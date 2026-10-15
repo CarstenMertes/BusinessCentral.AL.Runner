@@ -550,7 +550,10 @@ impl Parser<'_> {
     fn comment(&mut self) -> PResult<Handle> {
         self.expect("<!--")?;
         let Some(end) = self.rest().find("-->") else {
-            return self.fail_at("Unexpected end of file while parsing Comment has occurred.", self.s.len());
+            return self.fail_at(
+                "Unexpected end of file while parsing Comment has occurred.",
+                self.s.len(),
+            );
         };
         let body = self.s[self.i..self.i + end].to_string();
         if body.contains("--") {
@@ -832,14 +835,14 @@ struct Failure {
 
 /// `Ok(Err(detail))`: not well-formed XML; `detail` is BC's exception text with its position
 /// where the runtime knows it.
-fn parse_document_detail(text: &str) -> Result<Result<Handle, Option<Failure>>, Signal> {
+fn parse_document_detail(text: &str, dom: bool) -> Result<Result<Handle, Option<Failure>>, Signal> {
     let mut p = Parser {
         s: text,
         i: 0,
         open: Vec::new(),
         scope: Vec::new(),
         depth: 0,
-        dom: true,
+        dom,
         root_at: 0,
     };
     match p.document() {
@@ -1201,7 +1204,7 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
         };
         if with(&h, |d| matches!(d, XData::Document { .. })) {
             // xml/TestProbeXmlContracts.al:Add_NodeIntoWrongContainer_Error, `document_into_element_via_add_node`.
-        return Err(nav_argument());
+            return Err(nav_argument());
         }
         out.push(if parent_of(&h).is_some() { deep_clone(&h) } else { h });
     }
@@ -1360,7 +1363,7 @@ enum Axis {
     Child,
     Descendant,
     DescendantOrSelf,
-    SelfAxis,
+    Current,
     Parent,
     Ancestor,
     AncestorOrSelf,
@@ -1532,7 +1535,11 @@ impl XParser<'_> {
         while self.eat("|") {
             parts.push(self.path_expr()?);
         }
-        Ok(if parts.len() == 1 { parts.remove(0) } else { Expr::Union(parts) })
+        Ok(if parts.len() == 1 {
+            parts.remove(0)
+        } else {
+            Expr::Union(parts)
+        })
     }
 
     fn path_expr(&mut self) -> XRes<Expr> {
@@ -1610,7 +1617,11 @@ impl XParser<'_> {
                 self.i += 1;
                 if self.peek() == Some('/') {
                     self.i += 1;
-                    steps.push(Step { axis: Axis::DescendantOrSelf, test: Test::Node, preds: vec![] });
+                    steps.push(Step {
+                        axis: Axis::DescendantOrSelf,
+                        test: Test::Node,
+                        preds: vec![],
+                    });
                 }
                 steps.push(self.step()?);
                 self.ws();
@@ -1629,7 +1640,11 @@ impl XParser<'_> {
             self.i += 1;
             if self.peek() == Some('/') {
                 self.i += 1;
-                steps.push(Step { axis: Axis::DescendantOrSelf, test: Test::Node, preds: vec![] });
+                steps.push(Step {
+                    axis: Axis::DescendantOrSelf,
+                    test: Test::Node,
+                    preds: vec![],
+                });
                 steps.push(self.step()?);
             } else {
                 self.ws();
@@ -1648,7 +1663,11 @@ impl XParser<'_> {
                 self.i += 1;
                 if self.peek() == Some('/') {
                     self.i += 1;
-                    steps.push(Step { axis: Axis::DescendantOrSelf, test: Test::Node, preds: vec![] });
+                    steps.push(Step {
+                        axis: Axis::DescendantOrSelf,
+                        test: Test::Node,
+                        preds: vec![],
+                    });
                 }
                 steps.push(self.step()?);
             } else {
@@ -1667,7 +1686,7 @@ impl XParser<'_> {
             test = Test::Node;
         } else if self.peek() == Some('.') {
             self.i += 1;
-            axis = Axis::SelfAxis;
+            axis = Axis::Current;
             test = Test::Node;
         } else {
             let mut ax = Axis::Child;
@@ -1684,7 +1703,7 @@ impl XParser<'_> {
                             "child" => Axis::Child,
                             "descendant" => Axis::Descendant,
                             "descendant-or-self" => Axis::DescendantOrSelf,
-                            "self" => Axis::SelfAxis,
+                            "self" => Axis::Current,
                             "parent" => Axis::Parent,
                             "ancestor" => Axis::Ancestor,
                             "ancestor-or-self" => Axis::AncestorOrSelf,
@@ -1767,7 +1786,11 @@ fn parse_xpath(p: &str, prefixes: Prefixes) -> XRes<Expr> {
     if p.contains("@@") {
         return Err(XFail::NotNodeSet);
     }
-    let mut parser = XParser { s: p.chars().collect(), i: 0, prefixes };
+    let mut parser = XParser {
+        s: p.chars().collect(),
+        i: 0,
+        prefixes,
+    };
     let e = parser.expr()?;
     parser.ws();
     if parser.i != parser.s.len() {
@@ -1903,7 +1926,7 @@ fn axis_nodes(node: &Handle, step: &Step, ctx: &XCtx) -> XRes<Vec<Handle>> {
             cand.push(node.clone());
             descendants(node, &mut cand);
         }
-        Axis::SelfAxis => cand.push(node.clone()),
+        Axis::Current => cand.push(node.clone()),
         Axis::Parent => cand.extend(parent_of(node)),
         Axis::Ancestor | Axis::AncestorOrSelf => {
             if step.axis == Axis::AncestorOrSelf {
@@ -1990,7 +2013,10 @@ fn eval(e: &Expr, node: &Handle, pos: usize, last: usize, ctx: &XCtx) -> XRes<XV
         },
         Expr::Neg(x) => XVal::Num(-to_num(&eval(x, node, pos, last, ctx)?)),
         Expr::Arith(a, op, b) => {
-            let (x, y) = (to_num(&eval(a, node, pos, last, ctx)?), to_num(&eval(b, node, pos, last, ctx)?));
+            let (x, y) = (
+                to_num(&eval(a, node, pos, last, ctx)?),
+                to_num(&eval(b, node, pos, last, ctx)?),
+            );
             XVal::Num(match op {
                 '+' => x + y,
                 '-' => x - y,
@@ -1999,8 +2025,12 @@ fn eval(e: &Expr, node: &Handle, pos: usize, last: usize, ctx: &XCtx) -> XRes<XV
                 _ => x % y,
             })
         }
-        Expr::And(a, b) => XVal::Bool(to_bool(&eval(a, node, pos, last, ctx)?) && to_bool(&eval(b, node, pos, last, ctx)?)),
-        Expr::Or(a, b) => XVal::Bool(to_bool(&eval(a, node, pos, last, ctx)?) || to_bool(&eval(b, node, pos, last, ctx)?)),
+        Expr::And(a, b) => {
+            XVal::Bool(to_bool(&eval(a, node, pos, last, ctx)?) && to_bool(&eval(b, node, pos, last, ctx)?))
+        }
+        Expr::Or(a, b) => {
+            XVal::Bool(to_bool(&eval(a, node, pos, last, ctx)?) || to_bool(&eval(b, node, pos, last, ctx)?))
+        }
         Expr::Cmp(a, op, b) => {
             let (x, y) = (eval(a, node, pos, last, ctx)?, eval(b, node, pos, last, ctx)?);
             XVal::Bool(compare(&x, op, &y))
@@ -2055,9 +2085,7 @@ fn eval(e: &Expr, node: &Handle, pos: usize, last: usize, ctx: &XCtx) -> XRes<XV
                 ("contains", 2) => XVal::Bool(to_str(&vals[0]).contains(&to_str(&vals[1]))),
                 ("starts-with", 2) => XVal::Bool(to_str(&vals[0]).starts_with(&to_str(&vals[1]))),
                 ("string-length", 1) => XVal::Num(to_str(&vals[0]).chars().count() as f64),
-                ("normalize-space", 1) => {
-                    XVal::Str(to_str(&vals[0]).split_whitespace().collect::<Vec<_>>().join(" "))
-                }
+                ("normalize-space", 1) => XVal::Str(to_str(&vals[0]).split_whitespace().collect::<Vec<_>>().join(" ")),
                 (other, n) => return malformed(format!("function {other} with {n} arguments")),
             }
         }
@@ -2076,10 +2104,15 @@ fn compare(a: &XVal, op: &str, b: &XVal) -> bool {
     let cmp_str = |x: &str, y: &str| match op {
         "=" => x == y,
         "!=" => x != y,
-        _ => cmp_num(x.trim().parse().unwrap_or(f64::NAN), y.trim().parse().unwrap_or(f64::NAN)),
+        _ => cmp_num(
+            x.trim().parse().unwrap_or(f64::NAN),
+            y.trim().parse().unwrap_or(f64::NAN),
+        ),
     };
     match (a, b) {
-        (XVal::Nodes(n), XVal::Nodes(m)) => n.iter().any(|x| m.iter().any(|y| cmp_str(&string_value(x), &string_value(y)))),
+        (XVal::Nodes(n), XVal::Nodes(m)) => n
+            .iter()
+            .any(|x| m.iter().any(|y| cmp_str(&string_value(x), &string_value(y)))),
         (XVal::Nodes(n), XVal::Num(y)) | (XVal::Num(y), XVal::Nodes(n)) => {
             let flip = matches!(a, XVal::Num(_));
             n.iter().any(|x| {
@@ -2172,7 +2205,7 @@ fn read_from_text_options(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value
 
 fn read_text_into(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value], out: usize) -> NResult {
     let text = arg_text(a, 0)?;
-    match parse_document_detail(&text)? {
+    match parse_document_detail(&text, true)? {
         Ok(doc) => {
             a[out] = tagged("XmlDocument", doc);
             Ok(Value::Boolean(true))
@@ -2215,11 +2248,20 @@ fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> 
         let le = bytes[0] == 0xFF;
         let units: Vec<u16> = bytes[2..]
             .chunks_exact(2)
-            .map(|p| if le { u16::from_le_bytes([p[0], p[1]]) } else { u16::from_be_bytes([p[0], p[1]]) })
+            .map(|p| {
+                if le {
+                    u16::from_le_bytes([p[0], p[1]])
+                } else {
+                    u16::from_be_bytes([p[0], p[1]])
+                }
+            })
             .collect();
         String::from_utf16(&units).ok()
     } else if bytes.len() >= 2 && bytes.len() % 2 == 0 && bytes[0] != 0 && bytes[1] == 0 {
-        let units: Vec<u16> = bytes.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
+        let units: Vec<u16> = bytes
+            .chunks_exact(2)
+            .map(|p| u16::from_le_bytes([p[0], p[1]]))
+            .collect();
         String::from_utf16(&units).ok()
     } else {
         let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
@@ -2229,7 +2271,9 @@ fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> 
         return if c.ret_used() {
             Ok(Value::Boolean(false))
         } else {
-            unsupported("XmlDocument.ReadFrom of a stream whose bytes are no UTF-8 or UTF-16 text, result unused (error text not pinned)")
+            unsupported(
+                "XmlDocument.ReadFrom of a stream whose bytes are no UTF-8 or UTF-16 text, result unused (error text not pinned)",
+            )
         };
     };
     let mut args = [Value::Text(text), a[1].clone()];
@@ -2879,7 +2923,9 @@ fn select(c: &mut dyn Ctx, h: &Handle, path: &str, prefixes: Prefixes) -> Result
         Ok(v) => Ok(Some(v)),
         Err(XFail::Signal(s)) => Err(s),
         Err(XFail::NotNodeSet) if !c.ret_used() => Err(error("Expression must evaluate to a node-set.", "Xml:XPath")),
-        Err(XFail::Malformed(why)) if !c.ret_used() => unsupported(format!("XPath `{path}`: {why} (statement form, error text not pinned)")),
+        Err(XFail::Malformed(why)) if !c.ret_used() => {
+            unsupported(format!("XPath `{path}`: {why} (statement form, error text not pinned)"))
+        }
         Err(_) => Ok(None),
     }
 }
@@ -3315,7 +3361,7 @@ pub(crate) fn read_tree(text: &str) -> Result<Result<crate::xmlport::Elem, Optio
         }
         Ok(out)
     }
-    let doc = match parse_document_detail(text) {
+    let doc = match parse_document_detail(text, false) {
         Ok(Ok(d)) => d,
         Ok(Err(f)) => return Ok(Err(f.map(|f| f.message))),
         Err(Signal::Unsupported(why)) => return Err(why),

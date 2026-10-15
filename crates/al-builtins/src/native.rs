@@ -508,9 +508,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "RecordRef.Copy#1" | "RecordRef.Copy#2" => {
             "RecordRef.Copy is in no corpus test, so what it copies (the buffer, the filters, the key, the table view) and what ShareTable changes are not pinned"
         }
-        "TestRequestPage.Editable#1" => {
-            "TestRequestPage.Editable is in no corpus test (only the control form is, handlers/TestReqPageBoundVisibility.al), so whether the request page itself is editable is not pinned"
-        }
         _ => return None,
     })
 }
@@ -914,7 +911,10 @@ fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Re
         return Ok(Value::Integer(0));
     }
     if weights.len() > source.len() {
-        return raise("The weight parameter cannot be longer than the value string.", "ALSystemString");
+        return raise(
+            "The weight parameter cannot be longer than the value string.",
+            "ALSystemString",
+        );
     }
     // A short weight string is padded with 1 up to the length of the source.
     weights.resize(source.len(), 1);
@@ -932,10 +932,12 @@ fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Re
 fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let s: Vec<u16> = text_arg(args, 0)?.encode_utf16().collect();
     let pos = int_arg(args, 1).unwrap_or(1);
-    // types/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.
+    // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.
     if pos < 1 {
         return raise(
-            format!("The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to 2,147,483,647."),
+            format!(
+                "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to 2,147,483,647."
+            ),
             "OutsidePermittedRange",
         );
     }
@@ -943,7 +945,9 @@ fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     let end = match int_arg(args, 2) {
         Some(len) if len < 0 => {
             return raise(
-                format!("The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: {len}. The permitted range is: from 0 to 2,147,483,647."),
+                format!(
+                    "The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: {len}. The permitted range is: from 0 to 2,147,483,647."
+                ),
                 "OutsidePermittedRange",
             );
         }
@@ -1362,27 +1366,39 @@ pub(crate) mod tests {
         );
     }
 
-    // A standard format number that is not measured is a refusal the test can report, not a panic
-    // that takes the whole codeunit down.
+    // A standard format number a type does not have raises the pinned error, not a panic that takes the whole codeunit down
+    // (text/TestProbeTextDateFormatContracts.al:Dates_Format_Time, Dates_Format_DateTime, Dates_Format_Duration).
     #[test]
-    fn format_of_a_value_without_a_pinned_format_is_a_refusal() {
-        for v in [Value::Duration(3_600_000), Value::Time(43_200_001), Value::DateTime(5)] {
+    fn format_number_a_type_does_not_have_raises_the_pinned_error() {
+        for (v, ty) in [
+            (Value::Duration(3_600_000), "Duration"),
+            (Value::Time(43_200_001), "Time"),
+            (Value::DateTime(5), "DateTime"),
+        ] {
             let args = vec![v, Value::Integer(0), Value::Integer(7)];
-            assert!(matches!(call("System.Format#1", args), Err(Signal::Unsupported(_))));
+            let Err(Signal::Error(e)) = call("System.Format#1", args) else {
+                panic!("{ty}: format 7 must raise");
+            };
+            assert_eq!(
+                (e.message.as_str(), e.code.as_str()),
+                (
+                    format!("Standard format number 7 does not exist for the type '{ty}'.").as_str(),
+                    "InvalidStandardFormat"
+                )
+            );
         }
     }
 
     #[test]
-    fn formats_that_are_not_pinned_are_refused_not_panics() {
-        // A Duration with a standard format number that is not measured: Unsupported, so the test is
-        // reported as not run instead of a panic taking the whole codeunit down.
-        assert!(matches!(
-            call(
-                "System.Format#1",
-                vec![Value::Duration(86_400_000), Value::Integer(0), Value::Integer(5)]
-            ),
-            Err(Signal::Unsupported(_))
-        ));
+    fn a_duration_format_number_that_does_not_exist_raises() {
+        // text/TestProbeTextDateFormatContracts.al:Dates_Format_Duration, `duration_fmt_5`.
+        let Err(Signal::Error(e)) = call(
+            "System.Format#1",
+            vec![Value::Duration(86_400_000), Value::Integer(0), Value::Integer(5)],
+        ) else {
+            panic!("format 5 of a Duration must raise");
+        };
+        assert_eq!(e.code, "InvalidStandardFormat");
     }
 
     #[test]
@@ -1427,14 +1443,19 @@ pub(crate) mod tests {
             0
         );
         assert_eq!(n(call("Text.StrCheckSum#1", vec![t("")])), 0);
-        assert!(matches!(
-            call("Text.StrCheckSum#1", vec![t("12a")]),
-            Err(Signal::Unsupported(_))
-        ));
-        assert!(matches!(
-            call("Text.StrCheckSum#1", vec![t("12"), t("123")]),
-            Err(Signal::Unsupported(_))
-        ));
+        // types/TestProbeScalarContracts.al:StrCheckSum_NonDigitSource and the StrCheckSum tests after it.
+        for (args, message) in [
+            (vec![t("12a")], "The value string must be numeric."),
+            (
+                vec![t("12"), t("123")],
+                "The weight parameter cannot be longer than the value string.",
+            ),
+        ] {
+            let Err(Signal::Error(e)) = call("Text.StrCheckSum#1", args) else {
+                panic!("{message}");
+            };
+            assert_eq!((e.message.as_str(), e.code.as_str()), (message, "ALSystemString"));
+        }
     }
 
     #[test]
@@ -1466,10 +1487,11 @@ pub(crate) mod tests {
             )),
             "lo"
         );
-        assert!(matches!(
-            call("Text.CopyStr#1", vec![t("Hello"), Value::Integer(0)]),
-            Err(Signal::Unsupported(_))
-        ));
+        // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`.
+        let Err(Signal::Error(e)) = call("Text.CopyStr#1", vec![t("Hello"), Value::Integer(0)]) else {
+            panic!("CopyStr from position 0 must raise");
+        };
+        assert_eq!(e.code, "OutsidePermittedRange");
     }
 
     #[test]

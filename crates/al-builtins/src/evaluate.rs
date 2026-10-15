@@ -90,14 +90,18 @@ fn decimal(text: &str) -> Result<Parsed, Signal> {
     }
     // More than 18 significant digits do not evaluate, and a value below 1E-28 reads as zero (types/TestProbeStreamContracts.al:
     // WriteDecimal_ManyDigits, `19_digits_text`, `1e_minus_29`).
-    let digits: String = format!("{int}{}", frac.unwrap_or("")).trim_start_matches('0').to_string();
+    let digits: String = format!("{int}{}", frac.unwrap_or(""))
+        .trim_start_matches('0')
+        .to_string();
     // An integer part of 18 digits does not fit either (`123456789012345678` fails, `123456789012.345678` reads).
     if digits.len() > 18 || int.trim_start_matches('0').len() >= 18 {
         return Ok(Parsed::Rejected);
     }
     match text.parse::<Decimal>() {
         Ok(d) => Ok(Parsed::Value(Value::Decimal(d))),
-        Err(_) if digits.is_empty() || frac.is_some_and(|f| f.len() > 28) => Ok(Parsed::Value(Value::Decimal(Decimal::ZERO))),
+        Err(_) if digits.is_empty() || frac.is_some_and(|f| f.len() > 28) => {
+            Ok(Parsed::Value(Value::Decimal(Decimal::ZERO)))
+        }
         Err(_) => unsupported(format!("Evaluate of `{text}` outside the Decimal range")),
     }
 }
@@ -304,6 +308,21 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
                 }
             }
         }
+        // An Option reads an ordinal or a member name (types/PROptionInteger.al:Option_InCaseAndLoopBounds: `1` is B, `C` is C).
+        Value::Option(_, members) => {
+            let t = text.trim();
+            let by_name = members.iter().position(|m| m.eq_ignore_ascii_case(t));
+            match (t.parse::<usize>().ok().filter(|n| *n < members.len()), by_name) {
+                (Some(n), _) | (None, Some(n)) => Parsed::Value(Value::Option(n as i32, members.clone())),
+                // An OptionCaption may name it (fieldref/TestPrecompiledFieldOptionCaption.al:Evaluate_Caption_SelectsThatMember);
+                // the value does not carry the captions.
+                _ => {
+                    return unsupported(format!(
+                        "Evaluate of `{text}` into an Option: neither an ordinal nor a member name (an OptionCaption could name it, not pinned)"
+                    ));
+                }
+            }
+        }
         // The blank-like texts store the empty formula; garbage fails and leaves the value
         // (types/TestDateFormulaDurationFormatContracts.al:28-74, TestDateFormulaEvaluateLeftoversContracts.al).
         Value::DateFormula(_) => match crate::datefns::evaluate_formula(&text)? {
@@ -320,14 +339,22 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
         Parsed::Rejected if c.ret_used() => Ok(Value::Boolean(false)),
         // The error of a failed statement form (session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts,
         // `evaluate_int_overflow_statement`; types/TestProbeScalarContracts.al:Evaluate_BooleanFailureError).
-        Parsed::Rejected if matches!(a[0], Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Boolean(_)) => {
+        Parsed::Rejected
+            if matches!(
+                a[0],
+                Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Boolean(_)
+            ) =>
+        {
             let ty = match a[0] {
                 Value::Integer(_) => "Integer",
                 Value::BigInteger(_) => "BigInteger",
                 Value::Decimal(_) => "Decimal",
                 _ => "Boolean",
             };
-            crate::native::raise(format!("The value \"{text}\" can't be evaluated into type {ty}."), "Evaluate")
+            crate::native::raise(
+                format!("The value \"{text}\" can't be evaluated into type {ty}."),
+                "Evaluate",
+            )
         }
         Parsed::Rejected if matches!(a[0], Value::Guid(_)) => crate::native::raise(
             "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",

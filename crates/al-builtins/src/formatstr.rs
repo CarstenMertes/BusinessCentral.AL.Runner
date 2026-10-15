@@ -39,7 +39,7 @@ const WEEKDAYS: [&str; 7] = [
 ];
 
 /// Marks an error string of [`format_with_string`] as the platform's "invalid field or attribute" error (the caller
-/// raises it; types/TestProbeTextDateFormatContracts.al:Format_FormatStrings_Number, Format_OptionFieldAndOptionVariable).
+/// raises it; text/TestProbeTextDateFormatContracts.al:Format_FormatStrings_Number, Format_OptionFieldAndOptionVariable).
 pub const INVALID_FORMAT_MARK: &str = "\u{1}invalid-format:";
 
 /// What the codes that come after a number's digits need to know from the whole string.
@@ -266,7 +266,7 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         ("Year4", Some((y, _, _)), _) => format!("{y:04}"),
         // A two-digit year below 10 would print as one digit or two: not measured.
         // Two digits for 1999 and for 2000 to 2030, four for 1905, 1929, 1930 and 2105
-        // (types/TestProbeTextDateFormatContracts.al:Format_FormatStrings_Date); other years are not measured.
+        // (text/TestProbeTextDateFormatContracts.al:Format_FormatStrings_Date); other years are not measured.
         ("Year", Some((y, _, _)), _) if y == 1999 || (2000..=2030).contains(&y) => format!("{:02}", y.rem_euclid(100)),
         ("Year", Some((y, _, _)), _) if matches!(y, 1905 | 1929 | 1930 | 2105) => format!("{y}"),
         ("Year,2", Some((y, _, _)), _) => format!("{:02}", y.rem_euclid(100)),
@@ -338,6 +338,16 @@ mod tests {
     }
 
     #[test]
+    fn integer_thousand_with_a_width_shows_stars_when_the_number_does_not_fit() {
+        // text/TestProbeTextDateFormatContracts.al:Format_StringCodes, `integer_thousand_width_3` and `_10`.
+        assert_eq!(text(fmt(Value::Integer(1234567), "<Integer Thousand,3>")), "***");
+        assert_eq!(
+            text(fmt(Value::Integer(1234567), "<Integer Thousand,10>")),
+            " 1,234,567"
+        );
+    }
+
+    #[test]
     fn other_codes_and_values_are_refused() {
         let day = Value::Date(day_from_civil(2024, 3, 7), false);
         for (v, f) in [
@@ -345,8 +355,6 @@ mod tests {
             (day.clone(), "<Day,3>"),
             (day.clone(), "<Year4"),
             (Value::Date(0, false), "<Year4>"),
-            (Value::Decimal(1.into()), "<Integer Thousand,3>"),
-            (Value::Decimal(1.into()), "<Sign>"),
             (Value::Integer(1), "<Standard Format,x>"),
         ] {
             assert!(matches!(fmt(v, f), Err(Signal::Unsupported(_))), "{f}");
@@ -372,6 +380,11 @@ mod tests {
         );
         assert_eq!(text(fmt(Value::Integer(-5), "<Sign><Integer>")), "-5");
         assert_eq!(text(fmt(Value::Integer(5), "<Sign,1><Integer>")), " 5");
+        // text/TestProbeTextDateFormatContracts.al:Format_StringCodes, `sign_pos_dec`.
+        assert_eq!(
+            text(fmt(Value::Decimal("5.5".parse().unwrap()), "<Sign><Integer><Decimals>")),
+            "5.5"
+        );
     }
 
     #[test]

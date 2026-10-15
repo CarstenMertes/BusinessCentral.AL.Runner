@@ -119,6 +119,8 @@ page_methods! {
     "TestRequestPage.OK#1" => "TestPage.OK",
     "TestRequestPage.Cancel#1" => "TestPage.Cancel",
     "TestRequestPage.Caption#1" => "TestPage.Caption",
+    // handlers/PSRequestPageEditable.al: the page-level form answers as TestPage.Editable does.
+    "TestRequestPage.Editable#1" => "TestPage.Editable",
     "TestRequestPage.ValidationErrorCount#1" => "TestPage.ValidationErrorCount",
     "TestRequestPage.GetValidationError#1" => "TestPage.GetValidationError",
     "TestAction.Invoke#1" => "TestAction.Invoke",

@@ -29,6 +29,11 @@ pub struct BlobBuf {
     /// fetched with `CalcFields` before a stream reads it
     /// (streams/TestBlob.al Blob_Get_WithoutCalcFields_InStreamReadsEmpty).
     pub loaded: bool,
+    /// The buffer is the copy a record assignment made: its bytes show, but `CalcFields` fetches the Blob from the stored
+    /// row (types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes) unless a write came first.
+    pub refetch: bool,
+    /// A `Modify` of a temporary record wrote this content to the row; a write through a stream clears it.
+    pub persisted: bool,
 }
 
 /// A buffer that follows the borrowing rules of a `RefCell` (any number of readers or one writer,
@@ -68,6 +73,8 @@ pub fn new_blob() -> BlobRef {
         bytes: Vec::new(),
         write_pos: 0,
         loaded: true,
+        refetch: false,
+        persisted: false,
     }))
 }
 
@@ -77,6 +84,8 @@ pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
         bytes: b.borrow().bytes.clone(),
         write_pos: 0,
         loaded,
+        refetch: false,
+        persisted: false,
     }))
 }
 
@@ -90,6 +99,8 @@ pub fn write_bytes(b: &BlobRef, bytes: &[u8]) {
     buf.bytes.extend_from_slice(&bytes[overlap..]);
     buf.write_pos = at + bytes.len();
     buf.loaded = true;
+    buf.refetch = false;
+    buf.persisted = false;
 }
 
 /// How text becomes bytes in a stream. Windows is cp1252 and the default; MSDos gives the same
@@ -267,6 +278,8 @@ fn blob_create_out(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
         let mut buf = b.borrow_mut();
         buf.write_pos = 0;
         buf.loaded = true;
+        buf.refetch = false;
+        buf.persisted = false;
     }
     set_stream(&a[0], LibraryValue::OutStream(b, enc))?;
     Ok(Value::Null)
@@ -286,6 +299,8 @@ pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
         bytes: Vec::new(),
         write_pos: 0,
         loaded: true,
+        refetch: false,
+        persisted: false,
     });
     set_stream(
         &a[0],
@@ -429,7 +444,9 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     let max_chars = match a.get(1) {
         None => usize::MAX,
         Some(Value::Integer(n)) if *n >= 0 => *n as usize,
-        Some(_) => return unsupported("InStream.ReadText with a length that is not a non-negative Integer (not pinned)"),
+        Some(_) => {
+            return unsupported("InStream.ReadText with a length that is not a non-negative Integer (not pinned)");
+        }
     };
     if a.len() > 2 {
         return unsupported("InStream.ReadText with more arguments (not pinned)");
@@ -474,7 +491,11 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
                 .flatten()
                 .copied()
                 .collect();
-            let consumed = if at_lf || end + unit > rest.len() { (end + unit).min(rest.len()) } else { end };
+            let consumed = if at_lf || end + unit > rest.len() {
+                (end + unit).min(rest.len())
+            } else {
+                end
+            };
             (enc.decode(&line), consumed)
         });
         s.pos = pos + consumed;
@@ -584,13 +605,15 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
         let pos = s.pos;
         // Fewer bytes than the type needs, also none at all: the stream data error (streams/TestProbeStreamContracts.al:
         // Read_IntoTypes, a BigInteger or a Decimal read from 4 bytes; types/PRFileUpload.al:ReadFromUnfilledStream, a Byte).
-        let got = s.with_data(|d| d.get(pos..pos + width).map(<[u8]>::to_vec)).ok_or_else(|| {
-            Signal::Error(crate::native::AlError {
-                message: "Invalid data encountered in stream, unable to read text.".into(),
-                code: "InvalidStreamData".into(),
-                call_stack: String::new(),
-            })
-        })?;
+        let got = s
+            .with_data(|d| d.get(pos..pos + width).map(<[u8]>::to_vec))
+            .ok_or_else(|| {
+                Signal::Error(crate::native::AlError {
+                    message: "Invalid data encountered in stream, unable to read text.".into(),
+                    code: "InvalidStreamData".into(),
+                    call_stack: String::new(),
+                })
+            })?;
         s.pos += width;
         Ok(got)
     })?;
@@ -763,7 +786,9 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     // (streams/TestProbeStreamContracts.al:WriteText_NonAscii_Char_Byte_Length, `write_text_len3`, `write_text_len5_over`).
     if a.len() == 2 {
         let (Some(t), Value::Integer(n)) = (crate::native::text_of(&a[0]), &a[1]) else {
-            return unsupported("OutStream.Write with a length of something else than a Text and an Integer (not pinned)");
+            return unsupported(
+                "OutStream.Write with a length of something else than a Text and an Integer (not pinned)",
+            );
         };
         let cut: String = t.chars().take(usize::try_from(*n).unwrap_or(0)).collect();
         if !cut.is_ascii() {
@@ -805,7 +830,8 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         // (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_AfterWriteTextAndAfterWriteText_NonAscii:
         // 'wörld' is 77 F6 72 6C 64 00).
         Value::Text(t) | Value::Code(t)
-            if t.is_ascii() || (matches!(enc, Encoding::Windows | Encoding::MsDos) && enc.decode(&enc.encode(t)) == *t) =>
+            if t.is_ascii()
+                || (matches!(enc, Encoding::Windows | Encoding::MsDos) && enc.decode(&enc.encode(t)) == *t) =>
         {
             let mut v = enc.encode(t);
             v.extend(std::iter::repeat_n(0, enc.unit()));

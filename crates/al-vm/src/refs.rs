@@ -583,6 +583,17 @@ impl Session {
     fn fieldref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
         let (rec, pos) = match &*lib.borrow() {
             LibraryValue::FieldRef(r, p) | LibraryValue::KeyFieldRef(r, p) => (r.clone(), *p),
+            // Name, Number, Value(), Type, Length and Record raise on a FieldRef that was never assigned
+            // (types/PSUnassignedFieldRef.al UnassignedFieldRef_Members).
+            _ if matches!(method, "Name" | "Number" | "Type" | "Length" | "Record")
+                || (method == "Value" && args.is_empty()) =>
+            {
+                return Err(Signal::Error(AlError {
+                    message: "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized.".into(),
+                    code: "NotInitialized".into(),
+                    call_stack: String::new(),
+                }));
+            }
             _ => {
                 return unsupported(format!(
                     "FieldRef.{method} on a FieldRef that was never assigned: what BC does (an error, or a no-op) is not pinned (docs/probes-needed.md)"

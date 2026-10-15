@@ -49,18 +49,11 @@ fn request_page_update_and_report_preview_are_lowered_and_refuse_at_run_time_whe
     }
 }
 
-// Issue 33: CaptionClassTranslate (44 Tests-ERM tests) and the page-level TestRequestPage.Editable (21) are
-// in no corpus test (the corpus pins CaptionClass resolution of a page caption, TestPageCaptionClass.al:90,
-// and the control-level Editable, TestReqPageBoundVisibility.al, not these two calls).
+// Issue 33: CaptionClassTranslate (44 Tests-ERM tests) and the page-level TestRequestPage.Editable (21) are pinned by
+// types/PSCaptionClass.al and handlers/PSRequestPageEditable.al and no longer refused.
 #[test]
-fn caption_class_translate_and_request_page_editable_are_refused_with_their_reasons() {
-    for (object, routine, name) in [
-        ("C", "Translate", "CaptionClassTranslate"),
-        ("C", "PageEditable", "TestRequestPage.Editable"),
-    ] {
-        let why = refusal(object, routine);
-        assert!(why.contains(name), "{name}: {why}");
-        assert!(why.contains("not pinned"), "{name}: {why}");
-        assert!(!why.contains("is not implemented"), "{name}: {why}");
+fn caption_class_translate_and_request_page_editable_are_lowered() {
+    for (object, routine) in [("C", "Translate"), ("C", "PageEditable")] {
+        assert_eq!(refusal(object, routine), "", "{object}.{routine} lowers");
     }
 }

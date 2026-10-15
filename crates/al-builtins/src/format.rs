@@ -183,7 +183,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
     // `Format(true, 10)` is `Yes       `, `Format(true, 2)` is `Ye`).
     if matches!(v, Value::Boolean(_) | Value::Option(..)) && length > 0 {
         let cut: String = s.chars().take(length as usize).collect();
-        return Ok(format!("{cut}{}", " ".repeat((length as usize).saturating_sub(cut.chars().count()))));
+        return Ok(format!(
+            "{cut}{}",
+            " ".repeat((length as usize).saturating_sub(cut.chars().count()))
+        ));
     }
     Ok(pad(s, length))
 }
@@ -231,7 +234,7 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
     if matches!(standard, 1 | 2 | 9) {
         return Ok(plain);
     }
-    // Formats 3 and 4 are formats 0 and 1 with a trailing blank (types/TestProbeTextDateFormatContracts.al:
+    // Formats 3 and 4 are formats 0 and 1 with a trailing blank (text/TestProbeTextDateFormatContracts.al:
     // Format_FormatStrings_Number, `standard_format_3` and `standard_format_4`).
     if standard == 4 {
         return Ok(format!("{plain} "));
@@ -319,7 +322,7 @@ fn millis(ms: i64) -> String {
 /// Format_Time_StandardFormats). Format 0 and 1 are a 12-hour clock whose hour is padded with a
 /// space; format 1 adds the milliseconds (a time without any is not measured: refused); format 2 is
 /// the AL literal; format 9 the round-trip form.
-/// A standard format number the type does not have (types/TestProbeTextDateFormatContracts.al:Format_StandardNumbers_Time).
+/// A standard format number the type does not have (text/TestProbeTextDateFormatContracts.al:Format_StandardNumbers_Time).
 fn no_such_format(n: i32, ty: &str) -> FormatFail {
     FormatFail::Error {
         message: format!("Standard format number {n} does not exist for the type '{ty}'."),
@@ -367,7 +370,7 @@ fn format_datetime(ms: i64, standard: i32) -> Result<String, FormatFail> {
             let (h12, ap) = hour12(h);
             format!("{date} {h12:02}:{mi:02}:{s:02}{} {ap}", millis(f))
         }
-        // Format 3 shows the seconds, never the milliseconds (types/TestProbeTextDateFormatContracts.al:Format_StandardNumbers_DateTime).
+        // Format 3 shows the seconds, never the milliseconds (text/TestProbeTextDateFormatContracts.al:Format_StandardNumbers_DateTime).
         3 => {
             let (h12, ap) = hour12(h);
             format!("{date} {h12:02}:{mi:02}:{s:02} {ap}")

@@ -752,6 +752,13 @@ impl Session {
             // handlers/TestPageSetRecord.al).
             "SetRecord" => match args.first() {
                 Some(Value::Record(r)) => {
+                    // Inside a Page-typed modal handler the page holds the record already
+                    // (handlers/PSModalPageHandlerTyped.al: GetRecord answers the record SetRecord handed).
+                    if st.borrow().typed_handler && self.has_source(st) {
+                        let rec = self.page_rec(st);
+                        rec.borrow_mut().fields = r.borrow().fields.clone();
+                        return Ok(Value::Null);
+                    }
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
                     st.borrow_mut().set_record = Some(copy);
                     Ok(Value::Null)
@@ -2614,6 +2621,11 @@ impl Session {
         if st.borrow().open {
             return unsupported("running a page that is already open");
         }
+        if modal {
+            if let Some(handler) = self.take_typed_modal_handler(object) {
+                return self.answer_typed_modal(&st, record, handler);
+            }
+        }
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
         st.borrow_mut().modal = modal && !trapped;
         let handler = self.open_page(&st, PageMode::Edit, record, if trapped { None } else { Some(kind) })?;
@@ -2621,6 +2633,73 @@ impl Session {
             return Ok(Value::Null);
         };
         self.answer_page(&st, handler, modal)
+    }
+
+    /// A `[ModalPageHandler]` typed as the Page itself (handlers/PSModalPageHandlerTyped.al): the handler gets the page
+    /// object the code ran, never opened. `GetRecord` gives the record `RunModal` was given (an empty one when none),
+    /// `LookupMode` is Yes, `SetRecord` and `GetRecord` work on it, `Response` arrives as None, and the value the
+    /// handler leaves in it is what `Page.RunModal` answers. Whether the page's own triggers run is not pinned, so a
+    /// page that declares one is refused.
+    fn answer_typed_modal(&mut self, st: &St, record: Option<Rec>, handler: Handler) -> Result<Value, Signal> {
+        for t in [
+            "oninit",
+            "onopenpage",
+            "onclosepage",
+            "onqueryclosepage",
+            "onaftergetrecord",
+            "onaftergetcurrrecord",
+            "onfindrecord",
+            "onnextrecord",
+        ] {
+            if self.declares(st, t) {
+                return unsupported(format!(
+                    "a Page-typed ModalPageHandler for a page that declares {t} (whether its triggers run is not pinned)"
+                ));
+            }
+        }
+        self.page_instance(st)?;
+        if self.has_source(st) {
+            if let Some(r) = &record {
+                let rec = self.page_rec(st);
+                rec.borrow_mut().fields = r.borrow().fields.clone();
+            }
+        }
+        {
+            let mut s = st.borrow_mut();
+            s.lookup = true;
+            s.typed_handler = true;
+            s.cursor = Cursor::Row;
+        }
+        let (hobject, hroutine, hinst) = handler;
+        let none = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == "None")
+            .unwrap_or(0) as i32;
+        let members: std::sync::Arc<[String]> = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        self.page_handler_depth += 1;
+        let handled = self.call(
+            hobject,
+            hroutine,
+            hinst,
+            vec![Value::TestPage(st.clone()), Value::Option(none, members)],
+        );
+        self.page_handler_depth -= 1;
+        {
+            let mut s = st.borrow_mut();
+            s.typed_handler = false;
+            s.cursor = Cursor::None;
+        }
+        let (_, finals) = handled?;
+        match finals.get(1) {
+            Some(v @ Value::Option(..)) => Ok(v.clone()),
+            other => unsupported(format!(
+                "a Page-typed ModalPageHandler left {} in Response",
+                other.describe()
+            )),
+        }
     }
 
     /// Hands the open page `st` to its handler, closes it if the handler left it open, and for a
@@ -3811,7 +3890,26 @@ impl Session {
         // saved, and the saved row is read again: OnAfterGetRecord of the base runs before the
         // action (corpus handlers/TestPageExtensionBaseAccessContracts.al:338-342, where the base
         // copies a variable an extension control set into a variable the action logs).
-        if was_dirty && !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+        // A page with OnAfterGetRecord reads that row as a clean page does, and nothing more
+        // (pageext/PCCurrRecordReads.al:Card_DirtyPage_ReadsAfterEachAction and
+        // List_DirtyPage_ReadsAfterEachAction: one OnAfterGetRecord before the action body, no
+        // OnAfterGetCurrRecord); the reads after it follow below.
+        let dirty_reread_only = was_dirty
+            && self.declares(st, "onaftergetrecord")
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord")
+            && self.has_source(st)
+            && st.borrow().open
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && page_of(&engine, st).controls[idx].run_object.is_none()
+            && page_of(&engine, st).controls[idx].trigger("onaction").is_some();
+        if dirty_reread_only && st.borrow().host.is_none() {
+            // The edit reaches the server with the action, so the rows read after it hold it
+            // (Name reads 'dirty' after the action in the same tests).
+            self.save_row(st)?;
+        }
+        if was_dirty && !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") && !dirty_reread_only {
             st.borrow_mut().refresh = true;
             self.run_refresh(st)?;
             st.borrow_mut().refresh = false;
@@ -3820,7 +3918,7 @@ impl Session {
         // pageext/PCCurrRecordReads.al:Card_ReadsAfterEachAction and List_ReadsAfterEachAction: one
         // OnAfterGetRecord before the action's own trigger, only when the row is not dirty, which has
         // its re-read above).
-        let reads_rows = !was_dirty
+        let reads_rows = (!was_dirty || dirty_reread_only)
             && self.declares(st, "onaftergetrecord")
             && !self.declares(st, "onfindrecord")
             && !self.declares(st, "onnextrecord")
@@ -4493,7 +4591,10 @@ impl Session {
             page_of(&engine, st).controls[idx].binding,
             ir::Binding::Var(_) | ir::Binding::BaseVar(_)
         ) || (st.borrow().lookup && self.is_list_page(st))
-            || st.borrow().editable_off;
+            || st.borrow().editable_off
+            // A request page that says `Editable = false` makes its variable-bound fields read No too
+            // (handlers/PSRequestPageEditable.al Editable_RequestPageEditableFalse).
+            || (self.is_request_page(st) && !self.page_editable(st));
         // A label is never editable (handlers/TestPageLabelControlContracts.al). A cuegroup with
         // `Editable = false` makes its fields read No (handlers/TestPageCueGroupFixedGridContracts.al:
         // CueGroup_SetValue_IsSilentlyIgnored).

@@ -52,7 +52,7 @@ fn round(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             return unsupported("Round with a Precision below -1 (not pinned)");
         };
         return crate::native::raise(
-            &format!(
+            format!(
                 "The value of ROUND parameter 2 is outside of the permitted range. The current value is: {shown}. The permitted range is: from 1 to 2,147,483,647."
             ),
             "OutsidePermittedRange",
@@ -160,6 +160,7 @@ mod tests {
             other => panic!("{other:?}"),
         }
     }
+    #[track_caller]
     fn refused(r: Result<Value, Signal>) {
         assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?} should be a refusal");
     }
@@ -188,8 +189,40 @@ mod tests {
 
     #[test]
     fn round_refuses_what_the_corpus_does_not_pin() {
-        refused(call("System.Round#1", vec![d("2.5"), Value::Integer(0)]));
         refused(call("System.Round#1", vec![d("2.5"), Value::Integer(1), t("x")]));
+    }
+
+    fn raised(r: Result<Value, Signal>, message: &str, code: &str) {
+        match r {
+            Err(Signal::Error(e)) => assert_eq!((e.message.as_str(), e.code.as_str()), (message, code)),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
+    fn round_and_power_raise_what_the_probe_pins() {
+        // types/TestProbeScalarContracts.al:Round_PrecisionAndPower.
+        raised(
+            call("System.Round#1", vec![d("2.5"), Value::Integer(0)]),
+            "The value of ROUND parameter 2 is outside of the permitted range. The current value is: 0. The permitted range is: from 1 to 2,147,483,647.",
+            "OutsidePermittedRange",
+        );
+        let overflow = "Value was either too large or too small for a Decimal.";
+        raised(
+            call("System.Power#1", vec![Value::Integer(0), Value::Integer(-1)]),
+            overflow,
+            "AL:Overflow",
+        );
+        raised(
+            call("System.Power#1", vec![Value::Integer(10), Value::Integer(100)]),
+            overflow,
+            "AL:Overflow",
+        );
+        raised(
+            call("System.Power#1", vec![Value::Integer(2), Value::Integer(10_001)]),
+            overflow,
+            "AL:Overflow",
+        );
     }
 
     #[test]
@@ -204,11 +237,6 @@ mod tests {
         is_dec(call("System.Power#1", vec![d("1.5"), Value::Integer(2)]), "2.25");
     }
 
-    #[test]
-    fn power_refuses_what_the_corpus_does_not_pin() {
-        refused(call("System.Power#1", vec![Value::Integer(0), Value::Integer(-1)]));
-        refused(call("System.Power#1", vec![Value::Integer(10), Value::Integer(100)]));
-    }
     // Mutation-testing additions (docs/status.md debt).
 
     #[test]
@@ -252,7 +280,11 @@ mod tests {
         // is not a finite number is refused.
         is_dec(p("1", Value::Integer(10_000)), "1");
         is_dec(p("1", Value::Integer(10_001)), "1");
-        refused(p("2", Value::Integer(10_001)));
+        raised(
+            p("2", Value::Integer(10_001)),
+            "Value was either too large or too small for a Decimal.",
+            "AL:Overflow",
+        );
     }
 
     // Found by mutation testing: an exponent written with a scale (3.0, or 6 / 2 computed as 3.0) was

@@ -466,11 +466,11 @@ impl Parser<'_> {
         let v = if is_int {
             match text.parse::<i64>() {
                 Ok(n) => Value::BigInteger(n),
-                Err(_) => match text.parse::<Decimal>() {
-                    Ok(d) => Value::Decimal(d),
-                    // An integer beyond the Decimal keeps its digits (ExponentNumbers_ReadAndWrite, `f`).
-                    Err(_) => return Ok(new_handle(JsonNode::Scalar(Scalar::Raw(text.to_string())))),
-                },
+                // An integer beyond a BigInteger keeps its digits when written back (json/TestJsonRuntimeContracts.al:
+                // JsonObject_ReadFrom_NumbersKeepTheirWrittenForm, 12345678901234567890; ExponentNumbers_ReadAndWrite, `f`),
+                // while a Decimal set from AL is cut at 18 significant digits (WriteTo_NumberForms). A read as a Decimal
+                // parses the digits.
+                Err(_) => return Ok(new_handle(JsonNode::Scalar(Scalar::Raw(text.to_string())))),
             }
         } else {
             // A number with a fraction or an exponent is read as a double and written back the
@@ -744,6 +744,9 @@ fn as_decimal(s: &Scalar) -> Result<Value, Signal> {
         Scalar::Val(Value::Integer(n)) => Ok(Value::Decimal(Decimal::from(*n))),
         Scalar::Val(Value::BigInteger(n)) => Ok(Value::Decimal(Decimal::from(*n))),
         Scalar::Val(Value::Byte(n)) => Ok(Value::Decimal(Decimal::from(*n))),
+        Scalar::Raw(t) if t.parse::<Decimal>().is_ok() && t.bytes().all(|b| b.is_ascii_digit() || b == b'-') => {
+            Ok(Value::Decimal(t.parse::<Decimal>().expect("checked")))
+        }
         other => unsupported(format!(
             "reading {} as Decimal (conversion not pinned yet)",
             other.describe()
@@ -1225,7 +1228,10 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
             ))
         } else {
             // json/TestProbeJsonContracts.al:ReadFrom_ArrayIntoObject_Statement, ReadFrom_ObjectIntoArray_Statement.
-            let kind = syntax.as_ref().map(|p| with_node(p, |n| matches!(n, JsonNode::Array(_)))).unwrap_or(false);
+            let kind = syntax
+                .as_ref()
+                .map(|p| with_node(p, |n| matches!(n, JsonNode::Array(_))))
+                .unwrap_or(false);
             Err(error(
                 format!(
                     "JSON tokens of type '{}' are not supported by this implementation.",
@@ -1312,7 +1318,9 @@ fn yaml_scalar(c: &Handle) -> Result<String, Signal> {
             write(c, &mut t)?;
             Ok(t)
         }
-        _ => unsupported("WriteToYaml of a value that is not a number, a Boolean or a text (the YAML form is not pinned)"),
+        _ => unsupported(
+            "WriteToYaml of a value that is not a number, a Boolean or a text (the YAML form is not pinned)",
+        ),
     }
 }
 

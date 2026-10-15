@@ -736,7 +736,8 @@ fn get_ascending_reads_the_direction_of_a_key_field() {
         end;",
         "F",
     );
-    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+    // record/TestProbeRecordRefContracts.al:GetTable_CopiesBufferFiltersKeyDirection (`rr_ascending`): the property reads the direction set.
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
 }
 
 // A per-field direction on a multi-field key, or on a field outside the key, is not pinned.

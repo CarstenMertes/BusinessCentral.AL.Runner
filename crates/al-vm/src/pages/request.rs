@@ -108,7 +108,12 @@ impl Session {
             return unsupported("a request page without a handler");
         };
         self.page_handler_depth += 1;
+        // The handler of a `RunRequestPage` finds no transaction, while the page's own triggers write as ever
+        // (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler; handlers/TestReportInstanceRunReqPage.al
+        // writes a log row from OnOpenPage).
+        let outer = std::mem::replace(&mut self.request_only_page, want_parameters);
         let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
+        self.request_only_page = outer;
         self.page_handler_depth -= 1;
         if let Err(e) = handled {
             self.mark_closed(&st);

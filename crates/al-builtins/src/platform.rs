@@ -243,9 +243,9 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al. TableName, Class, Enabled and "Field Caption"
     // are read from the declaration (probe batch 5); Len (6) from the type (record/TestFieldLenAndFeatureKeyContracts.al); Type Name (9), ExternalName (10) and the rest are not.
     (2_000_000_041, &[1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 24, 25, 26, 27]),
-    // Feature Key (BC 27): ID (1), Enabled (2) and Data Update Required (8), record/TestFieldLenAndFeatureKeyContracts.al,
-    // TestFeatureKeyEnabledContracts.al.
-    (2_000_000_211, &[1, 2, 8]),
+    // Feature Key: ID (1), Enabled (2), Mandatory By (5), Can Try (6), Is One Way (7), Data Update Required (8) and Mandatory By Version (9),
+    // record/PFFeatureKeyColumns.al, TestFieldLenAndFeatureKeyContracts.al, TestFeatureKeyEnabledContracts.al.
+    (2_000_000_211, &[1, 2, 5, 6, 7, 8, 9]),
     // Key: record/TestKeyVirtualTable.al.
     (2_000_000_063, &[1, 2, 4, 7, 9, 10, 11, 13]),
     // Page Metadata: record/TestPageMetadata*.al. Caption (3) and CardPageID (6) are read from the declaration (probe batch 5).

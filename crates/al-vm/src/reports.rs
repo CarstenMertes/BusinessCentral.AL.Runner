@@ -301,7 +301,12 @@ impl Session {
         self.report_instance_for(receiver, can_stop, false)
     }
 
-    fn report_instance_for(&mut self, receiver: Option<Value>, can_stop: bool, run: bool) -> Result<(Inst, bool), Signal> {
+    fn report_instance_for(
+        &mut self,
+        receiver: Option<Value>,
+        can_stop: bool,
+        run: bool,
+    ) -> Result<(Inst, bool), Signal> {
         match receiver {
             Some(Value::Codeunit(rc)) => {
                 // Used again after a Run: anything but a Run makes it a new instance (OnInitReport runs).
@@ -683,9 +688,7 @@ impl Session {
         let run = self.report_prepare(inst, schema)?;
         let before = self.saved_values.get(&(schema.object as u32)).cloned();
         let ext: Vec<(usize, Inst)> = run.exts.iter().map(|(i, e)| (*e, i.clone())).collect();
-        let outer = std::mem::replace(&mut self.request_only_page, true);
         let closed = self.run_request_page(inst, schema.object, seed, ext, true);
-        self.request_only_page = outer;
         match before {
             Some(v) => {
                 self.saved_values.insert(schema.object as u32, v);
@@ -1210,6 +1213,20 @@ impl Session {
             // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Html_WithAnRdlcLayout_IsRefused: false, the
             // text in GetLastErrorText, nothing written. Whether the report's triggers run first is not pinned,
             // so none does.
+            // report/PRSaveAsFormats.al SaveAs_Formats_OfReportWithoutLayoutFile: Pdf, Html, Word and Excel of a report
+            // with `DefaultLayout` and no layout file answer false, write nothing and set this text. With the answer
+            // dropped BC's behaviour is not pinned.
+            "Pdf" | "Html" | "Word" | "Excel" if schema.report().layout_file_missing && result_used => {
+                self.last_error = al_builtins::native::AlError {
+                    message: format!(
+                        "Report {} does not have a valid layout. Valid layout types are: Word, RDLC, Excel, and Custom.",
+                        self.object_id_of(schema.object as u32)
+                    ),
+                    code: "Dialog".into(),
+                    call_stack: String::new(),
+                };
+                return Ok(Value::Boolean(false));
+            }
             "Html" if schema.report().layout == ir::ReportLayout::Rdlc => {
                 self.last_error = al_builtins::native::AlError {
                     message: FORMAT_NOT_SUPPORTED_BY_LAYOUT.into(),

@@ -125,13 +125,9 @@ fn work_date_defaults_to_today_and_can_be_set() {
 }
 
 #[test]
-fn work_date_of_the_undefined_date_is_refused() {
-    // Not pinned: whether WorkDate(0D) resets to today. docs/probes-needed.md.
-    let r = run("procedure F() begin WorkDate(0D); end;");
-    assert!(
-        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("WorkDate")),
-        "{r:?}"
-    );
+fn work_date_of_the_undefined_date_resets_to_today() {
+    // session/TestProbeSessionMiscContracts.al:WorkDate_SetUndefined (`after_set_0D_minus_today` is 0).
+    assert_eq!(text("", "WorkDate(0D); exit(Format(WorkDate() - Today()));"), "0");
 }
 
 // ---------------------------------------------------------------- the identity

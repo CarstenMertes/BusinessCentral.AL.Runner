@@ -80,7 +80,7 @@ fn ends_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(s.ends_with(&sub)))
 }
 
-/// The .NET argument errors of the string methods (types/TestProbeTextDateFormatContracts.al:Text_SubstringBounds,
+/// The .NET argument errors of the string methods (text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds,
 /// Text_IndexOfAndTextBuilderEdges).
 fn out_of_range(msg: &str) -> Signal {
     crate::native::raise::<()>(msg.to_string(), "ArgumentOutOfRange").unwrap_err()
@@ -122,7 +122,7 @@ fn index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
     let (s, sub) = (u16s(&recv_text(&r)?), u16s(&text(a, 0)?));
     let from = if a.len() > 1 {
         let n = int(a, 1)?;
-        // A start outside 1 to the length plus one raises (types/TestProbeTextDateFormatContracts.al:Text_IndexOfAndTextBuilderEdges).
+        // A start outside 1 to the length plus one raises (text/TestProbeTextDateFormatContracts.al:Text_IndexOfAndTextBuilderEdges).
         if n < 1 || n as usize > s.len() + 1 {
             return Err(out_of_range(
                 "Index was out of range. Must be non-negative and less than or equal to the size of the collection. (Parameter 'startIndex')",
@@ -210,8 +210,12 @@ fn trim_with(r: &Option<&mut Value>, a: &[Value], start: bool, end: bool) -> NRe
         ),
         None => None,
     };
-    // An empty set trims white space like no set (types/TestProbeTextDateFormatContracts.al:Text_TrimWithCharacterSet).
-    let strip = |c: char| set.as_ref().filter(|cs| !cs.is_empty()).map_or(c.is_whitespace(), |cs| cs.contains(&c));
+    // An empty set trims white space like no set (text/TestProbeTextDateFormatContracts.al:Text_TrimWithCharacterSet).
+    let strip = |c: char| {
+        set.as_ref()
+            .filter(|cs| !cs.is_empty())
+            .map_or(c.is_whitespace(), |cs| cs.contains(&c))
+    };
     let mut out: &str = &s;
     if start {
         out = out.trim_start_matches(strip);
@@ -412,7 +416,7 @@ fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (head, rest) = chars.split_at(first);
     let (num, tail) = rest.split_at(last + 1 - first);
     // The digit block plus the increment, keeping the width of the block (`A099` gives `A100`, `A9` gives `A10`);
-    // a negative increment subtracts (types/TestProbeTextDateFormatContracts.al:Text_IncStrAndConvertStr).
+    // a negative increment subtracts (text/TestProbeTextDateFormatContracts.al:Text_IncStrAndConvertStr).
     let digits: String = num.iter().collect();
     let Ok(value) = digits.parse::<i128>() else {
         return unsupported("IncStr of a digit block beyond 38 digits (not pinned)");
@@ -449,10 +453,16 @@ fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
 fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let s = u16s(&text(a, 0)?);
     let pos = int(a, 1)?;
-    // types/TestProbeTextDateFormatContracts.al:Text_DelStrInsStr: the position must be 1 or more (the upper bound the
+    // text/TestProbeTextDateFormatContracts.al:Text_DelStrInsStr: the position must be 1 or more (the upper bound the
     // message names is 2048 without a length and the largest Integer with one); a length must be 0 or more.
     if pos < 1 {
-        return Err(permitted("DELSTR", 2, pos, "1", if a.len() > 2 { INT_MAX } else { "2048" }));
+        return Err(permitted(
+            "DELSTR",
+            2,
+            pos,
+            "1",
+            if a.len() > 2 { INT_MAX } else { "2048" },
+        ));
     }
     if a.len() > 2 {
         let n = int(a, 2)?;
@@ -465,7 +475,11 @@ fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
         return Ok(Value::Text(from_u16(&s)));
     }
     let from = pos as usize - 1;
-    let to = if a.len() > 2 { s.len().min(from + int(a, 2)? as usize) } else { s.len() };
+    let to = if a.len() > 2 {
+        s.len().min(from + int(a, 2)? as usize)
+    } else {
+        s.len()
+    };
     let mut out = s[..from].to_vec();
     out.extend_from_slice(&s[to..]);
     Ok(Value::Text(from_u16(&out)))
@@ -631,7 +645,10 @@ fn tb_insert(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     let (pos, t) = (int(a, 0)?, text(a, 1)?);
     let u = with_string(&h, |s| u16s(s));
     if pos < 1 || pos as usize > u.len() + 1 {
-        return crate::native::raise::<Value>("An invalid argument was passed to a 'TextBuilder' data type method.".to_string(), "ArgumentOutOfRange");
+        return crate::native::raise::<Value>(
+            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+            "ArgumentOutOfRange",
+        );
     }
     let at = pos as usize - 1;
     let mut out = u[..at].to_vec();
@@ -647,7 +664,10 @@ fn tb_remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     let (start, count) = (int(a, 0)?, int(a, 1)?);
     let u = with_string(&h, |s| u16s(s));
     if start < 1 || count < 0 || (start as usize - 1) + count as usize > u.len() {
-        return crate::native::raise::<Value>("An invalid argument was passed to a 'TextBuilder' data type method.".to_string(), "ArgumentOutOfRange");
+        return crate::native::raise::<Value>(
+            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+            "ArgumentOutOfRange",
+        );
     }
     let from = start as usize - 1;
     let mut out = u[..from].to_vec();

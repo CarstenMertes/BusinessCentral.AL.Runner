@@ -98,7 +98,9 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             // rounding (types/PRDecimalToInteger.al: ConversionCast, `value 1.5`, `value 3000000000.0`).
             let cast_error = |to: &str| {
                 raise::<Value>(
-                    format!("Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.{to}."),
+                    format!(
+                        "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.{to}."
+                    ),
                     "ConversionCast",
                 )
             };
@@ -218,7 +220,7 @@ fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
     match max {
         // types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `too_long_11` (a Code[10] given 11 characters).
         Some(m) if Value::text_len(&s) > m as usize => crate::native::raise(
-            &format!(
+            format!(
                 "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {s}",
                 Value::text_len(&s)
             ),
@@ -251,6 +253,15 @@ pub enum Arith {
 
 pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     use Value as V;
+    // An Option takes part in arithmetic as its ordinal, an Integer (types/PROptionInteger.al:OptionMember_AsInteger:
+    // `Opt + 1`, `Opt * 2`).
+    if matches!(l, V::Option(..)) || matches!(r, V::Option(..)) {
+        let ord = |v: &Value| match v {
+            V::Option(n, _) => V::Integer(*n),
+            other => other.clone(),
+        };
+        return arith(op, &ord(l), &ord(r));
+    }
     // Text concatenation.
     if op == Arith::Add {
         if let (Some(a), Some(b)) = (text_like(l), text_like(r)) {
@@ -562,10 +573,11 @@ mod tests {
             Ok(Value::BigInteger(2))
         ));
         assert!(matches!(convert(d("2"), &RtType::Integer), Ok(Value::Integer(2))));
-        assert!(
-            matches!(convert(d("2.5"), &RtType::Integer), Err(Signal::Unsupported(_))),
-            "rounding rule not pinned yet"
-        );
+        // A Decimal with a fraction does not convert into an Integer, it is not rounded (types/PRDecimalToInteger.al).
+        let Err(Signal::Error(e)) = convert(d("2.5"), &RtType::Integer) else {
+            panic!("2.5 into an Integer must raise");
+        };
+        assert_eq!(e.code, "ConversionCast");
     }
 
     // corpus record/TestCalcFormulaValidationTests.Codeunit.al:42: `exit(60 * 60 * 1000)` from a
@@ -637,13 +649,11 @@ mod tests {
             matches!(convert(Value::Text(" ab ".into()), &RtType::Code(None)), Ok(Value::Code(ref s)) if s == "AB")
         );
         assert!(matches!(convert(Value::Code("AB".into()), &RtType::Text(None)), Ok(Value::Text(ref s)) if s == "AB"));
-        assert!(
-            matches!(
-                convert(Value::Text("abc".into()), &RtType::Text(Some(2))),
-                Err(Signal::Unsupported(_))
-            ),
-            "overflow message not pinned yet"
-        );
+        // types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim: a text past the declared length raises.
+        let Err(Signal::Error(e)) = convert(Value::Text("abc".into()), &RtType::Text(Some(2))) else {
+            panic!("a text longer than its type must raise");
+        };
+        assert_eq!(e.code, "StringLengthExceeded");
         assert!(matches!(
             convert(Value::Text("a".into()), &RtType::Char),
             Ok(Value::Char(97))
@@ -761,15 +771,22 @@ mod tests {
     }
 
     #[test]
-    fn division_by_zero_and_overflow_are_not_guessed() {
-        assert!(matches!(
-            arith(Arith::Div, &Value::Integer(1), &Value::Integer(0)),
-            Err(Signal::Unsupported(_))
-        ));
-        assert!(matches!(
-            arith(Arith::Add, &Value::Integer(i32::MAX), &Value::Integer(1)),
-            Err(Signal::Unsupported(_))
-        ));
+    fn division_by_zero_and_overflow_raise_the_pinned_errors() {
+        // session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts.
+        let Err(Signal::Error(e)) = arith(Arith::Div, &Value::Integer(1), &Value::Integer(0)) else {
+            panic!("1 / 0 must raise");
+        };
+        assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            ("Attempted to divide by zero.", "AL:DivideByZero")
+        );
+        let Err(Signal::Error(e)) = arith(Arith::Add, &Value::Integer(i32::MAX), &Value::Integer(1)) else {
+            panic!("an Integer overflow must raise");
+        };
+        assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            ("Arithmetic operation resulted in an overflow.", "AL:Overflow")
+        );
     }
 
     #[test]

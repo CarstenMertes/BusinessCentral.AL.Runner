@@ -3588,7 +3588,7 @@ impl Lowerer<'_> {
         if &captions == names {
             return Ok(value);
         }
-        // Every form of Format reads the caption list (types/TestProbeTextDateFormatContracts.al:
+        // Every form of Format reads the caption list (text/TestProbeTextDateFormatContracts.al:
         // Format_OptionFieldAndOptionVariable): standard formats 2 and 9 the ordinal, a length cuts or pads the caption.
         let _ = plain;
         if captions.len() != names.len() {
@@ -4495,6 +4495,23 @@ impl Lowerer<'_> {
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) | Some(Res::DotNetMember(_)) => self.call(n, n, &[]),
                 // `Q.Amount`: the current row's value of a query column.
+                Some(Res::QueryColumn { query, column })
+                    if n.kind() == MemberExpr
+                        && query == self.oi
+                        && kids[0].kind() == NameRef
+                        && kids[0].text().to_string().trim().eq_ignore_ascii_case("this") =>
+                {
+                    // `this.Id` (corpus query/PRQueryOpenColumn.al `PeekThis`).
+                    let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
+                    if layout.query.columns[column].filter_element {
+                        return Err("reading a filter element of a query (not pinned)".into());
+                    }
+                    let slot = *self.globals.get("currquery").ok_or("the running query")?;
+                    Ok(ir::Expr::QueryColumn {
+                        query: Box::new(ir::Expr::Load(ir::Place::Global(slot))),
+                        column,
+                    })
+                }
                 Some(Res::QueryColumn { query, column }) if n.kind() == MemberExpr => {
                     let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
                     if layout.query.columns[column].filter_element {
@@ -6193,18 +6210,15 @@ codeunit 50101 C2
             "{:?}",
             arg0("Q")
         );
-        // Another Format form on a captioned option is refused rather than guessed.
+        // Every Format form reads the caption list (text/TestProbeTextDateFormatContracts.al:
+        // Format_OptionFieldAndOptionVariable), standard format 9 included.
         let c = l.program.objects.iter().position(|o| o.name == "C").unwrap();
         let w = l.program.objects[c]
             .routines
             .iter()
             .position(|r| r.name == "W")
             .unwrap();
-        assert!(
-            l.unsupported[c][w].iter().any(|r| r.contains("not pinned")),
-            "{:?}",
-            l.unsupported[c][w]
-        );
+        assert!(l.unsupported[c][w].is_empty(), "{:?}", l.unsupported[c][w]);
     }
 
     #[test]

@@ -352,11 +352,11 @@ pub struct Session {
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
-/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al); BC's exact limit
-/// and the text of its error are not pinned, so exceeding this is Unsupported.
-/// The deepest call chain, the test method included: a recursion of 990 calls under a test runs, the next one raises
+/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al).
+/// The deepest call chain, the test method included: 991 recursive calls under a test run (codeunit/
+/// TestCodeunitRecursionDepth.al:RecursionDepth_JustInsideTheCeiling_Completes); a [TryFunction] counts for two frames
 /// (session/TestProbeSessionMiscContracts.al:CallDepth_990, CallDepth_1000, CallDepth_1001).
-pub const MAX_CALL_DEPTH: usize = 991;
+pub const MAX_CALL_DEPTH: usize = 992;
 
 impl Session {
     /// A session on the deterministic test host: a frozen clock and AL Runner's identity.
@@ -493,6 +493,16 @@ impl Session {
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
         self.committed_row_version = self.next_row_version;
         self.isolated_committed = self.isolated_storage.clone();
+        self.end_write_phase();
+    }
+
+    /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
+    /// it with a write that changes nothing; codeunit/TestWriteTxTestBoundary.al:Test10 to Test13d end it with the run or
+    /// the page operation, and a rollback ends it too).
+    fn end_write_phase(&mut self) {
+        if self.tx_phase == crate::transactions::TX_WRITE {
+            self.tx_phase = crate::transactions::TX_FRESH;
+        }
     }
 
     /// Discards every change since the last commit. The AutoIncrement counters are not
@@ -509,6 +519,7 @@ impl Session {
         for (slot, value) in std::mem::take(&mut self.truncate_undo) {
             self.autoinc.insert(slot, value);
         }
+        self.end_write_phase();
     }
 
     /// The session's database, for runners that manage transactions around tests.
@@ -805,6 +816,10 @@ impl Session {
             self.error_scopes.open();
         }
         self.try_depth += usize::from(is_try);
+        // A [TryFunction] takes a platform scope of its own on top of its frame (session/
+        // TestProbeSessionMiscContracts.al:CallDepth_1000 stops at 988 frames below test, TryDepth and TryDepthF, while
+        // codeunit/TestCodeunitRecursionDepth.al:RecursionDepth_JustInsideTheCeiling_Completes runs 991 frames under a test).
+        self.depth += usize::from(is_try);
         let test_scope = if self.code_coverage {
             self.coverage_enter(object, routine)
         } else {
@@ -833,6 +848,7 @@ impl Session {
             outcome = self.close_error_scope(outcome);
         }
         self.try_depth -= usize::from(is_try);
+        self.depth -= usize::from(is_try);
         self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
@@ -1220,7 +1236,7 @@ impl Session {
                 // the last character reads as the character 0; further positions are not pinned.
                 if i < 1 {
                     return al_builtins::native::raise(
-                        &format!(
+                        format!(
                             "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
                         ),
                         "OutsidePermittedRange",
@@ -1610,6 +1626,8 @@ impl Session {
                                             // fetches the Blob from the stored row again (types/ProbeTypeFormsAndFilters.al:
                                             // FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
                                             loaded: true,
+                                            refetch: true,
+                                            persisted: false,
                                         },
                                     )))
                                 }
@@ -1711,7 +1729,7 @@ impl Session {
         // length error of an assignment.
         if i < 1 || (i as usize) > units.len() + 1 {
             return al_builtins::native::raise(
-                &format!(
+                format!(
                     "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to {}.",
                     units.len()
                 ),
@@ -1726,7 +1744,7 @@ impl Session {
         }
         if let Some(m) = max.filter(|m| units.len() > *m as usize) {
             return al_builtins::native::raise(
-                &format!(
+                format!(
                     "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
                     units.len(),
                     String::from_utf16_lossy(&units)

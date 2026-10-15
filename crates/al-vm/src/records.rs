@@ -810,6 +810,7 @@ impl Session {
                 have: al_builtins::value::FieldSet::All,
                 unsure: al_builtins::value::FieldSet::Of(Vec::new()),
                 row: None,
+                cleared: false,
             });
             r.load.partial = false;
         }
@@ -845,7 +846,7 @@ impl Session {
             let Value::Blob(buf) = rec.borrow().fields[pos].clone() else {
                 return unsupported("CalcFields of a Blob field that holds no Blob");
             };
-            if buf.borrow().loaded {
+            if buf.borrow().loaded && !buf.borrow().refetch {
                 continue;
             }
             if stored.is_none() {
@@ -865,6 +866,7 @@ impl Session {
             let mut b = buf.borrow_mut();
             b.bytes = bytes;
             b.loaded = true;
+            b.refetch = false;
         }
         Ok(())
     }
@@ -1067,8 +1069,11 @@ impl Session {
                 // partial fetch (session/TestProbeSessionMiscContracts.al:PartialRecords_AreFieldsLoaded: a full Get,
                 // Clear, SetLoadFields(Cd) and Get still reports Txt loaded).
                 let (mut buffer, partial) = (r.load.buffer.take(), r.load.partial);
-                if let Some(b) = buffer.as_mut().filter(|b| b.row.is_none()) {
-                    b.row = old_row_id.clone();
+                if let Some(b) = buffer.as_mut() {
+                    if b.row.is_none() {
+                        b.row = old_row_id.clone();
+                    }
+                    b.cleared = true;
                 }
                 r.load = Default::default();
                 r.load.buffer = buffer;
@@ -1314,6 +1319,16 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     WriteOutcome::Done => {
+                        // A Blob a Modify of a temporary record persisted does not survive a later Rename
+                        // (streams/TestBlobRenameIsolation.al:TempBlob_CommittedWrite_Rename_SameInstanceReGet_LosesBlobValue);
+                        // one written after the Insert and never modified does.
+                        if rec.borrow().temp_id.is_some() {
+                            for v in &rec.borrow().fields {
+                                if let Value::Blob(b) = v {
+                                    b.borrow_mut().persisted = true;
+                                }
+                            }
+                        }
                         if run {
                             self.run_ext_trigger(&t, "OnAfterModify", rec, xrec.as_ref())?;
                         }
@@ -1558,7 +1573,7 @@ impl Session {
                         let filters = self.get_filters(rec, &t)?;
                         if filters.is_empty() || !matches!(method, "FindFirst" | "FindLast" | "FindSet") {
                             return unsupported(format!(
-                                "{method} on an empty set of table '{}' without using the result and without a filter: BC's error text is not pinned",
+                                "{method} on an empty set of table '{}' without using the result and without a filter: BC's error text is not pinned (docs/probes-needed.md)",
                                 t.name
                             ));
                         }
@@ -1800,13 +1815,19 @@ impl Session {
                 };
                 let old = rec.borrow().fields.clone();
                 let mut new = old.clone();
-                // A temporary record loses its Blob values in a Rename, whether the write was persisted or not
-                // (streams/TestProbeStreamContracts.al:TempRename_UnpersistedBlobWrite, TempRename_PersistedBlobWrite,
-                // TempRename_BlobInsertedWithValueThenRename).
+                // A temporary record's Blob reads empty through a stream right after a Rename, whether the write was
+                // persisted or not (streams/TestProbeStreamContracts.al:TempRename_UnpersistedBlobWrite,
+                // TempRename_PersistedBlobWrite, TempRename_BlobInsertedWithValueThenRename), while the bytes stay in the
+                // row: a Get and CalcFields read them back (streams/TestBlobRenameIsolation.al:
+                // TempBlob_UncommittedWrite_Rename_SameInstanceReGet_KeepsWrite).
                 if rec.borrow().temp_id.is_some() {
-                    for (i, f) in t.fields.iter().enumerate() {
-                        if matches!(new[i], Value::Blob(_)) {
-                            new[i] = self.default_value(&f.ty);
+                    for (i, v) in new.iter_mut().enumerate() {
+                        if let Value::Blob(b) = v {
+                            let kept = al_builtins::stream::copy_blob(b, false);
+                            *b = match self.default_value(&t.fields[i].ty) {
+                                Value::Blob(empty) if b.borrow().persisted => empty,
+                                _ => kept,
+                            };
                         }
                     }
                 }

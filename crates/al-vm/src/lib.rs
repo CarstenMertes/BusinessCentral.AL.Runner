@@ -203,9 +203,10 @@ impl Engine {
             .objects
             .iter()
             .map(|o| TableFacts {
-                temporary: o.properties.iter().any(|(k, v)| {
-                    k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary")
-                }),
+                temporary: o
+                    .properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary")),
                 crm: o
                     .properties
                     .iter()
@@ -392,6 +393,7 @@ pub struct Session {
     /// what `CurrFieldNo` reads in the field's OnValidate.
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// Tables with an ad-hoc key appended, by (table object, key fields): see `Session::table`.
+    pub(crate) initial_cache: std::collections::HashMap<usize, Option<Vec<Value>>>,
     pub(crate) adhoc_tables: RefCell<std::collections::HashMap<(u32, Vec<usize>), Arc<al_data::TableDef>>>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
@@ -519,7 +521,10 @@ impl Session {
             truncate_undo: Default::default(),
             validating: Vec::new(),
             try_depth: 0,
-            cx: al_data::AccessContext { company: company.into(), user: user.into() },
+            cx: al_data::AccessContext {
+                company: company.into(),
+                user: user.into(),
+            },
             baseline_rows: Default::default(),
             ret_used: true,
             bindings: Vec::new(),
@@ -563,6 +568,7 @@ impl Session {
             commits: 0,
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
+            initial_cache: Default::default(),
             adhoc_tables: Default::default(),
             lock_timeout: true,
             lock_timeout_duration: 10,

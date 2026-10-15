@@ -69,17 +69,50 @@ impl Session {
 
     /// Field values of a fresh record: `InitValue` where declared, else the type default.
     pub(crate) fn initial_fields(&mut self, table: usize) -> Vec<Value> {
+        // The values are the same for every record of the table, so a table whose defaults are all scalars is
+        // worked out once per session and copied (a text shares its buffer, copy on write); a table with a Blob, an
+        // array or another shared object builds fresh ones each time.
+        if let Some(Some(template)) = self.initial_cache.get(&table) {
+            return template.clone();
+        }
         let engine = self.engine.clone();
         let Some(t) = engine.program.objects[table].table.as_ref() else {
             return Vec::new();
         };
-        t.fields
+        let fields: Vec<Value> = t
+            .fields
             .iter()
             .map(|f| match &f.init {
                 Some(c) => ops::convert(crate::constant(c), &f.ty).unwrap_or_else(|_| self.default_value(&f.ty)),
                 None => self.default_value(&f.ty),
             })
-            .collect()
+            .collect();
+        if !self.initial_cache.contains_key(&table) {
+            let scalar = fields.iter().all(|v| {
+                matches!(
+                    v,
+                    Value::Null
+                        | Value::Boolean(_)
+                        | Value::Integer(_)
+                        | Value::BigInteger(_)
+                        | Value::Decimal(_)
+                        | Value::Byte(_)
+                        | Value::Char(_)
+                        | Value::Text(_)
+                        | Value::Code(_)
+                        | Value::Date(..)
+                        | Value::Time(_)
+                        | Value::DateTime(_)
+                        | Value::Duration(_)
+                        | Value::Guid(_)
+                        | Value::DateFormula(_)
+                        | Value::Option(..)
+                        | Value::Enum(..)
+                )
+            });
+            self.initial_cache.insert(table, scalar.then(|| fields.clone()));
+        }
+        fields
     }
 
     pub(crate) fn store_for(&mut self, rec: &Rec) -> &mut MemStore {

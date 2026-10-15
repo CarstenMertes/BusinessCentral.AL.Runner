@@ -98,7 +98,10 @@ impl Session {
 
     /// `CurrentCompany` of `rec`.
     pub(crate) fn current_company_of(&self, rec: &Rec) -> String {
-        rec.borrow().company.clone().unwrap_or_else(|| self.cx.company.to_string())
+        rec.borrow()
+            .company
+            .clone()
+            .unwrap_or_else(|| self.cx.company.to_string())
     }
 
     /// The company a name stands for in `Open(.., Company)` and `ChangeCompany`: the empty name and
@@ -108,7 +111,9 @@ impl Session {
         if name.is_empty() {
             return Ok(Some(None));
         }
-        Ok(self.find_company(name)?.map(|c| (c.as_str() != &*self.cx.company).then_some(c)))
+        Ok(self
+            .find_company(name)?
+            .map(|c| (c.as_str() != &*self.cx.company).then_some(c)))
     }
 
     /// `Record.ChangeCompany` and `RecordRef.ChangeCompany`: true once `rec` works in the company;

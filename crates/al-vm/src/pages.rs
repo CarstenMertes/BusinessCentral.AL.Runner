@@ -3353,7 +3353,7 @@ impl Session {
                             .as_ref()
                             .map_or(0, |t| t.fields[pos].id as i32)
                     };
-                    self.curr_field_no.push((Rc::as_ptr(&rec) as usize, number));
+                    self.curr_field_no.push((Rc::downgrade(&rec), number));
                     // A validation through the page runs the table's OnValidate on fresh table
                     // globals, and leaves the page's record with fresh globals (ADR-021 decision 8;
                     // corpus probes TableGlobals_PageFieldValidate_*, TableGlobals_PageRec_ActionGlobalsAreLostAfterPageFieldValidation).

@@ -6728,6 +6728,7 @@
 71169 Namespaced_RecordVariable
 71169 Namespaced_ReportDataitem
 71172 CurrFieldNo_AssignedAndRead
+71172 CurrFieldNo_InValidateAndModify
 71172 CurrFieldNo_Insert
 71177 PartPage_CallProcedureThroughCurrPage
 71177 PartPage_StandalonePartAsTestPage

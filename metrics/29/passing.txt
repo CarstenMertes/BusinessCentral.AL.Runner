@@ -4318,6 +4318,7 @@
 68042 IntegerSource_IntoBigIntegerFlowField
 68045 Ascending_WholeKey_Ties
 68046 RecordRef_Ascending
+68046 RecordRef_SetRecFilter_AndRecordSetRecFilter
 68047 SetCurrentKey_FieldNoKeyStartsWith
 68047 SetCurrentKey_NotStoredFields
 68047 SetCurrentKey_SurvivesCopyAndRecordRef

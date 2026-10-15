@@ -685,3 +685,21 @@ fn test_page_close_reports_ok_for_list_and_document_pages() {
             Check('List OK;Document OK;', P.Trace()); end;"
     ));
 }
+
+// Issue 33: Base Application's Tests-ERM declare `[ModalPageHandler] procedure H(var P: Page "X"; var
+// Response: Action)` (22 tests). No corpus test has a handler whose parameter is a Page rather than a
+// TestPage, so what BC gives it is not pinned: the refusal says that, and does not call the shape wrong.
+#[test]
+fn a_modal_page_handler_with_a_page_parameter_is_refused_as_not_pinned() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('PageHandler')]
+        procedure WithPage() var W: Page \"PM Wizard\"; begin W.RunModal(); end;
+        [ModalPageHandler] procedure PageHandler(var P: Page \"PM Wizard\"; var Response: Action) begin Response := Action::OK; end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why)
+            if why.contains("Page") && why.contains("not pinned") && !why.contains("not shaped like")),
+        "{o:?}"
+    );
+}

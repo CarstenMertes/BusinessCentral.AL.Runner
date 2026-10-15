@@ -348,7 +348,9 @@ pub struct Session {
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
 /// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al); BC's exact limit
 /// and the text of its error are not pinned, so exceeding this is Unsupported.
-pub const MAX_CALL_DEPTH: usize = 1000;
+/// The deepest call chain, the test method included: a recursion of 990 calls under a test runs, the next one raises
+/// (session/TestProbeSessionMiscContracts.al:CallDepth_990, CallDepth_1000, CallDepth_1001).
+pub const MAX_CALL_DEPTH: usize = 991;
 
 impl Session {
     /// A session on the deterministic test host: a frozen clock and AL Runner's identity.
@@ -697,9 +699,11 @@ impl Session {
             return Err(Signal::Unsupported(reason.clone()));
         }
         if self.depth >= MAX_CALL_DEPTH {
-            return Err(Signal::Unsupported(format!(
-                "call depth over {MAX_CALL_DEPTH} (BC's limit and error text are not pinned)"
-            )));
+            return Err(Signal::Error(al_builtins::native::AlError {
+                message: "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator.".into(),
+                code: "StackOverflow".into(),
+                call_stack: String::new(),
+            }));
         }
         self.depth += 1;
         // The builtin being run (a record write that runs triggers and events) keeps its own

@@ -252,9 +252,11 @@ impl Session {
         }
         let (answer, _) = self.dispatch_ui_returning(UiKind::SessionSettings, "", vec![settings])?;
         match answer {
-            Value::Boolean(true) => Ok(()),
+            // A handler that answers false is called once and nothing is raised (session/
+            // TestProbeSessionMiscContracts.al:SessionSettings_RequestUpdateFalse_Handler).
+            Value::Boolean(_) => Ok(()),
             other => Err(Signal::Unsupported(format!(
-                "a [SessionSettingsHandler] that answers {other} (only true is pinned)",
+                "a [SessionSettingsHandler] that answers {other}",
                 other = other.describe()
             ))),
         }

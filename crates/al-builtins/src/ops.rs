@@ -365,7 +365,8 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     let any_big = matches!(l, V::BigInteger(_)) || matches!(r, V::BigInteger(_));
     let any_dec = matches!(l, V::Decimal(_)) || matches!(r, V::Decimal(_));
     if b.is_zero() && matches!(op, Arith::Div | Arith::IntDiv | Arith::Mod) {
-        return unsupported("division by zero (error text not pinned yet)".into());
+        // session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts.
+        return raise("Attempted to divide by zero.", "AL:DivideByZero");
     }
     let res = match op {
         Arith::Add => a.checked_add(b),
@@ -391,12 +392,12 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     if any_big {
         return i64::try_from(n)
             .map(V::BigInteger)
-            .or_else(|_| unsupported("BigInteger overflow (error text not pinned yet)".into()));
+            .or_else(|_| raise("Arithmetic operation resulted in an overflow.", "AL:Overflow"));
     }
     if both_int || matches!(op, Arith::IntDiv | Arith::Mod) {
         return i32::try_from(n)
             .map(V::Integer)
-            .or_else(|_| unsupported("Integer overflow (error text not pinned yet)".into()));
+            .or_else(|_| raise("Arithmetic operation resulted in an overflow.", "AL:Overflow"));
     }
     Ok(V::Decimal(res))
 }

@@ -100,7 +100,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         let n = count(&a[1])?;
         with_list(r, |l| {
             if i + n > l.len() {
-                return out_of_range();
+                return range_past_end();
             }
             l.drain(i..i + n);
             Ok(Value::Boolean(true))
@@ -127,7 +127,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         let n = count(&a[1])?;
         with_list(r, |l| {
             if i + n > l.len() {
-                return out_of_range();
+                return range_past_end();
             }
             Ok(Value::List(Rc::new(RefCell::new(l[i..i + n].to_vec()))))
         })
@@ -139,9 +139,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
                 return if ret_used {
                     Ok(Value::Boolean(false))
                 } else {
-                    Err(Signal::Unsupported(
-                        "Dictionary.Add of an existing key (error text not pinned yet)".into(),
-                    ))
+                    error_code("An item with the same key has already been added.", "Argument")
                 };
             }
             d.push((a[0].clone(), a[1].clone()));
@@ -217,30 +215,37 @@ fn position(l: &[Value], v: &Value) -> Option<usize> {
     l.iter().position(|x| eq(x, v))
 }
 
-fn error<T>(message: &str) -> Result<T, Signal> {
+fn error_code<T>(message: &str, code: &str) -> Result<T, Signal> {
     Err(Signal::Error(crate::native::AlError {
         message: message.into(),
-        code: String::new(),
+        code: code.into(),
         call_stack: String::new(),
     }))
 }
 
+const LIST_INVALID: &str = "An invalid argument was passed to a 'List' data type method.";
+
 /// `List.Get` with an index past the end, in both forms (collections/TestListTrappableError.al:21-45).
 fn list_get_error<T>() -> Result<T, Signal> {
-    error("An invalid argument was passed to a 'List' data type method.")
+    error_code(LIST_INVALID, "ArgumentOutOfRange")
 }
 
 /// `Dictionary.Get` of a missing key: pinned for the `Get(Key, var Value)` form
 /// (collections/TestCollectionsDictionary.al:42-55); the value form is only pinned to raise
 /// (collections/TestCollectionContracts.al:188), and is assumed to say the same (probes-needed).
 fn key_not_found<T>() -> Result<T, Signal> {
-    error("The given key was not present in the dictionary.")
+    error_code("The given key was not present in the dictionary.", "KeyNotFound")
 }
 
+/// An index outside the list (session/TestProbeSessionMiscContracts.al:Dictionary_List_ErrorTexts: Get, RemoveAt, Set,
+/// Insert and a range starting at 0 or past the count; code ArgumentOutOfRange).
 fn out_of_range<T>() -> Result<T, Signal> {
-    Err(Signal::Unsupported(
-        "list index out of range (error text not pinned yet)".into(),
-    ))
+    error_code(LIST_INVALID, "ArgumentOutOfRange")
+}
+
+/// A range that reaches past the end of the list (code Argument).
+fn range_past_end<T>() -> Result<T, Signal> {
+    error_code(LIST_INVALID, "Argument")
 }
 
 /// AL list indexes are 1-based.

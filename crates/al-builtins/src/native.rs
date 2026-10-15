@@ -754,7 +754,13 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     }
     // A record as a whole, a RecordRef and a FieldRef need the table's schema.
     let composite = matches!(&args[0], Value::Record(_))
-        || matches!(&args[0], Value::Library(n, _) if n == "RecordRef" || n == "FieldRef");
+        || matches!(
+            &args[0],
+            Value::Library(
+                crate::library_kind::LibraryKind::RecordRef | crate::library_kind::LibraryKind::FieldRef,
+                _
+            )
+        );
     if composite && std == 0 {
         if let Some(r) = ctx.format_composite(&args[0]) {
             return r.map(|t| Value::Text(crate::format::pad(t, len).into()));
@@ -1146,7 +1152,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         }
         // Clear empties the controls and leaves an assigned page caption alone
         // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Clear_KeepsTheAssignedCaption).
-        Value::Library(name, cell) if name == "FilterPageBuilder" => {
+        Value::Library(crate::library_kind::LibraryKind::FilterPageBuilder, cell) => {
             let caption = match &*cell.borrow() {
                 crate::value::LibraryValue::FilterPageBuilder(s) => s.caption.clone(),
                 _ => None,
@@ -1155,7 +1161,10 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 controls: Vec::new(),
                 caption,
             });
-            Value::Library(name.clone(), std::rc::Rc::new(std::cell::RefCell::new(state)))
+            Value::Library(
+                crate::library_kind::LibraryKind::FilterPageBuilder,
+                std::rc::Rc::new(std::cell::RefCell::new(state)),
+            )
         }
         Value::Boolean(_) => Value::Boolean(false),
         Value::Integer(_) => Value::Integer(0),

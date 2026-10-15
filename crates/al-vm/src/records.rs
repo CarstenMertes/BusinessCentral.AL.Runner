@@ -1319,9 +1319,9 @@ impl Session {
                             .table
                             .as_ref()
                             .is_some_and(|s| {
-                                s.fields
-                                    .iter()
-                                    .any(|f| matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("Blob")))
+                                s.fields.iter().any(|f| {
+                                    matches!(&f.ty, RtType::Library(al_builtins::library_kind::LibraryKind::Blob))
+                                })
                             });
                         // A table with an AutoIncrement field needs the platform's answer at once
                         // (record/TestAutoIncrementContracts.al:AutoIncrement_SecondInsert_...).
@@ -1886,8 +1886,12 @@ impl Session {
                         // <field> field(s) in the <table> table.` (code DB:Ok; records/W4SortKeys.al:SetCurrentKey_NotStoredFields
                         // and record/ProbeClearAllSetKeyHyperlink.al:276-318, BC 27.5 and 29.0). A FlowField and a Media
                         // field are accepted and leave the current key the primary key (`CurrentKey()` answers `[Id]`).
-                        let is_blob =
-                            |p: usize| matches!(&t.fields[p].ty, RtType::Library(n) if n.eq_ignore_ascii_case("blob"));
+                        let is_blob = |p: usize| {
+                            matches!(
+                                &t.fields[p].ty,
+                                RtType::Library(al_builtins::library_kind::LibraryKind::Blob)
+                            )
+                        };
                         if let Some(&bad) = wanted.iter().find(|&&p| {
                             is_blob(p) || matches!(t.fields[p].ty, RtType::Variant) || schema.fields[p].flow_filter
                         }) {
@@ -1901,7 +1905,13 @@ impl Session {
                         }
                         let unordered = |p: usize| {
                             schema.fields[p].calc.is_some()
-                                || matches!(&t.fields[p].ty, RtType::Library(n) if n.eq_ignore_ascii_case("media") || n.eq_ignore_ascii_case("mediaset"))
+                                || matches!(
+                                    &t.fields[p].ty,
+                                    RtType::Library(
+                                        al_builtins::library_kind::LibraryKind::Media
+                                            | al_builtins::library_kind::LibraryKind::MediaSet
+                                    )
+                                )
                         };
                         if wanted.iter().all(|&p| unordered(p)) {
                             let mut r = rec.borrow_mut();

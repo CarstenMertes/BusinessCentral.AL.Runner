@@ -223,7 +223,13 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `observe.rs` (680): Whether a selected test can observe the install baseline: a whitelist over the lowered IR (no record, page, query, `DotNet`, `CreateGuid`, `IsolatedStorage`, `NumberSequence` or event publisher in the reach); the text pre-check of the demand-driven path. Entry: `may_observe_baseline`, `text_looks_pure`.
 - `reach.rs` (415): The reach report (`AL_REACH_REPORT=1`): which roots and edges pull the routines in, how many are refused, how many only matter through a refused routine. Entry: `report`.
 - `refusals.rs` (222): Ranking not-run reasons with names and numbers folded (`--top-refusals` of both command lines). Entry: `normalise_reason`, `rank`, `render_top`.
-- `runtime.rs` (2651): Runs test codeunits the way BC's test runner does; one Session per codeunit; install baseline; handlers. Entry: `CorpusRuntime` 96, `run_suites_with` 235, `run_codeunit_observed` 517, `run_codeunit_isolated` 492, `blocked_site` 951, `RunOptions` 118, `resolve_handlers` 710.
+- `runtime/mod.rs` (491): Runs test codeunits the way BC's test runner does; one Session per codeunit. Holds the app and manifest loading, `CorpusRuntime`, `TestResult`, `Phases` and the single-unit run. Entry: `CorpusRuntime` 112, `load_app` 17, `Phases` 162.
+- `runtime/compiled.rs` (418): What a compile produces and keeps (`Compiled`), the warm slot (`Warm`), and what a run asks for. Entry: `RunOptions` 6, `Compiled` 42, `Warm` 228, `SuiteRun` 398.
+- `runtime/corpus.rs` (927): `CorpusRuntime`: compiling suites of apps and running them. Entry: `run_suites_with` 89, `compile_suites` 127, `run_compiled` 448.
+- `runtime/cache.rs` (226): Compiling through the compile cache. Entry: `compile_with_cache` 70, `lazy_index` 7.
+- `runtime/run.rs` (597): Running the test codeunits of one compiled program, each test on a session of its own. Entry: `run_codeunit` 5, `run_codeunit_isolated` 21, `run_codeunit_observed` 46, `run_codeunit_core` 156.
+- `runtime/handlers.rs` (92): The handler functions a test declares, bound for the length of the test. Entry: `resolve_handlers` 8, `bind_handlers` 77.
+- `runtime/blocked.rs` (201): What a test cannot run for: install codeunits, tables a test touches, blocked routines. Entry: `blocked_site` 161, `run_install_codeunits` 8.
 - `target.rs` (99): Reads the version fields of an app.json (ADR-015 step 4). Entry: `build_query` 13, `read_app_versions` 19, `app_versions_from_json` 25.
 
 ### alrunner-cli
@@ -379,7 +385,7 @@ functions or methods; the file is in the module list above.
 
 ### Compile cache: a run that finds the dependency apps already lowered (ADR-022)
 
-1. `CorpusRuntime::try_run_suites_with` (testrun/runtime.rs), with `RunOptions::compile_cache`: the apps are put in the
+1. `CorpusRuntime::try_run_suites_with` (testrun/runtime/corpus.rs), with `RunOptions::compile_cache`: the apps are put in the
    program order a cache needs, dependency apps first, Microsoft's before the others and every app after the apps it
    depends on (`compile_cache::dependency_order`; the caller's order is kept in `order` for `TestResult::app`,
    `SuiteRun::app` and `RunOptions::only`). No cache with `AL_EAGER_DEPENDENCIES` or without dependency apps.

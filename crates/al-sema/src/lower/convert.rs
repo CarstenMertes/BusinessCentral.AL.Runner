@@ -132,7 +132,7 @@ impl Lowerer<'_> {
             Ty::Builtin(n) if al_builtins::sysenum::members(n).is_some() => {
                 RtType::Option(al_builtins::sysenum::option_members(n).expect("checked"))
             }
-            Ty::Builtin(n) => RtType::Library(n.clone()),
+            Ty::Builtin(n) => RtType::Library(n.into()),
             Ty::DotNet(alias) if alias.is_empty() => {
                 return Err("a DotNet value whose type is only known at run time cannot be stored as such".into());
             }

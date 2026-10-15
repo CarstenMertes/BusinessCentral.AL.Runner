@@ -189,7 +189,7 @@ impl Session {
             | Value::DateFormula(_) => al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported),
             // A RecordId reads as Format gives it (`Table: key`, record/TestProbeRecordRefContracts.al:472-502); that an
             // error message shows it the same way is assumed (docs/probes-needed.md).
-            Value::Library(name, _) if name == "RecordId" => {
+            Value::Library(al_builtins::library_kind::LibraryKind::RecordId, _) => {
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordIdInMessage);
                 al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported)
             }

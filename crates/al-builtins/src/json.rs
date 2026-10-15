@@ -99,7 +99,7 @@ fn recv(r: Option<&mut Value>) -> Result<Handle, Signal> {
 }
 
 fn tagged(name: &str, h: Handle) -> Value {
-    Value::Library(name.to_string(), h)
+    Value::Library(name.into(), h)
 }
 
 fn with_node<T>(h: &Handle, f: impl FnOnce(&mut JsonNode) -> T) -> T {

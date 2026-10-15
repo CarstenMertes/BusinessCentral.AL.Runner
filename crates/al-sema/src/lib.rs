@@ -12,7 +12,7 @@ pub mod provided;
 pub mod queries;
 pub mod relation;
 pub mod reports;
-pub(crate) mod text;
+pub(crate) mod scan;
 pub mod types;
 pub mod workspace;
 pub mod xmlports;

@@ -135,7 +135,7 @@ impl Session {
         // HasLinks and DeleteLinks look at the current company's rows of a per-company table and at
         // every row of another table (TestRecordLinkColumns.al, `HasLinks_*`, `DeleteLinks_*`).
         let own_company = self.cx.company.clone();
-        let scoped = t.per_company.then_some(own_company.as_str());
+        let scoped = t.per_company.then_some(&*own_company);
         match method {
             "HasLinks" => {
                 let link = linked(self, &rid, scoped)?;
@@ -151,7 +151,7 @@ impl Session {
             // per company, so it leaves the row AddLink wrote there (same file, `DeleteLink_*`).
             "DeleteLink" => {
                 let id = args.first().cloned().unwrap_or(Value::Null);
-                let link = linked(self, &rid, Some(own_company.as_str()))?;
+                let link = linked(self, &rid, Some(&*own_company))?;
                 self.record_op("SetRange", &link, &mut [Value::Integer(pos(1) as i32), id])?;
                 self.record_op("DeleteAll", &link, &mut [Value::Boolean(false)])?;
                 Ok(Value::Null)
@@ -198,7 +198,7 @@ impl Session {
                     other => return unsupported(format!("CopyLinks from {}", other.describe())),
                 };
                 let from_t = self.table(&from)?;
-                let from_scope = from_t.per_company.then_some(own_company.as_str());
+                let from_scope = from_t.per_company.then_some(&*own_company);
                 let from_rid = self.record_op("RecordId", &from, &mut [])?;
                 // Copying a record's links onto itself changes nothing
                 // (TestRecordLinkTable.al `CopyLinks_SourceOntoItself_DoesNotDuplicateTheRows`).

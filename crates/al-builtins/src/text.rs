@@ -184,6 +184,18 @@ impl From<&str> for Txt {
     }
 }
 
+impl From<std::sync::Arc<str>> for Txt {
+    fn from(s: std::sync::Arc<str>) -> Txt {
+        Txt::new(s.to_string())
+    }
+}
+
+impl From<&std::sync::Arc<str>> for Txt {
+    fn from(s: &std::sync::Arc<str>) -> Txt {
+        Txt::new(s.to_string())
+    }
+}
+
 impl From<&String> for Txt {
     fn from(s: &String) -> Txt {
         Txt::new(s.clone())

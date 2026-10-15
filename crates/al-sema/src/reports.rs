@@ -125,7 +125,7 @@ fn default_layout(obj: &ast::Object) -> ir::ReportLayout {
             .map(|p| p.value_text().trim().to_string())
     };
     if let Some(name) = prop("DefaultRenderingLayout") {
-        let name = crate::text::unquote_double(&name);
+        let name = crate::scan::unquote_double(&name);
         let layout = obj
             .sections()
             .filter(|s| s.name().eq_ignore_ascii_case("rendering"))
@@ -746,7 +746,7 @@ impl<'a> Owner<'a> {
                 // A source that is one field of the item's table: its properties decide how a
                 // Decimal is formatted.
                 let field = table.and_then(|t| {
-                    let source = crate::text::unquote_double(args.get(1)?);
+                    let source = crate::scan::unquote_double(args.get(1)?);
                     self.members[t]
                         .fields
                         .iter()
@@ -804,7 +804,7 @@ fn item_ir(
     let mut link_item = None;
     let mut parent_table = parent_table;
     if let Some(name) = prop("DataItemLinkReference") {
-        let name = crate::text::unquote_double(name.trim());
+        let name = crate::scan::unquote_double(name.trim());
         match enclosing(&name) {
             Some((idx, table)) => {
                 link_item = Some(idx);
@@ -824,13 +824,13 @@ fn item_ir(
                 raw.name
             )),
             Some((parent_table, own_table)) => {
-                for pair in crate::text::split_top_double(&text, ',') {
-                    let parts = crate::text::split_top_double(&pair, '=');
-                    let own = parts.first().map(|p| crate::text::unquote_double(p));
+                for pair in crate::scan::split_double(&text, ',') {
+                    let parts = crate::scan::split_double(&pair, '=');
+                    let own = parts.first().map(|p| crate::scan::unquote_double(p));
                     let other = parts.get(1).map(|p| p.trim()).and_then(|p| {
                         let low = p.to_ascii_lowercase();
                         (low.starts_with("field(") && p.ends_with(')'))
-                            .then(|| crate::text::unquote_double(&p[6..p.len() - 1]))
+                            .then(|| crate::scan::unquote_double(&p[6..p.len() - 1]))
                     });
                     let own_pos = own.as_ref().and_then(|n| {
                         o.members[own_table]

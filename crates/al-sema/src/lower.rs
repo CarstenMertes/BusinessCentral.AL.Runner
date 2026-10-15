@@ -1578,6 +1578,7 @@ fn lower_object<'a>(
         }
         // A dependency routine nothing reached was never checked: a stub that refuses.
         let reached = !checked.is_skipped(oi)
+            && !ws.routine_unreached(oi, routine_offsets[oi][ri])
             && demand.is_none_or(|d| !ws.is_dependency(oi) || d.reached(oi, routine_offsets[oi][ri]));
         // A routine whose check panicked has no types and resolutions to lower from: it refuses.
         let routine = if let Some(why) = checked.panic_of(oi, routine_offsets[oi][ri]) {
@@ -5567,6 +5568,65 @@ codeunit 50103 \"Listening Test\"
             reasons(Some(vec![(0, 50100)])),
             (0, 1, 0, 0),
             "only the codeunit that is not selected, not a helper and not a listener, is left out"
+        );
+    }
+
+    /// With `Roots::reach_only` a normal codeunit's procedure that no selected test (and no root that
+    /// runs by itself: a trigger, a subscriber, a codeunit with a Subtype) names is a stub that
+    /// refuses, so a pure test is not compiled together with the data-touching code beside it.
+    #[test]
+    fn reach_only_compiles_the_procedures_the_selected_tests_name() {
+        const SRC: &str = "codeunit 50100 \"Helper\" {
+            procedure Used(): Integer begin exit(Deeper()); end;
+            local procedure Deeper(): Integer begin exit(1); end;
+            procedure Unused() begin Message('x'); end;
+            local procedure AlsoUnused() begin Message('y'); end;
+            trigger OnRun() begin Message('z'); end;
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Other\", 'OnX', '', false, false)]
+            local procedure Listen() begin Message('w'); end;
+        }
+        codeunit 50101 \"Other\" { [IntegrationEvent(false, false)] procedure OnX() begin end; }
+        codeunit 50102 \"T\" { Subtype = Test; var H: Codeunit \"Helper\";
+            [Test] procedure P() begin if H.Used() <> 1 then Error('x'); end; }
+        codeunit 50103 \"Other Test\" { Subtype = Test; var H: Codeunit \"Helper\";
+            [Test] procedure Q() begin H.Unused(); end; }";
+        let compile = |reach_only: bool| {
+            let (ws, l) = compile_apps_with(
+                vec![AppSource {
+                    id: "a".into(),
+                    name: "a".into(),
+                    dependencies: vec![],
+                    files: vec![("f.al".to_string(), SRC.to_string())],
+                }],
+                vec![crate::workspace::AppKind::Workspace],
+                &Default::default(),
+                None,
+                crate::check::Roots {
+                    baseline: false,
+                    only_tests: Some(vec![(0, 50102)]),
+                    reach_only,
+                    ..Default::default()
+                },
+            );
+            let oi = ws.objects.iter().position(|o| o.id == Some(50100)).expect("helper");
+            let refused: Vec<String> = l.program.objects[oi]
+                .routines
+                .iter()
+                .zip(&l.unsupported[oi])
+                .filter(|(_, why)| !why.is_empty())
+                .map(|(r, _)| r.name.clone())
+                .collect();
+            refused
+        };
+        assert_eq!(
+            compile(false),
+            Vec::<String>::new(),
+            "without reach_only the whole codeunit compiles"
+        );
+        assert_eq!(
+            compile(true),
+            vec!["Unused".to_string(), "AlsoUnused".to_string()],
+            "Used and Deeper are named from the test, the trigger and the subscriber run by themselves"
         );
     }
 

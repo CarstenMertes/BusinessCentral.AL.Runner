@@ -133,7 +133,13 @@ impl OracleFile {
         }
         self.versions
             .iter()
-            .filter(|v| v.bc().matches_prefix(prefix))
+            .filter(|v| {
+                // A full build names the leg of its major and minor, whatever build the oracle pins: running the corpus
+                // on another build is how a newly published one is tried (`main.rs`).
+                let leg = BcVersion::parse(&v.bc_version).unwrap_or_else(|_| BcVersion::new(v.major, 0));
+                v.bc().matches_prefix(prefix)
+                    || (wanted.build.is_some() && (leg.major, leg.minor) == (wanted.major, wanted.minor))
+            })
             .max_by_key(|v| v.major)
             .ok_or_else(|| {
                 let mut known: Vec<_> = self.versions.iter().map(|v| (v.major, v.bc().to_string())).collect();
@@ -270,6 +276,22 @@ baseline = "metrics/28/passing-isolation-function.txt"
     #[test]
     fn a_garbage_flag_is_an_error() {
         assert!(file().select(Some("abc")).is_err());
+    }
+
+    /// A newly published Microsoft build must not change the corpus results unseen: CI and a local run load the build the
+    /// oracle pins.
+    #[test]
+    fn the_committed_oracle_pins_a_microsoft_build_for_every_major() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../oracle/oracle.toml")).unwrap();
+        let f = OracleFile::parse(&text).unwrap();
+        for v in &f.versions {
+            let build = v
+                .bc()
+                .build
+                .unwrap_or_else(|| panic!("BC {} has no `bc_build`", v.major));
+            assert!(build.starts_with(&format!("{}.", v.major)), "{build}");
+            assert_eq!(build.split('.').count(), 4, "{build}");
+        }
     }
 
     #[test]

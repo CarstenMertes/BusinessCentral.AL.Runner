@@ -22,6 +22,12 @@ before you open a source file.
    merged there, then bump the submodule and oracle and implement. Until then,
    record a documentation-only assumption in `docs/probes-needed.md`, or
    refuse. Error texts come from the corpus and are never invented.
+   Exception (owner, 2026-10-15): a behavior that Microsoft's own tests require
+   to pass on real BC (the test passes in Microsoft's CI and needs exactly this
+   behavior) may be implemented before a probe exists. Cite that test in the
+   code comment, add a `docs/probes-needed.md` row, and queue the probe. When
+   the probe lands it wins; fix the code if it disagrees. Error texts still come
+   only from the corpus.
 4. **Unsupported is refused explicitly, never run silently.** Refuse
    statically wherever possible: a lowering reason, or a diagnostic in
    `al-sema`, so the runner reports the test as not run before it starts.

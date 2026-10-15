@@ -26,6 +26,11 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   behavior in a code comment. If nothing pins it, refuse explicitly and add the
   assumption to `docs/probes-needed.md`, with the probe you would want. Do not
   implement the guess. Error texts come from the corpus and are never invented.
+  One exception (owner, 2026-10-15): a behavior that a Microsoft test needs in
+  order to pass on real BC may be implemented before its probe. Cite that
+  Microsoft test (app, codeunit, test name) in the code comment, add the
+  `docs/probes-needed.md` row, and say so in your report. The probe wins when it
+  lands. This is evidence, not a guess: a behavior no test requires is still refused.
 - **Unsupported is refused explicitly.** Use a lowering reason, a diagnostic in
   `al-sema`, or `Signal::Unsupported`. Never run a guessed or partial behavior
   silently.

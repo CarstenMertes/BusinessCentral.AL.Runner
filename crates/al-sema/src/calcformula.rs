@@ -153,39 +153,15 @@ impl Cursor {
     /// The text up to the `)` that closes an already consumed `(`, which is
     /// consumed too. Quotes (`"..."`, `'...'`) hide parentheses.
     fn raw_until_close(&mut self) -> Result<String, String> {
-        self.ws();
-        let start = self.i;
-        let mut depth = 0usize;
-        while let Some(&ch) = self.c.get(self.i) {
-            match ch {
-                '"' => {
-                    self.i += 1;
-                    while self.c.get(self.i).is_some_and(|c| *c != '"') {
-                        self.i += 1;
-                    }
-                }
-                '\'' => {
-                    self.i += 1;
-                    loop {
-                        match (self.c.get(self.i), self.c.get(self.i + 1)) {
-                            (Some('\''), Some('\'')) => self.i += 2,
-                            (Some('\''), _) | (None, _) => break,
-                            _ => self.i += 1,
-                        }
-                    }
-                }
-                '(' => depth += 1,
-                ')' if depth == 0 => {
-                    let raw: String = self.c[start..self.i].iter().collect();
-                    self.i += 1;
-                    return Ok(raw.trim().to_string());
-                }
-                ')' => depth -= 1,
-                _ => {}
-            }
-            self.i += 1;
-        }
-        Err("missing `)`".into())
+        let open = self.i.checked_sub(1).filter(|&o| self.c.get(o) == Some(&'('));
+        let Some(close) = open.and_then(|o| crate::scan::matching_paren(&self.c, o)) else {
+            // The cursor is left where it stopped reading, as the scanner did (an error ends the parse).
+            self.i = self.c.len();
+            return Err("missing `)`".into());
+        };
+        let raw: String = self.c[self.i..close].iter().collect();
+        self.i = close + 1;
+        Ok(raw.trim().to_string())
     }
 
     fn formula(&mut self) -> Result<Formula, String> {

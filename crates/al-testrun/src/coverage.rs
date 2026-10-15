@@ -26,8 +26,11 @@ pub struct CoverageStatement {
     pub object: String,
 }
 
+/// The statements a test ran: (position id, runs).
+pub type Hits = Vec<(u32, u32)>;
+
 thread_local! {
-    static SINK: RefCell<Option<Vec<(String, Vec<(u32, u32)>)>>> = const { RefCell::new(None) };
+    static SINK: RefCell<Option<Vec<(String, Hits)>>> = const { RefCell::new(None) };
 }
 
 /// Starts collecting on this thread (a test codeunit run).
@@ -40,7 +43,7 @@ pub(crate) fn enabled() -> bool {
 }
 
 /// Records what test `name` ran.
-pub(crate) fn push(name: &str, hits: Vec<(u32, u32)>) {
+pub(crate) fn push(name: &str, hits: Hits) {
     SINK.with(|s| {
         if let Some(v) = s.borrow_mut().as_mut() {
             v.push((name.to_string(), hits));
@@ -49,7 +52,7 @@ pub(crate) fn push(name: &str, hits: Vec<(u32, u32)>) {
 }
 
 /// Stops collecting and returns what was collected.
-pub(crate) fn finish() -> Vec<(String, Vec<(u32, u32)>)> {
+pub(crate) fn finish() -> Vec<(String, Hits)> {
     SINK.with(|s| s.borrow_mut().take()).unwrap_or_default()
 }
 

@@ -114,7 +114,12 @@ fn a_pure_test_starts_without_the_baseline() {
 fn a_test_that_reads_a_table_gets_the_baseline() {
     both(&[60102], |rt| {
         assert!(!rt.phases.baseline_skipped);
-        assert!(rt.phases.baseline_why.as_deref().is_some_and(|w| w.contains("record")));
+        assert!(
+            rt.phases
+                .baseline_why
+                .as_deref()
+                .is_some_and(|w| w.to_lowercase().contains("record"))
+        );
         assert_eq!(outcome(rt, "SeesTheInstallRow"), Outcome::Pass);
     });
 }

@@ -583,8 +583,11 @@ impl CorpusRuntime {
                 }
             };
             let load = started.elapsed();
+            // Without the baseline's roots, and without the workspace's procedures no selected test names:
+            // a helper beside the tests that touches tables must not pull the dependency apps in.
             let first_roots = al_sema::check::Roots {
                 baseline: false,
+                reach_only: true,
                 ..roots.clone()
             };
             let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);

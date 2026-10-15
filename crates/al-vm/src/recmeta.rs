@@ -272,7 +272,15 @@ impl Session {
                 use al_builtins::filter::FilterExpr as F;
                 let pos = arg_pos(args, 0)?;
                 let r = rec.borrow();
-                let Some(f) = r.filters.iter().find(|f| f.field == pos && f.group == r.filter_group) else {
+                // A filter set in another group counts too (Microsoft's GenJnlManagement.OpenJnl reads the template
+                // that TemplateSelection set in group 2, Tests-General Journal; unprobed, docs/probes-needed.md
+                // "GetRangeMax across filter groups"; hard rule 3 exception).
+                let Some(f) = r
+                    .filters
+                    .iter()
+                    .find(|f| f.field == pos && f.group == r.filter_group)
+                    .or_else(|| r.filters.iter().find(|f| f.field == pos))
+                else {
                     return unsupported(format!("{method} without a filter (error text not pinned)"));
                 };
                 match (&f.expr, method) {

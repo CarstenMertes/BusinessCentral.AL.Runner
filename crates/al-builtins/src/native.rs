@@ -641,6 +641,12 @@ pub fn text_of(v: &Value) -> Option<String> {
 }
 
 fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
+    // A Guid where a Text is expected is its text form, as in an assignment (`CopyStr(CreateGuid(), 1, 50)` in
+    // Microsoft's Match General Jnl Lines UT, 61 tests; unprobed, docs/probes-needed.md "A Guid assigned to a Text
+    // or Code"; hard rule 3 exception, owner 2026-10-15).
+    if let Some(Value::Guid(g)) = args.get(i) {
+        return Ok(crate::format::format_guid(g));
+    }
     args.get(i).and_then(text_of).map_or_else(
         || unsupported(&format!("text argument {i} of type {}", args.get(i).describe())),
         Ok,

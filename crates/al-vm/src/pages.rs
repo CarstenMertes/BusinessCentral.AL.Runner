@@ -358,6 +358,12 @@ impl Session {
                 && ev.starts_with("on")
                 && ev.ends_with("event")
                 && !al_ir::RAISED_PAGE_EVENTS.contains(&ev.as_str())
+                // The client has no operation that deletes the page's row (an action without code of ours is not on the
+                // runtime page, `action_without_behaviour`); a page that is merely
+                // opened never raises this event. Base
+                // Application subscribes to it on General Journal and the other journals (88 tests of
+                // Tests-General Journal were refused at the open).
+                && ev != "ondeleterecordevent"
             {
                 // Events a page publishes itself (IntegrationEvent) are ordinary routines.
                 let published = engine
@@ -1613,7 +1619,17 @@ impl Session {
                     _ => None,
                 })
                 .collect();
-            let [Some(v)] = single.as_slice() else { continue };
+            // The combined filter of a field is the intersection of its filters, in every filter group: several
+            // that all name the same value are that single value (Payment Journal: the record the page was run
+            // with carries the batch in group 0 and `OpenJnl` sets it again in group 2; Microsoft's Incom. Doc.
+            // Attach. FactBox tests, unprobed, docs/probes-needed.md).
+            let Some(Some(v)) = single.first() else { continue };
+            if single
+                .iter()
+                .any(|o| !o.as_ref().is_some_and(|w| ops::compare(v, w).is_ok_and(|c| c.is_eq())))
+            {
+                continue;
+            }
             stamped.push((pos, v.clone()));
         }
         for (pos, v) in stamped {

@@ -1,0 +1,188 @@
+# Migrating tools from AL Runner v2 to v3
+
+For the authors of tools that call AL Runner (ALchemist, LethAL, and others), and for the
+AI-assisted maintainers who change them. Decision: ADR-016, "v3 replaces v2" (2026-10-15). Background
+and the file:line list of what each tool uses: `docs/integrations/alchemist-lethal.md`.
+
+How to use this page: find your tool's section, apply each "Change" literally, then run the
+check at the end of the section. Every difference below is real in the code that is in this
+repository. Where a row says "not yet", the step number is the step of the plan in ADR-016 (this
+page grows with each step).
+
+## Status by step
+
+| Step | What | State |
+|---|---|---|
+| 1 | `alrunner test` flags LethAL uses, v2-shaped `--output-json` | done (this page, sections 1 to 5) |
+| 2 | Cobertura coverage (`--coverage`, `--coverage-out`) | not yet. The flags are refused with exit 2. |
+| 3 | `alrunner serve` (`runTests`, `shutdown`) | not yet. `alrunner serve` exits 2: "not implemented yet". |
+| 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | not yet |
+| 5 | `captureValues`, `iterationTracking` | not yet |
+| 6 | `alrunner debug --stdio` (DAP) | not yet |
+
+## 1. The command
+
+| v2 | v3 | Change |
+|---|---|---|
+| binary `al-runner` | binary `alrunner` | Run `alrunner test ...`. There is no `al-runner` launcher. A tool that finds the binary by name on the PATH looks for `alrunner`; a configured path still works. |
+| `al-runner [FLAGS] DIR [DIR]` | `alrunner test [FLAGS] APP...` | Put the word `test` first. APP is an app folder (with `app.json`), a `*.Source.zip` or an `.app` that carries source. |
+| install: `dotnet tool install -g msdyn365bc.al.runner` | one binary | Do not run `dotnet tool`. The user sets the path. v3 needs no .NET (an optional helper exists for `DotNet` variables). |
+| `al-runner --server` | `alrunner serve` | Step 3. Not available yet. |
+| `al-runner --dap stdio` | `alrunner debug --stdio` | Step 6. Not available yet. |
+
+## 2. `--version`
+
+v2 prints `... v2.12.0 ...` somewhere in its output. v3 prints
+
+```
+alrunner 3.0.0-alpha.1 (<commit>)
+```
+
+Change: do not match `/\bv2\.\d/`. Parse the first `\d+\.\d+\.\d+` (as ALchemist already does).
+A tool that must tell the two apart checks the program name: the output starts with `alrunner `.
+
+## 3. Flags of `alrunner test`
+
+Accepted with the v2 meaning unless the "Difference" column says otherwise.
+
+| Flag | Difference |
+|---|---|
+| `--output-json [FILE]` | See section 4. With no FILE, stdout holds only the JSON document. v2 mixed banner lines before it. |
+| `--output-json=FILE` | Same, with a FILE of any name. Without the `=`, a file name is taken only if it ends in `.json`. |
+| `--isolation codeunit\|test\|disabled` (also `--test-isolation`) | `codeunit`: the database is rolled back when a test codeunit ends (the default, as in Microsoft's test runner). `test` (aliases `function`, `method`): the database goes back to its state after `OnRun` after every test method, **the codeunit's AL variables are kept** (BC's `TestIsolation = Function`). v2's `test` also reset the codeunit's state; a tool that relied on that must not. `disabled`: not pinned, so every test is reported as not run (exit 7). |
+| `--test TEXT` (also `--filter`) | Case-insensitive substring. TEXT with a dot, such as `Codeunit50011.Foo`, is matched against the qualified name `Codeunit<ID>.<Method>`; TEXT without a dot against the method name. v2 matched the qualified name for both. A bare name that is also a part of the word `Codeunit` is not special. |
+| `--test-exact NAME` | New in v3 for the tools: the test whose method name or qualified name is exactly NAME (any case). Repeatable. |
+| `--exclude-test TEXT` | Removes the tests TEXT matches (the same matching as `--test`). Wins over every selecting option. Repeatable. Use whole qualified names to exclude exactly one test. |
+| `--define SYMBOL` | Adds a preprocessor symbol (`#if SYMBOL`) for the APPs. Repeatable. `--preprocessor-symbols A,B` adds several. v3 defines its own predefined symbols (ADR-015): they are not v2's list. |
+| `--package-cache DIR` | Same. Repeatable. |
+| `--test-timeout N`, `--test-timeout-secs N` | Seconds. Differences: v3 counts **CPU time** of the test (the load of the machine does not count) and a test that hangs without computing is stopped at 10 times N of wall time. Default 20 seconds. `0` means no limit. |
+| `--auto-provision` | Accepted and ignored. v3 always fetches Microsoft's apps from the artifact feed unless `--no-download`. |
+| `--coverage`, `--coverage-out FILE` | Step 2. Not accepted yet: exit 2, "unknown option". Do not send them. |
+| `--affected`, `--tdd`, `--include-failing`, `--strict-environment`, `--per-suite`, `--watch` | Refused with exit 2 and the reason (deferred). Do not send them. |
+| any other v2 flag | `unknown option`, exit 2. `alrunner test --help` is the list. |
+
+Selection runs whole codeunits: tests of one codeunit share state, so `alrunner` runs the codeunit
+of every selected test and reports only the selected tests. A tool that selects one test and
+excludes its siblings sees the same rows as in v2; it does not save the time of the siblings.
+
+## 4. The `--output-json` document
+
+v2's shape, pretty printed (the document starts with `{` in column 0, so the rule "parse from the
+last `{` in column 0 to the end" still works). Null and empty fields are left out.
+
+```json
+{
+  "tests": [
+    { "name": "Codeunit50100.Passes", "codeunit": 50100, "codeunitName": "Mixed Tests", "method": "Passes",
+      "status": "pass", "durationMs": 12 },
+    { "name": "Codeunit50100.Fails", "status": "fail", "message": "boom 5",
+      "stackTrace": "\"Mixed Tests\"(CodeUnit 50100).Fails line 3", "durationMs": 4 },
+    { "name": "Codeunit50100.Refused", "status": "error", "notRun": true,
+      "message": "NotRun: out-of-scope: <reason>" }
+  ],
+  "passed": 1, "failed": 1, "errors": 1, "skipped": 0, "notRun": 1, "total": 3,
+  "exitCode": 1, "wallSeconds": 1.234
+}
+```
+
+| Field | v2 | v3 | Change for a tool |
+|---|---|---|---|
+| `tests[].name` | `Codeunit<ID>.<Method>` | same | none |
+| `tests[].status` | `pass`, `fail`, `error`, `skipped` | `pass`, `fail`, `error` | `fail` is **every** failing test. v2 used `error` for an unexpected .NET exception; v3 has no such split. `skipped` is never sent. A tool that counts `error` as "the runner broke" must look at `notRun` first. |
+| `tests[].message` | text with a .NET prefix such as `NavNCLDialogException: ` | the BC message only (ADR-009) | Do not match .NET type prefixes. Match the message text. |
+| `tests[].stackTrace` | .NET stack | the AL call stack, one frame per line, innermost first | Show it as text. |
+| `tests[].durationMs` | present | present when the test ran | none |
+| `tests[].notRun` | absent | `true` on a test that did not run | New. v3 refuses what it cannot answer instead of running it (hard rule 4). Count these separately. |
+| not-run tests | no such thing in v2 | a row with `status: "error"`, `notRun: true`, `message: "NotRun: out-of-scope: <reason>"` | The prefix `<Type>: out-of-scope: ` is the form LethAL reads as "the runner refused" (not a killed mutant). Treat it as "unknown", not "killed". |
+| timed-out test | row with `Test exceeded <N>s timeout.` | the same sentence, `status: "error"`, `notRun: true` | none |
+| `passed`, `failed`, `total`, `wallSeconds` | present | present | none |
+| `errors` | tests that errored | **the tests not run** (the same number as `notRun`) | Read `notRun` for the meaning. |
+| `skipped` | present | always 0 | none |
+| `seed` | present | absent | v3 has no random seed in the document. |
+| `exitCode` | present | present | See section 5. |
+| `compilationErrors`, `executionErrors`, `suiteErrors`, `companyInitFailures` | present when non-empty | absent | v3 has no compile stage: what it cannot compile becomes `notRun` rows. A tool that treats "compile failed" as exit 3 must treat all-rows-`notRun` instead (see LethAL, below). |
+| `codeunit`, `codeunitName`, `method` | absent | present | New. Use them instead of splitting `name`. |
+
+When the run cannot start (a bad flag, an unreadable app, a missing dependency that stops the
+load), no document is written, the message is on stderr and the exit code is 2.
+
+## 5. Exit codes
+
+| Code | v2 | v3 |
+|---|---|---|
+| 0 | all passed | all selected tests passed |
+| 1 | a test failed or errored | a test failed |
+| 2 | bundle could not execute, bad flag | bad invocation or the run could not start |
+| 3 | bundle could not compile, or suite error | **never**. v3 has no compile stage. |
+| 6 | `--test` matched nothing | the selection matched nothing |
+| 7 | (none) | some tests were not run. `--allow-not-run` makes it 0. |
+| 8 | (none) | tests were not run because the .NET helper could not be used (a problem of the machine). |
+
+Rank when several apply: 2, 6, 1, 8, 7. A tool that reads rows only on exit 0 and 1 must also read
+rows on 7 (and 8); otherwise every run with a refused test hides all its rows.
+
+## 6. Environment variables
+
+| v2 | v3 | Change |
+|---|---|---|
+| `AL_RUNNER_TEST_TIMEOUT_SEC` | `ALRUNNER_TEST_TIMEOUT` (and the v2 name, still read) | `--test-timeout-secs` wins over both. A value that is not a number is an error (exit 2). |
+| `AL_RUNNER_VERBOSE` | not read | Use `--verbose`. |
+| `ALCHEMIST_RUNNER_PATH` | n/a (the tool's own) | none |
+
+## 7. Output on stderr and stdout
+
+v2 printed machine-readable and human lines mixed (`[bc] selected BC 27.5`, `al-runner ... BC ... N apps`,
+`[dep] ...`, `[provision] ...`, `[pkg-cache] ...`). v3 prints none of them. It prints its own
+header (`alrunner <version> (<commit>)`, `target: BC <v>, runtime <r>, Microsoft apps from build <b>`,
+`dependencies: N apps`). With `--output-json` and no file, all of it goes to stderr.
+
+Change for a tool that read the `[bc]` or `[dep]` lines: treat the BC build and the
+platform-apps pin as "unknown", or parse `target: BC <v>, ... build <b>` from stderr.
+
+## 8. LethAL (one-shot mode, `serverMode: false`)
+
+Source: `docs/integrations/alchemist-lethal.md`, section 3. The command LethAL builds
+(`al-runner-transport.ts:641-741`) maps to v3 with one rename:
+
+```
+alrunner test --output-json --isolation test --test Codeunit50011.Foo [--exclude-test Codeunit50011.Foo2]...
+  [--auto-provision] <sourceDir> [<testDir>] [--package-cache <dir>]... [--define <SYM>]...
+```
+
+Changes in LethAL:
+
+1. **Binary**: command name `alrunner`, first argument `test`. Config key `alRunner.alRunnerPath` stays.
+2. **Version check** (`al-runner-backend.ts:165, 1092-1115`; `al-runner-contract.ts:439-452`): replace
+   `/\bv2\.\d/` with a check that stdout starts with `alrunner ` and carries `\d+\.\d+\.\d+`.
+3. **Exit codes** (`al-runner-transport.ts:576-625, 821-845`): read the rows on exit 7 and 8 as on 1.
+   Exit 3 never happens.
+4. **Not-run rows** (`al-runner-backend.ts:97`): keep recognizing `<Type>: out-of-scope: ...`; the v3 message is
+   `NotRun: out-of-scope: <reason>`. Also read `notRun: true`. A row with `notRun` is "runner refused", never "killed".
+5. **Timeouts** (`al-runner-backend.ts:79-93`): unchanged sentence. The limit is CPU time in v3.
+6. **Compile failure** (`al-runner-contract.ts` fact `compile-failure-not-scorable`): v3 has no compile
+   exit code. A mutant that does not compile gives rows with `notRun: true`. Score that as "not scorable".
+7. **Assertion screen** (`assertion-screen.ts:36-44, 78-90`): do not depend on `NavNCLDialogException: ` or
+   `InvalidOperationException: out-of-scope:`. Messages are the BC text.
+8. **Stderr** (`al-runner-transport.ts:106-210`): see section 7.
+9. **Coverage**: set `"coverage": "none"` until step 2. LethAL then scores unreached mutants `survived`.
+10. **Selector**: `"selectorMode": "static"`. Server mode: not before step 3.
+11. **`--auto-provision`** may stay in the command; it is accepted.
+
+Check: run LethAL's contract probe against `alrunner`; the six facts (version, unknown flag rejected with a
+non-zero exit chosen by the process (2), qualified test name, timeout classified, timeout exit readable,
+compile failure not scorable) must hold with the changes above.
+
+## 9. ALchemist
+
+ALchemist needs `alrunner serve` and `alrunner debug` (steps 3 to 6). Until then nothing in this
+section can be applied. The changes it will need, so that they can be prepared:
+
+1. Binary lookup: also `which alrunner`; spawn `alrunner serve` instead of `al-runner --server`.
+2. Ready line, `runTests`, `summary` with `protocolVersion: 2` and `shutdown` are meant to be the same
+   as v2 (step 3). This page will list every deviation when step 3 lands.
+3. Debugger: `alrunner debug --stdio` instead of `al-runner --dap stdio` (step 6).
+
+## 10. What does not change for a tool
+
+The names of the tests (`Codeunit<ID>.<Method>`), the meaning of pass and fail, `durationMs`, the
+JUnit file (`--junit`), the position of positional app folders, `--package-cache`.

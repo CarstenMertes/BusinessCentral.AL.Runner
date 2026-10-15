@@ -639,3 +639,345 @@ fn warm_without_a_backup_or_a_build_says_what_it_needs() {
         text(&o)
     );
 }
+
+// ---- the interface the v2 tools use (docs/integrations/alchemist-lethal.md, step 1) ----
+
+fn json_of(o: &Output) -> serde_json::Value {
+    serde_json::from_slice(&o.stdout).unwrap_or_else(|e| panic!("stdout is not one JSON document: {e}\n{}", text(o)))
+}
+
+fn row<'a>(doc: &'a serde_json::Value, name: &str) -> &'a serde_json::Value {
+    doc["tests"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|t| t["name"] == name)
+        .unwrap_or_else(|| panic!("no row {name} in {doc}"))
+}
+
+#[test]
+fn output_json_without_a_file_is_the_only_thing_on_stdout_and_has_a_row_per_test() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--output-json"]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    // The report is on stderr, the document alone on stdout, starting with `{` in column 0.
+    assert!(String::from_utf8_lossy(&o.stdout).starts_with("{\n"));
+    assert!(String::from_utf8_lossy(&o.stderr).contains("Result: FAILED (exit 1)"));
+    let v = json_of(&o);
+    assert_eq!(
+        (
+            v["total"].as_u64(),
+            v["passed"].as_u64(),
+            v["failed"].as_u64(),
+            v["errors"].as_u64()
+        ),
+        (Some(4), Some(2), Some(1), Some(1))
+    );
+    assert_eq!((v["skipped"].as_u64(), v["exitCode"].as_u64()), (Some(0), Some(1)));
+    assert_eq!(row(&v, "Codeunit50100.Passes")["status"], "pass");
+    let fails = row(&v, "Codeunit50100.Fails");
+    assert_eq!(
+        (fails["status"].as_str(), fails["message"].as_str()),
+        (Some("fail"), Some("boom 5"))
+    );
+    assert!(
+        fails["stackTrace"].as_str().is_some_and(|s| s.contains("Fails")),
+        "{fails}"
+    );
+    let refused = row(&v, "Codeunit50100.Refused");
+    assert_eq!(refused["status"], "error");
+    assert!(
+        refused["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("NotRun: out-of-scope: ")),
+        "{refused}"
+    );
+    assert_eq!(refused["notRun"], true);
+}
+
+#[test]
+fn output_json_with_a_file_keeps_the_report_on_stdout() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let out = d.path().join("r/out.json");
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--output-json",
+        out.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    assert!(String::from_utf8_lossy(&o.stdout).contains("Result: FAILED (exit 1)"));
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
+    assert_eq!(v["total"], 4);
+}
+
+#[test]
+fn a_qualified_test_name_selects_one_test_and_exclude_test_removes_tests() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let a = app.to_str().unwrap();
+    let run = |extra: &[&str]| {
+        let mut args = vec!["test", a, "--no-download", "--output-json"];
+        args.extend_from_slice(extra);
+        alrunner(&args)
+    };
+    let o = run(&["--test", "Codeunit50100.Passes"]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let v = json_of(&o);
+    assert_eq!(v["total"], 1);
+    assert_eq!(row(&v, "Codeunit50100.Passes")["status"], "pass");
+    // The qualified name is matched in any case; a sibling of another codeunit with the same method name is not picked.
+    let o = run(&["--test", "codeunit50101.alsopasses"]);
+    assert_eq!(json_of(&o)["total"], 1);
+    // Nothing matches: exit 6.
+    assert_eq!(code(&run(&["--test", "Codeunit50100.AlsoPasses"])), 6);
+    // --test-exact.
+    let v = json_of(&run(&["--test-exact", "Passes"]));
+    assert_eq!(v["total"], 1);
+    // --exclude-test leaves out whole qualified names and wins over the selection.
+    let o = run(&[
+        "--exclude-test",
+        "Codeunit50100.Fails",
+        "--exclude-test",
+        "Codeunit50100.Refused",
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert_eq!(json_of(&o)["total"], 2);
+    assert_eq!(
+        code(&run(&[
+            "--test",
+            "Codeunit50100.Passes",
+            "--exclude-test",
+            "Codeunit50100.Passes"
+        ])),
+        6
+    );
+}
+
+const ISO: &str = r#"
+table 50300 "Iso Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 50300 "Iso Tests"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure A_Inserts()
+    var
+        R: Record "Iso Row";
+    begin
+        R.Id := 1;
+        R.Insert();
+    end;
+
+    [Test]
+    procedure B_SeesTheRow()
+    var
+        R: Record "Iso Row";
+    begin
+        if R.Count() <> 0 then
+            Error('kept');
+    end;
+}
+"#;
+
+#[test]
+fn isolation_decides_whether_the_database_is_rolled_back_between_the_tests_of_a_codeunit() {
+    let d = tempfile::tempdir().unwrap();
+    let app = d.path().join("iso");
+    write(
+        &app,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000000003", "Iso", &[]),
+    );
+    write(&app, "T.al", ISO);
+    let a = app.to_str().unwrap();
+    let run = |extra: &[&str]| {
+        let mut args = vec!["test", a, "--no-download", "--no-test-data", "--output-json"];
+        args.extend_from_slice(extra);
+        alrunner(&args)
+    };
+    // The default, Codeunit isolation: the second test sees the first one's row.
+    let o = run(&[]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    assert_eq!(row(&json_of(&o), "Codeunit50300.B_SeesTheRow")["message"], "kept");
+    // test (and its v2 and BC spellings): the database goes back after every test.
+    for mode in ["test", "function", "method"] {
+        let o = run(&["--isolation", mode]);
+        assert_eq!(code(&o), 0, "{mode}: {}", text(&o));
+        assert_eq!(json_of(&o)["passed"], 2);
+    }
+    // disabled is not pinned: every test is reported as not run.
+    let o = run(&["--isolation", "disabled"]);
+    assert_eq!(code(&o), 7, "{}", text(&o));
+    assert_eq!(json_of(&o)["notRun"], 2);
+    assert_eq!(code(&run(&["--isolation", "nope"])), 2);
+}
+
+#[test]
+fn define_adds_a_preprocessor_symbol_and_the_v2_flags_are_accepted() {
+    let d = tempfile::tempdir().unwrap();
+    let app = d.path().join("defs");
+    write(
+        &app,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000000004", "Defs", &[]),
+    );
+    write(
+        &app,
+        "T.al",
+        "codeunit 50400 \"Defs\" { Subtype = Test; [Test] procedure Symbol() begin\n#if LETHAL_MUTANT\n Error('mutant');\n#endif\n end; }",
+    );
+    let a = app.to_str().unwrap();
+    assert_eq!(code(&alrunner(&["test", a, "--no-download", "--no-test-data"])), 0);
+    let o = alrunner(&[
+        "test",
+        a,
+        "--no-download",
+        "--no-test-data",
+        "--define",
+        "LETHAL_MUTANT",
+        "--auto-provision",
+        "--test-timeout",
+        "30",
+    ]);
+    assert_eq!(code(&o), 1, "{}", text(&o));
+    assert!(text(&o).contains("mutant"), "{}", text(&o));
+    // The v2 variable is read; a value that is no number is an error.
+    let o = Command::new(env!("CARGO_BIN_EXE_alrunner"))
+        .env("AL_RUNNER_TEST_TIMEOUT_SEC", "soon")
+        .args(["test", a, "--no-download", "--no-test-data"])
+        .output()
+        .unwrap();
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(text(&o).contains("AL_RUNNER_TEST_TIMEOUT_SEC"), "{}", text(&o));
+}
+
+// ---- coverage (docs/integrations/alchemist-lethal.md, step 2) ----
+
+const COVERED: &str = r#"
+codeunit 50500 "Covered Tests"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure TakesTheThenBranch()
+    var
+        N: Integer;
+    begin
+        N := 1;
+        if N = 1 then
+            N := 2
+        else
+            N := 3;
+    end;
+
+    [Test]
+    procedure TakesTheElseBranch()
+    var
+        N: Integer;
+    begin
+        N := 5;
+        if N = 1 then
+            N := 2
+        else
+            N := 3;
+    end;
+}
+"#;
+
+fn covered_app(root: &Path) -> PathBuf {
+    let dir = root.join("covered");
+    write(
+        &dir,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000000005", "Covered", &[]),
+    );
+    write(&dir, "src/Covered.al", COVERED);
+    dir
+}
+
+#[test]
+fn coverage_writes_cobertura_with_the_runs_of_each_line_and_json_with_each_tests_statements() {
+    let d = tempfile::tempdir().unwrap();
+    let app = covered_app(d.path());
+    let xml = d.path().join("out/c.xml");
+    let js = d.path().join("out/c.json");
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--no-test-data",
+        "--coverage-out",
+        xml.to_str().unwrap(),
+        "--coverage-json",
+        js.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(text(&o).contains("coverage: "), "{}", text(&o));
+    // Cobertura: a class for the file with a line per statement line. Test 1: `N := 1;` (11), the `if` (12), the then
+    // branch (13) run, the else branch (15) does not. Test 2: `N := 5;` (23), the `if` (24), the else branch (27) run,
+    // the then branch (25) does not.
+    let x = std::fs::read_to_string(&xml).unwrap();
+    assert!(x.contains("filename=\"") && x.contains("Covered.al\""), "{x}");
+    assert!(x.contains("<line number=\"11\" hits=\"1\""), "{x}");
+    assert!(x.contains("<line number=\"12\" hits=\"1\""), "{x}");
+    let line_hits = |n: u32| -> u64 {
+        let tag = format!("<line number=\"{n}\" hits=\"");
+        let at = x.find(&tag).unwrap_or_else(|| panic!("no line {n} in {x}")) + tag.len();
+        x[at..].split('"').next().unwrap().parse().unwrap()
+    };
+    assert_eq!(
+        (line_hits(13), line_hits(15), line_hits(25), line_hits(27)),
+        (1, 0, 0, 1)
+    );
+    // JSON: every statement, and per test the statements it ran.
+    let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&js).unwrap()).unwrap();
+    let file = &v["coverage"][0];
+    assert!(file["file"].as_str().unwrap().ends_with("/src/Covered.al"), "{file}");
+    let statements = file["statements"].as_array().unwrap();
+    assert!(
+        statements
+            .iter()
+            .any(|s| s["scope"] == "TakesTheThenBranch" && s["line"] == 13 && s["hits"] == 1)
+    );
+    let per_test = v["perTestCoverage"].as_array().unwrap();
+    let then = per_test
+        .iter()
+        .find(|t| t["test"] == "Codeunit50500.TakesTheThenBranch")
+        .unwrap();
+    let ran: Vec<u64> = then["coverage"][0]["statements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|s| s["line"].as_u64().unwrap())
+        .collect();
+    assert!(ran.contains(&13) && !ran.contains(&15), "{ran:?}");
+}
+
+#[test]
+fn coverage_off_writes_nothing_and_a_selection_counts_only_the_selected_tests() {
+    let d = tempfile::tempdir().unwrap();
+    let app = covered_app(d.path());
+    let xml = d.path().join("c.xml");
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--no-test-data"]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(!text(&o).contains("coverage:"), "{}", text(&o));
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--no-test-data",
+        "--test",
+        "Codeunit50500.TakesTheElseBranch",
+        "--coverage-out",
+        xml.to_str().unwrap(),
+    ]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let x = std::fs::read_to_string(&xml).unwrap();
+    // Only the second test counts: its else branch ran, the first test's then branch did not.
+    assert!(x.contains("<line number=\"27\" hits=\"1\""), "{x}");
+    assert!(x.contains("<line number=\"13\" hits=\"0\""), "{x}");
+}

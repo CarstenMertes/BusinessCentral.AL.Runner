@@ -125,6 +125,8 @@ pub struct CorpusRuntime {
     results: Vec<TestResult>,
     /// The unprobed assumptions each test ran through, same key as `outcomes`; tests with none are absent.
     marks: std::collections::HashMap<(usize, u32, String), Vec<Assumption>>,
+    /// With `RunOptions::coverage`: every statement of the workspace's apps.
+    coverage_statements: Vec<crate::coverage::CoverageStatement>,
 }
 
 /// One test as the run left it, in the order the test codeunits were scheduled.
@@ -146,6 +148,9 @@ pub struct TestResult {
     pub assumptions: Vec<Assumption>,
     /// The wall time the test took; zero for a test that was not started.
     pub time: std::time::Duration,
+    /// With `RunOptions::coverage`: the statements the test ran, as (position id, runs), sorted by id. Position ids
+    /// index `CorpusRuntime::coverage_statements`' `pos` and `Program::positions`.
+    pub coverage: Vec<(u32, u32)>,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -226,6 +231,8 @@ struct Unit {
     isolation: TestIsolation,
     /// Run without putting the install baseline back (`AL_CHECK_BASELINE_RULE`).
     without_baseline: bool,
+    /// Count the statements each test runs (`RunOptions::coverage`).
+    coverage: bool,
 }
 
 /// What a test codeunit left: each test's outcome, the call stack of each AL error that failed one, how long
@@ -235,6 +242,7 @@ type UnitOutcomes = (
     Vec<(String, String)>,
     Vec<(String, std::time::Duration)>,
     Vec<(String, Vec<Assumption>)>,
+    Vec<(String, Vec<(u32, u32)>)>,
 );
 
 struct UnitResult {
@@ -270,6 +278,9 @@ fn run_unit(
         let mut stacks = Vec::new();
         let mut times = Vec::new();
         let mut hits = Vec::new();
+        if u.coverage {
+            crate::coverage::begin();
+        }
         let done = run_codeunit_full(
             engine,
             lowered,
@@ -282,7 +293,7 @@ fn run_unit(
             &mut hits,
             limit,
         );
-        (done, stacks, times, hits)
+        (done, stacks, times, hits, crate::coverage::finish())
     }))
     .map_err(|p| {
         p.downcast_ref::<String>()
@@ -359,6 +370,12 @@ pub struct RunOptions {
     /// to read them (`deps::load_project_with`). The run reads what it needs; a missing entry means
     /// the app has its text.
     pub lazy: Vec<Option<al_sema::LazySource>>,
+    /// `alrunner test --isolation`: the isolation of every test codeunit, instead of the runner's property (`None`: the runner's,
+    /// else Codeunit).
+    pub isolation: Option<TestIsolation>,
+    /// Count how often each statement of the workspace's apps runs, per test (`alrunner test --coverage`).
+    /// Off, a run pays one branch per statement.
+    pub coverage: bool,
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -862,8 +879,9 @@ impl CorpusRuntime {
                         si,
                         oi,
                         id,
-                        isolation: *i,
+                        isolation: opts.isolation.unwrap_or(*i),
                         without_baseline: false,
+                        coverage: opts.coverage,
                     }),
                     Err(why) => {
                         for r in test_routines(o) {
@@ -878,6 +896,7 @@ impl CorpusRuntime {
                                 call_stack: String::new(),
                                 assumptions: Vec::new(),
                                 time: std::time::Duration::ZERO,
+                                coverage: Vec::new(),
                             });
                         }
                     }
@@ -981,7 +1000,8 @@ impl CorpusRuntime {
                         outcome: &Outcome,
                         call_stack: String,
                         assumptions: Vec<Assumption>,
-                        time: std::time::Duration| {
+                        time: std::time::Duration,
+                        coverage: Vec<(u32, u32)>| {
                 list.push(TestResult {
                     suite: r.si,
                     app: order[o.app as usize],
@@ -992,10 +1012,11 @@ impl CorpusRuntime {
                     call_stack,
                     assumptions,
                     time,
+                    coverage,
                 })
             };
             match r.result {
-                Ok((done, stacks, times, hits)) => {
+                Ok((done, stacks, times, hits, mut covs)) => {
                     for (name, outcome) in done {
                         let stack = stacks.iter().find(|(n, _)| *n == name).map(|(_, s)| s.clone());
                         let marks = hits.iter().find(|(n, _)| *n == name).map(|(_, h)| h.clone());
@@ -1007,7 +1028,12 @@ impl CorpusRuntime {
                             .iter()
                             .find(|(n, _)| *n == name)
                             .map_or(std::time::Duration::ZERO, |(_, d)| *d);
-                        push(&mut list, &name, &outcome, stack.unwrap_or_default(), marks, time);
+                        let cov = covs
+                            .iter()
+                            .position(|(n, _)| *n == name)
+                            .map(|i| std::mem::take(&mut covs[i].1))
+                            .unwrap_or_default();
+                        push(&mut list, &name, &outcome, stack.unwrap_or_default(), marks, time, cov);
                         times_by_case.insert((r.si, r.id, name.to_lowercase()), time);
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
                     }
@@ -1023,6 +1049,7 @@ impl CorpusRuntime {
                             String::new(),
                             Vec::new(),
                             std::time::Duration::ZERO,
+                            Vec::new(),
                         );
                         outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
                     }
@@ -1047,6 +1074,11 @@ impl CorpusRuntime {
         // The workspace and the lowered program are big: dropping them takes as long as lowering
         // a tenth of the corpus, and nothing waits for it.
         let compile_parts = lowered.timings;
+        let coverage_statements = if opts.coverage {
+            crate::coverage::statements(&lowered.program, |oi| !lowered.dependency[oi], |a| order[a])
+        } else {
+            Vec::new()
+        };
         retire((ws, lowered));
         Ok(CorpusRuntime {
             outcomes,
@@ -1070,6 +1102,7 @@ impl CorpusRuntime {
             details,
             results: list,
             marks: marks_by_test,
+            coverage_statements,
         })
     }
 }
@@ -1078,6 +1111,12 @@ impl CorpusRuntime {
     /// Every test the run decided, with its codeunit's name and app, codeunit by codeunit.
     pub fn results(&self) -> &[TestResult] {
         &self.results
+    }
+
+    /// With `RunOptions::coverage`: every statement of the workspace's apps (the position ids that
+    /// `TestResult::coverage` counts).
+    pub fn coverage_statements(&self) -> &[crate::coverage::CoverageStatement] {
+        &self.coverage_statements
     }
 
     /// Where `case` of the run named `suite` was refused or failed; only with `RunOptions::trace`.
@@ -1488,6 +1527,10 @@ pub fn run_codeunit_full(
         session.restore_baseline(b);
     }
     session.trace_faults(observe.is_some());
+    let covering = crate::coverage::enabled();
+    if covering {
+        session.enable_coverage();
+    }
     let instance = session.instance(object);
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
@@ -1697,6 +1740,9 @@ pub fn run_codeunit_full(
             hits.push((routine.name.clone(), marks));
         }
         times.push((routine.name.clone(), test_started.elapsed()));
+        if covering {
+            crate::coverage::push(&routine.name, session.take_coverage());
+        }
         out.push((routine.name.clone(), outcome));
     }
     out

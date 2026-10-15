@@ -95,6 +95,19 @@ if [ "$dry" = 1 ]; then
   exit 0
 fi
 
+cases() { python3 - "$1" <<'PY'
+import sys, xml.etree.ElementTree as ET
+n = sum(1 for c in ET.parse(sys.argv[1]).iter("testcase") if c.get("name") != "OnRun")
+print(n)
+PY
+}
+declare -A before_cases before_onprem
+for leg in $legs; do
+  major="${leg%%.*}"
+  before_cases[$leg]="$(cases "$root/oracle/$major/junit.xml")"
+  before_onprem[$leg]="$(cases "$root/oracle/$major/junit-onprem.xml")"
+done
+
 # 3. The submodule.
 git -C "$corpus" checkout -q "$sha"
 
@@ -118,13 +131,18 @@ for leg in $legs; do
 done
 
 # 5. oracle.toml and README.md.
-cases() { python3 - "$1" <<'PY'
-import sys, xml.etree.ElementTree as ET
-n = sum(1 for c in ET.parse(sys.argv[1]).iter("testcase") if c.get("name") != "OnRun")
-print(n)
-PY
-}
 args=()
+added_files="$(git -C "$corpus" diff --name-only --diff-filter=A "$old" "$sha" -- tests 2>/dev/null | grep -c . || true)"
+echo "oracle cases per leg, before -> after (OnPrem in brackets):"
+for leg in $legs; do
+  major="${leg%%.*}"
+  now="$(cases "$root/oracle/$major/junit.xml")"
+  now_onprem="$(cases "$root/oracle/$major/junit-onprem.xml")"
+  echo "  $leg: ${before_cases[$leg]} -> $now ($(( now - ${before_cases[$leg]} )) more) [${before_onprem[$leg]} -> $now_onprem]"
+  if [ "${added_files:-0}" -gt 0 ] && [ "$now" = "${before_cases[$leg]}" ] && [ "$now_onprem" = "${before_onprem[$leg]}" ]; then
+    echo "  WARNING: $added_files corpus file(s) were added but the oracle of $leg has no new case: did the CI run the new tests?"
+  fi
+done
 for leg in $legs; do
   major="${leg%%.*}"
   args+=("$major" "${oracle_id[$leg]}" "${onprem_id[$leg]}" "$(cases "$root/oracle/$major/junit.xml")" "$(cases "$root/oracle/$major/junit-onprem.xml")")
@@ -141,15 +159,21 @@ done
 # 7. The harness counts: totals per major and the BC 29 area totals the harness asserts.
 dir="$(mktemp -d)"
 ./target/release/al-test-cli --root . --all-versions --no-deps --json "$dir/pass-rate.json" >/dev/null 2>&1 || true
-python3 - "$root" "$dir" "${args[@]}" <<'PY'
+python3 - "$root" "$dir" "$old" "$sha" "${args[@]}" <<'PY'
 import json, os, re, sys
-root, out, rest = sys.argv[1], sys.argv[2], sys.argv[3:]
+root, out, old, new, rest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4], sys.argv[5:]
 legs = {rest[i]: rest[i + 3] for i in range(0, len(rest), 5)}
+onprem = {rest[i]: rest[i + 4] for i in range(0, len(rest), 5)}
 p = root + "/crates/al-test-cli/tests/corpus_harness.rs"
 t = open(p).read()
 t = re.sub(r'\[\("27", \d+\), \("28", \d+\), \("29", \d+\)\]',
            f'[("27", {legs["27"]}), ("28", {legs["28"]}), ("29", {legs["29"]})]', t)
-t = re.sub(r'(assert_eq!\(r\["overall"\]\["total"\], )\d+\);', rf'\g<1>{legs["29"]});', t)
+# The BC 29 totals, and the BC 28 total of the test that reads the other test apps; the OnPrem total of BC 28.
+t = re.sub(r'(json\("29"\);\n\s*assert_eq!\(r\["overall"\]\["total"\], )\d+\);', rf'\g<1>{legs["29"]});', t)
+t = re.sub(r'(json\("28"\);\n\s*assert_eq!\(r\["overall"\]\["total"\], )\d+\);', rf'\g<1>{legs["28"]});', t)
+t = re.sub(r'(get\("onprem"\)\["counts"\]\["total"\], )\d+\);', rf'\g<1>{onprem["28"]});', t)
+if old != new:
+    t = t.replace(old, new)
 t = re.sub(r'( of )\d+( \()', rf'\g<1>{legs["29"]}\2', t)
 f = os.path.join(out, "pass-rate-29.json")
 if os.path.exists(f):

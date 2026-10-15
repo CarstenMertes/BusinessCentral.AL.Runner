@@ -43,6 +43,23 @@ pub enum Gate {
     /// only below BC 28 (`#if not BC28PLUS`, record/TestFieldLenAndFeatureKeyContracts.al); above, only that the table
     /// has rows. Not consumed yet (see `feature_key_rows_known`).
     FeatureKeyListChangedFrom28,
+    /// Column 15 of the Permission table ("AL Object Name") is Text[100] from BC 29, Text[30] before
+    /// (permissions/W6PermissionColumns.al, corpus bump 9). Not consumed yet.
+    PermissionObjectNameLongerFrom29,
+    /// A query aggregate (Sum, Average, Min, Max) over a BigInteger column is accepted from BC 29
+    /// (query/W7QueryAggregates.al, corpus bump 9). Not consumed yet.
+    QueryAggregateOverBigInteger,
+    /// `Base64Convert.FromBase64` of text that is not Base64 raises from BC 28 (types/PVBase64.al, corpus bump 9).
+    /// Not consumed yet.
+    FromBase64InvalidTextRaises,
+    /// Exporting a Media from BC 29 writes the imported bytes back (types/W7Media.al, corpus bump 9). Not consumed yet.
+    MediaExportKeepsTheImportedBytes,
+    /// The platform metadata tables (All Obj, All Obj with Caption, Field, Key, Table and Codeunit Metadata) list other
+    /// columns and rows from BC 29 (metadata/W6*.al, corpus bump 9). Not consumed yet.
+    PlatformMetadataColumnsFrom29,
+    /// `SetView` and `SetFilter` of text that is no table filter raise the Evaluate error `The value "..." can't be
+    /// evaluated into type TableFilter.` from BC 28 (records/W4PlatformAndMeta.al, corpus bump 9). Not consumed yet.
+    TableFilterEvaluateError,
 }
 
 impl Gate {
@@ -54,6 +71,12 @@ impl Gate {
         Gate::ReportSaveAsXmlHeaderHasCompanyBlock,
         Gate::ReportSaveAsDataItemIdentity,
         Gate::FeatureKeyListChangedFrom28,
+        Gate::PermissionObjectNameLongerFrom29,
+        Gate::QueryAggregateOverBigInteger,
+        Gate::FromBase64InvalidTextRaises,
+        Gate::MediaExportKeepsTheImportedBytes,
+        Gate::PlatformMetadataColumnsFrom29,
+        Gate::TableFilterEvaluateError,
     ];
 
     /// The first BC major with the new behaviour.
@@ -63,8 +86,15 @@ impl Gate {
             | Gate::FlowFieldMinMaxOverRowVersionRefused
             | Gate::SuperPermissionSetIgnoresAppId
             | Gate::NotSaaSInfrastructure
-            | Gate::ReportSaveAsXmlHeaderHasCompanyBlock => 29,
-            Gate::ReportSaveAsDataItemIdentity | Gate::FeatureKeyListChangedFrom28 => 28,
+            | Gate::ReportSaveAsXmlHeaderHasCompanyBlock
+            | Gate::PermissionObjectNameLongerFrom29
+            | Gate::QueryAggregateOverBigInteger
+            | Gate::MediaExportKeepsTheImportedBytes
+            | Gate::PlatformMetadataColumnsFrom29 => 29,
+            Gate::ReportSaveAsDataItemIdentity
+            | Gate::FeatureKeyListChangedFrom28
+            | Gate::FromBase64InvalidTextRaises
+            | Gate::TableFilterEvaluateError => 28,
         }
     }
 
@@ -80,11 +110,21 @@ impl Gate {
                     file: "record/TestProbeCalcFieldsContracts.al",
                     lines: "120,125",
                 },
+                Evidence {
+                    file: "calcfields/W4CalcFields.al",
+                    lines: "31",
+                },
             ],
-            Gate::FlowFieldMinMaxOverRowVersionRefused => &[Evidence {
-                file: "record/TestCalcFormulaSystemFieldsTests.Codeunit.al",
-                lines: "298,306,353",
-            }],
+            Gate::FlowFieldMinMaxOverRowVersionRefused => &[
+                Evidence {
+                    file: "record/TestCalcFormulaSystemFieldsTests.Codeunit.al",
+                    lines: "298,306,353",
+                },
+                Evidence {
+                    file: "calcfields/W4CalcFields.al",
+                    lines: "105",
+                },
+            ],
             Gate::SuperPermissionSetIgnoresAppId => &[Evidence {
                 file: "permissions/TestMetadataPermissionSet.al",
                 lines: "98,106",
@@ -93,18 +133,64 @@ impl Gate {
                 file: "session/TestEnvironmentUserTenantContracts.al",
                 lines: "169",
             }],
-            Gate::ReportSaveAsXmlHeaderHasCompanyBlock => &[Evidence {
-                file: "handlers/TestReportSaveAsDatasetContracts.al",
-                lines: "243",
+            Gate::ReportSaveAsXmlHeaderHasCompanyBlock => &[
+                Evidence {
+                    file: "handlers/TestReportSaveAsDatasetContracts.al",
+                    lines: "243",
+                },
+                Evidence {
+                    file: "report/W3ReportDataset.al",
+                    lines: "164,209",
+                },
+            ],
+            Gate::PermissionObjectNameLongerFrom29 => &[Evidence {
+                file: "permissions/W6PermissionColumns.al",
+                lines: "122",
+            }],
+            Gate::QueryAggregateOverBigInteger => &[Evidence {
+                file: "query/W7QueryAggregates.al",
+                lines: "148",
+            }],
+            Gate::FromBase64InvalidTextRaises => &[Evidence {
+                file: "types/PVBase64.al",
+                lines: "145",
+            }],
+            Gate::PlatformMetadataColumnsFrom29 => &[
+                Evidence {
+                    file: "metadata/W6AllObj.al",
+                    lines: "207,212",
+                },
+                Evidence {
+                    file: "metadata/W6FieldKeyRows.al",
+                    lines: "167,262",
+                },
+                Evidence {
+                    file: "metadata/W6TableCodeunitMetadata.al",
+                    lines: "258",
+                },
+            ],
+            Gate::TableFilterEvaluateError => &[Evidence {
+                file: "records/W4PlatformAndMeta.al",
+                lines: "256",
+            }],
+            Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
+                file: "types/W7Media.al",
+                lines: "134,141,146",
             }],
             Gate::FeatureKeyListChangedFrom28 => &[Evidence {
                 file: "record/TestFieldLenAndFeatureKeyContracts.al",
                 lines: "97",
             }],
-            Gate::ReportSaveAsDataItemIdentity => &[Evidence {
-                file: "handlers/TestReportSaveAsDatasetContracts.al",
-                lines: "299",
-            }],
+            Gate::ReportSaveAsDataItemIdentity => &[
+                Evidence {
+                    file: "handlers/TestReportSaveAsDatasetContracts.al",
+                    lines: "299",
+                },
+                Evidence {
+                    file: "report/W3ReportDataset.al",
+                    lines: "294,314",
+                },
+            ],
         }
     }
 }

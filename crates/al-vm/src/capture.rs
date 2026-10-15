@@ -270,10 +270,7 @@ impl Session {
                         let parts: Vec<String> = fields
                             .iter()
                             .map(|&f| match st.fields.get(f) {
-                                Some(v) => match format_value(v, 0, 9, self) {
-                                    Ok(t) => t,
-                                    Err(_) => String::new(),
-                                },
+                                Some(v) => format_value(v, 0, 9, self).unwrap_or_default(),
                                 None => String::new(),
                             })
                             .collect();

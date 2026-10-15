@@ -155,6 +155,7 @@ mod tests {
         }
         CapturedAt {
             captured: Captured {
+                truncated: false,
                 values: vec![
                     ValueRecord {
                         scope: "OnRun".into(),

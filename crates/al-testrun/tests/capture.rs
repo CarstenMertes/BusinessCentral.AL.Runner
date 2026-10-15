@@ -172,7 +172,8 @@ fn loops_nest_across_calls_and_say_how_they_ended() {
         BOTH,
     );
     let c = &r.captured.as_ref().unwrap().captured;
-    let by_scope: Vec<(&str, Option<u32>, Option<u32>, usize, ClosedBy)> = c
+    type Shape<'a> = (&'a str, Option<u32>, Option<u32>, usize, ClosedBy);
+    let by_scope: Vec<Shape> = c
         .loops
         .iter()
         .map(|l| {

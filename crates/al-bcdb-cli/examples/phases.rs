@@ -13,10 +13,32 @@ impl ByteSource for P {
         self.0.metadata().unwrap().len()
     }
     fn read_at(&self, o: u64, b: &mut [u8]) -> al_bcdb::Result<()> {
-        use std::os::unix::fs::FileExt;
-        self.0
-            .read_exact_at(b, o)
-            .map_err(|e| al_bcdb::Error::Io(e.to_string()))
+        #[cfg(unix)]
+        let r = {
+            use std::os::unix::fs::FileExt;
+            self.0.read_exact_at(b, o)
+        };
+        #[cfg(windows)]
+        let r = {
+            use std::os::windows::fs::FileExt;
+            let mut done = 0;
+            let mut r = Ok(());
+            while done < b.len() {
+                match self.0.seek_read(&mut b[done..], o + done as u64) {
+                    Ok(0) => {
+                        r = Err(std::io::ErrorKind::UnexpectedEof.into());
+                        break;
+                    }
+                    Ok(n) => done += n,
+                    Err(e) => {
+                        r = Err(e);
+                        break;
+                    }
+                }
+            }
+            r
+        };
+        r.map_err(|e: std::io::Error| al_bcdb::Error::Io(e.to_string()))
     }
 }
 

@@ -13,7 +13,7 @@
 //! decoder). A file of the wrong length is refused at open. Nothing in a refused file is used.
 
 use crate::Key;
-use al_sema::provided::{DepBlock, DepFacts, DepSet, DepSource};
+use al_sema::provided::{DepBlock, DepFacts, DepLayer, DepSet, DepSource, LayerSource};
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use sha2::{Digest, Sha256};
@@ -60,6 +60,10 @@ struct BlockRef {
 
 #[derive(Serialize, Deserialize)]
 struct Index {
+    /// How many objects the layers below hold (0 for the first layer).
+    base_len: u64,
+    /// The program index of each slot (`DepLayer::objects`).
+    objects: Vec<u32>,
     facts: Vec<DepFacts>,
     parse_problems: Vec<(String, String)>,
     blocks: Vec<BlockRef>,
@@ -76,9 +80,27 @@ fn zstd_err(e: std::io::Error) -> CacheError {
     CacheError::Damaged(format!("zstd: {e}"))
 }
 
-/// The bytes of the entry file for `set`. The same set and key give the same bytes.
+/// The bytes of the entry file for `set`, the first layer. The same set and key give the same bytes.
 pub fn build(set: &DepSet, key: &Key) -> Vec<u8> {
+    let objects: Vec<u32> = (0..set.facts.len() as u32).collect();
+    build_parts(0, &objects, set, key, None)
+}
+
+/// The bytes of the entry file for a layer (`build` is the first layer).
+pub fn build_layer(layer: &DepLayer, key: &Key) -> Vec<u8> {
+    build_parts(layer.base_len, &layer.objects, &layer.set, key, None)
+}
+
+/// [`build_layer`] with the dictionary of another entry (the first layer's) instead of one trained
+/// on this layer: training takes most of the time of compressing a small layer. The result is a
+/// function of the layer, the key and that dictionary.
+pub fn build_layer_with_dictionary(layer: &DepLayer, key: &Key, dictionary: &[u8]) -> Vec<u8> {
+    build_parts(layer.base_len, &layer.objects, &layer.set, key, Some(dictionary))
+}
+
+fn build_parts(base_len: usize, objects: &[u32], set: &DepSet, key: &Key, shared_dict: Option<&[u8]>) -> Vec<u8> {
     assert_eq!(set.facts.len(), set.blocks.len(), "one block per object");
+    assert_eq!(set.facts.len(), objects.len(), "one object index per block");
     let raw: Vec<Vec<u8>> = set
         .blocks
         .par_iter()
@@ -88,7 +110,9 @@ pub fn build(set: &DepSet, key: &Key) -> Vec<u8> {
     let total: usize = raw.iter().map(Vec::len).sum();
     let stride = (total / SAMPLE_BYTES).max(1);
     let samples: Vec<&[u8]> = raw.iter().step_by(stride).map(Vec::as_slice).collect();
-    let dict = if samples.len() >= 8 {
+    let dict = if let Some(d) = shared_dict {
+        d.to_vec()
+    } else if samples.len() >= 8 {
         zstd::dict::from_samples(&samples, DICT_SIZE).unwrap_or_default()
     } else {
         Vec::new()
@@ -119,6 +143,8 @@ pub fn build(set: &DepSet, key: &Key) -> Vec<u8> {
         at += c.len() as u64;
     }
     let index = Index {
+        base_len: base_len as u64,
+        objects: objects.to_vec(),
         facts: set.facts.clone(),
         parse_problems: set.parse_problems.clone(),
         blocks: block_refs,
@@ -213,8 +239,27 @@ impl Entry {
         if sha(dict_bytes) != index.dict_sha {
             return Err(CacheError::Damaged("dictionary".into()));
         }
-        if index.facts.len() != index.blocks.len() {
+        if index.facts.len() != index.blocks.len() || index.objects.len() != index.blocks.len() {
             return Err(CacheError::Damaged("object count".into()));
+        }
+        // The objects ascend; those from `base_len` on are the layer's own, with no gap.
+        let base = index.base_len;
+        let mut own = 0u64;
+        let mut last: Option<u32> = None;
+        for &o in &index.objects {
+            let ordered = last.is_none_or(|p| p < o);
+            last = Some(o);
+            let o = u64::from(o);
+            let fits = if o < base {
+                true
+            } else {
+                let ok = o == base + own;
+                own += 1;
+                ok
+            };
+            if !ordered || !fits {
+                return Err(CacheError::Damaged("object indexes".into()));
+            }
         }
         for b in &index.blocks {
             let end = (b.offset as usize).checked_add(b.len as usize);
@@ -228,7 +273,7 @@ impl Entry {
 
     /// Reads every block. For CI and `cache verify`: a damaged block anywhere is found.
     pub fn verify(&self) -> Result<(), CacheError> {
-        (0..self.len())
+        (0..self.index.blocks.len())
             .into_par_iter()
             .try_for_each(|i| self.read_block(i).map(|_| ()))
     }
@@ -247,15 +292,65 @@ impl Entry {
     }
 }
 
+impl Entry {
+    /// How many objects the layers below this one hold (0 for the first layer).
+    pub fn base_len(&self) -> usize {
+        self.index.base_len as usize
+    }
+
+    /// The zstd dictionary the blocks of this entry share.
+    pub fn dictionary(&self) -> &[u8] {
+        let from = self.index.dict_offset as usize;
+        &self.bytes[from..from + self.index.dict_len as usize]
+    }
+
+    /// The dependency files that did not parse when the layer was built.
+    pub fn parse_problems(&self) -> &[(String, String)] {
+        &self.index.parse_problems
+    }
+
+    fn slot_of(&self, object: usize) -> usize {
+        self.index
+            .objects
+            .binary_search(&(object as u32))
+            .unwrap_or_else(|_| panic!("object {object} is not in this layer"))
+    }
+}
+
+/// An entry that stands alone (the first layer) or is read through a [`Stack`](al_sema::provided::Stack).
 impl DepSource for Entry {
     fn len(&self) -> usize {
-        self.index.facts.len()
+        self.base_len()
+            + self
+                .index
+                .objects
+                .iter()
+                .filter(|&&o| o as u64 >= self.index.base_len)
+                .count()
     }
     fn facts(&self, object: usize) -> &DepFacts {
-        &self.index.facts[object]
+        &self.index.facts[self.slot_of(object)]
     }
     fn block(&self, object: usize) -> Result<DepBlock, String> {
-        self.read_block(object).map_err(|e| e.to_string())
+        self.read_block(self.slot_of(object)).map_err(|e| e.to_string())
+    }
+    fn parse_problems(&self) -> &[(String, String)] {
+        &self.index.parse_problems
+    }
+}
+
+impl LayerSource for Entry {
+    fn base_len(&self) -> usize {
+        self.base_len()
+    }
+    fn objects(&self) -> &[u32] {
+        &self.index.objects
+    }
+    fn facts_at(&self, slot: usize) -> &DepFacts {
+        &self.index.facts[slot]
+    }
+    fn block_at(&self, slot: usize) -> Result<DepBlock, String> {
+        self.read_block(slot).map_err(|e| e.to_string())
     }
     fn parse_problems(&self) -> &[(String, String)] {
         &self.index.parse_problems

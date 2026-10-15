@@ -128,6 +128,28 @@ fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
     )
 }
 
+/// `key_cmp(position(t, key, row), other)` without building the position.
+fn cmp_row_to_position(t: &TableDef, key: usize, row: &[Value], other: &[Value]) -> Ordering {
+    for (&i, x) in t.keys[key].iter().chain(&t.keys[0]).zip(other) {
+        match al_builtins::ops::compare(&row[i], x).unwrap_or(Ordering::Equal) {
+            Ordering::Equal => continue,
+            o => return o,
+        }
+    }
+    (t.keys[key].len() + t.keys[0].len()).cmp(&other.len())
+}
+
+/// `key_cmp(position(t, key, a), position(t, key, b))` without building the positions.
+fn cmp_rows(t: &TableDef, key: usize, a: &[Value], b: &[Value]) -> Ordering {
+    for &i in t.keys[key].iter().chain(&t.keys[0]) {
+        match al_builtins::ops::compare(&a[i], &b[i]).unwrap_or(Ordering::Equal) {
+            Ordering::Equal => continue,
+            o => return o,
+        }
+    }
+    Ordering::Equal
+}
+
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
     al_builtins::filter::row_passes(row, filters)
 }
@@ -440,11 +462,33 @@ impl Store for MemStore {
         let Some(table) = self.table(cx, t) else {
             return Ok(None);
         };
-        let mut best: Option<(Vec<Value>, &Row)> = None;
+        // In primary key order the table is already in the order of the scan: step to the first row past
+        // the position and look at the rows from there on until one passes the filters.
+        if scan.key == 0 {
+            use std::ops::Bound::{Excluded, Unbounded};
+            let k = t.keys[0].len();
+            let after = scan.after.map(|a| Key(a[..k.min(a.len())].to_vec()));
+            if scan.ascending {
+                let lower = after.map_or(Unbounded, Excluded);
+                return Ok(table
+                    .range((lower, Unbounded))
+                    .map(|(_, r)| r)
+                    .find(|r| passes(r, scan.filters))
+                    .cloned());
+            }
+            let upper = after.map_or(Unbounded, Excluded);
+            return Ok(table
+                .range((Unbounded, upper))
+                .rev()
+                .map(|(_, r)| r)
+                .find(|r| passes(r, scan.filters))
+                .cloned());
+        }
+        // Another key: every row is looked at, without building its position (a copy of the key fields).
+        let mut best: Option<&Row> = None;
         for row in table.values().filter(|r| passes(r, scan.filters)) {
-            let pos = position(t, scan.key, row);
             let after_ok = scan.after.is_none_or(|a| {
-                let o = key_cmp(&pos, a);
+                let o = cmp_row_to_position(t, scan.key, row, a);
                 if scan.ascending {
                     o == Ordering::Greater
                 } else {
@@ -454,8 +498,8 @@ impl Store for MemStore {
             if !after_ok {
                 continue;
             }
-            let better = best.as_ref().is_none_or(|(b, _)| {
-                let o = key_cmp(&pos, b);
+            let better = best.is_none_or(|b| {
+                let o = cmp_rows(t, scan.key, row, b);
                 if scan.ascending {
                     o == Ordering::Less
                 } else {
@@ -463,10 +507,10 @@ impl Store for MemStore {
                 }
             });
             if better {
-                best = Some((pos, row));
+                best = Some(row);
             }
         }
-        Ok(best.map(|(_, r)| r.clone()))
+        Ok(best.cloned())
     }
 
     fn count(&self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
@@ -786,6 +830,27 @@ mod tests {
         assert_eq!(s.count(&cx, &t, &[]).unwrap(), 0);
         s.record_restored_changes(false);
         assert!(s.restored_changes().is_empty());
+    }
+
+    /// Walking a table row by row costs a few comparisons a row, not a pass over the table: 30,000 rows in a
+    /// second, where a scan that looks at every row for each step needs minutes. Release only
+    /// (`cargo test --release -p al-data -- --ignored`).
+    #[test]
+    #[ignore]
+    fn walking_a_big_table_row_by_row_is_not_quadratic() {
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        let mut s = MemStore::default();
+        for i in 0..30_000 {
+            s.insert(&cx, &t, crate::contract::row(&format!("{i:08}"), i, i % 7))
+                .unwrap();
+        }
+        let started = std::time::Instant::now();
+        for key in [0, 1] {
+            let rows = crate::contract::scan_all(&s, &cx, &t, key, &[], true);
+            assert_eq!(rows.len(), 30_000);
+        }
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_secs(5), "two walks took {took:?}");
     }
 
     #[test]

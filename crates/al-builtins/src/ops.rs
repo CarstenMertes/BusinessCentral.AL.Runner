@@ -71,14 +71,11 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             Value::Library("SecretText".into(), Rc::new(RefCell::new(LibraryValue::Text(s))))
         }
         (v @ Value::Enum(from, _), T::Enum(to)) if from == *to => v,
-        // An enum of another type (`AssignmentCompatibility = true`): which value the ordinal selects and
-        // the error for an ordinal the target lacks are not pinned (docs/probes-needed.md).
-        (v @ Value::Enum(..), T::Enum(_)) => {
-            return unsupported(format!(
-                "assigning {} of another enum type to an Enum: the conversion by ordinal (AssignmentCompatibility) and the error for an ordinal the target lacks are not pinned (docs/probes-needed.md)",
-                v.describe()
-            ));
-        }
+        // An enum of another type converts by its ordinal; an ordinal the target lacks is kept (Format shows
+        // the number, AsInteger gives it). The same in a field, a Get key and a SetRange value (corpus
+        // types/PXEnumRecordRef.al:7-10, :74-135, probed on BC 27.5). Whether
+        // the assignment compiles (the target must state AssignmentCompatibility, AL0122) is the checker's.
+        (Value::Enum(_, o), T::Enum(to)) => Value::Enum(*to, o),
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
         (Value::Option(o, _), T::Integer) => Value::Integer(o),
         (Value::Integer(n), T::Duration) => Value::Duration(i64::from(n)),
@@ -165,12 +162,14 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // ' ' giving 0; an ordinal the enum lacks raises no error, the enum holds that number
         // (corpus types/PEOptionEnumBigText.al:68-141, :171-184, probed on BC 27.5).
         (Value::Option(o, _), T::Enum(id)) => Value::Enum(*id, o),
-        // An Integer into an Enum slot (a Record.Get key for an Enum field, Base Application's deferral
-        // codeunit passes document types as Integer). Only `Enum.FromInteger` is pinned
-        // (types/TestEnum.al:83-91); the implicit form is not (docs/probes-needed.md).
-        (v @ (Value::Integer(_) | Value::BigInteger(_)), T::Enum(_)) => {
+        // An Integer converts to the enum value of that ordinal, with or without AssignmentCompatibility; an
+        // ordinal the enum lacks is kept. The same in a field, a Get key and a SetRange value (corpus
+        // types/PXEnumRecordRef.al:11-12, :137-196, probed on BC 27.5).
+        (Value::Integer(n), T::Enum(id)) => Value::Enum(*id, n),
+        // A BigInteger is not probed (docs/probes-needed.md).
+        (v @ Value::BigInteger(_), T::Enum(_)) => {
             return unsupported(format!(
-                "assigning {} to an Enum: whether an Integer converts to the enum value of that ordinal, and the error for an ordinal the enum lacks, are not pinned (docs/probes-needed.md)",
+                "assigning {} to an Enum: only an Integer is pinned (docs/probes-needed.md)",
                 v.describe()
             ));
         }
@@ -459,6 +458,10 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Duration(a), V::BigInteger(b)) => a.cmp(b),
         (V::BigInteger(a), V::Duration(b)) => a.cmp(b),
         (V::Enum(ea, a), V::Enum(eb, b)) if ea == eb => a.cmp(b),
+        // Two enum types compare by ordinal: an ordinal converted into an enum that lacks it equals the
+        // source (corpus types/PXEnumRecordRef.al:93-97,106, both enums with
+        // AssignmentCompatibility; other pairs are an assumption, docs/probes-needed.md).
+        (V::Enum(_, a), V::Enum(_, b)) => a.cmp(b),
         (V::DateFormula(a), V::DateFormula(b)) => crate::datefns::formula_text(a).cmp(&crate::datefns::formula_text(b)),
         // SessionSettings compare by value (session/TestSessionSettings.al:513-545).
         (V::Library(na, a), V::Library(nb, b)) if na == "SessionSettings" && nb == "SessionSettings" => {
@@ -525,19 +528,29 @@ mod tests {
         Value::Decimal(Decimal::from_str(s).unwrap())
     }
 
-    // An Enum of one type stored in a slot of another enum type (`AssignmentCompatibility = true` in
-    // Base Application's Contact Business Relation) is refused at the assignment with its own reason;
-    // no corpus test pins the conversion (docs/probes-needed.md). Never keep the source's enum type.
+    // corpus types/PXEnumRecordRef.al:74-108, :137-196: an Enum of another
+    // type and an Integer become the target enum's value of that ordinal, a lacking ordinal kept.
     #[test]
-    fn an_enum_of_another_type_is_refused_at_the_assignment() {
-        let why = match convert(Value::Enum(5057, 1), &RtType::Enum(5056)) {
-            Err(Signal::Unsupported(w)) => w,
-            other => panic!("expected a refusal, got {other:?}"),
-        };
-        assert!(why.contains("another enum type") && why.contains("not pinned"), "{why}");
+    fn an_enum_of_another_type_and_an_integer_convert_by_ordinal() {
+        assert!(matches!(
+            convert(Value::Enum(5057, 1), &RtType::Enum(5056)),
+            Ok(Value::Enum(5056, 1))
+        ));
+        assert!(matches!(
+            convert(Value::Enum(5057, 7), &RtType::Enum(5056)),
+            Ok(Value::Enum(5056, 7))
+        ));
         assert!(matches!(
             convert(Value::Enum(5056, 1), &RtType::Enum(5056)),
             Ok(Value::Enum(5056, 1))
+        ));
+        assert!(matches!(
+            convert(Value::Integer(5), &RtType::Enum(5056)),
+            Ok(Value::Enum(5056, 5))
+        ));
+        assert!(matches!(
+            convert(Value::BigInteger(5), &RtType::Enum(5056)),
+            Err(Signal::Unsupported(_))
         ));
     }
 

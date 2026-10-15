@@ -2388,7 +2388,9 @@ impl Lowerer<'_> {
             let (value, _) = self.members[e]
                 .enum_values
                 .iter()
-                .find(|(_, n)| n.eq_ignore_ascii_case(text.trim()))?;
+                // Both sides trimmed: the blank member `" "` is named `" "` in `const(" ")`
+                // (Base Application "Standard Service Line"."No.").
+                .find(|(_, n)| n.trim().eq_ignore_ascii_case(text.trim()))?;
             return Some(ir::Const::Enum(e as u32, *value as i32));
         }
         init_const(text, ty)
@@ -4015,6 +4017,15 @@ impl Lowerer<'_> {
             SyntaxKind::ParenExpr => self.place(&n.children().next().ok_or("empty parentheses")?),
             SyntaxKind::IndexExpr => {
                 let kids: Vec<SyntaxNode> = n.children().collect();
+                // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index.
+                if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_of(&kids[0]), Ty::Array(..)) {
+                    if let ir::Place::Index(root, mut idx) = self.place(&kids[0])? {
+                        for k in &kids[1..] {
+                            idx.push(self.expr(k)?);
+                        }
+                        return Ok(ir::Place::Index(root, idx));
+                    }
+                }
                 let base = self.place(&kids[0])?;
                 let idx = kids[1..].iter().map(|k| self.expr(k)).collect::<L<Vec<_>>>()?;
                 Ok(ir::Place::Index(Box::new(base), idx))
@@ -4461,7 +4472,19 @@ impl Lowerer<'_> {
                     _ => Err("option value without its option type".into()),
                 },
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
-                _ => Err(format!("`{}` is not lowered yet", n.text())),
+                _ => {
+                    // `Enum::Member` of a system enum whose member list has no such member.
+                    let text = n.text().to_string();
+                    match text.split_once("::") {
+                        Some((e, m)) if al_builtins::sysenum::members(e.trim()).is_some() => Err(format!(
+                            "`{}::{}` is not a member of the system enum {} in the member list this runtime holds, which only holds the members a corpus probe lists: its ordinal is not pinned (docs/probes-needed.md)",
+                            e.trim(),
+                            m.trim().trim_matches('"'),
+                            e.trim()
+                        )),
+                        _ => Err(format!("`{text}` is not lowered yet")),
+                    }
+                }
             },
             MemberExpr if self.is_control_access(n) => self.control(n),
             // `CurrPage.<Part>.Page`: the page the part shows.
@@ -5156,12 +5179,22 @@ pub fn lower_for_cache(
     symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
 ) -> crate::provided::DepSet {
+    lower_for_cache_with(apps, &[], symbols, target)
+}
+
+/// [`lower_for_cache`] where app `i` with `app_symbols[i]` set is preprocessed with those symbols.
+pub fn lower_for_cache_with(
+    apps: Vec<crate::workspace::AppSource>,
+    app_symbols: &[Option<std::collections::BTreeSet<String>>],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+) -> crate::provided::DepSet {
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
     };
     let kinds = vec![crate::workspace::AppKind::Dependency; apps.len()];
-    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let ws = Workspace::load_apps_symbols(apps, kinds, symbols, app_symbols, Vec::new());
     let members = crate::members::build(&ws);
     let roots = crate::check::Roots {
         eager: true,
@@ -5218,12 +5251,24 @@ pub fn lower_layer(
     target: Option<&al_version::Target>,
     below: &dyn crate::provided::DepSource,
 ) -> Result<crate::provided::DepLayer, String> {
+    lower_layer_with(apps, n_below_apps, &[], symbols, target, below)
+}
+
+/// [`lower_layer`] where app `i` with `app_symbols[i]` set is preprocessed with those symbols.
+pub fn lower_layer_with(
+    apps: Vec<crate::workspace::AppSource>,
+    n_below_apps: usize,
+    app_symbols: &[Option<std::collections::BTreeSet<String>>],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    below: &dyn crate::provided::DepSource,
+) -> Result<crate::provided::DepLayer, String> {
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
     };
     let kinds = vec![crate::workspace::AppKind::Dependency; apps.len()];
-    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let ws = Workspace::load_apps_symbols(apps, kinds, symbols, app_symbols, Vec::new());
     let n_prov = below.len();
     if n_prov > ws.objects.len() {
         return Err(format!(
@@ -6533,6 +6578,27 @@ table 50912 \"ALT Head\"
         };
         assert_eq!(text("D"), "50911");
         assert_eq!(text("R"), "50950");
+    }
+
+    #[test]
+    fn table_relation_condition_on_the_blank_enum_member_resolves() {
+        // Base Application "Standard Service Line"."No.": `if (Type = const(" ")) "Standard Text" else
+        // if (Type = const(Item)) Item ...`. The blank member is the enum value named `" "` (the corpus
+        // declares such members: _fixtures/enums/ALTStatus.al:5); trimming the name lost it.
+        let (_, l) = lower_src(
+            "enum 50913 \"ALT Line Kind\" { value(0; \" \") { } value(1; Item) { } }
+             table 50914 \"ALT Text\" { fields { field(1; Code; Code[20]) { } } }
+             table 50915 \"ALT Item\" { fields { field(1; \"No.\"; Code[20]) { } } }
+             table 50916 \"ALT Std Line\" { fields {
+                field(1; Kind; Enum \"ALT Line Kind\") { }
+                field(2; \"No.\"; Code[20]) { TableRelation = if (Kind = const(\" \")) \"ALT Text\" else if (Kind = const(Item)) \"ALT Item\"; }
+             } }",
+        );
+        let f = flow(&l, "ALT Std Line", "No.");
+        let conds: Vec<_> = f.relation_arms.iter().map(|a| a.conditions[0].value.clone()).collect();
+        assert_eq!(conds.len(), 2, "{:?}", f.relation_arms);
+        assert!(matches!(conds[0], ir::Const::Enum(_, 0)), "{conds:?}");
+        assert!(matches!(conds[1], ir::Const::Enum(_, 1)), "{conds:?}");
     }
 
     #[test]

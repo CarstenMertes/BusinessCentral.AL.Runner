@@ -311,11 +311,35 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             .map(|i| i.path.join(".alpackages")),
     );
     let floor_versions = &inputs[0].versions;
+    // Which Microsoft build the project targets: see `apps::choose_build` (ADR-013, "Amendment 2026-10-15").
+    let own = apps::own_build(&inputs);
+    let floor = floor_versions.floor().map(|f| (u32::from(f.major), u32::from(f.minor)));
+    let packages = if a.bc_version.is_none() && own.is_none() {
+        al_deps::load::microsoft_packages_build(&search, None)
+    } else {
+        None
+    };
+    let choice = apps::choose_build(
+        a.bc_version.as_deref(),
+        own,
+        packages,
+        floor,
+        u32::from(chosen.target.bc.major),
+    );
+    if let Some(note) = &choice.note {
+        eprintln!("note: {note}");
+    }
+    if let Some(minor) = choice.minor {
+        chosen.target.bc.minor = minor as u16;
+    }
+    let from_packages = choice.from_packages;
+    let mut build_rule = choice.rule;
+    let preferred = choice.preferred;
+    let preferred_build = preferred.clone();
     let provision = Provision {
         cache_dir: a.cache_dir.clone(),
         download: !a.no_download,
-        query: target::build_query(a.bc_version.as_deref(), &chosen, floor_versions)
-            .with_preferred(apps::own_build(&inputs)),
+        query: target::build_query(a.bc_version.as_deref(), &chosen, floor_versions).with_preferred(preferred),
         local_artifacts: al_deps::cache::bcartifacts_sandbox_from_env(),
     };
     // The text of a package's files is left unread: a run whose tests reach nothing in it never needs it.
@@ -376,6 +400,17 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     if let Some(u) = &dependencies.build {
         chosen.target.bc.build = Some(u.build.to_string());
         bc_build = Some(u.build.to_string());
+        if from_packages && Some(&u.build) != preferred_build.as_ref() {
+            // The build the packages come from is neither cached nor published: the usual rules chose
+            // another one of the same major, and the target follows what the apps really are.
+            build_rule.push_str(&format!(
+                "; that build is not cached, on disk or published, so BC {} was used",
+                u.build
+            ));
+            if u.build.major() == u32::from(chosen.target.bc.major) {
+                chosen.target.bc.minor = u.build.minor() as u16;
+            }
+        }
     }
     // The resolver repeats a note on each round of the artifact feed; say each once.
     let mut seen = BTreeSet::new();
@@ -429,6 +464,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
                 app.path.display()
             );
         }
+        println!("build chosen by: {build_rule}");
         println!("dependencies: {} apps", dependencies.apps.len());
         println!(
             "threads: check {}, lower {}, test {}",

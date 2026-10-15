@@ -246,6 +246,9 @@ pub struct DependencyApp {
     /// With `Request::lazy_sources`, a package read lazily: `app.files` holds the paths and empty
     /// texts, and this reads a file and hashes the package (ADR-022, "pure tests").
     pub lazy: Option<al_sema::LazySource>,
+    /// The `preprocessorSymbols` of the app's own `app.json` (none for a compiled package). The
+    /// app's sources are preprocessed with these and not with the project's.
+    pub preprocessor_symbols: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -296,6 +299,36 @@ pub struct Request<'a> {
     /// `Loaded::lazy` says how to read a file later and holds a hash of the package's zip directory
     /// (ADR-022, "pure tests"). A package that cannot be read lazily (a folder, a wrapper) is read as usual.
     pub lazy_sources: bool,
+}
+
+/// The Microsoft build the packages in `search` come from: the highest version, among the packages
+/// of Business Foundation, System Application, Base Application and Application (the apps that ship
+/// one package per build, `MICROSOFT_PLATFORM_APP_IDS`), that reads as a four-part build. A package
+/// with or without AL source counts: a project's `.alpackages` holds what its developer compiled
+/// against, which is the build the project really targets, whatever the floor in its app.json says.
+/// Returns the build and the package it was read from. Reads manifests only.
+pub fn microsoft_packages_build(search: &[PathBuf], hint: Option<&str>) -> Option<(crate::build::BuildId, String)> {
+    use crate::select::MICROSOFT_PLATFORM_APP_IDS;
+    let mut best: Option<(crate::build::BuildId, String)> = None;
+    for dir in search {
+        for f in scan_path(dir, hint).0 {
+            let m = &f.manifest;
+            let ships_per_build = MICROSOFT_PLATFORM_APP_IDS
+                .iter()
+                .filter(|id| **id != crate::select::SYSTEM_APP_ID)
+                .any(|id| id.eq_ignore_ascii_case(&m.id));
+            if !ships_per_build || !m.publisher.eq_ignore_ascii_case("Microsoft") {
+                continue;
+            }
+            let Ok(b) = crate::build::BuildId::parse(&m.version.to_string()) else {
+                continue;
+            };
+            if best.as_ref().is_none_or(|(c, _)| b > *c) {
+                best = Some((b, format!("{} {} in {}", m.name, m.version, f.path.display())));
+            }
+        }
+    }
+    best
 }
 
 /// Chooses the packages that satisfy the project's dependencies and reads their source.
@@ -408,7 +441,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
         .collect();
     // A package read lazily has no sources; its files are named and read later.
     enum Read {
-        Eager(Manifest, Sources),
+        Eager(Box<Manifest>, Sources),
         Lazy(Box<crate::lazy::LazyPackage>),
     }
     let mut reads: std::collections::VecDeque<Result<Read, String>> = to_read
@@ -419,7 +452,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
                     return Ok(Read::Lazy(Box::new(l)));
                 }
             }
-            read_package_at_with(path, req.source_build).map(|(m, s)| Read::Eager(m, s))
+            read_package_at_with(path, req.source_build).map(|(m, s)| Read::Eager(Box::new(m), s))
         })
         .collect();
     let mut loaded = Loaded {
@@ -447,7 +480,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
         }
         let (manifest, sources, lazy): (Manifest, Option<Sources>, Option<crate::lazy::LazyPackage>) =
             match reads.pop_front().expect("one read per package")? {
-                Read::Eager(m, s) => (m, Some(s), None),
+                Read::Eager(m, s) => (*m, Some(s), None),
                 Read::Lazy(l) => (l.manifest.clone(), None, Some(*l)),
             };
         let role = if manifest.id.eq_ignore_ascii_case(SYSTEM_APP_ID) {
@@ -486,6 +519,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
             path,
             role,
             lazy: lazy.map(|l| l.source),
+            preprocessor_symbols: manifest.preprocessor_symbols.clone(),
         });
     }
     loaded.notes = notes;
@@ -771,28 +805,117 @@ mod tests {
     }
 
     #[test]
-    fn a_package_without_source_is_noted_and_not_loaded() {
+    fn a_package_without_source_is_not_found_and_says_where_the_search_went() {
         let dir = tempfile::tempdir().unwrap();
         write_app(dir.path(), "sym.app", "sym", "Sym", "1.0.0.0", &[], &[]);
+        let proj = project(&[("sym", "Sym", "1.0.0.0")]);
+        let searched = [dir.path().to_path_buf()];
+        let req = |missing| Request {
+            project: &proj,
+            workspace_apps: &[],
+            search_dirs: &searched,
+            missing,
+            source_build: None,
+            application_implies_dependencies: false,
+            lazy_sources: false,
+        };
+        let loaded = load_dependencies(&req(MissingPolicy::Skip)).unwrap();
+        assert!(
+            loaded.apps.is_empty(),
+            "a package without source is not loaded as a dependency"
+        );
+        let text = loaded.skipped[0].to_string();
+        assert!(
+            text.contains("Sym") && text.contains("without AL source") && text.contains("sym.app"),
+            "{text}"
+        );
+        assert!(
+            text.contains(&dir.path().display().to_string()),
+            "names the place searched: {text}"
+        );
+        // With the default policy it is an error, as a missing package is.
+        assert!(load_dependencies(&req(MissingPolicy::Error)).is_err());
+    }
+
+    /// The owner's case: the symbol package is in the project's `.alpackages`, the source is elsewhere
+    /// (a source archive in another search directory): the search goes on and finds it.
+    #[test]
+    fn a_symbol_package_in_the_first_place_does_not_hide_the_source_in_the_second() {
+        let alpackages = tempfile::tempdir().unwrap();
+        let elsewhere = tempfile::tempdir().unwrap();
+        write_app(alpackages.path(), "sym.app", "sym", "Sym", "2.0.0.0", &[], &[]);
+        let app_json = r#"{"id":"sym","name":"Sym","publisher":"P","version":"1.0.0.0","dependencies":[]}"#;
+        let zip = Builder::new()
+            .add("app.json", app_json.as_bytes(), true)
+            .add("S.Codeunit.al", b"codeunit 9 S { }", true)
+            .finish();
+        std::fs::write(elsewhere.path().join("Sym.Source.zip"), zip).unwrap();
         let loaded = load_dependencies(&Request {
             project: &project(&[("sym", "Sym", "1.0.0.0")]),
             workspace_apps: &[],
-            search_dirs: &[dir.path().to_path_buf()],
-            missing: MissingPolicy::Error,
+            search_dirs: &[alpackages.path().to_path_buf(), elsewhere.path().to_path_buf()],
+            missing: MissingPolicy::Skip,
             source_build: None,
             application_implies_dependencies: false,
             lazy_sources: false,
         })
         .unwrap();
-        assert!(loaded.apps.is_empty());
-        assert!(
-            loaded
-                .notes
-                .iter()
-                .any(|n| n.contains("Sym") && n.contains("no AL source")),
-            "{:?}",
-            loaded.notes
+        assert_eq!(loaded.apps.len(), 1);
+        assert!(loaded.skipped.is_empty());
+        assert!(loaded.apps[0].app.files.iter().any(|(_, t)| t.contains("codeunit 9 S")));
+    }
+
+    #[test]
+    fn the_build_of_a_project_is_the_build_of_the_microsoft_packages_it_carries() {
+        let dir = tempfile::tempdir().unwrap();
+        let put = |file: &str, id: &str, name: &str, version: &str, publisher: &str| {
+            let m = format!(
+                r#"<Package><App Id="{id}" Name="{name}" Publisher="{publisher}" Version="{version}" /><Dependencies/></Package>"#
+            );
+            let z = Builder::new().add("NavxManifest.xml", m.as_bytes(), true).finish();
+            std::fs::write(dir.path().join(file), navx(&z)).unwrap();
+        };
+        // Symbol packages, as VS Code downloads them: no AL source.
+        put(
+            "ba.app",
+            "437dbf0e-84ff-417a-965d-ed2bb9650972",
+            "Base Application",
+            "28.4.53241.53504",
+            "Microsoft",
         );
+        put(
+            "sa.app",
+            "63ca2fa4-4f03-4f2b-a480-172fef340d3f",
+            "System Application",
+            "28.3.52162.52931",
+            "Microsoft",
+        );
+        // System has the platform's own number; a test library and another publisher's app do not count.
+        put(
+            "sys.app",
+            "8874ed3a-0643-4247-9ced-7a7002f7135d",
+            "System",
+            "28.0.53445.0",
+            "Microsoft",
+        );
+        put(
+            "lib.app",
+            "dd0be2ea-f733-4d65-bb34-a28f4624fb14",
+            "Library Assert",
+            "99.9.99999.99999",
+            "Microsoft",
+        );
+        put(
+            "other.app",
+            "437dbf0e-84ff-417a-965d-ed2bb9650973",
+            "Mine",
+            "99.9.99999.99999",
+            "Me",
+        );
+        let (build, from) = microsoft_packages_build(&[dir.path().to_path_buf()], None).unwrap();
+        assert_eq!(build.to_string(), "28.4.53241.53504");
+        assert!(from.contains("Base Application") && from.contains("ba.app"), "{from}");
+        assert!(microsoft_packages_build(&[tempfile::tempdir().unwrap().path().to_path_buf()], None).is_none());
     }
 
     #[test]

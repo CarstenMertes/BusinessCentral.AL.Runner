@@ -234,6 +234,12 @@ pub fn layout(obj: &ast::Object) -> Layout {
             // The Schedule button of the request page: a run through `Report.Run` ignores it, true or false
             // (report/TestProbeReportContracts.al:AllowScheduling_TrueAndFalse_Run).
             "allowscheduling" => {}
+            // The data item a Word layout is merged per record of: rendering only, by the
+            // documentation (docs/probes-needed.md). Base Application's "Reference No Label" is named
+            // by an action of the page Item Reference List that tests open without invoking it.
+            "wordmergedataitem" => out
+                .output
+                .push(format!("report property {name} (a layout) is not supported yet")),
             other => out
                 .reasons
                 .push(format!("report property {other} is not supported yet")),
@@ -528,10 +534,17 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
     // extension that variable keeps (extensionevents/TestExtensionDeclaredEvents.al:105-117 pins a
     // procedure that raises an event of its own). What state that instance keeps is not pinned,
     // so a procedure next to a global variable or an added data item is refused.
-    let has_procedures = obj.routines().any(|r| !crate::pages::is_synthetic(&r.name()));
-    if has_procedures && obj.var_decls().next().is_some() {
+    // A `local` procedure (an event publisher such as Base Application's "Serv. Get Source Documents" declares
+    // only these) can be called from the extension's own code only, so it always runs on the instance that runs
+    // the calling trigger, which is where the extension's variables are (reportextensiontrigger/
+    // TestReportExtensionBaseMembersContracts.al:134-169 pins triggers that use an extension's own variable):
+    // the question below does not arise for it.
+    let public_procedures = obj
+        .routines()
+        .any(|r| !crate::pages::is_synthetic(&r.name()) && !r.is_local());
+    if public_procedures && obj.var_decls().next().is_some() {
         out.reasons
-            .push("a reportextension that declares procedures and global variables is not supported yet".into());
+            .push("a reportextension that declares public procedures and global variables is not supported yet".into());
     }
     for t in obj.triggers() {
         let n = t.name().to_ascii_lowercase();
@@ -610,9 +623,9 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                 .push(format!("reportextension section {other} is not supported yet")),
         }
     }
-    if has_procedures && !out.items.is_empty() {
+    if public_procedures && !out.items.is_empty() {
         out.reasons
-            .push("a reportextension that declares procedures and adds data items is not supported yet: which instance of the extension a procedure runs on, and whether it sees the added data items' records, are not pinned (docs/probes-needed.md)".into());
+            .push("a reportextension that declares public procedures and adds data items is not supported yet: which instance of the extension a procedure runs on, and whether it sees the added data items' records, are not pinned (docs/probes-needed.md)".into());
     }
     out
 }
@@ -1144,6 +1157,17 @@ mod tests {
         let output = l.output.join("; ");
         assert!(output.contains("defaultlayout"), "{output}");
         assert!(output.contains("section rendering"), "{output}");
+    }
+
+    #[test]
+    fn word_merge_data_item_refuses_the_rendering_run_not_the_declaration() {
+        // Base Application "Reference No Label" (`WordMergeDataItem = "Item Reference"`) is named by
+        // an action of the page Item Reference List that tests open without invoking it.
+        let l = layout_of(
+            "report 1 R { WordMergeDataItem = A; DefaultRenderingLayout = W; dataset { dataitem(A; Cust) { } } rendering { } }",
+        );
+        assert!(!l.reasons.join("; ").contains("wordmergedataitem"), "{:?}", l.reasons);
+        assert!(l.output.join("; ").contains("wordmergedataitem"), "{:?}", l.output);
     }
 
     #[test]

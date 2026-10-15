@@ -142,7 +142,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 ### al-sema
 
-- `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `ABSENT_ENUM_MEMBERS`).
+- `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0122, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `al_enum_assignment`, `ABSENT_ENUM_MEMBERS`).
 - `base_access.rs` (78): Page and report extension code that names the base object's members (ADR-023): which probes are pinned (`PINNED`), the `AL_UNPINNED_BASE_ACCESS` switch, the base's visible variables and procedures, and the slot of a base variable from syntax. Entry: `PINNED`, `pinned`, `scope_enabled`, `visible_vars`, `visible_procs`, `slot_of`.
 - `calcformula.rs` (513): The `CalcFormula` property of a FlowField, as syntax. Entry: `Formula` 18, `Cond` 28, `CondValue` 35, `parse` 48.
 - `check.rs` (2492): Resolves every name, member access and call in routine bodies, inferring types. Entry: `check_with` 122, `Checker` 323, `check_object` 647, `check_routine_in` 672, `CheckResult` 43, `Res` 67, `Roots` 103.
@@ -251,7 +251,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `pages/parts.rs` (324): Page parts (ADR-012 follow-up).
 - `pages/request.rs` (571): The request page of a report. Entry: `RequestClosed` 18, `action_id` 532.
 - `pages/runobject.rs` (321): `RunObject` actions (ADR-012 follow-up).
-- `partial.rs` (208): Partial records (SetLoadFields). Entry: `note_partial_fetch` 54, `load_fields_op` 122.
+- `partial.rs` (271): Partial records (SetLoadFields, LoadFields). Entry: `note_partial_fetch` 54, `load_fields_op` 122, `load_fields_row` 212.
 - `platform/apps.rs` (67): The tables that list the apps of the tenant.
 - `platform/date.rs` (361): The `Date` table (2000000007).
 - `platform/fields.rs` (264): The Field and Key platform tables. Entry: `field_row` 116, `shell_entries` 65.
@@ -278,7 +278,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `testdata.rs` (420): Test data (ADR-020): `TestBacking` maps a provider's columns onto the compiled table's fields, rebuilds the values and builds the table once per thread. Entry: `TestBacking`, `convert`, `sql_name`.
 - `transactions.rs` (446): Transactions as AL code sees them. Entry: `TxModel` 15, `CommitBehavior` 27, `codeunit_run` 193.
 - `ui.rs` (347): Dialogs raised by the code under test (`Message`, `Confirm`, `StrMenu`) and the test handler functions that answer them. Entry: `UiKind` 18, `UiHandler` 66, `dispatch_ui` 158, `dispatch_ui_returning` 163.
-- `views.rs` (377): Filter and view text: SetView, GetFilters, filter group text. Entry: `parse_filter_text` 28, `filter_text` 50, `get_filters` 117.
+- `views.rs` (510): Filter and view text: SetView, GetFilters, filter group text, AL property views (`property_view`). Entry: `parse_filter_text` 28, `filter_text` 50, `get_filters` 117, `property_view`.
 - `xmlports.rs` (1304): XmlPort import and export (Format = Xml).
 
 ## Flows

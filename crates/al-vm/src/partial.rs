@@ -23,7 +23,7 @@ use crate::records::Rec;
 use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
 use al_builtins::value::{Buffer, FieldSet, Value};
-use al_data::TableDef;
+use al_data::{Store, TableDef};
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
@@ -205,5 +205,79 @@ impl Session {
             }
             _ => unreachable!(),
         }
+    }
+
+    /// `Record.LoadFields(Fields)` on a record that was never fetched and holds its initial values:
+    /// reads the row of the buffer's primary key. Base Application's `Service Document Archive
+    /// Mgmt.` calls it as a statement before `Get()`, so it raises nothing when that row exists; that
+    /// the record then holds the row, with the named fields loaded, is the documentation's
+    /// (docs/probes-needed.md, issue 41). Without such a row the statement form does nothing. Everything
+    /// else is refused.
+    pub(crate) fn load_fields_row(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        cx: &al_data::AccessContext,
+        args: &[Value],
+    ) -> Result<Value, Signal> {
+        let wanted = positions(args)?;
+        let engine = self.engine.clone();
+        let schema = engine.program.objects[t.object as usize].table.as_ref();
+        if let Some(p) = wanted
+            .iter()
+            .find(|&&p| !schema.is_some_and(|s| s.fields.get(p).is_some_and(|f| f.stored)))
+        {
+            return unsupported(format!("LoadFields of field position {p}, which is not a stored field"));
+        }
+        if rec.borrow().load.buffer.is_some() {
+            return unsupported(
+                "LoadFields on a record that holds a fetched row: whether BC reads the row again, over values assigned since, is not pinned (docs/probes-needed.md)",
+            );
+        }
+        let fresh = self.initial_fields(t.object as usize);
+        {
+            let r = rec.borrow();
+            if format!("{:?}", fresh) != format!("{:?}", r.fields) {
+                return unsupported(
+                    "LoadFields on a record that was filled but never fetched: not pinned (docs/probes-needed.md)",
+                );
+            }
+            if !r.auto_calc.is_empty() {
+                return unsupported(
+                    "LoadFields on a record with SetAutoCalcFields: not pinned (docs/probes-needed.md)",
+                );
+            }
+        }
+        let pk = t.primary_key(&rec.borrow().fields);
+        let row = self
+            .store_for(rec)
+            .get(cx, t, &pk)
+            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+        let Some(row) = row else {
+            // As a statement it raises nothing: Base Application's `Service Document Archive
+            // Mgmt.`.GetNextOccurrenceNo calls it on a fresh archive record, where no row has the
+            // blank key, on every service document insert. The record stays as it was. The answer
+            // when the result is used is not pinned.
+            if !self.ret_used {
+                return Ok(Value::Boolean(false));
+            }
+            return unsupported(
+                "LoadFields with its result used when no row has the record's primary key: BC's answer is not pinned (docs/probes-needed.md)",
+            );
+        };
+        let id = row_id(t, &row);
+        self.load(rec, row)?;
+        let mut have = wanted;
+        have.extend(t.keys[0].iter().copied());
+        have.sort_unstable();
+        have.dedup();
+        let mut r = rec.borrow_mut();
+        r.load.buffer = Some(Buffer {
+            have: FieldSet::Of(have),
+            unsure: FieldSet::All,
+            row: Some(id),
+        });
+        r.load.partial = true;
+        Ok(Value::Boolean(true))
     }
 }

@@ -584,6 +584,20 @@ impl Session {
     }
 
     pub(crate) fn test_field(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
+        // `TestField(Field [, Value], ErrorInfo)`: the check is the one without the ErrorInfo, and one
+        // that holds raises nothing (documentation only, docs/probes-needed.md, issue 41; Base
+        // Application's "Gen. Jnl.-Check Line" calls it 176 times over). What a failing one raises
+        // from the ErrorInfo is not pinned: refused.
+        if let Some((Value::Library(kind, _), plain)) = args.split_last()
+            && kind.as_str() == "ErrorInfo"
+        {
+            return match self.test_field(rec, t, plain) {
+                Err(Signal::Error(_)) => unsupported(
+                    "TestField with an ErrorInfo whose check fails: the error BC raises from the ErrorInfo is not pinned (docs/probes-needed.md)",
+                ),
+                other => other,
+            };
+        }
         if args.len() > 2 {
             return unsupported("TestField with an ErrorInfo");
         }

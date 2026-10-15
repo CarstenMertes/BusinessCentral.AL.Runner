@@ -87,6 +87,9 @@ pub struct Members {
     pub enum_values: Vec<(u32, String)>,
     /// `Caption` of enum values that declare one, by ordinal.
     pub enum_captions: Vec<(u32, String)>,
+    /// An enum states `AssignmentCompatibility = true`: an enum of another type assigns into it
+    /// (corpus must-not-compile 0074, 0075; types/PXEnumRecordRef.al:7-10).
+    pub assignment_compatible: bool,
     pub procedures: Vec<ProcSig>,
 }
 
@@ -310,6 +313,10 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
         let slot = match p.name().to_ascii_lowercase().as_str() {
             "defaultimplementation" => ImplSlot::Default,
             "unknownvalueimplementation" => ImplSlot::Unknown,
+            "assignmentcompatibility" => {
+                m.assignment_compatible = p.value_text().trim().eq_ignore_ascii_case("true");
+                continue;
+            }
             _ => continue,
         };
         push_impls(&mut m, slot, &p.value_text(), i);

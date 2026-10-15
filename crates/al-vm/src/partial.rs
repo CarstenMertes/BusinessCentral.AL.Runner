@@ -141,11 +141,16 @@ impl Session {
         let stored = |p: usize| schema.is_some_and(|s| s.fields.get(p).is_some_and(|f| f.stored));
         match method {
             "SetLoadFields" | "AddLoadFields" => {
-                if let Some(p) = wanted.iter().find(|&&p| !stored(p)) {
-                    return unsupported(format!("{method} of field position {p}, which is not a stored field"));
+                // A field that is not stored (a FlowField, as in Sales Line SetLoadFieldsForInvDiscoundCalculation)
+                // is accepted and adds nothing to the request: it is no column to load. Not pinned by the corpus.
+                let no_args = wanted.is_empty();
+                let mut wanted = wanted;
+                if wanted.iter().any(|&p| !stored(p)) {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::LoadFieldsNonStored);
+                    wanted.retain(|&p| stored(p));
                 }
                 let mut r = rec.borrow_mut();
-                match (method, wanted.is_empty()) {
+                match (method, no_args) {
                     // No arguments: back to the default load set (record/TestRecordPartialLoad.al:61-99).
                     ("SetLoadFields", true) => r.load.request = None,
                     ("SetLoadFields", false) => r.load.request = Some(wanted),

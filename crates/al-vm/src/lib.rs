@@ -486,6 +486,10 @@ impl Session {
     pub fn rollback_transaction(&mut self) {
         self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
+        // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
+        // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
+        // recorded is written into them again at the next read.
+        self.coverage_rolled_back();
         for (slot, value) in std::mem::take(&mut self.truncate_undo) {
             self.autoinc.insert(slot, value);
         }

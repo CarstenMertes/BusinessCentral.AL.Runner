@@ -509,3 +509,13 @@ fn overloads_that_differ_only_in_the_table_of_a_record_parameter_pick_by_table()
         }";
     assert_eq!(text(run(src, "F", vec![])), "12");
 }
+
+// codeunit/PWCodeCoverageRows.al:DumpRows (BC 27.5): StrSubstNo of an Option field with an OptionCaption reads the
+// caption, as Format does ("Non Applicable", not the member NonApplicable).
+#[test]
+fn strsubstno_of_an_option_field_reads_its_caption() {
+    let src = "table 50300 T { fields { field(1; K; Code[10]) { } field(2; St; Option) { OptionMembers = Covered,NonApplicable; OptionCaption = 'Covered,Non Applicable'; } } keys { key(PK; K) { } } }
+        codeunit 50100 C { procedure F(): Text var R: Record T; begin R.St := R.St::NonApplicable;
+            exit(Format(R.St) + '|' + StrSubstNo('%1/%2', R.K, R.St)); end; }";
+    assert_eq!(text(run(src, "F", vec![])), "Non Applicable|/Non Applicable");
+}

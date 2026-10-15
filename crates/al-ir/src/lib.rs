@@ -73,6 +73,10 @@ pub struct SourceFile {
     /// Index into `Program::apps`.
     pub app: u32,
     pub path: String,
+    /// The text of the file, line by line, for an app whose manifest has
+    /// `resourceExposurePolicy.includeSourceInSymbolFile` (the Code Coverage table shows it); else empty.
+    #[serde(default)]
+    pub lines: Vec<String>,
 }
 
 /// "No position": a routine the compiler made up (a page expression), which has no source.
@@ -119,6 +123,10 @@ pub struct AppInfo {
     /// far as BC's behaviour goes. The app under test is not.
     #[serde(default)]
     pub dependency: bool,
+    /// The manifest says `resourceExposurePolicy.includeSourceInSymbolFile = true`: the app's source
+    /// lines are known (`SourceFile::lines`).
+    #[serde(default)]
+    pub include_source: bool,
 }
 
 /// A `.NET` type declared by a `dotnet { }` block.

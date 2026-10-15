@@ -361,6 +361,7 @@ pub(crate) fn lower_core(
                 dependencies: a.dependencies.clone(),
                 resources: Vec::new(),
                 dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
+                include_source: false,
             })
             .collect(),
         dotnet_types: ws
@@ -401,6 +402,7 @@ pub(crate) fn lower_core(
             .map(|f| ir::SourceFile {
                 app: f.app as u32,
                 path: f.path.clone(),
+                lines: Vec::new(),
             })
             .collect();
     }
@@ -4938,6 +4940,10 @@ impl Lowerer<'_> {
                         ir::Arg::Value(ir::Expr::Convert(self.rt(&el)?, Box::new(self.expr(a)?)))
                     } else if id.starts_with("System.Format#") && i == 0 {
                         ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
+                    } else if id.starts_with("Text.StrSubstNo#") && i >= 1 {
+                        // `%n` formats its argument like `Format`: an Option field shows its caption
+                        // (codeunit/PWCodeCoverageRows.al:DumpRows).
+                        ir::Arg::Value(self.format_option_field(true, a)?)
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });

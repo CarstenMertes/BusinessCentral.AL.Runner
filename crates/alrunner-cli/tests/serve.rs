@@ -195,7 +195,7 @@ fn bad_requests_get_an_error_line_and_the_server_goes_on() {
     s.send(json!({"command": "cancel"}));
     assert_eq!(s.line(), json!({"type": "ack", "command": "cancel", "noop": true}));
     // A field of another command only earns a warning.
-    s.send(json!({"command": "runTests", "sourcePaths": [a], "captureValues": true, "test": "Passes"}));
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "code": "x", "test": "Passes"}));
     let lines = s.until_summary();
     assert_eq!(
         lines.last().unwrap()["warnings"].as_array().unwrap().len(),
@@ -591,11 +591,10 @@ fn execute_checks_its_request_and_says_what_it_does_not_do_yet() {
             .unwrap()
             .contains("deferred")
     );
-    // Value capture is step 5: the run happens, and the response says so.
     let r =
         ask(json!({"command": "execute", "code": "Message('a');", "captureValues": true, "iterationTracking": true}));
     assert_eq!(r["tests"][0]["messages"], json!(["a"]), "{r}");
-    assert_eq!(r["warnings"].as_array().unwrap().len(), 2, "{r}");
+    assert!(r.get("warnings").is_none(), "{r}");
     // A field of runTests: a warning, not an error.
     let r = ask(json!({"command": "execute", "code": "Message('a');", "test": "X"}));
     assert!(r["warnings"][0].as_str().unwrap().contains("runTests"), "{r}");
@@ -640,6 +639,137 @@ fn cancel_stops_an_execute_that_does_not_end() {
     // The server goes on.
     s.send(json!({"command": "execute", "code": "Message('after');"}));
     assert_eq!(s.line()["tests"][0]["messages"], json!(["after"]));
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+// ---- captureValues and iterationTracking ----
+
+#[test]
+fn execute_returns_the_values_and_the_loops_as_v2_does() {
+    let mut s = started();
+    s.send(json!({
+        "command": "execute", "captureValues": true, "iterationTracking": true, "coverage": true,
+        "code": "codeunit 50102 X3 { trigger OnRun() var i: Integer; total: Integer; begin total := 0; for i := 1 to 3 do begin total := total + i; Message(Format(total)); end; end; }"
+    }));
+    let r = s.line();
+    assert_eq!(r["exitCode"], 0, "{r}");
+    let t = &r["tests"][0];
+    assert_eq!(t["name"], "X3.OnRun");
+    let cv = t["capturedValues"].as_array().unwrap();
+    let shape: Vec<(String, i64, Option<i64>, Option<i64>)> = cv
+        .iter()
+        .map(|v| {
+            (
+                v["variableName"].as_str().unwrap().to_string(),
+                v["value"].as_i64().unwrap(),
+                v["loop"].as_i64(),
+                v["iteration"].as_i64(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        shape,
+        vec![
+            ("total".to_string(), 0, None, None),
+            ("i".to_string(), 1, Some(0), Some(1)),
+            ("total".to_string(), 1, Some(0), Some(1)),
+            ("i".to_string(), 2, Some(0), Some(2)),
+            ("total".to_string(), 3, Some(0), Some(2)),
+            ("i".to_string(), 3, Some(0), Some(3)),
+            ("total".to_string(), 6, Some(0), Some(3)),
+        ]
+    );
+    // The loop: where it is, how many passes, how it ended, and the statements of each pass.
+    let l = &t["loops"][0];
+    assert_eq!(
+        (l["id"].as_i64(), l["scope"].as_str(), l["iterationCount"].as_i64()),
+        (Some(0), Some("OnRun"), Some(3))
+    );
+    assert_eq!(l["closedBy"], "exit");
+    assert!(l["file"].as_str().unwrap().ends_with("/Inline.al"), "{l}");
+    assert_eq!(l["iterations"].as_array().unwrap().len(), 3);
+    assert_eq!(l["iterations"][0]["index"], 1);
+    // The ids of statements are the ids of the coverage table (same scope).
+    let ids: Vec<i64> = cv.iter().map(|v| v["statementId"].as_i64().unwrap()).collect();
+    let covered: Vec<i64> = r["coverage"][0]["statements"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|st| st["id"].as_i64().unwrap())
+        .collect();
+    assert!(ids.iter().all(|i| covered.contains(i)), "{ids:?} not in {covered:?}");
+    // The tagged messages are the response's.
+    let m = r["messages"].as_array().unwrap();
+    assert_eq!(m.len(), 3, "{r}");
+    assert_eq!(
+        (m[1]["text"].as_str(), m[1]["loop"].as_i64(), m[1]["iteration"].as_i64()),
+        (Some("3"), Some(0), Some(2))
+    );
+    // Without the flags there is nothing of it.
+    s.send(json!({"command": "execute", "code": "Message('x');"}));
+    let r = s.line();
+    assert!(
+        r["tests"][0].get("capturedValues").is_none() && r["tests"][0].get("loops").is_none(),
+        "{r}"
+    );
+    assert!(r.get("messages").is_none(), "{r}");
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+const CAPTURE_TESTS: &str = r#"
+codeunit 50300 "Capture Tests"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure Loops()
+    var
+        i: Integer;
+        Sum: Integer;
+    begin
+        for i := 1 to 2 do
+            Sum += i;
+    end;
+}
+"#;
+
+#[test]
+fn run_tests_puts_the_capture_on_the_test_line() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "cap", CAPTURE_TESTS);
+    let mut s = started();
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "captureValues": true, "iterationTracking": true}));
+    let lines = s.until_summary();
+    let t = lines.iter().find(|l| l["type"] == "test").unwrap();
+    assert_eq!(t["status"], "pass", "{t}");
+    let values: Vec<(String, i64)> = t["capturedValues"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| {
+            (
+                v["variableName"].as_str().unwrap().to_string(),
+                v["value"].as_i64().unwrap(),
+            )
+        })
+        .collect();
+    assert_eq!(
+        values,
+        vec![
+            ("i".to_string(), 1),
+            ("Sum".to_string(), 1),
+            ("i".to_string(), 2),
+            ("Sum".to_string(), 3)
+        ]
+    );
+    assert_eq!(t["loops"][0]["iterationCount"], 2);
+    // Another request without the flags: the lines carry nothing of it.
+    s.send(json!({"command": "runTests", "sourcePaths": [a]}));
+    let lines = s.until_summary();
+    let t = lines.iter().find(|l| l["type"] == "test").unwrap();
+    assert!(t.get("capturedValues").is_none() && t.get("loops").is_none(), "{t}");
     s.send(json!({"command": "shutdown"}));
     s.line();
 }

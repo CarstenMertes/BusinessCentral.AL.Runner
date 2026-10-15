@@ -7,6 +7,26 @@ use std::cell::RefCell;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 
+/// Where a statement is: the position the capture names a statement by.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Loc {
+    /// The app that holds the file, as the caller numbered the apps of the run.
+    pub app: usize,
+    /// The path of the file inside its app.
+    pub file: String,
+    pub line: u32,
+    pub column: u32,
+    pub end_line: u32,
+}
+
+/// What a capture saw (`RunOptions::capture`), with where the statements it names are.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct CapturedAt {
+    pub captured: al_vm::Captured,
+    /// By position id: every statement the capture names.
+    pub locations: std::collections::BTreeMap<u32, Loc>,
+}
+
 /// A test that finished.
 #[derive(Debug, Clone)]
 pub struct TestEvent {
@@ -18,6 +38,8 @@ pub struct TestEvent {
     pub time: std::time::Duration,
     /// With `RunOptions::coverage`: the statements the test ran (position id, runs).
     pub coverage: Vec<(u32, u32)>,
+    /// With `RunOptions::capture`: what the test's code did, statement by statement.
+    pub captured: Option<CapturedAt>,
 }
 
 type OnTest = Arc<dyn Fn(TestEvent) + Send + Sync>;

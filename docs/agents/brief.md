@@ -180,7 +180,7 @@ Run these in order. Do not skip any.
    as in CI.
 3. Run the release-only tests. `check.sh` skips these `#[ignore]`d tests and CI
    runs them:
-   `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget --test corpus_resolve_deps -p al-data --lib -- --ignored`
+   `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget --test perf_vm --test corpus_resolve_deps -p al-data --lib -- --ignored`
    If the golden list of unresolved items changes, review the change and
    justify it in your report before you regenerate it with `UPDATE_GOLDEN=1`.
 4. Run the demand/eager differential if you touched dependency loading,

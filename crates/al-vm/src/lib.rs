@@ -13,7 +13,9 @@ use std::sync::Arc;
 
 mod autoinc;
 mod baseline;
+mod capture;
 pub use baseline::Baseline;
+pub use capture::{CaptureConfig, Captured, ClosedBy, LoopRecord, MAX_RECORDS, MessageRecord, Rendered, ValueRecord};
 pub use faultsite::FaultFrame;
 mod callstack;
 mod companies;
@@ -289,6 +291,8 @@ pub struct Session {
     /// A scratch run (`alrunner serve`'s `execute`): the text of every `Message` raised outside a test
     /// method, in order. `None`: such a call is refused, as BC's behaviour then is not pinned.
     pub(crate) scratch_messages: Option<Vec<String>>,
+    /// Value capture and loop tracking (`capture.rs`); `None`: off, and the statements run as they always did.
+    pub(crate) capture: Option<Box<capture::Capture>>,
     /// Set from another thread to stop the AL code of this session: every loop iteration checks it
     /// and ends the running test with `Signal::Unsupported` (the runner's per-test time limit).
     pub(crate) stop: Arc<std::sync::atomic::AtomicBool>,
@@ -464,6 +468,7 @@ impl Session {
             commit_behavior: Default::default(),
             in_test_codeunit: false,
             scratch_messages: None,
+            capture: None,
             stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             commits: 0,
             error_scopes: Default::default(),
@@ -859,7 +864,9 @@ impl Session {
             routine,
             pos: ir::NO_POS,
         });
+        self.cap_enter_frame(object, r, &frame.locals);
         let mut outcome = self.exec_block(&r.body, &mut frame);
+        self.cap_leave_frame(&outcome);
         if self.fault_trace && matches!(outcome, Err(Signal::Error(_) | Signal::Unsupported(_))) {
             self.note_fault();
         }
@@ -940,6 +947,9 @@ impl Session {
     }
 
     fn exec_block(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
+        if self.capture.as_ref().is_some_and(|c| c.tracking()) {
+            return self.exec_block_captured(stmts, f);
+        }
         for s in stmts {
             self.exec(s, f)?;
         }
@@ -977,8 +987,10 @@ impl Session {
             }
             S::While(c, body) => {
                 let here = self.call_stack.last().map(|t| t.pos);
+                let lid = self.cap_loop_enter();
                 while ops::truthy(&self.eval(c, f)?)? {
                     self.check_stop()?;
+                    self.cap_loop_pass(lid);
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
@@ -987,12 +999,15 @@ impl Session {
                     // The condition belongs to the loop's line, not to the body's last statement.
                     self.restore_pos(here);
                 }
+                self.cap_loop_exit(lid);
                 Ok(())
             }
             S::Repeat(body, until) => {
                 let here = self.call_stack.last().map(|t| t.pos);
+                let lid = self.cap_loop_enter();
                 loop {
                     self.check_stop()?;
+                    self.cap_loop_pass(lid);
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
@@ -1003,6 +1018,7 @@ impl Session {
                         break;
                     }
                 }
+                self.cap_loop_exit(lid);
                 Ok(())
             }
             S::For {
@@ -1032,8 +1048,10 @@ impl Session {
                 let (from, to) = (bound(from), bound(to));
                 let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
+                let lid = self.cap_loop_enter();
                 while if *down { i >= end } else { i <= end } {
                     self.check_stop()?;
+                    self.cap_loop_pass(lid);
                     let slot_ty = self.place_type(var, f);
                     if matches!(slot_ty, RtType::Option(_) | RtType::Enum(_)) {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
@@ -1045,6 +1063,7 @@ impl Session {
                         ops::convert(Value::BigInteger(i), &slot_ty)?
                     };
                     self.write(var, counter, f)?;
+                    self.cap_loop_var(var, f);
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
@@ -1055,6 +1074,7 @@ impl Session {
                     i = int(&bound(self.read(var, f)?))?;
                     i += if *down { -1 } else { 1 };
                 }
+                self.cap_loop_exit(lid);
                 Ok(())
             }
             S::Foreach { var, collection, body } => {
@@ -1075,14 +1095,18 @@ impl Session {
                         None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
                 };
+                let lid = self.cap_loop_enter();
                 for item in items {
+                    self.cap_loop_pass(lid);
                     self.write(var, item, f)?;
+                    self.cap_loop_var(var, f);
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
                     }
                 }
+                self.cap_loop_exit(lid);
                 Ok(())
             }
             S::Case {

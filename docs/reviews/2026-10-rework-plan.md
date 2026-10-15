@@ -180,3 +180,4 @@ continue even if it costs time." The orchestrator decided, preferring the more d
 - **D7:** (b) warn at 2,000 lines, fail at 3,000, with a shrinking exception list.
 - **D8:** (a) no feature work during the rework. The laptop corpus writer and the corpus publishing continue; a fix for
   a red CI is allowed.
+- **D4 (decided after `profile-suites`, docs/reviews/2026-10-pageworks-profile.md):** record handling first (ADR-035; Tests-ERM spends about 40% copying table schemas), then **register bytecode** for the executable form: once record costs are cut, dispatch dominates (Pageworks: dispatch 45%).

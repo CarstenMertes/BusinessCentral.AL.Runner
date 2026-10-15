@@ -153,6 +153,8 @@ pub struct TestResult {
     pub coverage: Vec<(u32, u32)>,
     /// With `RunOptions::execute`: the text of the `Message` calls the run made, in order.
     pub messages: Vec<String>,
+    /// With `RunOptions::capture`: what the capture saw while the test ran.
+    pub captured: Option<crate::events::CapturedAt>,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -237,7 +239,24 @@ struct Unit {
     coverage: bool,
     /// Run the `OnRun` trigger as the one test (`RunOptions::execute`).
     execute: bool,
+    /// What to capture of each test (`RunOptions::capture`).
+    capture: al_vm::CaptureConfig,
+    /// See `Scratch::order`.
+    order: Arc<Vec<usize>>,
     hooks: crate::events::Hooks,
+}
+
+/// What a scratch run or a capture leaves besides outcomes, per test.
+#[derive(Default)]
+struct Scratch {
+    /// What to capture (`RunOptions::capture`).
+    capture: al_vm::CaptureConfig,
+    /// The apps of the program, as the caller numbered them (to place what a capture names).
+    order: Arc<Vec<usize>>,
+    /// The text of the `Message` calls of an `execute` run.
+    messages: Vec<(String, Vec<String>)>,
+    /// What the capture saw.
+    captured: Vec<(String, crate::events::CapturedAt)>,
 }
 
 /// What a test codeunit left: each test's outcome, the call stack of each AL error that failed one, how long
@@ -248,7 +267,7 @@ type UnitOutcomes = (
     Vec<(String, std::time::Duration)>,
     Vec<(String, Vec<Assumption>)>,
     Vec<(String, Vec<(u32, u32)>)>,
-    Vec<(String, Vec<String>)>,
+    Scratch,
 );
 
 struct UnitResult {
@@ -288,7 +307,14 @@ fn run_unit(
             si: u.si,
             oi: u.oi,
             id: u.id,
-            result: Ok((Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())),
+            result: Ok((
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Vec::new(),
+                Scratch::default(),
+            )),
             took: started.elapsed(),
             sidecar_start: std::time::Duration::ZERO,
         };
@@ -297,7 +323,11 @@ fn run_unit(
         let mut stacks = Vec::new();
         let mut times = Vec::new();
         let mut hits = Vec::new();
-        let mut messages = Vec::new();
+        let mut scratch = Scratch {
+            capture: u.capture,
+            order: u.order.clone(),
+            ..Default::default()
+        };
         if u.coverage {
             crate::coverage::begin();
         }
@@ -311,11 +341,11 @@ fn run_unit(
             &mut stacks,
             &mut times,
             &mut hits,
-            &mut messages,
+            &mut scratch,
             limit,
             u.execute,
         );
-        (done, stacks, times, hits, crate::coverage::finish(), messages)
+        (done, stacks, times, hits, crate::coverage::finish(), scratch)
     }))
     .map_err(|p| {
         p.downcast_ref::<String>()
@@ -335,6 +365,7 @@ fn run_unit(
             call_stack,
             time,
             coverage,
+            captured: None,
         };
         match &result {
             Ok((done, stacks, times, _, covs, _)) => {
@@ -473,6 +504,9 @@ pub struct RunOptions {
     /// A scratch run (`alrunner serve`'s `execute`): the `OnRun` trigger of one codeunit per `SuiteRun`'s app runs
     /// instead of the tests, and the text of its `Message` calls is kept in `TestResult::messages`.
     pub execute: bool,
+    /// Capture the values of the locals and the loops of the apps' code, per test (`alrunner serve`, ADR-030). Off,
+    /// a run pays nothing for it.
+    pub capture: al_vm::CaptureConfig,
     /// Callbacks while the run goes on: a line per test as it finishes, and a flag that stops the run after the
     /// current test (`alrunner serve`).
     pub hooks: crate::events::Hooks,
@@ -1412,6 +1446,7 @@ impl CorpusRuntime {
         let mut codeunit_times: Vec<CodeunitTime> = Vec::new();
         // The test codeunits to run, in the order the report lists them.
         let mut units: Vec<Unit> = Vec::new();
+        let order_arc: Arc<Vec<usize>> = Arc::new(order.clone());
         let mut list: Vec<TestResult> = Vec::new();
         for (si, suite) in suites.iter().enumerate() {
             if opts.execute {
@@ -1425,6 +1460,8 @@ impl CorpusRuntime {
                         without_baseline: false,
                         coverage: opts.coverage,
                         execute: true,
+                        capture: opts.capture,
+                        order: order_arc.clone(),
                         hooks: opts.hooks.clone(),
                     });
                 }
@@ -1446,6 +1483,8 @@ impl CorpusRuntime {
                         without_baseline: false,
                         coverage: opts.coverage,
                         execute: false,
+                        capture: opts.capture,
+                        order: order_arc.clone(),
                         hooks: opts.hooks.clone(),
                     }),
                     Err(why) => {
@@ -1463,6 +1502,7 @@ impl CorpusRuntime {
                                 time: std::time::Duration::ZERO,
                                 coverage: Vec::new(),
                                 messages: Vec::new(),
+                                captured: None,
                             });
                         }
                     }
@@ -1568,7 +1608,8 @@ impl CorpusRuntime {
                         assumptions: Vec<Assumption>,
                         time: std::time::Duration,
                         coverage: Vec<(u32, u32)>,
-                        messages: Vec<String>| {
+                        messages: Vec<String>,
+                        captured: Option<crate::events::CapturedAt>| {
                 list.push(TestResult {
                     suite: r.si,
                     app: order[o.app as usize],
@@ -1581,10 +1622,11 @@ impl CorpusRuntime {
                     time,
                     coverage,
                     messages,
+                    captured,
                 })
             };
             match r.result {
-                Ok((done, stacks, times, hits, mut covs, mut msgs)) => {
+                Ok((done, stacks, times, hits, mut covs, mut scratch)) => {
                     for (name, outcome) in done {
                         let stack = stacks.iter().find(|(n, _)| *n == name).map(|(_, s)| s.clone());
                         let marks = hits.iter().find(|(n, _)| *n == name).map(|(_, h)| h.clone());
@@ -1601,11 +1643,17 @@ impl CorpusRuntime {
                             .position(|(n, _)| *n == name)
                             .map(|i| std::mem::take(&mut covs[i].1))
                             .unwrap_or_default();
-                        let said = msgs
+                        let said = scratch
+                            .messages
                             .iter()
                             .position(|(n, _)| *n == name)
-                            .map(|i| std::mem::take(&mut msgs[i].1))
+                            .map(|i| std::mem::take(&mut scratch.messages[i].1))
                             .unwrap_or_default();
+                        let seen = scratch
+                            .captured
+                            .iter()
+                            .position(|(n, _)| *n == name)
+                            .map(|i| std::mem::take(&mut scratch.captured[i].1));
                         push(
                             &mut list,
                             &name,
@@ -1615,6 +1663,7 @@ impl CorpusRuntime {
                             time,
                             cov,
                             said,
+                            seen,
                         );
                         times_by_case.insert((r.si, r.id, name.to_lowercase()), time);
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
@@ -1642,6 +1691,7 @@ impl CorpusRuntime {
                             std::time::Duration::ZERO,
                             Vec::new(),
                             Vec::new(),
+                            None,
                         );
                         outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
                     }
@@ -2131,7 +2181,7 @@ pub fn run_codeunit_full(
         stacks,
         times,
         hits,
-        &mut Vec::new(),
+        &mut Scratch::default(),
         limit,
         false,
     )
@@ -2150,7 +2200,7 @@ fn run_codeunit_core(
     stacks: &mut Vec<(String, String)>,
     times: &mut Vec<(String, std::time::Duration)>,
     hits: &mut Vec<(String, Vec<Assumption>)>,
-    messages: &mut Vec<(String, Vec<String>)>,
+    scratch: &mut Scratch,
     limit: Option<std::time::Duration>,
     execute: bool,
 ) -> Vec<(String, Outcome)> {
@@ -2245,6 +2295,9 @@ fn run_codeunit_core(
     // Function isolation returns the database to its state after OnRun when each test ends
     // (corpus isolation probe T5 and T6; oracle/28/xunit-isolation-function.xml).
     let checkpoint = (isolation == TestIsolation::Function).then(|| Checkpoint::take(&mut session));
+    if scratch.capture.any() {
+        session.enable_capture(scratch.capture);
+    }
     let mut out = Vec::new();
     // Set by the first test that was refused while it ran: it stopped half way, so what it left in
     // the codeunit's AL state (globals, single-instance codeunits) is not what BC would have left.
@@ -2434,7 +2487,14 @@ fn run_codeunit_core(
         }
         let took = test_started.elapsed();
         if execute {
-            messages.push((routine.name.clone(), session.take_messages()));
+            scratch.messages.push((routine.name.clone(), session.take_messages()));
+        }
+        let captured_at = scratch
+            .capture
+            .any()
+            .then(|| crate::capture::resolve(&lowered.program, &scratch.order, session.take_capture()));
+        if let Some(c) = &captured_at {
+            scratch.captured.push((routine.name.clone(), c.clone()));
         }
         times.push((routine.name.clone(), took));
         let cov = if covering { session.take_coverage() } else { Vec::new() };
@@ -2452,6 +2512,7 @@ fn run_codeunit_core(
                     .unwrap_or_default(),
                 time: took,
                 coverage: cov.clone(),
+                captured: captured_at.clone(),
             });
         }
         if covering {
@@ -2481,6 +2542,7 @@ fn run_codeunit_core(
                     call_stack: String::new(),
                     time: std::time::Duration::ZERO,
                     coverage: Vec::new(),
+                    captured: None,
                 });
             }
             out.push((obj.routines[r].name.clone(), outcome));

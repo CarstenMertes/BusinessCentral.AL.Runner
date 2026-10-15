@@ -505,9 +505,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Media.ImportFile#1" | "MediaSet.ImportFile#1" => {
             "Media.ImportFile and MediaSet.ImportFile read a file of the service tier and are in no corpus test, so which file a test can name, the error for a missing file and what the Tenant Media row holds are not pinned"
         }
-        "RecordRef.Copy#1" | "RecordRef.Copy#2" => {
-            "RecordRef.Copy is in no corpus test, so what it copies (the buffer, the filters, the key, the table view) and what ShareTable changes are not pinned"
-        }
         _ => return None,
     })
 }

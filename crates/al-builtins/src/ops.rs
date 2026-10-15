@@ -631,11 +631,25 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Integer(a), V::BigInteger(b)) => return Ok(i64::from(*a).cmp(b)),
         (V::BigInteger(a), V::Integer(b)) => return Ok(a.cmp(&i64::from(*b))),
         (V::Decimal(a), V::Decimal(b)) => return Ok(a.cmp(b)),
+        (V::Boolean(a), V::Boolean(b)) => return Ok(a.cmp(b)),
+        (V::Date(a, ca), V::Date(b, cb)) => return Ok((a, ca).cmp(&(b, cb))),
+        (V::Time(a), V::Time(b)) | (V::DateTime(a), V::DateTime(b)) | (V::Duration(a), V::Duration(b)) => {
+            return Ok(a.cmp(b));
+        }
+        (V::Guid(a), V::Guid(b)) => return Ok(a.cmp(b)),
+        (V::Option(a, _), V::Option(b, _)) => return Ok(a.cmp(b)),
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if !a.has_marker() && !b.has_marker() => {
             return Ok(a.cmp(b));
         }
         _ => {}
     }
+    compare_general(l, r)
+}
+
+/// The rest of [`compare`]: kept out of line so that the fast cases above stay small.
+#[inline(never)]
+fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
+    use Value as V;
     if let (Some(a), Some(b)) = (as_decimal(l), as_decimal(r)) {
         if !matches!(l, V::Char(_)) || !matches!(r, V::Text(_) | V::Code(_)) {
             return Ok(a.cmp(&b));

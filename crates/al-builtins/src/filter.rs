@@ -27,7 +27,7 @@ impl FilterExpr {
         // A text of spaces only is blank to a filter: `SetRange(Txt, ' ')` finds the rows holding '', ' ' and '  ', and
         // `<> ' '` finds the others (filters/W4Filters.al:BlankOnlyFilterValues_MatchOnlyBlankRows, BC 27.5 and 29.0).
         // Other trailing spaces are not pinned.
-        let v = &blank_if_spaces(v);
+        let v = &*blank_if_spaces(v);
         let cmp = |x: &Value| compare(v, &blank_if_spaces(x)).ok();
         match self {
             FilterExpr::Range(lo, hi) => {
@@ -50,11 +50,17 @@ impl FilterExpr {
     }
 }
 
-fn blank_if_spaces(v: &Value) -> Value {
+/// The value, or the blank text when it is spaces only; borrowed (no clone) in the usual case.
+fn blank_if_spaces(v: &Value) -> std::borrow::Cow<'_, Value> {
+    use std::borrow::Cow;
     match v {
-        Value::Text(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Text(String::new().into()),
-        Value::Code(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Code(String::new().into()),
-        other => other.clone(),
+        Value::Text(s) if !s.is_empty() && s.bytes().all(|c| c == b' ') => {
+            Cow::Owned(Value::Text(String::new().into()))
+        }
+        Value::Code(s) if !s.is_empty() && s.bytes().all(|c| c == b' ') => {
+            Cow::Owned(Value::Code(String::new().into()))
+        }
+        other => Cow::Borrowed(other),
     }
 }
 

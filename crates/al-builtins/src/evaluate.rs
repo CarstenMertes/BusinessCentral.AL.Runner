@@ -285,13 +285,13 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
                 .or_else(|| {
                     members
                         .iter()
-                        .find(|(_, n)| n.eq_ignore_ascii_case(&text))
+                        .find(|(_, n)| n.eq_ignore_ascii_case(text))
                         .map(|(o, _)| *o)
                 })
                 .or_else(|| {
                     captions
                         .iter()
-                        .find(|(_, n)| n.eq_ignore_ascii_case(&text))
+                        .find(|(_, n)| n.eq_ignore_ascii_case(text))
                         .map(|(o, _)| *o)
                 });
             match found {

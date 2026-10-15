@@ -51,6 +51,7 @@ pub fn apply_overrides(lines: &[&str], overrides: &str) -> Result<Vec<String>, S
 /// `SecretStrSubstNo(...)` unqualified and BC compiles it.
 pub const GLOBAL_RECEIVERS: &[&str] = &["System", "Dialog", "Text", "Database", "Session", "SecretText", "File"];
 
+#[derive(Clone)]
 pub struct Catalog {
     /// Every overload of every version, in id order: untagged first, then by tag (ADR-015 3.3).
     pub signatures: Vec<Signature>,
@@ -62,8 +63,17 @@ pub struct Catalog {
 
 impl Catalog {
     /// The whole catalog, as for the newest runtime: nothing is hidden.
+    ///
+    /// Parsed once per process (about 750 signatures); a caller gets a copy of it. Code that only reads the catalog
+    /// takes [`Catalog::shared`] and copies nothing.
     pub fn load() -> Catalog {
-        Catalog::build(None)
+        Catalog::shared().clone()
+    }
+
+    /// The same catalog, shared by the whole process.
+    pub fn shared() -> &'static Catalog {
+        static CATALOG: std::sync::OnceLock<Catalog> = std::sync::OnceLock::new();
+        CATALOG.get_or_init(|| Catalog::build(None))
     }
 
     /// The catalog an app of the target's runtime sees: `overloads` and `global`
@@ -248,6 +258,16 @@ pub fn generate(surface_json: &str) -> Result<Vec<String>, String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_catalog_is_parsed_once_and_every_copy_is_the_one_a_fresh_parse_gives() {
+        let fresh = Catalog::build(None);
+        assert!(std::ptr::eq(Catalog::shared(), Catalog::shared()));
+        assert_eq!(Catalog::load().signatures, fresh.signatures);
+        assert_eq!(Catalog::shared().signatures, fresh.signatures);
+        let id = Catalog::shared().id(&fresh.signatures[10]);
+        assert_eq!(Catalog::load().id(&fresh.signatures[10]), id);
+    }
 
     #[test]
     fn overrides_remove_and_add_lines() {

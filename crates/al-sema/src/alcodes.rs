@@ -15,7 +15,7 @@
 //!   runtime, the keys of its app.json). The caller supplies them; a compile without them skips
 //!   these checks.
 //!
-//! The codes the checker itself reports (`check.rs`, where types are known) are AL0118, AL0122,
+//! The codes the checker itself reports (`check/`, where types are known) are AL0118, AL0122,
 //! AL0132 and AL0161; they are listed in [`IMPLEMENTED`] too.
 
 use crate::workspace::{AppKind, Diagnostic, ObjKind, Workspace};

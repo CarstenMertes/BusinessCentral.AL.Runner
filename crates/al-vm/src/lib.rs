@@ -175,6 +175,9 @@ pub struct Session {
     pub(crate) page_handler_depth: usize,
     /// `CodeCoverageLog` is recording.
     pub(crate) code_coverage: bool,
+    /// `alrunner test --coverage`: runs per statement position (`Program::positions`) since the last
+    /// [`Session::take_coverage`]. `None` when coverage is off, which costs one branch per statement.
+    coverage_counts: Option<(Vec<u32>, Vec<u32>)>,
     /// What recording noted (`platform/coverage.rs`).
     pub(crate) recorder: platform::coverage::Recorder,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
@@ -430,6 +433,7 @@ impl Session {
             committed_row_version: 0,
             page_handler_depth: 0,
             code_coverage: false,
+            coverage_counts: None,
             recorder: Default::default(),
             frames: Vec::new(),
             call_stack: Vec::new(),
@@ -896,6 +900,24 @@ impl Session {
         self.stop.clone()
     }
 
+    /// Starts counting how often each statement runs (`alrunner test --coverage`).
+    pub fn enable_coverage(&mut self) {
+        self.coverage_counts = Some((Vec::new(), Vec::new()));
+    }
+
+    /// The statements that ran since the last call, as (position id, runs); counting starts again.
+    pub fn take_coverage(&mut self) -> Vec<(u32, u32)> {
+        let Some((counts, touched)) = &mut self.coverage_counts else {
+            return Vec::new();
+        };
+        let mut out: Vec<(u32, u32)> = touched
+            .drain(..)
+            .map(|id| (id, std::mem::take(&mut counts[id as usize])))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// Rearms the stop flag for the next test.
     pub fn clear_stop(&self) {
         self.stop.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -1054,6 +1076,16 @@ impl Session {
                 }
                 if self.code_coverage {
                     self.coverage_hit(*p);
+                }
+                if let Some((counts, touched)) = &mut self.coverage_counts {
+                    let i = *p as usize;
+                    if counts.len() <= i {
+                        counts.resize(self.engine.program.positions.len().max(i + 1), 0);
+                    }
+                    if counts[i] == 0 {
+                        touched.push(*p);
+                    }
+                    counts[i] += 1;
                 }
                 Ok(())
             }

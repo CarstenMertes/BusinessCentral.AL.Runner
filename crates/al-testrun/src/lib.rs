@@ -5,6 +5,7 @@
 
 pub mod baseline;
 pub mod compile_cache;
+pub mod coverage;
 mod cpuclock;
 pub mod deps;
 pub mod discover;

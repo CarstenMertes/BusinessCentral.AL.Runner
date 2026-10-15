@@ -14,7 +14,7 @@ page grows with each step).
 | Step | What | State |
 |---|---|---|
 | 1 | `alrunner test` flags LethAL uses, v2-shaped `--output-json` | done (this page, sections 1 to 5) |
-| 2 | Cobertura coverage (`--coverage`, `--coverage-out`) | not yet. The flags are refused with exit 2. |
+| 2 | Cobertura coverage (`--coverage`, `--coverage-out`), per-test statements (`--coverage-json`) | done (sections 3 and 4a) |
 | 3 | `alrunner serve` (`runTests`, `shutdown`) | not yet. `alrunner serve` exits 2: "not implemented yet". |
 | 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | not yet |
 | 5 | `captureValues`, `iterationTracking` | not yet |
@@ -57,7 +57,9 @@ Accepted with the v2 meaning unless the "Difference" column says otherwise.
 | `--package-cache DIR` | Same. Repeatable. |
 | `--test-timeout N`, `--test-timeout-secs N` | Seconds. Differences: v3 counts **CPU time** of the test (the load of the machine does not count) and a test that hangs without computing is stopped at 10 times N of wall time. Default 20 seconds. `0` means no limit. |
 | `--auto-provision` | Accepted and ignored. v3 always fetches Microsoft's apps from the artifact feed unless `--no-download`. |
-| `--coverage`, `--coverage-out FILE` | Step 2. Not accepted yet: exit 2, "unknown option". Do not send them. |
+| `--coverage` | Counts the statements of the APPs (not of dependency apps) per test. Writes Cobertura XML to `coverage.cobertura.xml` in the working directory unless `--coverage-out` names a file. |
+| `--coverage-out FILE` | Cobertura XML to FILE; implies `--coverage`. Section 4a. |
+| `--coverage-json FILE` | New in v3: the statements and what each test ran, as JSON; implies `--coverage`. Section 4a. |
 | `--affected`, `--tdd`, `--include-failing`, `--strict-environment`, `--per-suite`, `--watch` | Refused with exit 2 and the reason (deferred). Do not send them. |
 | any other v2 flag | `unknown option`, exit 2. `alrunner test --help` is the list. |
 
@@ -105,6 +107,39 @@ last `{` in column 0 to the end" still works). Null and empty fields are left ou
 
 When the run cannot start (a bad flag, an unreadable app, a missing dependency that stops the
 load), no document is written, the message is on stderr and the exit code is 2.
+
+## 4a. Coverage
+
+`--coverage-out FILE` writes Cobertura XML:
+
+- `<coverage ... lines-valid lines-covered>`, `<sources><source>` the working directory, one `<package>` per app, one
+  `<class name=<file name> filename=<path>>` per source file, and `<lines><line number="N" hits="M" branch="false" />`.
+- `filename` is relative to the working directory when the file lies below it, else absolute; always forward slashes. A
+  file inside a package (`.app`, `*.Source.zip`) is `<package path>!/<path inside>`. Line numbers are lines of the file as
+  it is on disk (v2 numbered the instrumented text; v3 does not instrument).
+- A source line has one entry when a statement starts on it. `hits` is the sum of the runs of the statements that
+  start on that line, over the selected tests. A line with no run has `hits="0"` (v2 left statements nothing reached out
+  in some cases; a tool that scores "no coverage" from a missing line must also treat `hits="0"` that way).
+- There is no `<methods>` content, no branch data (`branch-rate="0"`).
+- Dependency apps' code is not in the file, only the APPs given on the command line.
+
+`--coverage-json FILE` writes `{ "coverage": [...], "perTestCoverage": [...] }` in the shapes of the v2 server summary:
+
+```json
+{ "coverage": [ { "file": "/abs/path/src/T.al",
+                  "statements": [ { "id": 17, "scope": "TakesTheThenBranch", "line": 13, "column": 13, "endLine": 13, "hits": 1 } ] } ],
+  "perTestCoverage": [ { "test": "Codeunit50500.TakesTheThenBranch",
+                         "coverage": [ { "file": "/abs/path/src/T.al", "statements": [ { "id": 17, "hits": 1, "..." : "..." } ] } ] } ] }
+```
+
+- `coverage` has every statement of the APPs with its runs (0 when nothing ran it). `perTestCoverage` has, for each test
+  that ran, only the statements it ran, with its own `hits`. A test that did not run has no entry.
+- `id` is stable inside one run only. `scope` is the procedure or trigger name. `column` is a byte column, from 1.
+- v2 also sent `endColumn`; v3 does not know it.
+- Selected tests only: a codeunit runs whole, but the tests that `--test` and `--exclude-test` leave out do not count.
+- What the test ran includes the code its helpers and events ran, in the APPs.
+
+Cost: with coverage off the VM pays one `Option` check per statement. With it on, one counter bump per statement run.
 
 ## 5. Exit codes
 
@@ -164,7 +199,9 @@ Changes in LethAL:
 7. **Assertion screen** (`assertion-screen.ts:36-44, 78-90`): do not depend on `NavNCLDialogException: ` or
    `InvalidOperationException: out-of-scope:`. Messages are the BC text.
 8. **Stderr** (`al-runner-transport.ts:106-210`): see section 7.
-9. **Coverage**: set `"coverage": "none"` until step 2. LethAL then scores unreached mutants `survived`.
+9. **Coverage**: `"coverage": "al-runner"` works with `--coverage --coverage-out FILE` (section 4a). LethAL reads
+   `<class ... filename=...>` and `<line number=... hits=...>` by regex: both are as it expects. Labels are relative to the
+   working directory of the process. Per-test coverage (`--coverage-json`) is new; use it instead of one run per test.
 10. **Selector**: `"selectorMode": "static"`. Server mode: not before step 3.
 11. **`--auto-provision`** may stay in the command; it is accepted.
 

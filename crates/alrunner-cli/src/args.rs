@@ -44,6 +44,12 @@ pub struct TestArgs {
     pub exact: Vec<String>,
     /// `--define SYMBOL`: a preprocessor symbol for the apps. Repeatable. `--preprocessor-symbols A,B` adds several.
     pub defines: Vec<String>,
+    /// `--coverage`: count the statements of the APPs each test runs.
+    pub coverage: bool,
+    /// `--coverage-out FILE`: write Cobertura XML there (implies `--coverage`; default `coverage.cobertura.xml`).
+    pub coverage_out: Option<PathBuf>,
+    /// `--coverage-json FILE`: write the statements and the statements of each test as JSON (implies `--coverage`).
+    pub coverage_json: Option<PathBuf>,
     /// `--explain TEST`: run one test and say where it was refused or failed.
     pub explain: Option<String>,
     /// `--top-refusals [N]`: how many refusal reasons to list (default 10).
@@ -167,6 +173,18 @@ OUTPUT
                          FILE the document is the only thing on stdout and the report goes to
                          stderr. `--output-json=FILE` also works. See docs/integrations/migrating-tools-to-v3.md.
     --timings            Compile phases and the slowest test codeunits.
+
+COVERAGE
+    --coverage           Count how often each statement of the APPs runs, per test. Writes Cobertura XML to
+                         `coverage.cobertura.xml` (see --coverage-out). Off, a run pays one branch per statement.
+    --coverage-out FILE  Write the Cobertura XML to FILE (implies --coverage). Files are named relative to
+                         the working directory when they lie below it; a line has the runs of the
+                         statements that start on it.
+    --coverage-json FILE Write a JSON document with `coverage` ([{file, statements: [{id, scope, line,
+                         column, endLine, hits}]}]) and `perTestCoverage` ([{test, coverage: [...]}]) (implies --coverage): every statement with
+                         its runs, and for each test the statements it ran. File names are absolute with
+                         forward slashes (`archive.zip!/inner/path.al` inside a package). Statements are the
+                         ones the lowering marks, one per AL statement.
 
 ISOLATION
     --isolation MODE     `codeunit` (default): the database is rolled back when a test codeunit ends.
@@ -367,6 +385,15 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                     .push(v.parse().map_err(|_| format!("{flag} needs an object id, got `{v}`"))?);
             }
             "--filter" | "--test" => a.filters.push(text()?),
+            "--coverage" => a.coverage = true,
+            "--coverage-out" => {
+                a.coverage = true;
+                a.coverage_out = Some(text()?.into());
+            }
+            "--coverage-json" => {
+                a.coverage = true;
+                a.coverage_json = Some(text()?.into());
+            }
             "--test-exact" => a.exact.push(text()?),
             "--exclude-test" => a.excludes.push(text()?),
             "--define" => a.defines.push(text()?),
@@ -516,6 +543,16 @@ mod tests {
                 .unwrap_err()
                 .contains("codeunit, test or disabled")
         );
+    }
+
+    #[test]
+    fn coverage_flags_turn_coverage_on() {
+        assert!(!test_args("test A").coverage);
+        assert!(test_args("test A --coverage").coverage);
+        let a = test_args("test A --coverage-out c.xml --coverage-json c.json");
+        assert!(a.coverage);
+        assert_eq!(a.coverage_out, Some(PathBuf::from("c.xml")));
+        assert_eq!(a.coverage_json, Some(PathBuf::from("c.json")));
     }
 
     #[test]

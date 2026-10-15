@@ -279,6 +279,7 @@ mod tests {
             outcome,
             call_stack: String::new(),
             time: std::time::Duration::ZERO,
+            coverage: Vec::new(),
         }
     }
 

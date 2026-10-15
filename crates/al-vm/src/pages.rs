@@ -2694,6 +2694,9 @@ impl Session {
             return Ok(());
         }
         self.ret_used = false;
+        // The page saves the row on fresh table globals: what an action set in them is gone (corpus
+        // record/PWTableGlobals.al:408-431: OnModify reads Counter 0 though the action set 7).
+        self.reset_table_globals(&rec);
         self.page_xrec = Some(self.page_xrec_fields(st));
         let modified = self.record_op("Modify", &rec, &mut [Value::Boolean(true)]);
         self.page_xrec = None;
@@ -2787,6 +2790,14 @@ impl Session {
         // (testpart/TestPartCloseLinkEditableContracts.al:
         // Parts_EnabledReadsTheControl_EditableFalseDoesNotBlockWrites). New() and Next() onto the
         // new-row line of such a part are not pinned and stay refused.
+        // A validation through the page starts on fresh table globals, also when the line is saved
+        // first because the focus leaves the key control (corpus record/PWTableGlobals.al:392-405,
+        // PageInsert_NewThenSetTxtThenClose_ValidationBeforeInsert: OnInsert reads Counter 0 though
+        // OnNewRecord set 9).
+        if matches!(page_of(&self.engine(), st).controls[idx].binding, ir::Binding::Field(_)) && self.has_source(st) {
+            let rec = self.page_rec(st);
+            self.reset_table_globals(&rec);
+        }
         self.activate(st, idx)?;
         // Only an Update() requested by this call's triggers refreshes at its end.
         st.borrow_mut().refresh = false;
@@ -3608,11 +3619,22 @@ impl Session {
         if page_of(&engine, st).controls[idx].run_object.is_some() {
             return self.run_object_action(st, idx);
         } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
+            let before = (self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
+                .then(|| self.page_rec(st).borrow().fields.clone());
             let r = self.control_routine(st, idx, r);
             if r.is_err() {
                 st.borrow_mut().refresh = false;
             }
             r?;
+            // What the action left in Rec is saved when the client leaves the row (corpus
+            // record/PWTableGlobals.al:408-431, PageModify_AfterActionChangedRec_NoValidation).
+            if let Some(before) = before.filter(|_| st.borrow().cursor == Cursor::Row && !st.borrow().draft && !st.borrow().refresh) {
+                let rec = self.page_rec(st);
+                if !Self::same_values(&rec.borrow().fields, &before) {
+                    st.borrow_mut().dirty = true;
+                    self.save_row(st)?;
+                }
+            }
             self.settle_after_action(st)?;
             // The client reads the current row again after every action, so OnAfterGetCurrRecord of
             // the page and of its extensions runs again (corpus

@@ -1,0 +1,880 @@
+//! What the lowering of an object reads (plain data built once) and the per-object, per-thread state,
+//! with the constants and literal helpers the lowerer uses.
+use super::*;
+
+/// What the lowering of an object reads that is plain data, built once and read by every thread.
+pub(crate) struct Shared<'a> {
+    pub(crate) ws: &'a Workspace,
+    pub(crate) members: &'a MemberTable<'a>,
+    pub(crate) checked: &'a CheckResult,
+    pub(crate) catalog: &'a al_builtins::catalog::Catalog,
+    pub(crate) demand: Option<&'a crate::check::demand::Demand>,
+    /// Statements carry source positions (`lower_with_positions`).
+    pub(crate) positions: bool,
+    /// Per object: it is part of the compile (see `Workspace::restrict_to`).
+    pub(crate) active: Vec<bool>,
+    /// The table whose record is the implicit `Rec` of each object.
+    pub(crate) table_of: Vec<Option<usize>>,
+    pub(crate) page_temporary: Vec<bool>,
+    pub(crate) page_reasons: Vec<Vec<String>>,
+    /// What a variable of a page, report or xmlport type drives: the page extensions of each
+    /// page, the parts and actions of each page, the report extension of each report.
+    pub(crate) driven: DrivenCtx,
+    pub(crate) xml_irs: Vec<Option<ir::XmlPort>>,
+    pub(crate) report_irs: Vec<Option<ir::Report>>,
+    /// Per object: the first reason a variable of the xmlport or report is refused.
+    pub(crate) xml_reasons: Vec<Option<String>>,
+    pub(crate) report_reasons: Vec<Option<String>>,
+    pub(crate) ext_irs: Vec<Option<ir::ReportExt>>,
+    /// The global slot of each variable of a page extension, by lower-case name.
+    pub(crate) ext_slots: Vec<HashMap<String, usize>>,
+    /// The start offset of every routine, numbered as `Nodes` numbers them.
+    pub(crate) routine_offsets: std::sync::Arc<Vec<Vec<usize>>>,
+    pub(crate) routine_at: RoutineAt,
+    /// The extensions of each table.
+    pub(crate) extensions: HashMap<usize, Vec<usize>>,
+    /// For a report extension that changes a run, the report it belongs to.
+    pub(crate) ext_base: Vec<Option<usize>>,
+    /// Keep what a cache needs (`Lowered::exported`).
+    pub(crate) export: bool,
+}
+
+/// The routine nodes of the objects, built when first asked for. A syntax tree belongs to the
+/// thread that made it, so each thread has its own.
+pub(crate) struct Nodes<'a> {
+    pub(crate) ws: &'a Workspace,
+    pub(crate) active: Vec<bool>,
+    pub(crate) cells: Vec<std::cell::OnceCell<Vec<ast::Routine>>>,
+}
+
+impl<'a> Nodes<'a> {
+    pub(crate) fn new(ws: &'a Workspace, active: Vec<bool>) -> Nodes<'a> {
+        Nodes {
+            ws,
+            active,
+            cells: (0..ws.objects.len()).map(|_| std::cell::OnceCell::new()).collect(),
+        }
+    }
+
+    /// The procedures and triggers of object `oi` in source order (none if it is not compiled).
+    pub(crate) fn get(&self, oi: usize) -> &[ast::Routine] {
+        self.cells[oi].get_or_init(|| {
+            if self.active[oi] {
+                ast::routines_in(self.ws.object_ast(oi).syntax())
+            } else {
+                Vec::new()
+            }
+        })
+    }
+}
+
+/// What one thread keeps while it lowers objects.
+pub(crate) struct Local<'a> {
+    pub(crate) nodes: Nodes<'a>,
+    pub(crate) memo: Memo,
+}
+
+impl<'a> Local<'a> {
+    pub(crate) fn new(nodes: Nodes<'a>) -> Local<'a> {
+        Local {
+            nodes,
+            memo: Memo::default(),
+        }
+    }
+}
+
+/// The layouts of pages, report request pages, XML ports and report extensions, built from the
+/// syntax tree of an object when first asked for. The prologue of `lower_with_positions` builds
+/// the same layouts to find what the objects need of each other; a layout holds syntax nodes,
+/// which belong to the thread that made them, so each thread builds the ones it reads.
+pub(crate) struct Seq<'a> {
+    pub(crate) ws: &'a Workspace,
+    pub(crate) active: &'a [bool],
+    pub(crate) page_extensions: &'a HashMap<usize, Vec<usize>>,
+    pub(crate) ext_base: &'a [Option<usize>],
+    pub(crate) page: Vec<std::cell::OnceCell<Option<crate::pages::Layout>>>,
+    pub(crate) xml: Vec<std::cell::OnceCell<Option<crate::xmlports::Layout>>>,
+    pub(crate) report: Vec<std::cell::OnceCell<Option<crate::reports::Layout>>>,
+    pub(crate) ext: Vec<std::cell::OnceCell<Option<crate::reports::ExtLayout>>>,
+}
+
+impl<'a> Seq<'a> {
+    pub(crate) fn new(sh: &'a Shared<'a>) -> Seq<'a> {
+        fn cells<T>(n: usize) -> Vec<std::cell::OnceCell<T>> {
+            (0..n).map(|_| std::cell::OnceCell::new()).collect()
+        }
+        let n = sh.ws.objects.len();
+        Seq {
+            ws: sh.ws,
+            active: &sh.active,
+            page_extensions: &sh.driven.page_extensions,
+            ext_base: &sh.ext_base,
+            page: cells(n),
+            xml: cells(n),
+            report: cells(n),
+            ext: cells(n),
+        }
+    }
+
+    /// The extensions of page or report `oi` with their syntax trees.
+    pub(crate) fn extensions(&self, oi: usize) -> Vec<(usize, ast::Object)> {
+        self.page_extensions
+            .get(&oi)
+            .map(|v| v.iter().map(|&e| (e, self.ws.object_ast(e))).collect())
+            .unwrap_or_default()
+    }
+
+    /// The control tree of a page; of a report, its request page.
+    pub(crate) fn page_layout(&self, oi: usize) -> Option<&crate::pages::Layout> {
+        self.page[oi]
+            .get_or_init(|| match self.ws.objects[oi].kind {
+                ObjKind::Page if self.active[oi] => {
+                    Some(crate::pages::layout_with(&self.ws.object_ast(oi), &self.extensions(oi)))
+                }
+                ObjKind::Report if self.active[oi] => {
+                    let l = self.report(oi)?;
+                    Some(crate::reports::request_layout(&self.ws.object_ast(oi), &l.items, &self.extensions(oi)).0)
+                }
+                _ => None,
+            })
+            .as_ref()
+    }
+
+    pub(crate) fn xml(&self, oi: usize) -> Option<&crate::xmlports::Layout> {
+        self.xml[oi]
+            .get_or_init(|| {
+                (self.ws.objects[oi].kind == ObjKind::XmlPort && self.active[oi])
+                    .then(|| crate::xmlports::layout(&self.ws.object_ast(oi)))
+            })
+            .as_ref()
+    }
+
+    pub(crate) fn report(&self, oi: usize) -> Option<&crate::reports::Layout> {
+        self.report[oi]
+            .get_or_init(|| {
+                (self.ws.objects[oi].kind == ObjKind::Report && self.active[oi])
+                    .then(|| crate::reports::layout(&self.ws.object_ast(oi)))
+            })
+            .as_ref()
+    }
+
+    /// The report a report extension that changes a run belongs to.
+    pub(crate) fn ext_base(&self, oi: usize) -> Option<usize> {
+        self.ext_base[oi]
+    }
+
+    pub(crate) fn ext(&self, oi: usize) -> Option<&crate::reports::ExtLayout> {
+        self.ext[oi]
+            .get_or_init(|| self.ext_base[oi].map(|_| crate::reports::ext_layout(&self.ws.object_ast(oi))))
+            .as_ref()
+    }
+}
+
+pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a Seq<'a>, oi: usize) -> Lowerer<'a> {
+    Lowerer {
+        rec_slot: None,
+        table_of: &sh.table_of,
+        ws: sh.ws,
+        members: sh.members,
+        checked: sh.checked,
+        catalog: sh.catalog,
+        routine_at: &sh.routine_at,
+        oi,
+        file: sh.ws.objects[oi].file,
+        globals: HashMap::new(),
+        locals: HashMap::new(),
+        global_labels: HashMap::new(),
+        local_labels: HashMap::new(),
+        reasons: Vec::new(),
+        calls: Vec::new(),
+        page_reasons: &sh.page_reasons,
+        layouts: seq,
+        xml_reasons: &sh.xml_reasons,
+        report_reasons: &sh.report_reasons,
+        memo: &tl.memo,
+        ret_ty: None,
+        ret_decl: None,
+        routine_nodes: &tl.nodes,
+        ext_slots: &sh.ext_slots,
+        page_extensions: &sh.driven.page_extensions,
+        embeds: Default::default(),
+        positions: Vec::new(),
+        lines: None,
+        emit_pos: false,
+        routine_idx: 0,
+        assumed: Vec::new(),
+    }
+}
+
+/// Lowers object `oi`. `positions` and `line_cache` are the source positions and file line tables
+/// of the objects lowered so far on this thread.
+pub(crate) fn lower_object<'a>(
+    sh: &'a Shared<'a>,
+    tl: &'a Local<'a>,
+    seq: &'a Seq<'a>,
+    oi: usize,
+    line_cache: &mut HashMap<usize, std::rc::Rc<FileLines>>,
+) -> Piece {
+    let ws = sh.ws;
+    let members = sh.members;
+    let checked = sh.checked;
+    let demand = sh.demand;
+    let table_of = &sh.table_of;
+    let page_temporary = &sh.page_temporary;
+    let page_extensions = &sh.driven.page_extensions;
+    let page_reasons = &sh.page_reasons;
+    let xml_irs = &sh.xml_irs;
+    let report_irs = &sh.report_irs;
+    let ext_irs = &sh.ext_irs;
+    let routine_at = &sh.routine_at;
+    let routine_offsets = &sh.routine_offsets;
+    let extensions = &sh.extensions;
+    let o = &ws.objects[oi];
+    if !sh.active[oi] {
+        // Not compiled: a shell keeps object numbers stable. Its kind is `uncompiled table` and
+        // so on, so nothing the runtime looks up by kind and id (`Codeunit.Run(80)`) finds it
+        // and runs it as an empty object; the few lookups that would answer "no such object"
+        // (`RecordRef.Open(18)`) look for the shell and refuse instead.
+        return Piece {
+            object: ir::Object {
+                kind: format!("uncompiled {}", o.kind.label()),
+                id: o.id,
+                name: o.name.clone(),
+                globals: Vec::new(),
+                routines: Vec::new(),
+                // What the declaration scan read of the object body, so the metadata tables can
+                // answer for an object nothing compiled.
+                properties: o.scanned_properties.clone(),
+                enum_values: Vec::new(),
+                enum_captions: Vec::new(),
+                table: None,
+                rec_slot: None,
+                xrec_slot: None,
+                page: None,
+                app: o.app as u32,
+                query: None,
+                xmlport: None,
+                report: None,
+                report_ext: None,
+                namespace: o.namespace.clone(),
+                extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
+                layouts: o
+                    .scanned_layouts
+                    .iter()
+                    .map(|l| ir::LayoutDecl {
+                        name: l.name.clone(),
+                        properties: l.properties.clone(),
+                    })
+                    .collect(),
+            },
+            positions: Vec::new(),
+            unsupported: Vec::new(),
+            calls: Vec::new(),
+            direct: Vec::new(),
+            embeds: Vec::new(),
+        };
+    }
+    let obj = ws.object_ast(oi);
+    let mut lw = make_lowerer(sh, tl, seq, oi);
+    // Positions only feed call stacks and error lines; for a dependency app they cost a third of
+    // lowering and no corpus test reads them, so its routines carry none (measured in ADR-013).
+    lw.lines = (sh.positions && !ws.is_dependency(oi)).then(|| {
+        line_cache
+            .entry(o.file)
+            .or_insert_with(|| std::rc::Rc::new(FileLines::new(ws, o.file)))
+            .clone()
+    });
+    let mut globals = Vec::new();
+    let mut global_reasons = Vec::new();
+    if let Some(l) = seq.xml(oi) {
+        for n in &l.nodes {
+            let (ty, table) = match n.kind {
+                ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr => (Ok(RtType::Text(None)), false),
+                ir::XmlNodeKind::Table => (
+                    lw.rt(&Ty::Record {
+                        table: n.args.get(1).cloned().unwrap_or_default(),
+                        temporary: n.section.properties().any(|p| {
+                            p.name().eq_ignore_ascii_case("UseTemporary")
+                                && p.value_text().trim().eq_ignore_ascii_case("true")
+                        }),
+                    }),
+                    true,
+                ),
+                _ => continue,
+            };
+            let key = n.name.to_lowercase();
+            if lw.globals.contains_key(&key) {
+                continue;
+            }
+            lw.globals.insert(key, globals.len());
+            match ty {
+                Ok(rt) => globals.push(ir::Slot {
+                    name: n.name.clone(),
+                    ty: rt,
+                }),
+                Err(e) => {
+                    global_reasons.push(format!(
+                        "{} `{}`: {e}",
+                        if table { "table element" } else { "variable" },
+                        n.name
+                    ));
+                    globals.push(ir::Slot {
+                        name: n.name.clone(),
+                        ty: RtType::Variant,
+                    });
+                }
+            }
+        }
+        for name in ["__source", "__destination"] {
+            let ty = if name == "__source" { "InStream" } else { "OutStream" };
+            globals.push(ir::Slot {
+                name: name.into(),
+                ty: RtType::Library(ty.into()),
+            });
+        }
+    }
+    if let Some(l) = seq.report(oi) {
+        for i in &l.items {
+            let key = i.name.to_lowercase();
+            if lw.globals.contains_key(&key) {
+                continue;
+            }
+            let ty = lw.rt(&Ty::Record {
+                table: i.table.clone(),
+                temporary: crate::reports::uses_temporary(&i.section),
+            });
+            lw.globals.insert(key, globals.len());
+            match ty {
+                Ok(rt) => globals.push(ir::Slot {
+                    name: i.name.clone(),
+                    ty: rt,
+                }),
+                Err(e) => {
+                    global_reasons.push(format!("dataitem `{}`: {e}", i.name));
+                    globals.push(ir::Slot {
+                        name: i.name.clone(),
+                        ty: RtType::Variant,
+                    });
+                }
+            }
+        }
+        globals.push(ir::Slot {
+            name: "__userequestpage".into(),
+            ty: RtType::Integer,
+        });
+    }
+    // A reportextension that changes a run names the base items' records first (the run points
+    // them at the report's own), then the items it adds.
+    if let (Some(base), Some(l)) = (seq.ext_base(oi), seq.ext(oi)) {
+        let base_items = seq.report(base).map_or(&[][..], |b| &b.items[..]);
+        for i in base_items.iter().chain(&l.items) {
+            let key = i.name.to_lowercase();
+            if lw.globals.contains_key(&key) {
+                continue;
+            }
+            let ty = lw.rt(&Ty::Record {
+                table: i.table.clone(),
+                temporary: crate::reports::uses_temporary(&i.section),
+            });
+            lw.globals.insert(key, globals.len());
+            match ty {
+                Ok(rt) => globals.push(ir::Slot {
+                    name: i.name.clone(),
+                    ty: rt,
+                }),
+                Err(e) => {
+                    global_reasons.push(format!("dataitem `{}`: {e}", i.name));
+                    globals.push(ir::Slot {
+                        name: i.name.clone(),
+                        ty: RtType::Variant,
+                    });
+                }
+            }
+        }
+    }
+    for v in obj.var_decls() {
+        let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+        let label = v.type_ref().as_ref().and_then(label_text);
+        for n in v.names() {
+            if let Some(l) = &label {
+                lw.global_labels.insert(n.to_lowercase(), l.clone());
+            }
+            match lw.rt(&ty) {
+                Ok(rt) => {
+                    lw.globals.insert(n.to_lowercase(), globals.len());
+                    globals.push(ir::Slot { name: n, ty: rt });
+                }
+                Err(e) => global_reasons.push(format!("global `{n}`: {e}")),
+            }
+        }
+    }
+    let (mut rec_slot, mut xrec_slot) = (None, None);
+    if let Some(t) = table_of[oi] {
+        for (name, slot) in [("Rec", &mut rec_slot), ("xRec", &mut xrec_slot)] {
+            // A codeunit has no xRec.
+            if name == "xRec" && o.kind == ObjKind::Codeunit {
+                continue;
+            }
+            *slot = Some(globals.len());
+            lw.globals.insert(name.to_lowercase(), globals.len());
+            globals.push(ir::Slot {
+                name: name.into(),
+                ty: RtType::Record(t as u32, lw.is_temporary_table(t) || page_temporary[oi]),
+            });
+        }
+    }
+    // A query's own code runs on the query it was called on: its state sits in a hidden slot
+    // the VM fills when it makes the instance (`Session::query_instance`).
+    if o.kind == ObjKind::Query {
+        rec_slot = Some(globals.len());
+        // `CurrQuery` in the query's triggers and procedures
+        // (query/TestQueryOnBeforeOpenVariablesContracts.al:75-77).
+        lw.globals.insert("currquery".into(), globals.len());
+        globals.push(ir::Slot {
+            name: "__query".into(),
+            ty: RtType::Query(oi as u32),
+        });
+    }
+    lw.rec_slot = rec_slot;
+    if o.kind == ObjKind::Report {
+        // `CurrPage` of the request page. Typed Variant: the test client puts the page there
+        // when it opens, and AL code cannot name it.
+        globals.push(ir::Slot {
+            name: "CurrPage".into(),
+            ty: RtType::Variant,
+        });
+    }
+    // The page an extension extends, when it is in the workspace.
+    let extended_page = (o.kind == ObjKind::PageExtension)
+        .then(|| page_extensions.iter().find(|(_, v)| v.contains(&oi)).map(|(&p, _)| p))
+        .flatten();
+    if o.kind == ObjKind::Page || extended_page.is_some() {
+        lw.globals.insert("currpage".into(), globals.len());
+        globals.push(ir::Slot {
+            name: "CurrPage".into(),
+            ty: RtType::TestPage(extended_page.unwrap_or(oi) as u32),
+        });
+    }
+    if extended_page.is_some() {
+        debug_assert!(
+            sh.ext_slots[oi]
+                .iter()
+                .all(|(n, &i)| globals.get(i).is_some_and(|g| g.name.eq_ignore_ascii_case(n))),
+            "the slots of a page extension's variables moved"
+        );
+    }
+    let mut routines = Vec::new();
+    let mut unsupported = Vec::new();
+    let mut calls = Vec::new();
+    let mut direct = Vec::new();
+    for (ri, r) in tl.nodes.get(oi).iter().enumerate() {
+        lw.routine_idx = ri;
+        lw.reasons = global_reasons.clone();
+        lw.calls.clear();
+        // A trigger of a data item runs with the item's record as its `Rec`.
+        if matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension) {
+            lw.rec_slot = r
+                .syntax()
+                .ancestors()
+                .filter_map(ast::Section::cast)
+                .find(|s| {
+                    ["dataitem", "modify", "add"]
+                        .iter()
+                        .any(|k| s.name().eq_ignore_ascii_case(k))
+                })
+                .and_then(|s| s.args().into_iter().next())
+                .and_then(|n| lw.globals.get(&n.to_lowercase()).copied());
+            // A trigger of the request page runs with the page's `Rec`.
+            if lw.rec_slot.is_none()
+                && o.kind == ObjKind::Report
+                && r.syntax()
+                    .ancestors()
+                    .filter_map(ast::Section::cast)
+                    .any(|s| s.name().eq_ignore_ascii_case("requestpage"))
+            {
+                lw.rec_slot = rec_slot;
+            }
+        }
+        // A dependency routine nothing reached was never checked: a stub that refuses.
+        let reached = !checked.is_skipped(oi)
+            && !ws.routine_unreached(oi, routine_offsets[oi][ri])
+            && demand.is_none_or(|d| !ws.is_dependency(oi) || d.reached(oi, routine_offsets[oi][ri]));
+        // A routine whose check panicked has no types and resolutions to lower from: it refuses.
+        let routine = if let Some(why) = checked.panic_of(oi, routine_offsets[oi][ri]) {
+            lw.refused(r, format!("internal error while checking: {why}"))
+        } else if reached {
+            // A panic lowering one routine is a bug in the compiler; the routine refuses and the
+            // run goes on.
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| lw.routine(r))) {
+                Ok(routine) => routine,
+                Err(p) => {
+                    lw.calls.clear();
+                    lw.reasons = global_reasons.clone();
+                    lw.refused(
+                        r,
+                        format!("internal error while lowering: {}", crate::check::panic_message(&*p)),
+                    )
+                }
+            }
+        } else {
+            lw.stub(r)
+        };
+        if sh.export {
+            direct.push(lw.calls.clone());
+        }
+        // A TestPage drives page routines the call graph cannot see (ADR-012). An xmlport's
+        // triggers are run by Import and Export, and a report's by Run, which the graph cannot
+        // see either.
+        driven_edges(&sh.driven, routine.locals.iter().chain(&globals), &mut lw.calls);
+        unsupported.push(std::mem::take(&mut lw.reasons));
+        calls.push(std::mem::take(&mut lw.calls));
+        routines.push(routine);
+    }
+    let request_section = (o.kind == ObjKind::Report)
+        .then(|| obj.sections().find(|s| s.name().eq_ignore_ascii_case("requestpage")))
+        .flatten();
+    let page = seq
+        .page_layout(oi)
+        .map(|l| lw.page(oi, (&obj, request_section.as_ref()), l, &globals, &page_reasons[oi]));
+    // A report's request page properties (`SaveValues`, `Caption`) read like a page's: the
+    // report's own `Caption` wins over the request page's
+    // (corpus handlers/TestReportRequestPageCaption.al).
+    let mut properties: Vec<(String, String)> = obj.properties().map(|p| (p.name(), p.value_text())).collect();
+    if let Some(sec) = &request_section {
+        for p in sec.properties() {
+            let name = p.name();
+            if name.eq_ignore_ascii_case("Caption") && properties.iter().any(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+            {
+                continue;
+            }
+            properties.push((name, p.value_text()));
+        }
+    }
+    let object = ir::Object {
+        kind: o.kind.label().to_string(),
+        id: o.id,
+        name: o.name.clone(),
+        globals,
+        routines,
+        properties,
+        enum_values: members[oi]
+            .enum_values
+            .iter()
+            .map(|(v, n)| (*v as i32, n.clone()))
+            .collect(),
+        enum_captions: members[oi]
+            .enum_captions
+            .iter()
+            .map(|(v, c)| (*v as i32, c.clone()))
+            .collect(),
+        // A table whose source cannot be used (a platform table nothing provides, a dependency
+        // file that does not parse) has no members, so it has no schema: the Field and Key
+        // tables report it as not compiled instead of reading fields it does not have.
+        table: (o.kind == ObjKind::Table && ws.usable(oi))
+            .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), routine_at)),
+        rec_slot,
+        xrec_slot,
+        page,
+        app: o.app as u32,
+        xmlport: xml_irs[oi].clone(),
+        report: report_irs[oi].clone(),
+        report_ext: ext_irs[oi].clone(),
+        namespace: o.namespace.clone(),
+        extends_id: ws.extension_target(oi).and_then(|t| ws.objects[t].id),
+        layouts: if matches!(o.kind, ObjKind::Report | ObjKind::ReportExtension) {
+            crate::reports::layouts_of(&obj)
+        } else {
+            Vec::new()
+        },
+        query: checked.queries[oi].as_ref().map(|q| q.query.clone()),
+    };
+    let positions = std::mem::take(&mut lw.positions);
+    // Itself, whatever the lowering read about the extensions and implementers of others, and
+    // what `provided::embeds_of` adds from the pages' parts.
+    let embeds = lw.embeds.take().into_iter().collect();
+    Piece {
+        object,
+        positions,
+        unsupported,
+        calls,
+        direct,
+        embeds,
+    }
+}
+
+/// The page triggers an extension can declare that the client runs after the page's own trigger.
+/// The others answer a Boolean or serve rows, and how an extension's answer combines with the
+/// page's is not pinned. OnInit, OnFindRecord and OnNextRecord are page-only in BC: an extension
+/// that declares one is not called for it (AL Runner v2 docs/../RecordPatches.PageTriggerMetadata.cs,
+/// BC 27.5 and 28.4 NCLMetaForm.DefinedTriggers), so they are refused here.
+pub(crate) const EXTENSION_PAGE_TRIGGERS: &[&str] = &[
+    "onopenpage",
+    "onclosepage",
+    "onaftergetrecord",
+    "onaftergetcurrrecord",
+    "onnewrecord",
+    // Both the page's and the extensions' answers count, and both must be true to close
+    // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
+    // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose).
+    "onqueryclosepage",
+];
+
+/// The triggers a `modify` block can add to a control, which the client runs.
+pub(crate) const MODIFY_TRIGGERS: &[&str] = &[
+    "onbeforevalidate",
+    "onaftervalidate",
+    "ondrilldown",
+    "onlookup",
+    "onassistedit",
+];
+
+/// Why the client cannot drive a page once the extensions `exts` are merged into it: the
+/// triggers it does not run. Several extensions may declare one trigger: they run in the order
+/// the extensions apply (docs/probes-needed.md, "Page extensions").
+pub(crate) fn extension_reasons(exts: &[(usize, ast::Object)]) -> Vec<String> {
+    let mut out = Vec::new();
+    for (_, e) in exts {
+        let ename = e.name();
+        for t in e.triggers() {
+            if !EXTENSION_PAGE_TRIGGERS.contains(&t.name().to_ascii_lowercase().as_str()) {
+                out.push(format!(
+                    "page extension `{ename}`: trigger {} is not supported yet",
+                    t.name()
+                ));
+            }
+        }
+        // Triggers inside `modify` blocks: only the ones the client dispatches.
+        for sec in ast::sections_in(e.syntax()) {
+            if !sec.name().eq_ignore_ascii_case("modify") {
+                continue;
+            }
+            for t in sec.triggers() {
+                if !MODIFY_TRIGGERS.contains(&t.name().to_ascii_lowercase().as_str()) {
+                    out.push(format!(
+                        "page extension `{ename}`: trigger {} in modify({}) is not supported yet",
+                        t.name(),
+                        sec.args().first().cloned().unwrap_or_default()
+                    ));
+                }
+            }
+        }
+    }
+    out
+}
+
+/// An `InitValue` property as a constant of the field's type; `None` for
+/// forms not handled yet (the field then starts at its type's default).
+pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
+    let t = text.trim();
+    Some(match ty {
+        Ty::Integer => ir::Const::Integer(t.parse().ok()?),
+        Ty::BigInteger => ir::Const::BigInteger(t.parse().ok()?),
+        Ty::Decimal => ir::Const::Decimal(t.parse::<rust_decimal::Decimal>().ok()?.to_string()),
+        Ty::Boolean if t.eq_ignore_ascii_case("true") || t.eq_ignore_ascii_case("yes") => ir::Const::Boolean(true),
+        Ty::Boolean if t.eq_ignore_ascii_case("false") || t.eq_ignore_ascii_case("no") => ir::Const::Boolean(false),
+        Ty::Text(_) | Ty::Code(_) => ir::Const::Text(
+            t.strip_prefix('\'')
+                .and_then(|x| x.strip_suffix('\''))
+                .unwrap_or(t)
+                .replace("''", "'"),
+        ),
+        Ty::Option(m) => {
+            let name = t.trim_matches('"');
+            ir::Const::Option(m.iter().position(|x| x.eq_ignore_ascii_case(name))? as i32, m.clone())
+        }
+        Ty::Date => ir::Const::Date(date_literal(t)?),
+        Ty::Time => ir::Const::Time(time_literal(t)?),
+        // The same reading as `Evaluate` into a DateFormula (types/TestBlankEnumInitTests.Codeunit.al:88-95
+        // says InitValue and Evaluate share one evaluator): a calculable formula is kept as written.
+        // Blank, garbled and not-yet-supported formulas stay refused (the field is not initialised).
+        Ty::DateFormula => {
+            let f = t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).unwrap_or(t);
+            if al_builtins::datefns::is_blank_formula(f)
+                || al_builtins::datefns::is_garbage_formula(f)
+                || al_builtins::datefns::check_formula(f).is_err()
+            {
+                return None;
+            }
+            ir::Const::DateFormula(f.to_string())
+        }
+        _ => return None,
+    })
+}
+
+/// A `const(..)` value as a constant of the source field's type.
+pub(crate) fn calc_const(
+    ws: &Workspace,
+    members: &MemberTable<'_>,
+    file: usize,
+    raw: &str,
+    ty: &Ty,
+) -> Result<ir::Const, String> {
+    let raw = raw.trim();
+    // `Database::"X"` / `Report::"X"`: the object's id (corpus
+    // record/TestCalcFormulaDatabaseConst.Codeunit.al:7).
+    if let Some((kind, name)) = raw.split_once("::") {
+        let kind = match kind.trim().to_ascii_lowercase().as_str() {
+            "database" => Some(ObjKind::Table),
+            other => ObjKind::from_type_name(other),
+        };
+        let name = name.trim().trim_matches('"').to_string();
+        let Some(kind) = kind.filter(|k| *k != ObjKind::Enum) else {
+            return Err(format!("CalcFormula const({raw}) is not understood yet"));
+        };
+        let Resolution::Found(o) = ws.resolve_ref(file, kind, std::slice::from_ref(&name)) else {
+            return Err(format!("CalcFormula const({raw}): `{name}` is outside the workspace"));
+        };
+        let id = ws.objects[o]
+            .id
+            .ok_or_else(|| format!("CalcFormula const({raw}) has no object id"))?;
+        return match ty {
+            Ty::Integer => Ok(ir::Const::Integer(id as i32)),
+            Ty::BigInteger => Ok(ir::Const::BigInteger(i64::from(id))),
+            Ty::Decimal => Ok(ir::Const::Decimal(id.to_string())),
+            _ => Err(format!("CalcFormula const({raw}) on a non-numeric field")),
+        };
+    }
+    let unquoted = raw.trim_matches('"');
+    if let Ty::Enum(name) = ty {
+        let Resolution::Found(e) = ws.resolve_ref(file, ObjKind::Enum, &crate::types::qualified_parts(name)) else {
+            return Err(format!(
+                "CalcFormula const({raw}): enum `{}` is outside the workspace",
+                crate::types::display_name(name)
+            ));
+        };
+        let values = &members[e].enum_values;
+        let ordinal = values
+            .iter()
+            .find(|(_, n)| n.eq_ignore_ascii_case(unquoted))
+            .map(|(v, _)| *v as i32)
+            .or_else(|| unquoted.parse().ok())
+            .ok_or_else(|| format!("CalcFormula const({raw}) is not a member of enum `{name}`"))?;
+        return Ok(ir::Const::Enum(e as u32, ordinal));
+    }
+    if let Ty::Option(members) = ty {
+        if let Ok(n) = unquoted.parse::<i32>() {
+            return Ok(ir::Const::Option(n, members.clone()));
+        }
+    }
+    init_const(raw, ty).ok_or_else(|| format!("CalcFormula const({raw}) is not understood for a {ty} field"))
+}
+
+/// The runtime type of a scalar type (numbers, text, dates, options, enums); `None` for the rest.
+pub(crate) fn scalar_rt(ws: &Workspace, file: usize, t: &Ty) -> Option<L<RtType>> {
+    Some(Ok(match t {
+        Ty::Integer => RtType::Integer,
+        Ty::BigInteger => RtType::BigInteger,
+        Ty::Decimal => RtType::Decimal,
+        Ty::Boolean => RtType::Boolean,
+        Ty::Char => RtType::Char,
+        Ty::Byte => RtType::Byte,
+        Ty::Text(n) => RtType::Text(*n),
+        Ty::Code(n) => RtType::Code(*n),
+        Ty::Label => RtType::Text(None),
+        Ty::Date => RtType::Date,
+        Ty::Time => RtType::Time,
+        Ty::DateTime => RtType::DateTime,
+        Ty::Duration => RtType::Duration,
+        Ty::DateFormula => RtType::DateFormula,
+        Ty::Guid => RtType::Guid,
+        Ty::Variant => RtType::Variant,
+        Ty::Option(m) => RtType::Option(m.clone()),
+        Ty::Enum(n) => match ws.resolve_ref(file, ObjKind::Enum, &crate::types::qualified_parts(n)) {
+            Resolution::Found(i) => RtType::Enum(i as u32),
+            _ => {
+                return Some(Err(format!(
+                    "{} `{}` is outside the workspace",
+                    ObjKind::Enum.label(),
+                    crate::types::display_name(n)
+                )));
+            }
+        },
+        _ => return None,
+    }))
+}
+
+/// `20240115D` / `0D` as a day number.
+pub(crate) fn date_literal(text: &str) -> Option<i32> {
+    let d = text.strip_suffix(['D', 'd'])?;
+    if d.chars().all(|c| c == '0') {
+        return Some(0);
+    }
+    if d.len() != 8 || !d.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    Some(al_builtins::format::day_from_civil(
+        d[..4].parse().ok()?,
+        d[4..6].parse().ok()?,
+        d[6..].parse().ok()?,
+    ))
+}
+
+/// `120000T` / `120000.5T` / `0T` as milliseconds since midnight plus one.
+pub(crate) fn time_literal(text: &str) -> Option<i64> {
+    let d = text.strip_suffix(['T', 't'])?;
+    if d.chars().all(|c| c == '0') && !d.is_empty() && d.len() < 6 {
+        return Some(0);
+    }
+    let (hms, frac) = d.split_once('.').unwrap_or((d, "0"));
+    if hms.len() != 6 || !hms.chars().all(|c| c.is_ascii_digit()) {
+        return None;
+    }
+    let h: i64 = hms[..2].parse().ok()?;
+    let m: i64 = hms[2..4].parse().ok()?;
+    let s: i64 = hms[4..].parse().ok()?;
+    let ms: i64 = format!("{frac:0<3}")[..3].parse().ok()?;
+    Some(((h * 60 + m) * 60 + s) * 1000 + ms + 1)
+}
+
+/// The text of a `Label '...'` declaration, quotes undoubled.
+pub(crate) fn label_text(t: &ast::TypeRef) -> Option<String> {
+    if !t.type_name().eq_ignore_ascii_case("label") {
+        return None;
+    }
+    let tok = t
+        .syntax()
+        .descendants_with_tokens()
+        .filter_map(|e| e.into_token())
+        .find(|k| k.kind() == SyntaxKind::StringLit)?;
+    let text = tok.text();
+    Some(text[1..text.len() - 1].replace("''", "'"))
+}
+
+/// A filter expression written in AL, with double-quoted names turned into
+/// the single-quoted literals the filter grammar understands. AL quotes an
+/// identifier with `"`; the filter grammar treats `"` as an ordinary
+/// character (corpus record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9).
+pub(crate) fn rewrite_quotes(raw: &str) -> String {
+    let mut out = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                out.push('\'');
+                for n in chars.by_ref() {
+                    match n {
+                        '"' => break,
+                        '\'' => out.push_str("''"),
+                        n => out.push(n),
+                    }
+                }
+                out.push('\'');
+            }
+            '\'' => {
+                out.push('\'');
+                while let Some(n) = chars.next() {
+                    out.push(n);
+                    if n == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            out.push(chars.next().expect("peeked"));
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}

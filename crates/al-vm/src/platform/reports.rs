@@ -12,7 +12,7 @@
 //! The data items exist only for a report that compiled; the rows of another are poisoned.
 
 use super::mat::Entry;
-use super::objects::{Catalog, base_kind, ident, prop, string_lit, truthy};
+use super::objects::{Catalog, ident, prop, string_lit, truthy};
 use super::{Providers, blank, ids, option, pos};
 use al_builtins::describe::Describe;
 use al_builtins::value::{RtType, Value};
@@ -39,9 +39,13 @@ pub(super) fn layout_list_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     for o in c
         .objects
         .iter()
-        .filter(|o| matches!(base_kind(o), "report" | "reportextension"))
+        .filter(|o| matches!(o.kind, al_ir::ObjKind::Report | al_ir::ObjKind::ReportExtension))
     {
-        let id = if base_kind(o) == "report" { o.id } else { o.extends_id };
+        let id = if o.kind == al_ir::ObjKind::Report {
+            o.id
+        } else {
+            o.extends_id
+        };
         let Some(id) = id else { continue };
         let pkg = ids::package_id(c.owner(o));
         for l in &o.layouts {
@@ -122,7 +126,7 @@ pub(super) fn report_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
-    for o in c.objects.iter().filter(|o| base_kind(o) == "report") {
+    for o in c.objects.iter().filter(|o| o.kind == al_ir::ObjKind::Report) {
         let Some(id) = o.id else { continue };
         let mut key = blank(t);
         key[pos(t, 1)] = Value::Integer(id as i32);
@@ -234,7 +238,7 @@ pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
-    for o in c.objects.iter().filter(|o| base_kind(o) == "report") {
+    for o in c.objects.iter().filter(|o| o.kind == al_ir::ObjKind::Report) {
         let Some(id) = o.id else { continue };
         let Some(rep) = &o.report else {
             let mut k = blank(t);

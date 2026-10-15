@@ -237,7 +237,8 @@ pub(crate) fn lower_object<'a>(
         // (`RecordRef.Open(18)`) look for the shell and refuse instead.
         return Piece {
             object: ir::Object {
-                kind: format!("uncompiled {}", o.kind.label()),
+                kind: o.kind,
+                uncompiled: true,
                 id: o.id,
                 name: o.name.clone(),
                 globals: Vec::new(),
@@ -551,7 +552,8 @@ pub(crate) fn lower_object<'a>(
         }
     }
     let object = ir::Object {
-        kind: o.kind.label().to_string(),
+        kind: o.kind,
+        uncompiled: false,
         id: o.id,
         name: o.name.clone(),
         globals,

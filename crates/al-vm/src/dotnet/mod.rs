@@ -336,9 +336,10 @@ impl Session {
                     return unsupported("foreach over a null that is not a DotNet variable");
                 };
                 let o = &engine.program.objects[f.object];
-                let kind = match o.kind.as_str() {
-                    "codeunit" => "CodeUnit",
-                    other => {
+                let kind = match o.kind {
+                    al_ir::ObjKind::Codeunit if !o.uncompiled => "CodeUnit",
+                    _ => {
+                        let other = o.kind;
                         return unsupported(format!(
                             "foreach over an uninstantiated DotNet variable in a {other} (the object kind's spelling in the error is not pinned)"
                         ));

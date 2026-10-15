@@ -44,7 +44,7 @@ fn error(message: impl Into<String>) -> Signal {
 /// that was not compiled.
 fn names_uncompiled_page(engine: &Engine, name: &str) -> bool {
     engine.program.objects.iter().any(|o| {
-        o.kind == "uncompiled page"
+        o.is_shell_of(al_ir::ObjKind::Page)
             && (o.name.eq_ignore_ascii_case(name) || o.id.is_some_and(|i| i.to_string() == name))
     })
 }
@@ -463,7 +463,7 @@ impl Session {
                             .map(|(_, v)| v.trim().trim_matches('"').to_string());
                         if let Some(l) = lookup {
                             let found = engine.program.objects.iter().find(|o| {
-                                o.kind == "page"
+                                o.is_kind(al_ir::ObjKind::Page)
                                     && (o.name.eq_ignore_ascii_case(&l) || o.id.is_some_and(|i| i.to_string() == l))
                             });
                             if let Some(i) = found.and_then(|o| o.id) {
@@ -481,14 +481,14 @@ impl Session {
                     .program
                     .objects
                     .iter()
-                    .position(|o| o.kind == "page" && o.id == Some(id))
+                    .position(|o| o.is_kind(al_ir::ObjKind::Page) && o.id == Some(id))
                 else {
                     // A page of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
                     if engine
                         .program
                         .objects
                         .iter()
-                        .any(|o| o.kind == "uncompiled page" && o.id == Some(id))
+                        .any(|o| o.is_shell_of(al_ir::ObjKind::Page) && o.id == Some(id))
                     {
                         return unsupported(format!(
                             "page {n} belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
@@ -3840,7 +3840,8 @@ impl Session {
                 .find(|(k, _)| k.eq_ignore_ascii_case(prop))
                 .map(|(_, v)| v.trim().trim_matches('"').to_string())?;
             engine.program.objects.iter().position(|o| {
-                o.kind == "page" && (o.name.eq_ignore_ascii_case(&name) || o.id.is_some_and(|i| i.to_string() == name))
+                o.is_kind(al_ir::ObjKind::Page)
+                    && (o.name.eq_ignore_ascii_case(&name) || o.id.is_some_and(|i| i.to_string() == name))
             })
         });
         // A page of a dependency app that nothing reached is not compiled (ADR-013); BC has it, and
@@ -3922,7 +3923,8 @@ impl Session {
             .objects
             .iter()
             .position(|o| {
-                o.kind == "page" && (o.name.eq_ignore_ascii_case(&card) || o.id.is_some_and(|i| i.to_string() == card))
+                o.is_kind(al_ir::ObjKind::Page)
+                    && (o.name.eq_ignore_ascii_case(&card) || o.id.is_some_and(|i| i.to_string() == card))
             })
             .map(Some)
             .ok_or_else(|| Signal::Unsupported("CardPageId names a page outside the workspace".into()))
@@ -3964,7 +3966,8 @@ impl Session {
             return unsupported("the built-in Edit/View action of a list page with no CardPageId (not pinned)");
         };
         let Some(target) = engine.program.objects.iter().position(|o| {
-            o.kind == "page" && (o.name.eq_ignore_ascii_case(&card) || o.id.is_some_and(|i| i.to_string() == card))
+            o.is_kind(al_ir::ObjKind::Page)
+                && (o.name.eq_ignore_ascii_case(&card) || o.id.is_some_and(|i| i.to_string() == card))
         }) else {
             return unsupported("CardPageId names a page outside the workspace");
         };

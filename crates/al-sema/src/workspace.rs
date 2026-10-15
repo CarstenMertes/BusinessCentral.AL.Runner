@@ -6,25 +6,7 @@ use rayon::prelude::*;
 use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
-pub enum ObjKind {
-    Table,
-    TableExtension,
-    Page,
-    PageExtension,
-    Codeunit,
-    Report,
-    ReportExtension,
-    Query,
-    XmlPort,
-    Enum,
-    EnumExtension,
-    Interface,
-    PermissionSet,
-    PermissionSetExtension,
-    Profile,
-    Other,
-}
+pub use al_ir::ObjKind;
 
 #[derive(Debug, Clone)]
 pub struct AppSource {
@@ -97,77 +79,6 @@ pub struct Diagnostic {
     pub offset: usize,
     pub code: &'static str,
     pub message: String,
-}
-
-impl ObjKind {
-    pub fn from_keyword(kw: &str) -> ObjKind {
-        match kw.to_ascii_lowercase().as_str() {
-            "table" => ObjKind::Table,
-            "tableextension" => ObjKind::TableExtension,
-            "page" => ObjKind::Page,
-            "pageextension" => ObjKind::PageExtension,
-            "codeunit" => ObjKind::Codeunit,
-            "report" => ObjKind::Report,
-            "reportextension" => ObjKind::ReportExtension,
-            "query" => ObjKind::Query,
-            "xmlport" => ObjKind::XmlPort,
-            "enum" => ObjKind::Enum,
-            "enumextension" => ObjKind::EnumExtension,
-            "interface" => ObjKind::Interface,
-            "permissionset" => ObjKind::PermissionSet,
-            "permissionsetextension" => ObjKind::PermissionSetExtension,
-            "profile" => ObjKind::Profile,
-            _ => ObjKind::Other,
-        }
-    }
-
-    /// The object kind a variable type keyword refers to (`Record` → table).
-    pub fn from_type_name(ty: &str) -> Option<ObjKind> {
-        Some(match ty.to_ascii_lowercase().as_str() {
-            "record" => ObjKind::Table,
-            "codeunit" => ObjKind::Codeunit,
-            "page" | "testpage" => ObjKind::Page,
-            "report" | "testrequestpage" => ObjKind::Report,
-            "query" => ObjKind::Query,
-            "xmlport" => ObjKind::XmlPort,
-            "enum" => ObjKind::Enum,
-            "interface" => ObjKind::Interface,
-            _ => return None,
-        })
-    }
-
-    /// The kind an extension object extends.
-    pub fn extended(self) -> Option<ObjKind> {
-        Some(match self {
-            ObjKind::TableExtension => ObjKind::Table,
-            ObjKind::PageExtension => ObjKind::Page,
-            ObjKind::EnumExtension => ObjKind::Enum,
-            ObjKind::ReportExtension => ObjKind::Report,
-            ObjKind::PermissionSetExtension => ObjKind::PermissionSet,
-            _ => return None,
-        })
-    }
-
-    pub fn label(self) -> &'static str {
-        match self {
-            ObjKind::Table => "table",
-            ObjKind::TableExtension => "tableextension",
-            ObjKind::Page => "page",
-            ObjKind::PageExtension => "pageextension",
-            ObjKind::Codeunit => "codeunit",
-            ObjKind::Report => "report",
-            ObjKind::ReportExtension => "reportextension",
-            ObjKind::Query => "query",
-            ObjKind::XmlPort => "xmlport",
-            ObjKind::Enum => "enum",
-            ObjKind::EnumExtension => "enumextension",
-            ObjKind::Interface => "interface",
-            ObjKind::PermissionSet => "permissionset",
-            ObjKind::PermissionSetExtension => "permissionsetextension",
-            ObjKind::Profile => "profile",
-            ObjKind::Other => "object",
-        }
-    }
 }
 
 pub struct SourceFileData {

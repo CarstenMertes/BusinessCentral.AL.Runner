@@ -576,18 +576,15 @@ fn a_page_naming_a_report_with_allow_scheduling_opens() {
     ));
 }
 
-// Nothing pins what running such a report does with the property: running it is refused.
+// Running a processing-only report with AllowScheduling is an ordinary run (report/TestProbeReportContracts.al:
+// AllowScheduling_TrueAndFalse_Run).
 #[test]
-fn running_a_report_with_allow_scheduling_is_refused() {
-    let o = outcomes(&format!(
+fn running_a_report_with_allow_scheduling_runs_it() {
+    passes(&format!(
         "{HELPERS}
         [Test]
         procedure Runs() begin Report.Run(Report::\"PM Scheduled\", false); end;"
     ));
-    assert!(
-        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("allowscheduling")),
-        "{o:?}"
-    );
 }
 
 // SetSelectionFilter and GetRecord are in no corpus test: a page that declares a routine calling them

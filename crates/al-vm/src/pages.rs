@@ -628,6 +628,26 @@ impl Session {
                     None => Ok(Value::Text(self.page_caption(st))),
                 }
             }
+            // `ObjectId(UseNames)` (CurrPage and a Page variable alike, open or not): `Page <id>`, or with names, the
+            // default, `Page <Caption>` and the object name when the page has no Caption (handlers/PRPageObjectId.al).
+            "ObjectId" if method.starts_with("Page.") => {
+                let names = match args.first() {
+                    None => true,
+                    Some(v) => ops::truthy(v)?,
+                };
+                let engine = self.engine();
+                let o = &engine.program.objects[st.borrow().object as usize];
+                if !names {
+                    return Ok(Value::Text(format!("Page {}", o.id.unwrap_or(0))));
+                }
+                let caption = o
+                    .properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                    .map(|(_, v)| unquote(v))
+                    .unwrap_or_else(|| o.name.clone());
+                Ok(Value::Text(format!("Page {caption}")))
+            }
             "Caption" => {
                 self.require_open(st)?;
                 Ok(Value::Text(self.page_caption(st)))
@@ -3255,6 +3275,8 @@ impl Session {
                 // (corpus testpageclose/TestPageClosingActions.al).
                 return self.close_with(st, name, true, true);
             }
+            // The built-in OK and Cancel are visible (report/TestProbeReportContracts.al:RequestPage_InvokeActionNotFound).
+            ControlTarget::BuiltIn(_) if m == "Visible" => return Ok(Value::Boolean(true)),
             _ => return unsupported(format!("{method} on a built-in control")),
         };
         // The data items and actions of a report's request page.
@@ -3396,7 +3418,9 @@ impl Session {
                 let name = if m == "HideValue" { "hidevalue" } else { "showmandatory" };
                 let engine = self.engine();
                 match page_of(&engine, st).controls[idx].prop(name) {
-                    None => Ok(Value::Boolean(false)),
+                    // ShowMandatory is true when the page says nothing (handlers/TestProbePageHandlerContracts.al:
+                    // TestPage_Members_ShowMandatoryHideValue_Defaults); HideValue is false.
+                    None => Ok(Value::Boolean(m == "ShowMandatory")),
                     Some(ir::PropVal::Lit(l)) => Ok(Value::Boolean(unquote(l).eq_ignore_ascii_case("true"))),
                     Some(_) => unsupported(format!("TestField.{m} of a computed property")),
                 }
@@ -4291,6 +4315,16 @@ impl Session {
         }
         if let Value::Library(name, _) = v {
             return unsupported(format!("control text of a {name} value"));
+        }
+        // A control with HideValue = true shows no value (handlers/TestProbePageHandlerContracts.al:
+        // TestPage_Members_ShowMandatoryHideValue_Defaults, `hidevalue_field_value` is empty).
+        {
+            let engine = self.engine();
+            if let Some(ir::PropVal::Lit(l)) = page_of(&engine, st).controls[idx].prop("hidevalue") {
+                if unquote(l).eq_ignore_ascii_case("true") {
+                    return Ok(String::new());
+                }
+            }
         }
         let f = self.control_format(st, idx)?;
         let engine = self.engine();

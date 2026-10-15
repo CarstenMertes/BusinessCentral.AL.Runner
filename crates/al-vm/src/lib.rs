@@ -336,6 +336,9 @@ pub struct Session {
     /// (`CurrReport.Skip`, `Break`, `Quit`), and the request it made (al-vm reports.rs).
     pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
     pub(crate) report_flow: Option<crate::reports::Flow>,
+    /// The request page of a `RunRequestPage` is open: a table write in its handler finds no transaction
+    /// (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler).
+    pub(crate) request_only_page: bool,
     /// The report instances that `Execute` has run: a second `Execute` on one is refused.
     /// A page opened for a `RunObject` action looks its handler up without failing when there is
     /// none (al-vm pages/runobject.rs).
@@ -463,6 +466,7 @@ impl Session {
             report_quit: false,
             report_trigger: None,
             report_flow: None,
+            request_only_page: false,
             report_executed: Vec::new(),
             report_preview_pinned: Vec::new(),
             dataset: None,
@@ -640,6 +644,7 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            rerun: false,
             base: None,
         }))
     }
@@ -680,6 +685,7 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            rerun: false,
             base: None,
         }))
     }

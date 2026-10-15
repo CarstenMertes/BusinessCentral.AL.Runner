@@ -365,7 +365,7 @@ impl Session {
     /// `Insert` is pinned (codeunit/TestWriteTxTestBoundary.al:Test09_NoneTestCannotWriteDirectly);
     /// the other writes are refused as unsupported rather than given a guessed outcome.
     pub(crate) fn gate_write(&self, method: &str) -> Result<(), Signal> {
-        if !self.no_transaction() {
+        if !self.no_transaction() && !self.request_only_page {
             return Ok(());
         }
         match method {

@@ -790,6 +790,10 @@ pub struct Instance {
     pub object: u32,
     pub globals: Vec<Value>,
     pub initialized: bool,
+    /// A report variable a `Run` just reset: its next method call other than `Run` runs `OnInitReport` again,
+    /// a `Run` does not (report/TestProbeReportContracts.al:ReportVariable_RunTwice_GlobalsReset against
+    /// handlers/TestReportRuntimeContracts.al:Report_Run_ResetsTheGlobals_NotOnInitReport_RunTwiceIsAllowed_ExecuteTwiceThrows).
+    pub rerun: bool,
     /// For the instance of a page or report extension: the instance of the page or report it
     /// extends (ADR-023). `Weak`, so the link adds no reference cycle. `None` for every other
     /// instance.

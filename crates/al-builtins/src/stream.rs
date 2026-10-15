@@ -582,18 +582,14 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     };
     let bytes = with_in(r, |s| {
         let pos = s.pos;
-        // Fewer bytes than the type needs (streams/TestProbeStreamContracts.al:Read_IntoTypes, a BigInteger or a Decimal
-        // read from 4 bytes).
+        // Fewer bytes than the type needs, also none at all: the stream data error (streams/TestProbeStreamContracts.al:
+        // Read_IntoTypes, a BigInteger or a Decimal read from 4 bytes; types/PRFileUpload.al:ReadFromUnfilledStream, a Byte).
         let got = s.with_data(|d| d.get(pos..pos + width).map(<[u8]>::to_vec)).ok_or_else(|| {
-            if width >= 8 {
-                Signal::Error(crate::native::AlError {
-                    message: "Invalid data encountered in stream, unable to read text.".into(),
-                    code: "InvalidStreamData".into(),
-                    call_stack: String::new(),
-                })
-            } else {
-                Signal::Unsupported("InStream.Read past the end (error text not pinned)".into())
-            }
+            Signal::Error(crate::native::AlError {
+                message: "Invalid data encountered in stream, unable to read text.".into(),
+                code: "InvalidStreamData".into(),
+                call_stack: String::new(),
+            })
         })?;
         s.pos += width;
         Ok(got)

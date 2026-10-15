@@ -7,7 +7,7 @@
 
 use crate::dataset::{self, Column, Dataset};
 use crate::pages::RequestClosed;
-use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
+use crate::transactions::{TxModel, al_error};
 use crate::{Session, Signal};
 use al_builtins::describe::Describe;
 use al_builtins::ops;
@@ -177,7 +177,7 @@ impl Session {
                 Ok(Value::Null)
             }
             "Report.Run#1" | "Report.RunModal#1" => {
-                let (inst, quit) = self.report_instance(receiver, true)?;
+                let (inst, quit) = self.report_instance_for(receiver, true, id == "Report.Run#1")?;
                 let schema = self.report_schema(&inst)?;
                 let window = Self::report_shows_page(&inst, &schema);
                 let result = if quit {
@@ -298,8 +298,16 @@ impl Session {
     /// runs `OnInitReport` (handlers/TestReportOnInitReportTiming.al:50-60).
     /// Returns whether that trigger quit the report; a caller that cannot stop refuses it.
     fn report_instance(&mut self, receiver: Option<Value>, can_stop: bool) -> Result<(Inst, bool), Signal> {
+        self.report_instance_for(receiver, can_stop, false)
+    }
+
+    fn report_instance_for(&mut self, receiver: Option<Value>, can_stop: bool, run: bool) -> Result<(Inst, bool), Signal> {
         match receiver {
             Some(Value::Codeunit(rc)) => {
+                // Used again after a Run: anything but a Run makes it a new instance (OnInitReport runs).
+                if std::mem::take(&mut rc.borrow_mut().rerun) && !run {
+                    rc.borrow_mut().initialized = false;
+                }
                 let quit = !rc.borrow().initialized && self.report_init(&rc)?;
                 if quit && !can_stop {
                     return unsupported(
@@ -498,6 +506,7 @@ impl Session {
         let fresh = self.instance(object);
         let globals = std::mem::take(&mut fresh.borrow_mut().globals);
         inst.borrow_mut().globals = globals;
+        inst.borrow_mut().rerun = true;
     }
 
     // ------------------------------------------------------------------ table views
@@ -610,7 +619,7 @@ impl Session {
             return Ok(false);
         }
         if self.in_write_transaction() {
-            return Err(al_error(TRANSACTION_STOPPED));
+            return Err(crate::transactions::transaction_stopped());
         }
         if self.try_depth > 0 {
             return unsupported("a report run that enters a transaction world inside a TryFunction (not pinned)");
@@ -674,7 +683,9 @@ impl Session {
         let run = self.report_prepare(inst, schema)?;
         let before = self.saved_values.get(&(schema.object as u32)).cloned();
         let ext: Vec<(usize, Inst)> = run.exts.iter().map(|(i, e)| (*e, i.clone())).collect();
+        let outer = std::mem::replace(&mut self.request_only_page, true);
         let closed = self.run_request_page(inst, schema.object, seed, ext, true);
+        self.request_only_page = outer;
         match before {
             Some(v) => {
                 self.saved_values.insert(schema.object as u32, v);
@@ -746,7 +757,9 @@ impl Session {
             // A view that only sorts leaves the filters a SetTableView gave the item in force
             // (handlers/TestReportRuntimeContracts.al:393-410).
             let kept = (!view.to_ascii_lowercase().contains("where")).then(|| rec.borrow().filters.clone());
-            self.set_view(&rec, &t, &view)?;
+            // The filters of a DataItemTableView are the report's, not the record's: GetFilters does not show them, in
+            // OnPostReport either (report/TestProbeReportContracts.al:TriggerOrder_NestedAndSecondItem).
+            self.set_view_in(&rec, &t, &view, Some(LINK_GROUP), false, false)?;
             if let Some(filters) = kept {
                 rec.borrow_mut().filters = filters;
             }
@@ -1313,12 +1326,13 @@ impl Session {
     /// the variables as they are now, which they do on every read here, so nothing is left to do
     /// (handlers/TestReportRequestPageUpdateObjectIdContracts.al:RequestPageUpdate_RefreshesTheOtherControls:
     /// a handler sets Source to 21 and reads Derived 42 that the trigger set before it called Update(false)).
-    /// `true` saves the record: not pinned.
     pub(crate) fn request_page_update(&mut self, args: &[Value]) -> Result<Value, Signal> {
         match args.first() {
-            Some(Value::Boolean(false)) => Ok(Value::Null),
+            // `true` shows the same: the handler reads the variables the trigger set, and the run sees them
+            // (handlers/PRRequestPageUpdate.al:RequestPage_OnValidate_UpdateTrue).
+            Some(Value::Boolean(_)) => Ok(Value::Null),
             other => unsupported(format!(
-                "RequestPage.Update with SaveRecord {} (only false is pinned; whether true saves the record is not)",
+                "RequestPage.Update with SaveRecord {}",
                 other.map_or("missing".to_string(), |v| v.describe())
             )),
         }

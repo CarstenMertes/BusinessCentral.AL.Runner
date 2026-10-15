@@ -257,6 +257,12 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         if let (Some(a), Some(b)) = (text_like(l), text_like(r)) {
             return Ok(V::Text(a + &b));
         }
+        // A null string (a FileUpload's file name before a client filled it) joins as nothing (types/PRFileUpload.al:
+        // Unfilled_AssignClearAndPass).
+        match (l, r) {
+            (V::Text(t) | V::Code(t), V::Null) | (V::Null, V::Text(t) | V::Code(t)) => return Ok(V::Text(t.clone())),
+            _ => {}
+        }
         // A Char next to a text is a character of it, not a number: `'line1' + S[1] + 'line2'`
         // (corpus json/TestJsonXmlDeepContracts.al:71, which round-trips the result through JSON).
         // Two Chars add as numbers. A lone surrogate is not a character a Rust string can hold.

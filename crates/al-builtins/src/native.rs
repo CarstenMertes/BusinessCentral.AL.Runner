@@ -1083,7 +1083,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             ));
         }
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
-        Value::Library(name, _) if name == "OutStream" || name == "InStream" => Value::Library(
+        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload") => Value::Library(
             name.clone(),
             std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
         ),

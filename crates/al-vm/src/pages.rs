@@ -104,7 +104,7 @@ mod runobject;
 
 impl Session {
     /// `TP.Ctl`: a handle on control `control` of the test page `page`.
-    pub(crate) fn page_control(&mut self, page: Value, control: usize) -> Result<Value, Signal> {
+    pub(crate) fn page_control(&mut self, page: Value, control: usize, runtime: bool) -> Result<Value, Signal> {
         match page {
             Value::TestPage(p) => {
                 // A part control reads as the page it shows (a `TestPart`).
@@ -113,7 +113,7 @@ impl Session {
                     page_of(&engine, &p).controls[control].kind == ir::ControlKind::Part
                 };
                 if is_part {
-                    return self.part_page(&p, control).map(Value::TestPage);
+                    return self.part_page(&p, control, runtime).map(Value::TestPage);
                 }
                 Ok(Value::TestControl(Rc::new(ControlRef {
                     page: p,
@@ -358,6 +358,13 @@ impl Session {
                 && ev.starts_with("on")
                 && ev.ends_with("event")
                 && !al_ir::RAISED_PAGE_EVENTS.contains(&ev.as_str())
+                // The client has no operation that deletes the page's row (an action without code of ours is not on the
+                // runtime page, `action_without_behaviour`); a page that is merely
+                // opened never raises this event. Base
+                // Application subscribes to it on General Journal and the other journals (88 tests of
+                // Tests-General Journal were refused at the open).
+                && !(ev == "ondeleterecordevent"
+                    && al_builtins::assumptions::hit(al_builtins::assumptions::Assumption::PageRowDeleteEventNotRaised))
             {
                 // Events a page publishes itself (IntegrationEvent) are ordinary routines.
                 let published = engine
@@ -1653,7 +1660,20 @@ impl Session {
                     _ => None,
                 })
                 .collect();
-            let [Some(v)] = single.as_slice() else { continue };
+            // The combined filter of a field is the intersection of its filters, in every filter group: several
+            // that all name the same value are that single value (Payment Journal: the record the page was run
+            // with carries the batch in group 0 and `OpenJnl` sets it again in group 2; Microsoft's Incom. Doc.
+            // Attach. FactBox tests, unprobed, docs/probes-needed.md).
+            let Some(Some(v)) = single.first() else { continue };
+            if single
+                .iter()
+                .any(|o| !o.as_ref().is_some_and(|w| ops::compare(v, w).is_ok_and(|c| c.is_eq())))
+            {
+                continue;
+            }
+            if single.len() > 1 {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::NewRowEqualFiltersSeveralGroups);
+            }
             stamped.push((pos, v.clone()));
         }
         for (pos, v) in stamped {

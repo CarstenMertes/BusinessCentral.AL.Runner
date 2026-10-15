@@ -970,6 +970,72 @@ fn setfilter_placeholder_text_with_an_unpinned_filter_character_is_refused() {
     assert_eq!(text_or_int(r), 1);
 }
 
+// RecordRef.GetBySystemId, as probed on BC 27.5: corpus branch al-runtime-rs-staging (ae3fe88),
+// tests/al-language/types/PXEnumRecordRef.al:199-246 (found loads every field, a missing or null
+// Guid answers false and leaves the buffer), :249-270 (the result unused: a miss raises
+// DB:RecordNotFound), :273-301 (found outside the filters, the filters stay; a RecordRef never
+// opened answers false and Number() 0).
+#[test]
+fn record_ref_get_by_system_id_loads_the_row_and_a_miss_keeps_the_buffer() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; RR: RecordRef; Id: Guid; s: Text; begin
+            R.\"No.\" := 'A'; R.Descr := 'first'; R.Amount := 1.5; R.Insert(); Id := R.SystemId;
+            R.\"No.\" := 'B'; R.Descr := 'second'; R.Amount := 2.5; R.Insert();
+            RR.Open(Database::\"ALT T\");
+            s := Format(RR.GetBySystemId(Id)) + Format(RR.Field(1).Value) + Format(RR.Field(4).Value) + Format(RR.Field(2).Value);
+            s += Format(Format(RR.Field(RR.SystemIdNo()).Value) = Format(Id)) + Format(RR.Count());
+            s += '|' + Format(RR.GetBySystemId(CreateGuid())) + Format(RR.Field(1).Value) + Format(RR.Field(4).Value);
+            s += '|' + Format(RR.GetBySystemId('00000000-0000-0000-0000-000000000000'));
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesAfirst1.5Yes2|NoAfirst|No");
+}
+
+#[test]
+fn record_ref_get_by_system_id_with_the_result_unused_raises_on_a_miss() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; RR: RecordRef; Id: Guid; G: Guid; s: Text; begin
+            R.\"No.\" := 'A'; R.Insert(); Id := R.SystemId;
+            RR.Open(Database::\"ALT T\");
+            RR.GetBySystemId(Id);
+            s := Format(RR.Field(1).Value);
+            G := CreateGuid();
+            asserterror RR.GetBySystemId(G);
+            exit(s + '|' + GetLastErrorText() + '|' + GetLastErrorCode() + '|' + Format(G));
+        end;",
+        "F",
+    );
+    let t = text(r);
+    let parts: Vec<&str> = t.split('|').collect();
+    assert_eq!(parts[0], "A");
+    assert_eq!(
+        parts[1],
+        format!(
+            "The The Table does not exist. Identification fields and values: {}",
+            parts[3]
+        )
+    );
+    assert_eq!(parts[2], "DB:RecordNotFound");
+}
+
+#[test]
+fn record_ref_get_by_system_id_ignores_the_filters_and_a_never_opened_ref_answers_false() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; RR: RecordRef; Closed: RecordRef; Id: Guid; s: Text; begin
+            R.\"No.\" := 'A'; R.Descr := 'x'; R.Insert(); Id := R.SystemId;
+            RR.Open(Database::\"ALT T\");
+            RR.Field(4).SetRange('other');
+            s := Format(RR.GetBySystemId(Id)) + '|' + RR.GetFilters();
+            s += '|' + Format(Closed.GetBySystemId(Id)) + Format(Closed.Number());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes|Descr: other|No0");
+}
+
 // `Find('=<>')` names the same three directions as the pinned `Find('=><')` (pageupdate/TestPageUpdateGoneRow.al:423):
 // the characters of Which are a set, so their order does not matter (Microsoft's tests write `'=<>'`; documented
 // assumption, docs/probes-needed.md). Issue 43.

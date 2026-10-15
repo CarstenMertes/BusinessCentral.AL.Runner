@@ -2971,6 +2971,13 @@ impl Session {
         self.require_open(&c.page)?;
         let st = &c.page;
         let m = method.split_once('.').map(|(_, m)| m).unwrap_or(method);
+        // The setter form `Control.Value := x` arrives as `Value(x)`: it is `SetValue(x)`
+        // (corpus handlers/ProbeTestPageForms.al:108-148).
+        let m = if m == "Value" && !args.is_empty() {
+            "SetValue"
+        } else {
+            m
+        };
         let idx = match &c.target {
             ControlTarget::Control(i) => *i,
             ControlTarget::BuiltIn(name) if matches!(name.as_str(), "Edit" | "View") => {

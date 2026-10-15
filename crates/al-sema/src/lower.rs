@@ -2151,6 +2151,8 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
         (receiver, name),
         ("FieldRef", "Value")
+            // `TestPage.Control.Value := x` is `SetValue(x)` (corpus handlers/ProbeTestPageForms.al:108-148).
+            | ("TestField", "Value")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
             | ("Notification", "Id" | "Message" | "Scope")
             | (

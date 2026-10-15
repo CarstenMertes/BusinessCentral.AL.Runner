@@ -59,11 +59,11 @@ fn error<T>(message: String) -> Result<T, Signal> {
 }
 
 fn error_code<T>(message: String, code: &str) -> Result<T, Signal> {
-    Err(Signal::Error(AlError {
+    Err(Signal::Error(Box::new(AlError {
         message,
         code: code.into(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 /// BC's line break inside error texts: a carriage return and a backslash.

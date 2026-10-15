@@ -33,11 +33,11 @@ enum Left {
 }
 
 fn error(message: impl Into<String>) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message: message.into(),
         code: String::new(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// Whether `name` (a page's name or id as a table property writes it) is a page of a dependency app
@@ -50,11 +50,11 @@ fn names_uncompiled_page(engine: &Engine, name: &str) -> bool {
 }
 
 fn error_code(message: impl Into<String>, code: &str) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// The id a TestPage error names a control by: FNV-1a over the UTF-16 text of the declaring

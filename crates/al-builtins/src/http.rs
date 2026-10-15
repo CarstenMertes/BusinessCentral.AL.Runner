@@ -79,11 +79,11 @@ fn set_request_uri(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
     match uri_validity(&u) {
         Some(true) => with_request(r, |s| s.uri = Some(u)).map(|()| Value::Boolean(true)),
         Some(false) if c.ret_used() => Ok(Value::Boolean(false)),
-        Some(false) => Err(Signal::Error(crate::native::AlError {
+        Some(false) => Err(Signal::Error(Box::new(crate::native::AlError {
             message: "Failed to create the URL for the request. Please, make sure to set a valid URL.".into(),
             code: "CreateUrl:UriFormat".into(),
             call_stack: String::new(),
-        })),
+        }))),
         None => unsupported(format!(
             "SetRequestUri of `{u}`: whether it is a valid uri is not pinned (only an absolute uri and white space without a scheme are)"
         )),

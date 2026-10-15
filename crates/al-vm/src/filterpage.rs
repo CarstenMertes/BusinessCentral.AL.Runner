@@ -19,11 +19,11 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 fn al_error(message: String) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message,
         code: String::new(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// The caption of a builder nobody assigned one to: the platform's localized default, which the

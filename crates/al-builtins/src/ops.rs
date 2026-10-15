@@ -18,6 +18,16 @@ fn unsupported<T>(what: String) -> Result<T, Signal> {
 /// Converts `v` for storing in a slot of type `t`.
 pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
+    // The conversions between the plain numbers that cannot fail, without the Decimal detour.
+    match (&v, t) {
+        (Value::Integer(_), T::Integer) | (Value::BigInteger(_), T::BigInteger) | (Value::Decimal(_), T::Decimal) => {
+            return Ok(v);
+        }
+        (Value::Integer(n), T::BigInteger) => return Ok(Value::BigInteger(i64::from(*n))),
+        (Value::Integer(n), T::Decimal) => return Ok(Value::Decimal(Decimal::from(*n))),
+        (Value::BigInteger(n), T::Decimal) => return Ok(Value::Decimal(Decimal::from(*n))),
+        _ => {}
+    }
     Ok(match (v, t) {
         (v, T::Variant) => v,
         (Value::Null, t) => Value::default_for(t),
@@ -291,6 +301,27 @@ pub enum Arith {
 
 pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     use Value as V;
+    // Two Integers, the commonest case: whole-number arithmetic without the Decimal detour; the results are the
+    // general path's (an Integer, an overflow error, the divide-by-zero error). `/` keeps its Decimal quotient below.
+    if let (V::Integer(a), V::Integer(b)) = (l, r) {
+        let (a, b) = (i64::from(*a), i64::from(*b));
+        let n = match op {
+            Arith::Add => Some(a + b),
+            Arith::Sub => Some(a - b),
+            Arith::Mul => Some(a * b),
+            Arith::IntDiv | Arith::Mod if b == 0 => {
+                return raise("Attempted to divide by zero.", "AL:DivideByZero");
+            }
+            Arith::IntDiv => Some(a / b),
+            Arith::Mod => Some(a % b),
+            Arith::Div => None,
+        };
+        if let Some(n) = n {
+            return i32::try_from(n)
+                .map(V::Integer)
+                .or_else(|_| raise("Arithmetic operation resulted in an overflow.", "AL:Overflow"));
+        }
+    }
     // An Option takes part in arithmetic as its ordinal, an Integer (types/PROptionInteger.al:OptionMember_AsInteger:
     // `Opt + 1`, `Opt * 2`).
     if matches!(l, V::Option(..)) || matches!(r, V::Option(..)) {
@@ -566,9 +597,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Integer(a), V::BigInteger(b)) => return Ok(i64::from(*a).cmp(b)),
         (V::BigInteger(a), V::Integer(b)) => return Ok(a.cmp(&i64::from(*b))),
         (V::Decimal(a), V::Decimal(b)) => return Ok(a.cmp(b)),
-        (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b))
-            if !a.has_marker() && !b.has_marker() =>
-        {
+        (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if !a.has_marker() && !b.has_marker() => {
             return Ok(a.cmp(b));
         }
         _ => {}

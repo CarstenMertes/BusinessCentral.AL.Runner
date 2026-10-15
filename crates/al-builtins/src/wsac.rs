@@ -94,11 +94,11 @@ fn add_entity_key(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
     if added || c.ret_used() {
         return Ok(Value::Boolean(added));
     }
-    Err(Signal::Error(crate::native::AlError {
+    Err(Signal::Error(Box::new(crate::native::AlError {
         message: format!("The WebServiceActionContext already has an entity key for field {field}."),
         code: String::new(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {

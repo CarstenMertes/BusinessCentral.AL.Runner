@@ -221,11 +221,11 @@ impl Session {
         let Some(h) = scope.handlers.iter_mut().find(|h| h.kind == kind) else {
             // Text and code: corpus handlers/TestUnhandledUiAndDialogDefaults.al:68-107 (ONE space
             // after the kind; Confirm quotes the question, StrMenu the options only).
-            return Err(Signal::Error(AlError {
+            return Err(Signal::Error(Box::new(AlError {
                 message: format!("Unhandled UI: {} {shown}", kind.label()),
                 code: "MissingUIHandler".into(),
                 call_stack: String::new(),
-            }));
+            })));
         };
         h.fired = true;
         let (object, routine, instance) = (h.object, h.routine, h.instance.clone());
@@ -350,11 +350,11 @@ impl Session {
         else {
             // handlers/TestUnhandledUiAndDialogDefaults.al:97-104 ("ModalPage 68124", "Page 68124");
             // RequestPage names the report's request page id (handlers/TestReportRuntimeContracts.al:425).
-            return Err(Signal::Error(AlError {
+            return Err(Signal::Error(Box::new(AlError {
                 message: format!("Unhandled UI: {} {}", kind.label(), shown_id),
                 code: "MissingUIHandler".into(),
                 call_stack: String::new(),
-            }));
+            })));
         };
         h.fired = true;
         Ok((h.object, h.routine, h.instance.clone()))
@@ -376,11 +376,11 @@ impl Session {
     /// The refusal for a page of `kind` that the test bound no handler for. Code and text:
     /// handlers/TestUnhandledUiAndDialogDefaults.al:97-104, handlers/TestReportRuntimeContracts.al:425-426.
     pub(crate) fn unhandled_page(&self, kind: UiKind, object: u32) -> Signal {
-        Signal::Error(AlError {
+        Signal::Error(Box::new(AlError {
             message: format!("Unhandled UI: {} {}", kind.label(), self.object_id_of(object)),
             code: "MissingUIHandler".into(),
             call_stack: String::new(),
-        })
+        }))
     }
 
     pub(crate) fn has_page_handler(&self, kind: UiKind, page: u32) -> bool {

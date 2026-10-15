@@ -1959,7 +1959,7 @@ pub fn run_codeunit_full(
                         Err(Signal::Error(e)) => {
                             session.rollback_transaction();
                             let message = e.message.clone();
-                            failure = Some(e);
+                            failure = Some(*e);
                             Outcome::Fail(message)
                         }
                         // A refused test did not run: what it wrote before the refusal must not

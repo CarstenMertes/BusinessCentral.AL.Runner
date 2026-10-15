@@ -19,11 +19,11 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 fn error(message: String, code: &str) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message,
         code: code.into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// The text of an AL string literal property value (`'it''s'` → `it's`), if it is one.
@@ -922,14 +922,14 @@ impl Session {
             // the Guid as Format writes it: docs/probes-needed.md).
             None if raise_on_miss => {
                 let id = al_builtins::format::try_format(&Value::Guid(*g), 0, 0, self).map_err(Signal::Unsupported)?;
-                Err(Signal::Error(AlError {
+                Err(Signal::Error(Box::new(AlError {
                     message: format!(
                         "The {} does not exist. Identification fields and values: {id}",
                         self.caption(t)
                     ),
                     code: "DB:RecordNotFound".into(),
                     call_stack: String::new(),
-                }))
+                })))
             }
             None => unsupported("GetBySystemId of a missing row without using the result (error text not pinned)"),
         }

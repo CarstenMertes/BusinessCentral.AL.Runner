@@ -14,11 +14,11 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 fn error<T>(message: &str) -> Result<T, Signal> {
-    Err(Signal::Error(AlError {
+    Err(Signal::Error(Box::new(AlError {
         message: message.to_string(),
         code: String::new(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 fn set_tables(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {

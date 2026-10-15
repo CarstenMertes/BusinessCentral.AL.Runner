@@ -260,11 +260,11 @@ pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     if collectible && c.collect_error(info) {
         return Ok(Value::Null);
     }
-    Err(Signal::Error(crate::native::AlError {
+    Err(Signal::Error(Box::new(crate::native::AlError {
         message,
         code: "Dialog".into(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 /// A copy of an `ErrorInfo` value that shares nothing with the original.

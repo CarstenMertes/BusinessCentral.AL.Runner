@@ -26,11 +26,11 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 fn xerr(message: impl Into<String>, code: &str) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_SchemaMismatch_ThrowsXmlPortInvalidXml
@@ -339,7 +339,7 @@ impl Session {
             Err(Signal::Error(e)) if guarded => {
                 self.rollback_transaction();
                 self.error_finals = None;
-                self.last_error = e;
+                self.last_error = *e;
                 Ok(Value::Boolean(false))
             }
             Err(other) => Err(other),

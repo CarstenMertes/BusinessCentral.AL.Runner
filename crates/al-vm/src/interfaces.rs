@@ -17,11 +17,11 @@ use std::rc::Rc;
 /// (codeunit/TestInterfaceRuntimeContracts.al:76,
 /// Interface_CallOnUnassignedVariable_Throws_InterfaceNotInitialized).
 fn not_initialized() -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message: "Interface not initialized".into(),
         code: "InvalidOperation".into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 impl Session {
@@ -33,11 +33,11 @@ impl Session {
     /// codeunit/TestInterfaceRuntimeContracts.al:Interface_ExtendedInterface_IsAndAs).
     pub(crate) fn interface_test(&mut self, value: Value, objects: &[u32], cast: bool) -> Result<Value, Signal> {
         let unable = || {
-            Signal::Error(AlError {
+            Signal::Error(Box::new(AlError {
                 message: "The expression cannot be the target interface.".into(),
                 code: "UnableToCast".into(),
                 call_stack: String::new(),
-            })
+            }))
         };
         match value {
             Value::Codeunit(i) => {
@@ -98,11 +98,11 @@ impl Session {
             // it: codeunit/TestInterfaceRuntimeContracts.al:90
             // (Interface_CastUndeclaredEnumOrdinalWithoutUnknownImplementation_Throws).
             None => unknown.ok_or_else(|| {
-                Signal::Error(AlError {
+                Signal::Error(Box::new(AlError {
                     message: format!("Enum does not contain value {ordinal}."),
                     code: "ArgumentOutOfRange".into(),
                     call_stack: String::new(),
-                })
+                }))
             })?,
         };
         Ok(Value::Codeunit(self.instance(object)))

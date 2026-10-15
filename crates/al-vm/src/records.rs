@@ -163,11 +163,11 @@ impl Session {
                 "DB:RecordNotFound",
             )
         };
-        Err(Signal::Error(AlError {
+        Err(Signal::Error(Box::new(AlError {
             message,
             code: code.into(),
             call_stack: String::new(),
-        }))
+        })))
     }
 
     /// The table-level trigger `name` (`OnBeforeInsert`, `OnInsert`, ...) of every table extension that declares it,
@@ -460,7 +460,7 @@ impl Session {
             let v = al_builtins::format::try_format(&row[i], 0, 0, self).map_err(Signal::Unsupported)?;
             parts.push(format!("{}='{}'", t.fields[i].name, v));
         }
-        Err(Signal::Error(AlError {
+        Err(Signal::Error(Box::new(AlError {
             message: format!(
                 "There is already a record in table {} that has the same values in a unique index for the following fields: {}",
                 self.caption(t),
@@ -468,7 +468,7 @@ impl Session {
             ),
             code: "DB:RecordExists".into(),
             call_stack: String::new(),
-        }))
+        })))
     }
 
     /// Whether an insert or modify of `t` would run table code (a trigger, an extension trigger
@@ -774,7 +774,7 @@ impl Session {
             return Ok(());
         }
         let shown = al_builtins::format::try_format(&id, 0, 0, self).map_err(Signal::Unsupported)?;
-        Err(Signal::Error(AlError {
+        Err(Signal::Error(Box::new(AlError {
             // record/TestSystemFieldStampsContracts.al:153 (SystemId_Duplicate_And_ModifyAll_Texts;
             // the caption of the field is "System ID").
             message: format!(
@@ -784,7 +784,7 @@ impl Session {
             ),
             code: "DB:RecordExists".into(),
             call_stack: String::new(),
-        }))
+        })))
     }
 
     /// Reads a row into the record, then calculates its `SetAutoCalcFields` fields. A database
@@ -935,7 +935,7 @@ impl Session {
                 .is_some_and(|(o, _)| *o == t.object as usize)
         {
             let (_, e) = self.deferred_insert.take().expect("checked");
-            return Err(Signal::Error(e));
+            return Err(Signal::Error(Box::new(e)));
         }
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             if let Some(f) = schema.fields.iter().find(|f| f.init_text.is_some() && f.init.is_none()) {
@@ -955,11 +955,11 @@ impl Session {
                     if !rec.borrow().touched {
                         return Ok(Value::Null);
                     }
-                    return Err(Signal::Error(AlError {
+                    return Err(Signal::Error(Box::new(AlError {
                         message: (*messages.iter().next().expect("one message")).clone(),
                         code: String::new(),
                         call_stack: String::new(),
-                    }));
+                    })));
                 }
                 return unsupported(format!(
                     "{}.{}: InitValue `{}` is not implemented yet",
@@ -1227,7 +1227,7 @@ impl Session {
                             }
                             match self.fail(&t, &row, true) {
                                 Err(Signal::Error(e)) => {
-                                    self.deferred_insert.get_or_insert((t.object as usize, e));
+                                    self.deferred_insert.get_or_insert((t.object as usize, *e));
                                 }
                                 // A key whose format is not pinned stays a refusal.
                                 Err(other) => return Err(other),
@@ -1268,7 +1268,7 @@ impl Session {
                         && version(&theirs) <= self.committed_row_version
                     {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
-                        return Err(Signal::Error(AlError {
+                        return Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "The changes to the {} record cannot be saved because some information on the page is not up-to-date. Close the page, reopen it, and try again.{BR}{BR}Identification fields and values:{BR}{BR}{}",
                                 self.caption(&t),
@@ -1276,7 +1276,7 @@ impl Session {
                             ),
                             code: "DB:RecordChanged".into(),
                             call_stack: String::new(),
-                        }));
+                        })));
                     }
                 }
                 // Modify never changes the stored SystemId, whatever the buffer carries
@@ -1362,11 +1362,11 @@ impl Session {
                 // The platform takes no delete on Tenant License State (record/
                 // TestPlatformTablesWritableContracts.al:96-101; the single-record Delete is not pinned).
                 if self.engine.program.objects[t.object as usize].id == Some(2_000_000_189) {
-                    return Err(Signal::Error(AlError {
+                    return Err(Signal::Error(Box::new(AlError {
                         message: "It is not possible to delete any record in the Tenant License State table.".into(),
                         code: "DB:Ok".into(),
                         call_stack: String::new(),
-                    }));
+                    })));
                 }
                 let (filters, flow_field_filters) = self.split_filters(rec);
                 if !flow_field_filters.is_empty() {
@@ -1595,14 +1595,14 @@ impl Session {
                                 t.name
                             ));
                         }
-                        Err(Signal::Error(AlError {
+                        Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "There is no {} within the filter.{BR}{BR}Filters: {filters}",
                                 self.caption(&t)
                             ),
                             code: "DB:NothingInsideFilter".into(),
                             call_stack: String::new(),
-                        }))
+                        })))
                     }
                 }
             }
@@ -1704,7 +1704,7 @@ impl Session {
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
                         let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];
-                        return Err(Signal::Error(AlError {
+                        return Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "The filter \"{}\" is not valid for the {} field on the {} table. The value \"{word}\" can't be evaluated into type Boolean.",
                                 text.trim(),
@@ -1713,7 +1713,7 @@ impl Session {
                             ),
                             code: "Filter:CSide".into(),
                             call_stack: String::new(),
-                        }));
+                        })));
                     }
                     Err(e) => return Err(Signal::Unsupported(format!("SetFilter: {e}"))),
                 };

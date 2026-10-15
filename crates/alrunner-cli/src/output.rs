@@ -68,7 +68,18 @@ pub fn dotnet_warning(c: &Counts, why: &str) -> Option<String> {
 /// The first line of a message, cut to `max` characters.
 pub fn first_line(s: &str, max: usize) -> String {
     let line = s.lines().next().unwrap_or("");
-    al_testrun::refusals::clip(line, max)
+    // A control character (a NUL in a compared text, say) is shown as `\x00`, a tab stays.
+    let shown: String = line
+        .chars()
+        .map(|c| {
+            if c.is_control() && c != '\t' {
+                format!("\\x{:02X}", u32::from(c))
+            } else {
+                c.to_string()
+            }
+        })
+        .collect();
+    al_testrun::refusals::clip(&shown, max)
 }
 
 /// `Tests: 12 total, 5 passed, 1 failed, 6 not run`, and the warning that goes with a run that
@@ -244,6 +255,16 @@ mod tests {
         let none = Counts::of(rs[..1].iter().chain(rs[2..].iter()));
         assert_eq!(exit_code(&none, false), 7);
         assert!(dotnet_warning(&none, "").is_none());
+    }
+
+    #[test]
+    fn a_control_character_in_a_message_is_shown_as_an_escape() {
+        // Tests-Workflow has a failure whose text holds a NUL (`Expected:<asdf\0>`): printed raw it made
+        // the whole output a binary file to grep and to a terminal.
+        assert_eq!(
+            first_line("Expected:<asdf\u{0}> and \u{7}bell\tab", 80),
+            "Expected:<asdf\\x00> and \\x07bell\tab"
+        );
     }
 
     #[test]

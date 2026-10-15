@@ -5,6 +5,7 @@ pub use al_testrun::{baseline, deps, dotnet, explain, host, isolation, runtime, 
 pub mod args;
 pub mod config;
 pub mod corpus;
+pub mod coverage;
 pub mod drift;
 pub mod insight;
 pub mod mnc;

@@ -1200,15 +1200,13 @@ mod tests {
     }
 
     #[test]
-    fn procedures_next_to_added_data_items_are_refused_with_the_open_question() {
+    fn procedures_next_to_added_data_items_and_variables_are_accepted() {
+        // Pinned by reportext/W3RpExtProcedures.al: a procedure called through a report variable runs on the
+        // extension's instance of that variable.
         let l = ext_layout_of(
-            "reportextension 1 E extends R { dataset { addlast(A) { dataitem(B; Ledger) { } } } procedure P() begin end; }",
+            "reportextension 1 E extends R { dataset { addlast(A) { dataitem(B; Ledger) { } } } var G: Integer; procedure P() begin end; }",
         );
-        let all = l.reasons.join("; ");
-        assert!(
-            all.contains("procedures") && all.contains("not pinned") && all.contains("probes-needed"),
-            "{all}"
-        );
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
     }
 
     #[test]
@@ -1273,7 +1271,6 @@ mod tests {
         assert!(all.contains("addfirst(A)"), "{all}");
         assert!(all.contains("property caption of modify(A)"), "{all}");
         assert!(all.contains("trigger onfoo"), "{all}");
-        assert!(all.contains("procedures"), "{all}");
         assert!(all.contains("trigger oninitreport"), "{all}");
     }
 }

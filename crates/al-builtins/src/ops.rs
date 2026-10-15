@@ -410,7 +410,7 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() =>
         {
             return raise(
-                &format!(
+                format!(
                     "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.Int32.",
                     d.normalize()
                 ),

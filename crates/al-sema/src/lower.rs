@@ -4948,6 +4948,15 @@ impl Lowerer<'_> {
                         ir::Arg::Value(ir::Expr::Convert(self.rt(&el)?, Box::new(self.expr(a)?)))
                     } else if id.starts_with("System.Format#") && i == 0 {
                         ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
+                    // The substituted values of StrSubstNo, Message and Error are `Format`ted: an Option
+                    // field shows its caption (corpus xmlport/PWXmlPortFormatEvaluate.al:Import_Xml_Option,
+                    // `%3` of a field with OptionCaption).
+                    } else if i > 0
+                        && (id.starts_with("Text.StrSubstNo#")
+                            || id.starts_with("Dialog.Message#")
+                            || id.starts_with("Dialog.Error#"))
+                    {
+                        ir::Arg::Value(self.format_option_field(true, a)?)
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });

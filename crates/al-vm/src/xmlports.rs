@@ -497,7 +497,18 @@ impl Session {
                 None => return unsupported("XmlPort import into a table without a schema"),
             }
         };
-        let value = self.xp_value(text, &ty, schema.xp().format_evaluate_xml)?;
+        let value = if schema.xp().format_evaluate_xml {
+            let members = {
+                let r = rec.borrow();
+                match &self.engine.tables[r.table as usize] {
+                    Some(t) => self.members_of_field(t, pos)?,
+                    None => None,
+                }
+            };
+            self.xp_value_xml(text, &ty, members.map(|(_, m)| m))?
+        } else {
+            self.xp_value(text, &ty, false)?
+        };
         rec.borrow_mut().fields[pos] = value;
         self.xp_run_trigger(inst, schema, node, "onafterassignfield")?;
         Ok(pos)
@@ -508,7 +519,7 @@ impl Session {
     /// and an export writes a blank date as an empty element).
     fn xp_value(&mut self, text: &str, ty: &RtType, xml: bool) -> Result<Value, Signal> {
         if xml {
-            return self.xp_value_xml(text, ty);
+            return self.xp_value_xml(text, ty, None);
         }
         // A Legacy port reads the display text only: the XML date is refused and nothing is stored
         // (xmlport/TestXmlPortFormatEvaluateContracts.al:Import_LegacyXmlPort_TakesTheDisplayText_AndRefusesTheXmlDate).
@@ -636,8 +647,61 @@ impl Session {
     /// A Date that is not `yyyy-mm-dd` fails with the beginning of BC's text; the rest of that text is not
     /// pinned (docs/probes-needed.md). Display text for another type, and the types the probe does not
     /// cover, are refused.
-    fn xp_value_xml(&mut self, text: &str, ty: &RtType) -> Result<Value, Signal> {
+    fn xp_value_xml(
+        &mut self,
+        text: &str,
+        ty: &RtType,
+        members: Option<Vec<(i32, String, String)>>,
+    ) -> Result<Value, Signal> {
         match ty {
+            // corpus xmlport/PWXmlPortFormatEvaluate.al:Import_Xml_Time: `hh:mm:ss` with optional
+            // milliseconds; the 12-hour display text is refused.
+            RtType::Time if text.is_empty() => Ok(Value::Time(0)),
+            RtType::Time => al_builtins::iso::parse_time(text)
+                .map(Value::Time)
+                .ok_or_else(|| evaluate_error(text, "Time")),
+            // Import_Xml_Duration: the ISO 8601 form (`PT1H`); milliseconds and words are refused.
+            RtType::Duration if text.is_empty() => Ok(Value::Duration(0)),
+            RtType::Duration => parse_iso_duration(text)
+                .map(Value::Duration)
+                .ok_or_else(|| evaluate_error(text, "Duration")),
+            // Import_Xml_Option, Import_Xml_Enum: the member name, its ordinal or its caption.
+            RtType::Option(names) => {
+                let t = text.trim();
+                if t.is_empty() {
+                    return Ok(Value::Option(0, names.clone().into()));
+                }
+                let by_name = names.iter().position(|m| m.eq_ignore_ascii_case(t));
+                let by_caption = members
+                    .as_ref()
+                    .and_then(|m| m.iter().position(|(_, _, c)| c.eq_ignore_ascii_case(t)));
+                let by_ordinal = t.parse::<usize>().ok().filter(|i| *i < names.len());
+                match by_name.or(by_ordinal).or(by_caption) {
+                    Some(i) => Ok(Value::Option(i as i32, names.clone().into())),
+                    None => Err(evaluate_error(text, "Option")),
+                }
+            }
+            RtType::Enum(id) => {
+                let t = text.trim();
+                let list = match members {
+                    Some(m) => m,
+                    None => self.engine.program.objects[*id as usize]
+                        .enum_values
+                        .iter()
+                        .map(|(o, n)| (*o, n.clone(), n.clone()))
+                        .collect(),
+                };
+                if t.is_empty() {
+                    return Ok(Value::Enum(*id, list.first().map_or(0, |m| m.0)));
+                }
+                let by_name = list.iter().find(|(_, n, _)| n.eq_ignore_ascii_case(t));
+                let by_ordinal = t.parse::<i32>().ok().and_then(|o| list.iter().find(|(v, _, _)| *v == o));
+                let by_caption = list.iter().find(|(_, _, c)| c.eq_ignore_ascii_case(t));
+                match by_name.or(by_ordinal).or(by_caption) {
+                    Some((o, _, _)) => Ok(Value::Enum(*id, *o)),
+                    None => Err(evaluate_error(text, "Enum")),
+                }
+            }
             RtType::Text(_) | RtType::Code(_) | RtType::Integer | RtType::BigInteger => self.xp_value(text, ty, false),
             RtType::Date | RtType::DateTime | RtType::Decimal if text.is_empty() => Ok(self.default_value(ty)),
             RtType::Date => {
@@ -652,9 +716,7 @@ impl Session {
             RtType::DateTime => {
                 match al_builtins::iso::parse_datetime(text).filter(|_| text.as_bytes().get(4) == Some(&b'-')) {
                     Some(v) => Ok(Value::DateTime(v)),
-                    None => unsupported(format!(
-                        "XmlPort import of the DateTime `{text}` with FormatEvaluate = Xml (error text not pinned)"
-                    )),
+                    None => Err(evaluate_error(text, "DateTime")),
                 }
             }
             RtType::Decimal => {
@@ -667,17 +729,14 @@ impl Session {
                 };
                 match text.parse::<rust_decimal::Decimal>() {
                     Ok(d) if plain => Ok(Value::Decimal(d)),
-                    _ => unsupported(format!(
-                        "XmlPort import of the Decimal `{text}` with FormatEvaluate = Xml (error text not pinned)"
-                    )),
+                    _ => Err(evaluate_error(text, "Decimal")),
                 }
             }
+            // Import_Xml_DisplayTextOfDecimalBooleanDateTime: `true`, `false` and `1`, `0`; `Yes` is refused.
             RtType::Boolean => match text {
-                "true" => Ok(Value::Boolean(true)),
-                "false" => Ok(Value::Boolean(false)),
-                _ => unsupported(format!(
-                    "XmlPort import of the Boolean `{text}` with FormatEvaluate = Xml (error text not pinned)"
-                )),
+                "true" | "1" => Ok(Value::Boolean(true)),
+                "false" | "0" => Ok(Value::Boolean(false)),
+                _ => Err(evaluate_error(text, "Boolean")),
             },
             other => unsupported(format!(
                 "XmlPort import into a field of type {} with FormatEvaluate = Xml (the XML form is not pinned)",
@@ -1062,9 +1121,20 @@ impl Session {
         self.xp_run_trigger(inst, schema, node, "onbeforepassfield")?;
         let n = schema.node(node);
         let rec = self.xp_record(inst, schema.node(n.table_node.expect("field nodes have a table node")))?;
-        let v = rec.borrow().fields[n.field.expect("field nodes have a field")].clone();
+        let pos = n.field.expect("field nodes have a field");
+        let v = rec.borrow().fields[pos].clone();
         if schema.xp().format_evaluate_xml {
             return self.xp_field_text_xml(&v);
+        }
+        // An Option field with an OptionCaption writes the caption (corpus
+        // xmlport/PWXmlPortFormatEvaluate.al:Export_Legacy_TimeDurationOptionEnum: `Beta cap`).
+        if let Value::Option(o, _) = &v {
+            let t = self.table(&rec)?;
+            if let Some((_, members)) = self.members_of_field(&t, pos)? {
+                if let Some((_, _, caption)) = members.get(*o as usize) {
+                    return Ok(if caption.is_empty() { " ".to_string() } else { caption.clone() });
+                }
+            }
         }
         match &v {
             Value::Integer(i) => Ok(i.to_string()),
@@ -1100,6 +1170,20 @@ impl Session {
             Value::Boolean(b) => Ok(if *b { "true" } else { "false" }.to_string()),
             Value::Date(..) | Value::DateTime(_) => al_builtins::format::try_format(v, 0, 9, self)
                 .or_else(|why| unsupported(format!("XmlPort export of a value: {why}"))),
+            // corpus xmlport/PWXmlPortFormatEvaluate.al:Export_Xml_TimeDurationOptionEnum: `12:34:56`,
+            // `P1DT1H1M1.001S`, and the ordinal of an Option or Enum.
+            Value::Time(0) | Value::Duration(0) => Ok(String::new()),
+            Value::Time(t) => {
+                let ms = t - 1;
+                if ms % 1000 != 0 {
+                    return unsupported("XmlPort export of a Time with milliseconds with FormatEvaluate = Xml (not pinned)");
+                }
+                let s = ms / 1000;
+                Ok(format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60))
+            }
+            Value::Duration(d) => Ok(iso_duration(*d)),
+            Value::Option(i, _) => Ok(i.to_string()),
+            Value::Enum(_, o) => Ok(o.to_string()),
             other => unsupported(format!(
                 "XmlPort export of {} with FormatEvaluate = Xml (the XML form is not pinned)",
                 other.describe()
@@ -1261,6 +1345,61 @@ fn parse_time_12h(t: &str) -> Option<i64> {
 }
 
 /// `1 day 1 hour 1 minute 1 second 1 millisecond` (the text an export writes) as milliseconds.
+/// An ISO 8601 duration (`P1DT1H1M1.001S`, `PT1H`) in milliseconds.
+fn parse_iso_duration(t: &str) -> Option<i64> {
+    let rest = t.strip_prefix('P')?;
+    let (days, time) = match rest.split_once('T') {
+        Some((d, tm)) => (d, tm),
+        None => (rest, ""),
+    };
+    if days.is_empty() && time.is_empty() {
+        return None;
+    }
+    let mut total = 0i64;
+    let mut take = |part: &str, units: &[(char, f64)]| -> Option<()> {
+        let mut num = String::new();
+        for c in part.chars() {
+            if c.is_ascii_digit() || c == '.' {
+                num.push(c);
+                continue;
+            }
+            let mult = units.iter().find(|(u, _)| *u == c)?.1;
+            let n: f64 = num.parse().ok()?;
+            total += (n * mult).round() as i64;
+            num.clear();
+        }
+        num.is_empty().then_some(())
+    };
+    take(days, &[('D', 86_400_000.0)])?;
+    take(time, &[('H', 3_600_000.0), ('M', 60_000.0), ('S', 1000.0)])?;
+    Some(total)
+}
+
+/// `P1DT1H1M1.001S` for 90061001 ms; zero parts are left out.
+fn iso_duration(ms: i64) -> String {
+    let (days, rest) = (ms / 86_400_000, ms % 86_400_000);
+    let (h, rest) = (rest / 3_600_000, rest % 3_600_000);
+    let (m, rest) = (rest / 60_000, rest % 60_000);
+    let (sec, milli) = (rest / 1000, rest % 1000);
+    let mut out = String::from("P");
+    if days != 0 {
+        out.push_str(&format!("{days}D"));
+    }
+    if h != 0 || m != 0 || rest != 0 {
+        out.push('T');
+        if h != 0 {
+            out.push_str(&format!("{h}H"));
+        }
+        if m != 0 {
+            out.push_str(&format!("{m}M"));
+        }
+        if rest != 0 {
+            out.push_str(&if milli == 0 { format!("{sec}S") } else { format!("{sec}.{milli:03}S") });
+        }
+    }
+    out
+}
+
 fn parse_duration_text(t: &str) -> Option<i64> {
     let mut total = 0i64;
     let mut words = t.split_whitespace();

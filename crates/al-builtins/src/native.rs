@@ -410,6 +410,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
     ("Report.ObjectId#1", vm_only),
+    ("Report.Preview#1", vm_only),
+    ("RequestPage.Update#1", vm_only),
     ("Report.Language#1", vm_only),
     ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file
@@ -487,12 +489,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
 /// `docs/probes-needed.md`, "Builtins refused until a probe pins them").
 pub fn refusal(id: &str) -> Option<&'static str> {
     Some(match id {
-        "RequestPage.Update#1" => {
-            "RequestPage.Update (RequestOptionsPage.Update(SaveRecord)) is in no corpus test, so what it re-evaluates on the request page and whether it saves the record is not pinned"
-        }
-        "Report.Preview#1" => {
-            "Report.Preview is in no corpus test, so whether a run of a test (Run, SaveAs, a request page) is a preview is not pinned"
-        }
         "System.GetDotNetType#1" => {
             "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
         }

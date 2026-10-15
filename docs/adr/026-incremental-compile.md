@@ -1,6 +1,7 @@
 # ADR-026: Incremental compile (what it would take, what it would gain)
 
-- Status: Proposed (needs an owner decision: `docs/agents/brief.md` forbids any cache beyond ADR-022)
+- Status: Proposed (needs an owner decision: `docs/agents/brief.md` forbids any cache beyond ADR-022). Options 4 and 2 were
+  decided and built on 2026-10-15 (see "Results of 2026-10-15"); Option 3 stays unbuilt.
 - Date: 2026-10-15
 - Related: ADR-013 (demand-driven compile), ADR-016 (no features that only hide cost), ADR-022 (compile cache), ADR-011 (IR)
 - Changes: nothing yet. This ADR is measurement and analysis. No code was written.
@@ -231,3 +232,123 @@ For a **dependency set that changes**:
 For Option 4: the diagnostics order test for a workspace with unresolved references, the corpus ratchet, and
 `al-test-cli --timings` before and after on Tests-ERM. For Options 2 and 3: the differential above, a test that
 changes one file of a library app in the middle of a set, and `tools/cache_vs_uncached.sh run` with 0 differences.
+
+## Results of 2026-10-15 (owner decision: build Options 4 and 2; branch `layered-cache`)
+
+The owner decided that a change in a developer's own code must never recompile Base Application, and asked for
+Option 4 (parallel `resolve_references`), Option 2 (layers, in ADR-022 "Owner decision 2026-10-15") and a measurement of a
+large partner app. The machine was never quiet (1-minute load average 14 to 36 from other agents' builds), so ratios
+and pairs are given, not single numbers. Each figure has its load average.
+
+### Option 4: `resolve_references` runs per object on all cores
+
+The loop is the same code, run with rayon over the objects and collected in object order, so the list of diagnostics is
+the list the serial loop gave (a test with 300 files and five unresolved references each checks the exact list ten
+times; the final sort by file and offset is unchanged). The time of the call alone, serial against parallel:
+
+| Workspace | Serial | Parallel | Load average |
+|---|---:|---:|---:|
+| NP Retail (7 234 + 425 files), two runs each | 0.92, 1.06 s | 0.15, 0.32 s | 15 to 16 |
+| Tests-ERM (290 files), best of three | 0.81 s | 0.51 s | 24 |
+| Tests-ERM, five interleaved pairs | 1.85, 3.48, 4.49, 1.64, 4.74 s | 2.04, 1.63, 0.97, 0.96, 0.97 s | 22 to 36 |
+
+At a load of 24 on 12 cores a parallel loop gets only the cores the other agents leave free, so Tests-ERM shows less
+than NP Retail. On a quiet machine the call is bounded by the 12 cores: about 1 s of CPU. No cache is involved.
+
+### Option 2: layers
+
+Built, see ADR-022. One changed file in a partner library over the 4 Microsoft apps: 6.0 s before, 1.4 to 2.3 s after
+(load 14 to 16); the Microsoft layer is not touched. The ADR-026 measurement of 10.9 s was for the same kind of case at
+load 23.
+
+### A large implementation app: NP Retail (NaviPartner, `npcore-partners`; the code is read in place, a scratch copy
+is edited, nothing of it is committed)
+
+NP Retail is 7 234 files and 7 234 objects, 152 MB with its media. Its test app has 425 files, 313 test codeunits and
+4 813 tests. The build is BC 27.5.46862.48827. Two ways to run it:
+
+**1. NP Retail as the app under test** (`alrunner test Application Test`, selection of one codeunit, `--timings`). The
+workspace compile by phase, wall seconds, with the Microsoft layer a cache hit:
+
+| Phase | Before this work | After (parallel `resolve_references`) |
+|---|---:|---:|
+| Load (read, parse 7 659 files, `resolve_references`) | 1.55 (of which `resolve_references` 0.92) | 0.63 (of which 0.15) |
+| Check of the workspace | 0.93 | 0.69 |
+| Lower of the workspace | 0.98 | 0.97 |
+| **Workspace compile** | **3.5** | **2.3** |
+| Load average | 16 | 15 |
+
+A second pair at a higher load gave 4.1 s before and 5.2 s after (load 16 to 20; the check and lower phases moved by a
+factor of two with the load, `resolve_references` alone did not rise). Reading the dependency layer adds 0.2 to 0.7 s
+(blocks) and the install baseline 0.4 to 0.8 s. The workspace has 6 AL0118 errors ("The name 'Run' does not exist in
+the current context", six `__Legacy` scanner codeunits) that stop its run; they are a finding for another task.
+
+**2. NP Retail as a dependency of the test app** (the case of an implementation app in `.alpackages`): 17 183
+dependency objects, 7 234 of them NP Retail's. Rebuild after one changed procedure in one NP Retail file:
+
+| | One entry per set (before) | Layers (after) |
+|---|---:|---:|
+| Rebuild, wall | 14.8, 24.5, 25.6, 29.0 s (load 17 to 25) | 11.2, 11.9, 12.4 s (load 22 to 23); 7.7 s (load 16) |
+| Of which Microsoft's apps | the same as the rest | none (a hit) |
+| Cold build | 17.0, 18.8 s (load 21 to 26) | 20.6 to 28.6 s (load 23 to 25) |
+
+The layer is 42 % of the objects and costs 1.0 to 1.5 ms per object plus about 1.3 s fixed, so **a large partner app is
+helped by about a half, not by a factor of ten.** A library of 100 to 300 objects takes 1.4 to 2.3 s.
+
+### What a per-object incremental compile of the workspace would save (estimate, nothing implemented)
+
+Method: the phases scale with the number of files for parse, `resolve_references`, check and lower. For one to four
+changed files of 7 659, the own work is about 0.05 % of the workspace compile, 1 to 5 ms. The dependents are the
+unknown (ADR-026 table above): a body-only change has none, a changed signature of a widely used procedure or a new
+field in a table extension reaches the objects that read it, which for NP Retail can be hundreds. At 1 to 3 ms per
+object, 100 dependents cost 0.1 to 0.3 s. The fixed part that stays: the dependency layers' blocks (0.2 to 0.7 s), the
+install baseline (0.4 to 0.8 s).
+
+| Case | Full compile | Incremental, estimated | Saved |
+|---|---:|---:|---:|
+| NP Retail as the app under test, 1 to 4 files changed | 2.3 to 4.1 s | 0.1 to 0.5 s | 2 to 3.5 s per run |
+| That, as a share of a run | | | 20 to 40 % of a run that selects one codeunit (5 to 10 s); 3 to 5 % of the full 4 813-test run (50 to 80 s) |
+| NP Retail as a dependency layer, 1 to 4 files changed | 7.7 to 12.4 s | 1.4 to 2 s (the 1.3 s fixed cost stays) | 6 to 10 s per rebuild |
+
+The second row is the larger win for a project like NP Retail, and it needs more than per-object reuse: the layer file
+would have to be updated in place (positions of unchanged objects stay if no object is added or removed and no
+extension field is added), which is Option 3's read log again. The cheaper steps on the same layer that are not built:
+skip the read and scan of the layers below (the `.alci` index already holds the scan) and decode no blocks of the layers
+below that are not needed (the fixed 1.3 s), and use the cores better in the layer build (check 1.1 s, lower 1.8 s,
+drop 0.65 s and encode 1.8 s for NP Retail's layer ran one after the other).
+
+## Prior art: Microsoft RAD (research of 2026-10-15)
+
+Source: Microsoft Learn and the microsoft/AL issue tracker. No Microsoft code was read or copied.
+
+- **RAD is incremental publishing, not an incremental whole-app compiler.** The AL extension for VS Code records the
+  changed objects of the project in `.vscode/rad.json` (added, modified, removed, by file) on each build. A RAD publish
+  compiles that delta as its own unit against the app that is already published and installs it. Microsoft says it
+  "is an interim state and doesn't replace a full publish"; the app that ships is always a full build.
+  [Learn: Work with RAD](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-rad-publishing),
+  [microsoft/AL #7976](https://github.com/microsoft/AL/issues/7976).
+- **RAD does not recompile dependents of a changed object.** It trusts the server to catch a break. Our checker has no
+  server, so it would need the read log of Option 3 or a full compile (inference from the sources above).
+- **The compiler reuse is in the editor process.** `al.incrementalBuild` lets a build finish the language server's
+  background compilation. It is not a cross-process cache, so a cold command-line run has nothing to reuse.
+  [Learn: AL extension configuration](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-al-extension-configuration),
+  [microsoft/AL #6277](https://github.com/microsoft/AL/issues/6277).
+- **Dependencies are handled per app.** Symbols come from `.app` files. In a workspace the project references are
+  resolved from the live project, and publishing a base app uninstalls and recompiles the apps that depend on it as
+  whole apps. ALTool's `graph extract-all` is incremental per app, keyed by a content hash. This matches the layers of
+  this ADR (one unit per app, a change rebuilds the app and the apps above it).
+  [Learn: project references](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-work-workspace-projects-references),
+  [Learn: ALTool](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-al-tool).
+- **What RAD leaves out on purpose:** translations, permissions, report layouts, table data and web service
+  definitions; object ID renames are not detected.
+- **Its bug list is a list of test cases for a differential check** of any per-object incremental compile here (each
+  one a case that changes one or a few files and is compared with a full compile): deleted objects, renamed or moved
+  files and case-only renames (stale or duplicate objects, [#6214](https://github.com/microsoft/AL/issues/6214),
+  [#6077](https://github.com/microsoft/AL/issues/6077)), a reverted file (git revert, [#5561](https://github.com/microsoft/AL/issues/5561)),
+  page extensions ([#5594](https://github.com/microsoft/AL/issues/5594)), report request pages
+  ([#8222](https://github.com/microsoft/AL/issues/8222)), permission objects ([#7804](https://github.com/microsoft/AL/issues/7804)),
+  a bogus "removed" entry ([#5686](https://github.com/microsoft/AL/issues/5686)), and test codeunits not found after a delta
+  publish ([#7227](https://github.com/microsoft/AL/issues/7227)).
+- **Consequence for this ADR:** Microsoft made the same split as the measurements here. Reuse for the app being edited
+  lives in the editor; across apps the unit is the app. That supports layers (Option 2, built) over per-object reuse
+  across versions (Option 3, not built).

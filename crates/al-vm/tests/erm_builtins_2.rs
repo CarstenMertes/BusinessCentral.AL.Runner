@@ -41,15 +41,11 @@ fn refusal(object: &str, routine: &str) -> String {
 }
 
 #[test]
-fn request_page_update_and_report_preview_are_refused_with_their_reasons() {
-    for (object, routine, name) in [
-        ("ALT RQ", "OnPreReport", "RequestPage.Update"),
-        ("ALT RQ", "IsPreview", "Report.Preview"),
-    ] {
-        let why = refusal(object, routine);
-        assert!(why.contains(name), "{name}: {why}");
-        assert!(why.contains("not pinned"), "{name}: {why}");
-        assert!(!why.contains("is not implemented"), "{name}: {why}");
+fn request_page_update_and_report_preview_are_lowered_and_refuse_at_run_time_where_unpinned() {
+    // Update(false) in a request page trigger and Preview() in a report run by Run or RunModal are pinned
+    // (handlers/TestReportRequestPageUpdateObjectIdContracts.al); the cases that are not refuse when they run.
+    for (object, routine) in [("ALT RQ", "OnPreReport"), ("ALT RQ", "IsPreview")] {
+        assert_eq!(refusal(object, routine), "", "{object}.{routine} lowers");
     }
 }
 

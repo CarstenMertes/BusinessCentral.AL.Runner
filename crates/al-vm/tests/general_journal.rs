@@ -102,7 +102,6 @@ fn opening_a_page_that_has_a_delete_record_subscriber_is_not_refused() {
     assert_eq!(r, "A");
 }
 
-
 // ---- a new page row takes the equality filters of the page's FilterGroup(2) (Payment Journal) -----------
 const JOURNAL: &str = r#"
 table 50111 "GJ Line" { fields { field(1; Tmpl; Code[10]) { } field(2; Batch; Code[10]) { } field(3; "Line No."; Integer) { } field(4; Acc; Code[20]) { } } keys { key(PK; Tmpl, Batch, "Line No.") { } } }
@@ -130,7 +129,9 @@ page 50112 "GJ Journal"
 
 #[test]
 fn a_new_row_of_a_page_starts_with_the_equality_filters_of_filter_group_2() {
-    let src = format!("{JOURNAL}\ncodeunit 50100 C {{ procedure F(): Text var P: TestPage \"GJ Journal\"; R: Record \"GJ Line\"; begin P.OpenEdit(); P.New(); P.Acc.SetValue('X'); P.Close(); R.FindFirst(); exit(R.Tmpl + '/' + R.Batch); end; }}");
+    let src = format!(
+        "{JOURNAL}\ncodeunit 50100 C {{ procedure F(): Text var P: TestPage \"GJ Journal\"; R: Record \"GJ Line\"; begin P.OpenEdit(); P.New(); P.Acc.SetValue('X'); P.Close(); R.FindFirst(); exit(R.Tmpl + '/' + R.Batch); end; }}"
+    );
     let r = run_src(&src);
     assert_eq!(text(r), "T/B");
 }
@@ -191,7 +192,9 @@ codeunit 50115 "GJ Mgt"
 /// (Incom. Doc. Attach. FactBox, PaymentJournal_Multiline_Attach_Prev_Next): the new row takes both.
 #[test]
 fn a_new_row_takes_every_equality_filter_of_the_record_the_page_was_run_with() {
-    let src = format!("{JOURNAL2}\ncodeunit 50100 C {{ procedure F(): Text var P: TestPage \"GJ Journal2\"; L: Record \"GJ Line2\"; R: Record \"GJ Line2\"; begin L.SetRange(Tmpl, 'T'); L.SetRange(Batch, 'B'); Commit(); P.Trap(); Page.Run(Page::\"GJ Journal2\", L); P.Acc.SetValue('X'); P.Close(); R.FindFirst(); exit(R.Tmpl + '/' + R.Batch); end; }}");
+    let src = format!(
+        "{JOURNAL2}\ncodeunit 50100 C {{ procedure F(): Text var P: TestPage \"GJ Journal2\"; L: Record \"GJ Line2\"; R: Record \"GJ Line2\"; begin L.SetRange(Tmpl, 'T'); L.SetRange(Batch, 'B'); Commit(); P.Trap(); Page.Run(Page::\"GJ Journal2\", L); P.Acc.SetValue('X'); P.Close(); R.FindFirst(); exit(R.Tmpl + '/' + R.Batch); end; }}"
+    );
     assert_eq!(text(run_src(&src)), "T/B");
 }
 

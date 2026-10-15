@@ -104,7 +104,7 @@ mod runobject;
 
 impl Session {
     /// `TP.Ctl`: a handle on control `control` of the test page `page`.
-    pub(crate) fn page_control(&mut self, page: Value, control: usize) -> Result<Value, Signal> {
+    pub(crate) fn page_control(&mut self, page: Value, control: usize, runtime: bool) -> Result<Value, Signal> {
         match page {
             Value::TestPage(p) => {
                 // A part control reads as the page it shows (a `TestPart`).
@@ -113,7 +113,7 @@ impl Session {
                     page_of(&engine, &p).controls[control].kind == ir::ControlKind::Part
                 };
                 if is_part {
-                    return self.part_page(&p, control).map(Value::TestPage);
+                    return self.part_page(&p, control, runtime).map(Value::TestPage);
                 }
                 Ok(Value::TestControl(Rc::new(ControlRef {
                     page: p,

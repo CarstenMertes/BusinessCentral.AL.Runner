@@ -65,13 +65,17 @@ impl Session {
         };
         let parts = st.borrow().parts.clone();
         let mut kept = Vec::new();
+        let mut hidden = Vec::new();
         for (i, child) in parts {
             if self.control_visible(st, i)? {
                 kept.push((i, child));
+            } else {
+                hidden.push((i, child));
             }
         }
         st.borrow_mut().parts = kept.clone();
-        for (_, child) in kept {
+        st.borrow_mut().hidden_parts = hidden.clone();
+        for (_, child) in kept.into_iter().chain(hidden) {
             self.open_page_as(&child, mode, None, None, true)?;
         }
         Ok(())
@@ -119,7 +123,7 @@ impl Session {
     }
 
     /// The page shown by part control `control` of `st`.
-    pub(super) fn part_page(&self, st: &St, control: usize) -> Result<St, Signal> {
+    pub(super) fn part_page(&self, st: &St, control: usize, runtime: bool) -> Result<St, Signal> {
         self.require_open(st)?;
         let found = st
             .borrow()
@@ -127,6 +131,20 @@ impl Session {
             .iter()
             .find(|(i, _)| *i == control)
             .map(|(_, c)| c.clone());
+        // The page's own code reaches a part whose Visible came out false (Base Application's journals call
+        // `CurrPage.WorkflowStatusBatch.PAGE.SetFilterOnWorkflowRecord` behind `Visible = <variable>`; Tests-General
+        // Journal, 7 tests). Unprobed: docs/probes-needed.md "CurrPage.<Part> of an invisible part".
+        let found = found.or_else(|| {
+            runtime
+                .then(|| {
+                    st.borrow()
+                        .hidden_parts
+                        .iter()
+                        .find(|(i, _)| *i == control)
+                        .map(|(_, c)| c.clone())
+                })
+                .flatten()
+        });
         match found {
             Some(c) => Ok(c),
             None => {

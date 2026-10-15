@@ -692,6 +692,7 @@ Each check rejects only the shape a corpus case pins. The wider rule is not gues
 | Area | Assumption | Probe wanted |
 |---|---|---|
 | `TableRelation = T.F where(X = field(FlowFieldOfTheRecord))` (a Pageworks test: 9 tests of its dataset field config) | No corpus test filters a relation by a FlowField of the same record. Whether `Validate` calculates the FlowField before it builds the relation filter is not pinned. REFUSED: reading it as it stands (no CalcFields) gave a blank and made `Validate` fail with "cannot be found in the related table" for a value that exists, which a real BC run of the owner's test does not. | A table with a FlowField `Flow` (`lookup` of an Integer from a parent row) and a field `R` with `TableRelation = Field."No." where(TableNo = field(Flow))`, a row whose parent holds a real table number and a field number of it: `Validate(R, <field no>)` with no `CalcFields` first, and again after `CalcFields(Flow)`. Does it succeed in both? Repeat with a Code lookup and a `T.Code where(Grp = field(Flow))` relation, and with the FlowField as a condition `if (Flow = const(X)) ...` |
+
 ## Tests-SCM-Service: LoadFields, TestField with an ErrorInfo, WordMergeDataItem, Time and Option arithmetic (issue 41)
 
 | Area | Assumption | Probe wanted |

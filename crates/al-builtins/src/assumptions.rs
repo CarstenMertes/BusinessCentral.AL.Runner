@@ -145,18 +145,6 @@ registry! {
         tests: "Serv. Get Source Documents (local IntegrationEvent publishers), Serv. Suggest Worksheet Lines; about 2000 bucket tests.",
         probe: "A reportextension with an added data item, a global variable and local procedures that read both, run with Run and SaveAs.",
     },
-    PageObjectId => {
-        id: "page-object-id",
-        assumed: "Page.ObjectId(UseNames) answers 'Page <id>' or 'Page <Caption>' (the name when there is no Caption), also on a Page variable that has not run.",
-        tests: "Production Journal; 85 Tests-SCM-Manufacturing tests.",
-        probe: "CurrPage.ObjectId(false), ObjectId(true) and ObjectId() on a page with and without a Caption.",
-    },
-    OptionForLoopBounds => {
-        id: "option-for-loop-bounds",
-        assumed: "A for loop whose bounds are Option values runs over the ordinals, as an assignment of an Option to an Integer takes its ordinal.",
-        tests: "Library - Manufacturing (for Day := FromDay to ToDay); 83 Tests-SCM-Manufacturing tests.",
-        probe: "for I := Opt::B to Opt::D and downto, with an Integer and a BigInteger loop variable.",
-    },
     FindDirectionSet => {
         id: "find-direction-set",
         assumed: "The characters of Find's Which argument are a set: '=<>' and '<>=' are the pinned '=><'.",
@@ -181,24 +169,6 @@ registry! {
         assumed: "Database.SID answers S-1-5-21-a-b-c-rid with a fixed domain part and a stable hash of the name as the rid.",
         tests: "Library - Document Approvals.GetUser; 214 Tests-Dimension tests.",
         probe: "Nothing in AL can compare the numbers with BC's; the shape is pinned (PXDatabaseSid.al).",
-    },
-    ThisMemberOutsideCodeunit => {
-        id: "this-member-outside-codeunit",
-        assumed: "this.Proc() and this.Variable in a report, page, xmlport or query resolve to the object's own procedure or global variable, as in a codeunit.",
-        tests: "Calculate Inventory (this.GetLocation(..)); 1952 Tests-SCM tests.",
-        probe: "this.Proc() and this.Var in a report trigger, a page trigger, an xmlport and a query.",
-    },
-    QueryMethodOverColumn => {
-        id: "query-method-over-column",
-        assumed: "Q.Open() on a query that has a column or filter named Open is the method; a call is never a column.",
-        tests: "Summarized Stock By Item Trkg. query; 1869 Tests-SCM tests.",
-        probe: "A query with filter(Open; Open): Q.Open(), Q.SetRange(Open, true), Q.Open after Read().",
-    },
-    QueryBareColumn => {
-        id: "query-bare-column",
-        assumed: "A bare column name in a query's own procedure reads the column's value of the current row of the running query.",
-        tests: "Summarized Stock By Item Trkg. (GetItemTrackingSetup); 729 Tests-SCM tests.",
-        probe: "A query procedure reading a column before Read(), after Read() and after the last row.",
     },
     MixedDataItemLink => {
         id: "mixed-dataitem-link",
@@ -236,12 +206,6 @@ registry! {
         assumed: "A walk over a key that holds a FlowField orders by the primary key. (That SetCurrentKey accepts a FlowField is pinned by record/ProbeClearAllSetKeyHyperlink.al:SetCurrentKey_OnFlowFieldFlowFilterBlob_Outcome, which does not read the order.)",
         tests: "Library code that sets a key containing a FlowField in the buckets.",
         probe: "SetCurrentKey(FlowField) then FindSet over rows whose primary key order differs from their flowed values.",
-    },
-    ClientTypeNasOrdinal => {
-        id: "clienttype-nas-ordinal",
-        assumed: "ClientType::NAS has ordinal 6, the free slot before Background.",
-        tests: "Code that compares or formats ClientType::NAS.",
-        probe: "Format(ClientType::NAS, 0, 2).",
     },
 }
 

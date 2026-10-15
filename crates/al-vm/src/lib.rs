@@ -973,13 +973,10 @@ impl Session {
                     ));
                 }
                 // Option bounds of an Integer loop take its type as an assignment does: the ordinal (Microsoft's
-                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; documented
-                // assumption, docs/probes-needed.md).
+                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; pinned by the
+                // corpus Option_InCaseAndLoopBounds, types/ for_to_option).
                 let bound = |v: Value| match v {
-                    Value::Option(o, _) => {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::OptionForLoopBounds);
-                        Value::Integer(o)
-                    }
+                    Value::Option(o, _) => Value::Integer(o),
                     v => v,
                 };
                 let (from, to) = (bound(from), bound(to));

@@ -73,10 +73,6 @@ impl<V> PosMap<V> {
         self.shards[Self::shard_of(key)].get(key)
     }
 
-    pub fn get_mut(&mut self, key: &PosKey) -> Option<&mut V> {
-        self.shards[Self::shard_of(key)].get_mut(key)
-    }
-
     pub fn insert(&mut self, key: PosKey, value: V) -> Option<V> {
         self.shards[Self::shard_of(&key)].insert(key, value)
     }
@@ -200,9 +196,6 @@ impl CheckResult {
 /// The target of a resolved name, member or call.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Res {
-    /// Not the target of a node: the unprobed assumptions the checker made for the statement that starts at
-    /// the key's offset (key: file, start, start). Lowering turns them into `Stmt::Assume`.
-    Assumed(Vec<al_builtins::assumptions::Assumption>),
     /// A variable in the routine's scope (parameter, return value, local).
     Local(String),
     /// A global variable of the object (or an implicit one such as `Rec`).
@@ -720,25 +713,6 @@ impl<'a> Checker<'a> {
         let range = node.text_range();
         self.resolutions
             .insert((sc.file, range.start().into(), range.end().into()), r);
-    }
-
-    /// Notes that what the checker decided at `node` rests on assumption `a`: the statement that holds the node
-    /// will be marked (see [`Res::Assumed`]).
-    fn assume(&mut self, sc: &Scope, node: &SyntaxNode, a: al_builtins::assumptions::Assumption) {
-        let Some(stmt) = node.ancestors().find(|n| crate::lower::is_stmt(n.kind())) else {
-            return;
-        };
-        let start: usize = stmt.text_range().start().into();
-        match self.resolutions.get_mut(&(sc.file, start, start)) {
-            Some(Res::Assumed(v)) => {
-                if !v.contains(&a) {
-                    v.push(a);
-                }
-            }
-            _ => {
-                self.resolutions.insert((sc.file, start, start), Res::Assumed(vec![a]));
-            }
-        }
     }
 
     /// `Res::Field` if `name` is a field of the record type `t`.
@@ -1695,13 +1669,6 @@ impl<'a> Checker<'a> {
                     && !sc_has_var(sc, "this")
                 {
                     if let Some(e) = kids.get(1).and_then(|m| self.this_member(sc, node, m)) {
-                        if self.ws.objects[sc.oi].kind != ObjKind::Codeunit {
-                            self.assume(
-                                sc,
-                                node,
-                                al_builtins::assumptions::Assumption::ThisMemberOutsideCodeunit,
-                            );
-                        }
                         return e;
                     }
                 }
@@ -1798,7 +1765,6 @@ impl<'a> Checker<'a> {
                     if let Some(recv) = receiver_of(&base_ty) {
                         let c = self.catalog_cands(&recv, &mname, true, &base_ty);
                         if !c.is_empty() {
-                            self.assume(sc, node, al_builtins::assumptions::Assumption::QueryMethodOverColumn);
                             return E::Callable(c);
                         }
                     }
@@ -1964,9 +1930,6 @@ impl<'a> Checker<'a> {
             }
             // `FieldClass::Normal`: platform option types.
             Ty::Builtin(n) => {
-                if n.eq_ignore_ascii_case("ClientType") && rhs.eq_ignore_ascii_case("NAS") {
-                    self.assume(sc, node, al_builtins::assumptions::Assumption::ClientTypeNasOrdinal);
-                }
                 if let Some(i) =
                     al_builtins::sysenum::members(n).and_then(|m| m.iter().position(|m| m.eq_ignore_ascii_case(rhs)))
                 {

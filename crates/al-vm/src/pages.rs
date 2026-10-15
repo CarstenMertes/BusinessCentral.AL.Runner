@@ -615,10 +615,9 @@ impl Session {
             }
             // `ObjectId(UseNames)`: `Page <id>`, or with names (the default) `Page <Caption>`, the object name when
             // the page has no Caption. Taken from the probed report form (handlers/PWRefusedBuiltins.al:78-107,
-            // BC 27.5); for a page it is a documented assumption (docs/probes-needed.md). It reads the object, so
+            // BC 27.5; the page form is pinned by handlers/PRPageObjectId.al). It reads the object, so
             // a page that has not run answers too.
             "ObjectId" if method.starts_with("Page.") => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageObjectId);
                 let names = match args.first() {
                     None => true,
                     Some(Value::Boolean(b)) => *b,

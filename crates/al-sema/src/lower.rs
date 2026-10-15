@@ -3738,12 +3738,7 @@ impl Lowerer<'_> {
     }
 
     fn stmt(&mut self, n: &SyntaxNode) -> Vec<ir::Stmt> {
-        let start: usize = n.text_range().start().into();
-        let checked = match self.checked.resolutions.get(&(self.file, start, start)) {
-            Some(Res::Assumed(v)) => v.clone(),
-            _ => Vec::new(),
-        };
-        self.assumed.push(checked);
+        self.assumed.push(Vec::new());
         let mut out = self.stmt_plain(n);
         let marks = self.assumed.pop().unwrap_or_default();
         if !marks.is_empty() && !out.is_empty() {
@@ -4601,7 +4596,6 @@ impl Lowerer<'_> {
                 // (Base Application's "Summarized Stock By Item Trkg." does `X := Serial_No_;`; no corpus test
                 // does, docs/probes-needed.md).
                 Some(Res::QueryColumn { query, column }) if n.kind() == NameRef && query == self.oi => {
-                    self.assume(al_builtins::assumptions::Assumption::QueryBareColumn);
                     let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
                     if layout.query.columns[column].filter_element {
                         return Err("reading a filter element of a query (not pinned)".into());

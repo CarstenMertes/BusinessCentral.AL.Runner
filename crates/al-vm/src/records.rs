@@ -905,7 +905,7 @@ impl Session {
             self.unseeded_read(&t, temporary, method)?;
             self.coverage_read(&t, temporary)?;
         }
-        if matches!(method, "Get" | "GetBySystemId" | "CalcFields") {
+        if matches!(method, "Get" | "GetBySystemId" | "CalcFields" | "LoadFields") {
             let temporary = rec.borrow().temporary;
             self.coverage_read(&t, temporary)?;
         }
@@ -921,6 +921,7 @@ impl Session {
                 | "Rename"
                 | "Truncate"
                 | "Get"
+                | "LoadFields"
                 | "Find"
                 | "FindFirst"
                 | "FindLast"
@@ -1833,6 +1834,7 @@ impl Session {
             }
             "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
             "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
+            "LoadFields" => self.load_fields_row(rec, &t, &cx, args),
             "SetLoadFields" | "AddLoadFields" | "AreFieldsLoaded" | "SetBaseLoadFields" => {
                 self.load_fields_op(method, rec, &t, args)
             }

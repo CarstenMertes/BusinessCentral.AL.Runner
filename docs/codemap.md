@@ -251,7 +251,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `pages/parts.rs` (324): Page parts (ADR-012 follow-up).
 - `pages/request.rs` (571): The request page of a report. Entry: `RequestClosed` 18, `action_id` 532.
 - `pages/runobject.rs` (321): `RunObject` actions (ADR-012 follow-up).
-- `partial.rs` (208): Partial records (SetLoadFields). Entry: `note_partial_fetch` 54, `load_fields_op` 122.
+- `partial.rs` (271): Partial records (SetLoadFields, LoadFields). Entry: `note_partial_fetch` 54, `load_fields_op` 122, `load_fields_row` 212.
 - `platform/apps.rs` (67): The tables that list the apps of the tenant.
 - `platform/date.rs` (361): The `Date` table (2000000007).
 - `platform/fields.rs` (264): The Field and Key platform tables. Entry: `field_row` 116, `shell_entries` 65.
@@ -278,7 +278,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `testdata.rs` (420): Test data (ADR-020): `TestBacking` maps a provider's columns onto the compiled table's fields, rebuilds the values and builds the table once per thread. Entry: `TestBacking`, `convert`, `sql_name`.
 - `transactions.rs` (446): Transactions as AL code sees them. Entry: `TxModel` 15, `CommitBehavior` 27, `codeunit_run` 193.
 - `ui.rs` (347): Dialogs raised by the code under test (`Message`, `Confirm`, `StrMenu`) and the test handler functions that answer them. Entry: `UiKind` 18, `UiHandler` 66, `dispatch_ui` 158, `dispatch_ui_returning` 163.
-- `views.rs` (377): Filter and view text: SetView, GetFilters, filter group text. Entry: `parse_filter_text` 28, `filter_text` 50, `get_filters` 117.
+- `views.rs` (510): Filter and view text: SetView, GetFilters, filter group text, AL property views (`property_view`). Entry: `parse_filter_text` 28, `filter_text` 50, `get_filters` 117, `property_view`.
 - `xmlports.rs` (1304): XmlPort import and export (Format = Xml).
 
 ## Flows

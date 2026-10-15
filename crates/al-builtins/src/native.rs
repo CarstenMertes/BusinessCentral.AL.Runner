@@ -438,6 +438,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
     ("Record.SetLoadFields#1", |c, r, a| c.record("SetLoadFields", r, a)),
     ("Record.AddLoadFields#1", |c, r, a| c.record("AddLoadFields", r, a)),
+    ("Record.LoadFields#1", |c, r, a| c.record("LoadFields", r, a)),
     ("Record.SetBaseLoadFields#1", |c, r, a| {
         c.record("SetBaseLoadFields", r, a)
     }),

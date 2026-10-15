@@ -283,3 +283,43 @@ fn a_member_of_the_option_a_call_answers_names_its_value() {
     );
     assert_eq!(r.unwrap(), "Yes");
 }
+
+// ---------------------------------------------------------------- Record.LoadFields
+
+#[test]
+fn load_fields_on_a_record_never_fetched_reads_the_row_of_its_blank_key() {
+    // Base Application "Service Document Archive Mgmt.".AutoArchiveServiceDocument:
+    // `ServiceMgtSetup.LoadFields("Archive Quotes", ...); ServiceMgtSetup.Get();` on a fresh setup
+    // record. The statement form raises no error in BC when the row exists (Microsoft's service
+    // tests pass through it); the values it loads are documentation only (docs/probes-needed.md).
+    let r = text(
+        "",
+        "Rec.Init(); Rec.\"Entry No.\" := 0; Rec.Name := 'zero'; Rec.Note := 'n0'; Rec.Insert(); Clear(Rec);
+         Rec.LoadFields(Rec.Name); a := Rec.Name + '/' + Rec.Note + '/'; Clear(Rec); b := Rec.LoadFields(Rec.Name);
+         exit(a + Format(b) + '/' + Format(Rec.AreFieldsLoaded(Rec.Name)));",
+    );
+    assert_eq!(r.unwrap(), "zero/n0/Yes/Yes");
+}
+
+#[test]
+fn load_fields_as_a_statement_without_a_row_raises_nothing() {
+    // Base Application "Service Document Archive Mgmt.".GetNextOccurrenceNo calls
+    // `ServiceHeaderArchive.LoadFields(...)` as a statement on a fresh record before SetRange and
+    // FindLast, on every service document insert, where no archive row has the blank key: BC raises
+    // nothing there. The record is left as it was (nothing fetched).
+    let r = text(
+        "",
+        &format!("{SEED} Rec.LoadFields(Rec.Name); a := Format(Rec.AreFieldsLoaded(Rec.Name)); Rec.FindLast(); exit(a + '/' + Rec.Name);"),
+    );
+    assert_eq!(r.unwrap(), "No/beta");
+}
+
+#[test]
+fn load_fields_without_a_row_or_after_a_fetch_is_refused() {
+    // Neither is pinned (docs/probes-needed.md): what BC answers for a missing row when the result is
+    // used, and whether a fetched buffer is read again (overwriting values assigned since).
+    let missing = text("", "b := Rec.LoadFields(Rec.Name); exit('ran');");
+    assert!(matches!(missing, Err(Signal::Unsupported(_))), "{missing:?}");
+    let fetched = text("", &format!("{SEED} Rec.Get(1); Rec.LoadFields(Rec.Name); exit('ran');"));
+    assert!(matches!(fetched, Err(Signal::Unsupported(_))), "{fetched:?}");
+}

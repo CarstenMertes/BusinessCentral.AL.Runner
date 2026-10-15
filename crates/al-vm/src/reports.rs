@@ -728,7 +728,7 @@ impl Session {
             dataset: false,
         };
         for r in run.all_items() {
-            let Some(view) = run.item(r).view.clone() else { continue };
+            let Some(view) = run.item(r).view.as_deref().map(crate::views::property_view) else { continue };
             let rec = self.report_item_record(&run, r)?;
             let t = self.table(&rec)?;
             // A view that only sorts leaves the filters a SetTableView gave the item in force

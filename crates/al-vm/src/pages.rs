@@ -1042,11 +1042,11 @@ impl Session {
             .properties
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"))
-            .map(|(_, v)| v.trim().to_string());
+            .map(|(_, v)| crate::views::property_view(v.trim()));
         // The part control's SubPageView comes first: its filters land in the link group, its
         // sorting and order set the key and direction. The part page's own SourceTableView then
         // sets only the halves it names (corpus handlers/TestPartOwnSortVsSubPageView.al:1-45).
-        let sub_view = self.sub_page_view(st);
+        let sub_view = self.sub_page_view(st).map(|v| crate::views::property_view(&v));
         if let (Some(view), true) = (&sub_view, has_source) {
             let rec = self.page_rec(st);
             let table = self.table(&rec)?;

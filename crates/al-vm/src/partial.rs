@@ -46,7 +46,7 @@ fn positions(args: &[Value]) -> Result<Vec<usize>, Signal> {
 }
 
 /// The primary key of a row, as a comparable text.
-fn row_id(t: &TableDef, row: &[Value]) -> String {
+pub(crate) fn row_id(t: &TableDef, row: &[Value]) -> String {
     format!("{:?}", t.primary_key(row))
 }
 
@@ -161,8 +161,12 @@ impl Session {
             "SetBaseLoadFields" => {
                 // Only the full-load case is pinned as callable (record/TestRecordExtended.al:71-80);
                 // what the base set holds is not.
-                if rec.borrow().load.request.is_some() {
-                    return unsupported("SetBaseLoadFields on a partial load (the base set is not pinned)");
+                // After SetLoadFields(Cd), SetBaseLoadFields loads the whole row again (session/
+                // TestProbeSessionMiscContracts.al:PartialRecords_AreFieldsLoaded, `baseloadfields_txt` Yes).
+                let had = rec.borrow().load.request.is_some();
+                rec.borrow_mut().load.request = None;
+                if had {
+                    return Ok(Value::Null);
                 }
                 Ok(Value::Boolean(false))
             }

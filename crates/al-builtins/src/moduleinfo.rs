@@ -13,6 +13,9 @@ use std::rc::Rc;
 
 type Out = Result<Value, Signal>;
 
+/// The id of the Microsoft "Application" app, which every app under test depends on through `application` in its manifest.
+pub const APPLICATION_APP_ID: &str = "c1335042-3002-4257-bf8a-75c898ccb1b8";
+
 pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("NavApp.GetCurrentModuleInfo#1", get_current),
     ("NavApp.GetCallerModuleInfo#1", get_caller),
@@ -129,12 +132,9 @@ fn state(r: Option<&mut Value>) -> Result<ModuleInfoState, Signal> {
 
 /// The module behind a `ModuleInfo`; the module BC makes up for the null id is only readable where
 /// `synthesized_ok` (its data version).
-fn state_of(r: Option<&mut Value>, synthesized_ok: bool) -> Result<ModuleInfoState, Signal> {
+fn state_of(r: Option<&mut Value>, _synthesized_ok: bool) -> Result<ModuleInfoState, Signal> {
     match r {
         Some(Value::Library(_, cell)) => match &*cell.borrow() {
-            LibraryValue::ModuleInfo(m) if m.synthesized && !synthesized_ok => {
-                unsupported("a property of the module BC answers for the null app id (only DataVersion is pinned)")
-            }
             LibraryValue::ModuleInfo(m) => Ok(m.clone()),
             other => unsupported(format!("a ModuleInfo nobody filled ({})", other.describe())),
         },
@@ -186,7 +186,55 @@ fn dependencies(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out 
     Ok(Value::List(Rc::new(RefCell::new(items))))
 }
 
+/// The guid a `ModuleDependencyInfo` value holds.
+fn dependency_id(r: Option<&mut Value>) -> Result<[u8; 16], Signal> {
+    match r {
+        Some(Value::Library(_, cell)) => match &*cell.borrow() {
+            LibraryValue::Text(t) => crate::ops::parse_guid(t)
+                .ok_or_else(|| Signal::Unsupported("a ModuleDependencyInfo with a broken id".into())),
+            other => unsupported(format!("a ModuleDependencyInfo nobody filled ({})", other.describe())),
+        },
+        other => unsupported(format!("a ModuleDependencyInfo method on {}", other.describe())),
+    }
+}
+
+/// The app a dependency names, from the apps of the workspace (session/TestProbeSessionMiscContracts.al:ModuleInfo_CurrentModule:
+/// `Dep.Name`, `Dep.Id`, `Dep.Publisher`).
+fn dependency_app(c: &mut dyn Ctx, r: Option<&mut Value>) -> Result<ModuleInfoState, Signal> {
+    let id = dependency_id(r)?;
+    if crate::ops::parse_guid(APPLICATION_APP_ID) == Some(id) {
+        return Ok(ModuleInfoState {
+            id,
+            name: "Application".into(),
+            publisher: "Microsoft".into(),
+            version: None,
+            dependencies: Vec::new(),
+            synthesized: false,
+        });
+    }
+    match c.module_by_id(&id) {
+        ModuleLookup::Found(m) => Ok(m),
+        _ => unsupported("the name or publisher of a dependency whose app is not among the apps of the workspace"),
+    }
+}
+
+pub fn native_for_dependency(sig: &Signature) -> Option<NativeFn> {
+    if sig.receiver != "ModuleDependencyInfo" || !sig.instance {
+        return None;
+    }
+    let f: NativeFn = match sig.name.as_str() {
+        "Id" => |_, r, _| Ok(Value::Guid(dependency_id(r)?)),
+        "Name" => |c, r, _| Ok(Value::Text(dependency_app(c, r)?.name)),
+        "Publisher" => |c, r, _| Ok(Value::Text(dependency_app(c, r)?.publisher)),
+        _ => return None,
+    };
+    Some(f)
+}
+
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
+    if sig.receiver == "ModuleDependencyInfo" {
+        return native_for_dependency(sig);
+    }
     if sig.receiver != "ModuleInfo" || !sig.instance {
         return None;
     }

@@ -165,7 +165,12 @@ impl Session {
                 self.work_date = Some(*d);
                 Ok(Value::Null)
             }
-            // Whether the undefined date resets the work date to today is not pinned.
+            // The undefined date sets the work date back to today (session/TestProbeSessionMiscContracts.al:
+            // WorkDate_SetUndefined).
+            Some(Value::Date(0, false)) => {
+                self.work_date = None;
+                Ok(Value::Null)
+            }
             Some(other) => unsupported(format!(
                 "WorkDate({other}): only a defined, non-closing Date is pinned",
                 other = other.describe()

@@ -280,20 +280,12 @@ impl Session {
                     obj.name
                 ));
             };
-            let Some(Value::Record(rc)) = record_arg else {
-                return unsupported(format!(
-                    "Codeunit.Run of {} without a record (Rec of a TableNo codeunit is not pinned)",
-                    obj.name
-                ));
-            };
-            if rc.borrow().temporary {
-                return unsupported(format!(
-                    "Codeunit.Run of {} with a temporary record (not pinned)",
-                    obj.name
-                ));
-            }
+            // Without a record Rec is a blank record; a temporary one is handed over by reference like any other
+            // (session/TestProbeSessionMiscContracts.al:CodeunitRun_TableNo_NoRecord, CodeunitRun_TableNo_TemporaryRecord).
             self.ensure_initialized(&inst);
-            inst.borrow_mut().globals[slot] = Value::Record(rc.clone());
+            if let Some(Value::Record(rc)) = record_arg {
+                inst.borrow_mut().globals[slot] = Value::Record(rc.clone());
+            }
         }
 
         if guarded {

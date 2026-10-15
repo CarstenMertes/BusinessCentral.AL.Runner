@@ -21,6 +21,8 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "Database.IsInWriteTransaction#1",
     "Database.CompanyName#1",
     "CompanyProperty.DisplayName#1",
+    "CompanyProperty.UrlName#1",
+    "CompanyProperty.ID#1",
     "IsolatedStorage.Contains#1",
     "IsolatedStorage.Contains#2",
     "IsolatedStorage.Delete#1",

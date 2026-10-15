@@ -1047,6 +1047,7 @@ impl Session {
                 // temporary record: its rows stay and it stays temporary
                 // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount, BC 27.5).
                 let fresh = self.initial_fields(t.object as usize);
+                let old_row_id = Some(crate::partial::row_id(&t, &rec.borrow().fields));
                 // Clear sets the table's globals back to their initial values (ADR-021 decision 4;
                 // corpus probe TableGlobals_Clear_WhatHappensToTheGlobals).
                 self.reset_table_globals(rec);
@@ -1061,7 +1062,16 @@ impl Session {
                 r.ascending = true;
                 r.field_descending = false;
                 r.position = None;
+                // A Clear leaves the record's record of what it fetched: the fields in hand stay loaded for a later
+                // partial fetch (session/TestProbeSessionMiscContracts.al:PartialRecords_AreFieldsLoaded: a full Get,
+                // Clear, SetLoadFields(Cd) and Get still reports Txt loaded).
+                let (mut buffer, partial) = (r.load.buffer.take(), r.load.partial);
+                if let Some(b) = buffer.as_mut().filter(|b| b.row.is_none()) {
+                    b.row = old_row_id.clone();
+                }
                 r.load = Default::default();
+                r.load.buffer = buffer;
+                r.load.partial = partial;
                 Ok(Value::Null)
             }
             "Insert" => {

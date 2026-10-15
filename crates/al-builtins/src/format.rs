@@ -74,6 +74,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::DateFormula(f) => crate::datefns::formula_text(f),
         // A Version reads `major.minor.build.revision` (session/TestBCPlatformContracts.al:120-136
         // compares the formatted AppVersion with the manifest's `1.0.0.0`).
+        Value::Library(name, _) if name == "Version" && standard == 9 => {
+            // session/TestProbeSessionMiscContracts.al:Version_Forms.
+            return Err(no_such_format(9, "Version"));
+        }
         Value::Library(name, l) if name == "Version" => match &*l.borrow() {
             crate::value::LibraryValue::Version(v) => format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]),
             _ => return Err("Format of a Version nobody set".to_string().into()),

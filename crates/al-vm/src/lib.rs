@@ -196,6 +196,9 @@ pub struct Session {
     fault_site: Vec<faultsite::FaultFrame>,
     /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
     pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
+    /// What the isolated storage held at the last commit: a rollback goes back to it (session/
+    /// TestProbeSessionMiscContracts.al:IsolatedStorage_NotRolledBack, whose name is the opposite of its result).
+    pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
     install_scope: bool,
     /// Registered table connections by (type member, lower-case name), and the default name per type.
@@ -430,6 +433,7 @@ impl Session {
             fault_trace: false,
             fault_site: Vec::new(),
             isolated_storage: Default::default(),
+            isolated_committed: Default::default(),
             install_scope: false,
             sequences: Default::default(),
             table_connections: Default::default(),
@@ -484,6 +488,7 @@ impl Session {
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
         self.committed_row_version = self.next_row_version;
+        self.isolated_committed = self.isolated_storage.clone();
     }
 
     /// Discards every change since the last commit. The AutoIncrement counters are not
@@ -492,6 +497,7 @@ impl Session {
     pub fn rollback_transaction(&mut self) {
         self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
+        self.isolated_storage = self.isolated_committed.clone();
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
         // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
         // recorded is written into them again at the next read.
@@ -575,7 +581,22 @@ impl Session {
             name: app.name.clone(),
             publisher: app.publisher.clone(),
             version,
-            dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
+            dependencies: {
+                let mut deps: Vec<[u8; 16]> = app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect();
+                // The app under test also depends on the "Application" app, which its manifest states as `application`
+                // (session/TestProbeSessionMiscContracts.al:ModuleInfo_CurrentModule: 6 dependencies, the Application one last).
+                deps.sort();
+                if !app.dependency {
+                    if let Some(application) = ops::parse_guid(al_builtins::moduleinfo::APPLICATION_APP_ID) {
+                        if !deps.contains(&application) {
+                            deps.push(application);
+                        }
+                    }
+                }
+                // BC lists them by id.
+                deps.sort();
+                deps
+            },
             synthesized: false,
         })
     }
@@ -1916,9 +1937,11 @@ impl al_builtins::native::Ctx for Session {
         let bc = self.engine.target.as_ref().map(|t| &t.bc);
         let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
         al_builtins::value::ModuleInfoState {
+            // The module BC answers for the null app id: the base application W1 (session/
+            // TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).
             id: [0; 16],
-            name: String::new(),
-            publisher: String::new(),
+            name: "W1".into(),
+            publisher: "Microsoft".into(),
             version: Some([major, minor, 0, 0]),
             dependencies: Vec::new(),
             synthesized: true,

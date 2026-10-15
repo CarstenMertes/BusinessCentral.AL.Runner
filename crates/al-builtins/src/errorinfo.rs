@@ -29,10 +29,10 @@ fn with_state<R>(r: Option<&mut Value>, f: impl FnOnce(&mut ErrorInfoState) -> R
     let mut held = cell.borrow_mut();
     // A declared but never created ErrorInfo takes a property and gives it back
     // (types/TestHttpRequestFileUploadFieldErrorContracts.al:FieldError_WithErrorInfoAndWithText sets
-    // `Message` on one and raises it). Its other defaults are assumed to be those of `Create()`
-    // (docs/probes-needed.md).
+    // `Message` on one and raises it). It is not collectible (session/TestProbeSessionMiscContracts.al:
+    // ErrorInfo_UnsetAndOrdinals).
     if matches!(&*held, LibraryValue::Empty) {
-        *held = LibraryValue::ErrorInfo(fresh(String::new(), true));
+        *held = LibraryValue::ErrorInfo(fresh(String::new(), false));
     }
     match &mut *held {
         LibraryValue::ErrorInfo(s) => Ok(f(s)),
@@ -262,7 +262,7 @@ pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     }
     Err(Signal::Error(crate::native::AlError {
         message,
-        code: String::new(),
+        code: "Dialog".into(),
         call_stack: String::new(),
     }))
 }

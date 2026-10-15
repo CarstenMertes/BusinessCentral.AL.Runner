@@ -1263,6 +1263,8 @@ pub enum Stmt {
     /// Marks the statement that follows it in the same list: the VM records the position as the
     /// routine's current one (`Program::positions[id]`). It does nothing else.
     Pos(u32),
+    /// `continue`: skip the rest of the loop body and go on with the next round.
+    Continue,
 }
 
 #[cfg(test)]

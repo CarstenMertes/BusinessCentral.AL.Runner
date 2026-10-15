@@ -159,6 +159,9 @@ folder"). **Corpus** is the AL language test corpus used as the oracle (ADR-007)
 
 ## 6. Editors, debugging, other tools
 
+The exact interface points of ALchemist and LethAL (file:line, v3 status, gaps, plan) are in
+[`docs/integrations/alchemist-lethal.md`](integrations/alchemist-lethal.md).
+
 | ID | Feature | v2 reference | v3 today | Blocker | Proposed v3 | Hard |
 |---|---|---|---|---|---|---|
 | ED-1 | `--server`: JSON lines on stdin/stdout; `{"ready":true}` first; `runTests` streams one `test` line per test then a `summary` | `ServerProtocol.cs`, `docs/server-mode.md`, `protocol-v2.schema.json` | No | NEW-ADR | `alrunner serve`, speaking protocol-v2 unchanged so ALchemist and LethAL keep working | - |

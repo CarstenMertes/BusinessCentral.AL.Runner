@@ -28,7 +28,7 @@ pub enum Signal {
     Error(AlError),
     Exit(Option<Value>),
     Break,
-    /// `continue`: ends the turn of the innermost loop (AL 16 and later).
+    /// `continue`: go on with the next round of the innermost loop.
     Continue,
     /// Behaviour the runtime does not implement yet, met at run time (an edge
     /// case no corpus test pins). The runner reports the test as not run.

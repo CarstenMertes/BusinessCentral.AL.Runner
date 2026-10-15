@@ -167,6 +167,7 @@ pub fn load_project_with(
             publisher: d.publisher.clone(),
             version: d.version.to_string(),
             resources: Vec::new(),
+            include_source: false,
         });
         summary.push(format!("{} {}", d.app.name, d.version));
         lazy.push(d.lazy);

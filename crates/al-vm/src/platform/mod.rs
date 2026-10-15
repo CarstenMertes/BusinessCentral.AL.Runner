@@ -254,14 +254,17 @@ impl Providers {
         Some(row)
     }
 
-    /// A filter on a column the session changes cannot be answered from the shared listing.
-    fn event_filter_refusal(t: &TableDef, filters: &[FieldFilter]) -> Result<(), StoreError> {
-        if filters.iter().any(|f| matches!(t.fields[f.field].id, 8 | 13)) {
-            return Err(refused(
-                "Event Subscription: a filter on \"Number of Calls\" or \"Active Manual Instances\" is not answered",
-            ));
+    /// A filter on a column the session changes cannot be answered from the shared listing: the rows
+    /// are read with the session's counts first (record/ProbePlatformTables.al: `EventSubscription_FilterOnNumberOfCalls`).
+    fn event_filtered_listing(&self, t: &TableDef, filters: &[FieldFilter]) -> Result<Option<mat::Mat>, StoreError> {
+        if !filters.iter().any(|f| matches!(t.fields[f.field].id, 8 | 13)) {
+            return Ok(None);
         }
-        Ok(())
+        let listed = self.listed(t, Virtual::EventSubscription)?;
+        Ok(Some(listed.mapped(|row| {
+            self.with_event_stats(t, Some(row.clone()))
+                .unwrap_or_else(|| row.clone())
+        })))
     }
 
     pub(super) fn engine(&self) -> Arc<Engine> {
@@ -483,7 +486,9 @@ impl VirtualTables for Providers {
             Virtual::Date => date::next(t, scan),
             Virtual::WindowsLanguage => host_tables::windows_language_next(t, scan),
             Virtual::EventSubscription => {
-                Self::event_filter_refusal(t, scan.filters)?;
+                if let Some(m) = self.event_filtered_listing(t, scan.filters)? {
+                    return m.next(t, scan);
+                }
                 Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.next(t, scan)?))
             }
             k => self.listed(t, k)?.next(t, scan),
@@ -510,7 +515,9 @@ impl VirtualTables for Providers {
             Virtual::Date => date::count(t, filters),
             Virtual::WindowsLanguage => host_tables::windows_language_count(t, filters),
             Virtual::EventSubscription => {
-                Self::event_filter_refusal(t, filters)?;
+                if let Some(m) = self.event_filtered_listing(t, filters)? {
+                    return m.count(t, filters);
+                }
                 self.listed(t, Virtual::EventSubscription)?.count(t, filters)
             }
             k => self.listed(t, k)?.count(t, filters),

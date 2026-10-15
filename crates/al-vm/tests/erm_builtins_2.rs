@@ -14,8 +14,6 @@ report 50300 "ALT RQ"
 }
 codeunit 50100 C
 {
-    procedure Upload(var FU: FileUpload) var IS: InStream; begin FU.CreateInStream(IS); end;
-    procedure UploadEnc(var FU: FileUpload) var IS: InStream; begin FU.CreateInStream(IS, TextEncoding::UTF8); end;
     procedure Translate(): Text begin exit(CaptionClassTranslate('3,Foo')); end;
     procedure PageEditable(var P: TestRequestPage "ALT RQ") begin if P.Editable() then; end;
 }
@@ -43,12 +41,10 @@ fn refusal(object: &str, routine: &str) -> String {
 }
 
 #[test]
-fn request_page_update_report_preview_and_file_upload_are_refused_with_their_reasons() {
+fn request_page_update_and_report_preview_are_refused_with_their_reasons() {
     for (object, routine, name) in [
         ("ALT RQ", "OnPreReport", "RequestPage.Update"),
         ("ALT RQ", "IsPreview", "Report.Preview"),
-        ("C", "Upload", "FileUpload.CreateInStream"),
-        ("C", "UploadEnc", "FileUpload.CreateInStream"),
     ] {
         let why = refusal(object, routine);
         assert!(why.contains(name), "{name}: {why}");

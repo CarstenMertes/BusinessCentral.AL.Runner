@@ -6,7 +6,7 @@ use crate::Session;
 use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
-use al_builtins::value::{RecordState, Value};
+use al_builtins::value::{RecordState, RtType, Value};
 use al_data::{Store, TableDef};
 use std::cell::RefCell;
 use std::cmp::Ordering;
@@ -134,12 +134,13 @@ impl Session {
             .collect();
         order.sort_by_key(|&i| t.fields[i].id);
         let flow_filter = |i: usize| ir_table.and_then(|s| s.fields.get(i)).is_some_and(|f| f.flow_filter);
-        let (normal, calculated): (Vec<usize>, Vec<usize>) = order
-            .into_iter()
-            .filter(|&i| !flow_filter(i))
-            .partition(|&i| t.fields[i].stored);
+        // The FlowFilter fields come last, with the value the field holds (0 for an Integer) whatever
+        // filter was set on them (types/ProbeTypeFormsAndFilters.al:FormatRecord_WithFlowFilter_BeforeAndAfterSetRange,
+        // BC 27.5). Where they stand among the FlowFields is not pinned.
+        let (filters, rest): (Vec<usize>, Vec<usize>) = order.into_iter().partition(|&i| flow_filter(i));
+        let (normal, calculated): (Vec<usize>, Vec<usize>) = rest.into_iter().partition(|&i| t.fields[i].stored);
         let mut parts = Vec::new();
-        for i in normal.into_iter().chain(calculated) {
+        for i in normal.into_iter().chain(calculated).chain(filters) {
             parts.push(one(i)?);
         }
         Ok(parts.join("\t"))
@@ -459,24 +460,45 @@ impl Session {
                 };
                 let (from, to) = (*from as usize, *to as usize);
                 let dt = self.table(dst)?;
+                // A Code field's filter cannot go to a Text field: the constant must be compatible with the
+                // target field (types/ProbeTypeFormsAndFilters.al:361-395, BC 27.5). The other combinations of
+                // different types are not pinned.
                 if t.fields[from].ty != dt.fields[to].ty {
+                    if matches!(
+                        (&t.fields[from].ty, &dt.fields[to].ty),
+                        (RtType::Code(_), RtType::Text(_))
+                    ) {
+                        return Err(error(
+                            format!(
+                                "The type of the constant must be compatible with that of the {to_name} field, and the length of the constant must not exceed the length of the field.\r\\\r\\Type: Text <-- Code\r\\Field: {to_name} <-- {from_name}\r\\Table: {table}",
+                                to_name = dt.fields[to].name,
+                                from_name = t.fields[from].name,
+                                table = dt.name,
+                            ),
+                            "NCLCSRTS:TableEqualValue",
+                        ));
+                    }
                     return unsupported("CopyFilter between fields of different types (not pinned)");
                 }
-                let copied: Vec<_> = {
+                // The filters of the source's current group go to the target's current group; a field the source
+                // does not filter in that group clears the target's (same file, :386-393).
+                let (to_group, copied): (i32, Vec<_>) = {
                     let r = rec.borrow();
-                    if r.filter_group != 0 || dst.borrow().filter_group != 0 {
-                        return unsupported("CopyFilter inside a filter group (not pinned)");
-                    }
-                    r.filters
-                        .iter()
-                        .filter(|f| f.field == from && f.group == 0)
-                        .cloned()
-                        .collect()
+                    let g = r.filter_group;
+                    (
+                        dst.borrow().filter_group,
+                        r.filters
+                            .iter()
+                            .filter(|f| f.field == from && f.group == g)
+                            .cloned()
+                            .collect(),
+                    )
                 };
                 let mut d = dst.borrow_mut();
-                d.filters.retain(|f| !(f.field == to && f.group == 0));
+                d.filters.retain(|f| !(f.field == to && f.group == to_group));
                 for mut f in copied {
                     f.field = to;
+                    f.group = to_group;
                     d.filters.push(f);
                 }
                 Ok(Value::Null)
@@ -847,16 +869,30 @@ impl Session {
             ));
         }
         let key = parts.join(",");
+        // FieldError(Field, ErrorInfo) raises the same text with the ErrorInfo's message, code NCLCSRTS:TableErrorStr,
+        // and leaves the ErrorInfo as it was; a collectible one is collected in a collecting scope as a copy
+        // that holds the full text (handlers/PWRefusedBuiltins.al:113-168, BC 27.5).
+        let mut info = None;
         let what = match args.get(1) {
-            Some(v) => match al_builtins::native::text_of(v) {
-                Some(text) => text,
-                None => return unsupported("FieldError with an ErrorInfo"),
+            Some(v) => match (al_builtins::native::text_of(v), al_builtins::errorinfo::message_of(v)) {
+                (Some(text), _) => text,
+                (None, Some(message)) => {
+                    info = Some(v.clone());
+                    message
+                }
+                _ => return unsupported("FieldError with an argument that is neither text nor an ErrorInfo"),
             },
             None => format!("must not be {}", self.message_value(&row[pos])?),
         };
-        Err(error(
-            format!("{} {what} in {} {key}.", self.field_caption(t, pos), self.caption(t)),
-            "NCLCSRTS:TableErrorStr",
-        ))
+        let full = format!("{} {what} in {} {key}.", self.field_caption(t, pos), self.caption(t));
+        if let Some(info) = info {
+            if let Some(copy) = al_builtins::errorinfo::copy_of(&info) {
+                let collectible = al_builtins::errorinfo::set_message_of(&copy, &full);
+                if collectible && self.collect_error(&copy) {
+                    return Ok(Value::Null);
+                }
+            }
+        }
+        Err(error(full, "NCLCSRTS:TableErrorStr"))
     }
 }

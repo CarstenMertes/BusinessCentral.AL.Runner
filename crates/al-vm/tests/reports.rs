@@ -1487,17 +1487,18 @@ fn curr_report_language_reads_back_and_format_region_reads_empty() {
     );
 }
 
-// The same file :87-103 says BC rejects language 0 with an error that names the language. The text is in
-// no corpus line, so the runtime refuses instead of inventing it (docs/probes-needed.md).
+// The same file :87-103 says BC rejects language 0 with an error that names the language; the text is
+// `Invalid language ID supplied: 0.` / Argument (record/ProbeClearAllSetKeyHyperlink.al:341-353, BC 27.5), and a
+// language nobody set reads as the session's 1033.
 #[test]
-fn curr_report_language_zero_is_refused_with_its_reason() {
-    let why = refusal(
-        "var Probe: Report \"CRL Report\"; H: Codeunit Helpers; begin
+fn curr_report_language_zero_raises_the_invalid_language_error() {
+    assert_eq!(
+        f("var Probe: Report \"CRL Report\"; H: Codeunit Helpers; begin
         H.Seed();
         Probe.SetLang(0);
-        Probe.Run();
-        exit('');
-    end;",
+        asserterror Probe.Run();
+        exit(GetLastErrorText() + '|' + GetLastErrorCode());
+    end;"),
+        "Invalid language ID supplied: 0.|Argument"
     );
-    assert!(why.contains("Language") && why.contains("not pinned"), "{why}");
 }

@@ -1113,11 +1113,16 @@ fn evaluate_into_an_enum_reads_the_xml_ordinal_and_member_names() {
     );
     assert_eq!(t("R := Evaluate(E, '1', 9); exit(Format(R) + Format(E));"), "YesBee");
     assert_eq!(t("R := Evaluate(E, 'Zed'); exit(Format(R) + Format(E));"), "YesZed");
-    // A number that is no member, and a name that is none, make Evaluate return false.
+    // A name that is none makes Evaluate return false. A number that is no member is accepted with
+    // format 0 (types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms) and not pinned with format 9.
     assert_eq!(
-        t("E := E::Bee; R := Evaluate(E, '2', 9); exit(Format(R) + Format(E));"),
-        "NoBee"
+        t("E := E::Bee; R := Evaluate(E, '2'); exit(Format(R) + Format(E, 0, 2));"),
+        "Yes2"
     );
+    assert!(matches!(
+        enum_text_of("E: Enum \"Ev Enum\";", "Evaluate(E, '2', 9); exit('');"),
+        Err(Signal::Unsupported(_))
+    ));
     assert_eq!(
         t("E := E::Bee; R := Evaluate(E, 'Nope'); exit(Format(R) + Format(E));"),
         "NoBee"

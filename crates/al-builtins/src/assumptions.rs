@@ -163,37 +163,6 @@ registry! {
         tests: "Cash Receipt Journal OnAfterGetCurrRecord (WorkflowStatusBatch, Visible = variable); 7 Tests-General Journal tests.",
         probe: "A page with part(P; ...) { Visible = Flag } where Flag is false at open and OnAfterGetCurrRecord calls CurrPage.P.Page.Method().",
     },
-    RecordRefFilterGroup => {
-        id: "recordref-filter-group",
-        assumed: "RecordRef.FilterGroup as a getter, and as a setter for a group other than -1, behaves as Record.FilterGroup. (The setter with -1 is pinned by record/PWFilterGroupOr.al:OrGroup_RecordRef.)",
-        tests: "Find Record Management.FindRecordByDescriptionAndView; 12 Tests-SCM tests.",
-        probe: "The Record.FilterGroup test through RecordRef.Open, FieldRef.SetRange and RecordRef.GetFilters.",
-    },
-    ReportExtLocalProcedure => {
-        id: "reportext-local-procedure",
-        assumed: "A local procedure of a reportextension runs on the instance that runs the calling trigger, which holds the extension's variables and added data items.",
-        tests: "Serv. Get Source Documents (local IntegrationEvent publishers), Serv. Suggest Worksheet Lines; about 2000 bucket tests.",
-        probe: "A reportextension with an added data item, a global variable and local procedures that read both, run with Run and SaveAs.",
-    },
-    FindDirectionSet => {
-        id: "find-direction-set",
-        assumed: "The characters of Find's Which argument are a set: '=<>' and '<>=' are the pinned '=><'.",
-        tests: "Tests-Job (Find('=<>')).",
-        probe: "Find('=<>'), Find('<>=') and Find('=><') on the same position, with a row only on one side.",
-    },
-    LoadFieldsReadsRow => {
-        id: "load-fields-reads-row",
-        assumed: "Record.LoadFields on a record that was never fetched reads the row of the buffer's primary key and answers true.",
-        tests: "Service Document Archive Mgmt. (ServiceMgtSetup.LoadFields(...) before Get()).",
-        probe: "Already probed: the probe of the next corpus bump says LoadFields does NOT read the row and Ok := LoadFields(..) is false.",
-        note: "CONTRADICTED by a probe (corpus bump 9): fix the implementation and delete this entry.",
-    },
-    TestFieldErrorInfoPasses => {
-        id: "testfield-errorinfo-pass",
-        assumed: "TestField(Field [, Value], ErrorInfo) whose check holds raises nothing and is the check of the overload without the ErrorInfo; a failing check is refused.",
-        tests: "Gen. Jnl.-Check Line (176 calls); 478 Tests-SCM-Manufacturing tests.",
-        probe: "TestField(F, ErrorInfo.Create()) on a blank and a filled field, with and without ErrorBehavior::Collect (the owner's probe is pending).",
-    },
     DatabaseSidNumbers => {
         id: "database-sid-numbers",
         assumed: "Database.SID answers S-1-5-21-a-b-c-rid with a fixed domain part and a stable hash of the name as the rid.",
@@ -230,12 +199,6 @@ registry! {
         tests: "Report SaveAs datasets of reports with no rows in Tests-ERM.",
         probe: "Confirmed by a corpus bump 9 probe (empty DataItems); delete when the bump is merged.",
         note: "Probably pinned by corpus bump 9 (\"Empty DataItems <DataItems /> confirmed\"): check and delete.",
-    },
-    SetCurrentKeyFlowField => {
-        id: "setcurrentkey-flowfield",
-        assumed: "A walk over a key that holds a FlowField orders by the primary key. (That SetCurrentKey accepts a FlowField is pinned by record/ProbeClearAllSetKeyHyperlink.al:SetCurrentKey_OnFlowFieldFlowFilterBlob_Outcome, which does not read the order.)",
-        tests: "Library code that sets a key containing a FlowField in the buckets.",
-        probe: "SetCurrentKey(FlowField) then FindSet over rows whose primary key order differs from their flowed values.",
     },
     EnumOptionIntegerOrdinal => {
         id: "enum-option-integer-ordinal",

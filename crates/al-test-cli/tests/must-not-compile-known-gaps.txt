@@ -1,19 +1,1 @@
 # <BC major> <case name>: must-not-compile cases the front end does not decide yet. A ratchet: see must_not_compile.rs.
-27 0103-query-orderby-on-dataitem
-27 0107-text-has-no-length-method
-27 0110-getlasterrorobject-is-onprem
-27 0112-secrettext-unwrap-is-onprem
-27 0113-file-data-type-is-onprem
-27 0122-this-nonprotected-base-variable-in-reportextension
-28 0103-query-orderby-on-dataitem
-28 0107-text-has-no-length-method
-28 0110-getlasterrorobject-is-onprem
-28 0112-secrettext-unwrap-is-onprem
-28 0113-file-data-type-is-onprem
-28 0122-this-nonprotected-base-variable-in-reportextension
-29 0103-query-orderby-on-dataitem
-29 0107-text-has-no-length-method
-29 0110-getlasterrorobject-is-onprem
-29 0112-secrettext-unwrap-is-onprem
-29 0113-file-data-type-is-onprem
-29 0122-this-nonprotected-base-variable-in-reportextension

@@ -664,6 +664,7 @@ impl Session {
             initialized: true,
             rerun: false,
             base: None,
+            exts: Vec::new(),
         }))
     }
 
@@ -705,6 +706,7 @@ impl Session {
             initialized: true,
             rerun: false,
             base: None,
+            exts: Vec::new(),
         }))
     }
 
@@ -774,16 +776,6 @@ impl Session {
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
-        if !r.is_trigger
-            && engine.program.objects[object]
-                .report_ext
-                .as_ref()
-                .is_some_and(|e| !e.added.is_empty())
-        {
-            // A procedure of a reportextension that adds data items: it runs on the instance that runs the
-            // extension's triggers (only local procedures are reachable otherwise; reportext-procs).
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportExtLocalProcedure);
-        }
         let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len());
         for s in &r.locals {
             locals.push(self.default_value(&s.ty));
@@ -1224,6 +1216,15 @@ impl Session {
                 let inst = match instance {
                     None => f.instance.clone(),
                     Some(e) => match self.eval(e, f)? {
+                        // A procedure of a reportextension called through the report variable runs on the extension's
+                        // instance of that variable, which keeps the extension's globals and added data items
+                        // (reportext/W3RpExtProcedures.al:ExtensionProcedure_*).
+                        Value::Codeunit(i)
+                            if self.engine.program.objects[*object].report_ext.is_some()
+                                && i.borrow().object as usize != *object =>
+                        {
+                            self.report_extension_instance(&i, *object)?
+                        }
                         Value::Codeunit(i) => self.shared_instance(i),
                         // A table procedure runs with the record as its Rec, on the record
                         // variable's own globals (ADR-021).
@@ -1261,6 +1262,11 @@ impl Session {
             E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
             E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
             E::Refused(why) => Err(Signal::Unsupported(why.clone())),
+            E::Fail { message, code } => Err(Signal::Error(al_builtins::native::AlError {
+                message: message.clone(),
+                code: code.clone(),
+                call_stack: String::new(),
+            })),
             E::InterfaceCall {
                 receiver,
                 targets,

@@ -76,6 +76,8 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "RecordRef.DeleteLink#1",
     "RecordRef.DeleteLinks#1",
     "RecordRef.HasLinks#1",
+    "RecordRef.Copy#1",
+    "RecordRef.Copy#2",
     "RecordRef.CopyLinks#1",
     "RecordRef.CopyLinks#2",
     "RecordRef.CopyLinks#3",

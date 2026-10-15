@@ -33,9 +33,12 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ),
     (
         "AL0124",
-        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1 and 17.0",
+        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1 and 17.0; the property OrderBy on a query data item",
     ),
-    ("AL0132", "ExecutionMode::Install, Uninstall, Upgrade, Report, Profile"),
+    (
+        "AL0132",
+        "ExecutionMode::Install, Uninstall, Upgrade, Report, Profile; a field or method of a record that the table and the catalog lack; Length on a Text or Code",
+    ),
     (
         "AL0161",
         "a page extension names a non-protected variable or a local procedure of its base page, or a report extension does; a Cloud app names an internal agent table of the platform",
@@ -44,7 +47,7 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ("AL0197", "two objects of one type and name in one app"),
     (
         "AL0296",
-        "a Cloud app names a platform table that is Scope = OnPrem (the 123 of System.app that the corpus lists)",
+        "a Cloud app names a platform table that is Scope = OnPrem (the 123 of System.app that the corpus lists), calls GetLastErrorObject, SecretText.Unwrap, or File.Open",
     ),
     (
         "AL0433",
@@ -518,6 +521,17 @@ fn query_joins(ws: &Workspace, file: usize, sections: impl Iterator<Item = ast::
         let name = s.name();
         if name.eq_ignore_ascii_case("dataitem") {
             let props = properties_of(&s);
+            // AL0124 (corpus 0103): OrderBy belongs to the query object, not to a data item.
+            if let Some(p) = s.properties().find(|p| p.name().eq_ignore_ascii_case("OrderBy")) {
+                push(
+                    out,
+                    ws,
+                    file,
+                    offset_of(p.syntax()),
+                    "AL0124",
+                    "The property 'OrderBy' cannot be used in this context".to_string(),
+                );
+            }
             let cross = property(&props, "SqlJoinType").is_some_and(|v| v.eq_ignore_ascii_case("CrossJoin"));
             if cross {
                 if let Some(link) = s.properties().find(|p| p.name().eq_ignore_ascii_case("DataItemLink")) {
@@ -668,7 +682,92 @@ pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagno
             }
         }
     }
+    // AL0296 (corpus 0110, 0112, 0113): a Cloud app calls a method that has scope OnPrem: GetLastErrorObject, the
+    // Unwrap of a SecretText, the Open of a File. Only these three shapes are pinned.
+    if ctx.target == AppTarget::Cloud {
+        for (fi, f) in ws.files.iter().enumerate() {
+            if f.app != app {
+                continue;
+            }
+            let root = SyntaxNode::new_root(ws.green(fi));
+            let Some(source) = ast::SourceFile::cast(root) else {
+                continue;
+            };
+            for obj in source.objects() {
+                onprem_method_calls(ws, fi, &obj, &mut out);
+            }
+        }
+    }
     out
+}
+
+/// The OnPrem-only calls of one object (see [`check_context`]).
+fn onprem_method_calls(ws: &Workspace, file: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let globals: Vec<(String, String)> = obj.var_decls().flat_map(|d| typed_names(&d)).collect();
+    let own_procs: Vec<String> = obj.routines().map(|r| r.name().to_ascii_lowercase()).collect();
+    for r in obj.routines() {
+        let Some(body) = r.body() else { continue };
+        let mut vars: Vec<(String, String)> = globals.clone();
+        for p in r.params() {
+            if let Some(t) = p.type_ref() {
+                vars.push((p.name().to_ascii_lowercase(), t.type_name().to_ascii_lowercase()));
+            }
+        }
+        vars.extend(r.local_var_decls().flat_map(|d| typed_names(&d)));
+        for call in body.descendants().filter(|n| n.kind() == SyntaxKind::CallExpr) {
+            let Some(callee) = call.children().next() else { continue };
+            let method = match callee.kind() {
+                SyntaxKind::NameRef => {
+                    let name = callee.text().to_string().trim().to_string();
+                    (name.eq_ignore_ascii_case("GetLastErrorObject") && !own_procs.contains(&name.to_ascii_lowercase()))
+                        .then_some(name)
+                }
+                SyntaxKind::MemberExpr => {
+                    let mut kids = callee.children();
+                    let (Some(recv), Some(m)) = (kids.next(), kids.next()) else {
+                        continue;
+                    };
+                    if recv.kind() != SyntaxKind::NameRef {
+                        continue;
+                    }
+                    let recv_name = recv.text().to_string().trim().trim_matches('"').to_ascii_lowercase();
+                    let method = m.text().to_string().trim().to_string();
+                    let ty = vars
+                        .iter()
+                        .rev()
+                        .find(|(n, _)| *n == recv_name)
+                        .map(|(_, t)| t.as_str());
+                    match (ty, method.to_ascii_lowercase().as_str()) {
+                        (Some("secrettext"), "unwrap") | (Some("file"), "open") => Some(method),
+                        _ => None,
+                    }
+                }
+                _ => None,
+            };
+            if let Some(method) = method {
+                push(
+                    out,
+                    ws,
+                    file,
+                    offset_of(&call),
+                    "AL0296",
+                    format!(
+                        "The application object or method '{method}' has scope 'OnPrem' and cannot be used for 'Cloud' development."
+                    ),
+                );
+            }
+        }
+    }
+}
+
+/// The (lower-case name, lower-case type name) pairs a variable declaration introduces.
+fn typed_names(d: &ast::VarDecl) -> Vec<(String, String)> {
+    let Some(t) = d.type_ref() else { return Vec::new() };
+    let ty = t.type_name().to_ascii_lowercase();
+    d.names()
+        .into_iter()
+        .map(|n| (n.to_ascii_lowercase(), ty.clone()))
+        .collect()
 }
 
 #[cfg(test)]
@@ -1067,5 +1166,56 @@ mod tests {
         assert_eq!(v.len(), IMPLEMENTED.len());
         assert_eq!(not_checked_reason("AL0161"), None);
         assert_eq!(not_checked_reason("AL9999"), Some("not implemented"));
+    }
+
+    fn cloud() -> AppContext {
+        AppContext {
+            target: AppTarget::Cloud,
+            runtime: Some((16, 0)),
+            app_json_keys: Vec::new(),
+            bc_major: Some(27),
+        }
+    }
+
+    #[test]
+    fn al0296_a_cloud_app_calls_a_method_with_scope_onprem() {
+        let last = "codeunit 50000 C { procedure P() var I: ErrorInfo; begin I := GetLastErrorObject(); end; }";
+        assert_eq!(ctx_codes(last, &cloud()), vec!["AL0296"]);
+        // A procedure of the app with that name is not the platform's.
+        let own = "codeunit 50000 C { procedure GetLastErrorObject(): Integer begin end; procedure P() begin GetLastErrorObject(); end; }";
+        assert!(ctx_codes(own, &cloud()).is_empty());
+        let unwrap = "codeunit 50000 C { procedure P(S: SecretText): Text begin exit(S.Unwrap()); end; }";
+        assert_eq!(ctx_codes(unwrap, &cloud()), vec!["AL0296"]);
+        let file = "codeunit 50000 C { procedure P(): Boolean var F: File; begin exit(F.Open('x')); end; }";
+        assert_eq!(ctx_codes(file, &cloud()), vec!["AL0296"]);
+        // Another type's Unwrap, and an OnPrem app, are fine.
+        let other = "codeunit 50000 C { procedure P(S: Text): Text begin exit(S.Unwrap()); end; }";
+        assert!(ctx_codes(other, &cloud()).is_empty());
+        let onprem = AppContext {
+            target: AppTarget::OnPrem,
+            ..cloud()
+        };
+        assert!(ctx_codes(file, &onprem).is_empty());
+    }
+
+    #[test]
+    fn al0124_orderby_on_a_query_data_item_and_al0132_length_on_a_text() {
+        let q = "table 50000 T { fields { field(1; Id; Integer) { } } }
+            query 50001 Q { elements { dataitem(Row; T) { OrderBy = ascending(Id); column(Id; Id) { } } } }";
+        assert_eq!(codes(&[q]), vec!["AL0124"]);
+        let len = "codeunit 50000 C { procedure P(): Integer var V: Text; begin exit(V.Length()); end; }";
+        assert_eq!(codes(&[len]), vec!["AL0132"]);
+        let strlen = "codeunit 50000 C { procedure P(): Integer var V: Text; begin exit(StrLen(V)); end; }";
+        assert!(codes(&[strlen]).is_empty());
+    }
+
+    #[test]
+    fn al0161_this_names_a_base_variable_that_is_not_protected() {
+        let base = "table 50000 T { fields { field(1; Id; Integer) { } } }
+            report 50001 R { dataset { dataitem(Row; T) { } } var BaseVar: Text; protected var Shown: Text; }";
+        let bad = "reportextension 50002 E extends R { trigger OnPreReport() begin this.BaseVar := 'x'; end; }";
+        assert_eq!(codes(&[base, bad]), vec!["AL0161"]);
+        let ok = "reportextension 50002 E extends R { trigger OnPreReport() begin Message(this.Shown); end; }";
+        assert!(codes(&[base, ok]).is_empty());
     }
 }

@@ -37,13 +37,6 @@ fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
     run_codeunit(&engine, &l, oi)
 }
 
-fn not_run(o: &(String, Outcome)) -> String {
-    match &o.1 {
-        Outcome::NotRun(why) => why.clone(),
-        other => panic!("{}: {other:?}", o.0),
-    }
-}
-
 // types/TestSecretText.al:43: Unwrap is "the one API that returns the plain text"; what a secret
 // carries is pinned there (SecretStrSubstNo, IsEmpty).
 #[test]
@@ -59,28 +52,23 @@ fn unwrap_returns_the_text_a_secret_carries() {
     }
 }
 
-// xml/TestXmlRuntimeContracts.al:99 pins the form without options keeping white space; the default
-// XmlReadOptions is not pinned, so a document without ignorable white space reads as before and one
-// with it is refused.
+// misc/W4XmlJsonHttp.al (W4 Xml Options Tests.ReadFrom_*): the default XmlReadOptions and PreserveWhitespace true or
+// false read white space between tags and around the root as the form without options does.
 #[test]
-fn read_from_text_with_default_options_reads_a_document_without_ignorable_white_space() {
+fn read_from_text_with_xml_read_options_reads_white_space_as_the_form_without_options_does() {
     let o = outcomes(
         "[Test] procedure Compact() var D: XmlDocument; O: XmlReadOptions; R: Text; begin
              if not XmlDocument.ReadFrom('<root><a>x y</a></root>', O, D) then Error('read'); D.WriteTo(R);
              if not R.Contains('<a>x y</a>') then Error('got %1', R); end;
-         [Test] procedure Indented() var D: XmlDocument; O: XmlReadOptions; begin
-             XmlDocument.ReadFrom('<root>  <a/></root>', O, D); end;
+         [Test] procedure Indented() var D: XmlDocument; O: XmlReadOptions; R: Text; begin
+             O.PreserveWhitespace(false);
+             if not XmlDocument.ReadFrom('<root>  <a/></root>', O, D) then Error('read'); D.WriteTo(R);
+             if not R.Contains('<root>  <a />') then Error('got %1', R); end;
          [Test] procedure Outside() var D: XmlDocument; O: XmlReadOptions; begin
-             XmlDocument.ReadFrom(' <root/>', O, D); end;",
+             if not XmlDocument.ReadFrom(' <root/>', O, D) then Error('read'); end;",
     );
-    assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
-    for x in &o[1..] {
-        let why = not_run(x);
-        assert!(
-            why.contains("XmlReadOptions") && why.contains("not pinned"),
-            "{}: {why}",
-            x.0
-        );
+    for (n, r) in &o {
+        assert_eq!(r, &Outcome::Pass, "{n}");
     }
 }
 
@@ -97,42 +85,4 @@ fn media_import_stream_with_a_file_name_is_lowered() {
         .position(|r| r.name == "Import")
         .unwrap();
     assert!(l.unsupported[oi][ri].is_empty(), "{:?}", l.unsupported[oi][ri]);
-}
-
-fn refusal_of(routine_body: &str) -> String {
-    let (l, oi) = compile(routine_body);
-    let ri = l.program.objects[oi]
-        .routines
-        .iter()
-        .position(|r| r.name == "F")
-        .unwrap();
-    l.unsupported[oi][ri].first().cloned().expect("F is refused")
-}
-
-// No corpus test calls MediaSet.ImportFile, Media.ImportFile or RecordRef.Copy, or names ClientType::Teams: each is
-// refused with a reason that says so (hard rules 3 and 4; docs/probes-needed.md).
-#[test]
-fn builtins_and_members_no_corpus_test_pins_say_so_when_refused() {
-    for (body, needle) in [
-        (
-            "procedure F() var R: Record \"B3 Row\"; begin R.Pic.ImportFile('x.png', 'd'); end;",
-            "Media.ImportFile",
-        ),
-        (
-            "procedure F() var R: Record \"B3 Row\"; RR: RecordRef; begin RR.GetTable(R); RR.Copy(RR); end;",
-            "RecordRef.Copy",
-        ),
-        (
-            "procedure F(): Boolean begin exit(Session.CurrentClientType() = ClientType::Teams); end;",
-            "ClientType::Teams",
-        ),
-    ] {
-        let why = refusal_of(body);
-        assert!(why.contains(needle), "{needle}: {why}");
-        assert!(why.contains("not pinned"), "{needle}: {why}");
-        assert!(
-            !why.contains("is not implemented") && !why.contains("is not lowered yet"),
-            "{needle}: {why}"
-        );
-    }
 }

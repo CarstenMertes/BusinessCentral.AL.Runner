@@ -4,7 +4,9 @@
 use al_builtins::value::RtType;
 use serde::{Deserialize, Serialize};
 
+mod facts;
 mod objkind;
+pub use facts::{FieldClass, FieldFacts, ObjectFacts, PageType, TableType};
 pub use objkind::{ObjKind, UnknownKind};
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize, Default)]

@@ -28,18 +28,12 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 impl Session {
-    fn is_flow_field(field: &ir::Field) -> bool {
-        field
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("FieldClass") && v.trim().eq_ignore_ascii_case("FlowField"))
+    fn is_flow_field(&self, table: u32, pos: usize) -> bool {
+        self.engine.field_facts[table as usize][pos].class == ir::FieldClass::FlowField
     }
 
-    fn is_flow_filter(field: &ir::Field) -> bool {
-        field
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("FieldClass") && v.trim().eq_ignore_ascii_case("FlowFilter"))
+    fn is_flow_filter(&self, table: u32, pos: usize) -> bool {
+        self.engine.field_facts[table as usize][pos].class == ir::FieldClass::FlowFilter
     }
 
     /// The arm of field `pos`'s relation that applies to the buffer, if any.
@@ -70,7 +64,7 @@ impl Session {
             for c in &arm.conditions {
                 // BC evaluates conditions on Normal fields and FlowFields only
                 // (corpus fieldref/TestFieldRefRelationFieldClass.al:106-145).
-                if Self::is_flow_filter(&schema.fields[c.field]) {
+                if self.is_flow_filter(t.object, c.field) {
                     continue;
                 }
                 let ok = if c.filter {
@@ -143,16 +137,8 @@ impl Session {
         pos: usize,
         value: Value,
     ) -> Result<(), Signal> {
-        // The table's schema is read through the engine, not copied: a copy of every field and string on each Validate
-        // was 23 % of a Tests-ERM run (docs/reviews/2026-10-pageworks-profile.md).
-        let engine = self.engine.clone();
-        let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
-        let field = &schema.fields[pos];
-        if field
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("ValidateTableRelation") && v.trim().eq_ignore_ascii_case("false"))
-        {
+        // Typed field facts, worked out once (a scan of the field's properties on each Validate showed in the Tests-ERM profile).
+        if !self.engine.field_facts[t.object as usize][pos].validate_relation {
             return Ok(());
         }
         let Some(arm) = self.relation_arm(rec, t, pos)? else {
@@ -197,7 +183,7 @@ impl Session {
                         // The check calculates a FlowField the filter names (staging types/PZMisc.al:
                         // Validate_TableRelationFilteredByAFlowField, BC 29.0). Whether the calculated value
                         // stays on the record is not observed (docs/probes-needed.md).
-                        if Self::is_flow_field(&schema.fields[*own]) {
+                        if self.is_flow_field(t.object, *own) {
                             self.calc_fields(rec, &[*own])?;
                         }
                         ops::convert(rec.borrow().fields[*own].clone(), &related.fields[*p].ty)?

@@ -205,10 +205,7 @@ impl Session {
 pub(crate) fn tables_with_delete_subscribers(program: &al_ir::Program) -> std::collections::HashSet<String> {
     let mut tables = std::collections::HashSet::new();
     for o in &program.objects {
-        let manual = o
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"));
+        let manual = al_ir::ObjectFacts::of(o).manual_subscriber;
         if manual {
             continue;
         }

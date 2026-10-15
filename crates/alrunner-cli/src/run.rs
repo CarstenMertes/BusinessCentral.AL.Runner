@@ -19,6 +19,20 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::time::{Duration, Instant};
 
+/// With `--output-json` and no file, stdout holds the JSON document and nothing else: the report goes to stderr.
+static REPORT_TO_STDERR: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `println!` for the human report.
+macro_rules! say {
+    ($($t:tt)*) => {
+        if REPORT_TO_STDERR.load(std::sync::atomic::Ordering::Relaxed) {
+            eprintln!($($t)*)
+        } else {
+            println!($($t)*)
+        }
+    };
+}
+
 /// A test codeunit found in an APP's source, before anything is compiled.
 struct Found {
     app: usize,
@@ -34,19 +48,44 @@ const NEWEST_VERIFIED: u16 = 29;
 struct Selection {
     codeunits: Vec<u32>,
     filters: Vec<String>,
+    exact: Vec<String>,
+    excludes: Vec<String>,
+}
+
+/// `Codeunit<ID>.<Method>`, the name AL Runner v2 reports and accepts.
+fn qualified(codeunit: u32, test: &str) -> String {
+    format!("Codeunit{codeunit}.{test}")
 }
 
 impl Selection {
+    /// Whether the run is narrowed by anything.
     fn active(&self) -> bool {
-        !self.codeunits.is_empty() || !self.filters.is_empty()
+        !self.includes_none() || !self.excludes.is_empty()
+    }
+
+    fn includes_none(&self) -> bool {
+        self.codeunits.is_empty() && self.filters.is_empty() && self.exact.is_empty()
+    }
+
+    /// A pattern with a dot is matched against the qualified name, one without against the method name; any case,
+    /// as a substring.
+    fn matches(pattern: &str, codeunit: u32, test: &str) -> bool {
+        let p = pattern.to_lowercase();
+        if p.contains('.') {
+            qualified(codeunit, test).to_lowercase().contains(&p)
+        } else {
+            test.to_lowercase().contains(&p)
+        }
     }
 
     fn picks(&self, codeunit: u32, test: &str) -> bool {
-        if !self.active() || self.codeunits.contains(&codeunit) {
-            return true;
-        }
-        let t = test.to_lowercase();
-        self.filters.iter().any(|f| t.contains(&f.to_lowercase()))
+        let included = self.includes_none()
+            || self.codeunits.contains(&codeunit)
+            || self.filters.iter().any(|f| Self::matches(f, codeunit, test))
+            || self.exact.iter().any(|e| {
+                e.eq_ignore_ascii_case(test) || e.eq_ignore_ascii_case(&qualified(codeunit, test))
+            });
+        included && !self.excludes.iter().any(|x| Self::matches(x, codeunit, test))
     }
 }
 
@@ -214,8 +253,30 @@ pub fn warm(a: &TestArgs) -> Result<(), String> {
     Ok(())
 }
 
+/// The test time limit in seconds: `--test-timeout-secs`, else `ALRUNNER_TEST_TIMEOUT`, else AL Runner v2's
+/// `AL_RUNNER_TEST_TIMEOUT_SEC`, else 20.
+fn test_timeout_secs(a: &TestArgs) -> Result<u64, String> {
+    if let Some(n) = a.test_timeout_secs {
+        return Ok(n);
+    }
+    for var in ["ALRUNNER_TEST_TIMEOUT", "AL_RUNNER_TEST_TIMEOUT_SEC"] {
+        if let Some(v) = std::env::var(var).ok().filter(|v| !v.trim().is_empty()) {
+            return v
+                .trim()
+                .parse()
+                .map_err(|_| format!("{var} needs a number of seconds, got `{v}`"));
+        }
+    }
+    Ok(20)
+}
+
 pub fn test(a: &TestArgs) -> Result<u8, String> {
     let started = Instant::now();
+    REPORT_TO_STDERR.store(
+        matches!(a.output_json, Some(None)),
+        std::sync::atomic::Ordering::Relaxed,
+    );
+    let test_timeout = test_timeout_secs(a)?;
     // The key of the compile cache starts with a hash of this executable (10 ms): make it beside the loading.
     if !a.no_compile_cache {
         std::thread::spawn(|| {
@@ -230,6 +291,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
     // Fail on an unwritable output path before the long part, not after it.
     if let Some(p) = &a.junit {
+        write_file(p, "")?;
+    }
+    if let Some(Some(p)) = &a.output_json {
         write_file(p, "")?;
     }
     // A backup named on the command line is opened before the long part: a wrong path or company
@@ -256,6 +320,8 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
     let selection = Selection {
         codeunits: a.codeunits.clone(),
+        exact: a.exact.clone(),
+        excludes: a.excludes.clone(),
         // `--explain NAME --codeunit ID` explains the test of that one codeunit; the name alone
         // selects every codeunit that has a test of that name.
         filters: a
@@ -267,7 +333,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     };
     let chosen_units: Vec<&Found> = found
         .iter()
-        .filter(|f| f.tests.iter().any(|t| selection.picks(f.id, t)) || selection.codeunits.contains(&f.id))
+        .filter(|f| f.tests.iter().any(|t| selection.picks(f.id, t)))
         .collect();
     if chosen_units.is_empty() {
         let what = if selection.active() {
@@ -446,8 +512,8 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
 
     if !a.quiet {
-        println!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
-        println!(
+        say!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
+        say!(
             "target: BC {}, runtime {}{}",
             chosen.target.bc,
             chosen.target.runtime,
@@ -459,7 +525,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         for (i, app) in inputs.iter().enumerate() {
             let units = found.iter().filter(|f| f.app == i).count();
             let tests: usize = found.iter().filter(|f| f.app == i).map(|f| f.tests.len()).sum();
-            println!(
+            say!(
                 "app: {} {} ({} files, {units} test codeunits, {tests} tests) from {}",
                 app.json.name,
                 app.manifest.version,
@@ -467,24 +533,29 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
                 app.path.display()
             );
         }
-        println!("build chosen by: {build_rule}");
-        println!("dependencies: {} apps", dependencies.apps.len());
-        println!(
+        say!("build chosen by: {build_rule}");
+        say!("dependencies: {} apps", dependencies.apps.len());
+        say!(
             "threads: check {}, lower {}, test {}",
             threads("AL_CHECK_THREADS"),
             threads("AL_LOWER_THREADS"),
             threads("AL_TEST_THREADS")
         );
-        println!("isolation: TestIsolation = Codeunit (the default of Microsoft's test runner)");
+        match a.isolation {
+            None | Some(al_testrun::isolation::TestIsolation::Codeunit) => {
+                say!("isolation: TestIsolation = Codeunit (the default of Microsoft's test runner)")
+            }
+            Some(i) => say!("isolation: TestIsolation = {} (--isolation)", i.name()),
+        }
         if let Some((data, path)) = &test_data {
-            println!(
+            say!(
                 "test data: {} (company '{}', rows read when a test first touches a table)",
                 path.display(),
                 data.provider.company()
             );
         }
         if selection.active() {
-            println!("selection: {} test codeunits of {}", chosen_units.len(), found.len());
+            say!("selection: {} test codeunits of {}", chosen_units.len(), found.len());
         }
     }
 
@@ -506,7 +577,11 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     kinds.extend(dependencies.apps.iter().map(|_| al_sema::AppKind::Dependency));
     manifests.extend(dependencies.manifests.iter().cloned());
     all_apps.extend(dependencies.apps.iter().cloned());
-    let symbols: BTreeSet<String> = inputs.iter().flat_map(|i| i.symbols.iter().cloned()).collect();
+    let symbols: BTreeSet<String> = inputs
+        .iter()
+        .flat_map(|i| i.symbols.iter().cloned())
+        .chain(a.defines.iter().cloned())
+        .collect();
 
     let host = Arc::new(SidecarHost::new(SidecarConfig {
         sidecar: a.dotnet_sidecar.clone(),
@@ -548,10 +623,11 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             .chain(dependencies.lazy.iter().cloned())
             .collect(),
         trace: a.explain.is_some() || std::env::var_os("AL_STACK_OF").is_some(),
-        test_time_limit: match a.test_timeout_secs.unwrap_or(20) {
+        test_time_limit: match test_timeout {
             0 => None,
             n => Some(std::time::Duration::from_secs(n)),
         },
+        isolation: a.isolation,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
             && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
@@ -751,10 +827,10 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
                 }
                 _ => continue,
             };
-            println!("{line}");
+            say!("{line}");
         }
         if hidden_failures > 0 {
-            println!("... {hidden_failures} more failures (--verbose lists them, --junit has every message)");
+            say!("... {hidden_failures} more failures (--verbose lists them, --junit has every message)");
         }
     }
 
@@ -771,7 +847,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             )),
             _ => None,
         }));
-        println!("\n{}", refusals::render_top("not-run tests", &list, n));
+        say!("\n{}", refusals::render_top("not-run tests", &list, n));
     }
 
     if let Some(n) = a.top_failures.filter(|_| counts.fail > 0) {
@@ -785,7 +861,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             )),
             _ => None,
         }));
-        println!("\n{}", refusals::render_top_failures("failed tests", &list, n));
+        say!("\n{}", refusals::render_top_failures("failed tests", &list, n));
     }
 
     if let Some(needle) = &a.refusal_detail {
@@ -802,7 +878,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             }),
             needle,
         );
-        println!(
+        say!(
             "\n{}",
             refusals::render_top(&format!("not-run tests containing `{needle}`"), &list, 30)
         );
@@ -823,20 +899,20 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     };
     if let Some((data, _)) = &test_data {
         let summary = data.stats.summary();
-        println!("{}", summary.line(&data.provider.source(), data.provider.company()));
+        say!("{}", summary.line(&data.provider.source(), data.provider.company()));
         let refusals = summary.refusals();
         for line in refusals.iter().take(if a.verbose { usize::MAX } else { 10 }) {
-            println!("{}", al_testrun::refusals::clip(line, 400));
+            say!("{}", al_testrun::refusals::clip(line, 400));
         }
         if !a.verbose && refusals.len() > 10 {
-            println!("... {} more refused tables (--verbose lists them)", refusals.len() - 10);
+            say!("... {} more refused tables (--verbose lists them)", refusals.len() - 10);
         }
     }
-    println!("{}", output::summary_line(&counts, test_data.is_some()));
+    say!("{}", output::summary_line(&counts, test_data.is_some()));
     if let Some(w) = &dotnet_warning {
-        println!("{w}");
+        say!("{w}");
     }
-    println!(
+    say!(
         "Time: load {}, compile {}, install baseline {}, run {} ({:.0} tests/s), total {}{}",
         secs(load_time),
         secs(p.compile),
@@ -847,7 +923,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         peak_memory_mb().map_or(String::new(), |m| format!(", peak memory {m} MB"))
     );
     let code = output::exit_code(&counts, a.allow_not_run);
-    println!(
+    say!(
         "Result: {} (exit {code})",
         match code {
             0 => "PASSED",
@@ -858,6 +934,13 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             _ => "ERROR",
         }
     );
+    if let Some(target) = &a.output_json {
+        let doc = output::json(&results, code, total_time.as_secs_f64());
+        match target {
+            Some(path) => write_file(path, &doc)?,
+            None => println!("{doc}"),
+        }
+    }
     Ok(code)
 }
 
@@ -885,7 +968,7 @@ fn explain(
     let candidates = if exact.len() == 1 { exact } else { narrowed };
     let [r] = candidates.as_slice() else {
         if candidates.is_empty() {
-            println!("--explain: no test matches `{pattern}`");
+            say!("--explain: no test matches `{pattern}`");
             return Ok(6);
         }
         let list: Vec<String> = candidates
@@ -907,7 +990,7 @@ fn explain(
         codeunit: r.codeunit,
         name: r.test.clone(),
     };
-    println!(
+    say!(
         "{}",
         al_testrun::explain::render_without_oracle(&head, &r.outcome, rt.detail_in("", &id))
     );

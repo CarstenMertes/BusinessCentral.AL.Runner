@@ -487,6 +487,7 @@ fn run_version(
         compile_cache,
         test_time_limit: None,
         lazy: Vec::new(),
+        isolation: None,
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(

@@ -350,6 +350,9 @@ pub struct RunOptions {
     /// to read them (`deps::load_project_with`). The run reads what it needs; a missing entry means
     /// the app has its text.
     pub lazy: Vec<Option<al_sema::LazySource>>,
+    /// `alrunner test --isolation`: the isolation of every test codeunit, instead of the runner's property (`None`: the runner's,
+    /// else Codeunit).
+    pub isolation: Option<TestIsolation>,
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -851,7 +854,7 @@ impl CorpusRuntime {
                         si,
                         oi,
                         id,
-                        isolation: *i,
+                        isolation: opts.isolation.unwrap_or(*i),
                         without_baseline: false,
                     }),
                     Err(why) => {

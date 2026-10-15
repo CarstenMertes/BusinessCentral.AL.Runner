@@ -507,7 +507,11 @@ fn format_date(day: i32, closing: bool, standard: i32) -> Result<String, FormatF
     }
     let month = MONTHS[m as usize - 1];
     Ok(match standard {
-        0 | 1 => format!("{c}{m:02}/{d:02}/{yy:02}"),
+        // The year has two digits from 1931 to 2030 and four otherwise, so a text reads back into the same year
+        // (controls/W2ValueControls.al:Date_SessionFormatTwoDigitYear_*: 1929 and 1930 give 10 characters, 1999
+        // to 2030 give 8, BC 27.5 and 29.0).
+        0 | 1 if (1931..=2030).contains(&y) => format!("{c}{m:02}/{d:02}/{yy:02}"),
+        0 | 1 => format!("{c}{m:02}/{d:02}/{y:04}"),
         2 => format!("{m:02}{d:02}{yy:02}{c}D"),
         3 => format!("{yy:02}/{m:02}/{d:02}"),
         4 => format!("{month} {d}, {y}"),

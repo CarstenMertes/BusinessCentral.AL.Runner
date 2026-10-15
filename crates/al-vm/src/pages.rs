@@ -3143,6 +3143,7 @@ impl Session {
         let caption = self.control_caption(st, idx)?;
         let fmt = al_builtins::pagefmt::ControlFormat {
             work_date: self.work_date_day(),
+            today: Some(self.today_day_number()),
             ..self.control_format(st, idx)?
         };
         let arg = args.first().cloned().unwrap_or(Value::Null);
@@ -3190,8 +3191,18 @@ impl Session {
         let parsed = match al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text) {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
-                let msg = format!("Your entry of '{text}' is not an acceptable value for '{caption}'.");
-                return Err(refuse(self, msg));
+                let mut msg = format!("Your entry of '{text}' is not an acceptable value for '{caption}'.");
+                // A Date adds how the client reads one (controls/W2ValueControls.al:Date_IsoSpellings and
+                // session/W5WorkDateShorthand.al, BC 27.5 and 29.0); the text holds a CR, a backslash, a CR and
+                // a backslash where one would expect line breaks.
+                if matches!(ty, RtType::Date) {
+                    msg.push_str(&format!(
+                        " The format of the Date '{text}' does not match your device's date settings.\r\\\r\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+                    ));
+                }
+                // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,
+                // Enum_VariableControl_*); one bound to a table field keeps the empty code.
+                return Err(if rec_bound { refuse(self, msg) } else { refuse_bound(msg) });
             }
             Err(al_builtins::pagefmt::ParseError::Unsupported) => {
                 return unsupported(format!(

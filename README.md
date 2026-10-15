@@ -66,6 +66,78 @@ cargo build --release
 ./check.sh                                             # fmt, clippy, all tests, corpus ratchet
 ```
 
+## Try the alpha
+
+`alrunner` is in alpha (`3.0.0-alpha.1`). It does not match AL Runner v2 yet.
+Many tests are refused, and results may change between builds. Use it to try
+it out and to report what is wrong. Do not gate a pipeline on it.
+
+**Which build?**
+
+- **edge**: the newest build of the `release` branch. One pre-release named `edge`,
+  replaced on each build. Pick this to test the latest fixes.
+- **alpha**: a numbered checkpoint (`3.0.0-alpha.N`). Pick this for a stable
+  point you can name in a bug report.
+
+**Install** (Linux x64, Windows x64, macOS arm64). The scripts check the SHA-256 of
+the download. Replace `latest-alpha` with `edge` or a tag such as `v3.0.0-alpha.1`.
+
+```
+curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- latest-alpha   # Linux, macOS
+```
+
+On Windows, download `install.ps1` from the `edge` release and run
+`./install.ps1 -Version latest-alpha` in PowerShell. (GitHub's "latest" link
+skips pre-releases, so the `edge` release is the stable place for the scripts.)
+You can also download an archive from the releases page, check it against
+`SHA256SUMS`, and unpack it. Each archive holds the binary, `LICENSE` and a short
+`README.txt`. `gh attestation verify FILE --repo StefanMaron/al-runtime-rs`
+checks the build provenance.
+
+A numbered alpha is a draft until the owner publishes it.
+
+**The binaries are not signed.** Your system may warn you.
+
+- macOS: Gatekeeper blocks the file. Run `xattr -d com.apple.quarantine ./alrunner`
+  (the install script does this for you).
+- Windows: SmartScreen shows "Windows protected your PC". Click "More info", then
+  "Run anyway". Or run `Unblock-File .\alrunner.exe` in PowerShell.
+
+**Run**
+
+```
+alrunner --version
+alrunner test ./MyApp ./MyApp.Test
+```
+
+Pass both the app and its test app. Then your app is compiled fresh on each run,
+and Microsoft's apps stay in the cache. The first run that needs Microsoft's apps
+downloads them from Microsoft's artifact feed and builds the cache. Later runs
+load it.
+
+- **Test data** (the CRONUS demo company) is on by default when a run uses
+  Microsoft's apps. The first run downloads about 520 MB. `--no-test-data`
+  turns it off.
+- **"Not run"** means `alrunner` refused the test and said why, for example a
+  feature it does not support yet. It never guesses. The test did not pass and
+  did not fail. `--verbose` lists the reason for each test.
+- **Exit codes**: 0 all selected tests passed, 1 a test failed, 2 bad invocation
+  or the run could not start, 6 the selection matched no test, 7 some tests were
+  not run (`--allow-not-run` makes that 0).
+
+**Known limits**
+
+- Tests that use the `DotNet` type need the .NET 8 SDK. The binary carries the
+  helper sources and builds the helper into the cache on first use. Without the
+  SDK these tests are not run, with a reason.
+- Many features are missing. See `docs/status.md` and `docs/al-runner-v2-parity.md`.
+- No watch mode, no server mode, no coverage yet.
+- Only three targets are built: Linux x64, Windows x64 and macOS arm64.
+
+**Report problems** as a GitHub issue, using the "Alpha feedback" template.
+A wrong result is the most useful report: a test that passes or fails here and
+behaves differently on real Business Central.
+
 ## Command lines
 
 **`al-test-cli`** runs the corpus and reports the pass rate against the oracle.
@@ -146,6 +218,7 @@ runners until many more of these tests run.
 
 ## Documentation
 
+- `docs/releasing.md`: how an edge build, a numbered alpha and a hotfix are released.
 - `docs/architecture.md`: pipeline, crates, runtime model, budgets.
 - `docs/codemap.md`: which module owns what, and where the entry points are.
 - `docs/status.md`: current coverage, what is refused, roadmap, known issues.

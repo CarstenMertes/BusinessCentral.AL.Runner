@@ -150,6 +150,15 @@ fn help_and_version_exit_0_and_say_what_the_command_does() {
 }
 
 #[test]
+fn version_prints_the_crate_version_and_the_commit() {
+    let o = alrunner(&["--version"]);
+    let t = text(&o);
+    let want = format!("alrunner {} (", env!("CARGO_PKG_VERSION"));
+    assert!(t.starts_with(&want) && t.trim_end().ends_with(')'), "{t}");
+    assert!(env!("CARGO_PKG_VERSION").starts_with("3.0.0-alpha."), "{t}");
+}
+
+#[test]
 fn a_bad_invocation_exits_2_and_says_why() {
     for (args, why) in [
         (vec!["test"], "at least one APP"),

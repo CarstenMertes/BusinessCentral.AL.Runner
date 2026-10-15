@@ -34,7 +34,7 @@ impl ByteSource for FileSource {
             self.file.read_exact_at(buf, offset)
         };
         #[cfg(windows)]
-        let r: std::io::Result<()> = {
+        let r: std::io::Result<()> = (|| {
             use std::os::windows::fs::FileExt;
             let mut done = 0;
             while done < buf.len() {
@@ -45,7 +45,7 @@ impl ByteSource for FileSource {
                 done += n;
             }
             Ok(())
-        };
+        })();
         r.map_err(|e| {
             if e.kind() == std::io::ErrorKind::UnexpectedEof {
                 al_bcdb::Error::Io(format!("unexpected end of file at offset 0x{offset:x}"))

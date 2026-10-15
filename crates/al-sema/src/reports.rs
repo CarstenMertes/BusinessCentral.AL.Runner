@@ -102,6 +102,7 @@ pub struct Layout {
     pub about_text: Option<String>,
     /// The kind of the default layout.
     pub default_layout: ir::ReportLayout,
+    pub layout_file_missing: bool,
     /// Why `Report.SaveAs(.., Xml, ..)` cannot write this report's dataset.
     pub dataset_reasons: Vec<String>,
 }
@@ -165,6 +166,20 @@ fn default_layout(obj: &ast::Object) -> ir::ReportLayout {
     }
 }
 
+/// A report with `DefaultLayout = ...` and no layout file at all (report/PRSaveAsFormats.al: `DefaultLayout = RDLC`
+/// and nothing else).
+fn layout_file_missing(obj: &ast::Object) -> bool {
+    let has = |n: &str| obj.properties().any(|p| p.name().eq_ignore_ascii_case(n));
+    has("DefaultLayout")
+        && !has("DefaultRenderingLayout")
+        && !["RDLCLayout", "WordLayout", "ExcelLayout"].iter().any(|n| has(n))
+        && !obj.sections().any(|s| {
+            ["rendering", "rdlclayout", "wordlayout", "excellayout"]
+                .iter()
+                .any(|n| s.name().eq_ignore_ascii_case(n))
+        })
+}
+
 fn bool_prop(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" => Some(true),
@@ -195,6 +210,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         about_title: None,
         about_text: None,
         default_layout: default_layout(obj),
+        layout_file_missing: layout_file_missing(obj),
         dataset_reasons: Vec::new(),
     };
     for p in obj.properties() {
@@ -231,11 +247,9 @@ pub fn layout(obj: &ast::Object) -> Layout {
             | "previewmode" => out
                 .output
                 .push(format!("report property {name} (a layout) is not supported yet")),
-            // The Schedule button of the request page. Nothing pins what a run does with it, but a
-            // report that is only named (Base App's Item Tracing page has an action that runs
-            // "Item Tracing Specification"; handlers/TestPrecompiledOptionCaption.al:81 only opens the page)
-            // never reaches it, so it refuses when the report is run, not when it is compiled.
-            "allowscheduling" => out.output.push(format!("report property {name} is not supported yet")),
+            // The Schedule button of the request page: a run through `Report.Run` ignores it, true or false
+            // (report/TestProbeReportContracts.al:AllowScheduling_TrueAndFalse_Run).
+            "allowscheduling" => {}
             // The data item a Word layout is merged per record of: rendering only, by the
             // documentation (docs/probes-needed.md). Base Application's "Reference No Label" is named
             // by an action of the page Item Reference List that tests open without invoking it.
@@ -382,9 +396,12 @@ pub fn request_layout(
             // has them is not pinned, so a literal value passes here and the test client refuses to touch a
             // data item of a page that says `false` (docs/probes-needed.md).
             let show_filter = name == "showfilter" && bool_prop(&p.value_text()).is_some();
+            // `Editable = false` makes the page and its fields read Editable No (handlers/PSRequestPageEditable.al).
+            let editable = name == "editable" && bool_prop(&p.value_text()).is_some();
             if !["caption", "savevalues", "sourcetable"].contains(&name.as_str())
                 && !INERT_REQUEST_PAGE_PROPERTIES.contains(&name.as_str())
                 && !show_filter
+                && !editable
             {
                 layout
                     .reasons
@@ -946,6 +963,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         about_text: layout.about_text.clone(),
         layout: layout.default_layout,
         dataset_unsupported: layout.dataset_reasons.clone(),
+        layout_file_missing: layout.layout_file_missing,
     }
 }
 

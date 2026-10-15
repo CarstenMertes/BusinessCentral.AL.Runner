@@ -3,6 +3,7 @@
 
 use crate::describe::Describe;
 use crate::native::Signal;
+use crate::native::raise;
 use crate::value::{LibraryValue, RtType, Value};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -93,22 +94,37 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             if as_decimal(&v).is_some() && !matches!(v, Value::Text(_) | Value::Code(_)) =>
         {
             let d = as_decimal(&v).expect("numeric");
+            // A Decimal with a fraction, or beyond the range, does not convert into an Integer or a BigInteger: no
+            // rounding (types/PRDecimalToInteger.al: ConversionCast, `value 1.5`, `value 3000000000.0`).
+            let cast_error = |to: &str| {
+                raise::<Value>(
+                    format!(
+                        "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.{to}."
+                    ),
+                    "ConversionCast",
+                )
+            };
             match t {
                 T::Decimal => Value::Decimal(d),
+                T::Integer | T::BigInteger if matches!(v, Value::Decimal(_)) && d.fract() != Decimal::ZERO => {
+                    return cast_error(if matches!(t, T::Integer) { "Int32" } else { "Int64" });
+                }
                 _ if d.fract() != Decimal::ZERO => {
                     return unsupported(format!(
                         "rounding {d} into {} (not pinned by the corpus yet)",
                         t.describe()
                     ));
                 }
-                T::Integer => Value::Integer(
-                    i32::try_from(d.mantissa() / 10i128.pow(d.scale()))
-                        .or_else(|_| unsupported(format!("{d} overflows Integer")))?,
-                ),
-                T::BigInteger => Value::BigInteger(
-                    i64::try_from(d.mantissa() / 10i128.pow(d.scale()))
-                        .or_else(|_| unsupported(format!("{d} overflows BigInteger")))?,
-                ),
+                T::Integer => match i32::try_from(d.mantissa() / 10i128.pow(d.scale())) {
+                    Ok(n) => Value::Integer(n),
+                    Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int32"),
+                    Err(_) => return unsupported(format!("{d} overflows Integer")),
+                },
+                T::BigInteger => match i64::try_from(d.mantissa() / 10i128.pow(d.scale())) {
+                    Ok(n) => Value::BigInteger(n),
+                    Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int64"),
+                    Err(_) => return unsupported(format!("{d} overflows BigInteger")),
+                },
                 T::Byte => Value::Byte(
                     u8::try_from(d.mantissa() / 10i128.pow(d.scale()))
                         .or_else(|_| unsupported(format!("{d} overflows Byte")))?,
@@ -128,7 +144,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.
-            let s = crate::native::text_of(&v).expect("text").trim().to_uppercase();
+            let s = upper_code(crate::native::text_of(&v).expect("text").trim());
             Value::Code(fit(s, *max)?)
         }
         (Value::Text(s) | Value::Code(s), T::Char) => {
@@ -195,12 +211,27 @@ pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
     Some(out)
 }
 
+/// The upper case of a Code: a character whose upper case is several characters keeps its own (`ß` stays `ß`,
+/// types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `umlaut_sharp_s`).
+pub fn upper_code(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            let mut u = c.to_uppercase();
+            if u.len() == 1 { vec![u.next().unwrap()] } else { vec![c] }
+        })
+        .collect()
+}
+
 fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
     match max {
-        Some(m) if Value::text_len(&s) > m as usize => unsupported(format!(
-            "text of length {} into a slot of length {m} (error text not pinned yet)",
-            Value::text_len(&s)
-        )),
+        // types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `too_long_11` (a Code[10] given 11 characters).
+        Some(m) if Value::text_len(&s) > m as usize => crate::native::raise(
+            format!(
+                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {s}",
+                Value::text_len(&s)
+            ),
+            "StringLengthExceeded",
+        ),
         _ => Ok(s),
     }
 }
@@ -228,10 +259,25 @@ pub enum Arith {
 
 pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     use Value as V;
+    // An Option takes part in arithmetic as its ordinal, an Integer (types/PROptionInteger.al:OptionMember_AsInteger:
+    // `Opt + 1`, `Opt * 2`).
+    if matches!(l, V::Option(..)) || matches!(r, V::Option(..)) {
+        let ord = |v: &Value| match v {
+            V::Option(n, _) => V::Integer(*n),
+            other => other.clone(),
+        };
+        return arith(op, &ord(l), &ord(r));
+    }
     // Text concatenation.
     if op == Arith::Add {
         if let (Some(a), Some(b)) = (text_like(l), text_like(r)) {
             return Ok(V::Text(a + &b));
+        }
+        // A null string (a FileUpload's file name before a client filled it) joins as nothing (types/PRFileUpload.al:
+        // Unfilled_AssignClearAndPass).
+        match (l, r) {
+            (V::Text(t) | V::Code(t), V::Null) | (V::Null, V::Text(t) | V::Code(t)) => return Ok(V::Text(t.clone())),
+            _ => {}
         }
         // A Char next to a text is a character of it, not a number: `'line1' + S[1] + 'line2'`
         // (corpus json/TestJsonXmlDeepContracts.al:71, which round-trips the result through JSON).
@@ -311,6 +357,15 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::DateTime)
                 .ok_or_else(|| Signal::Unsupported("DateTime out of range (error text not pinned yet)".into()));
         }
+        // Time + an Integer adds milliseconds (json/TestProbeJsonContracts.al:ValueTypes_DurationTimeDateTime
+        // `100000T + 123`; text/TestProbeTextDateFormatContracts.al:387 `120000T + 7`). Past midnight is not pinned.
+        (V::Time(a), n) | (n, V::Time(a)) if op == Arith::Add && *a > 0 && int_of(n).is_some() => {
+            return int_of(n)
+                .and_then(|n| a.checked_add(n))
+                .filter(|t| (1..=86_400_000).contains(t))
+                .map(V::Time)
+                .ok_or_else(|| Signal::Unsupported("Time moved outside the day (not pinned)".into()));
+        }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
@@ -335,7 +390,8 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     let any_big = matches!(l, V::BigInteger(_)) || matches!(r, V::BigInteger(_));
     let any_dec = matches!(l, V::Decimal(_)) || matches!(r, V::Decimal(_));
     if b.is_zero() && matches!(op, Arith::Div | Arith::IntDiv | Arith::Mod) {
-        return unsupported("division by zero (error text not pinned yet)".into());
+        // session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts.
+        return raise("Attempted to divide by zero.", "AL:DivideByZero");
     }
     let res = match op {
         Arith::Add => a.checked_add(b),
@@ -361,12 +417,12 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     if any_big {
         return i64::try_from(n)
             .map(V::BigInteger)
-            .or_else(|_| unsupported("BigInteger overflow (error text not pinned yet)".into()));
+            .or_else(|_| raise("Arithmetic operation resulted in an overflow.", "AL:Overflow"));
     }
     if both_int || matches!(op, Arith::IntDiv | Arith::Mod) {
         return i32::try_from(n)
             .map(V::Integer)
-            .or_else(|_| unsupported("Integer overflow (error text not pinned yet)".into()));
+            .or_else(|_| raise("Arithmetic operation resulted in an overflow.", "AL:Overflow"));
     }
     Ok(V::Decimal(res))
 }
@@ -548,10 +604,11 @@ mod tests {
             Ok(Value::BigInteger(2))
         ));
         assert!(matches!(convert(d("2"), &RtType::Integer), Ok(Value::Integer(2))));
-        assert!(
-            matches!(convert(d("2.5"), &RtType::Integer), Err(Signal::Unsupported(_))),
-            "rounding rule not pinned yet"
-        );
+        // A Decimal with a fraction does not convert into an Integer, it is not rounded (types/PRDecimalToInteger.al).
+        let Err(Signal::Error(e)) = convert(d("2.5"), &RtType::Integer) else {
+            panic!("2.5 into an Integer must raise");
+        };
+        assert_eq!(e.code, "ConversionCast");
     }
 
     // corpus record/TestCalcFormulaValidationTests.Codeunit.al:42: `exit(60 * 60 * 1000)` from a
@@ -623,13 +680,11 @@ mod tests {
             matches!(convert(Value::Text(" ab ".into()), &RtType::Code(None)), Ok(Value::Code(ref s)) if s == "AB")
         );
         assert!(matches!(convert(Value::Code("AB".into()), &RtType::Text(None)), Ok(Value::Text(ref s)) if s == "AB"));
-        assert!(
-            matches!(
-                convert(Value::Text("abc".into()), &RtType::Text(Some(2))),
-                Err(Signal::Unsupported(_))
-            ),
-            "overflow message not pinned yet"
-        );
+        // types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim: a text past the declared length raises.
+        let Err(Signal::Error(e)) = convert(Value::Text("abc".into()), &RtType::Text(Some(2))) else {
+            panic!("a text longer than its type must raise");
+        };
+        assert_eq!(e.code, "StringLengthExceeded");
         assert!(matches!(
             convert(Value::Text("a".into()), &RtType::Char),
             Ok(Value::Char(97))
@@ -763,15 +818,22 @@ mod tests {
     }
 
     #[test]
-    fn division_by_zero_and_overflow_are_not_guessed() {
-        assert!(matches!(
-            arith(Arith::Div, &Value::Integer(1), &Value::Integer(0)),
-            Err(Signal::Unsupported(_))
-        ));
-        assert!(matches!(
-            arith(Arith::Add, &Value::Integer(i32::MAX), &Value::Integer(1)),
-            Err(Signal::Unsupported(_))
-        ));
+    fn division_by_zero_and_overflow_raise_the_pinned_errors() {
+        // session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts.
+        let Err(Signal::Error(e)) = arith(Arith::Div, &Value::Integer(1), &Value::Integer(0)) else {
+            panic!("1 / 0 must raise");
+        };
+        assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            ("Attempted to divide by zero.", "AL:DivideByZero")
+        );
+        let Err(Signal::Error(e)) = arith(Arith::Add, &Value::Integer(i32::MAX), &Value::Integer(1)) else {
+            panic!("an Integer overflow must raise");
+        };
+        assert_eq!(
+            (e.message.as_str(), e.code.as_str()),
+            ("Arithmetic operation resulted in an overflow.", "AL:Overflow")
+        );
     }
 
     #[test]

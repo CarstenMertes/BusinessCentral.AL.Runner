@@ -40,6 +40,8 @@ pub struct Args {
     /// `--files-dir DIR`: the `File` data type reads and writes real files under DIR. Without it
     /// files live in memory and are gone when the test ends.
     pub files_dir: Option<PathBuf>,
+    /// `--environment saas|onprem`: what Environment Information answers (default saas, as probed).
+    pub environment: Option<al_host::Environment>,
     /// `--no-download`: never fetch a dependency app from Microsoft's artifact feed (ADR-013).
     pub no_download: bool,
     /// `--cache-dir DIR`: where downloaded artifacts are kept (else `ALRUNNER_CACHE`, else
@@ -161,6 +163,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
             "--require-dotnet" => a.require_dotnet = true,
             "--files-dir" => a.files_dir = Some(text()?.into()),
+            "--environment" => a.environment = Some(text()?.parse().map_err(|e| format!("--environment: {e}"))?),
             "--no-download" => a.no_download = true,
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--fetch-deps" => a.fetch_deps = true,
@@ -234,6 +237,9 @@ INPUT
   --deps DIR                  extra directory of .app packages for the dependencies (repeatable)
   --no-deps                   run the corpus alone, without Microsoft's apps
   --no-download               never fetch a dependency app from the artifact feed
+  --environment ENV           the server Environment Information describes: saas (default, as probed) or
+                              onprem (IsSaaS and IsSandbox No until a test library changes them;
+                              an unprobed assumption Microsoft's suites need)
   --files-dir DIR             let the File data type read and write real files under DIR (default: in memory)
   --cache-dir DIR             where downloaded artifacts are kept (default: ~/.cache/al-runtime)
 

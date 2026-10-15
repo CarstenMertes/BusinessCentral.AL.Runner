@@ -310,31 +310,38 @@ impl Session {
         Ok(())
     }
 
-    /// Before a Delete stores: refuses when rows exist in the tables the platform's cascade also
-    /// empties, because that cascade is not pinned.
-    pub(crate) fn user_before_delete(&mut self, t: &TableDef, rec: &crate::records::Rec) -> Result<(), Signal> {
-        let sid = rec.borrow().fields[pos(t, F_SID)].clone();
-        if let Some(ac) = self.table_def(ACCESS_CONTROL) {
-            let cx = self.cx.clone();
-            let has = self
-                .all_rows(&cx, &ac)?
-                .iter()
-                .any(|r| guid(&r[pos(&ac, P_SID)]) == guid(&sid));
-            if has {
-                return unsupported(
-                    "Delete of a User that has Access Control rows: the platform deletes them too, which is not pinned",
-                );
-            }
-        }
+    /// Before a Delete stores. Nothing is refused: the rows the platform's cascade also empties are
+    /// the User Property row (pinned, TestUserDeleteCascadeOrder.al:26-84) and the Access Control rows
+    /// ([`Session::user_after_delete`], an assumption Microsoft's tests need).
+    pub(crate) fn user_before_delete(&mut self, _t: &TableDef, _rec: &crate::records::Rec) -> Result<(), Signal> {
         Ok(())
     }
 
-    /// After the User row is deleted: its User Property row goes (TestUserDeleteCascadeOrder.al:26-84).
+    /// After the User row is deleted: its User Property row goes (TestUserDeleteCascadeOrder.al:26-84),
+    /// and so do its Access Control rows. The second is an UNPROBED ASSUMPTION required by Microsoft's own
+    /// test (rule 3 exception, owner 2026-10-15): codeunit 134614 "Test App Permissions" deletes all users in
+    /// `InitializeData`, creates a super user and three more, and passes in Microsoft's CI only if the
+    /// deleted users' roles are gone. Probe: docs/probes-needed.md "User delete cascade to Access Control".
     pub(crate) fn user_after_delete(&mut self, t: &TableDef, rec: &crate::records::Rec) -> Result<(), Signal> {
+        let sid = rec.borrow().fields[pos(t, F_SID)].clone();
+        let cx = self.cx.clone();
         if let Some(up) = self.table_def(USER_PROPERTY) {
-            let sid = rec.borrow().fields[pos(t, F_SID)].clone();
-            let cx = self.cx.clone();
-            if let Ok(WriteOutcome::Done | WriteOutcome::NotFound) = self.store.delete(&cx, &up, &[sid]) {}
+            if let Ok(WriteOutcome::Done | WriteOutcome::NotFound) =
+                self.store.delete(&cx, &up, std::slice::from_ref(&sid))
+            {}
+        }
+        if let Some(ac) = self.table_def(ACCESS_CONTROL) {
+            let mine: Vec<Row> = self
+                .all_rows(&cx, &ac)?
+                .into_iter()
+                .filter(|r| guid(&r[pos(&ac, P_SID)]) == guid(&sid))
+                .collect();
+            for row in mine {
+                let pk = ac.primary_key(&row);
+                if let Err(e) = self.store.delete(&cx, &ac, &pk) {
+                    return unsupported(format!("deleting an Access Control row of a deleted User: {e}"));
+                }
+            }
         }
         Ok(())
     }

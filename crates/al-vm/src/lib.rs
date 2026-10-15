@@ -196,6 +196,9 @@ pub struct Session {
     fault_site: Vec<faultsite::FaultFrame>,
     /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
     pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
+    /// What the isolated storage held at the last commit: a rollback goes back to it (session/
+    /// TestProbeSessionMiscContracts.al:IsolatedStorage_NotRolledBack, whose name is the opposite of its result).
+    pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
     install_scope: bool,
     /// Registered table connections by (type member, lower-case name), and the default name per type.
@@ -333,6 +336,9 @@ pub struct Session {
     /// (`CurrReport.Skip`, `Break`, `Quit`), and the request it made (al-vm reports.rs).
     pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
     pub(crate) report_flow: Option<crate::reports::Flow>,
+    /// The request page of a `RunRequestPage` is open: a table write in its handler finds no transaction
+    /// (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler).
+    pub(crate) request_only_page: bool,
     /// The report instances that `Execute` has run: a second `Execute` on one is refused.
     /// A page opened for a `RunObject` action looks its handler up without failing when there is
     /// none (al-vm pages/runobject.rs).
@@ -346,9 +352,11 @@ pub struct Session {
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
-/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al); BC's exact limit
-/// and the text of its error are not pinned, so exceeding this is Unsupported.
-pub const MAX_CALL_DEPTH: usize = 1000;
+/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al).
+/// The deepest call chain, the test method included: 991 recursive calls under a test run (codeunit/
+/// TestCodeunitRecursionDepth.al:RecursionDepth_JustInsideTheCeiling_Completes); a [TryFunction] counts for two frames
+/// (session/TestProbeSessionMiscContracts.al:CallDepth_990, CallDepth_1000, CallDepth_1001).
+pub const MAX_CALL_DEPTH: usize = 992;
 
 impl Session {
     /// A session on the deterministic test host: a frozen clock and AL Runner's identity.
@@ -428,6 +436,7 @@ impl Session {
             fault_trace: false,
             fault_site: Vec::new(),
             isolated_storage: Default::default(),
+            isolated_committed: Default::default(),
             install_scope: false,
             sequences: Default::default(),
             table_connections: Default::default(),
@@ -457,6 +466,7 @@ impl Session {
             report_quit: false,
             report_trigger: None,
             report_flow: None,
+            request_only_page: false,
             report_executed: Vec::new(),
             report_preview_pinned: Vec::new(),
             dataset: None,
@@ -482,6 +492,17 @@ impl Session {
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
         self.committed_row_version = self.next_row_version;
+        self.isolated_committed = self.isolated_storage.clone();
+        self.end_write_phase();
+    }
+
+    /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
+    /// it with a write that changes nothing; codeunit/TestWriteTxTestBoundary.al:Test10 to Test13d end it with the run or
+    /// the page operation, and a rollback ends it too).
+    fn end_write_phase(&mut self) {
+        if self.tx_phase == crate::transactions::TX_WRITE {
+            self.tx_phase = crate::transactions::TX_FRESH;
+        }
     }
 
     /// Discards every change since the last commit. The AutoIncrement counters are not
@@ -490,6 +511,7 @@ impl Session {
     pub fn rollback_transaction(&mut self) {
         self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
+        self.isolated_storage = self.isolated_committed.clone();
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
         // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
         // recorded is written into them again at the next read.
@@ -497,6 +519,7 @@ impl Session {
         for (slot, value) in std::mem::take(&mut self.truncate_undo) {
             self.autoinc.insert(slot, value);
         }
+        self.end_write_phase();
     }
 
     /// The session's database, for runners that manage transactions around tests.
@@ -573,7 +596,22 @@ impl Session {
             name: app.name.clone(),
             publisher: app.publisher.clone(),
             version,
-            dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
+            dependencies: {
+                let mut deps: Vec<[u8; 16]> = app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect();
+                // The app under test also depends on the "Application" app, which its manifest states as `application`
+                // (session/TestProbeSessionMiscContracts.al:ModuleInfo_CurrentModule: 6 dependencies, the Application one last).
+                deps.sort();
+                if !app.dependency {
+                    if let Some(application) = ops::parse_guid(al_builtins::moduleinfo::APPLICATION_APP_ID) {
+                        if !deps.contains(&application) {
+                            deps.push(application);
+                        }
+                    }
+                }
+                // BC lists them by id.
+                deps.sort();
+                deps
+            },
             synthesized: false,
         })
     }
@@ -617,6 +655,7 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            rerun: false,
             base: None,
         }))
     }
@@ -657,6 +696,7 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            rerun: false,
             base: None,
         }))
     }
@@ -697,9 +737,11 @@ impl Session {
             return Err(Signal::Unsupported(reason.clone()));
         }
         if self.depth >= MAX_CALL_DEPTH {
-            return Err(Signal::Unsupported(format!(
-                "call depth over {MAX_CALL_DEPTH} (BC's limit and error text are not pinned)"
-            )));
+            return Err(Signal::Error(al_builtins::native::AlError {
+                message: "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator.".into(),
+                code: "StackOverflow".into(),
+                call_stack: String::new(),
+            }));
         }
         self.depth += 1;
         // The builtin being run (a record write that runs triggers and events) keeps its own
@@ -774,6 +816,10 @@ impl Session {
             self.error_scopes.open();
         }
         self.try_depth += usize::from(is_try);
+        // A [TryFunction] takes a platform scope of its own on top of its frame (session/
+        // TestProbeSessionMiscContracts.al:CallDepth_1000 stops at 988 frames below test, TryDepth and TryDepthF, while
+        // codeunit/TestCodeunitRecursionDepth.al:RecursionDepth_JustInsideTheCeiling_Completes runs 991 frames under a test).
+        self.depth += usize::from(is_try);
         let test_scope = if self.code_coverage {
             self.coverage_enter(object, routine)
         } else {
@@ -802,6 +848,7 @@ impl Session {
             outcome = self.close_error_scope(outcome);
         }
         self.try_depth -= usize::from(is_try);
+        self.depth -= usize::from(is_try);
         self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
@@ -1194,13 +1241,24 @@ impl Session {
                     return Err(Signal::Unsupported(format!("indexing {} as a text", t.describe())));
                 };
                 let i = int(&self.eval(index, f)?)?;
-                usize::try_from(i - 1)
-                    .ok()
-                    .and_then(|i| t.encode_utf16().nth(i))
-                    .map(Value::Char)
-                    .ok_or_else(|| {
-                        Signal::Unsupported("a text indexed outside its length (error text not pinned)".into())
-                    })
+                // types/TestProbeScalarContracts.al:TextChar_AssignByIndex: position 0 and below raise, the position after
+                // the last character reads as the character 0; further positions are not pinned.
+                if i < 1 {
+                    return al_builtins::native::raise(
+                        format!(
+                            "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
+                        ),
+                        "OutsidePermittedRange",
+                    );
+                }
+                let units: Vec<u16> = t.encode_utf16().collect();
+                match units.get(i as usize - 1) {
+                    Some(u) => Ok(Value::Char(*u)),
+                    None if i as usize == units.len() + 1 => Ok(Value::Char(0)),
+                    None => Err(Signal::Unsupported(
+                        "a text read more than one position past its length (not pinned)".into(),
+                    )),
+                }
             }
             E::DotNetCoerce(t, e) => {
                 self.dotnet.clear_null_string();
@@ -1599,10 +1657,13 @@ impl Session {
                                         al_builtins::stream::BlobBuf {
                                             bytes: b.bytes.clone(),
                                             write_pos: 0,
-                                            // A copy shows the bytes, but CalcFields fetches the Blob from the
-                                            // stored row again (types/ProbeTypeFormsAndFilters.al:
+                                            // A copy shows the bytes (and a stream over it reads them, streams/
+                                            // TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes), but CalcFields
+                                            // fetches the Blob from the stored row again (types/ProbeTypeFormsAndFilters.al:
                                             // FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
-                                            loaded: false,
+                                            loaded: true,
+                                            refetch: true,
+                                            persisted: false,
                                         },
                                     )))
                                 }
@@ -1693,23 +1754,44 @@ impl Session {
             ));
         };
         let mut units: Vec<u16> = s.encode_utf16().collect();
-        let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
-        let (Some(unit), true) = (unit, in_range) else {
+        let Some(unit) = unit else {
             return Err(Signal::Unsupported(format!(
-                "assigning {v} to character {i} of a text (only the next position within the length is pinned)",
+                "assigning {v} to a character of a text (only a UTF-16 character is pinned)",
                 v = v.describe()
             )));
         };
+        // A position outside 1 to the length plus one raises (types/TestProbeScalarContracts.al:TextChar_AssignByIndex:
+        // 5, 0 and -1 on 'abc'); the position after the last one appends, and past the declared length it raises the
+        // length error of an assignment.
+        if i < 1 || (i as usize) > units.len() + 1 {
+            return al_builtins::native::raise(
+                format!(
+                    "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to {}.",
+                    units.len()
+                ),
+                "OutsidePermittedRange",
+            );
+        }
         let i = i as usize - 1;
         if i == units.len() {
             units.push(unit);
         } else {
             units[i] = unit;
         }
+        if let Some(m) = max.filter(|m| units.len() > *m as usize) {
+            return al_builtins::native::raise(
+                format!(
+                    "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                    units.len(),
+                    String::from_utf16_lossy(&units)
+                ),
+                "StringLengthExceeded",
+            );
+        }
         let text = String::from_utf16(&units)
             .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
         if is_code {
-            return self.write(base, Value::Code(text.to_uppercase()), f);
+            return self.write(base, Value::Code(ops::upper_code(&text)), f);
         }
         self.write(base, Value::Text(text), f)
     }
@@ -1932,9 +2014,11 @@ impl al_builtins::native::Ctx for Session {
         let bc = self.engine.target.as_ref().map(|t| &t.bc);
         let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
         al_builtins::value::ModuleInfoState {
+            // The module BC answers for the null app id: the base application W1 (session/
+            // TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).
             id: [0; 16],
-            name: String::new(),
-            publisher: String::new(),
+            name: "W1".into(),
+            publisher: "Microsoft".into(),
             version: Some([major, minor, 0, 0]),
             dependencies: Vec::new(),
             synthesized: true,

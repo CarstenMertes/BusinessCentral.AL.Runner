@@ -125,6 +125,10 @@ fn to_number(d: Decimal, ty: &RtType, truncate_average: bool) -> Result<Value, S
             Some(ms) if d.fract() == Decimal::ZERO => Ok(Value::Duration(ms)),
             _ => unsupported(format!("{d} as a Duration")),
         },
+        // A result beyond an integral field overflows (record/TestProbeCalcFieldsContracts.al:CalcFields_BigIntegerIntoInteger).
+        RtType::Integer if d.fract() == Decimal::ZERO && d.to_i32().is_none() => {
+            al_builtins::native::raise("Arithmetic operation resulted in an overflow.", "AL:Overflow")
+        }
         _ => ops::convert(Value::Decimal(d), ty),
     }
 }
@@ -192,22 +196,10 @@ impl Session {
                         (RtType::BigInteger, RtType::Integer) | (RtType::Integer, RtType::BigInteger)
                     )
                 };
-                if relaxed
-                    && integer_pair(&f.ty, &s.ty)
-                    && !(calc.method == ir::CalcMethod::Sum && f.ty == RtType::BigInteger)
-                {
-                    // The file's header comment says BC 29 also accepts BigInteger into Integer,
-                    // but only the sum of an Integer source into a BigInteger FlowField is asserted.
-                    return unsupported(format!(
-                        "BC {} accepts this Integer/BigInteger pair, but the corpus pins only a sum of an Integer source into a BigInteger FlowField",
-                        al_version::Gate::FlowFieldSumIntegerIntoBigInteger.since_bc()
-                    ));
-                }
                 if std::mem::discriminant(&f.ty) != std::mem::discriminant(&s.ty)
-                    && !(relaxed
-                        && calc.method == ir::CalcMethod::Sum
-                        && f.ty == RtType::BigInteger
-                        && s.ty == RtType::Integer)
+                    // BC 29 accepts the Integer/BigInteger pair in both directions, for a sum and an average
+                    // (record/TestProbeCalcFieldsContracts.al:CalcFields_BigIntegerIntoInteger, BC29PLUS).
+                    && !(relaxed && integer_pair(&f.ty, &s.ty))
                 {
                     let stcap = self.table_caption(calc.table);
                     // Layout and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:

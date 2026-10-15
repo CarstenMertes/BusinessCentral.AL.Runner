@@ -29,10 +29,10 @@ fn with_state<R>(r: Option<&mut Value>, f: impl FnOnce(&mut ErrorInfoState) -> R
     let mut held = cell.borrow_mut();
     // A declared but never created ErrorInfo takes a property and gives it back
     // (types/TestHttpRequestFileUploadFieldErrorContracts.al:FieldError_WithErrorInfoAndWithText sets
-    // `Message` on one and raises it). Its other defaults are assumed to be those of `Create()`
-    // (docs/probes-needed.md).
+    // `Message` on one and raises it). It is not collectible (session/TestProbeSessionMiscContracts.al:
+    // ErrorInfo_UnsetAndOrdinals).
     if matches!(&*held, LibraryValue::Empty) {
-        *held = LibraryValue::ErrorInfo(fresh(String::new(), true));
+        *held = LibraryValue::ErrorInfo(fresh(String::new(), false));
     }
     match &mut *held {
         LibraryValue::ErrorInfo(s) => Ok(f(s)),
@@ -235,8 +235,7 @@ fn add_navigation_action(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]
 }
 
 /// `Error(ErrorInfo)`: raises the message as it is for a client error
-/// (errorinfo/TestErrorInfoErrorType.al:50-65). An internal error hides its message behind a text
-/// the corpus does not pin: refused. A collectible one is collected inside a collecting scope.
+/// (errorinfo/TestErrorInfoErrorType.al:50-65). A collectible one is collected inside a collecting scope.
 pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Some(info @ Value::Library(_, cell)) = a.first() else {
         return unsupported(format!("Error with {} as an ErrorInfo", a.first().describe()));
@@ -245,9 +244,17 @@ pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         LibraryValue::ErrorInfo(s) => (s.message.clone(), s.error_type == Some(1), s.collectible),
         _ => return unsupported("Error with an ErrorInfo nobody created"),
     };
-    if internal {
-        return unsupported("Error with ErrorType::Internal (the masking text is not pinned)");
-    }
+    // An internal error hides its message behind a fixed text and a correlation id (session/
+    // TestProbeSessionMiscContracts.al:ErrorInfo_ErrorClientAndInternal; the id changes from run to run).
+    let message = if internal {
+        let g = c.new_guid();
+        let id = crate::pagefmt::guid_text(&g);
+        format!(
+            "An error has occurred. If the error persists, please contact your system administrator.\r\\Correlation ID: {id}"
+        )
+    } else {
+        message
+    };
     // A collectible error inside a `[ErrorBehavior(Collect)]` scope is kept and execution goes on
     // (errorinfo/TestErrorInfoType.al:448-459); a non-collectible one unwinds even there (:474-490).
     if collectible && c.collect_error(info) {
@@ -255,7 +262,7 @@ pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     }
     Err(Signal::Error(crate::native::AlError {
         message,
-        code: String::new(),
+        code: "Dialog".into(),
         call_stack: String::new(),
     }))
 }
@@ -314,6 +321,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         "CustomDimensions" => custom_dimensions,
         "AddAction" => add_action,
         "AddNavigationAction" => add_navigation_action,
+        // Empty until the error is raised (session/TestProbeSessionMiscContracts.al:ErrorInfo_Callstack_IsAvailable).
+        "Callstack" => |_, r, _| with_state(r, |_| ()).map(|()| Value::Text(String::new())),
         _ => return None,
     })
 }

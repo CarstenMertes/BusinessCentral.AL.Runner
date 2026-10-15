@@ -170,10 +170,10 @@ impl Session {
         }))
     }
 
-    /// The table-level trigger `name` (`OnBeforeInsert`, `OnInsert`, ...) a table extension
-    /// declares. The order of several extensions' triggers is not pinned, so two
-    /// declaring the same one are refused.
-    fn ext_trigger(&self, t: &TableDef, name: &str) -> Result<Option<(usize, usize)>, Signal> {
+    /// The table-level trigger `name` (`OnBeforeInsert`, `OnInsert`, ...) of every table extension that declares it,
+    /// in the order of the extensions' object ids: two extensions run the same trigger one after the other
+    /// (corpus events/TestProbeEventContracts.al:ExtensionTriggers_TwoExtensionsSameTrigger_Order, ids 69800 and 69801).
+    fn ext_triggers(&self, t: &TableDef, name: &str) -> Vec<(usize, usize)> {
         let mut found = Vec::new();
         if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
             for &e in &schema.extensions {
@@ -184,21 +184,16 @@ impl Session {
                 }
             }
         }
-        match found.len() {
-            0 | 1 => Ok(found.first().copied()),
-            _ => unsupported(format!(
-                "{name} on {}: declared by more than one table extension (their order is not pinned)",
-                t.name
-            )),
-        }
+        found.sort_by_key(|(e, _)| self.engine.program.objects[*e].id.unwrap_or(u32::MAX));
+        found
     }
 
     /// Runs the extension trigger `name`, if any, with the record and `xrec`.
     fn run_ext_trigger(&mut self, t: &TableDef, name: &str, rec: &Rec, xrec: Option<&Rec>) -> Result<(), Signal> {
-        match self.ext_trigger(t, name)? {
-            Some((o, r)) => self.run_trigger(o, r, rec, xrec),
-            None => Ok(()),
+        for (o, r) in self.ext_triggers(t, name) {
+            self.run_trigger(o, r, rec, xrec)?;
         }
+        Ok(())
     }
 
     /// Whether `event` of table `t` would reach a subscriber now (static ones, and
@@ -492,7 +487,7 @@ impl Session {
             "OnModify",
             "OnAfterModify",
         ] {
-            any |= self.ext_trigger(t, n)?.is_some();
+            any |= !self.ext_triggers(t, n).is_empty();
         }
         for e in [
             "onbeforeinsertevent",
@@ -815,6 +810,7 @@ impl Session {
                 have: al_builtins::value::FieldSet::All,
                 unsure: al_builtins::value::FieldSet::Of(Vec::new()),
                 row: None,
+                cleared: false,
             });
             r.load.partial = false;
         }
@@ -850,7 +846,7 @@ impl Session {
             let Value::Blob(buf) = rec.borrow().fields[pos].clone() else {
                 return unsupported("CalcFields of a Blob field that holds no Blob");
             };
-            if buf.borrow().loaded {
+            if buf.borrow().loaded && !buf.borrow().refetch {
                 continue;
             }
             if stored.is_none() {
@@ -870,6 +866,7 @@ impl Session {
             let mut b = buf.borrow_mut();
             b.bytes = bytes;
             b.loaded = true;
+            b.refetch = false;
         }
         Ok(())
     }
@@ -1053,6 +1050,7 @@ impl Session {
                 // temporary record: its rows stay and it stays temporary
                 // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount, BC 27.5).
                 let fresh = self.initial_fields(t.object as usize);
+                let old_row_id = Some(crate::partial::row_id(&t, &rec.borrow().fields));
                 // Clear sets the table's globals back to their initial values (ADR-021 decision 4;
                 // corpus probe TableGlobals_Clear_WhatHappensToTheGlobals).
                 self.reset_table_globals(rec);
@@ -1067,7 +1065,19 @@ impl Session {
                 r.ascending = true;
                 r.field_descending = false;
                 r.position = None;
+                // A Clear leaves the record's record of what it fetched: the fields in hand stay loaded for a later
+                // partial fetch (session/TestProbeSessionMiscContracts.al:PartialRecords_AreFieldsLoaded: a full Get,
+                // Clear, SetLoadFields(Cd) and Get still reports Txt loaded).
+                let (mut buffer, partial) = (r.load.buffer.take(), r.load.partial);
+                if let Some(b) = buffer.as_mut() {
+                    if b.row.is_none() {
+                        b.row = old_row_id.clone();
+                    }
+                    b.cleared = true;
+                }
                 r.load = Default::default();
+                r.load.buffer = buffer;
+                r.load.partial = partial;
                 Ok(Value::Null)
             }
             "Insert" => {
@@ -1084,21 +1094,29 @@ impl Session {
                 // FailingWrites_RaiseTheBeforeEventAndTheTrigger_ThenTheError).
                 // Before event, then the trigger, then the write, then the After event
                 // (record/TestTriggerDispatchOrder.al:TriggerOrder_Insert_RecordPipeline_IsStable).
-                self.table_event(&t, "onbeforeinsertevent", rec, None, run, None)?;
-                // Rec already carries its SystemId in OnInsert, the one that is stored
-                // (record/TestXRecStampFields.al:80-90); the stamps and the key come below it.
+                // Rec carries its SystemId from the Before event on, the one that is stored (record/TestXRecStampFields.al:80-90;
+                // events/TestProbeEventContracts.al:SystemId_BeforeOnInsert_AndPresetBuffer, `sysid_null=No` in the Before event);
+                // the stamps and the key come below it.
                 let keep_id = match args.get(1) {
                     Some(v) => ops::truthy(v)?,
                     None => false,
                 };
+                // xRec in the insert triggers is the buffer as it was before the SystemId is given: the SystemId an
+                // earlier insert left in the variable, else the null Guid (Insert_Events_TriggerFalseAndTrue).
+                let before_id = t
+                    .fields
+                    .iter()
+                    .position(|f| f.id == 2_000_000_000)
+                    .map(|i| rec.borrow().fields[i].clone());
                 self.assign_system_id(&t, rec, keep_id);
+                self.table_event(&t, "onbeforeinsertevent", rec, None, run, None)?;
                 let id_slot = t.fields.iter().position(|f| f.id == 2_000_000_000);
                 let assigned = id_slot.map(|i| rec.borrow().fields[i].clone());
                 // xRec in the insert triggers is the buffer without the SystemId it was just given
                 // (record/TestXRecStampFields.al:38-52).
                 let insert_xrec = id_slot.map(|i| {
                     let mut copy = rec.borrow().clone();
-                    copy.fields[i] = Value::Guid([0; 16]);
+                    copy.fields[i] = before_id.clone().unwrap_or(Value::Guid([0; 16]));
                     Rc::new(RefCell::new(copy))
                 });
                 if run {
@@ -1199,7 +1217,7 @@ impl Session {
                             && !self.immediate_errors
                             && !rec.borrow().temporary
                         {
-                            if (run && self.ext_trigger(&t, "OnAfterInsert")?.is_some())
+                            if (run && !self.ext_triggers(&t, "OnAfterInsert").is_empty())
                                 || self.listened(&t, "onafterinsertevent", None)?
                             {
                                 return unsupported(format!(
@@ -1305,6 +1323,16 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     WriteOutcome::Done => {
+                        // A Blob a Modify of a temporary record persisted does not survive a later Rename
+                        // (streams/TestBlobRenameIsolation.al:TempBlob_CommittedWrite_Rename_SameInstanceReGet_LosesBlobValue);
+                        // one written after the Insert and never modified does.
+                        if rec.borrow().temp_id.is_some() {
+                            for v in &rec.borrow().fields {
+                                if let Value::Blob(b) = v {
+                                    b.borrow_mut().persisted = true;
+                                }
+                            }
+                        }
                         if run {
                             self.run_ext_trigger(&t, "OnAfterModify", rec, xrec.as_ref())?;
                         }
@@ -1356,7 +1384,7 @@ impl Session {
                     self.listened(&t, "onbeforedeleteevent", None)? || self.listened(&t, "onafterdeleteevent", None)?;
                 let mut trigger = self.table_trigger(&t, "OnDelete").is_some();
                 for n in ["OnBeforeDelete", "OnDelete", "OnAfterDelete"] {
-                    trigger |= self.ext_trigger(&t, n)?.is_some();
+                    trigger |= !self.ext_triggers(&t, n).is_empty();
                 }
                 let global = !temporary && self.global_enabled(&t, GlobalOp::Delete)?;
                 // With delete events or database triggers a DeleteAll deletes row by row: the events
@@ -1512,14 +1540,16 @@ impl Session {
                     // List_DeletedByAction_PassThroughFind_*) and, with filters, by the probe above for
                     // `>=`; another current key is not pinned.
                     w @ (">=" | "<=" | "=>" | "=<" | "=><") => {
-                        if rec.borrow().key != 0 {
-                            return unsupported(format!("Find('{w}') with another current key"));
-                        }
+                        // Another current key looks for the neighbour by that key's fields
+                        // (events/TestProbeEventContracts.al:Find_NeighbourSearch_WithFilterAndOtherKey, key Name).
                         let pk = t.primary_key(&rec.borrow().fields);
-                        let exact = self
-                            .store_for(rec)
-                            .get(&cx, &t, &pk)
-                            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+                        let exact = if rec.borrow().key != 0 {
+                            None
+                        } else {
+                            self.store_for(rec)
+                                .get(&cx, &t, &pk)
+                                .map_err(|e| Signal::Unsupported(format!("{e}")))?
+                        };
                         let exact = match exact {
                             Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
                             _ => None,
@@ -1527,7 +1557,8 @@ impl Session {
                         match exact {
                             Some(row) => Some(row),
                             None => {
-                                let pos = position(&t, 0, &rec.borrow().fields);
+                                let key = rec.borrow().key;
+                                let pos = position(&t, key, &rec.borrow().fields);
                                 let up = matches!(w, ">=" | "=>" | "=><");
                                 let down = matches!(w, "<=" | "=<" | "=><");
                                 let next = if up {
@@ -1540,14 +1571,9 @@ impl Session {
                                 } else {
                                     None
                                 };
-                                match (next, prev) {
-                                    (Some(_), Some(_)) if w == "=><" => {
-                                        return unsupported(
-                                            "Find('=><') with a row on either side (which one BC picks is not pinned)",
-                                        );
-                                    }
-                                    (n, p) => n.or(p),
-                                }
+                                // `=><` takes the next row, else the previous one (events/TestProbeEventContracts.al:
+                                // Find_NeighbourSearch_PrimaryKey: 15 gives 20, 25 gives 30, 35 gives 30).
+                                next.or(prev)
                             }
                         }
                     }
@@ -1561,10 +1587,25 @@ impl Session {
                     None if self.ret_used => Ok(Value::Boolean(false)),
                     // The error BC raises for an empty set has no corpus test (no `asserterror` on a Find call):
                     // its text is not pinned (docs/probes-needed.md).
-                    None => unsupported(format!(
-                        "{method} on an empty set of table '{}' without using the result: BC's error text is not pinned (docs/probes-needed.md)",
-                        t.name
-                    )),
+                    // events/TestProbeEventContracts.al:RecordErrors_GetMissing_TestField_Modify (FindFirst, FindLast, FindSet
+                    // with a filter): the text lists the filters; without one it is not pinned.
+                    None => {
+                        let filters = self.get_filters(rec, &t)?;
+                        if filters.is_empty() || !matches!(method, "FindFirst" | "FindLast" | "FindSet") {
+                            return unsupported(format!(
+                                "{method} on an empty set of table '{}' without using the result and without a filter: BC's error text is not pinned (docs/probes-needed.md)",
+                                t.name
+                            ));
+                        }
+                        Err(Signal::Error(AlError {
+                            message: format!(
+                                "There is no {} within the filter.{BR}{BR}Filters: {filters}",
+                                self.caption(&t)
+                            ),
+                            code: "DB:NothingInsideFilter".into(),
+                            call_stack: String::new(),
+                        }))
+                    }
                 }
             }
             "Next" => {
@@ -1802,11 +1843,6 @@ impl Session {
                 Ok(Value::Null)
             }
             "Rename" => {
-                if rec.borrow().temp_id.is_some() && rec.borrow().fields.iter().any(|f| matches!(f, Value::Blob(_))) {
-                    // streams/TestBlobRenameIsolation.al: BC keeps an unpersisted Blob write across a
-                    // temporary Rename but loses one persisted with Modify; no model here does both.
-                    return unsupported("Rename of a temporary record with a Blob field");
-                }
                 // Fields that relate to this table follow the rename; a temporary record has none.
                 let refs = if rec.borrow().temporary {
                     Vec::new()
@@ -1815,6 +1851,22 @@ impl Session {
                 };
                 let old = rec.borrow().fields.clone();
                 let mut new = old.clone();
+                // A temporary record's Blob reads empty through a stream right after a Rename, whether the write was
+                // persisted or not (streams/TestProbeStreamContracts.al:TempRename_UnpersistedBlobWrite,
+                // TempRename_PersistedBlobWrite, TempRename_BlobInsertedWithValueThenRename), while the bytes stay in the
+                // row: a Get and CalcFields read them back (streams/TestBlobRenameIsolation.al:
+                // TempBlob_UncommittedWrite_Rename_SameInstanceReGet_KeepsWrite).
+                if rec.borrow().temp_id.is_some() {
+                    for (i, v) in new.iter_mut().enumerate() {
+                        if let Value::Blob(b) = v {
+                            let kept = al_builtins::stream::copy_blob(b, false);
+                            *b = match self.default_value(&t.fields[i].ty) {
+                                Value::Blob(empty) if b.borrow().persisted => empty,
+                                _ => kept,
+                            };
+                        }
+                    }
+                }
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
                     if let Some(v) = args.get(n) {

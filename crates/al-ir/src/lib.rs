@@ -259,6 +259,10 @@ pub struct Report {
     /// whose effect on the dataset no test pins); empty = it can.
     #[serde(default)]
     pub dataset_unsupported: Vec<String>,
+    /// `DefaultLayout` names a kind but the report declares no layout file (no `RDLCLayout`, `WordLayout` or
+    /// `ExcelLayout` property, no `rendering` section): a rendered `Report.SaveAs` finds no valid layout.
+    #[serde(default)]
+    pub layout_file_missing: bool,
 }
 
 /// The layout a report renders with by default.

@@ -39,10 +39,9 @@ pub enum Gate {
     /// ` tableId="<table id>" systemId="<guid>"` after its name. Before BC 28 it carries neither
     /// (27.5 absent, 28.5 and 29.0 present; BC 28.0 to 28.4 were not measured).
     ReportSaveAsDataItemIdentity,
-    /// The platform table "Feature Key" has another list of columns and rows from BC 28: the corpus asserts
-    /// the 27.x list (16 rows, the columns up to "Description In English") only below BC 28
-    /// (`#if not BC28PLUS`); above, only that the table has rows. Not consumed yet: the runtime has no
-    /// provider for the table's other columns.
+    /// The platform table "Feature Key" has another list of rows from BC 28: the corpus asserts the 27.x list (16 rows)
+    /// only below BC 28 (`#if not BC28PLUS`, record/TestFieldLenAndFeatureKeyContracts.al); above, only that the table
+    /// has rows. Not consumed yet (see `feature_key_rows_known`).
     FeatureKeyListChangedFrom28,
 }
 
@@ -72,10 +71,16 @@ impl Gate {
     /// The corpus guards that pin both sides.
     pub fn evidence(self) -> &'static [Evidence] {
         match self {
-            Gate::FlowFieldSumIntegerIntoBigInteger => &[Evidence {
-                file: "record/TestCalcFormulaValidationTests.Codeunit.al",
-                lines: "205,227",
-            }],
+            Gate::FlowFieldSumIntegerIntoBigInteger => &[
+                Evidence {
+                    file: "record/TestCalcFormulaValidationTests.Codeunit.al",
+                    lines: "205,227",
+                },
+                Evidence {
+                    file: "record/TestProbeCalcFieldsContracts.al",
+                    lines: "120,125",
+                },
+            ],
             Gate::FlowFieldMinMaxOverRowVersionRefused => &[Evidence {
                 file: "record/TestCalcFormulaSystemFieldsTests.Codeunit.al",
                 lines: "298,306,353",
@@ -92,16 +97,10 @@ impl Gate {
                 file: "handlers/TestReportSaveAsDatasetContracts.al",
                 lines: "243",
             }],
-            Gate::FeatureKeyListChangedFrom28 => &[
-                Evidence {
-                    file: "record/TestFeatureKeyEnabledContracts.al",
-                    lines: "33",
-                },
-                Evidence {
-                    file: "record/TestFieldLenAndFeatureKeyContracts.al",
-                    lines: "97",
-                },
-            ],
+            Gate::FeatureKeyListChangedFrom28 => &[Evidence {
+                file: "record/TestFieldLenAndFeatureKeyContracts.al",
+                lines: "97",
+            }],
             Gate::ReportSaveAsDataItemIdentity => &[Evidence {
                 file: "handlers/TestReportSaveAsDatasetContracts.al",
                 lines: "299",
@@ -123,8 +122,9 @@ pub fn has(target: Option<&Target>, gate: Gate) -> bool {
 }
 
 /// Whether the rows of the Feature Key table are known for this target: they were measured on BC 27.5
-/// (record/TestFieldLenAndFeatureKeyContracts.al, `#if not BC28PLUS`) and not on any other major. It is
-/// not a gate: no oracle pins the newer side, so there is no behaviour to switch to.
+/// (record/PFFeatureKeyColumns.al, record/TestFieldLenAndFeatureKeyContracts.al `#if not BC28PLUS`) and the run of any
+/// other major still compiles the BC 27.5 Base Application, whose `Application System Constants` answers `W1 27.5`, so the
+/// corpus test would key on the 27.5 rows. It is not a gate: no behaviour switches on it.
 pub fn feature_key_rows_known(target: Option<&Target>) -> bool {
     target.is_some_and(|t| t.bc.major == 27)
 }

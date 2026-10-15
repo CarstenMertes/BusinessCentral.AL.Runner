@@ -204,9 +204,12 @@ impl Session {
                 .or_insert(0) += 1;
             let isolate = isolated && !self.store.has_uncommitted();
             let before = isolate.then(|| self.store.clone());
+            let phase = self.tx_phase;
             let (_, finals) = match self.call(s.object, s.routine, inst, call_args) {
                 Err(Signal::Error(e)) if isolate => {
                     self.store = before.expect("snapshot taken when isolating");
+                    // The subscriber's own transaction is gone with its writes.
+                    self.tx_phase = phase;
                     self.last_error = e;
                     continue;
                 }

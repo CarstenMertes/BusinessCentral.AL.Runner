@@ -151,3 +151,138 @@ pub fn own_build(inputs: &[AppInput]) -> Option<al_deps::build::BuildId> {
                 .or_else(|| BuildId::parse(&i.manifest.version).ok())
         })
 }
+
+/// What decided the Microsoft build of a run.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct BuildChoice {
+    /// The build the feed and the test data should come from when it is cached, on disk or published.
+    pub preferred: Option<al_deps::build::BuildId>,
+    /// One line for the run header: the rule that applied.
+    pub rule: String,
+    /// The target's BC minor, when the packages say it.
+    pub minor: Option<u32>,
+    /// The packages named a build that was not used, and why.
+    pub note: Option<String>,
+    /// `preferred` is the build of the Microsoft packages the project carries.
+    pub from_packages: bool,
+}
+
+/// The rule for the Microsoft build of a run (owner decision 2026-10-15): in this order,
+/// 1. `--bc-version`;
+/// 2. the build of the tests, when they are Microsoft's (`own_build`);
+/// 3. the build of the Microsoft packages the project carries in its own package folders
+///    (`.alpackages`, `--dep`, `--package-cache`; symbols only or with source): what its developer
+///    compiled against, so the build the project really targets. Used when it is of the target's
+///    major and not below the app.json floor (`application`, `platform`);
+/// 4. the newest published build of the target's major at or above the floor.
+///
+/// The build wanted may be neither cached, on disk nor published; then the feed's usual rules pick one
+/// and the run says so.
+pub fn choose_build(
+    bc_version: Option<&str>,
+    own: Option<al_deps::build::BuildId>,
+    packages: Option<(al_deps::build::BuildId, String)>,
+    floor: Option<(u32, u32)>,
+    target_major: u32,
+) -> BuildChoice {
+    let floor_text = floor.map_or("no floor".to_string(), |(a, b)| format!("{a}.{b}"));
+    if let Some(v) = bc_version {
+        return BuildChoice {
+            preferred: None,
+            rule: format!("--bc-version {v}"),
+            minor: None,
+            note: None,
+            from_packages: false,
+        };
+    }
+    if let Some(b) = own {
+        return BuildChoice {
+            rule: format!("the build of the tests ({b})"),
+            preferred: Some(b),
+            minor: None,
+            note: None,
+            from_packages: false,
+        };
+    }
+    if let Some((b, from)) = packages {
+        let floor_ok = floor.is_none_or(|f| (b.major(), b.minor()) >= f);
+        if b.major() == target_major && floor_ok {
+            return BuildChoice {
+                rule: format!(
+                    "the build of the Microsoft packages the project carries ({from}); app.json asks for {floor_text}"
+                ),
+                minor: Some(b.minor()),
+                preferred: Some(b),
+                note: None,
+                from_packages: true,
+            };
+        }
+        return BuildChoice {
+            preferred: None,
+            rule: format!("newest published build of BC {target_major} at or above the floor {floor_text}"),
+            minor: None,
+            note: Some(format!(
+                "the Microsoft packages in the project's package folders are build {b} ({from}), which is not of BC {target_major} at or above the app.json floor {floor_text}; not used to choose the build"
+            )),
+            from_packages: false,
+        };
+    }
+    BuildChoice {
+        preferred: None,
+        rule: format!("newest published build of BC {target_major} at or above the floor {floor_text}"),
+        minor: None,
+        note: None,
+        from_packages: false,
+    }
+}
+
+#[cfg(test)]
+mod build_choice_tests {
+    use super::*;
+    use al_deps::build::BuildId;
+
+    fn b(s: &str) -> BuildId {
+        BuildId::parse(s).unwrap()
+    }
+
+    #[test]
+    fn the_packages_the_project_carries_name_the_build() {
+        let c = choose_build(
+            None,
+            None,
+            Some((b("28.4.53241.53504"), "Base Application".into())),
+            Some((28, 0)),
+            28,
+        );
+        assert_eq!(c.preferred, Some(b("28.4.53241.53504")));
+        assert_eq!(c.minor, Some(4));
+        assert!(c.from_packages && c.rule.contains("Microsoft packages") && c.rule.contains("asks for 28.0"));
+    }
+
+    #[test]
+    fn packages_below_the_floor_or_of_another_major_are_not_used_and_the_run_says_so() {
+        for (pkg, floor, major) in [("28.0.1.1", (28, 2), 28), ("27.5.46862.48827", (27, 0), 28)] {
+            let c = choose_build(None, None, Some((b(pkg), "x".into())), Some(floor), major);
+            assert_eq!(c.preferred, None);
+            assert!(c.note.as_deref().unwrap().contains("not used"), "{c:?}");
+            assert!(c.rule.starts_with("newest published build"));
+        }
+    }
+
+    #[test]
+    fn bc_version_and_the_build_of_the_tests_come_first() {
+        let pkg = Some((b("28.4.53241.53504"), "x".into()));
+        let c = choose_build(Some("28.1"), Some(b("28.2.1.1")), pkg.clone(), None, 28);
+        assert_eq!((c.preferred, c.rule.as_str()), (None, "--bc-version 28.1"));
+        let c = choose_build(None, Some(b("28.2.1.1")), pkg, None, 28);
+        assert_eq!(c.preferred, Some(b("28.2.1.1")));
+        assert!(c.rule.contains("tests"));
+    }
+
+    #[test]
+    fn without_anything_the_floor_and_the_major_decide() {
+        let c = choose_build(None, None, None, Some((28, 0)), 28);
+        assert_eq!(c.preferred, None);
+        assert!(c.rule.contains("at or above the floor 28.0"));
+    }
+}

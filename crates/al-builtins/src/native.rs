@@ -440,6 +440,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
     ("Record.SetLoadFields#1", |c, r, a| c.record("SetLoadFields", r, a)),
     ("Record.AddLoadFields#1", |c, r, a| c.record("AddLoadFields", r, a)),
+    ("Record.LoadFields#1", |c, r, a| c.record("LoadFields", r, a)),
     ("Record.SetBaseLoadFields#1", |c, r, a| {
         c.record("SetBaseLoadFields", r, a)
     }),
@@ -492,9 +493,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "System.GetDotNetType#1" => {
             "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
         }
-        "Record.TestField#2" | "Record.TestField#4" => {
-            "TestField with an ErrorInfo is in no corpus test, so the error it raises (the text, which of the ErrorInfo's properties it keeps, and whether ErrorBehavior::Collect collects it) is not pinned"
-        }
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
@@ -506,6 +504,12 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         }
         "System.CaptionClassTranslate#1" => {
             "CaptionClassTranslate is in no corpus test, so how it resolves a caption class expression (the area, the language, the Caption Class codeunit event) is not pinned"
+        }
+        "Media.ImportFile#1" | "MediaSet.ImportFile#1" => {
+            "Media.ImportFile and MediaSet.ImportFile read a file of the service tier and are in no corpus test, so which file a test can name, the error for a missing file and what the Tenant Media row holds are not pinned"
+        }
+        "RecordRef.Copy#1" | "RecordRef.Copy#2" => {
+            "RecordRef.Copy is in no corpus test, so what it copies (the buffer, the filters, the key, the table view) and what ShareTable changes are not pinned"
         }
         "TestRequestPage.Editable#1" => {
             "TestRequestPage.Editable is in no corpus test (only the control form is, handlers/TestReqPageBoundVisibility.al), so whether the request page itself is editable is not pinned"
@@ -1168,13 +1172,14 @@ fn value_kind(v: &Value) -> String {
 pub(crate) mod tests {
     use super::*;
 
-    // TestField with an ErrorInfo (Microsoft's Gen. Jnl.-Check Line, 478 Tests-SCM-Manufacturing tests): no corpus test
-    // calls it (issue 42).
+    // TestField with an ErrorInfo is implemented (issue 41): a check that holds raises nothing, a failing one
+    // is refused at run time (al-vm recmeta.rs `test_field`, al-vm/tests/scm_service_41.rs). Issue 42 refused
+    // it at lowering; that entry is gone because `lookup` now finds the ids.
     #[test]
-    fn test_field_with_an_error_info_is_refused_with_its_reason() {
+    fn test_field_with_an_error_info_is_implemented_not_refused_at_lowering() {
         for id in ["Record.TestField#2", "Record.TestField#4"] {
-            let why = refusal(id).unwrap_or_default();
-            assert!(why.contains("ErrorInfo") && why.contains("not pinned"), "{id}: {why}");
+            assert!(refusal(id).is_none(), "{id}");
+            assert!(lookup(id).is_some(), "{id}");
         }
     }
 

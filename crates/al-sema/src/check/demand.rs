@@ -1529,6 +1529,62 @@ mod tests {
         );
     }
 
+    /// `main` over the platform app (the table `Field`) and an app with the table `Other`.
+    fn compile_with_catalog(main: &str) -> (Workspace, Lowered) {
+        let app = |id: &str, deps: &[&str], files: Vec<(&str, &str)>| AppSource {
+            id: id.into(),
+            name: id.into(),
+            dependencies: deps.iter().map(|d| d.to_string()).collect(),
+            files: files.into_iter().map(|(p, s)| (p.to_string(), s.to_string())).collect(),
+        };
+        compile_apps(
+            vec![
+                app(
+                    "main",
+                    &[crate::workspace::PLATFORM_APP_ID, "dep"],
+                    vec![("main.al", main)],
+                ),
+                app(
+                    crate::workspace::PLATFORM_APP_ID,
+                    &[],
+                    vec![(
+                        "field.al",
+                        "table 2000000041 \"Field\" { fields { field(1; TableNo; Integer) { } field(7; \"Type\"; Integer) { } } }",
+                    )],
+                ),
+                app(
+                    "dep",
+                    &[],
+                    vec![("other.al", "table 11 Other { fields { field(1; K; Code[10]) { } } }")],
+                ),
+            ],
+            vec![AppKind::Workspace, AppKind::Dependency, AppKind::Dependency],
+            &Default::default(),
+        )
+    }
+
+    /// Using the platform table `Field` as a table answers for every table of the installed apps, so
+    /// their shapes are compiled. A record variable that only has its fields assigned and read (Library
+    /// Assert's TypeNameOf) reads no row and needs none of them.
+    #[test]
+    fn a_catalog_table_used_as_a_table_compiles_every_table_shape() {
+        let (_, l) = compile_with_catalog(
+            "codeunit 1 Main { procedure Go() var F: Record \"Field\"; begin F.SetRange(TableNo, 18); end; }",
+        );
+        assert!(l.program.objects[object(&l, "Other")].table.is_some());
+    }
+
+    #[test]
+    fn a_catalog_table_variable_used_only_through_its_fields_compiles_no_other_table() {
+        let (_, l) = compile_with_catalog(
+            "codeunit 1 Main { procedure Go(): Integer var F: Record \"Field\"; begin F.\"Type\" := 3; exit(F.\"Type\"); end; }",
+        );
+        assert!(
+            l.program.objects[object(&l, "Other")].table.is_none(),
+            "no row of Field is read, so no table's shape is needed"
+        );
+    }
+
     #[test]
     fn reading_a_table_runs_no_trigger_and_writing_runs_the_trigger_of_that_operation() {
         let dep = [(

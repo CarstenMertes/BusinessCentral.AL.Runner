@@ -485,8 +485,19 @@ impl CorpusRuntime {
             && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
         let n_apps = apps.len();
         let (apps, mut kinds, manifests, suites_in, only, order) = if use_cache {
-            let order: Vec<usize> = (0..n_apps)
+            // Dependency apps first, Microsoft's before the others (the layers of the compile
+            // cache follow this order), then the workspace's.
+            let deps: Vec<usize> = (0..n_apps)
                 .filter(|&i| kinds[i] == al_sema::AppKind::Dependency)
+                .collect();
+            let dep_apps: Vec<&al_sema::workspace::AppSource> = deps.iter().map(|&i| &apps[i]).collect();
+            let dep_manifests: Vec<Manifest> = deps
+                .iter()
+                .map(|&i| manifests.get(i).cloned().unwrap_or_default())
+                .collect();
+            let order: Vec<usize> = crate::compile_cache::dependency_order(&dep_apps, &dep_manifests)
+                .into_iter()
+                .map(|k| deps[k])
                 .chain((0..n_apps).filter(|&i| kinds[i] != al_sema::AppKind::Dependency))
                 .collect();
             let mut new_of = vec![0; n_apps];
@@ -588,8 +599,11 @@ impl CorpusRuntime {
                 }
             };
             let load = started.elapsed();
+            // Without the baseline's roots, and without the workspace's procedures no selected test names:
+            // a helper beside the tests that touches tables must not pull the dependency apps in.
             let first_roots = al_sema::check::Roots {
                 baseline: false,
+                reach_only: true,
                 ..roots.clone()
             };
             let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
@@ -1022,7 +1036,7 @@ fn lazy_index(
     symbols: &BTreeSet<String>,
     lazy: &[Option<al_sema::LazySource>],
     identities: &[Option<[u8; 32]>],
-) -> Result<Vec<Option<al_sema::LazyDep>>, al_cache::Key> {
+) -> Result<Vec<Option<al_sema::LazyDep>>, Box<al_cache::Key>> {
     let which: Vec<usize> = (0..apps.len()).filter(|&i| lazy[i].is_some()).collect();
     let refs: Vec<&al_sema::workspace::AppSource> = which.iter().map(|&i| &apps[i]).collect();
     let mans: Vec<Manifest> = which
@@ -1046,7 +1060,7 @@ fn lazy_index(
                 })
                 .collect())
         }
-        _ => Err(key),
+        _ => Err(Box::new(key)),
     }
 }
 
@@ -1096,7 +1110,7 @@ fn compile_with_cache(
             }
         }
     };
-    let (entry, mut report) = cache::open_or_build_with(
+    let (layers, mut report) = cache::open_or_build_with(
         cc,
         &mut apps[..n_dep],
         &manifests[..n_dep],
@@ -1105,8 +1119,10 @@ fn compile_with_cache(
         &identities[..n_dep.min(identities.len())],
         &mut |a| fill(a),
     )?;
-    report.objects = DepSource::len(&entry);
-    report.parse_problems = entry.parse_problems().to_vec();
+    // `open_or_build_with` checked that the layers fit each other.
+    let stack = layers.stack().map_err(|why| format!("compile cache: {why}"))?;
+    report.objects = DepSource::len(&stack);
+    report.parse_problems = layers.parse_problems();
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
@@ -1132,7 +1148,7 @@ fn compile_with_cache(
         al_sema::Workspace::load_apps(apps, kinds, symbols)
     };
     let load = started.elapsed();
-    match al_sema::lower::compile_loaded_cached(ws, load, &catalog, roots.clone(), &entry) {
+    match al_sema::lower::compile_loaded_cached(ws, load, &catalog, roots.clone(), &stack) {
         Ok((ws, lowered)) => {
             report.relowered = (0..lowered.provided.len())
                 .filter(|&i| lowered.dependency[i] && !lowered.provided[i])
@@ -1145,7 +1161,9 @@ fn compile_with_cache(
             eprintln!("compile cache: {note}");
             report.notes.push(note);
             report.hit = false;
-            let _ = std::fs::remove_file(&report.file);
+            for l in &report.layers {
+                let _ = std::fs::remove_file(&l.file);
+            }
             if cc.require {
                 return Err(format!("--require-compile-cache: {}", report.notes.join("; ")));
             }
@@ -2639,6 +2657,8 @@ page 60709 "PH Ro" { PageType = Card; SourceTable = "PH Row"; layout { area(Cont
 page 60710 "PH Desc" { PageType = List; SourceTable = "PH Row"; SourceTableView = sorting("No.") order(descending); layout { area(Content) { repeater(R) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } } }
 table 60704 "PH Lk" { LookupPageId = "PH Card"; fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
 page 60705 "PH Saved" { PageType = StandardDialog; SaveValues = true; layout { area(Content) { field(Rem; RemTxt) { } } } var RemTxt: Text[30]; }
+page 60711 "PH Saved X" { PageType = StandardDialog; SaveValues = true; SourceTable = "PH Row"; layout { area(Content) { field(RemX; RemTxt) { } } } var RemTxt: Text[30]; }
+pageextension 60712 "PH Saved XE" extends "PH Saved X" { layout { addlast(Content) { field(DescX; Rec.Descr) { } } } }
 codeunit 60703 PhT
 {
     Subtype = Test;
@@ -2722,6 +2742,16 @@ codeunit 60703 PhT
         if Seen <> 'kept' then Error('got %1', Seen);
     end;
 
+    // handlers/TestPageSaveValues.al as above, on a SaveValues page that an extension extends with a
+    // control bound to a field of Rec (it adds no variable-bound control: docs/probes-needed.md)
+    [Test] [HandlerFunctions('SaveRemX')]
+    procedure SaveValuesOnAnExtendedPageKeepsWhatOkStored()
+    begin
+        Seen := 'x'; Page.RunModal(Page::"PH Saved X");
+        Seen := ''; Page.RunModal(Page::"PH Saved X");
+        if Seen <> 'kept' then Error('got %1', Seen);
+    end;
+
     // handlers/TestPageTrapSharedScope_Tests.al:87: a page still held by the caller keeps the trap
     [Test]
     procedure TrapSurvivesWhileAnotherVariableHoldsThePage()
@@ -2785,6 +2815,11 @@ codeunit 60703 PhT
         if Seen = 'x' then begin P.Rem.SetValue('kept'); P.OK().Invoke(); end
         else begin Seen := P.Rem.Value(); P.Cancel().Invoke(); end;
     end;
+    [ModalPageHandler] procedure SaveRemX(var P: TestPage "PH Saved X")
+    begin
+        if Seen = 'x' then begin P.RemX.SetValue('kept'); P.OK().Invoke(); end
+        else begin Seen := P.RemX.Value(); P.Cancel().Invoke(); end;
+    end;
     [ModalPageHandler] procedure OkModal(var P: TestPage "PH Card") begin P.OK().Invoke(); end;
     [ModalPageHandler] procedure Nothing(var P: TestPage "PH Card") begin end;
     [ModalPageHandler] procedure CancelIt(var P: TestPage "PH Card") begin P.Cancel().Invoke(); end;
@@ -2807,6 +2842,7 @@ codeunit 60703 PhT
             "PlainModalHasNoCancel",
             "IdZeroUsesLookupPageId",
             "SaveValuesKeepsWhatOkStored",
+            "SaveValuesOnAnExtendedPageKeepsWhatOkStored",
             "TrapSurvivesWhileAnotherVariableHoldsThePage",
             "UpdateSavesTheNewRowAndRefreshesIt",
             "CurrPageEditableFalseInOnOpenPageNarrowsEverything",

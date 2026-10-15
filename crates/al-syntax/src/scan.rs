@@ -117,6 +117,24 @@ impl Tok<'_> {
     }
 }
 
+/// A property value as `Property::value_text` gives it: directives and comments inside it dropped
+/// (a `CalcFormula` can span lines that carry `#pragma`).
+fn value_text(raw: &str) -> String {
+    if !raw.contains(['#', '/']) {
+        return raw.to_string();
+    }
+    let mut out = String::with_capacity(raw.len());
+    let mut pos = 0;
+    for t in lex(raw) {
+        let end = pos + t.len as usize;
+        if !matches!(t.kind, Directive | LineComment | BlockComment | DisabledText) {
+            out.push_str(&raw[pos..end]);
+        }
+        pos = end;
+    }
+    out.trim().to_string()
+}
+
 fn qualified(toks: &[Tok]) -> String {
     toks.iter()
         .map(|t| if t.kind == Dot { ".".to_string() } else { t.ident_text() })
@@ -316,7 +334,7 @@ fn scan_object(src: &str, sig: &[Tok], at: usize, out: &mut FileScan) -> usize {
                     j += 1;
                 }
                 let value = if j > i + 2 {
-                    src[sig[i + 2].start..sig[j - 1].end].to_string()
+                    value_text(&src[sig[i + 2].start..sig[j - 1].end])
                 } else {
                     String::new()
                 };
@@ -375,7 +393,7 @@ fn scan_layouts(src: &str, body: &[Tok]) -> Vec<ScannedLayout> {
                                             e += 1;
                                         }
                                         let value = if e > m + 2 {
-                                            src[body[m + 2].start..body[e - 1].end].to_string()
+                                            value_text(&src[body[m + 2].start..body[e - 1].end])
                                         } else {
                                             String::new()
                                         };

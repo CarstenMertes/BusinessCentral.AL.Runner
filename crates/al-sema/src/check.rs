@@ -243,6 +243,13 @@ pub struct Roots {
     /// (its routines are stubs that refuse), so the demand starts from the selected tests and the
     /// workspace's non-test code only. `None`: every test codeunit is a root.
     pub only_tests: Option<Vec<(usize, u32)>>,
+    /// With `only_tests`: a procedure of a workspace codeunit (one with no Subtype) that no selected
+    /// test names, directly or through the procedures it names, is neither checked nor compiled (a
+    /// stub that refuses). Names are matched by spelling, so the set is a superset of what can be
+    /// called. Triggers, event subscribers and codeunits with a Subtype always stay. For the compile
+    /// that weighs whether a pure test needs the install baseline: code beside the test that touches
+    /// tables must not drag the dependency apps in.
+    pub reach_only: bool,
     /// Check and lower every dependency routine instead of what the workspace reaches. The
     /// environment variable `AL_EAGER_DEPENDENCIES` does the same for a whole process. Used to
     /// compare the demand-driven compile with the complete one (outcomes must not differ).
@@ -279,6 +286,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         Some(keep) => (0..ws.objects.len()).map(|oi| unselected_test(ws, oi, keep)).collect(),
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
+    if roots.reach_only && roots.only_tests.is_some() {
+        ws.set_unreached(unreached_routines(ws, &skip));
+    }
     let provided = |oi: usize| roots.provided.get(oi).copied().unwrap_or(false);
     let mut timings = CheckTimings::default();
     let mut c = Checker::new(ws, members, catalog, system_enums(catalog), demand_mode);
@@ -383,6 +393,70 @@ fn check_workers() -> usize {
         .and_then(|v| v.parse().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
         .clamp(1, 32)
+}
+
+/// The procedures of the workspace's normal codeunits that no root names (`Roots::reach_only`). The
+/// roots are every other routine of the objects that are checked: test codeunits, triggers, event
+/// subscribers, objects that are not normal codeunits. A name in a root's text, or in the text of a
+/// procedure so named, makes every procedure of that name reachable.
+fn unreached_routines(ws: &Workspace, skip: &dyn Fn(usize) -> bool) -> HashSet<(usize, usize)> {
+    let names_in = |r: &ast::Routine| -> HashSet<String> {
+        r.syntax()
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))
+            .map(|t| ast::ident_text(&t).to_lowercase())
+            .collect()
+    };
+    // Free procedures by lower-case name; the rest are roots.
+    let mut free: HashMap<String, Vec<(usize, usize, HashSet<String>)>> = HashMap::new();
+    let mut wanted: HashSet<String> = HashSet::new();
+    for oi in 0..ws.objects.len() {
+        if ws.is_dependency(oi) || skip(oi) {
+            continue;
+        }
+        let obj = ws.object_ast(oi);
+        let normal_codeunit = ws.objects[oi].kind == ObjKind::Codeunit
+            && !obj.properties().any(|p| p.name().eq_ignore_ascii_case("Subtype"));
+        for r in ast::routines_in(obj.syntax()) {
+            let is_root = !normal_codeunit
+                || r.is_trigger()
+                || r.attributes().any(|a| {
+                    let n = a.name();
+                    n.eq_ignore_ascii_case("EventSubscriber") || n.to_ascii_lowercase().ends_with("event")
+                });
+            let names = names_in(&r);
+            if is_root {
+                wanted.extend(names);
+            } else {
+                let offset = usize::from(r.syntax().text_range().start());
+                free.entry(r.name().to_lowercase())
+                    .or_default()
+                    .push((oi, offset, names));
+            }
+        }
+    }
+    let mut reached: HashSet<(usize, usize)> = HashSet::new();
+    let mut queue: Vec<String> = wanted.iter().cloned().collect();
+    let mut asked: HashSet<String> = wanted;
+    while let Some(name) = queue.pop() {
+        if let Some(rs) = free.get(&name) {
+            for (oi, offset, names) in rs {
+                if reached.insert((*oi, *offset)) {
+                    for n in names {
+                        if asked.insert(n.clone()) {
+                            queue.push(n.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    free.into_values()
+        .flatten()
+        .map(|(oi, offset, _)| (oi, offset))
+        .filter(|k| !reached.contains(k))
+        .collect()
 }
 
 /// Whether object `oi` is a test codeunit of a workspace app that `keep` (app index, id) leaves out.
@@ -939,6 +1013,9 @@ impl<'a> Checker<'a> {
         let obj = self.ws.object_ast(oi);
         for r in ast::routines_in(obj.syntax()) {
             let offset = usize::from(r.syntax().text_range().start());
+            if self.ws.routine_unreached(oi, offset) {
+                continue;
+            }
             self.guard((oi, offset), |c| c.check_routine_in(&ctx, &r));
         }
         // What the test client does when it opens a workspace page or report, and what its actions
@@ -957,6 +1034,42 @@ impl<'a> Checker<'a> {
                 self.activate_source_table(oi);
             }
         }
+    }
+
+    /// The locals of routine `r` (by lower-case name) that are records of a platform table and are
+    /// named in the body only as `Name.Field` with `Field` a field of that table: nothing is asked
+    /// of the table, so the variable does not stand for its rows.
+    fn field_only_records(&self, file: usize, r: &ast::Routine, locals: &HashMap<String, Ty>) -> HashSet<String> {
+        let mut out = HashSet::new();
+        let Some(body) = r.body() else { return out };
+        for (name, t) in locals {
+            let Ty::Record { table, .. } = t else { continue };
+            let Some(ti) = self.resolve_quiet(file, ObjKind::Table, table) else {
+                continue;
+            };
+            if !self.ws.platform_table(ti) {
+                continue;
+            }
+            let only_fields = body
+                .descendants()
+                .filter(|n| n.kind() == SyntaxKind::NameRef && name_of(n).eq_ignore_ascii_case(name))
+                .all(|n| {
+                    let Some(p) = n.parent().filter(|p| p.kind() == SyntaxKind::MemberExpr) else {
+                        return false;
+                    };
+                    let mut kids = p.children();
+                    let (Some(base), Some(member)) = (kids.next(), kids.next()) else {
+                        return false;
+                    };
+                    base == n
+                        && self.members[ti].field(&name_of(&member)).is_some()
+                        && !p.parent().is_some_and(|g| g.kind() == SyntaxKind::CallExpr)
+                });
+            if only_fields {
+                out.insert(name.clone());
+            }
+        }
+        out
     }
 
     /// Checks one routine of the object `ctx` describes.
@@ -1027,8 +1140,21 @@ impl<'a> Checker<'a> {
                     locals.insert(n.to_lowercase(), ty.clone());
                 }
             }
-            // The types of everything in scope are used by the code that runs here.
-            for t in locals.values().chain(sc.rec.iter()) {
+            // The types of everything in scope are used by the code that runs here. A record variable
+            // of a catalog table (`Field`, `Key`, ...) that only has its fields assigned and read is a
+            // buffer in memory: it reads no row, so the shapes of all the objects the table lists are
+            // not needed (Library Assert's TypeNameOf is such a routine).
+            let buffers = self.field_only_records(file, r, &locals);
+            for (name, t) in locals.iter() {
+                if buffers.contains(name) {
+                    if let Ty::Record { table, .. } = t {
+                        self.resolve_at(file, ObjKind::Table, table);
+                    }
+                } else {
+                    self.touch_ty(file, t);
+                }
+            }
+            for t in sc.rec.iter() {
                 self.touch_ty(file, t);
             }
             sc.vars.push(locals);
@@ -1448,6 +1574,24 @@ impl<'a> Checker<'a> {
                 let r = kids[0].text_range();
                 self.types
                     .insert((sc.file, r.start().into(), r.end().into()), base_ty.clone());
+                // `CurrPage.Update(true)` is the page's method even when the page has an action or control of
+                // that name (System Application's "Schedule Feature Data Update" has an action `Update`): a
+                // control is not called. Real BC compiles that code; no corpus test names a control like a method.
+                if let Ty::Object(ObjKind::Page, page) = &base_ty {
+                    if node.parent().is_some_and(|p| p.kind() == CallExpr)
+                        && node.prev_sibling().is_none()
+                        && self
+                            .resolve(sc, ObjKind::Page, page)
+                            .is_some_and(|oi| self.named_section(oi, &mname).is_some())
+                    {
+                        if let Some(recv) = receiver_of(&base_ty) {
+                            let c = self.catalog_cands(&recv, &mname, true, &base_ty);
+                            if !c.is_empty() {
+                                return E::Callable(c);
+                            }
+                        }
+                    }
+                }
                 // `Q.Open()` is the query's method even when the query has a column named Open (Base
                 // Application's "Summarized Stock By Item Trkg." has one): a column is not called.
                 // Compiles in real BC; no corpus test names a column like a method (docs/probes-needed.md).

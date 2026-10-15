@@ -381,9 +381,14 @@ fn run_version(
             "compile cache: BC {}: {} {} ({:.1} MB), {} dependency objects; {} {:.2} s, checked every block in {:.2} s",
             version.bc_version,
             if report.built { "built" } else { "found" },
-            report.file.display(),
+            report
+                .layers
+                .iter()
+                .map(|l| l.file.display().to_string())
+                .collect::<Vec<_>>()
+                .join(" + "),
             report.bytes as f64 / 1e6,
-            al_sema::provided::DepSource::len(&entry),
+            entry.len(),
             if report.built { "build" } else { "open" },
             if report.built {
                 report.build.as_secs_f64()

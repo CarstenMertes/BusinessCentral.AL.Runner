@@ -7,7 +7,7 @@
 use std::fmt;
 use std::ops::Deref;
 
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+#[derive(Clone, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub enum LibraryKind {
     BigText,
     Blob,
@@ -202,6 +202,27 @@ impl LibraryKind {
             LibraryKind::XmlText => "XmlText",
             LibraryKind::Other(n) => n,
         }
+    }
+}
+
+/// Debug prints the quoted name, as the `String` it replaced did (the `compile_dump` comparison relies on it).
+impl fmt::Debug for LibraryKind {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        fmt::Debug::fmt(self.name(), f)
+    }
+}
+
+/// Serialized as the name, which is what the `String` it replaced wrote (the compile cache and the dumps keep their bytes).
+impl serde::Serialize for LibraryKind {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.serialize_str(self.name())
+    }
+}
+
+impl<'de> serde::Deserialize<'de> for LibraryKind {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<LibraryKind, D::Error> {
+        let name = String::deserialize(d)?;
+        Ok(LibraryKind::from_name(&name))
     }
 }
 

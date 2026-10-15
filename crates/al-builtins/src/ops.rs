@@ -79,10 +79,21 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
         // An Enum value into an Option or an Integer is its ordinal, a BigInteger into an Option likewise (an ordinal
         // beyond the members is kept, as for an Integer). Not pinned by the corpus (docs/probes-needed.md).
-        (Value::Enum(_, o), T::Option(m)) => Value::Option(o, m.clone().into()),
-        (Value::Enum(_, o), T::Integer) => Value::Integer(o),
+        (Value::Enum(_, o), T::Option(m))
+            if crate::assumptions::hit(crate::assumptions::Assumption::EnumOptionIntegerOrdinal) =>
+        {
+            Value::Option(o, m.clone().into())
+        }
+        (Value::Enum(_, o), T::Integer)
+            if crate::assumptions::hit(crate::assumptions::Assumption::EnumOptionIntegerOrdinal) =>
+        {
+            Value::Integer(o)
+        }
         (Value::BigInteger(n), T::Option(m)) => match i32::try_from(n) {
-            Ok(o) => Value::Option(o, m.clone().into()),
+            Ok(o) => {
+                crate::assumptions::assume(crate::assumptions::Assumption::EnumOptionIntegerOrdinal);
+                Value::Option(o, m.clone().into())
+            }
             Err(_) => return unsupported(format!("{n} as an Option ordinal (beyond Integer)")),
         },
         (Value::Option(o, _), T::Integer) => Value::Integer(o),

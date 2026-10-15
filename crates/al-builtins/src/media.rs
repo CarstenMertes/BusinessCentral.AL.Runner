@@ -237,7 +237,9 @@ fn import_file(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if c.fs_read(&name)?.is_none() {
         return crate::native::raise(format!("Could not find a part of the path '{name}'."), "InvalidPath");
     }
-    unsupported("Media.ImportFile of a file that exists: what the Tenant Media row keeps (MIME type, description, file name) is not pinned")
+    unsupported(
+        "Media.ImportFile of a file that exists: what the Tenant Media row keeps (MIME type, description, file name) is not pinned",
+    )
 }
 
 pub const REGISTRY: &[(&str, NativeFn)] = &[

@@ -98,4 +98,3 @@ fn media_import_stream_with_a_file_name_is_lowered() {
         .unwrap();
     assert!(l.unsupported[oi][ri].is_empty(), "{:?}", l.unsupported[oi][ri]);
 }
-

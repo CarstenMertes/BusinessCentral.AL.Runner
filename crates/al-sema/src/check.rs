@@ -213,6 +213,9 @@ pub enum Res {
     /// A `protected var` variable of the page or report that the page or report extension extends
     /// (ADR-023), by lower-case name.
     BaseGlobal(String),
+    /// `this.<protected variable of the base>` in an extension, by lower-case name: BC compiles it and raises when it
+    /// runs (types/PYThisExtensions.al:ReportExtension_ThisBaseVariable_ReadInATrigger).
+    ThisBaseGlobal(String),
     /// A catalog builtin overload id (ADR-008).
     Builtin(String),
     /// An enum value by its declared integer value (what `AsInteger()` returns).
@@ -1664,7 +1667,13 @@ impl<'a> Checker<'a> {
                 if is_this_keyword(&kids[0])
                     && matches!(
                         self.ws.objects[sc.oi].kind,
-                        ObjKind::Codeunit | ObjKind::Report | ObjKind::Page | ObjKind::XmlPort | ObjKind::Query
+                        ObjKind::Codeunit
+                            | ObjKind::Report
+                            | ObjKind::Page
+                            | ObjKind::XmlPort
+                            | ObjKind::Query
+                            | ObjKind::ReportExtension
+                            | ObjKind::PageExtension
                     )
                     && !sc_has_var(sc, "this")
                 {
@@ -2116,7 +2125,11 @@ impl<'a> Checker<'a> {
         let n = name_of(member);
         let key = n.to_lowercase();
         if let Some(t) = sc.globals.get(&key).cloned() {
-            let res = Self::global_res(sc, key);
+            let res = if sc.base_vars.contains(&key) {
+                Res::ThisBaseGlobal(key)
+            } else {
+                Self::global_res(sc, key)
+            };
             self.record(sc, node, res);
             return Some(E::Val(t));
         }
@@ -2136,6 +2149,27 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|p| proc_cand(p))
             .collect();
+        // In an extension `this` is the base object, and both the base's procedures and the extension's own are
+        // reachable through it (types/PYThisExtensions.al: this.BaseProc, this.ExtProc, this.BasePageProc, this.ExtPageProc).
+        if sc.self_obj != sc.oi || sc.base_obj.is_some() {
+            let own_obj: Vec<Cand> = if sc.self_obj != sc.oi {
+                self.members[sc.oi]
+                    .procedures_named(&n)
+                    .iter()
+                    .map(|p| proc_cand(p))
+                    .collect()
+            } else {
+                Vec::new()
+            };
+            let base = self.base_proc_cands(sc, &n);
+            let mut all: Vec<Cand> = base
+                .into_iter()
+                .filter(|b| !own.iter().chain(&own_obj).any(|o| o.param_tys == b.param_tys))
+                .collect();
+            all.extend(own);
+            all.extend(own_obj);
+            return (!all.is_empty()).then_some(E::Callable(all));
+        }
         (!own.is_empty()).then_some(E::Callable(own))
     }
 

@@ -170,6 +170,8 @@ The corpus must stay ordered and free of duplicates. Rules for every writer and 
 3. **Adding a procedure to an existing topic codeunit is allowed**; changing or removing an existing test procedure is not (the oracle uses their names). If the codeunit has too many tests (over about 25 observations in one procedure, or one codeunit mixing topics), start a new codeunit in the same folder.
 4. **Do not move or rename existing files or tests.** Test names are part of the oracle. A later one-time consolidation is listed below; the owner decides when.
 5. Object ids stay inside your writer range (laptop 70000-74999; the publisher uses 61200-61299 for OnPrem and 69000-69999 for the rest). `check-object-ids.py` enforces uniqueness.
+6. **A new writer range must be added to the CI `codeunit_range`** (`.github/workflows/ci.yml`, input `codeunit_range` of the Cloud job and of the OnPrem job) in the same commit that starts using it. CI only runs the test codeunits inside that range; a range that is not listed compiles but runs nothing, and the run is still green. Current ranges: Cloud `60000..60999|67000..69999|70000..74999`, OnPrem `61200..61299`.
+7. **The hand-over check is the junit, not the green run.** After the CI run of your branch, download the junit artifacts and count your tests (`python3 tools/corpus-writer/ci-failures.py <run id>` prints failures; count the `testcase` elements whose codeunit id is in your range with a one-line script) and compare the number with the tests you wrote. Fewer than you wrote means a range or a gate problem, whatever the run's colour.
 
 Folder map (`tests/al-language/` unless stated):
 

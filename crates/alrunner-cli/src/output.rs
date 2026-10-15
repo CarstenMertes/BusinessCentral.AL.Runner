@@ -310,10 +310,10 @@ mod tests {
         let refs: Vec<&TestResult> = rs.iter().collect();
         let x = junit(&refs, None, 0.0);
         assert!(
-            x.contains("name=\"T1\"><properties><property name=\"assumptions\" value=\"guid-to-text,record-get-record-id\" /></properties></testcase>"),
+            x.contains("name=\"T1\" time=\"0.000\"><properties><property name=\"assumptions\" value=\"guid-to-text,record-get-record-id\" /></properties></testcase>"),
             "{x}"
         );
-        assert!(x.contains("name=\"T2\" />"), "{x}");
+        assert!(x.contains("name=\"T2\" time=\"0.000\" />"), "{x}");
         assert!(x.contains("failures=\"1\""), "{x}");
         assert!(
             !x.contains("name=\"T1\"><skipped") && !x.contains("name=\"T1\"><failure"),

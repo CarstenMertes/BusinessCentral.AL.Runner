@@ -1,7 +1,8 @@
 //! An array passed to a parameter declared with more elements than the argument has (Tests-ERM
 //! codeunit 134831 passes an `array[2]` variable to `var DimensionValue: array[9]`) panicked in the
 //! interpreter (issue 18). What BC does is not pinned by the corpus, so an element beyond the argument is
-//! refused, with the elements that exist reading and writing as before.
+//! refused, with the elements that exist reading and writing as before. `ArrayLen` inside the procedure is the
+//! argument's length (types/W7VarArray.al), so a loop up to `ArrayLen` stays within it.
 
 use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
@@ -16,7 +17,7 @@ table 62700 "AS Row"
 }
 codeunit 62702 "AS Helper"
 {
-    procedure FillNine(var Rows: array[9] of Record "AS Row") var i: Integer; begin for i := 1 to ArrayLen(Rows) do Rows[i].N := i; end;
+    procedure FillNine(var Rows: array[9] of Record "AS Row") var i: Integer; begin for i := 1 to 9 do Rows[i].N := i; end;
     procedure FillTwo(var Rows: array[2] of Record "AS Row") var i: Integer; begin for i := 1 to ArrayLen(Rows) do Rows[i].N := i; end;
     procedure FillIntegers(var Vals: array[5] of Integer) begin Vals[1] := 1; Vals[5] := 5; end;
 }

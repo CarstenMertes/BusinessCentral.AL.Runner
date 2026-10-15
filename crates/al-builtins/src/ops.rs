@@ -100,6 +100,21 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Option(o, _), T::Integer) => Value::Integer(o),
         (Value::Integer(n), T::Duration) => Value::Duration(i64::from(n)),
         (Value::BigInteger(n), T::Duration) => Value::Duration(n),
+        // A Duration into an Integer, BigInteger or Decimal is its milliseconds (the reverse of a whole number into a
+        // Duration, pinned by record/TestCalcFormulaValidationTests.Codeunit.al:42). Calendar Management CalcTimeDelta
+        // does `Result := EndingTime - StartingTime` (Time - Time is a Duration) into an Integer. Not pinned.
+        (Value::Duration(ms), T::Integer) if i32::try_from(ms).is_ok() => {
+            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
+            Value::Integer(i32::try_from(ms).expect("checked"))
+        }
+        (Value::Duration(ms), T::BigInteger) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
+            Value::BigInteger(ms)
+        }
+        (Value::Duration(ms), T::Decimal) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
+            Value::Decimal(Decimal::from(ms))
+        }
         (Value::Integer(i), T::Option(m)) => Value::Option(i, m.clone().into()),
         // A Duration is a count of milliseconds.
         (v, T::Duration) if as_decimal(&v).is_some() && !matches!(v, Value::Text(_) | Value::Code(_)) => {
@@ -188,13 +203,14 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // ordinal the enum lacks is kept. The same in a field, a Get key and a SetRange value (corpus
         // types/PXEnumRecordRef.al:11-12, :137-196, probed on BC 27.5).
         (Value::Integer(n), T::Enum(id)) => Value::Enum(*id, n),
-        // A BigInteger is not probed (docs/probes-needed.md).
-        (v @ Value::BigInteger(_), T::Enum(_)) => {
-            return unsupported(format!(
-                "assigning {} to an Enum: only an Integer is pinned (docs/probes-needed.md)",
-                v.describe()
-            ));
-        }
+        // A BigInteger goes by ordinal as an Integer does (not probed; registry entry enum-option-integer-ordinal).
+        (Value::BigInteger(n), T::Enum(id)) => match i32::try_from(n) {
+            Ok(o) => {
+                crate::assumptions::assume(crate::assumptions::Assumption::EnumOptionIntegerOrdinal);
+                Value::Enum(*id, o)
+            }
+            Err(_) => return unsupported(format!("{n} as an Enum ordinal (beyond Integer)")),
+        },
         // A Guid assigns into a Text or Code as its text form `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`, as
         // Format gives it (`Dimensions.Add('PackageCode', Rec.SystemId)` into a Dictionary of [Text, Text] in Base
         // Application's Config. Package Management). No corpus test assigns a Guid to a Text
@@ -421,6 +437,21 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return moved
                 .map(|m| V::Time(m.rem_euclid(86_400_000) + 1))
                 .ok_or_else(|| Signal::Unsupported("Time moved by an amount that overflows (not pinned)".into()));
+        }
+        // A whole-number Decimal moves a Time like an Integer (Calendar Management's `Time + Decimal`); a fraction raises
+        // below. Assumed, as for a Date (registry entry time-add-whole-decimal).
+        (V::Time(_), V::Decimal(d)) | (V::Decimal(d), V::Time(_))
+            if matches!(op, Arith::Add | Arith::Sub)
+                && d.fract().is_zero()
+                && (op == Arith::Add || matches!(l, V::Time(_)))
+                && i32::try_from(d.mantissa() / 10i128.pow(d.scale())).is_ok() =>
+        {
+            crate::assumptions::assume(crate::assumptions::Assumption::TimeAddWholeDecimal);
+            let n = V::Integer(i32::try_from(d.mantissa() / 10i128.pow(d.scale())).expect("checked"));
+            return match (l, r) {
+                (V::Time(_), _) => arith(op, l, &n),
+                _ => arith(op, &n, r),
+            };
         }
         (V::Time(a), V::Decimal(d)) | (V::Decimal(d), V::Time(a))
             if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() =>
@@ -715,8 +746,14 @@ mod tests {
             convert(Value::Integer(5), &RtType::Enum(5056)),
             Ok(Value::Enum(5056, 5))
         ));
+        // A BigInteger is not probed; Microsoft's tests assign one (Transfer Order posting, `Enum := BigIntegerField`),
+        // so it goes by ordinal as an Integer does (registry entry enum-option-integer-ordinal).
         assert!(matches!(
             convert(Value::BigInteger(5), &RtType::Enum(5056)),
+            Ok(Value::Enum(5056, 5))
+        ));
+        assert!(matches!(
+            convert(Value::BigInteger(i64::MAX), &RtType::Enum(5056)),
             Err(Signal::Unsupported(_))
         ));
     }
@@ -750,6 +787,38 @@ mod tests {
             convert(Value::BigInteger(i64::MAX), &members()),
             Err(Signal::Unsupported(_))
         ));
+    }
+
+    // Calendar Management CalcTimeDelta: `Result := EndingTime - StartingTime` into an Integer (about 750 Microsoft tests
+    // in service and manufacturing set-ups reach it).
+    #[test]
+    fn a_duration_converts_to_a_number_of_milliseconds() {
+        assert!(matches!(
+            convert(Value::Duration(63_565_866), &RtType::Integer),
+            Ok(Value::Integer(63_565_866))
+        ));
+        assert!(matches!(
+            convert(Value::Duration(-5), &RtType::BigInteger),
+            Ok(Value::BigInteger(-5))
+        ));
+        assert!(
+            matches!(convert(Value::Duration(7), &RtType::Decimal), Ok(Value::Decimal(d)) if d == Decimal::from(7))
+        );
+        assert!(matches!(
+            convert(Value::Duration(i64::MAX), &RtType::Integer),
+            Err(Signal::Unsupported(_))
+        ));
+    }
+
+    // Calendar Management: `Time + Decimal` with a whole Decimal (about 820 Microsoft tests through the service set-up).
+    #[test]
+    fn a_whole_decimal_moves_a_time_like_an_integer() {
+        let t = |ms: i64| Value::Time(ms + 1);
+        let dec = |n: i64| Value::Decimal(Decimal::from(n));
+        assert!(matches!(arith(Arith::Add, &t(5000), &dec(1000)), Ok(Value::Time(6001))));
+        assert!(matches!(arith(Arith::Add, &dec(1000), &t(5000)), Ok(Value::Time(6001))));
+        assert!(matches!(arith(Arith::Sub, &t(5000), &dec(1000)), Ok(Value::Time(4001))));
+        assert!(matches!(arith(Arith::Add, &t(5000), &dec(0)), Ok(Value::Time(5001))));
     }
 
     #[test]

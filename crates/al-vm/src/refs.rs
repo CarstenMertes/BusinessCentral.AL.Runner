@@ -109,6 +109,17 @@ fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
         .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE && s.field_enabled(t, i) && !s.field_removed(t, i))
         .collect();
     v.sort_by_key(|&i| t.fields[i].id);
+    // A platform table lists its primary key fields first: Active Session is `2, 3, 1, 4, ...` and Time Zone
+    // `3, 1, 2` (session/W6SessionTimeZone.al:ColumnNames_*, BC 27.5 and 29.0). The order of a table of an app
+    // is by number, as before.
+    if t.fields.first().is_some_and(|_| {
+        s.engine.program.objects[t.object as usize]
+            .id
+            .is_some_and(|id| id >= SYSTEM_FIELD_BASE)
+    }) {
+        let key = &t.keys[0];
+        v.sort_by_key(|&i| (key.iter().position(|&k| k == i).unwrap_or(usize::MAX), t.fields[i].id));
+    }
     v
 }
 

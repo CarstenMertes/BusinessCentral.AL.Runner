@@ -17,6 +17,11 @@ use al_data::{Row, TableDef};
 
 const MS_PER_DAY: i64 = 86_400_000;
 
+/// The name of the database the session reads: not blank, and the same in the Session and the Active Session row
+/// (session/W6SessionTimeZone.al:ActiveSession_OwnRow_HostColumns and ActiveSession_DatabaseName_EqualsSessionDatabaseName,
+/// BC 27.5 and 29.0). The name itself is not pinned.
+const DATABASE_NAME: &str = "AL Runtime";
+
 /// The ordinal of the `Client Type` option member of Active Session for a host client type, and
 /// the text `Format` gives it.
 fn client_type_ordinal(t: al_host::ClientType) -> (i32, &'static str) {
@@ -47,6 +52,7 @@ pub(super) fn session_row(t: &TableDef, i: &Ident) -> Row {
     r[pos(t, 3)] = Value::Boolean(true);
     r[pos(t, 5)] = Value::Time(i.login_millis.rem_euclid(MS_PER_DAY) + 1);
     r[pos(t, 6)] = Value::Date((i.login_millis.div_euclid(MS_PER_DAY) + unix_epoch_day()) as i32, false);
+    r[pos(t, 16)] = Value::Text(DATABASE_NAME.into());
     r[pos(t, 17)] = Value::Text(client_type_ordinal(i.client_type).1.into());
     r[pos(t, 19)] = Value::Text(i.host_name.clone().into());
     r
@@ -64,6 +70,7 @@ pub(super) fn active_session_row(t: &TableDef, i: &Ident) -> Row {
     r[pos(t, 6)] = Value::Text(i.user_id.clone().into());
     r[pos(t, 7)] = option(t, 7, client_type_ordinal(i.client_type).0);
     r[pos(t, 9)] = crate::hostvalues::datetime_of_unix_millis(i.login_millis);
+    r[pos(t, 10)] = Value::Text(DATABASE_NAME.into());
     r[pos(t, 11)] = Value::Guid(session_unique_id(i.session_id));
     r
 }

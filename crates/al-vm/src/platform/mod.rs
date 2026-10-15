@@ -69,6 +69,8 @@ pub(crate) struct Ident {
     pub login_millis: i64,
     /// The host's time zones, in `No.` order.
     pub time_zones: Vec<al_host::TimeZoneInfo>,
+    /// The Windows name of the session's time zone.
+    pub time_zone: String,
 }
 
 impl Ident {
@@ -79,6 +81,7 @@ impl Ident {
             user_sid: id.user_security_id(),
             company: id.company_name(),
             company_id: id.company_id(),
+            time_zone: id.time_zone(),
             session_id: id.session_id(),
             instance_id: id.service_instance_id(),
             host_name: id.host_name(),
@@ -335,6 +338,10 @@ impl Providers {
                 row[pos(t, 4)] = Value::Text(o.mime.clone().into());
                 row[pos(t, 5)] = Value::Integer(o.height);
                 row[pos(t, 6)] = Value::Integer(o.width);
+                // The row names the session company (platform/W6TenantMedia.al:TenantMedia_RowAfterImportStream).
+                if let Some(p) = t.fields.iter().position(|f| f.name.eq_ignore_ascii_case("Company Name")) {
+                    row[p] = Value::Text(self.ident.company.clone().into());
+                }
                 mat::Entry::ok(row)
             })
             .collect()

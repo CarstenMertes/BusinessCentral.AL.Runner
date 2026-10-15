@@ -24,7 +24,11 @@ pub enum FilterExpr {
 impl FilterExpr {
     /// Whether a field value passes. Values that cannot be compared do not pass.
     pub fn matches(&self, v: &Value) -> bool {
-        let cmp = |x: &Value| compare(v, x).ok();
+        // A text of spaces only is blank to a filter: `SetRange(Txt, ' ')` finds the rows holding '', ' ' and '  ', and
+        // `<> ' '` finds the others (filters/W4Filters.al:BlankOnlyFilterValues_MatchOnlyBlankRows, BC 27.5 and 29.0).
+        // Other trailing spaces are not pinned.
+        let v = &blank_if_spaces(v);
+        let cmp = |x: &Value| compare(v, &blank_if_spaces(x)).ok();
         match self {
             FilterExpr::Range(lo, hi) => {
                 lo.as_ref()
@@ -43,6 +47,14 @@ impl FilterExpr {
             FilterExpr::Or(xs) => xs.iter().any(|x| x.matches(v)),
             FilterExpr::And(xs) => xs.iter().all(|x| x.matches(v)),
         }
+    }
+}
+
+fn blank_if_spaces(v: &Value) -> Value {
+    match v {
+        Value::Text(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Text(String::new().into()),
+        Value::Code(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Code(String::new().into()),
+        other => other.clone(),
     }
 }
 
@@ -160,6 +172,27 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
                     Some('\'') => {
                         i += 1;
                         break;
+                    }
+                    // A placeholder inside the quotes is replaced like any other (the filter text '''%1''|''%2''' in
+                    // Gen. Jnl.-Show CT Entries filters a blank currency as ''|''). A text or an Integer is put in as it
+                    // reads; any other type is not pinned (registry entry filter-placeholder-in-quotes).
+                    Some('%') if c.get(i + 1).is_some_and(|d| d.is_ascii_digit()) => {
+                        let n = c[i + 1].to_digit(10).expect("digit") as usize;
+                        let arg = args
+                            .get(n.wrapping_sub(1))
+                            .ok_or("filter placeholder without an argument")?;
+                        match arg {
+                            Value::Text(t) | Value::Code(t) => lit.push_str(t),
+                            Value::Integer(v) => lit.push_str(&v.to_string()),
+                            other => {
+                                return Err(format!(
+                                    "placeholder %{n} inside quotes holds {}: only a text or an Integer is put in (not pinned)",
+                                    other.describe()
+                                ));
+                            }
+                        }
+                        crate::assumptions::assume(crate::assumptions::Assumption::FilterPlaceholderInQuotes);
+                        i += 2;
                     }
                     Some(ch) => {
                         lit.push(*ch);

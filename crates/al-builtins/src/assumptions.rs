@@ -202,7 +202,7 @@ registry! {
     },
     EnumOptionIntegerOrdinal => {
         id: "enum-option-integer-ordinal",
-        assumed: "An Enum value converts into an Option or an Integer, and a BigInteger into an Option, by ordinal; an ordinal beyond the members is kept. (Integer into Option, Option into Integer and Option into Enum are pinned by types/PROptionInteger.al and types/PEOptionEnumBigText.al.)",
+        assumed: "An Enum value converts into an Option or an Integer, and a BigInteger into an Option or an Enum, by ordinal; an ordinal beyond the members is kept. (Integer into Option, Option into Integer and Option into Enum are pinned by types/PROptionInteger.al and types/PEOptionEnumBigText.al.)",
         tests: "Sales Line UpdatePlanned (the FlowField filter of Reserved Quantity: Option column against an Enum field) in about 7,000 Tests-ERM and Tests-SCM tests; Library - Variable Storage DequeueInteger of an enqueued enum (ERM TestMultipleGenJnlLines).",
         probe: "Opt := Variant(EnumValue), Int := Variant(EnumValue), a FlowField filter and a SetRange that compare an Option column with an Enum field, with an ordinal the Option lacks. Corpus-topic issue 67.",
     },
@@ -235,6 +235,42 @@ registry! {
         assumed: "RecordRef.SetTable of a RecordRef on a temporary record into a record variable that is not declared temporary makes that variable temporary and share the temporary rows. (Permanent into permanent and temporary into temporary are pinned by recordref/TestRecordRefGetSetTableContracts.al.)",
         tests: "Mfg. Dimension Management OnCheckDimValuePostingOnAfterCreateDimTableIDs: SetTable(PurchaseLine) of the temporary Purchase Line of a posting check; about 1,450 Tests-ERM and Tests-SCM tests.",
         probe: "Tmp.Insert; RR.GetTable(Tmp); RR.SetTable(Perm); Perm.IsTemporary, Perm.Get, Perm.Insert and Perm.Count afterwards; the same for a permanent RecordRef into a temporary variable.",
+    },
+    FilterPlaceholderInQuotes => {
+        id: "filter-placeholder-in-quotes",
+        assumed: "In SetFilter, a %n inside a quoted part of the filter text is replaced by the argument like any other placeholder (the text '''%1''|''%2''' with two blank texts is the filter ''|'').",
+        tests: "Gen. Jnl.-Show CT Entries (Credit Transfer Register UT.TestShowCTEntriesForGenJnlLine and the Payment Export tests); Base Application filters written '''%1'''.",
+        probe: "SetFilter(TextField, '''%1''|''%2''', '', 'A') on rows with blank and A, then GetFilter and Count; with an Integer and a Code argument.",
+    },
+    PageEventSender => {
+        id: "page-event-sender",
+        assumed: "The sender of an event a page publishes with IncludeSender is the page itself (a Page variable on the running instance), not the page's Rec.",
+        tests: "Item Tracking Lines OnSetSourceSpecOnCollectTrackingData with the subscriber in Asm. Item Tracking Mgt. (var sender: Page \"Item Tracking Lines\"); about 800 Tests-ERM and Tests-SCM tests that open item tracking.",
+        probe: "A page that publishes [IntegrationEvent(true, false)], a subscriber with (var sender: Page X) that calls a procedure of the page and reads its Caption, from TestPage.OpenView and from a Page variable.",
+    },
+    DurationToNumber => {
+        id: "duration-to-number",
+        assumed: "A Duration converts into an Integer, a BigInteger or a Decimal as its number of milliseconds; a value beyond Integer is refused. (A whole number into a Duration is pinned by record/TestCalcFormulaValidationTests.Codeunit.al:42.)",
+        tests: "Calendar Management CalcTimeDelta (Result := EndingTime - StartingTime into an Integer): about 750 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
+        probe: "I := D; B := D; Dec := D for a Duration D, also negative and beyond Integer, and I := EndTime - StartTime.",
+    },
+    DataItemViewAndTableView => {
+        id: "data-item-view-and-table-view",
+        assumed: "A report data item whose DataItemTableView filters, run with a SetTableView (or a record given to the static Run), shows the rows that pass both: the filters of the view are added to the item's own, which live in the report's filter group. (A DataItemTableView that only sorts keeps the SetTableView filters: handlers/TestReportRuntimeContracts.al:393-410.)",
+        tests: "Whse.-Source - Create Document and Production Order callers (Warehouse Request, Item data items): about 800 Tests-SCM and Tests-ERM tests.",
+        probe: "A data item with DataItemTableView = where(F = filter(1..2)) run after SetTableView with F in 2..3, with a filter on another field, and the item's GetFilters in OnPreDataItem.",
+    },
+    ForBoolean => {
+        id: "for-boolean",
+        assumed: "A for loop over a Boolean variable (for B := false to true do) runs for false and then for true, and downto from true to false; the variable holds the Boolean in each round; its value after the loop is not read.",
+        tests: "Library codeunits with `for Stepwise := false to true do` (about 410 Tests-ERM and Tests-SCM tests).",
+        probe: "for B := false to true do counting the passes, the value of B inside and after the loop, and for B := true downto false.",
+    },
+    TimeAddWholeDecimal => {
+        id: "time-add-whole-decimal",
+        assumed: "A Time plus or minus a whole-number Decimal moves like an Integer. (A Time with an Integer, a Duration and a fractional Decimal is pinned by types/PUTimeArithmetic.al.)",
+        tests: "Service Item Line CalculateResponseDateTime through Calendar Management: about 820 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
+        probe: "T + 1000.0 and T - 1000.0 for a Decimal variable holding a whole number, and 0.",
     },
 }
 

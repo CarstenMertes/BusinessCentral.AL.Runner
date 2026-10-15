@@ -1407,6 +1407,8 @@ enum Expr {
     Arith(Box<Expr>, char, Box<Expr>),
     /// A filter on a function result or a parenthesised expression followed by steps.
     Filter(Box<Expr>, Vec<Step>),
+    /// `(path)[n]`, `f()[p]`: predicates applied to a node set in document order.
+    Predicated(Box<Expr>, Vec<Expr>),
 }
 
 struct XParser<'a> {
@@ -1611,6 +1613,19 @@ impl XParser<'_> {
     /// Steps after a function call or a parenthesised expression: `(a)/b`, `f()[1]`.
     fn filter_tail(&mut self, e: Expr) -> XRes<Expr> {
         self.ws();
+        let mut e = e;
+        let mut preds = Vec::new();
+        while self.peek() == Some('[') {
+            self.i += 1;
+            preds.push(self.expr()?);
+            if !self.eat("]") {
+                return malformed("unclosed [");
+            }
+            self.ws();
+        }
+        if !preds.is_empty() {
+            e = Expr::Predicated(Box::new(e), preds);
+        }
         if self.peek() == Some('/') {
             let mut steps = Vec::new();
             while self.peek() == Some('/') {
@@ -2007,6 +2022,26 @@ fn eval(e: &Expr, node: &Handle, pos: usize, last: usize, ctx: &XCtx) -> XRes<XV
             }
             XVal::Nodes(sort_dedup(all, ctx))
         }
+        Expr::Predicated(inner, preds) => match eval(inner, node, pos, last, ctx)? {
+            XVal::Nodes(mut found) => {
+                for p in preds {
+                    let total = found.len();
+                    let mut keep = Vec::new();
+                    for (i, n) in found.iter().enumerate() {
+                        let pass = match eval(p, n, i + 1, total, ctx)? {
+                            XVal::Num(x) => x == (i + 1) as f64,
+                            other => to_bool(&other),
+                        };
+                        if pass {
+                            keep.push(n.clone());
+                        }
+                    }
+                    found = keep;
+                }
+                XVal::Nodes(found)
+            }
+            _ => return Err(XFail::NotNodeSet),
+        },
         Expr::Filter(inner, steps) => match eval(inner, node, pos, last, ctx)? {
             XVal::Nodes(n) => XVal::Nodes(run_steps(n, steps, ctx)?),
             _ => return Err(XFail::NotNodeSet),

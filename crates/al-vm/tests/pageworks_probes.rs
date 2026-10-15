@@ -352,3 +352,42 @@ fn word_xml_part_answers_the_data_set_as_xml_text() {
 fn word_xml_part_of_an_unknown_report_fails_with_metadata_not_found() {
     assert_eq!(text(run(WORD_REPORT, "G")), "No|AL:MetadataNotFound");
 }
+
+// A dataset fixture of Pageworks' picker source: `.//*[local-name()="DataItem"]` over `DataSet/DataItems/DataItem`, then the
+// `name` attribute of each, read through `foreach .. in Element.Attributes()`.
+#[test]
+fn data_items_are_listed_by_their_name_attribute() {
+    let r = text(run(
+        &cu("procedure F(): Text var Doc: XmlDocument; Root: XmlElement; L: XmlNodeList; N: XmlNode; A: XmlAttribute; Seen: Text; begin
+            XmlDocument.ReadFrom('<DataSet><DataItems><DataItem name=\"Customer\"><Columns><Column name=\"No.\">C001</Column></Columns><DataItems /></DataItem><DataItem name=\"Customer\" /></DataItems></DataSet>', Doc);
+            Doc.GetRoot(Root);
+            if not Root.SelectNodes('.//*[local-name()=\"DataItem\"]', L) then exit('no select');
+            Seen := Format(L.Count());
+            foreach N in L do foreach A in N.AsXmlElement().Attributes() do Seen += '/' + A.Name() + '=' + A.Value();
+            foreach N in L do Seen += '|' + NameOf(N.AsXmlElement());
+            exit(Seen);
+        end;
+        procedure NameOf(E: XmlElement): Text var A: XmlAttribute; begin foreach A in E.Attributes() do if A.Name() = 'name' then exit(A.Value()); end;"),
+        "F",
+    ));
+    assert_eq!(r, "2/name=Customer/name=Customer|Customer|Customer");
+}
+
+// Pageworks' `DataItemXPath`: `(.//*[local-name()="DataItem" and @name="X"])[1]` and steps after it. The corpus pins the
+// parenthesised path with steps after it (xml/TestXmlRuntimeContracts.al), not a predicate after the parenthesis: the
+// W3C XPath 1.0 filter expression (docs/probes-needed.md "XPath predicates joined by `and`").
+#[test]
+fn a_predicate_after_a_parenthesised_path_picks_by_position_then_steps_follow() {
+    let r = text(run(
+        &cu("procedure F(): Text var Doc: XmlDocument; Root: XmlElement; L: XmlNodeList; Seen: Text; begin
+            XmlDocument.ReadFrom('<d><i name=\"A\"><c>1</c><c>2</c></i><i name=\"A\"><c>3</c></i><i name=\"B\"><c>4</c></i></d>', Doc);
+            Doc.GetRoot(Root);
+            Root.SelectNodes('(.//*[local-name()=\"i\" and @name=\"A\"])[1]/*[local-name()=\"c\"]', L); Seen := Format(L.Count());
+            Root.SelectNodes('(.//i)[last()]/c', L); Seen += '/' + Format(L.Count());
+            Root.SelectNodes('(.//i)[2]//c', L); Seen += '/' + Format(L.Count());
+            exit(Seen);
+        end;"),
+        "F",
+    ));
+    assert_eq!(r, "2/1/1");
+}

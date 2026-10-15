@@ -143,8 +143,13 @@ jobs:
           ./target/release/al-test-cli --all-versions --require-dotnet \
             --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml || status=1
           normal_end=$(date +%s)
-          # Each version's file has its own "How long it took" table: the runtime's own cost.
-          cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
+          # One line per BC version: pass, fail, not run, rate and total time. Areas, phases and
+          # suites are in pass-rate-<v>.json and in the log.
+          {
+            echo "## Corpus pass rate"
+            echo
+            cat pass-rate-*.md
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # --no-ratchet: the allow-listed differences fail the ratchet; compare_junit is the check.
           # --json keeps each eager run's phase times (every report has them).
@@ -207,7 +212,7 @@ jobs:
             echo
             echo "## With the compile cache"
             echo
-            echo "The times of the measured run, every dependency app taken from the cache:"
+            echo "One line per BC version, every dependency app taken from the cache (total time of the measured run):"
             echo
             cat cached-pass-rate-*.md
             echo

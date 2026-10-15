@@ -94,8 +94,13 @@ impl Default for Options {
 
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum SelectError {
-    /// No package has this app at all.
-    Missing { dep: DepDecl, searched: Vec<String> },
+    /// No package that carries the app's AL source was found. `symbol_only` names the packages of
+    /// the app that were found without source (they do not count as found, owner decision 2026-10-15).
+    Missing {
+        dep: DepDecl,
+        searched: Vec<String>,
+        symbol_only: Vec<String>,
+    },
     /// Packages exist for the id, but all are below the declared minimum.
     BelowMinimum { dep: DepDecl, found: Vec<Version> },
     /// The dependencies lead back to an app already being resolved.
@@ -107,14 +112,26 @@ pub enum SelectError {
 impl fmt::Display for SelectError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            SelectError::Missing { dep, searched } => {
+            SelectError::Missing {
+                dep,
+                searched,
+                symbol_only,
+            } => {
                 write!(
                     f,
-                    "dependency `{}` by {} ({}) version {} or higher was not found; searched: {}; put its .app in the project's .alpackages or pass --deps DIR",
+                    "dependency `{}` by {} ({}) version {} or higher was not found{}; searched: {}; put its .app with AL source (or its source archive) in the project's .alpackages or pass --deps DIR",
                     dep.name,
                     dep.publisher,
                     dep.id,
                     dep.min,
+                    if symbol_only.is_empty() {
+                        String::new()
+                    } else {
+                        format!(
+                            " with AL source (found only packages without AL source, which cannot serve it: {})",
+                            symbol_only.join(", ")
+                        )
+                    },
                     if searched.is_empty() {
                         "(nothing)".to_string()
                     } else {
@@ -224,7 +241,7 @@ impl Resolver<'_> {
         let by_id: Vec<usize> = (0..self.pool.len())
             .filter(|&i| !dep.id.is_empty() && same(&self.pool[i].id, &dep.id))
             .collect();
-        let matching: Vec<usize> = if by_id.is_empty() {
+        let found: Vec<usize> = if by_id.is_empty() {
             (0..self.pool.len())
                 .filter(|&i| {
                     !dep.name.is_empty()
@@ -235,12 +252,20 @@ impl Resolver<'_> {
         } else {
             by_id
         };
+        // A package that cannot serve the source is not found (owner decision 2026-10-15); the
+        // search goes on. The `Application` aggregate holds no objects by design and counts.
+        let serves = |i: usize| {
+            let c = &self.pool[i];
+            c.has_source || same(&c.id, APPLICATION_APP_ID)
+        };
+        let matching: Vec<usize> = found.iter().copied().filter(|&i| serves(i)).collect();
         if matching.is_empty() {
             return self.unsatisfied(
                 dep,
                 SelectError::Missing {
                     dep: dep.clone(),
                     searched: self.opts.searched.clone(),
+                    symbol_only: found.iter().map(|&i| self.pool[i].origin.clone()).collect(),
                 },
             );
         }
@@ -535,9 +560,53 @@ mod tests {
         let pool = vec![symbols_only, cand("a", "1.0.0.0", vec![])];
         let plan = resolve(&project(vec![dep("a", "1.0")]), &pool, &Options::default()).unwrap();
         assert_eq!(names(&plan, &pool), ["a_1.0.0.0.app"]);
-        // Alone, it is still chosen (the caller decides what a source-less package means).
-        let plan = resolve(&project(vec![dep("a", "1.0")]), &pool[..1], &Options::default()).unwrap();
-        assert_eq!(plan.order, [0]);
+    }
+
+    /// Owner decision 2026-10-15: a package that cannot serve the source is not a package that is
+    /// found. The search goes on; with nothing else the dependency is missing, and says what was seen.
+    #[test]
+    fn a_package_without_source_does_not_satisfy_a_dependency() {
+        let mut symbols_only = cand("a", "9.0.0.0", vec![dep("b", "1.0")]);
+        symbols_only.has_source = false;
+        let pool = vec![symbols_only, cand("b", "1.0.0.0", vec![])];
+        let opts = Options {
+            missing: MissingPolicy::Skip,
+            searched: vec!["alpackages".into()],
+        };
+        let plan = resolve(&project(vec![dep("a", "1.0")]), &pool, &opts).unwrap();
+        assert!(plan.order.is_empty(), "neither it nor what only it needs is chosen");
+        let SelectError::Missing { dep: missing, symbol_only, .. } = &plan.skipped[0] else {
+            panic!("{:?}", plan.skipped)
+        };
+        assert_eq!(missing.id, "a");
+        assert_eq!(symbol_only, &["a_9.0.0.0.app"]);
+        let text = plan.skipped[0].to_string();
+        assert!(text.contains("without AL source") && text.contains("a_9.0.0.0.app"), "{text}");
+        // As an error (the default policy) it is the same kind of error.
+        assert!(matches!(
+            resolve(&project(vec![dep("a", "1.0")]), &pool, &Options::default()),
+            Err(SelectError::Missing { .. })
+        ));
+    }
+
+    #[test]
+    fn a_later_place_with_source_satisfies_when_an_earlier_one_has_only_symbols() {
+        let mut symbols_only = cand("a", "9.0.0.0", vec![]);
+        symbols_only.has_source = false;
+        let mut elsewhere = cand("a", "2.0.0.0", vec![]);
+        elsewhere.tier = 3;
+        let pool = vec![symbols_only, elsewhere];
+        let plan = resolve(&project(vec![dep("a", "1.0")]), &pool, &Options::default()).unwrap();
+        assert_eq!(names(&plan, &pool), ["a_2.0.0.0.app"]);
+    }
+
+    #[test]
+    fn the_application_aggregate_has_no_source_by_design_and_is_still_found() {
+        let mut aggregate = cand(APPLICATION_APP_ID, "28.0.0.0", vec![dep("b", "1.0")]);
+        aggregate.has_source = false;
+        let pool = vec![aggregate, cand("b", "1.0.0.0", vec![])];
+        let plan = resolve(&project(vec![dep(APPLICATION_APP_ID, "28.0")]), &pool, &Options::default()).unwrap();
+        assert_eq!(plan.order.len(), 2);
     }
 
     #[test]

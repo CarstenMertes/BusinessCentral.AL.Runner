@@ -437,7 +437,7 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     );
     assert!(out.contains("Version comparison"), "{out}");
     // Every oracle is recorded for the pin. One case exists on BC 27 only (FeatureKey_Columns_AndRows_OfThe27Platform
-    // and FeatureKey_Enabled_PerId_On27, guarded by `#if not BC28PLUS`).
+    //, guarded by `#if not BC28PLUS`).
     assert!(out.contains("oracle: 1 case(s) differ between versions"), "{out}");
     // The three known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same
     // cases on every version, among the cases every oracle has. A new difference would be

@@ -76,6 +76,8 @@ before you open a source file.
   5. `--timings` says where a run spent its time (load, compile, install baseline, tests).
   6. `AL_REACH_REPORT=1` prints, after the compile, how many routines each kind of root pulls in, which are refused,
      and how many only matter through a refused routine (slow on a bucket: it walks every test).
+- After adding a builtin to the catalog or a registry, or an invented id: `cargo run -p al-builtins --example gen_builtin_ids`
+  (the test `builtin_ids_current` fails while `builtin_ids.rs` is stale).
 - `./check.sh` before every commit: fmt, clippy -D warnings, all tests, and the
   corpus ratchet. It fails on the first error.
 - Perf budgets (cold compile of the corpus ≤ 1.99 M instructions per object, wall time printed for information; parser ≥ 50 MB/s) are

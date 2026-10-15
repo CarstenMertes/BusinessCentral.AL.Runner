@@ -8,6 +8,7 @@
 //! listed in docs/probes-needed.md.
 
 use crate::{AlError, Session, Signal};
+use al_builtins::builtin_id::ids;
 use al_builtins::value::Value;
 
 /// The transaction model of the running test method (`[TransactionModel(...)]`).
@@ -206,7 +207,7 @@ impl Session {
     /// call is guarded when its result is used (`ret_used`).
     pub(crate) fn codeunit_run(
         &mut self,
-        id: &str,
+        id: al_ir::BuiltinId,
         receiver: Option<Value>,
         args: &[Value],
         guarded: bool,
@@ -217,8 +218,8 @@ impl Session {
             self.bg_refuse_transaction_call("Codeunit.Run")?;
         }
         let (inst, record_arg) = match (id, receiver) {
-            ("Codeunit.Run#1", Some(Value::Codeunit(rc))) => (self.shared_instance(rc), args.first()),
-            ("Codeunit.Run#3", None) => {
+            (ids::CODEUNIT_RUN_1, Some(Value::Codeunit(rc))) => (self.shared_instance(rc), args.first()),
+            (ids::CODEUNIT_RUN_3, None) => {
                 let Some(Value::Integer(n)) = args.first() else {
                     return unsupported("Codeunit.Run with an id that is not an integer");
                 };

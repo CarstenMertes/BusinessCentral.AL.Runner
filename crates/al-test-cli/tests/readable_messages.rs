@@ -10,17 +10,17 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
-        "al-testrun/src/runtime.rs",
+        "al-testrun/src/runtime/compiled.rs",
         r#""the program differs (first object that differs: {:?}; positions equal: {}; counts {} and {})","#,
         "the report of a defect of the incremental update (ALRUNNER_CHECK_INCREMENTAL, tests): for the developers of the compiler",
     ),
     (
-        "al-testrun/src/runtime.rs",
+        "al-testrun/src/runtime/compiled.rs",
         r#""the diagnostics differ: {:?} and {:?}","#,
         "the report of a defect of the incremental update (ALRUNNER_CHECK_INCREMENTAL, tests): for the developers of the compiler",
     ),
     (
-        "al-testrun/src/runtime.rs",
+        "al-testrun/src/runtime/compiled.rs",
         r#""the baseline decision differs: {:?} {:?} and {:?} {:?}","#,
         "the report of a defect of the incremental update (ALRUNNER_CHECK_INCREMENTAL, tests): for the developers of the compiler",
     ),
@@ -70,7 +70,7 @@ const KEPT: &[(&str, &str, &str)] = &[
         "the tree dump of the parser tests: a syntax kind name",
     ),
     (
-        "al-testrun/src/runtime.rs",
+        "al-testrun/src/runtime/handlers.rs",
         r#""{} and {} are both {kind:?} handlers; which one BC would bind is not pinned","#,
         "`kind` is a unit enum (UiKind): the debug text is the variant name",
     ),

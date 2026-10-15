@@ -1567,17 +1567,19 @@ impl Session {
                 args,
                 ret_used,
             } => {
+                use al_builtins::builtin_id::{Class, ids};
+                let id = *id;
                 // Event subscriptions are session state: the VM runs them (dispatch.rs).
-                if let "Session.BindSubscription#1" | "Session.UnbindSubscription#1" = id.as_str() {
+                if let ids::SESSION_BINDSUBSCRIPTION_1 | ids::SESSION_UNBINDSUBSCRIPTION_1 = id {
                     let Some(ir::Arg::Value(e)) = args.first() else {
                         return Err(Signal::Unsupported(format!("{id} with this argument")));
                     };
                     let cu = self.eval(e, f)?;
-                    return self.subscription(id.starts_with("Session.Bind"), cu, *ret_used);
+                    return self.subscription(id == ids::SESSION_BINDSUBSCRIPTION_1, cu, *ret_used);
                 }
                 // `CurrFieldNo` is a property of the implicit Rec, not a catalog method: the lowerer
                 // emits this id with the Rec as receiver.
-                if id == "Record.SetCurrFieldNo#1" {
+                if id == ids::RECORD_SETCURRFIELDNO_1 {
                     let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver.as_deref(), args.first()) else {
                         return Err(Signal::Unsupported("CurrFieldNo := without a record".into()));
                     };
@@ -1602,7 +1604,7 @@ impl Session {
                     }
                     return Ok(Value::Null);
                 }
-                if id == "Record.CurrFieldNo#1" {
+                if id == ids::RECORD_CURRFIELDNO_1 {
                     let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
                         return Err(Signal::Unsupported("CurrFieldNo without a record".into()));
                     };
@@ -1616,7 +1618,7 @@ impl Session {
                 // a table and a page the record stays as it is and so does the page itself
                 // (session/TestClearAllTransactionTypeContracts.al:224-285, BC 27.5). Any other object
                 // kind is refused.
-                if id == "System.ClearAll#1" {
+                if id == ids::SYSTEM_CLEARALL_1 {
                     let object = f.instance.borrow().object as usize;
                     let o = &self.engine.program.objects[object];
                     let keep: Vec<usize> = match o.kind {
@@ -1640,7 +1642,7 @@ impl Session {
                     }
                     return Ok(Value::Null);
                 }
-                if id == "Session.ApplicationArea#1" {
+                if id == ids::SESSION_APPLICATIONAREA_1 {
                     // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
                     // (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
                     return match args.first() {
@@ -1655,12 +1657,10 @@ impl Session {
                         Some(_) => Err(Signal::Unsupported("ApplicationArea with this argument".into())),
                     };
                 }
-                if id.starts_with("Codeunit.Run#")
-                    || id.starts_with("Xmlport.")
-                    || id.starts_with("Report.")
-                    || id.starts_with("FilterPageBuilder.")
-                    || id == "RequestPage.Update#1"
-                    || id == "Database.IsInWriteTransaction#1"
+                let class = id.class();
+                if class != Class::Other && class != Class::InStreamRead
+                    || id == ids::REQUESTPAGE_UPDATE_1
+                    || id == ids::DATABASE_ISINWRITETRANSACTION_1
                 {
                     let recv = match receiver.as_deref() {
                         Some(ir::Arg::Value(e)) => Some(self.eval(e, f)?),
@@ -1674,26 +1674,26 @@ impl Session {
                             ir::Arg::Ref(p) => self.read(p, f)?,
                         });
                     }
-                    if id == "Database.IsInWriteTransaction#1" {
+                    if id == ids::DATABASE_ISINWRITETRANSACTION_1 {
                         return Ok(Value::Boolean(self.in_write_transaction()));
                     }
-                    if id.starts_with("Xmlport.") {
+                    if class == Class::Xmlport {
                         return self.xmlport_builtin(id, recv, &values, *ret_used);
                     }
-                    if id == "RequestPage.Update#1" {
+                    if id == ids::REQUESTPAGE_UPDATE_1 {
                         return self.request_page_update(&values);
                     }
-                    if id.starts_with("Report.") {
+                    if class == Class::Report {
                         self.ret_used = *ret_used;
                         return self.report_builtin(id, recv, &values, f.instance.clone());
                     }
-                    if id.starts_with("FilterPageBuilder.") {
+                    if class == Class::FilterPageBuilder {
                         return self.filter_page_builder_op(id, recv, &values, *ret_used);
                     }
                     return self.codeunit_run(id, recv, &values, *ret_used);
                 }
                 let native =
-                    al_builtins::native::lookup(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
+                    al_builtins::native::by_id(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
                 let mut recv = match receiver.as_deref() {
                     Some(ir::Arg::Value(e)) => Some(self.eval(e, f)?),
                     Some(ir::Arg::Ref(p)) => Some(self.read(p, f)?),
@@ -1713,7 +1713,7 @@ impl Session {
                 }
                 for (a, v) in args.iter().zip(values) {
                     if let ir::Arg::Ref(p) = a {
-                        let v = if id.starts_with("InStream.Read") {
+                        let v = if class == Class::InStreamRead {
                             self.fit_stream_read(p, v, f)?
                         } else {
                             v
@@ -2387,7 +2387,7 @@ impl al_builtins::native::Ctx for Session {
     fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
         Session::ref_op(self, id, receiver, args)
     }
-    fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
+    fn session_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Result<Value, Signal> {
         Session::session_op(self, id, args)
     }
     fn media_store(&mut self) -> Option<&mut al_builtins::media::MediaStore> {

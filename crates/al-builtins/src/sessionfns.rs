@@ -5,7 +5,7 @@ use crate::native::NativeFn;
 
 macro_rules! via_session {
     ($($id:literal),* $(,)?) => {
-        &[$(($id, |c, _, a| c.session_op($id, a))),*]
+        &[$(($id, |c, _, a| c.session_op(const { crate::builtin_id::BuiltinId::must($id) }, a))),*]
     };
 }
 

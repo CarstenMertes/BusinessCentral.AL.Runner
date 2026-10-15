@@ -119,7 +119,7 @@ pub trait Ctx: FormatCtx {
     /// Builtins that read or change session state (number sequences, the transaction state): the
     /// VM implements them. `id` is the catalog overload id (`NumberSequence.Next#1`); `args` holds
     /// the call's arguments, with `var` parameters written back in place.
-    fn session_op(&mut self, id: &str, _args: &mut [Value]) -> Result<Value, Signal> {
+    fn session_op(&mut self, id: crate::builtin_id::BuiltinId, _args: &mut [Value]) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("builtin {id} needs a session")))
     }
     /// The language id, locale id and Windows time zone name of the running session, which
@@ -574,52 +574,57 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
     })
 }
 
-/// The implementation registered for overload `id`, if any. One hash probe over a table built once: the registry lists in
-/// order (the first entry for an id wins), then the implementations chosen per catalog signature, then the platform's.
-pub fn lookup(id: &str) -> Option<NativeFn> {
-    static TABLE: std::sync::OnceLock<std::collections::HashMap<String, NativeFn, BuildFnv>> =
-        std::sync::OnceLock::new();
+/// The implementations by name: the registry lists in order (the first entry for an id wins), then the
+/// implementations chosen per catalog signature, then the platform's. Built once.
+fn by_name() -> &'static std::collections::HashMap<String, NativeFn> {
+    static TABLE: std::sync::OnceLock<std::collections::HashMap<String, NativeFn>> = std::sync::OnceLock::new();
+    TABLE.get_or_init(|| {
+        let mut t = std::collections::HashMap::new();
+        for (i, f) in all() {
+            t.entry((*i).to_string()).or_insert(*f);
+        }
+        for (i, f) in derived() {
+            t.entry(i.clone()).or_insert(*f);
+        }
+        for (i, f) in crate::platform_native::entries() {
+            t.entry(i.to_string()).or_insert(f);
+        }
+        t
+    })
+}
+
+/// Ids the lowering writes that are no catalog overload and have no native of their own (the VM runs them).
+pub const INVENTED_IDS: &[&str] = &["Record.SetCurrFieldNo#1", "Record.CurrFieldNo#1"];
+
+/// Every name that gets a [`BuiltinId`]: the catalog's overloads of every version, the registered natives
+/// and the invented ids. Sorted, unique. This is what `builtin_ids.rs` is generated from.
+pub fn all_builtin_names() -> Vec<String> {
+    let cat = crate::catalog::Catalog::shared();
+    let mut names: std::collections::BTreeSet<String> = cat.signatures.iter().map(|s| cat.id(s)).collect();
+    names.extend(by_name().keys().cloned());
+    names.extend(INVENTED_IDS.iter().map(|s| (*s).to_string()));
+    names.into_iter().collect()
+}
+
+/// The implementation of builtin `id`, if any: one array index into a table built once (the VM's own
+/// builtins have no entry).
+pub fn by_id(id: crate::builtin_id::BuiltinId) -> Option<NativeFn> {
+    static TABLE: std::sync::OnceLock<Vec<Option<NativeFn>>> = std::sync::OnceLock::new();
     TABLE
         .get_or_init(|| {
-            let mut t = std::collections::HashMap::with_hasher(BuildFnv);
-            for (i, f) in all() {
-                t.entry((*i).to_string()).or_insert(*f);
-            }
-            for (i, f) in derived() {
-                t.entry(i.clone()).or_insert(*f);
-            }
-            for (i, f) in crate::platform_native::entries() {
-                t.entry(i.to_string()).or_insert(f);
-            }
-            t
+            let names = by_name();
+            crate::builtin_id::BuiltinId::all()
+                .map(|i| names.get(i.name()).copied())
+                .collect()
         })
-        .get(id)
+        .get(id.index())
         .copied()
+        .flatten()
 }
 
-/// FNV-1a over the bytes: the ids are short ASCII names we wrote ourselves, so the default hasher's protection against
-/// chosen keys buys nothing, and its cost is more than a scan of the first entries.
-#[derive(Default, Clone, Copy)]
-struct BuildFnv;
-
-struct Fnv(u64);
-
-impl std::hash::BuildHasher for BuildFnv {
-    type Hasher = Fnv;
-    fn build_hasher(&self) -> Fnv {
-        Fnv(0xcbf2_9ce4_8422_2325)
-    }
-}
-
-impl std::hash::Hasher for Fnv {
-    fn finish(&self) -> u64 {
-        self.0
-    }
-    fn write(&mut self, bytes: &[u8]) {
-        for b in bytes {
-            self.0 = (self.0 ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
-        }
-    }
+/// The implementation registered for overload `id`, if any.
+pub fn lookup(id: &str) -> Option<NativeFn> {
+    crate::builtin_id::BuiltinId::of(id).and_then(by_id)
 }
 
 /// [`lookup`] the way it was before the table: scans in the same order. The test compares the two.

@@ -1,6 +1,7 @@
 //! Builtins that act on session state: number sequences and the transaction state.
 
 use crate::Session;
+use al_builtins::builtin_id::ids;
 use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::value::Value;
@@ -168,14 +169,14 @@ impl Session {
         Ok((company, name.to_string()))
     }
 
-    pub(crate) fn session_op(&mut self, id: &str, args: &mut [Value]) -> Result<Value, Signal> {
+    pub(crate) fn session_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Result<Value, Signal> {
         if let Some(answer) = self.host_op(id, args) {
             return answer;
         }
         if let Some(answer) = self.encryption_op(id, args) {
             return answer;
         }
-        if id == "SessionInformation.Callstack#1" {
+        if id == ids::SESSIONINFORMATION_CALLSTACK_1 {
             // Frames innermost first, a backslash after each, the runner's below
             // (session/TestSessionInformationCallstackContracts.al:130-143).
             return match self.live_call_stack() {
@@ -185,19 +186,19 @@ impl Session {
                 ),
             };
         }
-        if id == "Database.IsInWriteTransaction#1" {
+        if id == ids::DATABASE_ISINWRITETRANSACTION_1 {
             // An uncommitted write opens one, a Commit and the test boundary close it
             // (codeunit/TestWriteTxTestBoundary.al:93,103,142). Writes to temporary tables are
             // not counted: they never reach the database (not pinned).
             return Ok(Value::Boolean(self.store.has_uncommitted()));
         }
-        if id == "CompanyProperty.DisplayName#1" {
+        if id == ids::COMPANYPROPERTY_DISPLAYNAME_1 {
             // Non-empty (session/TestBCPlatformContracts.al:CompanyProperty_DisplayName_NonEmpty). That it is
             // the company's name when no display name is set is an assumption (docs/probes-needed.md); a
             // company that states a display name is not modelled.
             return Ok(Value::Text(self.cx.company.clone().into()));
         }
-        if id == "CompanyProperty.ID#1" {
+        if id == ids::COMPANYPROPERTY_ID_1 {
             // A Guid that identifies the company; stable for a name (the Company table's SystemId is not modelled).
             let mut h: u64 = 0xcbf2_9ce4_8422_2325;
             for b in self.cx.company.bytes() {
@@ -210,7 +211,7 @@ impl Session {
             g[8] = (g[8] & 0x3f) | 0x80;
             return Ok(Value::Guid(g));
         }
-        if id == "CompanyProperty.UrlName#1" {
+        if id == ids::COMPANYPROPERTY_URLNAME_1 {
             // The company name as it stands in a URL: unreserved characters kept, the rest percent-encoded
             // (session/TestProbeSessionMiscContracts.al:Company_Names scrubs both the name and its `%20` form).
             let mut out = String::new();
@@ -223,7 +224,7 @@ impl Session {
             }
             return Ok(Value::Text(out.into()));
         }
-        if id == "Database.CompanyName#1" {
+        if id == ids::DATABASE_COMPANYNAME_1 {
             // The company of the session, the same name `Record.CurrentCompany` answers
             // (session/TestDatabase.al:69-75, session/TestSessionFunctions.al:25).
             return Ok(Value::Text(self.cx.company.clone().into()));
@@ -233,10 +234,10 @@ impl Session {
             // zero (session/TestSystemExtended.al:635-659, TestBCDatabaseContracts.al:100-117).
             // What the database holds committed: a row inserted in the open transaction does not count yet
             // (record/TestProbeRecordRefContracts.al:LastUsedRowVersion_StartsAndGrows, `grows_after_insert` No).
-            "Database.LastUsedRowVersion#1" => return Ok(Value::BigInteger(self.committed_row_version.max(1))),
+            ids::DATABASE_LASTUSEDROWVERSION_1 => return Ok(Value::BigInteger(self.committed_row_version.max(1))),
             // Set when given a value, read otherwise; the default is the documented one
             // (docs/probes-needed.md). session/TestSystemExtended.al:608-630 only calls it.
-            "Database.LockTimeout#1" => {
+            ids::DATABASE_LOCKTIMEOUT_1 => {
                 match args.first() {
                     None | Some(Value::Null) => {}
                     Some(Value::Boolean(b)) => self.lock_timeout = *b,
@@ -246,7 +247,7 @@ impl Session {
             }
             // Set when given a value, read otherwise. Only "positive" is pinned (corpus types/PVLabelSplitForeach.al
             // on the staging branch: positive, 10 ms on the probe tier, "the exact default is a server setting").
-            "Database.LockTimeoutDuration#1" => {
+            ids::DATABASE_LOCKTIMEOUTDURATION_1 => {
                 match args.first() {
                     None | Some(Value::Null) => {}
                     Some(Value::Duration(d)) => self.lock_timeout_duration = *d,
@@ -267,7 +268,7 @@ impl Session {
             //   to Update raises DB:CannotChangeTransactionType;
             // - once a read call has run, a set of Report reads back as Update.
             // Every other set after the transaction has started is not pinned and refused.
-            "Database.CurrentTransactionType#1" => {
+            ids::DATABASE_CURRENTTRANSACTIONTYPE_1 => {
                 use crate::transactions::{TX_FRESH, TX_READ, TX_WRITE};
                 let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("TransactionType")
                     .expect("a system option")
@@ -305,7 +306,7 @@ impl Session {
             }
             _ => {}
         }
-        if id == "System.CodeCoverageLog#1" {
+        if id == ids::SYSTEM_CODECOVERAGELOG_1 {
             // With a state it records or stops and answers the state it was given; without one it
             // answers whether it is recording (codeunit/TestCodeCoverageStartStop.al:30-102). The
             // MultiSession flag changes nothing observable here.
@@ -318,26 +319,54 @@ impl Session {
                 Some(other) => unsupported(format!("CodeCoverageLog with {}", other.describe())),
             };
         }
-        if let Some(method) = id
-            .strip_prefix("Database.")
-            .and_then(|m| m.strip_suffix("TableConnection#1"))
-        {
+        let table_connection = match id {
+            ids::DATABASE_REGISTERTABLECONNECTION_1 => Some("Register"),
+            ids::DATABASE_UNREGISTERTABLECONNECTION_1 => Some("Unregister"),
+            ids::DATABASE_HASTABLECONNECTION_1 => Some("Has"),
+            ids::DATABASE_SETDEFAULTTABLECONNECTION_1 => Some("SetDefault"),
+            ids::DATABASE_GETDEFAULTTABLECONNECTION_1 => Some("GetDefault"),
+            _ => None,
+        };
+        if let Some(method) = table_connection {
             return self.table_connection_op(method, args);
         }
         if let Some(v) = self.error_collection_op(id, args) {
             return v;
         }
-        if let Some(rest) = id.strip_prefix("IsolatedStorage.") {
-            return self.isolated_storage_op(rest, args);
+        let isolated = match id {
+            ids::ISOLATEDSTORAGE_CONTAINS_1 => Some(("Contains", 1)),
+            ids::ISOLATEDSTORAGE_CONTAINS_2 => Some(("Contains", 2)),
+            ids::ISOLATEDSTORAGE_DELETE_1 => Some(("Delete", 1)),
+            ids::ISOLATEDSTORAGE_GET_1 => Some(("Get", 1)),
+            ids::ISOLATEDSTORAGE_GET_2 => Some(("Get", 2)),
+            ids::ISOLATEDSTORAGE_GET_3 => Some(("Get", 3)),
+            ids::ISOLATEDSTORAGE_GET_4 => Some(("Get", 4)),
+            ids::ISOLATEDSTORAGE_SET_1 => Some(("Set", 1)),
+            ids::ISOLATEDSTORAGE_SET_2 => Some(("Set", 2)),
+            ids::ISOLATEDSTORAGE_SETENCRYPTED_1 => Some(("SetEncrypted", 1)),
+            ids::ISOLATEDSTORAGE_SETENCRYPTED_2 => Some(("SetEncrypted", 2)),
+            _ => None,
+        };
+        if let Some((method, n)) = isolated {
+            return self.isolated_storage_op(method, n, args);
         }
-        let method = id.strip_prefix("NumberSequence.").and_then(|m| m.split('#').next());
+        let method = match id {
+            ids::NUMBERSEQUENCE_CURRENT_1 => Some("Current"),
+            ids::NUMBERSEQUENCE_DELETE_1 => Some("Delete"),
+            ids::NUMBERSEQUENCE_EXISTS_1 => Some("Exists"),
+            ids::NUMBERSEQUENCE_INSERT_1 => Some("Insert"),
+            ids::NUMBERSEQUENCE_NEXT_1 => Some("Next"),
+            ids::NUMBERSEQUENCE_RANGE_1 | ids::NUMBERSEQUENCE_RANGE_2 => Some("Range"),
+            ids::NUMBERSEQUENCE_RESTART_1 => Some("Restart"),
+            _ => None,
+        };
         let Some(method) = method else {
             return unsupported(format!("builtin {id}"));
         };
         // The position of the optional CompanySpecific argument per overload.
         let scope = match id {
-            "NumberSequence.Insert#1" | "NumberSequence.Range#2" => 3,
-            "NumberSequence.Range#1" | "NumberSequence.Restart#1" => 2,
+            ids::NUMBERSEQUENCE_INSERT_1 | ids::NUMBERSEQUENCE_RANGE_2 => 3,
+            ids::NUMBERSEQUENCE_RANGE_1 | ids::NUMBERSEQUENCE_RESTART_1 => 2,
             _ => 1,
         };
         let key = self.sequence_key(args, scope)?;
@@ -410,7 +439,7 @@ impl Session {
                     return unsupported("a number sequence past the BigInteger range (error not pinned)");
                 };
                 s.last = Some(last);
-                if id == "NumberSequence.Range#2" {
+                if id == ids::NUMBERSEQUENCE_RANGE_2 {
                     args[2] = Value::BigInteger(s.increment);
                 }
                 Ok(Value::BigInteger(first))
@@ -467,12 +496,10 @@ impl Session {
 
     /// `IsolatedStorage.<rest>` (`Get#4`, `SetEncrypted#2`, ...): a text store per scope, outside
     /// the transaction (not pinned either way). Corpus: session/TestIsolatedStorage.al:30-125.
-    fn isolated_storage_op(&mut self, rest: &str, args: &mut [Value]) -> Result<Value, Signal> {
+    fn isolated_storage_op(&mut self, method: &str, n: u32, args: &mut [Value]) -> Result<Value, Signal> {
         let Some(key) = args.first().and_then(al_builtins::native::text_of).map(String::from) else {
             return unsupported("an IsolatedStorage key that is not text");
         };
-        let (method, n) = rest.split_once('#').unwrap_or((rest, "1"));
-        let n: u32 = n.parse().unwrap_or(1);
         // Where the optional DataScope sits, and where the value goes, per overload.
         let scope_at = match (method, n) {
             ("Get", 3 | 4) => None,
@@ -559,10 +586,10 @@ impl Session {
     /// 344 characters (256 bytes in base 64) and differs on every call; this session remembers what it
     /// encrypted, so `Decrypt` returns it. Text that is not encrypted data raises the pinned error;
     /// text that looks like encrypted data this session did not make is refused.
-    fn encryption_op(&mut self, id: &str, args: &mut [Value]) -> Option<Result<Value, Signal>> {
+    fn encryption_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Option<Result<Value, Signal>> {
         Some(match id {
-            "System.EncryptionEnabled#1" | "System.EncryptionKeyExists#1" => Ok(Value::Boolean(true)),
-            "System.Encrypt#1" => {
+            ids::SYSTEM_ENCRYPTIONENABLED_1 | ids::SYSTEM_ENCRYPTIONKEYEXISTS_1 => Ok(Value::Boolean(true)),
+            ids::SYSTEM_ENCRYPT_1 => {
                 let Some(plain) = args.first().and_then(al_builtins::native::text_of) else {
                     return Some(unsupported("Encrypt of something that is not text"));
                 };
@@ -577,7 +604,7 @@ impl Session {
                 self.encrypted.insert(cipher.clone(), plain.to_string());
                 Ok(Value::Text(cipher.into()))
             }
-            "System.Decrypt#1" => {
+            ids::SYSTEM_DECRYPT_1 => {
                 let Some(cipher) = args.first().and_then(al_builtins::native::text_of) else {
                     return Some(unsupported("Decrypt of something that is not text"));
                 };

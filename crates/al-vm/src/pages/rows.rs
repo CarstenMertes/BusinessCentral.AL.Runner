@@ -1,0 +1,968 @@
+use super::*;
+
+impl Session {
+    /// The caption a CaptionClass text stands for. Area 3 is the literal text. Other numeric areas
+    /// are the platform's resolvers, which are not modelled. An area that is not a number, or no
+    /// area at all, goes to no built-in resolver: the System Application's Caption Class codeunit
+    /// raises OnResolveCaptionClass for it, and when no subscriber claims it the text stays as
+    /// written (corpus handlers/TestPageCaptionClass.al:90
+    /// TestPageField_Caption_UnresolvedCaptionClass_ReturnsExpressionUnchanged;
+    /// autoformat/TestCaptionClassResolverFailure.al: an error the subscriber raises reaches the
+    /// open, and a subscriber that claims nothing changes nothing). The language handed to the
+    /// event is the session language (types/PSCaptionClass.al).
+    pub(super) fn caption_class_text(&mut self, st: &St, text: &str) -> Result<String, Signal> {
+        if let Some(rest) = text.strip_prefix("3,") {
+            return Ok(rest.to_string());
+        }
+        let (area, expr) = text.split_once(',').unwrap_or(("", text));
+        if text.contains(',') && area.trim().parse::<u32>().is_ok() {
+            return unsupported(format!("CaptionClass `{text}` is resolved by the platform"));
+        }
+        let _ = st;
+        self.raise_resolve_caption_class(area, expr, text)
+    }
+
+    /// `CaptionClassTranslate(Text)`: area 3 gives the text after the first comma without an event ('3,One,Two' is
+    /// `One,Two`, '3,' is empty); a text with no comma and the empty text come back unchanged without an event; any other
+    /// area raises OnResolveCaptionClass of the Caption Class codeunit with the area, the rest after the first comma and the
+    /// session language, and comes back unchanged when no subscriber resolves it (corpus types/PSCaptionClass.al:5-8,
+    /// CaptionClassTranslate_Expressions).
+    pub(crate) fn caption_class_translate(&mut self, text: &str) -> Result<String, Signal> {
+        let Some((area, expr)) = text.split_once(',') else {
+            return Ok(text.to_string());
+        };
+        if area == "3" {
+            return Ok(expr.to_string());
+        }
+        self.raise_resolve_caption_class(area, expr, text)
+    }
+
+    pub(super) fn raise_resolve_caption_class(&mut self, area: &str, expr: &str, text: &str) -> Result<String, Signal> {
+        if !self
+            .engine
+            .events
+            .is_subscribed(crate::events::CAPTION_CLASS, "onresolvecaptionclass")
+        {
+            return Ok(text.to_string());
+        }
+        let names: Vec<String> = ["CaptionArea", "CaptionExpr", "Language", "Caption", "Resolved"]
+            .iter()
+            .map(|n| n.to_string())
+            .collect();
+        let mut args = vec![
+            Value::Text(area.to_string().into()),
+            Value::Text(expr.to_string().into()),
+            Value::Integer(self.global_language),
+            Value::Text(String::new().into()),
+            Value::Boolean(false),
+        ];
+        let call = crate::dispatch::EventCall {
+            object: crate::events::CAPTION_CLASS,
+            event: "onresolvecaptionclass",
+            element: None,
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)?;
+        Ok(match (&args[4], &args[3]) {
+            (Value::Boolean(true), Value::Text(t) | Value::Code(t)) => t.to_string(),
+            _ => text.to_string(),
+        })
+    }
+
+    /// The expressions every row population evaluates, whatever the control's Visible
+    /// (corpus autoformat/TestAutoFormatExpressionTiming.al:5-12): AutoFormatExpression and
+    /// CaptionClass. They run after OnOpenPage and before OnAfterGetRecord.
+    pub(super) fn populate_expressions(&mut self, st: &St) -> Result<(), Signal> {
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        for (idx, c) in page.controls.iter().enumerate() {
+            for name in ["autoformatexpression", "captionclass"] {
+                match c.prop(name) {
+                    Some(routine @ (ir::PropVal::Routine(_) | ir::PropVal::Ext(..))) => {
+                        let v = self
+                            .prop_routine_value(st, idx, routine)?
+                            .expect("a routine-valued property");
+                        if name == "captionclass" {
+                            if let Value::Text(t) | Value::Code(t) = &v {
+                                self.caption_class_text(st, t)?;
+                            }
+                        }
+                    }
+                    // An area no built-in resolver claims goes to the Caption Class codeunit's
+                    // OnResolveCaptionClass event (corpus autoformat/TestCaptionClassResolverFailure.al:1-12).
+                    Some(ir::PropVal::Lit(l)) if name == "captionclass" => {
+                        self.caption_class_text(st, &unquote(l))?;
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// The FlowFields the page shows are calculated when a row loads. A temporary source row
+    /// reads them from the database tables (corpus handlers/TestPageRunTempRecordStoredRow_Tests.al:
+    /// TempRecordFlowFieldIsCalculatedFromTheDatabase).
+    pub(super) fn calc_row_flowfields(&mut self, st: &St) -> Result<(), Signal> {
+        if !self.has_source(st) {
+            return Ok(());
+        }
+        let engine = self.engine();
+        let rec = self.page_rec(st);
+        let table = rec.borrow().table as usize;
+        let Some(def) = engine.program.objects[table].table.as_ref() else {
+            return Ok(());
+        };
+        let mut positions: Vec<usize> = page_of(&engine, st)
+            .controls
+            .iter()
+            .filter_map(|c| match c.binding {
+                ir::Binding::Field(p) if def.fields[p].calc.is_some() => Some(p),
+                _ => None,
+            })
+            .collect();
+        positions.sort_unstable();
+        positions.dedup();
+        if positions.is_empty() {
+            return Ok(());
+        }
+        if !rec.borrow().temporary {
+            return self.calc_fields(&rec, &positions);
+        }
+        let probe = {
+            let mut p = rec.borrow().clone();
+            p.temporary = false;
+            p.auto_calc.clear();
+            Rc::new(RefCell::new(p))
+        };
+        for p in positions {
+            self.check_calc_field(table, p)?;
+            let v = self.calc_value(&probe, p, &mut Vec::new())?;
+            rec.borrow_mut().fields[p] = v;
+        }
+        Ok(())
+    }
+
+    /// Populates the current row: the control expressions, then OnAfterGetRecord.
+    pub(super) fn populate_current(&mut self, st: &St) -> Result<(), Signal> {
+        st.borrow_mut().dirty = false;
+        self.calc_row_flowfields(st)?;
+        self.set_xrec(st);
+        self.populate_expressions(st)?;
+        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        Ok(())
+    }
+
+    /// PageType = List (a worksheet or ListPlus page with a repeater is not one; corpus
+    /// handlers/TestPageControlEditableRoutes.al:Worksheet_RunModal_LookupMode).
+    pub(super) fn is_list_page(&self, st: &St) -> bool {
+        let object = st.borrow().object as usize;
+        self.engine.object_facts[object].page_type == Some(al_ir::PageType::List)
+    }
+
+    pub(super) fn is_list(&self, st: &St) -> bool {
+        let engine = self.engine();
+        page_of(&engine, st)
+            .controls
+            .iter()
+            .any(|c| c.kind == ir::ControlKind::Repeater)
+    }
+
+    pub(super) fn row_key(&self, rec: &Rec) -> Result<Vec<Value>, Signal> {
+        let table = self.table(rec)?;
+        Ok(table.primary_key(&rec.borrow().fields))
+    }
+
+    /// A repeater populates a window of rows at a time; a row inside the window it already
+    /// holds is not populated again (corpus autoformat/TestAutoFormatExpressionTiming.al:5-12:
+    /// a failing row 20 of 120 fails the open, row 30 does not, and a move to row 120
+    /// populates a new window). The window is 20 rows: the corpus pins it only between 20 and 24.
+    pub(super) const WINDOW: usize = 20;
+
+    pub(super) fn populate_window(&mut self, st: &St) -> Result<(), Signal> {
+        st.borrow_mut().window_from_start = false;
+        st.borrow_mut().window_eof = false;
+        let rec = self.page_rec(st);
+        let start = self.row_key(&rec)?;
+        let mut keys = Vec::new();
+        let mut walked = 0;
+        let mut end_reached = false;
+        let opening = std::mem::take(&mut st.borrow_mut().landing_first);
+        for i in 0..Self::WINDOW {
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            self.populate_current(st)?;
+            keys.push(al_builtins::value::WindowRow {
+                key,
+                stored,
+                shown: rec.borrow().fields.clone(),
+            });
+            if i + 1 == Self::WINDOW {
+                break;
+            }
+            if !self.nav_next(st, 1)? {
+                end_reached = true;
+                break;
+            }
+            walked += 1;
+        }
+        // A view that ends inside the window: the client puts its first row back without asking
+        // the page, reads it again, then asks OnNextRecord(-1) and OnFindRecord(`=`) and reads it
+        // once more (corpus pageext/PCCurrRecordReads.al:List_ReadsAfterEachAction and
+        // FindList_OnFindRecordAndOnNextRecord, `open` of a list of 3 rows: five reads). Only the
+        // count is pinned, for a table of 3 rows.
+        let find_page = self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord");
+        let end_reached = end_reached && opening;
+        if end_reached && find_page && self.declares(st, "onaftergetrecord") {
+            if let Some(first) = keys.first() {
+                rec.borrow_mut().fields = first.stored.clone();
+            }
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            if self.declares(st, "onnextrecord") {
+                self.nav_next(st, -1)?;
+            }
+            if self.declares(st, "onfindrecord") {
+                self.nav_find(st, "=")?;
+            }
+            if let Some(row) = keys.first() {
+                rec.borrow_mut().fields = row.shown.clone();
+                self.set_xrec_fields(st, row.stored.clone());
+            }
+            st.borrow_mut().window = keys;
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            return Ok(());
+        }
+        // Back on the row the cursor is on. A page that serves its rows from triggers steps back
+        // through them: the row is not necessarily in the table.
+        if self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord") {
+            for _ in 0..walked {
+                if !self.nav_next(st, -1)? {
+                    return unsupported("OnNextRecord did not step back over the rows it served");
+                }
+            }
+        } else {
+            self.ret_used = true;
+            self.record_op("Get", &rec, &mut start.clone())?;
+        }
+        // The row buffer the page keeps for the row it stands on is what OnAfterGetRecord left.
+        if let Some(row) = keys.first() {
+            rec.borrow_mut().fields = row.shown.clone();
+            self.set_xrec_fields(st, row.stored.clone());
+        }
+        st.borrow_mut().window = keys;
+        // The row the cursor stands on is read once more after the window: a list of 60 rows
+        // raises OnAfterGetRecord 21 times when it opens, rows 1 to 20 and then row 1 again
+        // (corpus handlers/TestPageRuntimeContracts.al:121-136 TestPage_List_OpenReads21Rows).
+        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        if end_reached {
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+        }
+        Ok(())
+    }
+
+    /// A GoToKey that goes past the rows a list has read reads on in blocks: the last two rows of the
+    /// block before, then 20 new rows (fewer at the end of the view). The cursor stands on the first
+    /// unread row `X` and the window holds every row before it. Returns whether the block was full, the key
+    /// of its last row, and leaves the cursor on `X` again with the whole block in the window.
+    /// Pinned on a real service tier by corpus handlers/TestPageSystemPartListWindowContracts.al:194
+    /// (List_Window_AfterGoToKeyOutsideTheRowsRead), :210 (List_Window_SmallTable) and
+    /// handlers/TestPageRuntimeContracts.al:331.
+    pub(super) fn read_window_block(&mut self, st: &St) -> Result<(bool, Vec<Value>), Signal> {
+        let rec = self.page_rec(st);
+        let start = self.row_key(&rec)?;
+        let prefix = st.borrow().window.len().min(2);
+        let trigger_rows = self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord");
+        if prefix > 0 && !self.nav_next(st, -(prefix as i32))? {
+            return unsupported("a list that cannot step back over the rows it has read");
+        }
+        let mut walked = 0usize;
+        let mut new_rows = 0usize;
+        let mut last_key = start.clone();
+        for i in 0..prefix + Self::WINDOW {
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            self.populate_current(st)?;
+            let row = al_builtins::value::WindowRow {
+                key: key.clone(),
+                stored,
+                shown: rec.borrow().fields.clone(),
+            };
+            {
+                let mut s = st.borrow_mut();
+                match s.window.iter().position(|w| Self::same_key(&w.key, &key)) {
+                    Some(at) => s.window[at] = row,
+                    None => s.window.push(row),
+                }
+            }
+            if i >= prefix {
+                new_rows += 1;
+                last_key = key;
+            }
+            if i + 1 == prefix + Self::WINDOW {
+                break;
+            }
+            if !self.nav_next(st, 1)? {
+                break;
+            }
+            walked += 1;
+        }
+        // Back on `X`, which is `prefix` rows into the walk.
+        if trigger_rows {
+            for _ in prefix..walked {
+                if !self.nav_next(st, -1)? {
+                    return unsupported("OnNextRecord did not step back over the rows it served");
+                }
+            }
+        } else {
+            self.ret_used = true;
+            self.record_op("Get", &rec, &mut start.clone())?;
+        }
+        Ok((new_rows == Self::WINDOW, last_key))
+    }
+
+    /// The last two rows of the window are read once more: what a read that reached the end of the view
+    /// does (corpus handlers/TestPageSystemPartListWindowContracts.al:194, handlers/TestPageRuntimeContracts.al:331).
+    /// The cursor is on the last row of the view and stays there.
+    pub(super) fn reread_last_rows(&mut self, st: &St) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        let n = st.borrow().window.len();
+        if n >= 2 {
+            if !self.nav_next(st, -1)? {
+                return unsupported("a list that cannot step back over its last row");
+            }
+            self.populate_current(st)?;
+            self.nav_next(st, 1)?;
+        }
+        self.populate_current(st)?;
+        let _ = rec;
+        st.borrow_mut().window_eof = true;
+        Ok(())
+    }
+
+    pub(super) fn in_window(&self, st: &St, key: &[Value]) -> bool {
+        st.borrow().window.iter().any(|k| Self::same_key(&k.key, key))
+    }
+
+    pub(super) fn same_key(a: &[Value], b: &[Value]) -> bool {
+        a.len() == b.len()
+            && a.iter().zip(b).all(|(a, b)| {
+                ops::compare(a, b)
+                    .map(|o| o == std::cmp::Ordering::Equal)
+                    .unwrap_or(false)
+            })
+    }
+
+    /// The cursor has landed on a stored row: populate it as the page type does, then
+    /// OnAfterGetCurrRecord.
+    pub(super) fn arrive(&mut self, st: &St) -> Result<(), Signal> {
+        // A stored row is not the started record the cursor may have left (corpus
+        // handlers/TestPageOpenNewPartLink.al:OpenNew_LinesInsertedInCode_LastThenWriteLandsOnTheLastLine).
+        st.borrow_mut().draft = false;
+        st.borrow_mut().stale = false;
+        if self.is_list(st) {
+            let key = self.row_key(&self.page_rec(st))?;
+            if !self.in_window(st, &key) {
+                self.populate_window(st)?;
+            } else {
+                // A row of the window shows the buffer OnAfterGetRecord left, as long as the stored
+                // row is still the one that buffer was made from.
+                let rec = self.page_rec(st);
+                let row = st
+                    .borrow()
+                    .window
+                    .iter()
+                    .find(|w| Self::same_key(&w.key, &key))
+                    .filter(|w| Self::same_values(&w.stored, &rec.borrow().fields))
+                    .cloned();
+                match row {
+                    Some(w) => {
+                        rec.borrow_mut().fields = w.shown;
+                        self.set_xrec_fields(st, w.stored);
+                    }
+                    None => self.set_xrec(st),
+                }
+            }
+        } else {
+            self.populate_current(st)?;
+        }
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        Ok(())
+    }
+
+    /// Moves the cursor; the Boolean the move methods return.
+    pub(super) fn page_move(&mut self, st: &St, how: &str) -> Result<Value, Signal> {
+        if !self.has_source(st) {
+            return unsupported(format!("{how}() on a page without a source table"));
+        }
+        // Leaving a row saves it.
+        let anchor = st.borrow_mut().after_new.take();
+        if let Left::Stay = self.leave_row(st, how)? {
+            return Ok(Value::Boolean(false));
+        }
+        // A new line saved in the middle of a list: Next() goes to the row below the one it was
+        // started under, not to the row after its own key (corpus
+        // handlers/ProbeTestPageForms.al:227-253, where a row with the last key, added below row 2,
+        // is followed by row 3 and not by the blank line).
+        let cursor_now = st.borrow().cursor;
+        if let ("Next", Some(anchor), Cursor::Row) = (how, anchor, cursor_now) {
+            if self.next_below_anchor(st, anchor)? {
+                st.borrow_mut().cursor = Cursor::Row;
+                self.arrive(st)?;
+                return Ok(Value::Boolean(true));
+            }
+        }
+        let r = self.page_move_inner(st, how);
+        self.torn_down_on_error(st, r).map(Value::Boolean)
+    }
+
+    /// An error escaping a row population tears the page down. On a card the move reads as
+    /// "not open"; on a list it raises the error itself (corpus
+    /// autoformat/TestAutoFormatExpressionTiming.al, RowFormat_List_LastOntoAFailingRowBeyondTheWindow).
+    pub(super) fn torn_down_on_error<T>(&mut self, st: &St, r: Result<T, Signal>) -> Result<T, Signal> {
+        match r {
+            Err(Signal::Error(e)) => {
+                self.mark_closed(st);
+                if self.is_list(st) {
+                    Err(Signal::Error(e))
+                } else {
+                    Err(error_code(NOT_OPEN, "TestPageNotOpened"))
+                }
+            }
+            other => other,
+        }
+    }
+
+    /// Moves the page's record to the row after `anchor` in key order, when there is one and it is
+    /// not the row just saved; else leaves the record as it was and answers false.
+    pub(super) fn next_below_anchor(&mut self, st: &St, anchor: Vec<Value>) -> Result<bool, Signal> {
+        if self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord") {
+            return Ok(false);
+        }
+        let rec = self.page_rec(st);
+        let saved = rec.borrow().fields.clone();
+        rec.borrow_mut().fields = anchor;
+        self.ret_used = true;
+        let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
+        let found = matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true));
+        let moved = found && {
+            self.ret_used = true;
+            matches!(self.record_op("Next", &rec, &mut [Value::Integer(1)])?, Value::Integer(n) if n != 0)
+        };
+        let table = self.table(&rec)?;
+        let same = moved && Self::same_values(&table.primary_key(&rec.borrow().fields), &table.primary_key(&saved));
+        if moved && !same {
+            return Ok(true);
+        }
+        rec.borrow_mut().fields = saved;
+        Ok(false)
+    }
+
+    /// A move of a list whose whole view the client has read (fewer rows than a window) is served
+    /// from the client's rows: the new row is read, a page with OnFindRecord is asked `=` for it,
+    /// the row is read again, and OnAfterGetCurrRecord ends the move; `Last` on a page without
+    /// OnFindRecord starts with an OnAfterGetCurrRecord (corpus pageext/PCCurrRecordReads.al:
+    /// List_ReadsAfterEachAction `next`, `last`, `first`; FindList_OnFindRecordAndOnNextRecord
+    /// `next`, `last`, `previous`, `first`, pinned for a table of 3 rows). `None` when the move is not
+    /// one of those.
+    pub(super) fn move_in_client_rows(&mut self, st: &St, how: &str) -> Result<Option<bool>, Signal> {
+        let find_page = self.declares(st, "onfindrecord");
+        if !self.declares(st, "onaftergetrecord")
+            || !self.is_list(st)
+            || st.borrow().cursor != Cursor::Row
+            || st.borrow().draft
+            || st.borrow().stale
+            || !st.borrow().window_from_start
+            || st.borrow().window.is_empty()
+            || st.borrow().window.len() >= Self::WINDOW
+        {
+            return Ok(None);
+        }
+        let rec = self.page_rec(st);
+        let key = self.row_key(&rec)?;
+        let window = st.borrow().window.clone();
+        let Some(at) = window.iter().position(|w| Self::same_key(&w.key, &key)) else {
+            return Ok(None);
+        };
+        let target = match how {
+            "First" => 0,
+            "Last" => window.len() - 1,
+            "Next" if at + 1 < window.len() => at + 1,
+            "Previous" if at > 0 => at - 1,
+            _ => return Ok(None),
+        };
+        if how == "Last" && !find_page {
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        }
+        self.read_client_row(st, target)?;
+        Ok(Some(true))
+    }
+
+    /// The reads of a move onto row `target` of the rows the client holds (see `move_in_client_rows`).
+    pub(super) fn read_client_row(&mut self, st: &St, target: usize) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        let stored = st.borrow().window[target].stored.clone();
+        rec.borrow_mut().fields = stored;
+        self.populate_current(st)?;
+        if self.declares(st, "onfindrecord") {
+            self.nav_find(st, "=")?;
+        }
+        self.populate_current(st)?;
+        let shown = rec.borrow().fields.clone();
+        if let Some(w) = st.borrow_mut().window.get_mut(target) {
+            w.shown = shown;
+        }
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        Ok(())
+    }
+
+    pub(super) fn page_move_inner(&mut self, st: &St, how: &str) -> Result<bool, Signal> {
+        if let Some(r) = self.move_in_client_rows(st, how)? {
+            return Ok(r);
+        }
+        let cursor = st.borrow().cursor;
+        let landed = match how {
+            "First" => self.nav_find(st, "-")?,
+            "Last" => self.nav_find(st, "+")?,
+            "Next" => match cursor {
+                Cursor::Row => {
+                    if self.nav_next(st, 1)? {
+                        true
+                    } else if st.borrow().new_line {
+                        // corpus handlers/TestPageNewRowLine_Tests.al: Next() past the last data
+                        // row lands on the blank line and answers true.
+                        self.refuse_read_only_part(st, "Next() onto the new-row line")?;
+                        self.land_on_new_line(st)?;
+                        return Ok(true);
+                    } else {
+                        false
+                    }
+                }
+                _ => false,
+            },
+            "Previous" => match cursor {
+                Cursor::NewLine => self.nav_find(st, "+")?,
+                Cursor::Row => self.nav_next(st, -1)?,
+                Cursor::None => false,
+            },
+            _ => unreachable!(),
+        };
+        if landed {
+            st.borrow_mut().cursor = Cursor::Row;
+            self.arrive(st)?;
+        }
+        Ok(landed)
+    }
+
+    /// GoToKey / GoToRecord: a forward scan from the first row of the view, populating every row it
+    /// passes, so a row whose population fails stops the search there (corpus
+    /// autoformat/TestAutoFormatExpressionTiming.al, RowFormat_GoToKeyPastTheFailingRow_ReadsAsTheTestPageNotOpen).
+    /// A key no row has leaves the page on the row it stood on
+    /// (corpus handlers/TestPageGoToRecordNonKeyRefresh_Tests.al:1-15).
+    pub(super) fn page_go_to_key(&mut self, st: &St, key: &mut [Value]) -> Result<Value, Signal> {
+        if !self.has_source(st) {
+            return unsupported("GoToKey on a page without a source table");
+        }
+        let result_used = self.ret_used;
+        // A TestPart raises when the key has the wrong number of fields, and when the key is
+        // missing and the result is not used (corpus testpart/TestTestPart.al:
+        // TestPart_GoToKey_ErrorsWhenTheKeyFieldCountIsWrong, _ErrorsForAMissingKeyWhenTheReturnIsDiscarded).
+        // Texts and codes: handlers/TestPageRuntimeContracts.al:300-312 (TestPart_GoToKey_Arity_AndMissingKey).
+        if st.borrow().host.is_some() {
+            let rec = self.page_rec(st);
+            let wanted = self.table(&rec)?.keys[0].len();
+            if key.len() != wanted {
+                return Err(error_code(
+                    "The number of arguments does not match the number of primary key fields.",
+                    "TestInvalidNumberOfKeyFieldValues",
+                ));
+            }
+        }
+        self.save_row(st)?;
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let want: Vec<Value> = table.keys[0]
+            .iter()
+            .enumerate()
+            .map(|(n, &f)| match key.get(n) {
+                Some(v) => ops::convert(v.clone(), &table.fields[f].ty),
+                None => Ok(self.default_value(&table.fields[f].ty)),
+            })
+            .collect::<Result<_, _>>()?;
+        // A list that serves its rows from OnFindRecord and holds its whole view goes to a row it
+        // holds as a move does (corpus pageext/PCCurrRecordReads.al:FindList_OnFindRecordAndOnNextRecord
+        // `gotokey_2`, a table of 3 rows).
+        if self.declares(st, "onfindrecord")
+            && self.declares(st, "onaftergetrecord")
+            && self.is_list(st)
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && !st.borrow().stale
+        {
+            let held = {
+                let s = st.borrow();
+                (s.window_from_start && s.window.len() < Self::WINDOW)
+                    .then(|| s.window.iter().position(|w| Self::same_key(&w.key, &want)))
+                    .flatten()
+            };
+            if let Some(at) = held {
+                self.read_client_row(st, at)?;
+                return Ok(Value::Boolean(true));
+            }
+        }
+        let before_fields = rec.borrow().fields.clone();
+        let (before_cursor, before_draft) = (st.borrow().cursor, st.borrow().draft);
+        let mut at = self.nav_find(st, "-")?;
+        let mut found = false;
+        // The last block this scan read: whether it was full and the key of its last row.
+        let mut block: Option<(bool, Vec<Value>)> = None;
+        while at {
+            st.borrow_mut().cursor = Cursor::Row;
+            if self.is_list(st) && st.borrow().window_from_start && !st.borrow().window.is_empty() {
+                let key = self.row_key(&rec)?;
+                if !self.in_window(st, &key) {
+                    let r = self.read_window_block(st);
+                    block = Some(self.torn_down_on_error(st, r)?);
+                }
+            }
+            let r = self.arrive(st);
+            self.torn_down_on_error(st, r)?;
+            let here = self.row_key(&rec)?;
+            if here.len() == want.len()
+                && here
+                    .iter()
+                    .zip(&want)
+                    .all(|(a, b)| ops::compare(a, b).map(|o| o.is_eq()).unwrap_or(false))
+            {
+                found = true;
+                break;
+            }
+            at = self.nav_next(st, 1)?;
+        }
+        if found {
+            // A full block whose last row is the target: the read goes on. At the end of the view it reads
+            // the last two rows once more (handlers/TestPageRuntimeContracts.al:331, row 60). Where more
+            // rows follow, nothing pins what is read.
+            if let Some((true, last)) = &block {
+                if Self::same_key(&self.row_key(&rec)?, last) {
+                    if self.nav_next(st, 1)? {
+                        self.nav_next(st, -1)?;
+                        return unsupported(
+                            "GoToKey onto the last row of a full block of rows read, with more rows after it (not pinned)",
+                        );
+                    }
+                    let r = self.reread_last_rows(st);
+                    self.torn_down_on_error(st, r)?;
+                }
+            }
+        }
+        if !found {
+            // A miss reads on to the end of the view and then the last two rows once more
+            // (handlers/TestPageSystemPartListWindowContracts.al:194, key 100).
+            if block.is_some() && !st.borrow().window_eof {
+                let r = self.reread_last_rows(st);
+                self.torn_down_on_error(st, r)?;
+            }
+            rec.borrow_mut().fields = before_fields;
+            let mut s = st.borrow_mut();
+            s.cursor = before_cursor;
+            s.draft = before_draft;
+            drop(s);
+            if st.borrow().host.is_some() && !result_used {
+                return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+            }
+        }
+        Ok(Value::Boolean(found))
+    }
+
+    /// `FindFirstField` / `FindNextField` / `FindPreviousField`: walks the rows of the view from the
+    /// first row, the row after the current one, or the row before it, and stops on the first row
+    /// whose control shows `value`. The Variant is type-sensitive: a Text never matches an Integer
+    /// field (corpus handlers/TestPageAdvanced.al:302 Page_FindPreviousField_StringValue_*). A miss
+    /// leaves the cursor where it was (docs/probes-needed.md).
+    pub(super) fn page_find_field(&mut self, st: &St, how: &str, args: &mut [Value]) -> Result<Value, Signal> {
+        if !self.has_source(st) {
+            return unsupported(format!("{how} on a page without a source table"));
+        }
+        let Some(Value::TestControl(c)) = args.first() else {
+            return unsupported(format!("{how} without a control"));
+        };
+        let ControlTarget::Control(idx) = c.target else {
+            return unsupported(format!("{how} on a built-in control"));
+        };
+        let wanted = args.get(1).cloned().unwrap_or(Value::Null);
+        let result_used = self.ret_used;
+        let origin = self.row_key(&self.page_rec(st))?;
+        let (first_step, step) = match how {
+            "FindFirstField" => ("First", "Next"),
+            "FindNextField" => ("Next", "Next"),
+            _ => ("Previous", "Previous"),
+        };
+        let mut at = self.page_move(st, first_step)?;
+        while matches!(at, Value::Boolean(true)) {
+            let here = self.control_value(st, idx)?;
+            if Self::variant_matches(&here, &wanted) {
+                return Ok(Value::Boolean(true));
+            }
+            at = self.page_move(st, step)?;
+        }
+        let mut key = origin;
+        self.page_go_to_key(st, &mut key)?;
+        // A Find...Field whose result is not used raises when no row carries the value
+        // (handlers/TestPagePlatformPageSourceTable_Tests.al:125-131, the whole message; controls/W2FindFieldAssign.al:
+        // FindNextField_MissWithResultUnused and FindPreviousField_MissWithResultUnused, BC 27.5 and 29.0).
+        if !result_used {
+            return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+        }
+        Ok(Value::Boolean(false))
+    }
+
+    pub(super) fn variant_matches(here: &Value, wanted: &Value) -> bool {
+        let class = |v: &Value| match v {
+            Value::Text(_) | Value::Code(_) => 1,
+            Value::Integer(_) => 2,
+            Value::BigInteger(_) => 3,
+            Value::Decimal(_) => 4,
+            Value::Boolean(_) => 5,
+            Value::Date(..) => 6,
+            _ => 0,
+        };
+        class(here) == class(wanted)
+            && class(here) != 0
+            && ops::compare(here, wanted).map(|o| o.is_eq()).unwrap_or(false)
+    }
+
+    /// A `Trap()` set on a TestPage that belongs to a routine ends with the routine; one set through
+    /// a `var` parameter belongs to the caller (corpus handlers/TestPageTrapScope_Tests.al:1-15).
+    pub(crate) fn end_trap_scope(&mut self, frame: &crate::Frame, params: usize, by_var: &[bool]) {
+        let Some(trap) = &self.trap else { return };
+        // The trap ends with the last variable holding the page. A by-var parameter hands its page
+        // back to the caller, and a page another variable still holds keeps the trap alive (corpus
+        // handlers/TestPageTrapSharedScope_Tests.al:87 TrapSharedByTwoLocalsSurvivesWhenOneIsAssignedOut,
+        // handlers/TestPageTrapScope_Tests.al TrapAssignedOutOfALocalVariableSurvives).
+        let mut local_holders = 0;
+        let mut handed_back = false;
+        for (i, v) in frame.locals.iter().enumerate() {
+            if let Value::TestPage(st) = v {
+                if Rc::ptr_eq(st, trap) {
+                    local_holders += 1;
+                    if i < params && by_var.get(i).copied().unwrap_or(false) {
+                        handed_back = true;
+                    }
+                }
+            }
+        }
+        if local_holders == 0 || handed_back {
+            return;
+        }
+        let outside = Rc::strong_count(trap).saturating_sub(1 + local_holders);
+        if outside == 0 {
+            trap.borrow_mut().trapping = false;
+            self.trap = None;
+        }
+    }
+
+    // ---- pages opened by AL code ----------------------------------------------------------
+
+    /// The built-in action name `close_with` is asked for, as the `Action` the page reports. A
+    /// lookup-mode modal reads OK and Cancel as LookupOK and LookupCancel; a page closing itself
+    /// (`CurrPage.Close()`) reads as OK in a plain modal and as LookupCancel in lookup mode (corpus
+    /// handlers/TestPageModalQueryClose_Tests.al, TestPageModalSelfClose_Tests.al).
+    pub(super) fn close_action(&self, st: &St, requested: &str) -> String {
+        let (modal, lookup) = {
+            let s = st.borrow();
+            (s.modal, s.lookup)
+        };
+        match (requested, modal, lookup) {
+            ("OK", true, true) => "LookupOK".into(),
+            ("Cancel", true, true) => "LookupCancel".into(),
+            ("Close", true, true) => "LookupCancel".into(),
+            ("Close", true, false) => "OK".into(),
+            ("Close", false, _) => "Cancel".into(),
+            (other, _, _) => other.into(),
+        }
+    }
+
+    /// What a modal page reports when its handler invoked nothing: the page type decides (corpus
+    /// handlers/TestPageBuiltInActions_Tests.al (i)-(k), TestPageModalQueryClose_Tests.al (b) and (e)).
+    pub(super) fn unattended_action(&self, st: &St) -> &'static str {
+        let (lookup, object) = {
+            let s = st.borrow();
+            (s.lookup, s.object as usize)
+        };
+        let page_type = self.engine.object_facts[object].page_type_lower().to_string();
+        match page_type.as_str() {
+            "standarddialog" | "promptdialog" | "confirmationdialog" => "Cancel",
+            _ if lookup => "LookupCancel",
+            _ => "OK",
+        }
+    }
+
+    /// `Page.Run` / `Page.RunModal` (static and on a `Page` variable): opens the page for the
+    /// calling AL, hands it to the bound handler (or to the `TestPage.Trap()` variable for a plain
+    /// run), and for a modal run reports how it closed.
+    pub(crate) fn run_page_ui(&mut self, st: &St, record: Option<Rec>, modal: bool) -> Result<Value, Signal> {
+        let object = st.borrow().object;
+        let mut st = st.clone();
+        let mut trapped = false;
+        if !modal {
+            if let Some(trap) = self.trap.take() {
+                if trap.borrow().object != object {
+                    return unsupported("a Trap() for another page than the one Page.Run opens");
+                }
+                trap.borrow_mut().trapping = false;
+                // The trapped variable receives the page and keeps it open for the test. A `Page`
+                // variable that was set up first hands its instance over
+                // (handlers/TestPageOnInit_Tests.al:223 POI_SetterBeforeTrappedRun_...).
+                self.adopt_instance(&st, &trap);
+                st = trap;
+                trapped = true;
+            }
+        }
+        if st.borrow().open {
+            return unsupported("running a page that is already open");
+        }
+        if modal {
+            if let Some(handler) = self.take_typed_modal_handler(object) {
+                return self.answer_typed_modal(&st, record, handler);
+            }
+        }
+        let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
+        st.borrow_mut().modal = modal && !trapped;
+        let handler = self.open_page(&st, PageMode::Edit, record, if trapped { None } else { Some(kind) })?;
+        let Some(handler) = handler else {
+            return Ok(Value::Null);
+        };
+        self.answer_page(&st, handler, modal)
+    }
+
+    /// A `[ModalPageHandler]` typed as the Page itself (handlers/PSModalPageHandlerTyped.al): the handler gets the page
+    /// object the code ran, never opened. `GetRecord` gives the record `RunModal` was given (an empty one when none),
+    /// `LookupMode` is Yes, `SetRecord` and `GetRecord` work on it, `Response` arrives as None, and the value the
+    /// handler leaves in it is what `Page.RunModal` answers. Whether the page's own triggers run is not pinned, so a
+    /// page that declares one is refused.
+    pub(super) fn answer_typed_modal(
+        &mut self,
+        st: &St,
+        record: Option<Rec>,
+        handler: Handler,
+    ) -> Result<Value, Signal> {
+        for t in [
+            "oninit",
+            "onopenpage",
+            "onclosepage",
+            "onqueryclosepage",
+            "onaftergetrecord",
+            "onaftergetcurrrecord",
+            "onfindrecord",
+            "onnextrecord",
+        ] {
+            if self.declares(st, t) {
+                return unsupported(format!(
+                    "a Page-typed ModalPageHandler for a page that declares {t} (whether its triggers run is not pinned)"
+                ));
+            }
+        }
+        self.page_instance(st)?;
+        if self.has_source(st) {
+            if let Some(r) = &record {
+                let rec = self.page_rec(st);
+                rec.borrow_mut().fields = r.borrow().fields.clone();
+            }
+        }
+        {
+            let mut s = st.borrow_mut();
+            s.lookup = true;
+            s.typed_handler = true;
+            s.cursor = Cursor::Row;
+        }
+        let (hobject, hroutine, hinst) = handler;
+        let none = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == "None")
+            .unwrap_or(0) as i32;
+        let members: std::sync::Arc<[String]> = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        self.page_handler_depth += 1;
+        let handled = self.call(
+            hobject,
+            hroutine,
+            hinst,
+            vec![Value::TestPage(st.clone()), Value::Option(none, members)],
+        );
+        self.page_handler_depth -= 1;
+        {
+            let mut s = st.borrow_mut();
+            s.typed_handler = false;
+            s.cursor = Cursor::None;
+        }
+        let (_, finals) = handled?;
+        match finals.get(1) {
+            Some(v @ Value::Option(..)) => Ok(v.clone()),
+            other => unsupported(format!(
+                "a Page-typed ModalPageHandler left {} in Response",
+                other.describe()
+            )),
+        }
+    }
+
+    /// Hands the open page `st` to its handler, closes it if the handler left it open, and for a
+    /// modal page reports how it closed.
+    pub(super) fn answer_page(&mut self, st: &St, handler: Handler, modal: bool) -> Result<Value, Signal> {
+        let (hobject, hroutine, hinst) = handler;
+        let st = st.clone();
+        self.page_handler_depth += 1;
+        let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
+        self.page_handler_depth -= 1;
+        if let Err(e) = handled {
+            self.mark_closed(&st);
+            return Err(e);
+        }
+        if st.borrow().open {
+            let a = self.unattended_action(&st);
+            self.close_with(&st, a, true, false)?;
+            if st.borrow().open {
+                // The platform closes the page the handler left open, and OnQueryClosePage
+                // raises again: a second message, a second refusal. The caller gets control back
+                // with the page gone and no action completed; the page's writes stay (corpus
+                // handlers/TestPageQueryCloseMessageHandler_Tests.al:
+                // ErrorInQueryClosePage_MessageConsumed_CallerRegainsControl, ..._SettlesThePagesUncommittedWrite).
+                // A refusal by a plain `false` is not pinned for a modal page.
+                if !(modal && st.borrow().close_error) {
+                    return unsupported("a page whose OnQueryClosePage refused the platform's close");
+                }
+                self.mark_closed(&st);
+                st.borrow_mut().result = Some("None".into());
+            }
+        }
+        // A handler that left its page torn down closed it without OK (corpus
+        // testpageteardown/TestPageTeardown.al:1930; the non-lookup reading is docs-only).
+        if modal && !st.borrow().open && st.borrow().result.is_none() {
+            let a = self.close_action(&st, "Cancel");
+            st.borrow_mut().result = Some(a);
+        }
+        let result = st.borrow().result.clone();
+        st.borrow_mut().modal = false;
+        if !modal {
+            return Ok(Value::Null);
+        }
+        let name = result.unwrap_or_else(|| "None".into());
+        let members: std::sync::Arc<[String]> = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        let ordinal = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == name)
+            .unwrap_or(0) as i32;
+        Ok(Value::Option(ordinal, members))
+    }
+
+    // ---- writing ------------------------------------------------------------------------
+}

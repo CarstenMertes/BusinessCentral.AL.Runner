@@ -752,7 +752,7 @@ fn builtin_calls_carry_the_overload_id() {
         panic!()
     };
     assert!(
-        matches!(&**e, ir::Expr::Builtin { id, receiver: None, args, .. } if id == "System.Format#1" && args.len() == 1)
+        matches!(&**e, ir::Expr::Builtin { id, receiver: None, args, .. } if id.name() == "System.Format#1" && args.len() == 1)
     );
 }
 
@@ -1507,7 +1507,7 @@ fn record_methods_know_whether_their_result_is_used() {
     let (_, l) = lower_src(&src);
     let p = l.program.objects[1].routines.iter().find(|r| r.name == "P").unwrap();
     assert!(
-        matches!(&p.body[0], ir::Stmt::Expr(ir::Expr::Builtin { id, receiver: Some(r), ret_used: false, .. }) if id == "Record.Insert#1" && **r == ir::Arg::Ref(ir::Place::Local(0))),
+        matches!(&p.body[0], ir::Stmt::Expr(ir::Expr::Builtin { id, receiver: Some(r), ret_used: false, .. }) if id.name() == "Record.Insert#1" && **r == ir::Arg::Ref(ir::Place::Local(0))),
         "{:?}",
         p.body[0]
     );

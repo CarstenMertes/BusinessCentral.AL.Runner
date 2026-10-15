@@ -13,6 +13,7 @@ pub mod xml;
 pub mod xmlport;
 
 pub mod assumptions;
+pub mod builtin_id;
 pub mod catalog;
 pub mod collation;
 pub mod collections;

@@ -76,73 +76,37 @@ pub fn junit_with(
     assumptions: &dyn Fn(&CaseId) -> Vec<Assumption>,
     bc_build: Option<&str>,
 ) -> String {
-    let mut by_cu: std::collections::BTreeMap<u32, Vec<(&CaseId, Outcome)>> = Default::default();
+    type Row<'a> = (&'a CaseId, Outcome, Vec<Assumption>);
+    let mut by_cu: std::collections::BTreeMap<u32, Vec<Row>> = Default::default();
     for c in oracle.iter().filter(|c| !c.bc_failed) {
-        by_cu.entry(c.id.codeunit).or_default().push((&c.id, outcome(&c.id)));
+        let o = outcome(&c.id);
+        // Only a pass carries its assumptions in this dialect.
+        let marks = if matches!(o, Outcome::Pass) {
+            assumptions(&c.id)
+        } else {
+            Vec::new()
+        };
+        by_cu.entry(c.id.codeunit).or_default().push((&c.id, o, marks));
     }
-    let all = by_cu.values().flatten();
-    let total = all.clone().count();
-    let failures = all.clone().filter(|(_, o)| matches!(o, Outcome::Fail(_))).count();
-    let skipped = all.filter(|(_, o)| matches!(o, Outcome::NotRun(_))).count();
-    let mut s = format!(
-        "<?xml version='1.0' encoding='utf-8'?>\n<testsuites tests=\"{total}\" failures=\"{failures}\" skipped=\"{skipped}\">\n"
-    );
-    if let Some(b) = bc_build {
-        s.push_str(&format!(
-            "  <properties><property name=\"bc_build\" value=\"{}\" /></properties>\n",
-            esc(b)
-        ));
-    }
-    for (cu, cases) in &by_cu {
-        s.push_str(&format!(
-            "  <testsuite name=\"Codeunit {cu}\" tests=\"{}\" time=\"{:.3}\">\n",
-            cases.len(),
-            cases.iter().map(|(id, _)| time(id)).sum::<f64>()
-        ));
-        for (id, o) in cases {
-            let head = format!(
-                "    <testcase classname=\"Codeunit {cu}\" name=\"{}\" time=\"{:.3}\"",
-                esc(&id.name),
-                time(id)
-            );
-            match o {
-                Outcome::Pass => {
-                    let marks = assumptions(id);
-                    if marks.is_empty() {
-                        s.push_str(&format!("{head} />\n"));
-                    } else {
-                        s.push_str(&format!(
-                            "{head}><properties><property name=\"assumptions\" value=\"{}\" /></properties></testcase>\n",
-                            esc(&al_testrun::flagged::id_list(&marks))
-                        ));
-                    }
-                }
-                Outcome::Fail(m) => s.push_str(&format!("{head}><failure message=\"{}\" /></testcase>\n", esc(m))),
-                Outcome::NotRun(m) => s.push_str(&format!("{head}><skipped message=\"{}\" /></testcase>\n", esc(m))),
-            }
-        }
-        s.push_str("  </testsuite>\n");
-    }
-    s.push_str("</testsuites>\n");
-    s
-}
-
-/// XML text: markup characters escaped, and the control characters XML 1.0 forbids
-/// (all below U+0020 but tab, LF, CR) replaced by `?`.
-fn esc(t: &str) -> String {
-    t.chars()
-        .map(|c| {
-            if (c as u32) < 0x20 && !matches!(c, '\t' | '\n' | '\r') {
-                '?'
-            } else {
-                c
-            }
+    let suites: Vec<al_testrun::junit::Suite> = by_cu
+        .iter()
+        .map(|(cu, cases)| al_testrun::junit::Suite {
+            name: format!("Codeunit {cu}"),
+            codeunit: *cu,
+            cases: cases
+                .iter()
+                .map(|(id, o, marks)| al_testrun::junit::Case {
+                    class: format!("Codeunit {cu}"),
+                    name: &id.name,
+                    time: time(id),
+                    outcome: o,
+                    assumptions: marks,
+                    stack: String::new(),
+                })
+                .collect(),
         })
-        .collect::<String>()
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
+        .collect();
+    al_testrun::junit::write(&suites, al_testrun::junit::Dialect::Oracle, bc_build, 0.0)
 }
 
 #[cfg(test)]
@@ -347,7 +311,8 @@ mod tests {
     fn junit_never_emits_characters_xml_forbids() {
         // XML 1.0 allows no control characters but tab, LF and CR; a reason that carries one
         // (a qualified-name separator) made the CI artifact unparseable.
-        let xml = esc("a\u{1f}b\u{0}c\td");
+        let outcome = |_: &CaseId| Outcome::NotRun("a\u{1f}b\u{0}c\td".into());
+        let xml = junit(&oracle(), &outcome, &|_| 0.0, None);
         assert!(
             !xml.chars()
                 .any(|c| (c as u32) < 0x20 && !matches!(c, '\t' | '\n' | '\r')),

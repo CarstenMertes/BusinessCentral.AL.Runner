@@ -1,0 +1,161 @@
+# Corpus writer guide
+
+For an agent that writes probe tests for the corpus without the context of the person who started this. Read it fully once, then work from the checklists.
+
+## What you do
+
+al-runtime-rs may only implement AL behaviour that a corpus test pins (CLAUDE.md, hard rules 3 and 4). A "probe" is a test in the corpus repo that was **measured on real Business Central** and asserts exactly what BC did. You write probes for the open rows of `docs/probes-needed.md`, or for a whole topic (all members of a type with their edge cases and error texts).
+
+You never change al-runtime-rs code. You write AL in the corpus repo, measure it on a local BC 29 container, make it green there, and hand the branch over.
+
+## Repos and branches
+
+| What | Where |
+|---|---|
+| Corpus repo | `https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests` (local clone, call it `$CORPUS`) |
+| Corpus branch the runtime pins | `al-runtime-rs` (only moves when staging is green on 27, 28, 29) |
+| Integration branch | `al-runtime-rs-staging` (the publisher merges green writer branches here and runs the full matrix) |
+| Your branch | `al-runtime-rs-writer-<name>`, created from the current `al-runtime-rs-staging`; merge staging into it before you hand it over |
+| Local BC container | `https://github.com/StefanMaron/MsDyn365Bc.On.Linux` (call it `$BCLINUX`) |
+| Tools for this guide | `tools/corpus-writer/` in al-runtime-rs |
+
+Never push to `al-runtime-rs` or `al-runtime-rs-staging`, never open a pull request to `master`. Never edit or delete an existing test (add new ones). Never put secrets in files.
+
+The corpus app is `tests/al-language` (Cloud target, BC 27 symbols, runtime 16.0). Two more apps exist: `tests/al-language-onprem` (Target OnPrem: for `Scope = OnPrem` objects such as `Database.SID`, `Report.SaveAsPdf`, `Environment Info Test Library`) and `tests/al-language-onprem-dotnet` (needs AL compiler 18 or newer).
+
+## Object ids and names
+
+Every object id in the corpus app must lie in `idRanges` of `tests/al-language/app.json` and be unique in the whole tree (`.github/scripts/check-object-ids.py` checks both and runs in CI). Ranges per writer:
+
+| Writer | Ids |
+|---|---|
+| Publisher (existing objects) | 60000-60999, 67000-69999 |
+| Laptop writer | **70000-74999** (already in `idRanges` on `al-runtime-rs-staging`) |
+
+Use ids only from your own range. Object **names** must be unique per object type in the app and at most 30 characters: give them a short prefix of your own (for example `LT `) so they cannot clash with the publisher's (`PA `, `W1 ` to `W7 `, `PX `, ...). Both gates fail the build; the object-id gate also catches two branches that use the same id once they are merged.
+
+## Local setup (once)
+
+You need Docker, Python 3, .NET (for the AL compiler) and about **12 GB of free RAM**: the BC container needs about 5-6 GB and the SQL container keeps its database in a 4 GB tmpfs. The first start downloads about 3 GB of artifacts and takes 5-10 minutes; later starts reuse the cache volumes. Linux is the supported host. On macOS use `docker-compose.macos.yml` and `MacOS.md` of bc-linux; on Windows use WSL2 with Docker Desktop and run everything inside WSL (not tried by the publisher).
+
+1. Clone bc-linux and the corpus; check out your branch:
+   ```bash
+   git clone git@github.com:StefanMaron/MsDyn365Bc.On.Linux.git ~/bc-linux
+   git clone https://github.com/StefanMaron/BusinessCentral.AL.Language.Tests ~/corpus
+   cd ~/corpus && git checkout -b al-runtime-rs-writer-<name> origin/al-runtime-rs-staging
+   ```
+2. Start **BC 29.0.54011.55816** (the build the CI legs pin; same platform as the oracle):
+   ```bash
+   cd ~/bc-linux
+   BC_VERSION=29.0 BC_ARTIFACT_URL=https://bcartifacts-exdbf9fwegejdqak.b02.azurefd.net/sandbox/29.0.54011.55816/w1 docker compose up -d --wait
+   ```
+   The database is wiped when the containers are recreated (`docker compose down`, then `up`). That is how you get a **fresh install** (see pitfalls).
+3. Install the AL compiler and stage the symbols the corpus needs:
+   ```bash
+   cd ~/bc-linux
+   eval "$(bash scripts/install-al-compiler.sh 29.0)"          # prints AL_BIN_DIR; put it on PATH
+   export PATH="$AL_BIN_DIR:$PATH"
+   ARTIFACTS=<the artifact dir inside the bc volume, or the folder download-artifacts.sh used>
+   python3 scripts/stage-symbols.py --app-json ~/corpus/tests/al-language/app.json --artifact-dir "$ARTIFACTS" --out-dir ~/corpus/tests/al-language/.alpackages
+   ```
+   (`al-compile` from `StefanMaron/al-smart-compile` is an optional wrapper that does the symbol lookup for you; `run-corpus.sh` uses it when it is installed.)
+4. Publish the fixture app the corpus depends on (once per fresh database):
+   ```bash
+   cd ~/corpus/tests/al-language-internals-fixture && AL compile /project:. /packagecachepath:../al-language/.alpackages /out:fixture.app
+   cd ~/bc-linux && bash -c '. scripts/publish-app.sh; bc_publish_app ~/corpus/tests/al-language-internals-fixture/fixture.app'
+   ```
+5. Check the setup with a known test: `export CORPUS=~/corpus BCLINUX=~/bc-linux; SYMS=BC27PLUS,BC28PLUS,BC29PLUS tools/corpus-writer/run-corpus.sh 69100` (in al-runtime-rs). Expect "passed 1 failed 0".
+
+Timings on a laptop-class machine: compiling and publishing the corpus app takes 1 to 2 minutes per run, running one test codeunit a few seconds, a batch of 100 to 150 tests about 5 minutes with observe, verify and fixes.
+
+Environment variables used by the tools: `CORPUS` (corpus clone), `BCLINUX` (bc-linux clone), `WORK` (scratch folder, default `~/.cache/corpus-writer`), `DRAFTS` (folder with your draft AL files, default `$WORK/drafts`), `SYMS` (preprocessor symbols; always `BC27PLUS,BC28PLUS,BC29PLUS` on the BC 29 container so `#if BC29PLUS` code is compiled the way CI compiles it for 29).
+
+## The loop: observe, then assert
+
+You write tests that only **observe**, run them once on the container, and a script turns what BC did into assertions. You never type an expected value by hand.
+
+1. **Draft** the AL in `$DRAFTS/<topic>/` (any sub folders). Every test ends with `Observer.Finish();` and records facts with the helper `"Probe Observer"` (codeunit 69160, in `tests/al-language/_fixtures/ProbeObserver.Codeunit.al`):
+   ```al
+   [Test]
+   procedure Label_Split_OneSeparator()
+   var
+       Observer: Codeunit "Probe Observer";
+   begin
+       Observer.Observe('parts', Format(MyLabel.Split(',').Count()));   // a fact: name and value (Text)
+       asserterror SomethingThatShouldFail();
+       Observer.ObserveError('name');                                   // records text and code of the error, clears it
+       Observer.Finish();                                               // ends the observation form
+   end;
+   ```
+   Good examples to copy the style from: `tests/al-language/types/PXEnumRecordRef.al`, `types/PRDecimalToInteger.al`, `types/PUTestFieldErrorInfo.al`, `pageext/PCCurrRecordReads.al` (pages, logs), `query/PRQueryOpenColumn.al`.
+2. **Run the pipeline** (observes, converts to assertions, verifies):
+   ```bash
+   export CORPUS=~/corpus BCLINUX=~/bc-linux SYMS=BC27PLUS,BC28PLUS,BC29PLUS
+   python3 tools/corpus-writer/pipeline.py <topic> <fixes.py|-> "<test codeunit ids, a|b|c>"
+   ```
+   The test codeunit ids: `python3 tools/corpus-writer/testids.py $DRAFTS/<topic>`. `pipeline.py` copies the drafts into the corpus app, switches the helper to its observing variant, runs every test (they fail on purpose with `OBSERVE:` messages), rewrites each `Observer.Finish();` into `Observer.Expect(...)` lines plus `Observer.Verify();`, switches the helper back, and runs the result. It prints `0 failing` when everything is green and `FAIL ...` lines otherwise. Long observations continue in generated `_More` tests; the script handles it.
+3. **Fix what failed** in `fixes.py` (a Python file the pipeline runs after copying; helpers in `tools/corpus-writer/fixes-lib.py`: `drop_test`, `sub`, `noerr`). Typical causes: a statement you thought would raise does not (turn `asserterror X; ObserveError` into `X; Observe('..','no error')`), a test that fails by itself (drop it), a value that varies per run (drop the observation or hide it, see rules). Repeat step 2.
+4. **Check the file headers**: each new file starts with a comment block in the style of the existing files (BC Documentation link, Scope, Fixtures used, "Probe: written against ...", the facts in plain words, BC versions).
+5. **Run the repo gates** and commit:
+   ```bash
+   cd ~/corpus
+   python3 .github/scripts/check-object-ids.py && python3 .github/scripts/check-singleinstance-fixture-owners.py && python3 .github/scripts/check-install-triggers.py .
+   for t in .github/scripts/test-*.py; do python3 $t || break; done
+   ```
+   Commit small and often, message `test: <what is pinned>`.
+
+Compile-error facts ("does X compile, and which diagnostic") are **must-not-compile cases**, not tests: `tests/must-not-compile/README.md` explains the format; `tools/corpus-writer/mnc-fill.py scratch.al tests/must-not-compile/cases/NNNN-name.al` runs the compiler and writes the case with the real diagnostic (needs `AL` and `SYMBOLS` environment variables: the AL compiler command and the symbol folder). Cases must hold on AL 16, 17, 18 and 30 (`.github/scripts/check-must-not-compile.py`).
+
+## Rules learned the hard way
+
+Each of these broke a published batch.
+
+1. **Assert only the asked fact.** No dumps of rows, datasets or metadata, no counts of Microsoft table rows, no generated ids (control, action, data item, column, task, test ids), no GUIDs, no company name or id, no user, session or host values, no dates of today, no app or platform versions, no time-of-day, no runner or identity values (`ClientType`, `UserId`, client computer name, error stack frames of the runner), no BC build texts. Prefer relations (equal, not equal, before, after).
+2. **No tests that test the runner**: anything that reads differently when the test host differs (websocket runner on 27, altool on 28 and 29): the object named in "tried to invoke" errors, "UI handlers were not executed", the stack below the test procedure, session state at the start of a test, lock timeouts against a background session, TestPage field ids.
+3. **Never write a codeunit with `Subtype = Install` or `Upgrade`.** An install trigger runs when the app is published; one that raises breaks the app on every BC version and turns the whole matrix red. `check-install-triggers.py` rejects them.
+4. **`ApplicationArea = All;` on every page that a TestPage opens** (BC 28 and later cannot find controls otherwise).
+5. **Version differences are real**: guard them with `#if BC29PLUS` / `#if BC28PLUS` / (`not BC28PLUS` for 27) and assert both variants; or, when only the value of a platform table differs, key it on the version like `record/PFFeatureKeyColumns.al` does (`ApplicationSystemConstants` text is `W1 29.0` - country first).
+6. **A test codeunit must contain at least one `[Test]`** (an empty one makes the run report "no test results" and fails the leg). Helper `[Test]`-less codeunits are fine.
+7. **A SingleInstance codeunit (a log) must be used by exactly one test codeunit** (`check-singleinstance-fixture-owners.py`). It also counts a codeunit as using everything that appears LATER in the same file: put tables and pages that declare log variables above the first codeunit of the file.
+8. **No writes inside a `[TryFunction]`** (the test container sets `DisableWriteInsideTryFunctions`); use `asserterror`. `asserterror` rolls back the writes made inside it and, in a test, the earlier uncommitted ones.
+9. **Rows persist between the tests of one codeunit.** Every test starts with its own `DeleteAll()` of the tables it uses. A duplicate-key insert into a table without a BLOB raises only at the end of the test; never leave one pending.
+10. **An `asserterror` around a statement that does not raise fails the whole test**; when unsure, observe the plain statement and, if needed, give it its own test. A `[HandlerFunctions]` handler the test does not trigger fails the test.
+11. **Cloud target only in `tests/al-language`**: `Scope = OnPrem` objects give AL0296 there (a lot of platform tables, `File`, `TemporaryPath`, ...). Put those probes in the OnPrem app.
+12. **Own tables for every probe**; never write to Microsoft tables. Never create or delete companies, never touch the encryption key (the database is shared by every test).
+13. A test must restore session state it changed (`WorkDate`, `CurrentTransactionType`, application area, language).
+14. Keep one fact family per test, at most about 25 observations; many small tests beat one large one.
+
+## Pitfalls
+
+- **Upgrade versus fresh install.** `run-corpus.sh` bumps the app version on every run, so after the first run the container does an *upgrade*: install triggers do **not** run. A broken install trigger only shows on a fresh database. The gate rejects install codeunits, so you should not have any; if you ever add one on purpose, test it with `docker compose down && docker compose up -d --wait` (wipes the database; republish the fixture) and then one run.
+- **A lower or equal app version is silently ignored** by the container. The script keeps the counter in `$WORK/ver.n`; if the container was recreated, delete it.
+- Do not run two compile/publish runs at the same time against one container.
+- If the container is out of memory the whole machine suffers: close other heavy programs. `docker stats` shows the use.
+- After each run the script restores `app.json` and generated layout files; do not commit `tests/al-language/app.json` changes of version or `preprocessorSymbols`.
+- Test pages open slowly the first time after a restart (a first failure such as "page definition has changed" disappears on the second run).
+
+## Handing a branch over
+
+When everything is green locally on BC 29 and the gates pass:
+
+1. `git fetch && git merge origin/al-runtime-rs-staging` into your branch; re-run the gates and your new tests once.
+2. Push `al-runtime-rs-writer-<name>`.
+3. Tell the publisher (SendMessage or the coordinator): branch, last commit, number of tests, rows or topic pinned, and anything you dropped and why.
+
+The publisher merges your branch into staging, dispatches the full matrix and answers with failures. A 27 or 28 difference found there is fixed with a version guard, not by dropping the probe, unless it is a runner artefact (rule 2).
+
+## Running the GitHub CI yourself
+
+CI is only the final check for 27 and 28; you are green on 29 locally first.
+
+```bash
+gh workflow run 282763884 -R StefanMaron/BusinessCentral.AL.Language.Tests --ref <your branch>
+gh run list -R StefanMaron/BusinessCentral.AL.Language.Tests --branch <your branch> --limit 3
+python3 tools/corpus-writer/ci-failures.py <run id>    # failing tests per BC version from the junit artifacts
+```
+
+The matrix has ten Cloud legs (27.0, 27.3, 27.5, 28.0 to 28.5, 29.0) and ten OnPrem legs, about 20-30 minutes in total. **Concurrency is per ref**: starting a new run on a branch cancels the run still going on the same branch (observed); runs on different branches run in parallel. So push, dispatch once, wait for the result, then fix.
+
+## Where the facts go
+
+Put the result in the test file header, not only in the commit. The runtime reads the header and the assertions. When a row of `docs/probes-needed.md` is settled by your tests, say which row in the handover message; the publisher updates the document.

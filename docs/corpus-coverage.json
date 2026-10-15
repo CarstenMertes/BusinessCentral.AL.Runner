@@ -1,7 +1,7 @@
 {
-  "corpus_commit": "2cc72c12dac99a9a6ab33478c7cb6a92b084e311",
+  "corpus_commit": "f716ca0a31a3f0511d26bfe33718311ce2a39388",
   "overloads": 1729,
-  "pinned": 1064,
+  "pinned": 1074,
   "types": [
     {
       "methods": [
@@ -107,7 +107,7 @@
           "id": "Blob.Length#1",
           "pinned": true,
           "signature": "Blob.Length inst () -> Integer",
-          "site": "streams/StTBigText.al:290"
+          "site": "misc/lt-probes-needed-1/PnABlobLength.al:28"
         }
       ],
       "overloads": 6,
@@ -396,13 +396,13 @@
           "id": "Database.LastUsedRowVersion#1",
           "pinned": true,
           "signature": "Database.LastUsedRowVersion static () -> BigInteger",
-          "site": "platform/lt-platform-members/PlTDatabase.al:228"
+          "site": "misc/lt-probes-needed-2/PnBRecordMisc.al:214"
         },
         {
           "id": "Database.LockTimeout#1",
           "pinned": true,
           "signature": "Database.LockTimeout static (?LockTimeout: Boolean) -> Boolean?",
-          "site": "record/TestProbeRecordRefContracts.al:646"
+          "site": "misc/lt-probes-needed-2/PnBRecordMisc.al:221"
         },
         {
           "id": "Database.LockTimeoutDuration#1",
@@ -1180,7 +1180,7 @@
           "id": "FieldRef.OptionString#1",
           "pinned": true,
           "signature": "FieldRef.OptionString inst () -> Text",
-          "site": "session/TestMiscComplete.al:28"
+          "site": "misc/lt-probes-needed-2/PnBRecordMisc.al:137"
         },
         {
           "id": "FieldRef.Record#1",
@@ -2014,7 +2014,7 @@
           "id": "HttpContent.ReadAs#1",
           "pinned": true,
           "signature": "HttpContent.ReadAs inst (var InStream: InStream) -> Boolean?",
-          "site": "network/lt-http/HttpContent.al:263"
+          "site": "misc/lt-probes-needed-5/PnE12HttpContent.al:90"
         },
         {
           "id": "HttpContent.ReadAs#2",
@@ -2057,13 +2057,13 @@
           "id": "HttpHeaders.Add#1",
           "pinned": true,
           "signature": "HttpHeaders.Add inst (Name: Text, Value: SecretText) -> Boolean?",
-          "site": "network/lt-http/HttpHeaders.al:488"
+          "site": "network/lt-http/HttpHeaders.al:486"
         },
         {
           "id": "HttpHeaders.Add#2",
           "pinned": true,
           "signature": "HttpHeaders.Add inst (Name: Text, Value: Text) -> Boolean?",
-          "site": "network/TestHttpRequestMessage.al:41"
+          "site": "misc/lt-probes-needed-5/PnE12HttpContent.al:119"
         },
         {
           "id": "HttpHeaders.Clear#1",
@@ -2109,9 +2109,9 @@
         },
         {
           "id": "HttpHeaders.GetValues#3",
-          "pinned": false,
+          "pinned": true,
           "signature": "HttpHeaders.GetValues inst (Key: Text, Values: List of [Text]) -> Boolean?",
-          "site": null
+          "site": "misc/lt-probes-needed-5/PnE12HttpContent.al:72"
         },
         {
           "id": "HttpHeaders.Keys#1",
@@ -2123,7 +2123,7 @@
           "id": "HttpHeaders.Remove#1",
           "pinned": true,
           "signature": "HttpHeaders.Remove inst (Name: Text) -> Boolean?",
-          "site": "network/TestHttpRequestMessage.al:40"
+          "site": "misc/lt-probes-needed-5/PnE12HttpContent.al:117"
         },
         {
           "id": "HttpHeaders.TryAddWithoutValidation#1",
@@ -2135,11 +2135,11 @@
           "id": "HttpHeaders.TryAddWithoutValidation#2",
           "pinned": true,
           "signature": "HttpHeaders.TryAddWithoutValidation inst (Name: Text, Value: Text) -> Boolean?",
-          "site": "network/lt-http/HttpHeaders.al:406"
+          "site": "network/lt-http/HttpHeaders.al:404"
         }
       ],
       "overloads": 14,
-      "pinned": 9,
+      "pinned": 10,
       "type": "HttpHeaders"
     },
     {
@@ -2294,7 +2294,7 @@
           "id": "InStream.Position#1",
           "pinned": true,
           "signature": "InStream.Position inst (?Length: BigInteger) -> BigInteger?",
-          "site": "streams/StTCopyBlob.al:79"
+          "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:154"
         },
         {
           "id": "InStream.Read#1",
@@ -3612,9 +3612,9 @@
         },
         {
           "id": "JsonValue.ReadFrom#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonValue.ReadFrom inst (Data: Text) -> Boolean?",
-          "site": null
+          "site": "misc/lt-probes-needed-1/PnAJsonReadKinds.al:31"
         },
         {
           "id": "JsonValue.SelectToken#1",
@@ -3720,7 +3720,7 @@
         }
       ],
       "overloads": 37,
-      "pinned": 27,
+      "pinned": 28,
       "type": "JsonValue"
     },
     {
@@ -3735,13 +3735,13 @@
           "id": "KeyRef.FieldCount#1",
           "pinned": true,
           "signature": "KeyRef.FieldCount inst () -> Integer",
-          "site": "record/TestProbeRecordRefContracts.al:228"
+          "site": "misc/lt-probes-needed-2/PnBErrorsCollections.al:391"
         },
         {
           "id": "KeyRef.FieldIndex#1",
           "pinned": true,
           "signature": "KeyRef.FieldIndex inst (Index: Integer) -> FieldRef",
-          "site": "record/TestFieldDataClassificationVirtualTable.al:131"
+          "site": "misc/lt-probes-needed-2/PnBErrorsCollections.al:392"
         },
         {
           "id": "KeyRef.Record#1",
@@ -4143,19 +4143,19 @@
           "id": "ModuleInfo.AppVersion#1",
           "pinned": true,
           "signature": "ModuleInfo.AppVersion inst () -> Version",
-          "site": "platform/lt-platform-members/PlTNavApp.al:24"
+          "site": "misc/lt-probes-needed-1/PnAModuleInfoNull.al:25"
         },
         {
           "id": "ModuleInfo.DataVersion#1",
           "pinned": true,
           "signature": "ModuleInfo.DataVersion inst () -> Version",
-          "site": "platform/lt-platform-members/PlTNavApp.al:25"
+          "site": "misc/lt-probes-needed-1/PnAModuleInfoNull.al:26"
         },
         {
           "id": "ModuleInfo.Dependencies#1",
           "pinned": true,
           "signature": "ModuleInfo.Dependencies inst () -> List of [ModuleDependencyInfo]",
-          "site": "platform/lt-platform-members/PlTNavApp.al:25"
+          "site": "misc/lt-probes-needed-1/PnAModuleInfoNull.al:28"
         },
         {
           "id": "ModuleInfo.Id#1",
@@ -4179,7 +4179,7 @@
           "id": "ModuleInfo.Publisher#1",
           "pinned": true,
           "signature": "ModuleInfo.Publisher inst () -> Text",
-          "site": "platform/lt-platform-members/PlTNavApp.al:24"
+          "site": "misc/lt-probes-needed-1/PnAModuleInfoNull.al:23"
         }
       ],
       "overloads": 7,
@@ -4234,7 +4234,7 @@
           "id": "NavApp.GetModuleInfo#1",
           "pinned": true,
           "signature": "NavApp.GetModuleInfo static (AppId: Guid, var Info: ModuleInfo) -> Boolean?",
-          "site": "platform/lt-platform-members/PlTNavApp.al:124"
+          "site": "misc/lt-probes-needed-1/PnAModuleInfoNull.al:21"
         },
         {
           "id": "NavApp.GetResource#1",
@@ -4792,7 +4792,7 @@
           "id": "Query.ColumnNo#1",
           "pinned": true,
           "signature": "Query.ColumnNo inst (Column: Any) -> Integer",
-          "site": "query/TestQueryObject.al:355"
+          "site": "misc/lt-probes-needed-1/PnAQueryFiltersColumnNo.al:135"
         },
         {
           "id": "Query.GetFilter#1",
@@ -4804,7 +4804,7 @@
           "id": "Query.GetFilters#1",
           "pinned": true,
           "signature": "Query.GetFilters inst () -> Text",
-          "site": "query/PWQueryContracts.al:251"
+          "site": "misc/lt-probes-needed-1/PnAQueryFiltersColumnNo.al:23"
         },
         {
           "id": "Query.Open#1",
@@ -4888,13 +4888,13 @@
           "id": "Query.SetFilter#1",
           "pinned": true,
           "signature": "Query.SetFilter inst (Column: Any, String: Text, ?Value: Any*)",
-          "site": "query/PRQueryOpenColumn.al:202"
+          "site": "misc/lt-inferred-behaviors/P69QueryTwoOuters.al:216"
         },
         {
           "id": "Query.SetRange#1",
           "pinned": true,
           "signature": "Query.SetRange inst (Column: Any, ?FromValue: Any, ?ToValue: Any)",
-          "site": "query/PRQueryOpenColumn.al:163"
+          "site": "misc/lt-inferred-behaviors/P69NsConsumers.al:165"
         },
         {
           "id": "Query.TopNumberOfRows#1",
@@ -4925,7 +4925,7 @@
           "id": "Record.AreFieldsLoaded#1",
           "pinned": true,
           "signature": "Record.AreFieldsLoaded inst (Fields: Any*) -> Boolean",
-          "site": "record/TestRecordFlowField.al:257"
+          "site": "misc/lt-probes-needed-2/PnBErrorsCollections.al:504"
         },
         {
           "id": "Record.Ascending#1",
@@ -4955,7 +4955,7 @@
           "id": "Record.ClearMarks#1",
           "pinned": true,
           "signature": "Record.ClearMarks inst ()",
-          "site": "record/TestRecordFind.al:303"
+          "site": "misc/lt-probes-needed-3/PnC15PropertyForms.al:50"
         },
         {
           "id": "Record.Consistent#1",
@@ -5075,7 +5075,7 @@
           "id": "Record.FieldName#1",
           "pinned": true,
           "signature": "Record.FieldName inst (Field: Any) -> Text",
-          "site": "record/TestRecordCaptionSeparators.al:120"
+          "site": "misc/lt-inferred-behaviors/P69OptionInText.al:172"
         },
         {
           "id": "Record.FieldNo#1",
@@ -5153,7 +5153,7 @@
           "id": "Record.GetFilters#1",
           "pinned": true,
           "signature": "Record.GetFilters inst () -> Text",
-          "site": "filters/W4Filters.al:54"
+          "site": "errors/lt-last-error-and-events/P70_06RunModalField.al:169"
         },
         {
           "id": "Record.GetPosition#1",
@@ -5183,7 +5183,7 @@
           "id": "Record.HasFilter#1",
           "pinned": true,
           "signature": "Record.HasFilter inst () -> Boolean",
-          "site": "record/PWFilterGroupOr.al:75"
+          "site": "misc/lt-probes-needed-6/PnF10SetFilterEmpty.al:45"
         },
         {
           "id": "Record.HasLinks#1",
@@ -5231,7 +5231,7 @@
           "id": "Record.LoadFields#1",
           "pinned": true,
           "signature": "Record.LoadFields inst (Fields: Any*) -> Boolean?",
-          "site": "records/W4PlatformAndMeta.al:456"
+          "site": "misc/lt-probes-needed-6/PnF30LoadFields.al:50"
         },
         {
           "id": "Record.LockTable#1",
@@ -5243,13 +5243,13 @@
           "id": "Record.Mark#1",
           "pinned": true,
           "signature": "Record.Mark inst (?Mark: Boolean) -> Boolean?",
-          "site": "record/ProbePropertyAssignmentForms.al:22"
+          "site": "misc/lt-probes-needed-3/PnC15PropertyForms.al:39"
         },
         {
           "id": "Record.MarkedOnly#1",
           "pinned": true,
           "signature": "Record.MarkedOnly inst (?MarkedOnly: Boolean) -> Boolean?",
-          "site": "record/ProbePropertyAssignmentForms.al:28"
+          "site": "misc/lt-probes-needed-3/PnC15PropertyForms.al:44"
         },
         {
           "id": "Record.Modify#1",
@@ -5333,13 +5333,13 @@
           "id": "Record.SetAutoCalcFields#1",
           "pinned": true,
           "signature": "Record.SetAutoCalcFields inst (?Field1: Any*) -> Boolean?",
-          "site": "record/TestCalcFieldsTruncateUniqueContracts.al:256"
+          "site": "misc/lt-probes-needed-1/PnABlobLength.al:83"
         },
         {
           "id": "Record.SetBaseLoadFields#1",
           "pinned": true,
           "signature": "Record.SetBaseLoadFields inst () -> Boolean?",
-          "site": "record/TestRecordExtended.al:78"
+          "site": "misc/lt-probes-needed-2/PnBErrorsCollections.al:508"
         },
         {
           "id": "Record.SetCurrentKey#1",
@@ -5387,7 +5387,7 @@
           "id": "Record.SetView#1",
           "pinned": true,
           "signature": "Record.SetView inst (String: Text)",
-          "site": "platform/lt-platform-members/PlTFilterPageBuilder.al:302"
+          "site": "misc/lt-probes-needed-6/PnF27RecordRefCopy.al:146"
         },
         {
           "id": "Record.TableCaption#1",
@@ -5399,7 +5399,7 @@
           "id": "Record.TableName#1",
           "pinned": true,
           "signature": "Record.TableName inst () -> Text",
-          "site": "record/TestRecordCaptionSeparators.al:111"
+          "site": "misc/lt-inferred-behaviors/P69NsConsumers.al:50"
         },
         {
           "id": "Record.TestField#1",
@@ -5586,13 +5586,13 @@
           "id": "RecordId.GetRecord#1",
           "pinned": true,
           "signature": "RecordId.GetRecord inst () -> RecordRef",
-          "site": "recordref/TestRecordIdGetRecordContracts.al:51"
+          "site": "misc/lt-probes-needed-4/PnD02_RecordIdGetRecord.al:57"
         },
         {
           "id": "RecordId.TableNo#1",
           "pinned": true,
           "signature": "RecordId.TableNo inst () -> Integer",
-          "site": "record/TestRecordRecordId.al:38"
+          "site": "misc/lt-inferred-behaviors/P69NsConsumers.al:122"
         }
       ],
       "overloads": 2,
@@ -5623,7 +5623,7 @@
           "id": "RecordRef.Ascending#1",
           "pinned": true,
           "signature": "RecordRef.Ascending inst (?SetAscending: Boolean) -> Boolean?",
-          "site": "record/TestProbeRecordRefContracts.al:69"
+          "site": "misc/lt-probes-needed-3/PnC13RefAndCopyFilter.al:46"
         },
         {
           "id": "RecordRef.Caption#1",
@@ -5653,13 +5653,13 @@
           "id": "RecordRef.Copy#1",
           "pinned": true,
           "signature": "RecordRef.Copy inst (FromRecordRef: RecordRef, ?ShareTable: Boolean)",
-          "site": "records/W4SortKeys.al:246"
+          "site": "misc/lt-probes-needed-6/PnF27RecordRefCopy.al:72"
         },
         {
           "id": "RecordRef.Copy#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.Copy inst (var FromRecord: Record, ?ShareTable: Boolean)",
-          "site": null
+          "site": "misc/lt-probes-needed-6/PnF27RecordRefCopy.al:127"
         },
         {
           "id": "RecordRef.CopyLinks#1",
@@ -5707,7 +5707,7 @@
           "id": "RecordRef.CurrentKeyIndex#1",
           "pinned": true,
           "signature": "RecordRef.CurrentKeyIndex inst (?NewKeyIndex: Integer) -> Integer?",
-          "site": "record/TestProbeRecordRefContracts.al:68"
+          "site": "misc/lt-probes-needed-6/PnF27RecordRefCopy.al:51"
         },
         {
           "id": "RecordRef.Delete#1",
@@ -5737,7 +5737,7 @@
           "id": "RecordRef.Duplicate#1",
           "pinned": true,
           "signature": "RecordRef.Duplicate inst () -> RecordRef",
-          "site": "record/TestProbeRecordRefContracts.al:164"
+          "site": "misc/lt-probes-needed-1/PnARecordRefDuplicate.al:62"
         },
         {
           "id": "RecordRef.Field#1",
@@ -5767,7 +5767,7 @@
           "id": "RecordRef.FieldExist#2",
           "pinned": true,
           "signature": "RecordRef.FieldExist inst (FieldNo: Integer) -> Boolean",
-          "site": "permissions/W6PermissionColumns.al:67"
+          "site": "misc/lt-probes-needed-4/PnD12_RemovedFieldRecordRef.al:89"
         },
         {
           "id": "RecordRef.FieldIndex#1",
@@ -5797,7 +5797,7 @@
           "id": "RecordRef.FindLast#1",
           "pinned": true,
           "signature": "RecordRef.FindLast inst () -> Boolean?",
-          "site": "recordref/TestRecordRefCRUD.al:121"
+          "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:167"
         },
         {
           "id": "RecordRef.FindSet#1",
@@ -5821,13 +5821,13 @@
           "id": "RecordRef.Get#1",
           "pinned": true,
           "signature": "RecordRef.Get inst (RecordID: RecordId) -> Boolean?",
-          "site": "record/TestRecordStaleBufferWrite.al:188"
+          "site": "misc/lt-probes-needed-1/PnARecordRefDuplicate.al:119"
         },
         {
           "id": "RecordRef.GetBySystemId#1",
           "pinned": true,
           "signature": "RecordRef.GetBySystemId inst (SystemId: Guid) -> Boolean?",
-          "site": "recordref/lt-refs/RfTOpen.al:360"
+          "site": "misc/lt-probes-needed-4/PnD04_GetBySystemId.al:134"
         },
         {
           "id": "RecordRef.GetFilters#1",
@@ -5857,7 +5857,7 @@
           "id": "RecordRef.HasFilter#1",
           "pinned": true,
           "signature": "RecordRef.HasFilter inst () -> Boolean",
-          "site": "recordref/TestRecordRefFilter.al:113"
+          "site": "misc/lt-probes-needed-4/PnD02_RecordIdGetRecord.al:61"
         },
         {
           "id": "RecordRef.HasLinks#1",
@@ -5917,7 +5917,7 @@
           "id": "RecordRef.KeyIndex#1",
           "pinned": true,
           "signature": "RecordRef.KeyIndex inst (Index: Integer) -> KeyRef",
-          "site": "record/TestFieldDataClassificationVirtualTable.al:130"
+          "site": "misc/lt-probes-needed-2/PnBErrorsCollections.al:390"
         },
         {
           "id": "RecordRef.LoadFields#1",
@@ -5953,7 +5953,7 @@
           "id": "RecordRef.Name#1",
           "pinned": true,
           "signature": "RecordRef.Name inst () -> Text",
-          "site": "record/TestRecordTableCaption.al:77"
+          "site": "misc/lt-inferred-behaviors/P69NsConsumers.al:120"
         },
         {
           "id": "RecordRef.Next#1",
@@ -6001,7 +6001,7 @@
           "id": "RecordRef.RecordId#1",
           "pinned": true,
           "signature": "RecordRef.RecordId inst () -> RecordId",
-          "site": "recordref/TestRecordRefGetSet.al:38"
+          "site": "misc/lt-probes-needed-1/PnARecordRefDuplicate.al:119"
         },
         {
           "id": "RecordRef.RecordLevelLocking#1",
@@ -6055,7 +6055,7 @@
           "id": "RecordRef.SetRecFilter#1",
           "pinned": true,
           "signature": "RecordRef.SetRecFilter inst ()",
-          "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:190"
+          "site": "misc/lt-probes-needed-3/PnC13RefAndCopyFilter.al:79"
         },
         {
           "id": "RecordRef.SetTable#1",
@@ -6119,7 +6119,7 @@
         }
       ],
       "overloads": 86,
-      "pinned": 66,
+      "pinned": 67,
       "type": "RecordRef"
     },
     {
@@ -6198,9 +6198,9 @@
         },
         {
           "id": "Report.IsReadOnly#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.IsReadOnly inst () -> Boolean",
-          "site": null
+          "site": "misc/lt-probes-needed-8/PnH4CurrReport.al:77"
         },
         {
           "id": "Report.Language#1",
@@ -6228,9 +6228,9 @@
         },
         {
           "id": "Report.PageNo#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.PageNo inst (?NewPageNo: Integer) -> Integer?",
-          "site": null
+          "site": "misc/lt-probes-needed-8/PnH4CurrReport.al:63"
         },
         {
           "id": "Report.PaperSource#1",
@@ -6284,7 +6284,7 @@
           "id": "Report.Run#1",
           "pinned": true,
           "signature": "Report.Run inst ()",
-          "site": "handlers/PRRequestPageUpdate.al:157"
+          "site": "errors/lt-last-error-and-events/P70_07RequestCaption.al:74"
         },
         {
           "id": "Report.Run#2",
@@ -6410,7 +6410,7 @@
           "id": "Report.ShowOutput#1",
           "pinned": true,
           "signature": "Report.ShowOutput inst () -> Boolean",
-          "site": "report/lt-report-requestpage/RptSkipBreakQuit.al:143"
+          "site": "misc/lt-probes-needed-8/PnH4CurrReport.al:63"
         },
         {
           "id": "Report.ShowOutput#2",
@@ -6426,9 +6426,9 @@
         },
         {
           "id": "Report.TargetFormat#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.TargetFormat inst () -> ReportFormat",
-          "site": null
+          "site": "misc/lt-probes-needed-8/PnH4CurrReport.al:76"
         },
         {
           "id": "Report.TotalsCausedBy#1",
@@ -6480,7 +6480,7 @@
         }
       ],
       "overloads": 59,
-      "pinned": 24,
+      "pinned": 27,
       "type": "Report"
     },
     {
@@ -6493,9 +6493,9 @@
         },
         {
           "id": "RequestPage.Caption#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RequestPage.Caption inst (?NewCaption: Text) -> Text?",
-          "site": null
+          "site": "errors/lt-last-error-and-events/P70_07RequestCaption.al:29"
         },
         {
           "id": "RequestPage.Close#1",
@@ -6541,7 +6541,7 @@
         }
       ],
       "overloads": 9,
-      "pinned": 1,
+      "pinned": 2,
       "type": "RequestPage"
     },
     {
@@ -6599,7 +6599,7 @@
           "id": "Session.CurrentExecutionMode#1",
           "pinned": true,
           "signature": "Session.CurrentExecutionMode static () -> ExecutionMode",
-          "site": "session/ProbeSystemEnumMembers.al:50"
+          "site": "misc/lt-probes-needed-3/PnC11SystemEnums.al:25"
         },
         {
           "id": "Session.DefaultClientType#1",
@@ -6745,55 +6745,55 @@
           "id": "SessionSettings.Company#1",
           "pinned": true,
           "signature": "SessionSettings.Company inst (?NewCompanyName: Text) -> Text?",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:16"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:34"
         },
         {
           "id": "SessionSettings.Init#1",
           "pinned": true,
           "signature": "SessionSettings.Init inst ()",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:26"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:80"
         },
         {
           "id": "SessionSettings.LanguageId#1",
           "pinned": true,
           "signature": "SessionSettings.LanguageId inst (?NewLanguageId: Integer) -> Integer?",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:16"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:30"
         },
         {
           "id": "SessionSettings.LocaleId#1",
           "pinned": true,
           "signature": "SessionSettings.LocaleId inst (?NewLocaleId: Integer) -> Integer?",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:16"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:31"
         },
         {
           "id": "SessionSettings.ProfileAppId#1",
           "pinned": true,
           "signature": "SessionSettings.ProfileAppId inst (?NewProfileAppId: Guid) -> Guid?",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:16"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:38"
         },
         {
           "id": "SessionSettings.ProfileId#1",
           "pinned": true,
           "signature": "SessionSettings.ProfileId inst (?NewProfileId: Text) -> Text?",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:16"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:36"
         },
         {
           "id": "SessionSettings.ProfileSystemScope#1",
           "pinned": true,
           "signature": "SessionSettings.ProfileSystemScope inst (?NewProfileScope: Boolean) -> Boolean?",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:16"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:39"
         },
         {
           "id": "SessionSettings.RequestSessionUpdate#1",
           "pinned": true,
           "signature": "SessionSettings.RequestSessionUpdate inst (saveSettings: Boolean)",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:167"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:136"
         },
         {
           "id": "SessionSettings.TimeZone#1",
           "pinned": true,
           "signature": "SessionSettings.TimeZone inst (?NewTimeZone: Text) -> Text?",
-          "site": "platform/lt-platform-members/PlTSessionSettings.al:16"
+          "site": "misc/lt-probes-needed-7/PnGSessionSettings.al:32"
         }
       ],
       "overloads": 9,
@@ -6824,13 +6824,13 @@
           "id": "System.CalcDate#1",
           "pinned": true,
           "signature": "System.CalcDate static (DateExpression: DateFormula, ?Date: Date) -> Date",
-          "site": "types/ProbeTypeFormsAndFilters.al:135"
+          "site": "misc/lt-probes-needed-3/PnC12ClearEvaluate.al:258"
         },
         {
           "id": "System.CalcDate#2",
           "pinned": true,
           "signature": "System.CalcDate static (DateExpression: Text, ?Date: Date) -> Date",
-          "site": "session/TestCalcDateNotificationContracts.al:20"
+          "site": "misc/lt-probes-needed-2/PnBDateFormat.al:174"
         },
         {
           "id": "System.CanLoadType#1",
@@ -6884,7 +6884,7 @@
           "id": "System.ClosingDate#1",
           "pinned": true,
           "signature": "System.ClosingDate static (Date: Date) -> Date",
-          "site": "misc/lt-system-functions/RandomFormat.al:387"
+          "site": "misc/lt-probes-needed-1/PnAStreamDateBytes.al:77"
         },
         {
           "id": "System.CodeCoverageInclude#1",
@@ -6986,19 +6986,19 @@
           "id": "System.Date2DMY#1",
           "pinned": true,
           "signature": "System.Date2DMY static (Date: Date, Value: Integer) -> Integer",
-          "site": "session/TestCalcDateNotificationContracts.al:21"
+          "site": "misc/lt-probes-needed-2/PnBDateFormat.al:20"
         },
         {
           "id": "System.Date2DWY#1",
           "pinned": true,
           "signature": "System.Date2DWY static (Date: Date, Value: Integer) -> Integer",
-          "site": "text/TestProbeTextDateFormatContracts.al:692"
+          "site": "misc/lt-probes-needed-2/PnBDateFormat.al:26"
         },
         {
           "id": "System.Decrypt#1",
           "pinned": true,
           "signature": "System.Decrypt static (EncryptedString: Text) -> Text",
-          "site": "session/TestIsolatedStorage.al:86"
+          "site": "misc/lt-probes-needed-5/PnE02Scalars.al:97"
         },
         {
           "id": "System.DeleteEncryptionKey#1",
@@ -7098,9 +7098,9 @@
         },
         {
           "id": "System.GetLastErrorText#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.GetLastErrorText static (ExcludeCustomerContent: Boolean) -> Text",
-          "site": null
+          "site": "errors/lt-last-error-and-events/P70_02LastErrFlag.al:15"
         },
         {
           "id": "System.GetUrl#1",
@@ -7196,13 +7196,13 @@
           "id": "System.NormalDate#1",
           "pinned": true,
           "signature": "System.NormalDate static (Date: Date) -> Date",
-          "site": "record/TestDateVirtualTable.al:188"
+          "site": "misc/lt-probes-needed-1/PnAStreamDateBytes.al:85"
         },
         {
           "id": "System.Power#1",
           "pinned": true,
           "signature": "System.Power static (Number: Decimal, Power: Decimal) -> Decimal",
-          "site": "misc/lt-system-functions/Round.al:212"
+          "site": "misc/lt-probes-needed-2/PnBDateFormat.al:414"
         },
         {
           "id": "System.Random#1",
@@ -7220,19 +7220,19 @@
           "id": "System.Round#1",
           "pinned": true,
           "signature": "System.Round static (Number: Decimal, ?Precision: Decimal, ?Direction: Text) -> Decimal",
-          "site": "misc/lt-system-functions/Round.al:18"
+          "site": "misc/lt-probes-needed-2/PnBDateFormat.al:309"
         },
         {
           "id": "System.RoundDateTime#1",
           "pinned": true,
           "signature": "System.RoundDateTime static (Datetime: DateTime, ?Precision: BigInteger, ?Direction: Text) -> DateTime",
-          "site": "types/TestRoundDateTimeContracts.al:34"
+          "site": "misc/lt-probes-needed-4/PnD01_RoundDateTime.al:17"
         },
         {
           "id": "System.Sleep#1",
           "pinned": true,
           "signature": "System.Sleep static (Duration: Integer)",
-          "site": "platform/W6TaskScheduler.al:83"
+          "site": "misc/lt-probes-needed-1/PnASystemFields.al:127"
         },
         {
           "id": "System.TemporaryPath#1",
@@ -7278,7 +7278,7 @@
         }
       ],
       "overloads": 79,
-      "pinned": 56,
+      "pinned": 57,
       "type": "System"
     },
     {
@@ -7287,19 +7287,19 @@
           "id": "TaskScheduler.CanCreateTask#1",
           "pinned": true,
           "signature": "TaskScheduler.CanCreateTask static () -> Boolean",
-          "site": "platform/W6TaskScheduler.al:51"
+          "site": "misc/lt-probes-needed-3/PnC16HyperlinkTask.al:96"
         },
         {
           "id": "TaskScheduler.CancelTask#1",
           "pinned": true,
           "signature": "TaskScheduler.CancelTask static (Task: Guid) -> Boolean?",
-          "site": "platform/W6TaskScheduler.al:146"
+          "site": "misc/lt-probes-needed-3/PnC16HyperlinkTask.al:105"
         },
         {
           "id": "TaskScheduler.CreateTask#1",
           "pinned": true,
           "signature": "TaskScheduler.CreateTask static (CodeunitId: Integer, FailureCodeunitId: Integer, ?IsReady: Boolean, ?Company: Text, ?NotBefore: DateTime, ?RecordID: RecordId) -> Guid?",
-          "site": "platform/W6TaskScheduler.al:52"
+          "site": "misc/lt-probes-needed-3/PnC16HyperlinkTask.al:97"
         },
         {
           "id": "TaskScheduler.CreateTask#2",
@@ -7311,13 +7311,13 @@
           "id": "TaskScheduler.SetTaskReady#1",
           "pinned": true,
           "signature": "TaskScheduler.SetTaskReady static (Task: Guid, ?NotBefore: DateTime) -> Boolean?",
-          "site": "platform/W6TaskScheduler.al:120"
+          "site": "misc/lt-probes-needed-3/PnC16HyperlinkTask.al:103"
         },
         {
           "id": "TaskScheduler.TaskExists#1",
           "pinned": true,
           "signature": "TaskScheduler.TaskExists static (Task: Guid) -> Boolean",
-          "site": "platform/W6TaskScheduler.al:97"
+          "site": "misc/lt-probes-needed-3/PnC16HyperlinkTask.al:99"
         }
       ],
       "overloads": 6,
@@ -7379,7 +7379,7 @@
           "id": "TestField.AsDecimal#1",
           "pinned": true,
           "signature": "TestField.AsDecimal inst () -> Decimal",
-          "site": "pageupdate/TestPageUpdate.al:85"
+          "site": "misc/lt-probes-needed-7/PnGControlKinds.al:156"
         },
         {
           "id": "TestField.AsInteger#1",
@@ -7512,25 +7512,25 @@
           "id": "TestFilter.Ascending#1",
           "pinned": true,
           "signature": "TestFilter.Ascending inst (?Value: Boolean) -> Boolean?",
-          "site": "report/W3ReportParametersText.al:189"
+          "site": "misc/lt-probes-needed-7/PnGTestFilter.al:53"
         },
         {
           "id": "TestFilter.CurrentKey#1",
           "pinned": true,
           "signature": "TestFilter.CurrentKey inst () -> Text",
-          "site": "pages/W1Navigation.al:569"
+          "site": "misc/lt-probes-needed-7/PnGTestFilter.al:41"
         },
         {
           "id": "TestFilter.GetFilter#1",
           "pinned": true,
           "signature": "TestFilter.GetFilter inst (Field: TestFilterField) -> Text",
-          "site": "pagefindrecord/TestPageFindRecord.al:225"
+          "site": "misc/lt-probes-needed-7/PnGTestFilter.al:208"
         },
         {
           "id": "TestFilter.SetCurrentKey#1",
           "pinned": true,
           "signature": "TestFilter.SetCurrentKey inst (Field1: TestFilterField, ?Field2: TestFilterField*) -> Boolean?",
-          "site": "pages/W1Navigation.al:519"
+          "site": "misc/lt-probes-needed-7/PnGTestFilter.al:42"
         },
         {
           "id": "TestFilter.SetFilter#1",
@@ -7623,7 +7623,7 @@
           "id": "TestPage.Cancel#1",
           "pinned": true,
           "signature": "TestPage.Cancel inst () -> TestAction",
-          "site": "handlers/TestPageBuiltInActions_Tests.al:280"
+          "site": "errors/lt-last-error-and-events/P70_06RunModalField.al:56"
         },
         {
           "id": "TestPage.Caption#1",
@@ -7731,19 +7731,19 @@
           "id": "TestPage.Next#1",
           "pinned": true,
           "signature": "TestPage.Next inst () -> Boolean?",
-          "site": "handlers/ProbeTestPageForms.al:240"
+          "site": "errors/lt-last-error-and-events/P70_06RunModalField.al:48"
         },
         {
           "id": "TestPage.No#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "TestPage.No inst () -> TestAction",
-          "site": null
+          "site": "misc/lt-probes-needed-7/PnGActionOrdinals.al:160"
         },
         {
           "id": "TestPage.OK#1",
           "pinned": true,
           "signature": "TestPage.OK inst () -> TestAction",
-          "site": "handlers/PWPageVariableEditable.al:144"
+          "site": "errors/lt-last-error-and-events/P70_06RunModalField.al:54"
         },
         {
           "id": "TestPage.OpenEdit#1",
@@ -7801,13 +7801,13 @@
         },
         {
           "id": "TestPage.Yes#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "TestPage.Yes inst () -> TestAction",
-          "site": null
+          "site": "misc/lt-probes-needed-7/PnGActionOrdinals.al:158"
         }
       ],
       "overloads": 31,
-      "pinned": 28,
+      "pinned": 30,
       "type": "TestPage"
     },
     {
@@ -7828,7 +7828,7 @@
           "id": "TestPart.Enabled#1",
           "pinned": true,
           "signature": "TestPart.Enabled inst () -> Boolean",
-          "site": "pages/W1Parts.al:532"
+          "site": "misc/lt-probes-needed-7/PnGPartTriggers.al:112"
         },
         {
           "id": "TestPart.Expand#1",
@@ -7936,7 +7936,7 @@
           "id": "TestPart.Visible#1",
           "pinned": true,
           "signature": "TestPart.Visible inst () -> Boolean",
-          "site": "pageextensionpart/TestPageExtensionPart.al:201"
+          "site": "misc/lt-probes-needed-7/PnGPartTriggers.al:113"
         }
       ],
       "overloads": 21,
@@ -7949,13 +7949,13 @@
           "id": "TestRequestPage.Cancel#1",
           "pinned": true,
           "signature": "TestRequestPage.Cancel inst () -> TestAction",
-          "site": "handlers/PSRequestPageEditable.al:190"
+          "site": "errors/lt-last-error-and-events/P70_07RequestCaption.al:65"
         },
         {
           "id": "TestRequestPage.Caption#1",
           "pinned": true,
           "signature": "TestRequestPage.Caption inst () -> Text",
-          "site": "handlers/TestReportRequestPageCaption.al:161"
+          "site": "errors/lt-last-error-and-events/P70_07RequestCaption.al:63"
         },
         {
           "id": "TestRequestPage.Editable#1",
@@ -8112,7 +8112,7 @@
           "id": "Text.ConvertStr#1",
           "pinned": true,
           "signature": "Text.ConvertStr static (String: Text, FromCharacters: Text, ToCharacters: Text) -> Text",
-          "site": "text/TestProbeTextDateFormatContracts.al:50"
+          "site": "misc/lt-probes-needed-1/PnATextFunctions.al:99"
         },
         {
           "id": "Text.CopyStr#1",
@@ -8142,7 +8142,7 @@
           "id": "Text.IncStr#1",
           "pinned": true,
           "signature": "Text.IncStr static (String: Text) -> Text",
-          "site": "text/TestProbeTextDateFormatContracts.al:48"
+          "site": "misc/lt-probes-needed-1/PnATextFunctions.al:89"
         },
         {
           "id": "Text.IncStr#2",
@@ -8172,13 +8172,13 @@
           "id": "Text.InsStr#1",
           "pinned": true,
           "signature": "Text.InsStr static (String: Text, SubString: Text, Position: Integer) -> Text",
-          "site": "text/TestProbeTextDateFormatContracts.al:46"
+          "site": "misc/lt-probes-needed-1/PnATextFunctions.al:81"
         },
         {
           "id": "Text.LastIndexOf#1",
           "pinned": true,
           "signature": "Text.LastIndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer",
-          "site": "text/TestProbeTextDateFormatContracts.al:54"
+          "site": "misc/lt-probes-needed-1/PnATextFunctions.al:41"
         },
         {
           "id": "Text.LowerCase#1",
@@ -8232,7 +8232,7 @@
           "id": "Text.SelectStr#1",
           "pinned": true,
           "signature": "Text.SelectStr static (Number: Integer, CommaString: Text) -> Text",
-          "site": "session/TestSystemExtended.al:191"
+          "site": "misc/lt-inferred-behaviors/P69OptionInText.al:118"
         },
         {
           "id": "Text.Split#1",
@@ -8365,7 +8365,7 @@
           "id": "TextBuilder.Insert#1",
           "pinned": true,
           "signature": "TextBuilder.Insert inst (Position: Integer, Text: Text) -> Boolean?",
-          "site": "text/TestProbeTextDateFormatContracts.al:60"
+          "site": "misc/lt-probes-needed-1/PnATextBuilder.al:26"
         },
         {
           "id": "TextBuilder.Length#1",
@@ -8383,13 +8383,13 @@
           "id": "TextBuilder.Remove#1",
           "pinned": true,
           "signature": "TextBuilder.Remove inst (StartIndex: Integer, Count: Integer) -> Boolean?",
-          "site": "text/TestProbeTextDateFormatContracts.al:66"
+          "site": "misc/lt-probes-needed-1/PnATextBuilder.al:40"
         },
         {
           "id": "TextBuilder.Replace#1",
           "pinned": true,
           "signature": "TextBuilder.Replace inst (OldText: Text, NewText: Text) -> Boolean?",
-          "site": "text/TestProbeTextDateFormatContracts.al:72"
+          "site": "misc/lt-probes-needed-1/PnATextBuilder.al:56"
         },
         {
           "id": "TextBuilder.Replace#2",
@@ -8407,7 +8407,7 @@
           "id": "TextBuilder.ToText#2",
           "pinned": true,
           "signature": "TextBuilder.ToText inst (StartIndex: Integer, Count: Integer) -> Text",
-          "site": "text/lt-label-textbuilder/TxCTextBuilderEdit.al:319"
+          "site": "misc/lt-probes-needed-1/PnATextBuilder.al:64"
         }
       ],
       "overloads": 13,
@@ -9011,13 +9011,13 @@
           "id": "Version.Major#1",
           "pinned": true,
           "signature": "Version.Major inst () -> Integer",
-          "site": "platform/lt-platform-members/PlTNavApp.al:98"
+          "site": "misc/lt-probes-needed-1/PnAModuleInfoNull.al:25"
         },
         {
           "id": "Version.Minor#1",
           "pinned": true,
           "signature": "Version.Minor inst () -> Integer",
-          "site": "platform/lt-platform-members/PlTNavApp.al:99"
+          "site": "misc/lt-probes-needed-1/PnAModuleInfoNull.al:27"
         },
         {
           "id": "Version.Revision#1",
@@ -9115,7 +9115,7 @@
           "id": "XmlAttribute.Create#2",
           "pinned": true,
           "signature": "XmlAttribute.Create static (Name: Text, Value: Text) -> XmlAttribute",
-          "site": "session/TestFinalCoverage.al:312"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:32"
         },
         {
           "id": "XmlAttribute.CreateNamespaceDeclaration#1",
@@ -9327,7 +9327,7 @@
           "id": "XmlCData.Create#1",
           "pinned": true,
           "signature": "XmlCData.Create static (Value: Text) -> XmlCData",
-          "site": "xml/TestProbeXmlContracts.al:76"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:42"
         },
         {
           "id": "XmlCData.GetDocument#1",
@@ -9436,7 +9436,7 @@
           "id": "XmlComment.Create#1",
           "pinned": true,
           "signature": "XmlComment.Create static (Value: Text) -> XmlComment",
-          "site": "xml/TestProbeXmlContracts.al:82"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:40"
         },
         {
           "id": "XmlComment.GetDocument#1",
@@ -9545,7 +9545,7 @@
           "id": "XmlDeclaration.Create#1",
           "pinned": true,
           "signature": "XmlDeclaration.Create static (Version: Text, Encoding: Text, Standalone: Text) -> XmlDeclaration",
-          "site": "xml/TestProbeXmlContracts.al:49"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:48"
         },
         {
           "id": "XmlDeclaration.Encoding#1",
@@ -9672,7 +9672,7 @@
           "id": "XmlDocument.AsXmlNode#1",
           "pinned": true,
           "signature": "XmlDocument.AsXmlNode inst () -> XmlNode",
-          "site": "xml/XmlNodes.al:246"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:44"
         },
         {
           "id": "XmlDocument.Create#1",
@@ -9708,7 +9708,7 @@
           "id": "XmlDocument.GetChildNodes#1",
           "pinned": true,
           "signature": "XmlDocument.GetChildNodes inst () -> XmlNodeList",
-          "site": "xml/TestProbeXmlContracts.al:150"
+          "site": "misc/lt-probes-needed-1/PnAXmlWhitespaceText.al:40"
         },
         {
           "id": "XmlDocument.GetDeclaration#1",
@@ -9750,7 +9750,7 @@
           "id": "XmlDocument.GetDocumentType#1",
           "pinned": true,
           "signature": "XmlDocument.GetDocumentType inst (var DocumentType: XmlDocumentType) -> Boolean?",
-          "site": "xml/TestProbeXmlContracts.al:688"
+          "site": "misc/lt-probes-needed-1/PnAXmlDoctype.al:21"
         },
         {
           "id": "XmlDocument.GetParent#1",
@@ -9822,7 +9822,7 @@
           "id": "XmlDocument.SelectNodes#1",
           "pinned": true,
           "signature": "XmlDocument.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?",
-          "site": "xml/TestProbeXmlContracts.al:582"
+          "site": "misc/lt-probes-needed-1/PnAXmlXPath.al:33"
         },
         {
           "id": "XmlDocument.SelectNodes#2",
@@ -10076,7 +10076,7 @@
           "id": "XmlElement.AsXmlNode#1",
           "pinned": true,
           "signature": "XmlElement.AsXmlNode inst () -> XmlNode",
-          "site": "session/TestFinalCoverage.al:233"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:83"
         },
         {
           "id": "XmlElement.Attributes#1",
@@ -10130,7 +10130,7 @@
           "id": "XmlElement.GetChildNodes#1",
           "pinned": true,
           "signature": "XmlElement.GetChildNodes inst () -> XmlNodeList",
-          "site": "xml/TestProbeXmlContracts.al:152"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:90"
         },
         {
           "id": "XmlElement.GetDescendantElements#1",
@@ -10166,7 +10166,7 @@
           "id": "XmlElement.GetNamespaceOfPrefix#1",
           "pinned": true,
           "signature": "XmlElement.GetNamespaceOfPrefix inst (Prefix: Text, var Result: Text) -> Boolean?",
-          "site": "xml/TestProbeXmlContracts.al:298"
+          "site": "misc/lt-probes-needed-1/PnAXmlParentDocNs.al:46"
         },
         {
           "id": "XmlElement.GetParent#1",
@@ -10178,7 +10178,7 @@
           "id": "XmlElement.GetPrefixOfNamespace#1",
           "pinned": true,
           "signature": "XmlElement.GetPrefixOfNamespace inst (Namespace: Text, var Result: Text) -> Boolean?",
-          "site": "xml/TestXmlNamespaceManager.al:62"
+          "site": "misc/lt-probes-needed-1/PnAXmlParentDocNs.al:52"
         },
         {
           "id": "XmlElement.HasAttributes#1",
@@ -10202,7 +10202,7 @@
           "id": "XmlElement.InnerXml#1",
           "pinned": true,
           "signature": "XmlElement.InnerXml inst () -> Text",
-          "site": "xml/TestProbeXmlContracts.al:111"
+          "site": "misc/lt-probes-needed-1/PnAXmlWhitespaceText.al:34"
         },
         {
           "id": "XmlElement.IsEmpty#1",
@@ -10286,7 +10286,7 @@
           "id": "XmlElement.SelectNodes#2",
           "pinned": true,
           "signature": "XmlElement.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?",
-          "site": "xml/TestXmlExtended.al:159"
+          "site": "misc/lt-probes-needed-1/PnAXmlXPath.al:240"
         },
         {
           "id": "XmlElement.SelectSingleNode#1",
@@ -10310,7 +10310,7 @@
           "id": "XmlElement.SetAttribute#2",
           "pinned": true,
           "signature": "XmlElement.SetAttribute inst (Name: Text, Value: Text)",
-          "site": "session/TestFinalCoverage.al:203"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:79"
         },
         {
           "id": "XmlElement.WriteTo#1",
@@ -10334,7 +10334,7 @@
           "id": "XmlElement.WriteTo#4",
           "pinned": true,
           "signature": "XmlElement.WriteTo inst (var Text: Text) -> Boolean?",
-          "site": "xml/TestXmlExtended.al:116"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:80"
         }
       ],
       "overloads": 48,
@@ -10366,7 +10366,7 @@
           "id": "XmlNamespaceManager.AddNamespace#1",
           "pinned": true,
           "signature": "XmlNamespaceManager.AddNamespace inst (Prefix: Text, Uri: Text)",
-          "site": "xml/TestProbeXmlContracts.al:529"
+          "site": "misc/lt-probes-needed-1/PnAXmlXPath.al:24"
         },
         {
           "id": "XmlNamespaceManager.HasNamespace#1",
@@ -10487,13 +10487,13 @@
           "id": "XmlNode.GetDocument#1",
           "pinned": true,
           "signature": "XmlNode.GetDocument inst (var Document: XmlDocument) -> Boolean?",
-          "site": "xml/TestXmlNodeTypes.al:63"
+          "site": "misc/lt-probes-needed-1/PnAXmlParentDocNs.al:42"
         },
         {
           "id": "XmlNode.GetParent#1",
           "pinned": true,
           "signature": "XmlNode.GetParent inst (var Parent: XmlElement) -> Boolean?",
-          "site": "xml/TestXmlExtended.al:145"
+          "site": "misc/lt-probes-needed-1/PnAXmlNodeAdds.al:83"
         },
         {
           "id": "XmlNode.IsXmlAttribute#1",
@@ -10547,7 +10547,7 @@
           "id": "XmlNode.IsXmlText#1",
           "pinned": true,
           "signature": "XmlNode.IsXmlText inst () -> Boolean",
-          "site": "xml/TestXmlComplete.al:40"
+          "site": "misc/lt-probes-needed-1/PnAXmlWhitespaceText.al:37"
         },
         {
           "id": "XmlNode.Remove#1",
@@ -10925,7 +10925,7 @@
           "id": "Xmlport.Export#2",
           "pinned": true,
           "signature": "Xmlport.Export static (Number: Integer, var OutStream: OutStream, ?var Record: Record) -> Boolean?",
-          "site": "xmlport/PWXmlPortFormatEvaluate.al:115"
+          "site": "misc/lt-probes-needed-3/PnC19XmlPort.al:262"
         },
         {
           "id": "Xmlport.FieldDelimiter#1",

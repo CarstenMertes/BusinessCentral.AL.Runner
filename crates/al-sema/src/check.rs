@@ -1848,6 +1848,11 @@ impl<'a> Checker<'a> {
                             Ty::Array(_, el) if matches!(*el, Ty::Option(_)) => *el,
                             t => t,
                         };
+                        // `Mode::Decompress` on a `DotNet CompressionMode` variable: a static member of the
+                        // .NET type (a .NET enum's member), read like `Mode.Decompress`.
+                        if matches!(&t, Ty::DotNet(alias) if !alias.is_empty()) {
+                            self.record(sc, node, Res::DotNetMember(rhs.clone()));
+                        }
                         self.scope_member(sc, node, &t, &rhs);
                         E::Val(t)
                     }

@@ -406,6 +406,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.RunModal#3", vm_only),
     ("Report.Execute#1", vm_only),
     ("Report.Execute#3", vm_only),
+    ("Report.WordXmlPart#1", vm_only),
+    ("Report.WordXmlPart#2", vm_only),
     ("Report.Print#1", vm_only),
     ("Report.Print#2", vm_only),
     ("Report.RunRequestPage#1", vm_only),
@@ -829,12 +831,15 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     if sub.is_empty() {
         return Ok(Value::Integer(0));
     }
-    let hay: Vec<u16> = s.encode_utf16().collect();
-    let needle: Vec<u16> = sub.encode_utf16().collect();
-    let pos = hay
-        .windows(needle.len())
-        .position(|w| w == needle.as_slice())
-        .map_or(0, |p| p + 1);
+    // A match at a char boundary is the same match unit by unit; the position counts UTF-16 units. No copy of the
+    // text: a loop that calls StrPos on a long text (Pageworks' asset parsing) would copy it each time.
+    let pos = s.find(sub.as_str()).map_or(0, |b| {
+        if s.is_ascii() {
+            b + 1
+        } else {
+            s[..b].encode_utf16().count() + 1
+        }
+    });
     Ok(Value::Integer(pos as i32))
 }
 
@@ -950,7 +955,12 @@ fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Re
 }
 
 fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    let s: Vec<u16> = text_arg(args, 0)?.encode_utf16().collect();
+    let whole = text_arg(args, 0)?;
+    // A text of ASCII only is indexed by byte, with no copy: a loop of CopyStr over a long text stays linear in
+    // the loop (Pageworks' asset parsing).
+    let ascii = whole.is_ascii();
+    let s: Vec<u16> = if ascii { Vec::new() } else { whole.encode_utf16().collect() };
+    let total = if ascii { whole.len() } else { s.len() };
     let pos = int_arg(args, 1).unwrap_or(1);
     // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.
     if pos < 1 {
@@ -961,7 +971,7 @@ fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             "OutsidePermittedRange",
         );
     }
-    let start = (pos as usize - 1).min(s.len());
+    let start = (pos as usize - 1).min(total);
     let end = match int_arg(args, 2) {
         Some(len) if len < 0 => {
             return raise(
@@ -971,9 +981,12 @@ fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 "OutsidePermittedRange",
             );
         }
-        Some(len) => (start + len as usize).min(s.len()),
-        None => s.len(),
+        Some(len) => (start + len as usize).min(total),
+        None => total,
     };
+    if ascii {
+        return Ok(Value::Text(whole[start..end].to_string()));
+    }
     Ok(Value::Text(String::from_utf16_lossy(&s[start..end])))
 }
 

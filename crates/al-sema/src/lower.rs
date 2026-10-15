@@ -4514,6 +4514,21 @@ impl Lowerer<'_> {
                 self.call(n, &kids[0], &args)
             }
             ScopeExpr => match self.res(n).cloned() {
+                // `Mode::Decompress` with `Mode: DotNet CompressionMode`: the type's static member.
+                Some(Res::DotNetMember(name)) => {
+                    let Ty::DotNet(alias) = self.ty_of(n) else {
+                        return Err(format!("`{name}` is not a member of a DotNet value"));
+                    };
+                    let ty = self.ws.resolve_dotnet(self.file, &alias).ok_or_else(|| {
+                        format!("DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies")
+                    })?;
+                    Ok(ir::Expr::DotNet {
+                        ty: Some(ty),
+                        receiver: Some(Box::new(self.expr(&kids[0])?)),
+                        op: ir::DotNetOp::Get(name),
+                        args: Vec::new(),
+                    })
+                }
                 Some(Res::EnumValue { object, value }) => Ok(ir::Expr::Const(ir::Const::Enum(object as u32, value))),
                 Some(Res::OptionValue(i)) => match self.ty_of(n) {
                     Ty::Option(m) => Ok(ir::Expr::Const(ir::Const::Option(i, m))),

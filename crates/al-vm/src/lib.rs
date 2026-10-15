@@ -1257,6 +1257,16 @@ impl Session {
                         "OutsidePermittedRange",
                     );
                 }
+                if t.is_ascii() {
+                    // No copy of a long text for each character read.
+                    return match t.as_bytes().get(i as usize - 1) {
+                        Some(u) => Ok(Value::Char(u16::from(*u))),
+                        None if i as usize == t.len() + 1 => Ok(Value::Char(0)),
+                        None => Err(Signal::Unsupported(
+                            "a text read more than one position past its length (not pinned)".into(),
+                        )),
+                    };
+                }
                 let units: Vec<u16> = t.encode_utf16().collect();
                 match units.get(i as usize - 1) {
                     Some(u) => Ok(Value::Char(*u)),

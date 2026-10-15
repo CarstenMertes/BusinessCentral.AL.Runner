@@ -323,3 +323,32 @@ fn a_var_list_argument_picks_the_overload_with_its_own_element_type() {
     ));
     assert_eq!(r, "text|integer|object");
 }
+
+// ---- Report.WordXmlPart (staging types/PZMisc.al:WordXmlPart_*, BC 29.0) -------------------------------
+// The XML of the data set as text for a report that has only an RDLC layout, with either flag: it starts with
+// `<`, holds the data item and column names and the Word data namespace marker `urn:microsoft-dynamics-nav`.
+// An unknown report id fails with the code AL:MetadataNotFound.
+const WORD_REPORT: &str = "table 50130 \"WX Src\" { fields { field(1; Id; Integer) { } field(2; \"Long Name\"; Text[20]) { } } keys { key(PK; Id) { } } }
+report 50131 \"WX Report\" { DefaultLayout = RDLC; dataset { dataitem(Src; \"WX Src\") { column(IdCol; Id) { } dataitem(\"Child Item\"; \"WX Src\") { column(NameCol; \"Long Name\") { } } } } }
+codeunit 50100 C { procedure F(): Text var R: Text; Seen: Text; begin
+    R := Report.WordXmlPart(50131);
+    Seen := Format(R.StartsWith('<')) + '/' + Format(StrPos(R, 'IdCol') > 0) + '/' + Format(StrPos(R, 'Src') > 0) + '/' + Format(StrPos(R, 'urn:microsoft-dynamics-nav') > 0);
+    Seen += '/' + Format(StrPos(R, 'ElementType') > 0);
+    R := Report.WordXmlPart(50131, true);
+    Seen += '/' + Format(StrPos(R, 'ElementType=\"Column\"') > 0) + '/' + Format(StrPos(R, 'Child_Item') > 0);
+    R := Report.WordXmlPart(50131, false);
+    Seen += '/' + Format(StrPos(R, 'ElementType') > 0);
+    exit(Seen);
+end;
+[TryFunction] procedure Missing() var R: Text; begin R := Report.WordXmlPart(99999999); end;
+procedure G(): Text var Ok: Boolean; begin Ok := Missing(); exit(Format(Ok) + '|' + GetLastErrorCode()); end; }";
+
+#[test]
+fn word_xml_part_answers_the_data_set_as_xml_text() {
+    assert_eq!(text(run(WORD_REPORT, "F")), "Yes/Yes/Yes/Yes/No/Yes/Yes/No");
+}
+
+#[test]
+fn word_xml_part_of_an_unknown_report_fails_with_metadata_not_found() {
+    assert_eq!(text(run(WORD_REPORT, "G")), "No|AL:MetadataNotFound");
+}

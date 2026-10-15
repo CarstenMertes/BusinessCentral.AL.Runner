@@ -33,6 +33,11 @@ pub const TEST_EXECUTION: &str = "Microsoft.Dynamics.Nav.Runtime.NavTestExecutio
 pub const GRAPH_QUERY: &str = "Microsoft.Dynamics.Nav.AzureADGraphClient.GraphQuery";
 pub const USER_ACCOUNT_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper";
 
+/// `System.IO.Compression.GZipStream`, behind System Application's "Data Compression".
+pub const GZIP_STREAM: &str = "System.IO.Compression.GZipStream";
+/// `System.IO.Compression.CompressionMode`.
+pub const COMPRESSION_MODE: &str = "System.IO.Compression.CompressionMode";
+
 /// (CLR type, member, result). One row per registry member that returns a value.
 pub const SIGS: &[(&str, &str, Ret)] = &[
     (GRAPH_QUERY, "GraphQuery", Ret::Object),
@@ -78,6 +83,11 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (USER_ACCOUNT_HELPER, "IsUserDelegatedAdmin", Ret::Boolean),
     (USER_ACCOUNT_HELPER, "GetEffectivePermissionForObject", Ret::Text),
     (TEST_EXECUTION, "IsInTestMode", Ret::Boolean),
+    (GZIP_STREAM, "GZipStream", Ret::Object),
+    (GZIP_STREAM, "CopyTo", Ret::Void),
+    (GZIP_STREAM, "Dispose", Ret::Void),
+    (COMPRESSION_MODE, "Compress", Ret::Object),
+    (COMPRESSION_MODE, "Decompress", Ret::Object),
 ];
 
 /// The declared result of `member` on `clr_type`, if the runtime provides that member.

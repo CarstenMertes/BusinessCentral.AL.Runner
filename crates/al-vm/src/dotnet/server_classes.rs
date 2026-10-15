@@ -372,6 +372,12 @@ fn al_runner(what: &str) -> Pin {
 
 /// The shipped types.
 pub fn types() -> Vec<RegistryType> {
+    let mut all = super::compression::types();
+    all.extend(own_types());
+    all
+}
+
+fn own_types() -> Vec<RegistryType> {
     let cfg = |name: &str, f: MemberFn| member(name, Pin::Probe(CFG_PIN.into()), f);
     vec![
         RegistryType {

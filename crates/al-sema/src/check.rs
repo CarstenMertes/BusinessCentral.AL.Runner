@@ -2116,6 +2116,17 @@ impl<'a> Checker<'a> {
             self.record(sc, node, res);
             return Some(E::Val(t));
         }
+        // `this.Id` in a query's own code: the running query's column (corpus query/PRQueryOpenColumn.al `PeekThis`).
+        if let Some(rec) = sc.rec.clone() {
+            if matches!(rec, Ty::Object(ObjKind::Query, _)) && sc.self_obj == sc.oi {
+                if let Some(r) = self.field_res(sc, &rec, &n) {
+                    if let Some(e) = self.member(sc, &rec, &n) {
+                        self.record(sc, node, r);
+                        return Some(e);
+                    }
+                }
+            }
+        }
         let own: Vec<Cand> = self.members[sc.self_obj]
             .procedures_named(&n)
             .iter()

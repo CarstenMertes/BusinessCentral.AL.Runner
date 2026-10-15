@@ -46,7 +46,9 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         },
         Value::Integer(i) => i.to_string(),
         Value::BigInteger(i) => i.to_string(),
-        Value::Byte(b) => b.to_string(),
+        // A Byte formats as the character of that code (streams/TestProbeStreamContracts.al:Read_IntoTypes,
+        // `integer_into_byte`: 2 is `\u0002`).
+        Value::Byte(b) => char::from(*b).to_string(),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         Value::Decimal(d) => format_decimal(d, standard)?,
         Value::Text(t) | Value::Code(t) => t.clone(),
@@ -72,6 +74,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::DateFormula(f) => crate::datefns::formula_text(f),
         // A Version reads `major.minor.build.revision` (session/TestBCPlatformContracts.al:120-136
         // compares the formatted AppVersion with the manifest's `1.0.0.0`).
+        Value::Library(name, _) if name == "Version" && standard == 9 => {
+            // session/TestProbeSessionMiscContracts.al:Version_Forms.
+            return Err(no_such_format(9, "Version"));
+        }
         Value::Library(name, l) if name == "Version" => match &*l.borrow() {
             crate::value::LibraryValue::Version(v) => format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]),
             _ => return Err("Format of a Version nobody set".to_string().into()),
@@ -146,9 +152,18 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // the key values in it; the layout is docs/probes-needed.md).
         Value::Library(name, l) if name == "RecordId" => match &*l.borrow() {
             crate::value::LibraryValue::RecordId { name, key, .. } => {
+                // A text key that is empty or holds a comma is quoted (record/TestProbeRecordRefContracts.al:RecordId_FormatForms).
                 let key = key
                     .iter()
-                    .map(|k| format_value(k, 0, 0, ctx))
+                    .map(|k| {
+                        format_value(k, 0, 0, ctx).map(|t| {
+                            if matches!(k, Value::Text(_) | Value::Code(_)) && (t.is_empty() || t.contains(',')) {
+                                format!("\"{t}\"")
+                            } else {
+                                t
+                            }
+                        })
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 format!("{name}: {}", key.join(","))
             }
@@ -164,6 +179,15 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             .into());
         }
     };
+    // A Boolean pads on the right and cuts at the length (types/TestProbeScalarContracts.al:FormatBoolean_Numbers:
+    // `Format(true, 10)` is `Yes       `, `Format(true, 2)` is `Ye`).
+    if matches!(v, Value::Boolean(_) | Value::Option(..)) && length > 0 {
+        let cut: String = s.chars().take(length as usize).collect();
+        return Ok(format!(
+            "{cut}{}",
+            " ".repeat((length as usize).saturating_sub(cut.chars().count()))
+        ));
+    }
     Ok(pad(s, length))
 }
 
@@ -210,9 +234,15 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
     if matches!(standard, 1 | 2 | 9) {
         return Ok(plain);
     }
-    if standard != 0 {
+    // Formats 3 and 4 are formats 0 and 1 with a trailing blank (text/TestProbeTextDateFormatContracts.al:
+    // Format_FormatStrings_Number, `standard_format_3` and `standard_format_4`).
+    if standard == 4 {
+        return Ok(format!("{plain} "));
+    }
+    if standard != 0 && standard != 3 {
         return Err(format!("Format of a Decimal with standard format {standard} (not pinned)").into());
     }
+    let tail = if standard == 3 { " " } else { "" };
     let (sign, digits) = plain.strip_prefix('-').map_or(("", plain.as_str()), |r| ("-", r));
     let (int, frac) = digits.split_once('.').map_or((digits, None), |(i, f)| (i, Some(f)));
     let mut grouped = String::new();
@@ -223,8 +253,8 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
         grouped.push(c);
     }
     Ok(match frac {
-        Some(f) => format!("{sign}{grouped}.{f}"),
-        None => format!("{sign}{grouped}"),
+        Some(f) => format!("{sign}{grouped}.{f}{tail}"),
+        None => format!("{sign}{grouped}{tail}"),
     })
 }
 
@@ -278,16 +308,28 @@ fn format_time_12h(ms_of_day: i64) -> String {
     format!("{h12:02}:{m:02} {ap}")
 }
 
-/// The milliseconds of a time of day as `.fff`, nothing when there are none. A count that ends in a
-/// zero (`.120` or `.12`) is not measured (docs/probes-needed.md), but prints padded like `.007`.
+/// The milliseconds of a time of day as `.fff` without trailing zeros, nothing when there are none
+/// (text/TestProbeTextDateFormatContracts.al:Format_MillisecondsTimeDateTimeDuration: `.007`, `.12`, `.5`).
 fn millis(ms: i64) -> String {
-    if ms == 0 { String::new() } else { format!(".{ms:03}") }
+    if ms == 0 {
+        String::new()
+    } else {
+        format!(".{ms:03}").trim_end_matches('0').to_string()
+    }
 }
 
 /// A Time, from its milliseconds since midnight (types/TestFormatEvaluateTextContracts.al:
 /// Format_Time_StandardFormats). Format 0 and 1 are a 12-hour clock whose hour is padded with a
 /// space; format 1 adds the milliseconds (a time without any is not measured: refused); format 2 is
 /// the AL literal; format 9 the round-trip form.
+/// A standard format number the type does not have (text/TestProbeTextDateFormatContracts.al:Format_StandardNumbers_Time).
+fn no_such_format(n: i32, ty: &str) -> FormatFail {
+    FormatFail::Error {
+        message: format!("Standard format number {n} does not exist for the type '{ty}'."),
+        code: "InvalidStandardFormat".into(),
+    }
+}
+
 fn format_time(ms_of_day: i64, standard: i32) -> Result<String, FormatFail> {
     let (h, m, s, f) = (
         ms_of_day / 3_600_000,
@@ -298,10 +340,10 @@ fn format_time(ms_of_day: i64, standard: i32) -> Result<String, FormatFail> {
     let (h12, ap) = hour12(h);
     Ok(match standard {
         0 => format!("{h12:>2}:{m:02}:{s:02} {ap}"),
-        1 if f != 0 => format!("{h12:>2}:{m:02}:{s:02}{} {ap}", millis(f)),
+        1 => format!("{h12:>2}:{m:02}:{s:02}{} {ap}", millis(f)),
         2 => format!("{h:02}{m:02}{s:02}{}T", millis(f)),
         9 => format!("{h:02}:{m:02}:{s:02}{}", millis(f)),
-        n => return Err(format!("Format of a Time with standard format {n} (not pinned)").into()),
+        n => return Err(no_such_format(n, "Time")),
     })
 }
 
@@ -324,12 +366,17 @@ fn format_datetime(ms: i64, standard: i32) -> Result<String, FormatFail> {
     let date = format!("{m:02}/{d:02}/{:02}", y.rem_euclid(100));
     Ok(match standard {
         0 | 2 => format!("{date} {}", format_time_12h(in_day)),
-        1 if f != 0 => {
+        1 => {
             let (h12, ap) = hour12(h);
             format!("{date} {h12:02}:{mi:02}:{s:02}{} {ap}", millis(f))
         }
+        // Format 3 shows the seconds, never the milliseconds (text/TestProbeTextDateFormatContracts.al:Format_StandardNumbers_DateTime).
+        3 => {
+            let (h12, ap) = hour12(h);
+            format!("{date} {h12:02}:{mi:02}:{s:02} {ap}")
+        }
         9 => format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}{}Z", millis(f)),
-        n => return Err(format!("Format of a DateTime with standard format {n} (not pinned)").into()),
+        n => return Err(no_such_format(n, "DateTime")),
     })
 }
 
@@ -427,7 +474,7 @@ fn format_duration(ms: i64, standard: i32) -> Result<String, FormatFail> {
             let frac = if frac.is_empty() { "0" } else { frac };
             Ok(format!("{sign}P{d}DT{h}H{m}M{s}.{frac}S"))
         }
-        n => Err(format!("Format of a Duration with standard format {n} (not pinned)").into()),
+        n => Err(no_such_format(n, "Duration")),
     }
 }
 
@@ -467,14 +514,8 @@ fn format_date(day: i32, closing: bool, standard: i32) -> Result<String, FormatF
         5 => format!("{m:02}{d:02}{yy:02}"),
         6 => format!("{yy:02}{m:02}{d:02}"),
         7 => format!("{} {d}, {y}", &month[..3]),
-        8 => {
-            return Err(FormatFail::Error {
-                message: "Standard format number 8 does not exist for the type 'Date'.".into(),
-                code: "InvalidStandardFormat".into(),
-            });
-        }
         9 => format!("{y:04}-{m:02}-{d:02}"),
-        n => return Err(format!("Format of a Date with standard format {n} (not pinned)").into()),
+        n => return Err(no_such_format(n, "Date")),
     })
 }
 

@@ -226,13 +226,15 @@ fn enum_values_format_by_name() {
 }
 
 #[test]
-fn runaway_recursion_is_unsupported_not_a_crash() {
+fn runaway_recursion_raises_stack_overflow_not_a_crash() {
     // Same stack the CLI gives the VM (al-test-cli main).
     std::thread::Builder::new()
         .stack_size(512 << 20)
         .spawn(|| {
             let src = cu("procedure F(N: Integer): Integer begin exit(F(N + 1)); end;");
-            assert!(matches!(run(&src, "F", vec![Value::Integer(0)]), Err(Signal::Unsupported(r)) if r.contains("call depth")));
+            assert!(
+                matches!(run(&src, "F", vec![Value::Integer(0)]), Err(Signal::Error(e)) if e.code == "StackOverflow")
+            );
         })
         .unwrap()
         .join()
@@ -247,25 +249,26 @@ fn a_character_can_be_assigned_into_a_text_by_position() {
                       N[1] := 8239; T := 'a' + N + 'b';
                       exit(Format(StrLen(N)) + Format(StrLen(T)) + Format(StrLen(T.Replace(N, ' ')))); end;");
     assert_eq!(text(run(&src, "F", vec![])), "133");
-    // Past the end of the text, past its declared length, or a value that is no character: refused.
-    for body in [
-        "N[2] := 65;",
-        "N[1] := 65; N[3] := 66;",
-        "N[1] := 65; N[2] := 66;",
-        "N[0] := 65;",
+    // Past the end of the text, past its declared length: errors (types/TestProbeScalarContracts.al:TextChar_AssignByIndex).
+    for (body, code) in [
+        ("N[2] := 65;", "OutsidePermittedRange"),
+        ("N[1] := 65; N[3] := 66;", "OutsidePermittedRange"),
+        ("N[1] := 65; N[2] := 66;", "StringLengthExceeded"),
+        ("N[0] := 65;", "OutsidePermittedRange"),
     ] {
         let src = cu(&format!(
             "procedure F(): Text var N: Text[1]; begin {body} exit(N); end;"
         ));
-        assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(_))), "{body}");
+        let r = run(&src, "F", vec![]);
+        assert!(matches!(&r, Err(Signal::Error(e)) if e.code == code), "{body}: {r:?}");
     }
 }
 
 #[test]
 fn a_990_deep_chain_completes() {
     // codeunit/TestCodeunitRecursionDepth.al:57-70 (RecursionDepth_JustInsideTheCeiling_Completes):
-    // the platform's ceiling lies above 990 calls. Past it the run is refused, not guessed (the
-    // text of the platform's refusal is not pinned).
+    // the platform's ceiling lies above 990 calls. Past it the run raises the StackOverflow error
+    // (session/TestProbeSessionMiscContracts.al:CallDepth_1001).
     std::thread::Builder::new()
         .stack_size(512 << 20)
         .spawn(|| {
@@ -277,7 +280,7 @@ fn a_990_deep_chain_completes() {
             assert!(matches!(r, Ok(Value::Integer(990))), "{r:?}");
             assert!(matches!(
                 run(&src, "F", vec![Value::Integer(5000)]),
-                Err(Signal::Unsupported(_))
+                Err(Signal::Error(e)) if e.code == "StackOverflow"
             ));
         })
         .unwrap()
@@ -351,10 +354,14 @@ fn dictionaries() {
 }
 
 #[test]
-fn collection_errors_are_not_guessed() {
-    // List.Get past the end is pinned (tests/builtins.rs); RemoveAt past the end is not.
+fn list_remove_at_past_the_end_raises() {
+    // session/TestProbeSessionMiscContracts.al:Dictionary_List_ErrorTexts, `list_removeat_4`.
     let src = cu("procedure F(): Integer var L: List of [Integer]; begin L.RemoveAt(1); exit(0); end;");
-    assert!(matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(_))));
+    let r = run(&src, "F", vec![]);
+    assert!(
+        matches!(&r, Err(Signal::Error(e)) if e.code == "ArgumentOutOfRange"),
+        "{r:?}"
+    );
 }
 
 #[test]

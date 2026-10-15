@@ -72,6 +72,7 @@ impl Session {
         self.committed_row_version = b.committed_row_version;
         self.autoinc = b.autoinc.clone();
         self.isolated_storage = b.isolated_storage.clone();
+        self.isolated_committed = b.isolated_storage.clone();
         self.sequences = b.sequences.clone();
         self.last_stamp = b.last_stamp;
         self.baseline_rows = b.nonempty_tables();

@@ -70,6 +70,15 @@ impl UiKind {
     }
 }
 
+/// `ModalPageHandler(var P: Page "X"; var Response: Action)` (handlers/PSModalPageHandlerTyped.al).
+fn typed_modal(kind: UiKind, params: usize, by_var: &[bool], p: Option<&RtType>, response: Option<&RtType>) -> bool {
+    kind == UiKind::ModalPage
+        && params == 2
+        && by_var == [true, true]
+        && matches!(p, Some(RtType::Page(_)))
+        && matches!(response, Some(RtType::Option(_)) | Some(RtType::Enum(_)))
+}
+
 /// A page handler found for a page: (object, routine, instance).
 pub(crate) type BoundHandler = (usize, usize, Rc<RefCell<Instance>>);
 
@@ -83,6 +92,8 @@ pub struct UiHandler {
     routine: usize,
     instance: Rc<RefCell<Instance>>,
     fired: bool,
+    /// A `[ModalPageHandler]` whose first parameter is a `Page` and whose second is `var Response: Action`.
+    typed: bool,
 }
 
 /// The handlers bound while a test method runs.
@@ -112,7 +123,8 @@ impl Session {
                 r.params == 3 && r.by_var == [false, true, false] && matches!(ty(1), Some(RtType::Integer))
             }
             UiKind::Page | UiKind::ModalPage | UiKind::RequestPage => {
-                r.params == 1 && r.by_var == [true] && matches!(ty(0), Some(RtType::TestPage(_)))
+                (r.params == 1 && r.by_var == [true] && matches!(ty(0), Some(RtType::TestPage(_))))
+                    || (typed_modal(kind, r.params, &r.by_var, ty(0), ty(1)))
             }
             // SessionSettingsHandler(var SessionSettings: SessionSettings): Boolean
             // (session/TestSessionSettings.al:546-552, error AL0244 names the shape).
@@ -131,11 +143,12 @@ impl Session {
             Some(RtType::TestPage(p)) if matches!(kind, UiKind::Page | UiKind::ModalPage | UiKind::RequestPage) => {
                 Some(*p)
             }
+            Some(RtType::Page(p)) if typed_modal(kind, r.params, &r.by_var, ty(0), ty(1)) => Some(*p),
             _ => None,
         };
-        // A page handler whose parameter is a `Page` (and a `var Response: Action`) is a shape BC
-        // accepts; no corpus test has one, so what it is handed is not pinned (docs/probes-needed.md,
-        // "Page handlers").
+        // A ModalPageHandler whose parameter is a `Page` and a `var Response: Action` is pinned by
+        // handlers/PSModalPageHandlerTyped.al. Any other page handler of a `Page` is a shape BC accepts that no
+        // corpus test has, so what it is handed is not pinned (docs/probes-needed.md, "Page handlers").
         if !ok && matches!(kind, UiKind::Page | UiKind::ModalPage) && matches!(ty(0), Some(RtType::Page(_))) {
             return Err(format!(
                 "{} takes a Page instead of a TestPage: what a {} handler of that shape is handed and how its Response: Action is read are not pinned (docs/probes-needed.md)",
@@ -158,6 +171,7 @@ impl Session {
             routine,
             instance,
             fired: false,
+            typed: typed_modal(kind, r.params, &r.by_var, ty(0), ty(1)),
         })
     }
 
@@ -252,9 +266,11 @@ impl Session {
         }
         let (answer, _) = self.dispatch_ui_returning(UiKind::SessionSettings, "", vec![settings])?;
         match answer {
-            Value::Boolean(true) => Ok(()),
+            // A handler that answers false is called once and nothing is raised (session/
+            // TestProbeSessionMiscContracts.al:SessionSettings_RequestUpdateFalse_Handler).
+            Value::Boolean(_) => Ok(()),
             other => Err(Signal::Unsupported(format!(
-                "a [SessionSettingsHandler] that answers {other} (only true is pinned)",
+                "a [SessionSettingsHandler] that answers {other}",
                 other = other.describe()
             ))),
         }
@@ -342,6 +358,18 @@ impl Session {
         };
         h.fired = true;
         Ok((h.object, h.routine, h.instance.clone()))
+    }
+
+    /// The bound `Page`-typed `[ModalPageHandler]` of `page`, marked as used, when the test bound one.
+    pub(crate) fn take_typed_modal_handler(&mut self, page: u32) -> Option<BoundHandler> {
+        let h = self
+            .ui
+            .as_mut()?
+            .handlers
+            .iter_mut()
+            .find(|h| h.kind == UiKind::ModalPage && h.typed && h.page == Some(page))?;
+        h.fired = true;
+        Some((h.object, h.routine, h.instance.clone()))
     }
 
     /// Whether the test bound a handler of `kind` for `page`.

@@ -46,7 +46,7 @@ fn positions(args: &[Value]) -> Result<Vec<usize>, Signal> {
 }
 
 /// The primary key of a row, as a comparable text.
-fn row_id(t: &TableDef, row: &[Value]) -> String {
+pub(crate) fn row_id(t: &TableDef, row: &[Value]) -> String {
     format!("{:?}", t.primary_key(row))
 }
 
@@ -73,11 +73,19 @@ impl Session {
                 have: FieldSet::Of(have),
                 unsure: FieldSet::Of(unsure),
                 row: Some(new_row),
+                cleared: false,
+            },
+            Some(old) if old.cleared && old.row.as_deref() != Some(new_row.as_str()) => Buffer {
+                have: FieldSet::Of(have),
+                unsure: FieldSet::Of(unsure),
+                row: Some(new_row),
+                cleared: false,
             },
             Some(old) => {
                 let old_row = old.row.clone().unwrap_or_else(|| row_id(&t, &r.fields));
                 let mut next = old.clone();
                 next.row = Some(new_row.clone());
+                next.cleared = false;
                 if old_row == new_row {
                     // The same row again: nothing is evicted (record/TestRecordPartialLoadNarrowAfterFetch.al:121-185).
                     if let FieldSet::Of(h) = &mut next.have {
@@ -161,8 +169,17 @@ impl Session {
             "SetBaseLoadFields" => {
                 // Only the full-load case is pinned as callable (record/TestRecordExtended.al:71-80);
                 // what the base set holds is not.
-                if rec.borrow().load.request.is_some() {
-                    return unsupported("SetBaseLoadFields on a partial load (the base set is not pinned)");
+                // After SetLoadFields(Cd), SetBaseLoadFields loads the whole row again (session/
+                // TestProbeSessionMiscContracts.al:PartialRecords_AreFieldsLoaded, `baseloadfields_txt` Yes).
+                let had = rec.borrow().load.request.is_some();
+                if had && self.ret_used {
+                    return unsupported(
+                        "the result of SetBaseLoadFields on a partial record (only the statement form is pinned)",
+                    );
+                }
+                rec.borrow_mut().load.request = None;
+                if had {
+                    return Ok(Value::Null);
                 }
                 Ok(Value::Boolean(false))
             }
@@ -225,7 +242,8 @@ impl Session {
         {
             return unsupported(format!("LoadFields of field position {p}, which is not a stored field"));
         }
-        if rec.borrow().load.buffer.is_some() {
+        // A buffer that survives a Clear is for a later fetch of the same row, not a row the record holds.
+        if rec.borrow().load.buffer.as_ref().is_some_and(|b| !b.cleared) {
             return unsupported(
                 "LoadFields on a record that holds a fetched row: whether BC reads the row again, over values assigned since, is not pinned (docs/probes-needed.md)",
             );
@@ -272,6 +290,7 @@ impl Session {
             have: FieldSet::Of(have),
             unsure: FieldSet::All,
             row: Some(id),
+            cleared: false,
         });
         r.load.partial = true;
         Ok(Value::Boolean(true))

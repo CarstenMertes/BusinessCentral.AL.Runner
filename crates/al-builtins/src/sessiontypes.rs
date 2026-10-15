@@ -59,9 +59,9 @@ fn int(a: &[Value], i: usize) -> Result<i32, Signal> {
 /// is refused on read (see [`SessionSettingsState`]).
 fn language_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_settings(r, |s| s.language_id)?.map(Value::Integer).ok_or_else(|| {
-            Signal::Unsupported("LanguageId of settings nobody set (the default is not pinned)".into())
-        });
+        // Untouched settings read as 0, empty and the null Guid (session/TestProbeSessionMiscContracts.al:
+        // SessionSettings_PristineProperties).
+        return with_settings(r, |s| s.language_id.unwrap_or(0)).map(Value::Integer);
     }
     let n = int(a, 0)?;
     with_settings(r, |s| s.language_id = Some(n)).map(|()| Value::Null)
@@ -69,9 +69,7 @@ fn language_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn locale_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_settings(r, |s| s.locale_id)?
-            .map(Value::Integer)
-            .ok_or_else(|| Signal::Unsupported("LocaleId of settings nobody set (the default is not pinned)".into()));
+        return with_settings(r, |s| s.locale_id.unwrap_or(0)).map(Value::Integer);
     }
     let n = int(a, 0)?;
     with_settings(r, |s| s.locale_id = Some(n)).map(|()| Value::Null)
@@ -79,9 +77,7 @@ fn locale_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn time_zone(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_settings(r, |s| s.time_zone.clone())?
-            .map(Value::Text)
-            .ok_or_else(|| Signal::Unsupported("TimeZone of settings nobody set (the default is not pinned)".into()));
+        return with_settings(r, |s| s.time_zone.clone().unwrap_or_default()).map(Value::Text);
     }
     let t = text(a, 0)?;
     with_settings(r, |s| s.time_zone = Some(t)).map(|()| Value::Null)
@@ -89,9 +85,7 @@ fn time_zone(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn profile_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_settings(r, |s| s.profile_id.clone())?
-            .map(Value::Text)
-            .ok_or_else(|| Signal::Unsupported("ProfileId of settings nobody set (the default is not pinned)".into()));
+        return with_settings(r, |s| s.profile_id.clone().unwrap_or_default()).map(Value::Text);
     }
     let t = text(a, 0)?;
     with_settings(r, |s| s.profile_id = Some(t)).map(|()| Value::Null)
@@ -99,9 +93,7 @@ fn profile_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn profile_app_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_settings(r, |s| s.profile_app_id)?.map(Value::Guid).ok_or_else(|| {
-            Signal::Unsupported("ProfileAppId of settings nobody set (the default is not pinned)".into())
-        });
+        return with_settings(r, |s| s.profile_app_id.unwrap_or([0; 16])).map(Value::Guid);
     }
     let Value::Guid(g) = a[0] else {
         return unsupported(format!("ProfileAppId with {}", a[0].describe()));

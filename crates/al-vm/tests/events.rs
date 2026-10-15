@@ -1298,21 +1298,25 @@ fn delete_all_true_runs_the_extension_triggers_per_row_and_false_runs_none() {
     );
 }
 
-// The order of two extensions' triggers is not pinned, so two declaring the same one is refused.
+// events/TestProbeEventContracts.al:ExtensionTriggers_TwoExtensionsSameTrigger_Order: two extensions' triggers of the same
+// kind run one after the other, in the order of the extensions' object ids (here 50302 before 50303, whichever is declared first).
 #[test]
-fn two_extensions_declaring_the_same_trigger_are_refused() {
+fn two_extensions_declaring_the_same_trigger_run_in_the_order_of_their_ids() {
     let src = format!(
         "{EXT}
 tableextension 50303 ETExt2 extends ET
 {{
-    trigger OnBeforeInsert() begin end;
+    trigger OnBeforeInsert() var T: Codeunit Trace; begin T.Add('Ext2BeforeInsert'); end;
 }}
 codeunit 50100 C
 {{
-    procedure F() var R: Record ET; begin R.\"No.\" := 1; R.Insert(true); end;
+    procedure F(): Text var R: Record ET; T: Codeunit Trace; begin T.Clear(); R.\"No.\" := 1; R.Insert(true); exit(T.Get()); end;
 }}"
     );
-    assert!(matches!(run(&src, "F"), Err(Signal::Unsupported(r)) if r.contains("extension")));
+    let log = text(run(&src, "F"));
+    let first = log.find("ExtBeforeInsert").expect(&log);
+    let second = log.find("Ext2BeforeInsert").expect(&log);
+    assert!(first < second, "{log}");
 }
 
 // record/TestTriggerDispatchOrder.al:TriggerOrder_Validate_FieldPipeline_IsStable (:21-37): the

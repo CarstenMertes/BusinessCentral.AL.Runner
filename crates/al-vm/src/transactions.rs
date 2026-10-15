@@ -161,7 +161,9 @@ impl Session {
     /// a change, whatever the caller has pending (handlers/TestPageBgTaskTx_Tests.al:
     /// RunPageBackgroundTask_WorkerIsOutsideCallersWriteTransaction).
     pub(crate) fn in_write_transaction(&self) -> bool {
-        self.bg_worker.is_none() && self.store.has_uncommitted()
+        // A write call starts the transaction even when it changes nothing (record/TestProbeRecordRefContracts.al:
+        // WriteTransaction_State: a DeleteAll or ModifyAll of no row).
+        self.bg_worker.is_none() && (self.store.has_uncommitted() || self.tx_phase == TX_WRITE)
     }
 
     /// Whether the running test method has no transaction: `TransactionModel::None` outside
@@ -278,20 +280,12 @@ impl Session {
                     obj.name
                 ));
             };
-            let Some(Value::Record(rc)) = record_arg else {
-                return unsupported(format!(
-                    "Codeunit.Run of {} without a record (Rec of a TableNo codeunit is not pinned)",
-                    obj.name
-                ));
-            };
-            if rc.borrow().temporary {
-                return unsupported(format!(
-                    "Codeunit.Run of {} with a temporary record (not pinned)",
-                    obj.name
-                ));
-            }
+            // Without a record Rec is a blank record; a temporary one is handed over by reference like any other
+            // (session/TestProbeSessionMiscContracts.al:CodeunitRun_TableNo_NoRecord, CodeunitRun_TableNo_TemporaryRecord).
             self.ensure_initialized(&inst);
-            inst.borrow_mut().globals[slot] = Value::Record(rc.clone());
+            if let Some(Value::Record(rc)) = record_arg {
+                inst.borrow_mut().globals[slot] = Value::Record(rc.clone());
+            }
         }
 
         if guarded {
@@ -371,7 +365,7 @@ impl Session {
     /// `Insert` is pinned (codeunit/TestWriteTxTestBoundary.al:Test09_NoneTestCannotWriteDirectly);
     /// the other writes are refused as unsupported rather than given a guessed outcome.
     pub(crate) fn gate_write(&self, method: &str) -> Result<(), Signal> {
-        if !self.no_transaction() {
+        if !self.no_transaction() && !self.request_only_page {
             return Ok(());
         }
         match method {

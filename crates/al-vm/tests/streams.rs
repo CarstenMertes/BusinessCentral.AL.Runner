@@ -225,20 +225,25 @@ fn what_the_corpus_does_not_pin_about_streams_is_refused() {
         BASE,
         "B.Data.CreateOutStream(O); O.Write(1234567890123456789.5); exit('');"
     ));
-    // An empty blob that was not loaded has no measured length.
-    assert!(refused(
+}
+
+#[test]
+fn an_empty_blob_that_was_not_loaded_has_length_zero() {
+    // streams/TestProbeStreamContracts.al:BlobLength_EmptyUnloaded.
+    let t = text(
         BASE,
-        "B.Code := 'X'; B.Insert(); B.Get('X'); exit(Format(B.Data.Length()));"
-    ));
+        "B.Code := 'X'; B.Insert(); B.Get('X'); exit(Format(B.Data.Length()) + Format(B.Data.HasValue()));",
+    );
+    assert_eq!(t, "0No");
 }
 
 #[test]
 fn write_text_without_a_text_writes_carriage_return_line_feed() {
     // streams/TestStreamsRuntimeContracts.al:OutStream_WriteText_WithoutArgument_WritesCarriageReturnLineFeed.
     let t = text(
-        base!("V: Byte; H: Text;"),
+        base!("V: Byte; N: Integer; H: Text;"),
         "B.Data.CreateOutStream(O); O.WriteText('abc'); O.WriteText(); O.WriteText('def'); B.Data.CreateInStream(I);
-         while not I.EOS() do begin I.Read(V); H += Format(V) + ','; end; exit(H);",
+         while not I.EOS() do begin I.Read(V); N := V; H += Format(N) + ','; end; exit(H);",
     );
     assert_eq!(t, "97,98,99,13,10,100,101,102,");
 }
@@ -248,11 +253,11 @@ fn the_default_encoding_is_windows_1252() {
     // streams/TestStreamsRuntimeContracts.al:WriteText_DefaultEncodingIsWindows1252_NotUtf8 and
     // :WriteText_ExplicitEncodings_Bytes: e acute is one byte by default, two in UTF8, and UTF16 is
     // two bytes per character with no byte order mark.
-    let vars = base!("V: Byte; H: Text; E: Char;");
+    let vars = base!("V: Byte; N: Integer; H: Text; E: Char;");
     let bytes = |enc: &str| {
         format!(
             "E := 233; B.Data.CreateOutStream(O{enc}); O.WriteText('h' + Format(E)); B.Data.CreateInStream(I{enc});
-             while not I.EOS() do begin I.Read(V); H += Format(V) + ','; end; exit(H);"
+             while not I.EOS() do begin I.Read(V); N := V; H += Format(N) + ','; end; exit(H);"
         )
     };
     assert_eq!(text(vars, &bytes("")), "104,233,");
@@ -307,10 +312,10 @@ fn binary_forms_of_the_types_the_probe_measured() {
     // BigInteger, Time and Text).
     let hex = |write: &str| {
         text(
-            base!("V: Byte; H: Text; Big: BigInteger;"),
+            base!("V: Byte; N: Integer; H: Text; Big: BigInteger;"),
             &format!(
                 "Evaluate(Big, '5000000000'); B.Data.CreateOutStream(O); {write}; B.Data.CreateInStream(I);
-                 while not I.EOS() do begin I.Read(V); H += Format(V) + ','; end; exit(H);"
+                 while not I.EOS() do begin I.Read(V); N := V; H += Format(N) + ','; end; exit(H);"
             ),
         )
     };
@@ -327,10 +332,10 @@ fn binary_forms_of_the_types_the_probe_measured() {
 fn binary_forms_of_a_date_and_a_decimal() {
     let hex = |write: &str| {
         let t = text(
-            base!("V: Byte; H: Text;"),
+            base!("V: Byte; N: Integer; H: Text;"),
             &format!(
                 "B.Data.CreateOutStream(O); {write}; B.Data.CreateInStream(I);
-                 while not I.EOS() do begin I.Read(V); H += Format(V) + ','; end; exit(H);"
+                 while not I.EOS() do begin I.Read(V); N := V; H += Format(N) + ','; end; exit(H);"
             ),
         );
         t.split(',')
@@ -415,14 +420,29 @@ fn pad_str_pads_on_the_right() {
 }
 
 #[test]
-fn renaming_a_temporary_record_with_a_blob_is_refused() {
-    // streams/TestBlobRenameIsolation.al TempBlob_CommittedWrite_Rename_SameInstanceReGet_LosesBlobValue
-    // measured that BC loses a Blob persisted with Modify across a temporary Rename, while an
-    // unpersisted write survives: no model here reproduces both, so the Rename is refused.
-    assert!(refused(
-        "B: Record \"ALT Blob\" temporary; O: OutStream;",
-        "B.Init(); B.Code := 'A'; B.Insert(true); B.Data.CreateOutStream(O); O.WriteText('x'); B.Modify(true); B.Rename('B'); exit('');"
-    ));
+fn renaming_a_temporary_record_with_a_blob() {
+    // streams/TestBlobRenameIsolation.al TempBlob_CommittedWrite_Rename_SameInstanceReGet_LosesBlobValue: a Blob persisted
+    // with Modify is lost across a temporary Rename, while an unpersisted write survives
+    // (TempBlob_UncommittedWrite_Rename_SameInstanceReGet_KeepsWrite); a stream over the record's Blob reads nothing right
+    // after the Rename either way (streams/TestProbeStreamContracts.al:TempRename_UnpersistedBlobWrite, TempRename_PersistedBlobWrite).
+    let vars = "B: Record \"ALT Blob\" temporary; O: OutStream; I: InStream; T: Text;";
+    let after = "B.Rename('B'); B.Get('B'); B.CalcFields(Data); B.Data.CreateInStream(I); I.ReadText(T); exit(Format(B.Data.HasValue()) + '|' + T);";
+    assert_eq!(
+        text(
+            vars,
+            &format!(
+                "B.Init(); B.Code := 'A'; B.Insert(true); B.Data.CreateOutStream(O); O.WriteText('x'); B.Modify(true); {after}"
+            )
+        ),
+        "No|"
+    );
+    assert_eq!(
+        text(
+            vars,
+            &format!("B.Init(); B.Code := 'A'; B.Insert(true); B.Data.CreateOutStream(O); O.WriteText('x'); {after}")
+        ),
+        "Yes|x"
+    );
     // A database record keeps what Modify persisted across Rename.
     let t = text(
         base!("R: Record \"ALT Blob\"; RI: InStream; RT: Text;"),
@@ -464,7 +484,8 @@ fn text_encodings_decide_the_bytes_per_character() {
 fn json_write_to_an_out_stream_writes_utf8_whatever_the_stream_encoding() {
     // streams/ProbeJsonAndInStreamBytes.al:WriteTo_OutStream_Windows_AsciiAndNonAscii, :..._Utf16_...,
     // :..._MsDos_...: the bytes are UTF-8 on every stream (BC 27.5).
-    let read = "B.Data.CreateInStream(I); while not I.EOS() do begin I.Read(V); T += Format(V) + ','; end; exit(T);";
+    let read =
+        "B.Data.CreateInStream(I); while not I.EOS() do begin I.Read(V); N := V; T += Format(N) + ','; end; exit(T);";
     for enc in [
         "",
         ", TextEncoding::UTF16",
@@ -472,7 +493,7 @@ fn json_write_to_an_out_stream_writes_utf8_whatever_the_stream_encoding() {
         ", TextEncoding::Windows",
     ] {
         let t = text(
-            base!("A: JsonArray; V: Byte;"),
+            base!("A: JsonArray; V: Byte; N: Integer;"),
             &format!("A.Add('\u{e9}'); B.Data.CreateOutStream(O{enc}); A.WriteTo(O); {read}"),
         );
         assert_eq!(t, "91,34,195,169,34,93,", "{enc}");
@@ -482,9 +503,9 @@ fn json_write_to_an_out_stream_writes_utf8_whatever_the_stream_encoding() {
 #[test]
 fn json_write_to_an_out_stream_writes_non_ascii_text_as_utf8_on_a_utf8_stream() {
     let t = text(
-        base!("A: JsonArray; V: Byte;"),
+        base!("A: JsonArray; V: Byte; N: Integer;"),
         "A.Add('\u{e9}'); B.Data.CreateOutStream(O, TextEncoding::UTF8); A.WriteTo(O); B.Data.CreateInStream(I);
-         while not I.EOS() do begin I.Read(V); T += Format(V) + ','; end; exit(T);",
+         while not I.EOS() do begin I.Read(V); N := V; T += Format(N) + ','; end; exit(T);",
     );
     assert_eq!(t, "91,34,195,169,34,93,");
 }

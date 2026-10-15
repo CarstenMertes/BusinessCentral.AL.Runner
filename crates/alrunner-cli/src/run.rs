@@ -323,7 +323,7 @@ pub struct Report {
     pub coverage: Option<serde_json::Value>,
 }
 
-/// Everything the compile depends on but the selection: the workspace sources, the dependency apps, the symbols, the target.
+/// Everything the compile depends on but the selection and the text of the workspace files: the workspace file names, the dependency apps, the symbols, the target.
 fn warm_key(
     inputs: &[AppInput],
     dependencies: &al_testrun::deps::Dependencies,
@@ -335,9 +335,9 @@ fn warm_key(
     for i in inputs {
         i.source.id.hash(&mut h);
         i.source.dependencies.hash(&mut h);
-        for (path, text) in &i.source.files {
+        // The names of the files, not their text: a change of text is the warm compile's to take in.
+        for (path, _) in &i.source.files {
             path.hash(&mut h);
-            text.hash(&mut h);
         }
         i.manifest.version.hash(&mut h);
     }
@@ -774,8 +774,19 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         }
         Some(w) => {
             let key = warm_key(&inputs, &dependencies, &symbols, &format!("{:?}", chosen.target));
+            let files: Vec<al_testrun::runtime::FileChange> = inputs
+                .iter()
+                .enumerate()
+                .flat_map(|(app, i)| {
+                    i.source
+                        .files
+                        .iter()
+                        .map(move |(path, text)| al_testrun::runtime::FileChange { app, path, text })
+                })
+                .collect();
             let (rt, used) = w.runtime.run(
                 &key,
+                &files,
                 build_apps,
                 &symbols,
                 Some(&chosen.target),

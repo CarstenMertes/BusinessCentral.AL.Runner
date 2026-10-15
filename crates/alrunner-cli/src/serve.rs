@@ -253,6 +253,10 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
                 "protocolVersion": 2,
                 "wallSeconds": started.elapsed().as_secs_f64(),
             });
+            if ctx.used == Some(al_testrun::runtime::WarmUse::Updated) {
+                // Only the code of some routines changed: only those objects were compiled again.
+                summary["incremental"] = json!(true);
+            }
             if cancelled {
                 summary["cancelled"] = json!(true);
             }

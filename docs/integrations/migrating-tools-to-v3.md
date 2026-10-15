@@ -161,16 +161,20 @@ Differences a client must adapt to:
 
 1. **Test lines stream**, one per test as it finishes, then the summary.
 2. The server is **warm and in-process**: compiled dependency apps and test data stay in memory. Same sources as the
-   last request: the compiled workspace is reused and `cached` is `true`. A changed source recompiles, so a change
-   always shows. Every request starts from the same post-install database, so nothing leaks between requests.
-   The first request is slow (full compile, about 3 GB resident with Microsoft's apps); repeats take 0.2 to 2 s.
+   last request: the compiled workspace is reused and `cached` is `true`. A changed source always shows. When only the
+   code of routines of codeunits, tables or table extensions changed, just those objects are compiled again and the
+   summary has `incremental: true` (ADR-029; a request takes 0.4 s on the corpus app and 2.2 s on Tests-ERM, of which
+   1.8 s is the tests); any other change compiles the workspace again. Every request starts from the same post-install
+   database, so nothing leaks between requests. The first request after a new build of `alrunner` builds the
+   dependency cache (a minute with Microsoft's apps, then 3 GB resident); with the cache on disk it takes as long as a
+   one-shot run. Repeats take 0.2 to 2 s.
    A panic in a test is reported as an error for that test and the server goes on.
 3. `test` lines have `type`, `name`, `status` (`pass`, `fail`, `error`), `durationMs`, `message`, `stackTrace`,
    `stackFrames` (the AL stack split into lines), and `notRun: true` for a test that did not run (status `error`, message
    `NotRun: out-of-scope: <reason>`; see section 4). `errorKind`, `alSourceFile`, `alSourceLine` are not sent.
 4. The `summary` has `exitCode` (the exit code of `alrunner test`, section 5), `passed`, `failed`, `errors` (= not run),
-   `notRun`, `total`, `cached`, `protocolVersion`, `wallSeconds`, `warnings` when there are some, `cancelled` when
-   cancelled, and `coverage` / `perTestCoverage` when asked for (section 4a shapes). `compilationErrors`,
+   `notRun`, `total`, `cached`, `incremental` when only some objects were compiled again, `protocolVersion`, `wallSeconds`,
+   `warnings` when there are some, `cancelled` when cancelled, and `coverage` / `perTestCoverage` when asked for (section 4a shapes). `compilationErrors`,
    `changedFiles`, `selection`, `companyInitFailures`, `sourceScanFailures` are not sent.
 5. A run that cannot start (a bad path, an app that does not load) answers `{"error": "the run produced no result (exit 2): ..."}`
    instead of a summary with exit code 2 or 3.

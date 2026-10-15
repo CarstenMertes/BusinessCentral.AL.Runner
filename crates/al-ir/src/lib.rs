@@ -990,17 +990,17 @@ fn no_pos() -> u32 {
 
 impl Routine {
     /// Moves every source position id of the routine (its own and its `Stmt::Pos` markers) up by
-    /// `by`: the object was lowered with positions numbered from 0 and now follows `by` positions
+    /// `by` (wrapping, so a `by` made from a negative distance moves them down): the object was lowered with positions numbered from 0 and now follows `by` positions
     /// of other objects in `Program::positions`. [`NO_POS`] stays.
     pub fn shift_positions(&mut self, by: u32) {
         if self.pos != NO_POS {
-            self.pos += by;
+            self.pos = self.pos.wrapping_add(by);
         }
         if self.end_pos != NO_POS {
-            self.end_pos += by;
+            self.end_pos = self.end_pos.wrapping_add(by);
         }
         if self.begin_pos != NO_POS {
-            self.begin_pos += by;
+            self.begin_pos = self.begin_pos.wrapping_add(by);
         }
         shift_stmts(&mut self.body, by);
     }
@@ -1009,7 +1009,7 @@ impl Routine {
 fn shift_stmts(stmts: &mut [Stmt], by: u32) {
     for s in stmts {
         match s {
-            Stmt::Pos(id) => *id += by,
+            Stmt::Pos(id) => *id = id.wrapping_add(by),
             Stmt::If(_, then, otherwise) => {
                 shift_stmts(then, by);
                 shift_stmts(otherwise, by);

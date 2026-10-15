@@ -4,6 +4,7 @@ pub mod alcodes;
 pub mod base_access;
 pub mod calcformula;
 pub mod check;
+pub mod incremental;
 pub mod lower;
 pub mod members;
 pub mod pages;

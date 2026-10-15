@@ -4466,7 +4466,19 @@ impl Lowerer<'_> {
                     _ => Err("option value without its option type".into()),
                 },
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
-                _ => Err(format!("`{}` is not lowered yet", n.text())),
+                _ => {
+                    // `Enum::Member` of a system enum whose member list has no such member.
+                    let text = n.text().to_string();
+                    match text.split_once("::") {
+                        Some((e, m)) if al_builtins::sysenum::members(e.trim()).is_some() => Err(format!(
+                            "`{}::{}` is not a member of the system enum {} in the member list this runtime holds, which only holds the members a corpus probe lists: its ordinal is not pinned (docs/probes-needed.md)",
+                            e.trim(),
+                            m.trim().trim_matches('"'),
+                            e.trim()
+                        )),
+                        _ => Err(format!("`{text}` is not lowered yet")),
+                    }
+                }
             },
             MemberExpr if self.is_control_access(n) => self.control(n),
             // `CurrPage.<Part>.Page`: the page the part shows.

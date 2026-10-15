@@ -364,11 +364,14 @@ fn the_first_line_names_the_target() {
     assert_eq!(shared.code, 0, "{}", shared.err);
     assert_eq!(
         shared.out.lines().next(),
-        Some("target: BC 27.5, runtime 16.0"),
+        Some("target: BC 27.5.46862.56249, runtime 16.0"),
         "{}",
         shared.out
     );
-    for line in ["target: BC 28.5, runtime 16.0", "target: BC 29.0, runtime 16.0"] {
+    for line in [
+        "target: BC 28.5.54151.56267, runtime 16.0",
+        "target: BC 29.0.54011.56262, runtime 16.0",
+    ] {
         assert!(shared.out.lines().any(|l| l == line), "{line} in {}", shared.out);
     }
     // `--bc-version` picks one. A selection puts its own line first, so the target line follows it.
@@ -382,8 +385,8 @@ fn the_first_line_names_the_target() {
         );
         out.lines().nth(1).unwrap_or_default().to_string()
     };
-    assert_eq!(target_line("27"), "target: BC 27.5, runtime 16.0");
-    assert_eq!(target_line("28"), "target: BC 28.5, runtime 16.0");
+    assert_eq!(target_line("27"), "target: BC 27.5.46862.56249, runtime 16.0");
+    assert_eq!(target_line("28"), "target: BC 28.5.54151.56267, runtime 16.0");
 }
 
 #[test]
@@ -421,7 +424,11 @@ fn the_default_is_the_newest_version_with_an_oracle() {
     let (code, out, err) = cli(&["--codeunit", SMALL_CU]);
     assert_eq!(code, 0, "{err}");
     // The selection's own line comes first.
-    assert_eq!(out.lines().nth(1), Some("target: BC 29.0, runtime 16.0"), "{out}");
+    assert_eq!(
+        out.lines().nth(1),
+        Some("target: BC 29.0.54011.56262, runtime 16.0"),
+        "{out}"
+    );
 }
 
 #[test]

@@ -297,6 +297,9 @@ pub struct PageState {
     pub refresh: bool,
     /// A row with the new record's starting key was already stored when the draft started.
     pub draft_stored: bool,
+    /// The row a new line was started below (`New()` on a stored row of a list): after the new row
+    /// is saved, `Next()` goes to the row below that one, as the client's own row order has it.
+    pub after_new: Option<Vec<Value>>,
     /// OnInit/OnOpenPage are running, and `CurrPage.Editable(false)` has been called in them.
     pub opening: bool,
     pub editable_off: bool,
@@ -378,6 +381,7 @@ impl PageState {
             trapping: false,
             refresh: false,
             draft_stored: false,
+            after_new: None,
             opening: false,
             editable_off: false,
             editable_preset: None,

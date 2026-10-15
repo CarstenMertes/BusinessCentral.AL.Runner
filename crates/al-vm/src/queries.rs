@@ -430,6 +430,14 @@ impl Session {
         def: &ir::Query,
         filters: &[(usize, FilterExpr)],
     ) -> Result<Vec<(usize, FilterExpr)>, Signal> {
+        // Filters on columns come in column order, whatever the order they were set in (query/W7QueryFilters.al:
+        // GetFilters_*, all 13 orders over seven columns, BC 27.5 and 29.0). With a filter element among them the
+        // order is the older probe's: set order, the Text column last.
+        if !filters.iter().any(|(c, _)| def.columns[*c].filter_element) {
+            let mut out = filters.to_vec();
+            out.sort_by_key(|(c, _)| *c);
+            return Ok(out);
+        }
         let is_text = |c: usize| matches!(def.columns[c].ty, RtType::Text(_) | RtType::Code(_));
         let mut out: Vec<_> = filters.iter().filter(|(c, _)| !is_text(*c)).cloned().collect();
         out.extend(filters.iter().filter(|(c, _)| is_text(*c)).cloned());

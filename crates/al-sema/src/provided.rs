@@ -65,6 +65,19 @@ pub struct DepBlock {
     pub calls: Vec<Vec<(u32, u32)>>,
 }
 
+impl DepBlock {
+    /// A block with nothing in it. A layer build marks the objects of the layers below as supplied
+    /// but never reads their lowered form (the lowering of other objects reads their facts), so it
+    /// does not decode their blocks.
+    pub fn placeholder() -> DepBlock {
+        DepBlock {
+            object: ir::Object::default(),
+            unsupported: Vec::new(),
+            calls: Vec::new(),
+        }
+    }
+}
+
 /// A set of lowered dependency objects, indexed like the objects of the dependency apps.
 pub trait DepSource: Sync {
     fn len(&self) -> usize;

@@ -313,6 +313,9 @@ pub struct PageState {
     /// The pages shown by the part controls of this page: (control index, child page). Only parts
     /// that are in the control tree at open have one.
     pub parts: Vec<(usize, Rc<RefCell<PageState>>)>,
+    /// Parts dropped at open because their `Visible` came out false: the page's own code still reaches them
+    /// (`CurrPage.<Part>.Page`), the test client does not.
+    pub hidden_parts: Vec<(usize, Rc<RefCell<PageState>>)>,
     /// Primary key of the stored row the cursor stood on when the current new row was started:
     /// the lower neighbour AutoSplitKey numbers it from (`None`: no such row).
     pub lower_key: Option<Vec<Value>>,
@@ -393,6 +396,7 @@ impl PageState {
             editable_preset: None,
             caption: None,
             parts: Vec::new(),
+            hidden_parts: Vec::new(),
             lower_key: None,
             set_record: None,
             typed_handler: false,

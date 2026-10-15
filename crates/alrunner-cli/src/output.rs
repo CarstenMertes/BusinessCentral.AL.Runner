@@ -157,35 +157,19 @@ pub fn stack_lines(stack: &str) -> Vec<String> {
 ///   tests not run, and `skipped` is 0.
 /// - `codeunit`, `codeunitName` and `method` are v3's additions.
 pub fn json(results: &[&TestResult], exit_code: u8, wall_s: f64) -> String {
-    use serde_json::{Map, Value, json};
+    use serde_json::{Value, json};
     let c = Counts::of(results.iter().copied());
     let tests: Vec<Value> = results
         .iter()
         .map(|r| {
-            let mut t = Map::new();
-            t.insert("name".into(), json!(format!("Codeunit{}.{}", r.codeunit, r.test)));
-            t.insert("codeunit".into(), json!(r.codeunit));
-            t.insert("codeunitName".into(), json!(r.codeunit_name));
-            t.insert("method".into(), json!(r.test));
-            let (status, message) = match &r.outcome {
-                Outcome::Pass => ("pass", None),
-                Outcome::Fail(m) => ("fail", Some(m.clone())),
-                Outcome::NotRun(why) => {
-                    t.insert("notRun".into(), json!(true));
-                    ("error", Some(not_run_message(why)))
-                }
-            };
-            t.insert("status".into(), json!(status));
-            if !r.time.is_zero() {
-                t.insert("durationMs".into(), json!(r.time.as_millis() as u64));
-            }
-            if let Some(m) = message {
-                t.insert("message".into(), json!(m));
-            }
-            if !r.call_stack.is_empty() {
-                t.insert("stackTrace".into(), json!(stack_lines(&r.call_stack).join("\n")));
-            }
-            Value::Object(t)
+            Value::Object(json_row(
+                r.codeunit,
+                &r.codeunit_name,
+                &r.test,
+                &r.outcome,
+                &r.call_stack,
+                r.time,
+            ))
         })
         .collect();
     let doc = json!({
@@ -200,6 +184,42 @@ pub fn json(results: &[&TestResult], exit_code: u8, wall_s: f64) -> String {
         "wallSeconds": (wall_s * 1000.0).round() / 1000.0,
     });
     serde_json::to_string_pretty(&doc).expect("a JSON value serializes")
+}
+
+/// One row of `tests[]` of the `--output-json` document, also the body of a `test` line of `alrunner serve`.
+pub fn json_row(
+    codeunit: u32,
+    codeunit_name: &str,
+    test: &str,
+    outcome: &Outcome,
+    call_stack: &str,
+    time: std::time::Duration,
+) -> serde_json::Map<String, serde_json::Value> {
+    use serde_json::json;
+    let mut t = serde_json::Map::new();
+    t.insert("name".into(), json!(format!("Codeunit{codeunit}.{test}")));
+    t.insert("codeunit".into(), json!(codeunit));
+    t.insert("codeunitName".into(), json!(codeunit_name));
+    t.insert("method".into(), json!(test));
+    let (status, message) = match outcome {
+        Outcome::Pass => ("pass", None),
+        Outcome::Fail(m) => ("fail", Some(m.clone())),
+        Outcome::NotRun(why) => {
+            t.insert("notRun".into(), json!(true));
+            ("error", Some(not_run_message(why)))
+        }
+    };
+    t.insert("status".into(), json!(status));
+    if !time.is_zero() {
+        t.insert("durationMs".into(), json!(time.as_millis() as u64));
+    }
+    if let Some(m) = message {
+        t.insert("message".into(), json!(m));
+    }
+    if !call_stack.is_empty() {
+        t.insert("stackTrace".into(), json!(stack_lines(call_stack).join("\n")));
+    }
+    t
 }
 
 /// The message of a not-run test in the JSON document: v2's timeout sentence for a test the time limit stopped, else the

@@ -4815,9 +4815,11 @@ impl Lowerer<'_> {
             .iter()
             .position(|c| c.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| format!("control `{name}` is not in the page layout"))?;
+        let runtime = matches!(self.ty_of(recv), Ty::Object(ObjKind::Page, _));
         Ok(ir::Expr::Control {
             page: Box::new(self.expr(recv)?),
             control,
+            runtime,
         })
     }
 

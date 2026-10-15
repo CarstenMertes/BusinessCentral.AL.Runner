@@ -1200,6 +1200,10 @@ pub enum Expr {
     Control {
         page: Box<Expr>,
         control: usize,
+        /// `CurrPage.<Control>` in the page's own code, not a test page variable: a part that is not visible
+        /// is still there for the page's code.
+        #[serde(default)]
+        runtime: bool,
     },
     /// Field `pos` of the record `base` evaluates to (`GetLocation(Code)."Bin Mandatory"`: a field of a
     /// procedure's result, which is not a place).

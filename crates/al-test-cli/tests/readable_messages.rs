@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "alrunner-cli/src/run.rs",
+        r#"let key = warm_key(&inputs, &dependencies, &symbols, &format!("{:?}", chosen.target));"#,
+        "part of a hash key for the warm slot, never shown",
+    ),
+    (
         "al-data/src/memory.rs",
         r#".filter(|&i| format!("{:?}", n[i]) != format!("{:?}", old[i]))"#,
         "equality of two values (Value has no PartialEq) for the record of changes to restored rows, never shown",

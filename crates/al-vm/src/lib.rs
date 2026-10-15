@@ -1287,9 +1287,9 @@ impl Session {
                 let v = self.eval(value, f)?;
                 self.enum_implementation(v, by_ordinal, *unknown)
             }
-            E::Control { page, control } => {
+            E::Control { page, control, runtime } => {
                 let p = self.eval(page, f)?;
-                self.page_control(p, *control)
+                self.page_control(p, *control, *runtime)
             }
             E::FieldOf(base, pos) => {
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldOfProcedureResult);

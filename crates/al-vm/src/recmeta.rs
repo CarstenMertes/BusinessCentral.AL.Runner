@@ -278,7 +278,21 @@ impl Session {
                 use al_builtins::filter::FilterExpr as F;
                 let pos = arg_pos(args, 0)?;
                 let r = rec.borrow();
-                let Some(f) = r.filters.iter().find(|f| f.field == pos && f.group == r.filter_group) else {
+                // A filter set in another group counts too (Microsoft's GenJnlManagement.OpenJnl reads the template
+                // that TemplateSelection set in group 2, Tests-General Journal; unprobed, docs/probes-needed.md
+                // "GetRangeMax across filter groups"; hard rule 3 exception).
+                let Some(f) = r
+                    .filters
+                    .iter()
+                    .find(|f| f.field == pos && f.group == r.filter_group)
+                    .or_else(|| {
+                        r.filters.iter().find(|f| f.field == pos).inspect(|_| {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::GetRangeAcrossFilterGroups,
+                            )
+                        })
+                    })
+                else {
                     return unsupported(format!("{method} without a filter (error text not pinned)"));
                 };
                 match (&f.expr, method) {
@@ -443,9 +457,21 @@ impl Session {
             // Doc (Record.SetRecFilter): filters the primary key fields to the current values; the
             // filters on other fields stay (record/TestRecordViewCopyMarkContracts.al:41,
             // SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey).
+            // With another current key it also filters that key's fields, after the primary key's
+            // (records/W4SortKeys.al:RecordRef_SetRecFilter_AndRecordSetRecFilter: current key Txt gives
+            // `Id: 3, Txt: b`, on a Record and on a RecordRef, BC 27.5 and 29.0).
             "SetRecFilter" => {
                 let group = rec.borrow().filter_group;
-                let pk = &t.keys[0];
+                let mut pk: Vec<usize> = t.keys[0].clone();
+                let current = rec.borrow().key;
+                if let Some(k) = t.keys.get(current) {
+                    for &p in k {
+                        if !pk.contains(&p) {
+                            pk.push(p);
+                        }
+                    }
+                }
+                let pk = &pk;
                 let mut r = rec.borrow_mut();
                 r.filters.retain(|f| !(pk.contains(&f.field) && f.group == group));
                 for &p in pk {

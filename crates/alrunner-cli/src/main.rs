@@ -5,6 +5,7 @@ mod args;
 mod coverage;
 mod output;
 mod run;
+mod serve;
 mod testdata;
 
 use args::Command;
@@ -52,6 +53,13 @@ fn real_main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Warm(a) => match run::warm(&a) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(2)
+            }
+        },
+        Command::Serve(daemon) => match serve::serve(&daemon) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {
                 eprintln!("error: {e}");

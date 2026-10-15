@@ -2153,7 +2153,11 @@ impl al_builtins::native::Ctx for Session {
             .program
             .apps
             .get(self.engine.program.objects[obj].app as usize)?;
-        Some((app.name.clone(), app.resources.clone()))
+        // BC names the app `<name> by <publisher> <version>` (session/W5NavAppResources.al:GetResourceAsText_NameMatching).
+        Some((
+            format!("{} by {} {}", app.name, app.publisher, app.version),
+            app.resources.clone(),
+        ))
     }
     fn runner_call_stack(&self) -> String {
         self.runner_frames.clone()

@@ -65,6 +65,9 @@ pub struct Args {
     /// `--must-not-compile [DIR]`: check the must-not-compile corpus (`mnc.rs`) and stop. DIR is the
     /// folder of the cases or the one that holds `cases/`; without it `corpus/tests/must-not-compile`.
     pub must_not_compile: Option<Option<PathBuf>>,
+    /// `--coverage-map`: write docs/corpus-coverage.md and .json (which builtin overloads the corpus
+    /// tests call, `coverage.rs`) and stop.
+    pub coverage_map: bool,
     /// `--explain TEST`: run one test and say why it ended as it did.
     pub explain: Option<String>,
     /// `--top-refusals [N]`: rank the refusal reasons; N entries (default 10).
@@ -153,6 +156,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--no-download" => a.no_download = true,
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--fetch-deps" => a.fetch_deps = true,
+            "--coverage-map" => a.coverage_map = true,
             "--compile-cache" => a.compile_cache = true,
             "--require-compile-cache" => {
                 a.compile_cache = true;
@@ -236,6 +240,8 @@ SELECTION (each flag repeats; the selection is their union; without one, everyth
   cases. --update-baseline refuses to run with a selection.
 
 DIAGNOSE
+  --coverage-map              write docs/corpus-coverage.md and .json: per type, which builtin
+                              overloads the corpus tests call (one file:line each), then stop
   --must-not-compile [DIR]    check the corpus of AL files the real compiler rejects (DIR, else
                               corpus/tests/must-not-compile): the same ALnnnn codes, per BC major
                               (--bc-version, default 29); exit 1 on a mismatch, then stop

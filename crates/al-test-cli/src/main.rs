@@ -61,6 +61,16 @@ fn run() -> Result<ExitCode, String> {
         al_test_cli::host::set_files_dir(dir.clone());
     }
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
+    if args.coverage_map {
+        let oracle_path = args.oracle.clone().unwrap_or_else(|| root.join("oracle/oracle.toml"));
+        let cfg =
+            config::OracleFile::parse(&read(&oracle_path)?).map_err(|e| format!("{}: {e}", oracle_path.display()))?;
+        println!(
+            "{}",
+            al_test_cli::coverage::write_coverage_map(&root, &cfg.corpus_commit)?
+        );
+        return Ok(ExitCode::SUCCESS);
+    }
     if let Some(dir) = &args.must_not_compile {
         return must_not_compile(&args, &root, dir.as_deref());
     }

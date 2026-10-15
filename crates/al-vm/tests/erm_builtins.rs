@@ -50,18 +50,6 @@ fn run(body: &str) -> Result<Value, Signal> {
     s.call(oi, ri, inst, vec![]).map(|(v, _)| v)
 }
 
-/// Why routine `F` cannot be lowered, if it cannot.
-fn refusal(body: &str) -> String {
-    let l = compile(body);
-    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
-    let ri = l.program.objects[oi]
-        .routines
-        .iter()
-        .position(|r| r.name == "F")
-        .unwrap();
-    l.unsupported[oi][ri].first().cloned().expect("F is refused")
-}
-
 fn text(r: Result<Value, Signal>) -> String {
     match r {
         Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
@@ -109,8 +97,13 @@ fn set_permission_filter_does_not_throw_and_changes_no_row() {
 
 #[test]
 fn builtins_no_corpus_test_pins_are_refused_with_a_reason_that_says_so() {
-    let why = refusal("procedure F() begin Xmlport.Run(50300); end;");
-    assert!(why.contains("Xmlport.Run"), "{why}");
-    assert!(why.contains("not pinned"), "{why}");
-    assert!(!why.contains("is not implemented"), "{why}");
+    // Preview is pinned only inside a report run by Run or RunModal (handlers/
+    // TestReportRequestPageUpdateObjectIdContracts.al); asked of a variable outside a run it refuses when it runs.
+    match run("procedure F() var Rep: Report \"ALT R\"; begin Rep.Preview(); end;") {
+        Err(Signal::Unsupported(why)) => {
+            assert!(why.contains("Report.Preview"), "{why}");
+            assert!(why.contains("not pinned"), "{why}");
+        }
+        other => panic!("{other:?}"),
+    }
 }

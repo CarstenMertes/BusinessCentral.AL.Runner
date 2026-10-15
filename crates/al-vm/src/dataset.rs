@@ -211,29 +211,34 @@ impl Header {
 pub(crate) const DECIMAL_FORMATTER: &str = "#,##0.00";
 
 /// The `decimalformatter` of a Decimal column. `places` is the `DecimalPlaces` of the column, else
-/// of the field, as written: `min : max` gives `#,##0.` followed by `min` zeros and `max - min` hash
-/// signs (`2 : 4` is `#,##0.00##`, `0 : 2` is `#,##0.##`, `0 : 5` is `#,##0.#####`), no dot when
-/// `max` is 0 (`0 : 0` is `#,##0`); a single number `n` is `n : n` (`1` is `#,##0.0`). No property is
-/// the default (handlers/TestReportSaveAsColumnTypesContracts.al:230-244,
-/// handlers/TestReportSaveAsColumnDetailsContracts.al:12-14, handlers/PWReportSaveAsColumns.al:199-211).
+/// of the field, as written: `min : max`, or one number for both. The format is `#,##0`, then the
+/// minimum number of zeros after the point and the further optional places as `#`
+/// (handlers/TestReportSaveAsColumnDetailsContracts.al:UndefinedTimesGuidsHoursAndDecimalPlaces and
+/// handlers/PWReportSaveAsColumns.al:DecimalPlaces_SingleNumberRangeAndZero): `2 : 4` gives
+/// `#,##0.00##`, `0 : 0` gives `#,##0`, `1` gives `#,##0.0`, `0 : 5` gives `#,##0.#####`, `0 : 2`
+/// gives `#,##0.##`, `1 : 1` gives `#,##0.0`, `3 : 3` gives `#,##0.000`
+/// (handlers/TestReportSaveAsColumnTypesContracts.al:230-244). No property is the default.
 pub(crate) fn decimal_formatter(places: Option<&str>) -> Result<String, Signal> {
     let Some(places) = places else {
         return Ok(DECIMAL_FORMATTER.to_string());
     };
-    let parse = |t: &str| t.trim().parse::<usize>().ok();
-    let (min, max) = match places.split(':').collect::<Vec<_>>().as_slice() {
-        [n] => (parse(n), parse(n)),
-        [a, b] => (parse(a), parse(b)),
-        _ => (None, None),
+    let bound = |t: &str| t.trim().parse::<usize>().ok();
+    let (min, max) = match places.split_once(':') {
+        Some((a, b)) => (bound(a), bound(b)),
+        None => (bound(places), bound(places)),
     };
     match (min, max) {
-        (Some(min), Some(max)) if min <= max => Ok(if max == 0 {
-            "#,##0".to_string()
-        } else {
-            format!("#,##0.{}{}", "0".repeat(min), "#".repeat(max - min))
-        }),
+        (Some(min), Some(max)) if min <= max => {
+            let mut f = String::from("#,##0");
+            if max > 0 {
+                f.push('.');
+                f.push_str(&"0".repeat(min));
+                f.push_str(&"#".repeat(max - min));
+            }
+            Ok(f)
+        }
         _ => unsupported(format!(
-            "DecimalPlaces = {places} in a dataset (not a form of the pinned ones)"
+            "DecimalPlaces = {places} in a dataset (not a number or a range of two)"
         )),
     }
 }
@@ -439,10 +444,10 @@ impl Dataset {
         out.push_str(&self.body);
         if self.root {
             out.push_str("  </DataItems>\n");
-        } else {
-            // A dataset with no row still has a DataItems element (handlers/PWReportSaveAsColumns.al:
-            // Labels_NoRowAtAll shows a line that starts with `<DataItems`); how BC spells it empty is
-            // not pinned.
+        } else if self.body.is_empty() {
+            // A report with no row at all still writes the element (handlers/PWReportSaveAsColumns.al:
+            // Labels_NoRowAtAll keeps every line that starts with `<DataItems` and sees one). Only that
+            // prefix is pinned; the XmlWriter's short form is assumed (docs/probes-needed.md).
             out.push_str("  <DataItems />\n");
         }
         out.push_str("</ReportDataSet>");
@@ -462,11 +467,17 @@ mod tests {
         assert_eq!(decimal_formatter(None).unwrap(), "#,##0.00");
         assert_eq!(decimal_formatter(Some("1 : 1")).unwrap(), "#,##0.0");
         assert_eq!(decimal_formatter(Some("3:3")).unwrap(), "#,##0.000");
-        assert_eq!(decimal_formatter(Some("0:5")).unwrap(), "#,##0.#####");
-        assert_eq!(decimal_formatter(Some("2 : 4")).unwrap(), "#,##0.00##");
-        assert_eq!(decimal_formatter(Some("0:0")).unwrap(), "#,##0");
-        assert_eq!(decimal_formatter(Some("1")).unwrap(), "#,##0.0");
-        assert!(decimal_formatter(Some("5:2")).is_err());
+        // handlers/TestReportSaveAsColumnDetailsContracts.al and handlers/PWReportSaveAsColumns.al
+        for (places, want) in [
+            ("2 : 4", "#,##0.00##"),
+            ("0 : 0", "#,##0"),
+            ("1", "#,##0.0"),
+            ("0 : 5", "#,##0.#####"),
+            ("0 : 2", "#,##0.##"),
+        ] {
+            assert_eq!(decimal_formatter(Some(places)).unwrap(), want, "{places}");
+        }
+        assert!(decimal_formatter(Some("4 : 2")).is_err());
         assert!(decimal_formatter(Some("x")).is_err());
     }
 

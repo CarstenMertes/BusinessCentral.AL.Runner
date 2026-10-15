@@ -623,6 +623,43 @@ Each is one decision. My recommendation is first.
     - Yes for the 7 shared names, with a `v3` data subfolder (recommended).
     - No: only `ALRUNNER_*`; CI files must be edited.
 
+## Owner decision (2026-10-15): alpha
+
+The owner asked for a first public build before gate P. The gates in section 7 stay as written.
+
+- **License**: MIT, like AL Runner v2. Copyright holder: Stefan Maron. `LICENSE` is at the repo root and the
+  workspace sets `license = "MIT"`.
+- **First release `3.0.0-alpha.1`**, below the preview gate on purpose: no v2 parity, refused tests are
+  expected, results may change. The crates share one version (`[workspace.package]`).
+  `alrunner --version` prints the version and the short commit, for example `alrunner 3.0.0-alpha.1 (d73d2cacb)`.
+- **Unsigned binaries for three targets**: `x86_64-unknown-linux-musl`, `x86_64-pc-windows-msvc`,
+  `aarch64-apple-darwin`. Archives are `.tar.xz` (Linux, macOS) and `.zip` (Windows) with the binary, `LICENSE` and
+  a short README. One `SHA256SUMS`. `install.sh` and `install.ps1`. A build provenance attestation
+  (`actions/attest-build-provenance`) for every archive. The Gatekeeper and SmartScreen warnings and their
+  workarounds are in the README ("Try the alpha"). Signing (section 3 stage 5) waits for the preview.
+  The aarch64 Linux, Intel macOS and Windows arm64 targets of section 3 are not built for the alpha.
+- **Linux allocator**: the musl build links `mimalloc` (the `mimalloc` feature of `alrunner-cli`), as section 3
+  recommends. The musl against glibc measurement of section 3 is **not done**: the author's machine has no musl
+  target. Decide with the first numbers from a dry run, and add a gnu build only if musl is clearly slower.
+- **The .NET helper**: unchanged. The binary embeds the helper sources and builds them into the cache on first
+  `DotNet` use, which needs a .NET 8 SDK. There is no helper asset in the alpha.
+- **Two kinds of build, one pipeline.** Both use the reusable workflow `build-packages.yml` (build on native
+  runners, smoke test, package, attest, checksums). Smoke test: `release/smoke.sh` runs `--version`, then
+  `alrunner test` on the fixture in `release/smoke/` (an app and a test app, no Microsoft code, no download).
+  - **`edge`**: one rolling pre-release with the tag `edge`. It holds the newest build of the `release` branch.
+    When CI is green on a push to `release`, `edge.yml` rebuilds the three targets, moves the tag to that commit,
+    replaces the assets and rewrites the body (commit, date, compare link). It is a pre-release and never
+    "latest". A newer push cancels an older build. No new tag or release per push.
+  - **Numbered alphas** (`3.0.0-alpha.N`): a tag `v3.*` on a commit of `release`. `release.yml` refuses a tag that
+    is not the crate version or whose commit is not on `release`, runs the CI checks (`ci.yml`, reused), builds,
+    and creates a **draft** pre-release. A person publishes it. A manual run is a dry run and creates no release.
+- **Branches**: development stays on `main`. `release` is fast-forwarded from `main` when the owner wants a new
+  edge build (`git push origin main:release`). Nobody commits on it, except a hotfix that cannot come from
+  `main`: it is committed on `release`, released, and merged back into `main`. A fast-forward that fails
+  afterwards means the merge-back is missing. Steps: `docs/releasing.md`. Open for the owner: branch protection
+  for `release` (no force push) and protected tags `v3.*` and `edge`. Repository settings are not changed here.
+- **Docs and feedback**: README "Try the alpha" and the issue template `.github/ISSUE_TEMPLATE/alpha-feedback.md`.
+
 ## Rejected options
 
 - **Keep `al-test-cli` as the user tool.** It is the oracle harness; its flags and

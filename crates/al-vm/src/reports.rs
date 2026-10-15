@@ -130,12 +130,6 @@ impl Session {
             // `ObjectId(UseNames)`: `Report 69730`, or with names (the default) `Report <Caption>`, the object name
             // when the report has no Caption (handlers/PWRefusedBuiltins.al:78-107, BC 27.5; also through a Report
             // variable).
-            // `CurrReport.Preview` is false in a report started by `Run` or `RunModal`, with or without the
-            // request page (handlers/TestReportRequestPageUpdateObjectIdContracts.al:13, :129-140).
-            "Report.Preview#1" if self.report_started_by_run => Ok(Value::Boolean(false)),
-            "Report.Preview#1" => unsupported(
-                "CurrReport.Preview of a report not started by Run or RunModal (SaveAs, Execute, a request page) is not pinned",
-            ),
             "Report.ObjectId#1" => {
                 // `CurrReport.ObjectId` has no receiver value: it is the running report
                 // (handlers/PWRefusedBuiltins.al:ReportObjectId_CurrReportInCaptionedReport).
@@ -160,6 +154,16 @@ impl Session {
                 };
                 Ok(Value::Text(format!("Report {caption}")))
             }
+            // `CurrReport.Preview()` is false in a report run by `Report.Run` (with and without the request
+            // page) and `RunModal` (handlers/TestReportRequestPageUpdateObjectIdContracts.al:
+            // RequestPageUpdate_RefreshesTheOtherControls, ObjectIdAndPreview_WithoutTheRequestPage_AndWithRunModal).
+            // Execute, SaveAs and the request page's preview action are not pinned.
+            "Report.Preview#1" => match self.report_preview_pinned.last() {
+                Some(true) => Ok(Value::Boolean(false)),
+                _ => unsupported(
+                    "Report.Preview outside a report started by Run or RunModal (whether an Execute, a SaveAs or a request page preview is a preview is not pinned)",
+                ),
+            },
             "Report.UseRequestPage#1" => {
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
@@ -623,10 +627,10 @@ impl Session {
         // requestpage section opens its page as well (handlers/TestReportRuntimeContracts.al:416-440).
         let shows_page = entry == Entry::Run && window;
         let enters = self.report_enter_world(schema, shows_page)?;
-        let outer = std::mem::replace(&mut self.report_started_by_run, entry == Entry::Run);
-        let r = self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None));
-        self.report_started_by_run = outer;
-        r.map(|_| ())
+        self.report_preview_pinned.push(entry == Entry::Run);
+        let ran = self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None));
+        self.report_preview_pinned.pop();
+        ran.map(|_| ())
     }
 
     /// Runs `body` as the platform runs a report: a run that enters no world still begins a
@@ -1208,21 +1212,10 @@ impl Session {
             }
         }
         // handlers/TestReportSaveAsColumnTypesContracts.al:372-388: false with the text and the code
-        // `ReportProcessingOnly`, no trigger runs and nothing is written.
+        // `ReportProcessingOnly`, no trigger runs and nothing is written. With the answer dropped
+        // BC's behaviour is not pinned.
         if schema.report().processing_only {
-            // With the answer dropped (the statement form) the same error is raised (handlers/
-            // TestReportSaveAsColumnDetailsContracts.al:197-207, handlers/PWReportSaveAsColumns.al:255-265).
-            if !result_used {
-                return Err(Signal::Error(al_builtins::native::AlError {
-                    message: format!(
-                        "Report {} is a processing-only report. Output cannot be rendered and saved to a file.",
-                        self.object_id_of(schema.object as u32)
-                    ),
-                    code: "ReportProcessingOnly".into(),
-                    call_stack: String::new(),
-                }));
-            }
-            self.last_error = al_builtins::native::AlError {
+            let error = al_builtins::native::AlError {
                 message: format!(
                     "Report {} is a processing-only report. Output cannot be rendered and saved to a file.",
                     self.object_id_of(schema.object as u32)
@@ -1230,6 +1223,13 @@ impl Session {
                 code: "ReportProcessingOnly".into(),
                 call_stack: String::new(),
             };
+            // The statement form raises the same error (handlers/TestReportSaveAsColumnDetailsContracts.al:
+            // ProcessingOnlyReport_StatementFormRaises, handlers/PWReportSaveAsColumns.al:
+            // ProcessingOnly_AnswerDropped_AsserterrorForm); with the answer used it is returned as false.
+            if !result_used {
+                return Err(Signal::Error(error));
+            }
+            self.last_error = error;
             return Ok(Value::Boolean(false));
         }
         if let Some(why) = schema.report().dataset_unsupported.first() {
@@ -1266,28 +1266,10 @@ impl Session {
         }
         let enters = self.report_enter_world(&schema, false)?;
         let outer = self.dataset.replace(Dataset::default());
-        // The Labels block is written for IncludeCaption even when the data item has no row at all
-        // (handlers/TestReportSaveAsColumnDetailsContracts.al:191-194, handlers/PWReportSaveAsColumns.al:
-        // Labels_NoRowAtAll), so the labels of the report's own items are known before any row.
-        for item in &schema.report().items {
-            let Some(Some(t)) = item.table.map(|tb| self.engine.tables[tb].clone()) else {
-                continue;
-            };
-            for c in item
-                .columns
-                .iter()
-                .filter(|c| c.include_caption && c.unsupported.is_none())
-            {
-                if let (Ok(name), Some(pos)) = (dataset::dataset_name(&c.name), c.field) {
-                    let label = (format!("{name}Caption"), self.field_caption(&t, pos));
-                    let ds = self.dataset.as_mut().expect("just set");
-                    if !ds.labels.contains(&label) {
-                        ds.labels.push(label);
-                    }
-                }
-            }
-        }
+        self.dataset_labels(&schema);
+        self.report_preview_pinned.push(false);
         let ran = self.report_in_world(enters, |s| s.report_body(&inst, &schema, false, Some(&parameters)));
+        self.report_preview_pinned.pop();
         let written = std::mem::replace(&mut self.dataset, outer);
         match ran {
             Ok(true) => {
@@ -1324,6 +1306,21 @@ impl Session {
                 }
             }
             Err(other) => Err(other),
+        }
+    }
+
+    /// `RequestOptionsPage.Update(SaveRecord)` in a request page trigger. With `false` the controls show
+    /// the variables as they are now, which they do on every read here, so nothing is left to do
+    /// (handlers/TestReportRequestPageUpdateObjectIdContracts.al:RequestPageUpdate_RefreshesTheOtherControls:
+    /// a handler sets Source to 21 and reads Derived 42 that the trigger set before it called Update(false)).
+    /// `true` saves the record: not pinned.
+    pub(crate) fn request_page_update(&mut self, args: &[Value]) -> Result<Value, Signal> {
+        match args.first() {
+            Some(Value::Boolean(false)) => Ok(Value::Null),
+            other => unsupported(format!(
+                "RequestPage.Update with SaveRecord {} (only false is pinned; whether true saves the record is not)",
+                other.map_or("missing".to_string(), |v| v.describe())
+            )),
         }
     }
 
@@ -1425,6 +1422,33 @@ impl Session {
             &columns,
         );
         Ok(())
+    }
+
+    /// The Labels block of the top-level data items is written even when no row reaches the column
+    /// (handlers/TestReportSaveAsColumnDetailsContracts.al:LabelsAreWrittenForAnEmptyDataItem,
+    /// handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll). Items nested in another are added when a
+    /// row reaches them: whether an unreached nested item writes its labels is not pinned.
+    fn dataset_labels(&mut self, schema: &Schema) {
+        let engine = self.engine.clone();
+        for item in schema.report().items.iter().filter(|i| i.parent.is_none()) {
+            let Some(t) = item.table.and_then(|t| engine.tables.get(t)).and_then(|t| t.clone()) else {
+                continue;
+            };
+            for c in item
+                .columns
+                .iter()
+                .filter(|c| c.include_caption && c.unsupported.is_none())
+            {
+                let (Some(pos), Ok(name)) = (c.field, dataset::dataset_name(&c.name)) else {
+                    continue;
+                };
+                let label = (format!("{name}Caption"), self.field_caption(&t, pos));
+                let ds = self.dataset.as_mut().expect("a SaveAs run has a dataset");
+                if !ds.labels.contains(&label) {
+                    ds.labels.push(label);
+                }
+            }
+        }
     }
 
     /// The table id and the lower case GUID of the row `rec` stands on.
@@ -1546,9 +1570,10 @@ impl Session {
             }
             Value::Guid(_) => {
                 let g = al_builtins::format::try_format(&value, 0, 0, self).map_err(Signal::Unsupported)?;
-                let g = g.trim_matches(|ch| ch == '{' || ch == '}');
-                // Hex letters are written in lower case (handlers/TestReportSaveAsColumnDetailsContracts.al:8-9).
-                g.to_lowercase()
+                // Lower case, braces dropped (handlers/TestReportSaveAsColumnDetailsContracts.al:
+                // UndefinedTimesGuidsHoursAndDecimalPlaces, handlers/PWReportSaveAsColumns.al:
+                // Undefined_TimeDateTime_SingleDigitHour_GuidWithHexLetters); the null Guid is zeros, not blank.
+                g.trim_matches(|ch| ch == '{' || ch == '}').to_ascii_lowercase()
             }
             other => {
                 return unsupported(format!(

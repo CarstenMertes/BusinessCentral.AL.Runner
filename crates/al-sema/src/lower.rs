@@ -4853,9 +4853,15 @@ impl Lowerer<'_> {
                     {
                         None
                     }
-                    // `RequestOptionsPage` is the request page of the running report: the call needs no receiver.
+                    // `RequestOptionsPage` is the request page of the report whose code is running; it has
+                    // no variable to take as a receiver.
                     Some(r)
-                        if sig.receiver == "RequestPage"
+                        if sig.instance
+                            && sig.receiver == "RequestPage"
+                            && matches!(
+                                self.ws.objects[self.oi].kind,
+                                ObjKind::Report | ObjKind::ReportExtension
+                            )
                             && r.text().to_string().trim().eq_ignore_ascii_case("RequestOptionsPage") =>
                     {
                         None
@@ -5166,6 +5172,87 @@ pub fn lower_for_cache(
     set
 }
 
+/// The blocks a run takes from `src` for the first `n_prov` objects of `ws`: the identity of the
+/// objects is checked, and a block the apps above them change (`relower_set`) is left out, to be
+/// lowered again from source.
+fn provided_blocks(
+    ws: &Workspace,
+    n_prov: usize,
+    src: &dyn crate::provided::DepSource,
+) -> Result<Vec<Option<crate::provided::DepBlock>>, String> {
+    use rayon::prelude::*;
+    crate::provided::check_identity(ws, n_prov, src)?;
+    let relower = crate::provided::relower_set(ws, n_prov, src);
+    (0..ws.objects.len())
+        .into_par_iter()
+        .map(|oi| {
+            if oi < n_prov && !relower[oi] {
+                src.block(oi).map(Some)
+            } else {
+                Ok(None)
+            }
+        })
+        .collect()
+}
+
+/// One layer of the dependency set (ADR-022, owner decision 2026-10-15). `apps` are the apps of
+/// the layers below followed by the layer's own, in program order; `n_below_apps` is how many
+/// belong to the layers below; `below` describes their objects, which come first in the program.
+/// The layer's objects are compiled completely, the objects below are taken from `below` except
+/// those the layer changes, which are lowered again. The result holds the layer's own objects and
+/// those lowered again, so that the layers below and this one give, object for object, what one
+/// complete compile of all the apps gives.
+pub fn lower_layer(
+    apps: Vec<crate::workspace::AppSource>,
+    n_below_apps: usize,
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    below: &dyn crate::provided::DepSource,
+) -> Result<crate::provided::DepLayer, String> {
+    let catalog = match target {
+        Some(t) => al_builtins::catalog::Catalog::for_target(t),
+        None => al_builtins::catalog::Catalog::load(),
+    };
+    let kinds = vec![crate::workspace::AppKind::Dependency; apps.len()];
+    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let n_prov = below.len();
+    if n_prov > ws.objects.len() {
+        return Err(format!(
+            "the layers below hold {n_prov} objects, the apps have {}",
+            ws.objects.len()
+        ));
+    }
+    let blocks = provided_blocks(&ws, n_prov, below)?;
+    let provided = Provided { src: below, blocks };
+    let members = crate::members::build(&ws);
+    let mut roots = crate::check::Roots {
+        eager: true,
+        ..Default::default()
+    };
+    roots.provided = (0..ws.objects.len()).map(|oi| provided.has(oi)).collect();
+    roots.provided_queries = (0..ws.objects.len())
+        .map(|oi| provided.has(oi).then(|| below.facts(oi).query.clone()).flatten())
+        .collect();
+    let checked = crate::check::check_with(&ws, &members, &catalog, roots);
+    let lowered = lower_core(&ws, &members, &checked, true, lower_workers(), Some(provided), true)?;
+    let all = lowered.exported.expect("exported");
+    let mut layer = crate::provided::DepLayer {
+        base_len: n_prov,
+        ..Default::default()
+    };
+    // Facts and direct calls of an object taken from `below` are not complete in the export, and
+    // are not needed: only the objects lowered here are kept.
+    for (oi, (facts, block)) in all.facts.into_iter().zip(all.blocks).enumerate() {
+        if !lowered.provided[oi] {
+            layer.objects.push(oi as u32);
+            layer.set.facts.push(facts);
+            layer.set.blocks.push(block);
+        }
+    }
+    layer.set.parse_problems = ws.lazy_parse_problems_from(n_below_apps);
+    Ok(layer)
+}
+
 /// [`compile_apps_with`] for a run whose dependency apps (first in `apps`) are described by `src`:
 /// their objects come from it, except the ones the workspace changes (see `provided.rs`). The
 /// result is the complete (eager) compile. An error says the source does not fit the apps or is
@@ -5197,23 +5284,10 @@ pub fn compile_loaded_cached(
     mut roots: crate::check::Roots,
     src: &dyn crate::provided::DepSource,
 ) -> Result<(Workspace, Lowered), Box<(Workspace, String)>> {
-    use rayon::prelude::*;
     let blocks_started = std::time::Instant::now();
     let prepared = (|| {
         let n_dep = crate::provided::dependency_prefix(&ws).ok_or("a dependency app follows a workspace app")?;
-        crate::provided::check_identity(&ws, n_dep, src)?;
-        let relower = crate::provided::relower_set(&ws, n_dep, src);
-        let blocks: Vec<Option<crate::provided::DepBlock>> = (0..ws.objects.len())
-            .into_par_iter()
-            .map(|oi| {
-                if oi < n_dep && !relower[oi] {
-                    src.block(oi).map(Some)
-                } else {
-                    Ok(None)
-                }
-            })
-            .collect::<Result<_, String>>()?;
-        Ok::<_, String>(blocks)
+        provided_blocks(&ws, n_dep, src)
     })();
     let blocks = match prepared {
         Ok(b) => b,

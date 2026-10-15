@@ -42,7 +42,7 @@ fn real_main() -> ExitCode {
             ExitCode::SUCCESS
         }
         Command::Version => {
-            println!("alrunner {}", env!("CARGO_PKG_VERSION"));
+            println!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
             ExitCode::SUCCESS
         }
         Command::Warm(a) => match run::warm(&a) {

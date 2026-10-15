@@ -409,15 +409,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.RunRequestPage#2", vm_only),
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
-    // `RequestOptionsPage.Update(false)` in a request page trigger: the controls read their variables
-    // live, so there is nothing to refresh (corpus handlers/TestReportRequestPageUpdateObjectIdContracts.al:
-    // 9-10). Update(true) saves the record, which no test pins.
-    ("RequestPage.Update#1", |_, _, a| match a.first() {
-        Some(Value::Boolean(false)) => Ok(Value::Null),
-        _ => unsupported("RequestPage.Update with SaveRecord true (it saves the record; not pinned)"),
-    }),
     ("Report.ObjectId#1", vm_only),
     ("Report.Preview#1", vm_only),
+    ("RequestPage.Update#1", vm_only),
     ("Report.Language#1", vm_only),
     ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file

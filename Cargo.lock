@@ -10,7 +10,7 @@ checksum = "320119579fcad9c21884f5c4861d16174d0e06250625266f50fe6898340abefa"
 
 [[package]]
 name = "al-bcdb"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "crc32fast",
  "flate2",
@@ -22,7 +22,7 @@ dependencies = [
 
 [[package]]
 name = "al-bcdb-cli"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-bcdb",
  "al-bcdb-std",
@@ -33,7 +33,7 @@ dependencies = [
 
 [[package]]
 name = "al-bcdb-std"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-bcdb",
  "al-host",
@@ -44,7 +44,7 @@ dependencies = [
 
 [[package]]
 name = "al-builtins"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-version",
  "rust_decimal",
@@ -54,7 +54,7 @@ dependencies = [
 
 [[package]]
 name = "al-cache"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-ir",
  "al-sema",
@@ -67,7 +67,7 @@ dependencies = [
 
 [[package]]
 name = "al-data"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-builtins",
  "im",
@@ -75,7 +75,7 @@ dependencies = [
 
 [[package]]
 name = "al-deps"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-sema",
  "al-syntax",
@@ -91,11 +91,11 @@ dependencies = [
 
 [[package]]
 name = "al-host"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 
 [[package]]
 name = "al-ir"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-builtins",
  "serde",
@@ -104,7 +104,7 @@ dependencies = [
 
 [[package]]
 name = "al-sema"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-builtins",
  "al-ir",
@@ -120,7 +120,7 @@ dependencies = [
 
 [[package]]
 name = "al-syntax"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-version",
  "libc",
@@ -130,7 +130,7 @@ dependencies = [
 
 [[package]]
 name = "al-test-cli"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-builtins",
  "al-data",
@@ -153,7 +153,7 @@ dependencies = [
 
 [[package]]
 name = "al-testrun"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-builtins",
  "al-cache",
@@ -174,11 +174,11 @@ dependencies = [
 
 [[package]]
 name = "al-version"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 
 [[package]]
 name = "al-vm"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-builtins",
  "al-data",
@@ -192,7 +192,7 @@ dependencies = [
 
 [[package]]
 name = "alrunner-cli"
-version = "0.1.0"
+version = "3.0.0-alpha.1"
 dependencies = [
  "al-bcdb-std",
  "al-deps",

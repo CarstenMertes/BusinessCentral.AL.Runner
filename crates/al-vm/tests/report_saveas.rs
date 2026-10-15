@@ -493,14 +493,6 @@ fn f(body: &str) -> String {
     }
 }
 
-/// The AL error `body` raises: its code and its message.
-fn raised(body: &str) -> (String, String) {
-    match run(body) {
-        Err(Signal::Error(e)) => (e.code.clone(), e.message.clone()),
-        other => panic!("expected an error, got {other:?}"),
-    }
-}
-
 fn refusal(body: &str) -> String {
     match run(body) {
         Err(Signal::Unsupported(r)) => r,
@@ -880,9 +872,10 @@ fn a_data_item_name_with_spaces_and_parentheses_is_written_the_way_the_corpus_sh
     );
 }
 
-// Assumption (docs/probes-needed.md): a DataItems element is written only when it holds a DataItem.
+// handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll sees a line that starts with `<DataItems` in a dataset with no row at
+// all. Assumption (docs/probes-needed.md): it is the short form `<DataItems />`.
 #[test]
-fn a_dataset_without_rows_has_no_data_items_element() {
+fn a_dataset_without_rows_has_an_empty_data_items_element() {
     let text = f(
         "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin
             Buf.DeleteAll();
@@ -891,9 +884,10 @@ fn a_dataset_without_rows_has_no_data_items_element() {
             exit(H.Lines(Buf));
         end;",
     );
-    // handlers/PWReportSaveAsColumns.al: a dataset with no row still has the element, empty.
-    assert!(text.contains("<DataItems />|"), "{text}");
-    assert!(text.ends_with("<DataItems />|</ReportDataSet>|"), "{text}");
+    assert!(
+        text.ends_with("  </BCReportInformation>|  <DataItems />|</ReportDataSet>|"),
+        "{text}"
+    );
 }
 
 #[test]
@@ -956,7 +950,7 @@ fn the_dataset_reads_back_as_xml() {
 #[test]
 fn a_data_item_over_a_temporary_record_has_no_rows_of_the_table() {
     let text = dataset_of("Probe Temporary Report", "");
-    assert!(text.contains("<DataItems />|"), "{text}");
+    assert!(!text.contains("<DataItem "), "{text}");
 }
 
 // session/TestBCPlatformContracts.al:CompanyProperty_DisplayName_NonEmpty
@@ -966,12 +960,20 @@ fn the_company_display_name_is_not_empty() {
 }
 
 #[test]
-fn a_processing_only_report_saved_without_using_the_answer_raises_the_error() {
-    let (code, message) = raised(
+fn a_processing_only_report_raises_in_the_statement_form() {
+    // handlers/TestReportSaveAsColumnDetailsContracts.al:ProcessingOnlyReport_StatementFormRaises
+    match run(
         "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Processing Report\", '', ReportFormat::Xml, Out); end;",
-    );
-    assert_eq!(code, "ReportProcessingOnly");
-    assert!(message.contains("processing-only report"), "{message}");
+    ) {
+        Err(Signal::Error(e)) => {
+            assert!(
+                e.message
+                    .contains("is a processing-only report. Output cannot be rendered and saved to a file.")
+            );
+            assert_eq!(e.code, "ReportProcessingOnly");
+        }
+        other => panic!("{other:?}"),
+    }
 }
 
 // handlers/TestReportSaveAsDatasetContracts.al:253-300 (BC28PLUS): from BC 28 every DataItem element carries
@@ -1026,10 +1028,6 @@ fn a_processing_only_report_answers_false_with_its_error_and_writes_nothing() {
         out,
         "No|Report 68399 is a processing-only report. Output cannot be rendered and saved to a file.|ReportProcessingOnly|"
     );
-    let (code, _) = raised(
-        "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Processing Only\", '', ReportFormat::Xml, Out); end;",
-    );
-    assert_eq!(code, "ReportProcessingOnly");
 }
 
 // reportextensiontrigger/TestReportExtensionDataItemPlacementContracts.al:150-198: the triggers run, and the

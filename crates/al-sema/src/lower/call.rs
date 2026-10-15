@@ -113,7 +113,7 @@ impl Lowerer<'_> {
                 // A one-dimensional array is measured when the call runs: a parameter holds the caller's array.
                 if dims.len() == 1 && args.len() == 1 {
                     return Ok(ir::Expr::Builtin {
-                        id,
+                        id: builtin_id(&id)?,
                         receiver: None,
                         args: vec![ir::Arg::Ref(self.place(arg)?)],
                         ret_used: true,
@@ -353,7 +353,7 @@ impl Lowerer<'_> {
                     });
                 }
                 Ok(ir::Expr::Builtin {
-                    id,
+                    id: builtin_id(&id)?,
                     receiver,
                     args: out,
                     ret_used: true,
@@ -401,4 +401,10 @@ impl Lowerer<'_> {
             .find(|d| d.code == "AR1005" && d.offset == at && &d.file == path)
             .map(|d| format!("AR1005 {}", d.message))
     }
+}
+
+/// The [`ir::BuiltinId`] of a catalog overload id. Every catalog id has one (a test in al-builtins checks it), so
+/// this fails only when `builtin_ids.rs` is stale.
+pub(super) fn builtin_id(id: &str) -> Result<ir::BuiltinId, String> {
+    ir::BuiltinId::of(id).ok_or_else(|| format!("builtin {id} has no builtin id (regenerate builtin_ids.rs)"))
 }

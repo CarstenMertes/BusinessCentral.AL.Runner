@@ -4,6 +4,7 @@
 //! is refused.
 
 use crate::Session;
+use al_builtins::builtin_id::ids;
 use al_builtins::describe::Describe;
 use al_builtins::filter::FieldFilter;
 use al_builtins::native::{AlError, Signal};
@@ -73,7 +74,7 @@ pub(crate) fn copy_for_assignment(cell: &Lib) -> Lib {
 impl Session {
     pub(crate) fn filter_page_builder_op(
         &mut self,
-        id: &str,
+        id: al_ir::BuiltinId,
         recv: Option<Value>,
         args: &[Value],
         ret_used: bool,
@@ -81,10 +82,6 @@ impl Session {
         let Some(Value::Library(_, cell)) = recv else {
             return unsupported(format!("{id} without a FilterPageBuilder"));
         };
-        let method = id
-            .strip_prefix("FilterPageBuilder.")
-            .and_then(|m| m.split('#').next())
-            .unwrap_or(id);
         // The calls that fail answer `fallback` when their result is used and raise otherwise
         // (filterpage/TestFilterPageBuilder.al: the trappable-return convention, header item 4).
         let fail = |message: String, fallback: Value| {
@@ -94,9 +91,9 @@ impl Session {
                 Err(arg_error(message))
             }
         };
-        match method {
-            "Count" => Ok(Value::Integer(state_of(&cell)?.controls.len() as i32)),
-            "Name" => {
+        match id {
+            ids::FILTERPAGEBUILDER_COUNT_1 => Ok(Value::Integer(state_of(&cell)?.controls.len() as i32)),
+            ids::FILTERPAGEBUILDER_NAME_1 => {
                 let Some(Value::Integer(i)) = args.first() else {
                     return unsupported("FilterPageBuilder.Name without an integer index");
                 };
@@ -110,7 +107,7 @@ impl Session {
                     ))),
                 }
             }
-            "PageCaption" => match args.first() {
+            ids::FILTERPAGEBUILDER_PAGECAPTION_1 => match args.first() {
                 Some(v) => {
                     state_of(&cell)?.caption = Some(text(std::slice::from_ref(v), 0)?);
                     Ok(Value::Null)
@@ -123,10 +120,12 @@ impl Session {
                         .into(),
                 )),
             },
-            "AddTable" | "AddRecord" | "AddRecordRef" => {
+            ids::FILTERPAGEBUILDER_ADDTABLE_1
+            | ids::FILTERPAGEBUILDER_ADDRECORD_1
+            | ids::FILTERPAGEBUILDER_ADDRECORDREF_1 => {
                 let name = text(args, 0)?;
-                let (table, record) = match method {
-                    "AddTable" => {
+                let (table, record) = match id {
+                    ids::FILTERPAGEBUILDER_ADDTABLE_1 => {
                         let Some(Value::Integer(no)) = args.get(1) else {
                             return unsupported("FilterPageBuilder.AddTable without an integer table id");
                         };
@@ -147,7 +146,7 @@ impl Session {
                         };
                         (table as u32, rec)
                     }
-                    "AddRecord" => match args.get(1) {
+                    ids::FILTERPAGEBUILDER_ADDRECORD_1 => match args.get(1) {
                         Some(Value::Record(r)) => (r.borrow().table, Rc::new(RefCell::new(r.borrow().clone()))),
                         other => return unsupported(format!("FilterPageBuilder.AddRecord with {}", other.describe())),
                     },
@@ -192,7 +191,7 @@ impl Session {
                     }
                 }
             }
-            "AddField" => {
+            ids::FILTERPAGEBUILDER_ADDFIELD_1 | ids::FILTERPAGEBUILDER_ADDFIELD_2 => {
                 let name = text(args, 0)?;
                 let Some(control) = self.filter_control(&cell, &name)? else {
                     // The unknown-name answer is pinned for a used result only
@@ -230,7 +229,7 @@ impl Session {
                 }
                 Ok(Value::Boolean(true))
             }
-            "GetView" => {
+            ids::FILTERPAGEBUILDER_GETVIEW_1 => {
                 let name = text(args, 0)?;
                 let use_names = match args.get(1) {
                     Some(v) => ops::truthy(v)?,
@@ -249,7 +248,7 @@ impl Session {
                     }
                 }
             }
-            "SetView" => {
+            ids::FILTERPAGEBUILDER_SETVIEW_1 => {
                 let name = text(args, 0)?;
                 let view = text(args, 1)?;
                 let Some(control) = self.filter_control(&cell, &name)? else {
@@ -268,10 +267,10 @@ impl Session {
                 self.set_view(&control.record, &t, &view)?;
                 Ok(Value::Boolean(true))
             }
-            "RunModal" => {
+            ids::FILTERPAGEBUILDER_RUNMODAL_1 => {
                 unsupported("FilterPageBuilder.RunModal opens a filter page; no corpus test pins how a test answers it")
             }
-            other => unsupported(format!("FilterPageBuilder.{other}")),
+            _ => unsupported(format!("FilterPageBuilder.{}", id.method())),
         }
     }
 

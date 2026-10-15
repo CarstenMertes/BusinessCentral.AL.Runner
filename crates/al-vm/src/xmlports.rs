@@ -9,6 +9,7 @@
 use crate::records::Rec;
 use crate::transactions::TxModel;
 use crate::{AlError, Session, Signal};
+use al_builtins::builtin_id::ids;
 use al_builtins::describe::Describe;
 use al_builtins::ops;
 use al_builtins::value::{Instance, LibraryValue, RtType, Value};
@@ -84,16 +85,16 @@ impl Schema {
 impl Session {
     pub(crate) fn xmlport_builtin(
         &mut self,
-        id: &str,
+        id: al_ir::BuiltinId,
         receiver: Option<Value>,
         args: &[Value],
         ret_used: bool,
     ) -> Result<Value, Signal> {
         match id {
-            "Xmlport.SetSource#1" | "Xmlport.SetDestination#1" => {
+            ids::XMLPORT_SETSOURCE_1 | ids::XMLPORT_SETDESTINATION_1 => {
                 let inst = self.xp_instance(receiver)?;
                 let schema = self.xp_schema(&inst)?;
-                let (slot, want) = if id == "Xmlport.SetSource#1" {
+                let (slot, want) = if id == ids::XMLPORT_SETSOURCE_1 {
                     (schema.xp().source_slot, "InStream")
                 } else {
                     (schema.xp().destination_slot, "OutStream")
@@ -106,14 +107,14 @@ impl Session {
                     other => unsupported(format!("{id} with {}", other.describe())),
                 }
             }
-            "Xmlport.SetTableView#1" => {
+            ids::XMLPORT_SETTABLEVIEW_1 => {
                 let inst = self.xp_instance(receiver)?;
                 self.xp_set_view(&inst, args.first())?;
                 Ok(Value::Null)
             }
-            "Xmlport.Export#1" | "Xmlport.Import#1" => {
+            ids::XMLPORT_EXPORT_1 | ids::XMLPORT_IMPORT_1 => {
                 let inst = self.xp_instance(receiver)?;
-                let dir = if id.starts_with("Xmlport.Export") {
+                let dir = if matches!(id, ids::XMLPORT_EXPORT_1 | ids::XMLPORT_EXPORT_2) {
                     Dir::Export
                 } else {
                     Dir::Import
@@ -121,8 +122,8 @@ impl Session {
                 self.xp_run(&inst, dir, ret_used, false)
             }
             // The static forms run a fresh instance of the xmlport with that id.
-            "Xmlport.Export#2" | "Xmlport.Import#2" => {
-                let dir = if id.starts_with("Xmlport.Export") {
+            ids::XMLPORT_EXPORT_2 | ids::XMLPORT_IMPORT_2 => {
+                let dir = if matches!(id, ids::XMLPORT_EXPORT_1 | ids::XMLPORT_EXPORT_2) {
                     Dir::Export
                 } else {
                     Dir::Import

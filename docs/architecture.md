@@ -171,7 +171,7 @@ that file's header and in `docs/probes-needed.md`.
 | Budget | Limit | Today |
 |---|---|---|
 | Cold compile of the corpus (`al-test-cli/tests/perf_budget.rs`) | ≤ 1 990 000 instructions per compiled object (the day's value plus 5 %); CPU-time fallback 2 000 000 ns per object. Wall time is printed, not budgeted: on shared CI runners the same code ranged from 0.8 to 1.0 s and from 2.4 to 3.0 s of CPU between runs | 1 886 000 instructions per object (6.0 G for 3 183 objects), ~0.5 s |
-| Interpreter, six programs of `al-test-cli/tests/vm-bench` (`perf_vm.rs`, ADR-031) | instructions per iteration: Integer loop 1130, Decimal loop 2170, call 3020, text 7650, builtins 7000, records 17700 (the day's value plus 3 %; lowered by each fast path) | 1 088 / 2 100 / 2 926 / 7 418 / 6 795 / 17 179 |
+| Interpreter, six programs of `al-test-cli/tests/vm-bench` (`perf_vm.rs`, ADR-031) | instructions per iteration: Integer loop 1130, Decimal loop 2170, call 3020, text 6920, builtins 6480, records 16900 (the day's value plus 3 %; lowered by each fast path) | 1 001 / 2 014 / 2 669 / 6 715 / 6 292 / 16 391 |
 | Serial parse throughput (`al-syntax/tests/perf_parse_throughput.rs`) | ≥ 50 MB/s | ~65–75 MB/s |
 
 `cargo run --release -p al-test-cli --example phases` prints timings per

@@ -6,6 +6,7 @@
 //! session's view of the clock forward, which is all AL can observe of a wait.
 
 use crate::Session;
+use al_builtins::builtin_id::ids;
 use al_builtins::describe::Describe;
 use al_builtins::format::day_from_civil;
 use al_builtins::native::Signal;
@@ -49,13 +50,13 @@ impl Session {
     }
 
     /// The builtins of this module, `None` for any other id.
-    pub(crate) fn host_op(&mut self, id: &str, args: &mut [Value]) -> Option<Result<Value, Signal>> {
+    pub(crate) fn host_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Option<Result<Value, Signal>> {
         Some(match id {
-            "System.Today#1" => Ok(Value::Date(self.today_day_number(), false)),
-            "System.Time#1" => Ok(Value::Time(self.now_millis().rem_euclid(MS_PER_DAY) + 1)),
-            "System.CurrentDateTime#1" => Ok(datetime_of_unix_millis(self.now_millis())),
-            "System.WorkDate#1" => self.work_date_op(args),
-            "System.Sleep#1" => match args.first() {
+            ids::SYSTEM_TODAY_1 => Ok(Value::Date(self.today_day_number(), false)),
+            ids::SYSTEM_TIME_1 => Ok(Value::Time(self.now_millis().rem_euclid(MS_PER_DAY) + 1)),
+            ids::SYSTEM_CURRENTDATETIME_1 => Ok(datetime_of_unix_millis(self.now_millis())),
+            ids::SYSTEM_WORKDATE_1 => self.work_date_op(args),
+            ids::SYSTEM_SLEEP_1 => match args.first() {
                 // A negative wait is not pinned.
                 Some(Value::Integer(n)) if *n >= 0 => {
                     self.waited_ms += i64::from(*n);
@@ -66,8 +67,8 @@ impl Session {
                     other.describe()
                 )),
             },
-            "System.Random#1" => self.random_op(args),
-            "System.Randomize#1" => match args.first() {
+            ids::SYSTEM_RANDOM_1 => self.random_op(args),
+            ids::SYSTEM_RANDOMIZE_1 => match args.first() {
                 // `new Random(seed)` (ALSystemNumeric.ALRandomize(int)); the sequence is .NET's.
                 Some(Value::Integer(seed)) => {
                     self.rng = al_host::random::NetRandom::new(*seed);
@@ -83,28 +84,28 @@ impl Session {
                 }
                 Some(other) => unsupported(format!("Randomize with {}", other.describe())),
             },
-            "Database.UserId#1" => Ok(Value::Text(self.host.identity.user_id().into())),
-            "Database.UserSecurityId#1" => Ok(Value::Guid(self.host.identity.user_security_id())),
-            "Database.SessionId#1" => Ok(Value::Integer(self.host.identity.session_id())),
+            ids::DATABASE_USERID_1 => Ok(Value::Text(self.host.identity.user_id().into())),
+            ids::DATABASE_USERSECURITYID_1 => Ok(Value::Guid(self.host.identity.user_security_id())),
+            ids::DATABASE_SESSIONID_1 => Ok(Value::Integer(self.host.identity.session_id())),
             // Only an id no session has is pinned (session/TestSessionComplete.al:45-52: 99999 is not active).
-            "Session.IsSessionActive#1" => match args.first() {
+            ids::SESSION_ISSESSIONACTIVE_1 => match args.first() {
                 Some(Value::Integer(n)) if *n != self.host.identity.session_id() => Ok(Value::Boolean(false)),
                 other => unsupported(format!(
                     "Session.IsSessionActive({other}): only an id other than the running session's is pinned",
                     other = other.describe()
                 )),
             },
-            "Database.ServiceInstanceId#1" => Ok(Value::Integer(self.host.identity.service_instance_id())),
-            "Database.TenantId#1" => Ok(Value::Text(self.host.identity.tenant_id().into())),
-            "System.GuiAllowed#1" => Ok(Value::Boolean(self.host.identity.gui_allowed())),
-            "System.IsServiceTier#1" => Ok(Value::Boolean(self.host.identity.is_service_tier())),
+            ids::DATABASE_SERVICEINSTANCEID_1 => Ok(Value::Integer(self.host.identity.service_instance_id())),
+            ids::DATABASE_TENANTID_1 => Ok(Value::Text(self.host.identity.tenant_id().into())),
+            ids::SYSTEM_GUIALLOWED_1 => Ok(Value::Boolean(self.host.identity.gui_allowed())),
+            ids::SYSTEM_ISSERVICETIER_1 => Ok(Value::Boolean(self.host.identity.is_service_tier())),
             // The folder AL code writes scratch files to. BC's answer ends with `TEMP\` on the Linux tier
             // too (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:TemporaryPath_EndsWithTheTempFolderAndABackslash);
             // the part before it is not pinned, so the path is the relative `TEMP\`, which the files
             // directory (or the in-memory files) keeps inside the run (docs/owner-review.md).
-            "System.TemporaryPath#1" => Ok(Value::Text("TEMP\\".into())),
-            "System.WindowsLanguage#1" => Ok(Value::Integer(self.host.identity.windows_language())),
-            "System.GlobalLanguage#1" => match args.first() {
+            ids::SYSTEM_TEMPORARYPATH_1 => Ok(Value::Text("TEMP\\".into())),
+            ids::SYSTEM_WINDOWSLANGUAGE_1 => Ok(Value::Integer(self.host.identity.windows_language())),
+            ids::SYSTEM_GLOBALLANGUAGE_1 => match args.first() {
                 None => Ok(Value::Integer(self.global_language)),
                 Some(Value::Integer(n)) if *n > 0 => {
                     self.global_language = *n;
@@ -116,12 +117,12 @@ impl Session {
                 )),
             },
             // corpus types/PSCaptionClass.al:5-8, :58-81 (CaptionClassTranslate_Expressions).
-            "System.CaptionClassTranslate#1" => match args.first().and_then(al_builtins::native::text_of) {
+            ids::SYSTEM_CAPTIONCLASSTRANSLATE_1 => match args.first().and_then(al_builtins::native::text_of) {
                 Some(t) => self.caption_class_translate(&t).map(|s| Value::Text(s.into())),
                 None => unsupported("CaptionClassTranslate of something that is not text"),
             },
-            "Session.CurrentClientType#1" => Ok(client_type(self.host.identity.current_client_type())),
-            "Session.DefaultClientType#1" => Ok(client_type(self.host.identity.default_client_type())),
+            ids::SESSION_CURRENTCLIENTTYPE_1 => Ok(client_type(self.host.identity.current_client_type())),
+            ids::SESSION_DEFAULTCLIENTTYPE_1 => Ok(client_type(self.host.identity.default_client_type())),
             _ => return None,
         })
     }

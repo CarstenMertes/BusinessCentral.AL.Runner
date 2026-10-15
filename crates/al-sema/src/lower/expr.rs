@@ -504,7 +504,8 @@ impl Lowerer<'_> {
                         .rec_slot
                         .ok_or("CurrFieldNo outside code that has an implicit Rec")?;
                     Ok(ir::Expr::Builtin {
-                        id: "Record.CurrFieldNo#1".into(),
+                        id: ir::BuiltinId::of("Record.CurrFieldNo#1")
+                            .ok_or("Record.CurrFieldNo#1 has no builtin id")?,
                         receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
                         args: Vec::new(),
                         ret_used: true,

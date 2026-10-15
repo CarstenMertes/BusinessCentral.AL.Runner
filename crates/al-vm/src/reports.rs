@@ -9,6 +9,7 @@ use crate::dataset::{self, Column, Dataset};
 use crate::pages::RequestClosed;
 use crate::transactions::{TxModel, al_error};
 use crate::{Session, Signal};
+use al_builtins::builtin_id::ids;
 use al_builtins::describe::Describe;
 use al_builtins::ops;
 use al_builtins::value::{Instance, Value};
@@ -80,16 +81,16 @@ impl Schema {
 impl Session {
     pub(crate) fn report_builtin(
         &mut self,
-        id: &str,
+        id: al_ir::BuiltinId,
         receiver: Option<Value>,
         args: &[Value],
         running: Inst,
     ) -> Result<Value, Signal> {
         match id {
-            "Report.Quit#1" => self.report_quit_builtin(&running),
-            "Report.Skip#1" => self.report_flow_builtin(&running, Flow::Skip),
-            "Report.Break#1" => self.report_flow_builtin(&running, Flow::Break),
-            "Report.SetTableView#1" => {
+            ids::REPORT_QUIT_1 => self.report_quit_builtin(&running),
+            ids::REPORT_SKIP_1 => self.report_flow_builtin(&running, Flow::Skip),
+            ids::REPORT_BREAK_1 => self.report_flow_builtin(&running, Flow::Break),
+            ids::REPORT_SETTABLEVIEW_1 => {
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
                 self.report_set_view(&inst, &schema, args.first())?;
@@ -102,7 +103,7 @@ impl Session {
             // positive is not pinned. A language nobody set reads as the session's, 1033. The runtime's culture
             // is fixed (en-US): the language is kept and changes no formatting (dates and decimals read
             // the same after 1031, ibid.).
-            "Report.Language#1" => match args.first() {
+            ids::REPORT_LANGUAGE_1 => match args.first() {
                 Some(Value::Integer(n)) if *n > 0 => {
                     self.curr_report_language = Some(*n);
                     Ok(Value::Null)
@@ -122,7 +123,7 @@ impl Session {
             // `FormatRegion` only takes effect when a Word or Excel layout renders; a run that writes the
             // dataset (an Xml export) never does, and the property reads back empty
             // (handlers/TestReportCurrReportLanguage.al:12-18, :76-83).
-            "Report.FormatRegion#1" => match args.first() {
+            ids::REPORT_FORMATREGION_1 => match args.first() {
                 Some(Value::Text(_) | Value::Code(_)) => Ok(Value::Null),
                 None => Ok(Value::Text(String::new().into())),
                 Some(other) => unsupported(format!("CurrReport.FormatRegion with {}", other.describe())),
@@ -130,7 +131,7 @@ impl Session {
             // `ObjectId(UseNames)`: `Report 69730`, or with names (the default) `Report <Caption>`, the object name
             // when the report has no Caption (handlers/PWRefusedBuiltins.al:78-107, BC 27.5; also through a Report
             // variable).
-            "Report.ObjectId#1" => {
+            ids::REPORT_OBJECTID_1 => {
                 // `CurrReport.ObjectId` has no receiver value: it is the running report
                 // (handlers/PWRefusedBuiltins.al:ReportObjectId_CurrReportInCaptionedReport).
                 let receiver = receiver.or_else(|| Some(Value::Codeunit(running.clone())));
@@ -158,13 +159,13 @@ impl Session {
             // page) and `RunModal` (handlers/TestReportRequestPageUpdateObjectIdContracts.al:
             // RequestPageUpdate_RefreshesTheOtherControls, ObjectIdAndPreview_WithoutTheRequestPage_AndWithRunModal).
             // Execute, SaveAs and the request page's preview action are not pinned.
-            "Report.Preview#1" => match self.report_preview_pinned.last() {
+            ids::REPORT_PREVIEW_1 => match self.report_preview_pinned.last() {
                 Some(true) => Ok(Value::Boolean(false)),
                 _ => unsupported(
                     "Report.Preview outside a report started by Run or RunModal (whether an Execute, a SaveAs or a request page preview is a preview is not pinned)",
                 ),
             },
-            "Report.UseRequestPage#1" => {
+            ids::REPORT_USEREQUESTPAGE_1 => {
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
                 let slot = schema.report().request_flag_slot;
@@ -176,8 +177,8 @@ impl Session {
                 inst.borrow_mut().globals[slot] = Value::Integer(if *b { 1 } else { 2 });
                 Ok(Value::Null)
             }
-            "Report.Run#1" | "Report.RunModal#1" => {
-                let (inst, quit) = self.report_instance_for(receiver, true, id == "Report.Run#1")?;
+            ids::REPORT_RUN_1 | ids::REPORT_RUNMODAL_1 => {
+                let (inst, quit) = self.report_instance_for(receiver, true, id == ids::REPORT_RUN_1)?;
                 let schema = self.report_schema(&inst)?;
                 let window = Self::report_shows_page(&inst, &schema);
                 let result = if quit {
@@ -193,7 +194,7 @@ impl Session {
                 result.map(|()| Value::Null)
             }
             // The static forms run a fresh instance of the report with that id.
-            "Report.Run#3" | "Report.RunModal#3" => {
+            ids::REPORT_RUN_3 | ids::REPORT_RUNMODAL_3 => {
                 let (inst, schema) = self.report_by_number(id, args.first())?;
                 let window = match args.get(1) {
                     None => true,
@@ -219,7 +220,7 @@ impl Session {
                 self.report_run(&inst, &schema, Entry::Run, window)
                     .map(|()| Value::Null)
             }
-            "Report.Execute#1" => {
+            ids::REPORT_EXECUTE_1 => {
                 let (inst, quit) = self.report_instance(receiver, true)?;
                 let schema = self.report_schema(&inst)?;
                 self.report_execute_args(id, args.first(), args.get(1))?;
@@ -240,7 +241,7 @@ impl Session {
                 self.report_run(&inst, &schema, Entry::Execute, false)
                     .map(|()| Value::Null)
             }
-            "Report.Execute#3" => {
+            ids::REPORT_EXECUTE_3 => {
                 let (inst, schema) = self.report_by_number(id, args.first())?;
                 self.report_execute_args(id, args.get(1), args.get(2))?;
                 let quit = self.report_init(&inst)?;
@@ -250,8 +251,8 @@ impl Session {
                 self.report_run(&inst, &schema, Entry::Execute, false)
                     .map(|()| Value::Null)
             }
-            "Report.Print#1" | "Report.Print#2" => {
-                let schema = if id == "Report.Print#1" {
+            ids::REPORT_PRINT_1 | ids::REPORT_PRINT_2 => {
+                let schema = if id == ids::REPORT_PRINT_1 {
                     let inst = self.report_instance(receiver, false)?.0;
                     self.report_schema(&inst)?
                 } else {
@@ -265,10 +266,10 @@ impl Session {
                     schema.name()
                 ))
             }
-            "Report.SaveAs#1" | "Report.SaveAs#2" => self.report_save_as(id, receiver, args),
-            "Report.WordXmlPart#1" | "Report.WordXmlPart#2" => self.report_word_xml_part(id, receiver, args),
-            "Report.RunRequestPage#1" | "Report.RunRequestPage#2" => {
-                let (inst, schema, seed) = if id == "Report.RunRequestPage#1" {
+            ids::REPORT_SAVEAS_1 | ids::REPORT_SAVEAS_2 => self.report_save_as(id, receiver, args),
+            ids::REPORT_WORDXMLPART_1 | ids::REPORT_WORDXMLPART_2 => self.report_word_xml_part(id, receiver, args),
+            ids::REPORT_RUNREQUESTPAGE_1 | ids::REPORT_RUNREQUESTPAGE_2 => {
+                let (inst, schema, seed) = if id == ids::REPORT_RUNREQUESTPAGE_1 {
                     let inst = self.report_instance(receiver, false)?.0;
                     let schema = self.report_schema(&inst)?;
                     (inst, schema, args.first())
@@ -365,8 +366,13 @@ impl Session {
     /// AL:MetadataNotFound (its text is not pinned). The rest follows what the owner's Pageworks code reads
     /// (a `NavWordReportXmlPart` root, a `Labels` block, nested data items, `ElementType` DataItem / Column
     /// with the flag): unprobed, docs/probes-needed.md "Report.WordXmlPart".
-    fn report_word_xml_part(&mut self, id: &str, receiver: Option<Value>, args: &[Value]) -> Result<Value, Signal> {
-        let static_form = id == "Report.WordXmlPart#2";
+    fn report_word_xml_part(
+        &mut self,
+        id: al_ir::BuiltinId,
+        receiver: Option<Value>,
+        args: &[Value],
+    ) -> Result<Value, Signal> {
+        let static_form = id == ids::REPORT_WORDXMLPART_2;
         let (flag_at, schema) = if static_form {
             let known = match args.first() {
                 Some(Value::Integer(n)) => self.engine.program.objects.iter().any(|o| {
@@ -435,7 +441,7 @@ impl Session {
         ).into()))
     }
 
-    fn report_by_number(&mut self, id: &str, arg: Option<&Value>) -> Result<(Inst, Schema), Signal> {
+    fn report_by_number(&mut self, id: al_ir::BuiltinId, arg: Option<&Value>) -> Result<(Inst, Schema), Signal> {
         let Some(Value::Integer(n)) = arg else {
             return unsupported(format!("{id} with an id that is not an integer"));
         };
@@ -473,7 +479,7 @@ impl Session {
     /// (record/TestTxModelReportExec.al:138-211).
     fn report_execute_args(
         &self,
-        id: &str,
+        id: al_ir::BuiltinId,
         parameters: Option<&Value>,
         record_ref: Option<&Value>,
     ) -> Result<(), Signal> {
@@ -1294,9 +1300,14 @@ impl Session {
     /// request page and writes the dataset the run produces. `Html` of a report with an RDLC layout
     /// is the one refusal BC answers with `false` that a test pins; Pdf, Word and Excel render a
     /// layout, which this runtime does not do (docs/probes-needed.md).
-    fn report_save_as(&mut self, id: &str, receiver: Option<Value>, args: &[Value]) -> Result<Value, Signal> {
+    fn report_save_as(
+        &mut self,
+        id: al_ir::BuiltinId,
+        receiver: Option<Value>,
+        args: &[Value],
+    ) -> Result<Value, Signal> {
         let result_used = self.ret_used;
-        let at = usize::from(id == "Report.SaveAs#2");
+        let at = usize::from(id == ids::REPORT_SAVEAS_2);
         let parameters = match args.get(at) {
             Some(Value::Text(s)) => s.clone(),
             other => return unsupported(format!("{id} with the parameters {}", other.describe())),

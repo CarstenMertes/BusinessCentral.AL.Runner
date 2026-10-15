@@ -1,6 +1,7 @@
 //! Typed IR (ADR-011): every name resolved, every node typed, conversions
 //! explicit. Plain data, serde-serialisable, no syntax nodes.
 
+pub use al_builtins::builtin_id::BuiltinId;
 use al_builtins::value::RtType;
 use serde::{Deserialize, Serialize};
 
@@ -1264,7 +1265,7 @@ pub enum Expr {
     /// `ret_used`: the result is used, so methods with an optional Boolean
     /// result report failure as `false` instead of raising an error.
     Builtin {
-        id: String,
+        id: BuiltinId,
         receiver: Option<Box<Arg>>,
         args: Vec<Arg>,
         ret_used: bool,
@@ -1469,7 +1470,7 @@ mod tests {
                             }),
                         )),
                         Stmt::AssertError(vec![Stmt::Expr(Expr::Builtin {
-                            id: "Dialog.Error#2".into(),
+                            id: al_builtins::builtin_id::ids::DIALOG_ERROR_2,
                             receiver: None,
                             args: vec![Arg::Value(Expr::Const(Const::Text("x".into())))],
                             ret_used: false,

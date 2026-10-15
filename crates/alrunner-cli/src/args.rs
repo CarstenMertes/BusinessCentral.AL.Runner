@@ -15,7 +15,7 @@ pub enum Command {
 }
 
 /// `alrunner test`.
-#[derive(Debug, Default, PartialEq)]
+#[derive(Debug, Default, Clone, PartialEq)]
 pub struct TestArgs {
     /// The apps whose tests run: an app folder (with `app.json`), a `*.Source.zip` or an `.app`.
     pub apps: Vec<PathBuf>,

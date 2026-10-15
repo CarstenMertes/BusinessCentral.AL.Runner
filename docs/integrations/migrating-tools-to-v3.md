@@ -154,15 +154,17 @@ error at start-up (exit 2).
 |---|---|
 | `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test`, `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `code`, `captureValues`, `iterationTracking`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
 | `execute` | `{"error": "execute is not implemented yet"}` (step 4). |
-| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it **kills the run**: the summary has `cancelled: true`, `exitCode: 130`, no test lines. v2 finished the running test and reported the tests before it. |
+| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. |
 | `shutdown` | `{"status":"shutting down"}`, then exit 0. EOF on stdin exits too. |
 
 Differences a client must adapt to:
 
-1. **Test lines arrive together, when the run ends**, not one by one (the runtime reports results at the end of the run).
-   Progress shown per test appears at the end.
-2. Each `runTests` is a fresh `alrunner test` process: nothing is warm, so a changed source file always shows. There is no
-   `cached: true`; `cached` is always `false`. A request costs the compile (the compile cache on disk helps).
+1. **Test lines stream**, one per test as it finishes, then the summary.
+2. The server is **warm and in-process**: compiled dependency apps and test data stay in memory. Same sources as the
+   last request: the compiled workspace is reused and `cached` is `true`. A changed source recompiles, so a change
+   always shows. Every request starts from the same post-install database, so nothing leaks between requests.
+   The first request is slow (full compile, about 3 GB resident with Microsoft's apps); repeats take 0.2 to 2 s.
+   A panic in a test is reported as an error for that test and the server goes on.
 3. `test` lines have `type`, `name`, `status` (`pass`, `fail`, `error`), `durationMs`, `message`, `stackTrace`,
    `stackFrames` (the AL stack split into lines), and `notRun: true` for a test that did not run (status `error`, message
    `NotRun: out-of-scope: <reason>`; see section 4). `errorKind`, `alSourceFile`, `alSourceLine` are not sent.
@@ -172,7 +174,7 @@ Differences a client must adapt to:
    `changedFiles`, `selection`, `companyInitFailures`, `sourceScanFailures` are not sent.
 5. A run that cannot start (a bad path, an app that does not load) answers `{"error": "the run produced no result (exit 2): ..."}`
    instead of a summary with exit code 2 or 3.
-6. While a run is in progress only `cancel` and `shutdown` are answered; other requests get an `error` line (v2 queued them).
+6. While a run is in progress `cancel` and `shutdown` are answered at once; other requests are queued, as in v2.
 7. `testIsolation: "test"` means TestIsolation Function (section 3), `"disabled"` runs nothing.
 
 ## 5. Exit codes
@@ -252,7 +254,7 @@ ALchemist needs `alrunner serve` (step 3, done), `execute` (step 4), value captu
    `al-runner --server` (`serverProcess.ts:125-141`). The version check only warns and accepts `3.0.0` (A3).
 2. `runtests` (lowercase) is accepted. ALchemist sends `captureValues` and `iterationTracking` on `runTests`: they earn
    a `warnings` entry and are otherwise ignored, as in v2. It never sends `cobertura` or `testFilter`; both would be
-   refused as unknown fields. Section 4b lists the other differences (lines come together, `cancel` kills the run).
+   refused as unknown fields. Section 4b lists the other differences (warm state, streaming, queued requests).
 3. `coverage` arrives in the summary in the v2 shape (section 4a). ALchemist reads `hitStatements` and `totalStatements`,
    which neither v2 nor v3 sends (a tool-side issue noted in `alchemist-lethal.md`, section 6).
 4. Test names are `Codeunit<ID>.<Method>` as in v2; the label match in `testController.ts:493` (A8) must be checked on a run.

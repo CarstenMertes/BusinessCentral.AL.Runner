@@ -227,6 +227,7 @@ struct Unit {
     without_baseline: bool,
     /// Count the statements each test runs (`RunOptions::coverage`).
     coverage: bool,
+    hooks: crate::events::Hooks,
 }
 
 /// What a test codeunit left: each test's outcome, the call stack of each AL error that failed one, and
@@ -267,6 +268,19 @@ fn run_unit(
     let started = std::time::Instant::now();
     crate::dotnet::take_start_time();
     let baseline = baseline.filter(|_| !u.without_baseline);
+    crate::events::install(u.hooks.clone());
+    // A cancelled run starts no further codeunit.
+    if crate::events::cancelled() {
+        crate::events::uninstall();
+        return UnitResult {
+            si: u.si,
+            oi: u.oi,
+            id: u.id,
+            result: Ok((Vec::new(), Vec::new(), Vec::new(), Vec::new())),
+            took: started.elapsed(),
+            sidecar_start: std::time::Duration::ZERO,
+        };
+    }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut stacks = Vec::new();
         let mut times = Vec::new();
@@ -292,6 +306,50 @@ fn run_unit(
             .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
             .unwrap_or_default()
     });
+    // Tests the loop did not report as they finished (a codeunit refused as a whole, a panic) are reported now.
+    if crate::events::wants_events() {
+        let have = crate::events::reported();
+        let name = lowered.program.objects[u.oi].name.clone();
+        let event = |test: &str, outcome: Outcome, call_stack: String, time, coverage| crate::events::TestEvent {
+            codeunit: u.id,
+            codeunit_name: name.clone(),
+            test: test.to_string(),
+            outcome,
+            call_stack,
+            time,
+            coverage,
+        };
+        match &result {
+            Ok((done, stacks, times, covs)) => {
+                for (test, outcome) in done.iter().filter(|(t, _)| !have.contains(t)) {
+                    let stack = stacks.iter().find(|(n, _)| n == test).map(|(_, s)| s.clone());
+                    let time = times
+                        .iter()
+                        .find(|(n, _)| n == test)
+                        .map_or(std::time::Duration::ZERO, |(_, d)| *d);
+                    let cov = covs
+                        .iter()
+                        .find(|(n, _)| n == test)
+                        .map(|(_, c)| c.clone())
+                        .unwrap_or_default();
+                    crate::events::report(event(test, outcome.clone(), stack.unwrap_or_default(), time, cov));
+                }
+            }
+            Err(msg) => {
+                for r in test_routines(&lowered.program.objects[u.oi]).filter(|r| !have.contains(&r.name)) {
+                    let why = Outcome::NotRun(format!("runtime panic (bug): {msg}"));
+                    crate::events::report(event(
+                        &r.name,
+                        why,
+                        String::new(),
+                        std::time::Duration::ZERO,
+                        Vec::new(),
+                    ));
+                }
+            }
+        }
+    }
+    crate::events::uninstall();
     UnitResult {
         si: u.si,
         oi: u.oi,
@@ -367,6 +425,116 @@ pub struct RunOptions {
     /// Count how often each statement of the workspace's apps runs, per test (`alrunner test --coverage`).
     /// Off, a run pays one branch per statement.
     pub coverage: bool,
+    /// Callbacks while the run goes on: a line per test as it finishes, and a flag that stops the run after the
+    /// current test (`alrunner serve`).
+    pub hooks: crate::events::Hooks,
+}
+
+/// What the compile phase of a run leaves for its run phase (`CorpusRuntime::compile_suites`).
+pub struct Compiled {
+    #[allow(dead_code)] // kept alive with `lowered`: a warm server keeps both
+    ws: al_sema::Workspace,
+    lowered: Lowered,
+    cache_report: Option<crate::compile_cache::CacheReport>,
+    baseline_wanted: bool,
+    baseline: bool,
+    baseline_note: Option<String>,
+    order: Vec<usize>,
+    suites: Vec<SuiteRun>,
+    opts_only: Option<Vec<(usize, u32)>>,
+    compile_cache_skipped: bool,
+    source_index: Option<&'static str>,
+    compile_time: std::time::Duration,
+}
+
+/// What a warm server keeps between requests (ADR-028): the last compile, and which test codeunits it was compiled for.
+#[derive(Default)]
+pub struct Warm {
+    slot: Option<WarmSlot>,
+}
+
+struct WarmSlot {
+    key: String,
+    /// The codeunits the compile reached, by (app, id) as the caller gave them; `None`: all of them.
+    compiled_for: Option<std::collections::BTreeSet<(usize, u32)>>,
+    compiled: Compiled,
+}
+
+/// What a warm run did about the compile.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum WarmUse {
+    /// The compile of an earlier request was used as it was.
+    Reused,
+    /// The inputs changed or the earlier compile did not reach the selected tests: compiled again.
+    Compiled,
+}
+
+impl Warm {
+    pub fn new() -> Warm {
+        Warm::default()
+    }
+
+    /// Runs like [`CorpusRuntime::try_run_suites_with`], keeping the compile for the next call. `key` names everything
+    /// the compile depends on except the selection (the sources, the dependency apps, the symbols, the target). With the
+    /// same key and a selection the earlier compile reached, nothing is compiled. A different selection compiles for
+    /// the earlier and the new one together, so a client that asks for one test after another converges.
+    #[allow(clippy::too_many_arguments)]
+    pub fn run(
+        &mut self,
+        key: &str,
+        build: impl FnOnce() -> (Vec<al_sema::workspace::AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>),
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+        suites: &[SuiteRun],
+        opts: &RunOptions,
+    ) -> Result<(CorpusRuntime, WarmUse), String> {
+        let wanted: Option<std::collections::BTreeSet<(usize, u32)>> =
+            opts.only.as_ref().map(|v| v.iter().copied().collect());
+        let covers = |have: &Option<std::collections::BTreeSet<(usize, u32)>>| match (have, &wanted) {
+            (None, _) => true,
+            (Some(h), Some(w)) => w.is_subset(h),
+            (Some(_), None) => false,
+        };
+        let reusable = self
+            .slot
+            .as_ref()
+            .is_some_and(|s| s.key == key && covers(&s.compiled_for));
+        let mut used = WarmUse::Reused;
+        if !reusable {
+            used = WarmUse::Compiled;
+            let union = match (self.slot.as_ref().filter(|s| s.key == key), &wanted) {
+                (Some(s), Some(w)) => s.compiled_for.as_ref().map(|h| h.union(w).copied().collect()),
+                _ => wanted.clone(),
+            };
+            let (apps, kinds, manifests) = build();
+            let compile_opts = RunOptions {
+                only: union.as_ref().map(|u| u.iter().copied().collect()),
+                ..opts.clone()
+            };
+            // The old compile goes first: two of them are never in memory together.
+            if let Some(old) = self.slot.take() {
+                retire(old.compiled);
+            }
+            let compiled =
+                CorpusRuntime::compile_suites(apps, kinds, &manifests, symbols, target, suites, &compile_opts)?;
+            self.slot = Some(WarmSlot {
+                key: key.to_string(),
+                compiled_for: union,
+                compiled,
+            });
+        }
+        let slot = self.slot.as_ref().expect("a compile is kept");
+        let rt = CorpusRuntime::run_compiled(&slot.compiled, target, dotnet, opts);
+        Ok((rt, used))
+    }
+
+    /// Drops what is kept.
+    pub fn clear(&mut self) {
+        if let Some(old) = self.slot.take() {
+            retire(old.compiled);
+        }
+    }
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -505,6 +673,26 @@ impl CorpusRuntime {
         suites: &[SuiteRun],
         opts: &RunOptions,
     ) -> Result<CorpusRuntime, String> {
+        let compiled = Self::compile_suites(apps, kinds, manifests, symbols, target, suites, opts)?;
+        let rt = Self::run_compiled(&compiled, target, dotnet, opts);
+        // The workspace and the lowered program are big: dropping them takes as long as lowering
+        // a tenth of the corpus, and nothing waits for it.
+        retire(compiled);
+        Ok(rt)
+    }
+
+    /// The compile phase of a run: the workspace, the lowered program and what the run phase needs
+    /// to know about it ([`run_compiled`](Self::run_compiled)). A warm server keeps this between requests.
+    #[allow(clippy::too_many_arguments)]
+    pub fn compile_suites(
+        apps: Vec<al_sema::workspace::AppSource>,
+        kinds: Vec<al_sema::AppKind>,
+        manifests: &[Manifest],
+        symbols: &BTreeSet<String>,
+        target: Option<&al_version::Target>,
+        suites: &[SuiteRun],
+        opts: &RunOptions,
+    ) -> Result<Compiled, String> {
         // AL_NO_BASELINE=1 leaves the install baseline out (to measure what it costs).
         let baseline_wanted =
             kinds.contains(&al_sema::AppKind::Dependency) && std::env::var_os("AL_NO_BASELINE").is_none();
@@ -712,7 +900,6 @@ impl CorpusRuntime {
                 }
             },
         };
-        let opts_only = only;
         let source_index = source_index.or(cache_report.as_ref().and_then(|c| c.source_index));
         // A dependency file that does not parse takes every object in it out of the compile, and the
         // tests that need one are refused as "outside the workspace". Say so, once, with the first lines.
@@ -781,6 +968,61 @@ impl CorpusRuntime {
                 }
             }
         }
+        let opts_only = only;
+        let compile_time = compile_started.elapsed();
+        Ok(Compiled {
+            ws,
+            lowered,
+            cache_report,
+            baseline_wanted,
+            baseline,
+            baseline_note,
+            order,
+            suites: suites_in,
+            opts_only,
+            compile_cache_skipped,
+            source_index,
+            compile_time,
+        })
+    }
+
+    /// The run phase: engine, install baseline, the test codeunits. Leaves `compiled` as it was, so a warm
+    /// server runs it again for the next request.
+    pub fn run_compiled(
+        compiled: &Compiled,
+        target: Option<&al_version::Target>,
+        dotnet: al_vm::dotnet::DotNetConfig,
+        opts: &RunOptions,
+    ) -> CorpusRuntime {
+        let Compiled {
+            ws: _,
+            lowered,
+            cache_report,
+            baseline_wanted,
+            baseline,
+            baseline_note,
+            order,
+            suites,
+            opts_only,
+            compile_cache_skipped,
+            source_index,
+            compile_time: compile_phase,
+        } = compiled;
+        let (baseline_wanted, baseline, compile_cache_skipped, source_index) =
+            (*baseline_wanted, *baseline, *compile_cache_skipped, *source_index);
+        let baseline_note = baseline_note.clone();
+        // The selection of this request, in program order: a warm compile may reach more than the request asks for.
+        let opts_only = match &opts.only {
+            Some(v) => {
+                let mut new_of = vec![0; order.len()];
+                for (new, &old) in order.iter().enumerate() {
+                    new_of[old] = new;
+                }
+                Some(v.iter().map(|&(a, id)| (new_of[a], id)).collect::<Vec<_>>())
+            }
+            None => opts_only.clone(),
+        };
+        let suites = &suites[..];
         let blocked: Vec<Vec<Option<String>>> = lowered
             .unsupported
             .iter()
@@ -797,7 +1039,7 @@ impl CorpusRuntime {
                 target.cloned(),
                 dotnet.clone(),
             );
-            global_triggers_find_unavailable(&mut engine, &lowered);
+            global_triggers_find_unavailable(&mut engine, lowered);
             if let Some(e) = Arc::get_mut(&mut engine) {
                 e.test_data = opts.test_data.clone();
             }
@@ -805,10 +1047,10 @@ impl CorpusRuntime {
         };
         let mut engine = make_engine();
         let engine_time = engine_started.elapsed();
-        let compile_time = compile_started.elapsed();
+        let compile_time = *compile_phase + engine_time;
         let started = std::time::Instant::now();
         let baseline_run = if baseline {
-            crate::baseline::run(&engine, &lowered)
+            crate::baseline::run(&engine, lowered)
         } else {
             None
         };
@@ -858,10 +1100,10 @@ impl CorpusRuntime {
         for (si, suite) in suites.iter().enumerate() {
             let isolation = match suite.runner {
                 None => Ok(TestIsolation::default()),
-                Some(r) => runner_isolation(&lowered, r),
+                Some(r) => runner_isolation(lowered, r),
             };
             for (oi, o) in lowered.program.objects.iter().enumerate() {
-                let is_test = is_selected_test(&lowered, oi, suite, &opts_only);
+                let is_test = is_selected_test(lowered, oi, suite, &opts_only);
                 let Some(id) = o.id.filter(|_| is_test) else { continue };
                 match &isolation {
                     Ok(i) => units.push(Unit {
@@ -871,6 +1113,7 @@ impl CorpusRuntime {
                         isolation: opts.isolation.unwrap_or(*i),
                         without_baseline: false,
                         coverage: opts.coverage,
+                        hooks: opts.hooks.clone(),
                     }),
                     Err(why) => {
                         for r in test_routines(o) {
@@ -897,7 +1140,7 @@ impl CorpusRuntime {
         if std::env::var_os("AL_CHECK_BASELINE_RULE").is_some() && baseline.is_some() {
             let list = std::env::var("AL_CHECK_BASELINE_RULE").is_ok_and(|v| v == "list");
             for u in &mut units {
-                let why = crate::observe::may_observe_baseline(&lowered, &[u.oi]);
+                let why = crate::observe::may_observe_baseline(lowered, &[u.oi]);
                 if let (true, Some(why)) = (list, &why) {
                     eprintln!(
                         "baseline rule check: {} may observe it: {why}",
@@ -932,7 +1175,7 @@ impl CorpusRuntime {
                         details.insert((u.si, u.id, name.to_lowercase()), d);
                     };
                     let trace: Option<&mut Observer> = opts.trace.then_some(&mut observe);
-                    run_unit(&engine, &lowered, baseline.as_ref(), u, trace, limit)
+                    run_unit(&engine, lowered, baseline.as_ref(), u, trace, limit)
                 })
                 .collect()
         } else {
@@ -945,7 +1188,7 @@ impl CorpusRuntime {
                 loop {
                     let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(u) = units.get(k) else { return done };
-                    done.push(run_unit(&engine, &lowered, baseline, u, None, limit));
+                    done.push(run_unit(&engine, lowered, baseline, u, None, limit));
                 }
             };
             std::thread::scope(|scope| {
@@ -956,7 +1199,7 @@ impl CorpusRuntime {
                         .spawn_scoped(scope, || {
                             let own = baseline_engine
                                 .as_ref()
-                                .and_then(|e| crate::baseline::run(e, &lowered))
+                                .and_then(|e| crate::baseline::run(e, lowered))
                                 .map(|b| b.baseline);
                             pull(own.as_ref())
                         });
@@ -1059,8 +1302,7 @@ impl CorpusRuntime {
         } else {
             Vec::new()
         };
-        retire((ws, lowered));
-        Ok(CorpusRuntime {
+        CorpusRuntime {
             outcomes,
             times: times_by_case,
             suites,
@@ -1071,7 +1313,7 @@ impl CorpusRuntime {
                 tests: tests_time,
                 suites: suite_times,
                 compile_parts,
-                cache: cache_report,
+                cache: cache_report.clone(),
                 engine: engine_time,
                 baseline_skipped,
                 baseline_why: baseline_note,
@@ -1082,7 +1324,7 @@ impl CorpusRuntime {
             details,
             results: list,
             coverage_statements,
-        })
+        }
     }
 }
 
@@ -1568,7 +1810,12 @@ pub fn run_codeunit_full(
     // Set by the first test that was refused while it ran: it stopped half way, so what it left in
     // the codeunit's AL state (globals, single-instance codeunits) is not what BC would have left.
     let mut refused_mid_run: Option<String> = None;
-    for r in tests {
+    let mut panicked = false;
+    for r in tests.iter().copied() {
+        // A cancelled run starts no further test (the one running finishes).
+        if crate::events::cancelled() {
+            break;
+        }
         let test_started = std::time::Instant::now();
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
@@ -1609,7 +1856,28 @@ pub fn run_codeunit_full(
                     session.clear_stop();
                     let watchdog = limit.map(|l| Watchdog::start(session.stop_flag(), l));
                     session.set_runner_frames(runner_frames(&lowered.program, engine));
-                    let result = session.call(object, r, instance.clone(), Vec::new());
+                    // A panic in the test is a runtime bug: it is caught here, so that it ends this codeunit and not
+                    // the process (a server must outlive it). The session is not trusted after it.
+                    let called = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        // A debugging aid: the named test panics here, to show that a panic ends one codeunit and not the
+                        // process (tests of `alrunner serve`). Not documented for users.
+                        if std::env::var("ALRUNNER_DEBUG_PANIC_IN").is_ok_and(|n| n == routine.name) {
+                            panic!("requested by ALRUNNER_DEBUG_PANIC_IN");
+                        }
+                        session.call(object, r, instance.clone(), Vec::new())
+                    }));
+                    let result = match called {
+                        Ok(r) => r,
+                        Err(p) => {
+                            panicked = true;
+                            let msg = p
+                                .downcast_ref::<String>()
+                                .cloned()
+                                .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                                .unwrap_or_default();
+                            Err(Signal::Unsupported(format!("runtime panic (bug): {msg}")))
+                        }
+                    };
                     session.set_runner_frames(String::new());
                     let timed_out = watchdog.is_some_and(Watchdog::finish);
                     // The reason names the limit; the VM only knows that it was stopped.
@@ -1700,11 +1968,56 @@ pub fn run_codeunit_full(
                 stacks.push((routine.name.clone(), e.call_stack.clone()));
             }
         }
-        times.push((routine.name.clone(), test_started.elapsed()));
+        let took = test_started.elapsed();
+        times.push((routine.name.clone(), took));
+        let cov = if covering { session.take_coverage() } else { Vec::new() };
+        if crate::events::wants_events() {
+            crate::events::report(crate::events::TestEvent {
+                codeunit: obj.id.unwrap_or(0),
+                codeunit_name: obj.name.clone(),
+                test: routine.name.clone(),
+                outcome: outcome.clone(),
+                call_stack: stacks
+                    .iter()
+                    .rev()
+                    .find(|(n, _)| *n == routine.name)
+                    .map(|(_, s)| s.clone())
+                    .unwrap_or_default(),
+                time: took,
+                coverage: cov.clone(),
+            });
+        }
         if covering {
-            crate::coverage::push(&routine.name, session.take_coverage());
+            crate::coverage::push(&routine.name, cov);
         }
         out.push((routine.name.clone(), outcome));
+        // A panic in a test ends the codeunit: the session may be inconsistent.
+        if panicked {
+            break;
+        }
+        if crate::events::cancelled() {
+            break;
+        }
+    }
+    if panicked {
+        let ran = out.len();
+        for &r in &tests[ran..] {
+            let outcome = Outcome::NotRun(
+                "an earlier test of this codeunit panicked (a runtime bug), so the rest of it was not run".into(),
+            );
+            if crate::events::wants_events() {
+                crate::events::report(crate::events::TestEvent {
+                    codeunit: obj.id.unwrap_or(0),
+                    codeunit_name: obj.name.clone(),
+                    test: obj.routines[r].name.clone(),
+                    outcome: outcome.clone(),
+                    call_stack: String::new(),
+                    time: std::time::Duration::ZERO,
+                    coverage: Vec::new(),
+                });
+            }
+            out.push((obj.routines[r].name.clone(), outcome));
+        }
     }
     out
 }

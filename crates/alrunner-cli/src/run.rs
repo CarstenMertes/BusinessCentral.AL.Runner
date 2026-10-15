@@ -45,7 +45,7 @@ struct Found {
 const NEWEST_VERIFIED: u16 = 29;
 
 /// Which tests a run is about.
-#[derive(Default)]
+#[derive(Default, Clone)]
 struct Selection {
     codeunits: Vec<u32>,
     filters: Vec<String>,
@@ -135,8 +135,33 @@ fn write_file(path: &Path, text: &str) -> Result<(), String> {
     std::fs::write(path, text).map_err(|e| format!("{}: {e}", path.display()))
 }
 
+/// With `alrunner serve`: the backup opened last, kept with the tables read from it, for the next request.
+type KeptBackup = ((PathBuf, Option<String>), TestData);
+static KEPT_BACKUP: std::sync::Mutex<Option<KeptBackup>> = std::sync::Mutex::new(None);
+static KEEP_BACKUPS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// `alrunner serve` keeps the opened backup (and so the tables read from it) between requests.
+pub fn keep_backups() {
+    KEEP_BACKUPS.store(true, std::sync::atomic::Ordering::Relaxed);
+}
+
 /// Opens a backup file.
 fn open_backup(a: &TestArgs, path: PathBuf) -> Result<(TestData, PathBuf), String> {
+    if KEEP_BACKUPS.load(std::sync::atomic::Ordering::Relaxed) {
+        let key = (path.clone(), a.test_data_company.clone());
+        if let Some((k, d)) = KEPT_BACKUP.lock().unwrap_or_else(|e| e.into_inner()).as_ref() {
+            if *k == key {
+                return Ok((d.clone(), path));
+            }
+        }
+        let opened = open_backup_fresh(a, path)?;
+        *KEPT_BACKUP.lock().unwrap_or_else(|e| e.into_inner()) = Some((key, opened.0.clone()));
+        return Ok(opened);
+    }
+    open_backup_fresh(a, path)
+}
+
+fn open_backup_fresh(a: &TestArgs, path: PathBuf) -> Result<(TestData, PathBuf), String> {
     // The page map of the backup is kept next to the compile cache, so a cold or a warm open of a
     // 900 MB backup reads the map instead of verifying every extent.
     let index_dir = (!a.no_compile_cache
@@ -273,9 +298,72 @@ fn test_timeout_secs(a: &TestArgs) -> Result<u64, String> {
 }
 
 pub fn test(a: &TestArgs) -> Result<u8, String> {
+    test_with(a, None)
+}
+
+/// What `alrunner serve` keeps between requests, and how it hears about a request's run (ADR-028).
+#[derive(Default)]
+pub struct WarmCtx {
+    pub runtime: al_testrun::runtime::Warm,
+    /// Called for each selected test as it finishes.
+    pub on_test: Option<Arc<dyn Fn(al_testrun::events::TestEvent) + Send + Sync>>,
+    /// Set from outside: the run stops after the current test.
+    pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    /// What the last run came to.
+    pub report: Option<Report>,
+    /// Whether the last run used the compile of an earlier request.
+    pub used: Option<al_testrun::runtime::WarmUse>,
+}
+
+/// The result of a run for a caller that is not the console.
+pub struct Report {
+    /// The `--output-json` document.
+    pub doc: serde_json::Value,
+    /// With coverage: the `--coverage-json` document.
+    pub coverage: Option<serde_json::Value>,
+}
+
+/// Everything the compile depends on but the selection: the workspace sources, the dependency apps, the symbols, the target.
+fn warm_key(
+    inputs: &[AppInput],
+    dependencies: &al_testrun::deps::Dependencies,
+    symbols: &BTreeSet<String>,
+    target: &str,
+) -> String {
+    use std::hash::{Hash, Hasher};
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    for i in inputs {
+        i.source.id.hash(&mut h);
+        i.source.dependencies.hash(&mut h);
+        for (path, text) in &i.source.files {
+            path.hash(&mut h);
+            text.hash(&mut h);
+        }
+        i.manifest.version.hash(&mut h);
+    }
+    for (app, lazy) in dependencies.apps.iter().zip(&dependencies.lazy) {
+        app.id.hash(&mut h);
+        app.files.len().hash(&mut h);
+        match lazy {
+            Some(l) => l.identity.hash(&mut h),
+            None => {
+                for (path, text) in &app.files {
+                    path.hash(&mut h);
+                    text.len().hash(&mut h);
+                }
+            }
+        }
+    }
+    dependencies.summary.hash(&mut h);
+    symbols.hash(&mut h);
+    target.hash(&mut h);
+    format!("{:016x}", h.finish())
+}
+
+pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, String> {
     let started = Instant::now();
     REPORT_TO_STDERR.store(
-        matches!(a.output_json, Some(None)),
+        matches!(a.output_json, Some(None)) || warm.is_some(),
         std::sync::atomic::Ordering::Relaxed,
     );
     let test_timeout = test_timeout_secs(a)?;
@@ -565,23 +653,26 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
 
     // Compile and run.
-    let mut all_apps: Vec<al_sema::workspace::AppSource> = inputs.iter().map(|i| i.source.clone()).collect();
-    // An app with an `application` or `platform` floor sees `Application`, what it propagates and
-    // `System` without declaring them.
-    for (app, input) in all_apps.iter_mut().zip(&inputs) {
-        let implied =
-            dependencies.implied_dependencies(input.json.platform.is_some(), input.json.application.is_some());
-        for id in implied {
-            if !id.eq_ignore_ascii_case(&app.id) && !app.dependencies.contains(&id) {
-                app.dependencies.push(id);
+    let build_apps = || {
+        let mut all_apps: Vec<al_sema::workspace::AppSource> = inputs.iter().map(|i| i.source.clone()).collect();
+        // An app with an `application` or `platform` floor sees `Application`, what it propagates and
+        // `System` without declaring them.
+        for (app, input) in all_apps.iter_mut().zip(&inputs) {
+            let implied =
+                dependencies.implied_dependencies(input.json.platform.is_some(), input.json.application.is_some());
+            for id in implied {
+                if !id.eq_ignore_ascii_case(&app.id) && !app.dependencies.contains(&id) {
+                    app.dependencies.push(id);
+                }
             }
         }
-    }
-    let mut kinds = vec![al_sema::AppKind::Workspace; all_apps.len()];
-    let mut manifests: Vec<al_testrun::runtime::Manifest> = inputs.iter().map(|i| i.manifest.clone()).collect();
-    kinds.extend(dependencies.apps.iter().map(|_| al_sema::AppKind::Dependency));
-    manifests.extend(dependencies.manifests.iter().cloned());
-    all_apps.extend(dependencies.apps.iter().cloned());
+        let mut kinds = vec![al_sema::AppKind::Workspace; all_apps.len()];
+        let mut manifests: Vec<al_testrun::runtime::Manifest> = inputs.iter().map(|i| i.manifest.clone()).collect();
+        kinds.extend(dependencies.apps.iter().map(|_| al_sema::AppKind::Dependency));
+        manifests.extend(dependencies.manifests.iter().cloned());
+        all_apps.extend(dependencies.apps.iter().cloned());
+        (all_apps, kinds, manifests)
+    };
     let symbols: BTreeSet<String> = inputs
         .iter()
         .flat_map(|i| i.symbols.iter().cloned())
@@ -610,9 +701,13 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     });
     // Tests that look free of data are compiled first without the baseline and may need no .NET helper
     // at all: start the helpers only when the run turns out to need them (a session starts one then).
-    let looks_pure = opts_only.is_some()
-        && std::env::var_os("AL_FORCE_BASELINE").is_none()
-        && al_testrun::observe::text_looks_pure(&all_apps, &kinds, &symbols, opts_only.as_deref());
+    let looks_pure = warm.is_some() || {
+        // A warm server starts no helper ahead: a session starts one when a test needs it.
+        let (all_apps, kinds, _) = build_apps();
+        opts_only.is_some()
+            && std::env::var_os("AL_FORCE_BASELINE").is_none()
+            && al_testrun::observe::text_looks_pure(&all_apps, &kinds, &symbols, opts_only.as_deref())
+    };
     if !dependencies.apps.is_empty() && !looks_pure {
         // The Microsoft apps call .NET (Media, images). Start the helper processes now so the
         // starts overlap the compile; a run without them starts nothing (ADR-014 section 6).
@@ -621,6 +716,23 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     let dotnet = al_vm::dotnet::DotNetConfig {
         host,
         ..Default::default()
+    };
+    let hooks = match warm.as_deref() {
+        Some(w) => {
+            let pick = selection.clone();
+            let forward = w.on_test.clone();
+            al_testrun::events::Hooks {
+                on_test: forward.map(|f| {
+                    Arc::new(move |e: al_testrun::events::TestEvent| {
+                        if pick.picks(e.codeunit, &e.test) {
+                            f(e)
+                        }
+                    }) as Arc<dyn Fn(al_testrun::events::TestEvent) + Send + Sync>
+                }),
+                cancel: w.cancel.clone(),
+            }
+        }
+        None => Default::default(),
     };
     let opts = RunOptions {
         only: opts_only,
@@ -634,6 +746,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         },
         isolation: a.isolation,
         coverage: a.coverage,
+        hooks,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
             && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
@@ -645,16 +758,35 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         }),
     };
     let load_time = started.elapsed();
-    let rt = CorpusRuntime::try_run_suites_with(
-        all_apps,
-        kinds,
-        &manifests,
-        &symbols,
-        Some(&chosen.target),
-        dotnet,
-        &[SuiteRun::everything()],
-        &opts,
-    )?;
+    let rt = match warm.as_deref_mut() {
+        None => {
+            let (all_apps, kinds, manifests) = build_apps();
+            CorpusRuntime::try_run_suites_with(
+                all_apps,
+                kinds,
+                &manifests,
+                &symbols,
+                Some(&chosen.target),
+                dotnet,
+                &[SuiteRun::everything()],
+                &opts,
+            )?
+        }
+        Some(w) => {
+            let key = warm_key(&inputs, &dependencies, &symbols, &format!("{:?}", chosen.target));
+            let (rt, used) = w.runtime.run(
+                &key,
+                build_apps,
+                &symbols,
+                Some(&chosen.target),
+                dotnet,
+                &[SuiteRun::everything()],
+                &opts,
+            )?;
+            w.used = Some(used);
+            rt
+        }
+    };
     let p = &rt.phases;
     let d = sidecar_host.stats();
     sidecar_host.shutdown();
@@ -890,29 +1022,36 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         );
     }
 
+    let mut coverage_doc: Option<String> = None;
     if a.coverage {
         let cwd = std::env::current_dir().unwrap_or_default();
         let labels = |app: usize, file: &str| coverage::label(&inputs[app].path, file, &cwd);
         let names: Vec<String> = inputs.iter().map(|i| i.json.name.clone()).collect();
         let statements = rt.coverage_statements();
         let cwd_text = cwd.to_string_lossy().replace('\\', "/");
-        let cobertura_path = a
-            .coverage_out
-            .clone()
-            .unwrap_or_else(|| PathBuf::from("coverage.cobertura.xml"));
-        write_file(
-            &cobertura_path,
-            &coverage::cobertura(statements, &results, &names, &labels, &cwd_text),
-        )?;
-        if let Some(path) = &a.coverage_json {
-            write_file(path, &coverage::json(statements, &results, &labels))?;
+        // A server request gets its coverage in the summary and writes a file only when it names one.
+        if warm.is_none() || a.coverage_out.is_some() {
+            let cobertura_path = a
+                .coverage_out
+                .clone()
+                .unwrap_or_else(|| PathBuf::from("coverage.cobertura.xml"));
+            write_file(
+                &cobertura_path,
+                &coverage::cobertura(statements, &results, &names, &labels, &cwd_text),
+            )?;
+            say!(
+                "coverage: {} statements of {} app(s); Cobertura in {}",
+                statements.len(),
+                inputs.len(),
+                cobertura_path.display()
+            );
         }
-        say!(
-            "coverage: {} statements of {} app(s); Cobertura in {}",
-            statements.len(),
-            inputs.len(),
-            cobertura_path.display()
-        );
+        if a.coverage_json.is_some() || warm.is_some() {
+            coverage_doc = Some(coverage::json(statements, &results, &labels));
+        }
+        if let (Some(path), Some(doc)) = (&a.coverage_json, &coverage_doc) {
+            write_file(path, doc)?;
+        }
     }
     let total_time = started.elapsed();
     if let Some(path) = &a.junit {
@@ -964,6 +1103,12 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             _ => "ERROR",
         }
     );
+    if let Some(w) = warm {
+        w.report = Some(Report {
+            doc: serde_json::from_str(&output::json(&results, code, total_time.as_secs_f64())).unwrap_or_default(),
+            coverage: coverage_doc.as_deref().and_then(|d| serde_json::from_str(d).ok()),
+        });
+    }
     if let Some(target) = &a.output_json {
         let doc = output::json(&results, code, total_time.as_secs_f64());
         match target {

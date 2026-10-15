@@ -13,9 +13,14 @@ struct Server {
 
 impl Server {
     fn start(extra: &[&str]) -> Server {
+        Server::start_with(extra, &[])
+    }
+
+    fn start_with(extra: &[&str], env: &[(&str, &str)]) -> Server {
         let mut child = Command::new(env!("CARGO_BIN_EXE_alrunner"))
             .arg("serve")
             .args(extra)
+            .envs(env.iter().copied())
             .env("AL_CHECK_THREADS", "2")
             .env("AL_LOWER_THREADS", "2")
             .env("AL_TEST_THREADS", "2")
@@ -136,11 +141,17 @@ fn a_run_streams_test_lines_then_a_summary_and_shutdown_ends_the_server() {
     // Only the test that ran a statement has an entry: Passes has an empty body.
     assert_eq!(summary["perTestCoverage"].as_array().unwrap().len(), 1);
     assert_eq!(summary["perTestCoverage"][0]["test"], "Codeunit50100.Fails");
-    // A second request on the same server: selection and exclusion.
+    assert_eq!(summary["cached"], false, "the first request compiles");
+    // A second request on the same server: selection and exclusion, on the compile of the first.
     s.send(json!({"command": "runTests", "sourcePaths": [a], "test": "Codeunit50100.Passes", "excludeTests": ["Codeunit50100.Fails"]}));
     let lines = s.until_summary();
     assert_eq!(lines.iter().filter(|l| l["type"] == "test").count(), 1, "{lines:?}");
     assert_eq!(lines.last().unwrap()["exitCode"], 0);
+    assert_eq!(
+        lines.last().unwrap()["cached"],
+        true,
+        "nothing changed, nothing is compiled: {lines:?}"
+    );
     assert!(lines.last().unwrap().get("coverage").is_none());
     s.send(json!({"command": "shutdown"}));
     assert_eq!(s.line(), json!({"status": "shutting down"}));
@@ -169,7 +180,7 @@ fn bad_requests_get_an_error_line_and_the_server_goes_on() {
         ),
         (
             json!({"command": "runTests", "sourcePaths": ["/no/such/app"]}),
-            "no result",
+            "no such file or folder",
         ),
         (json!({"command": "execute", "code": "x"}), "not implemented"),
     ] {
@@ -205,28 +216,252 @@ codeunit 50200 "Slow Tests"
     begin
         for i := 1 to 2000000000 do;
     end;
+
+    [Test]
+    procedure SpinsToo()
+    var
+        i: Integer;
+    begin
+        for i := 1 to 2000000000 do;
+    end;
 }
 "#;
 
 #[test]
-fn cancel_stops_a_run_and_the_summary_says_so() {
+fn cancel_stops_the_run_after_the_current_test_and_reports_what_ran() {
     let d = tempfile::tempdir().unwrap();
     let a = app(d.path(), "slow", SLOW);
-    let mut s = Server::start(&["--no-download", "--no-test-data"]);
+    // The CPU limit ends the first test after 2 s; the second never starts.
+    let mut s = Server::start(&["--no-download", "--no-test-data", "--test-timeout", "2"]);
     s.line();
     s.send(json!({"command": "runTests", "sourcePaths": [a]}));
-    std::thread::sleep(std::time::Duration::from_millis(1500));
+    std::thread::sleep(std::time::Duration::from_millis(700));
     s.send(json!({"command": "cancel"}));
     assert_eq!(s.line(), json!({"type": "ack", "command": "cancel", "noop": false}));
-    let summary = s.line();
+    let lines = s.until_summary();
+    let tests: Vec<&Value> = lines.iter().filter(|l| l["type"] == "test").collect();
     assert_eq!(
-        (summary["type"].as_str(), summary["cancelled"].as_bool()),
-        (Some("summary"), Some(true)),
+        tests.len(),
+        1,
+        "the test that was running finished, the next did not start: {lines:?}"
+    );
+    assert_eq!(tests[0]["name"], "Codeunit50200.Spins");
+    assert!(
+        tests[0]["message"]
+            .as_str()
+            .unwrap()
+            .starts_with("Test exceeded 2s timeout"),
+        "{}",
+        tests[0]
+    );
+    let summary = lines.last().unwrap();
+    assert_eq!(
+        (summary["cancelled"].as_bool(), summary["total"].as_u64()),
+        (Some(true), Some(1)),
         "{summary}"
     );
-    // The server still answers.
+    // The server still answers, and the next run is not cancelled.
     s.send(json!({"command": "cancel"}));
     assert_eq!(s.line()["noop"], true);
     s.send(json!({"command": "shutdown"}));
     assert_eq!(s.line(), json!({"status": "shutting down"}));
+}
+
+const WRITES: &str = r#"
+table 50300 "Serve Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 50300 "Serve Writes"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure InsertsAfterCheckingTheTableIsEmpty()
+    var
+        R: Record "Serve Row";
+    begin
+        if not R.IsEmpty() then
+            Error('the table was not empty: %1 row(s)', R.Count());
+        R.Id := 1;
+        R.Insert();
+        R.Id := 2;
+        R.Insert();
+        Commit();
+    end;
+}
+"#;
+
+#[test]
+fn a_test_that_writes_gives_the_same_answer_in_two_requests() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "writes", WRITES);
+    let mut s = Server::start(&["--no-download", "--no-test-data"]);
+    s.line();
+    let mut outcomes = Vec::new();
+    for _ in 0..3 {
+        s.send(json!({"command": "runTests", "sourcePaths": [a]}));
+        let lines = s.until_summary();
+        let summary = lines.last().unwrap().clone();
+        outcomes.push((
+            lines[0]["status"].clone(),
+            lines[0]["message"].clone(),
+            summary["passed"].clone(),
+            summary["cached"].clone(),
+        ));
+    }
+    // Each request starts from the same database: the table is empty every time, though the test commits two rows.
+    assert_eq!(outcomes[0].0, "pass", "{outcomes:?}");
+    assert!(outcomes.iter().all(|o| o.0 == "pass" && o.2 == 1), "{outcomes:?}");
+    // The later requests used the compile of the first.
+    assert_eq!(
+        (outcomes[0].3.clone(), outcomes[1].3.clone(), outcomes[2].3.clone()),
+        (json!(false), json!(true), json!(true))
+    );
+}
+
+#[test]
+fn a_changed_source_is_compiled_again_and_an_unchanged_one_is_not() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "changing", MIXED);
+    let mut s = Server::start(&["--no-download", "--no-test-data"]);
+    s.line();
+    let run = |s: &mut Server| {
+        s.send(json!({"command": "runTests", "sourcePaths": [a], "test": "Codeunit50100.Fails"}));
+        s.until_summary()
+    };
+    assert_eq!(run(&mut s).last().unwrap()["cached"], false);
+    assert_eq!(run(&mut s).last().unwrap()["cached"], true);
+    // The test is fixed on disk: the next request sees it.
+    write(&a, "src/T.al", &MIXED.replace("Error('boom %1', 5);", ""));
+    let lines = run(&mut s);
+    assert_eq!(lines.last().unwrap()["cached"], false);
+    assert_eq!(lines[0]["status"], "pass", "{lines:?}");
+    // A request for a test the first compile did not reach compiles for both.
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "test": "Codeunit50100.Passes"}));
+    let lines = s.until_summary();
+    assert_eq!(lines.last().unwrap()["passed"], 1, "{lines:?}");
+}
+
+const TWO_UNITS: &str = r#"
+codeunit 50400 "Boom Tests"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure First()
+    begin
+    end;
+
+    [Test]
+    procedure Boom()
+    begin
+    end;
+
+    [Test]
+    procedure Third()
+    begin
+    end;
+}
+
+codeunit 50401 "Fine Tests"
+{
+    Subtype = Test;
+
+    [Test]
+    procedure Fine()
+    begin
+    end;
+}
+"#;
+
+#[test]
+fn a_panic_in_a_test_is_reported_as_an_error_and_the_server_goes_on() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "boom", TWO_UNITS);
+    let mut s = Server::start_with(
+        &["--no-download", "--no-test-data"],
+        &[("ALRUNNER_DEBUG_PANIC_IN", "Boom")],
+    );
+    s.line();
+    s.send(json!({"command": "runTests", "sourcePaths": [a]}));
+    let lines = s.until_summary();
+    let status = |name: &str| {
+        lines
+            .iter()
+            .find(|l| l["name"] == name)
+            .unwrap_or_else(|| panic!("no {name}: {lines:?}"))
+            .clone()
+    };
+    assert_eq!(status("Codeunit50400.First")["status"], "pass");
+    let boom = status("Codeunit50400.Boom");
+    assert_eq!(boom["status"], "error");
+    assert!(boom["message"].as_str().unwrap().contains("runtime panic"), "{boom}");
+    // The rest of that codeunit is not run, with the reason; the other codeunit is.
+    assert!(
+        status("Codeunit50400.Third")["message"]
+            .as_str()
+            .unwrap()
+            .contains("panicked")
+    );
+    assert_eq!(status("Codeunit50401.Fine")["status"], "pass");
+    assert_eq!(lines.last().unwrap()["total"], 4);
+    // The server answers the next request.
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "test": "Fine"}));
+    assert_eq!(s.until_summary().last().unwrap()["passed"], 1);
+}
+
+fn rss_mb(pid: u32) -> u64 {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).unwrap();
+    let kb: u64 = status
+        .lines()
+        .find_map(|l| l.strip_prefix("VmRSS:"))
+        .unwrap()
+        .split_whitespace()
+        .next()
+        .unwrap()
+        .parse()
+        .unwrap();
+    kb / 1024
+}
+
+#[test]
+#[cfg(target_os = "linux")]
+fn memory_stays_bounded_over_fifty_requests_that_change_the_source_every_time() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "many", MIXED);
+    let mut s = Server::start(&["--no-download", "--no-test-data"]);
+    s.line();
+    let pid = s.child.id();
+    let mut at_10 = 0;
+    for i in 0..50 {
+        // A changed file every time: the compile is dropped and made again 50 times.
+        write(&a, "src/T.al", &format!("{MIXED}\n// request {i}\n"));
+        s.send(json!({"command": "runTests", "sourcePaths": [a]}));
+        let lines = s.until_summary();
+        assert_eq!(lines.last().unwrap()["total"], 2, "{lines:?}");
+        if i == 9 {
+            at_10 = rss_mb(pid);
+        }
+    }
+    let at_50 = rss_mb(pid);
+    assert!(
+        at_50 < at_10 + 60,
+        "resident memory grew from {at_10} MB after 10 requests to {at_50} MB after 50"
+    );
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+#[test]
+fn a_request_sent_during_a_run_waits_for_it() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "slow2", SLOW);
+    let b = app(d.path(), "mixed", MIXED);
+    let mut s = Server::start(&["--no-download", "--no-test-data", "--test-timeout", "1"]);
+    s.line();
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "test": "Codeunit50200.SpinsToo"}));
+    s.send(json!({"command": "runTests", "sourcePaths": [b], "test": "Codeunit50100.Passes"}));
+    let first = s.until_summary();
+    assert_eq!(first.last().unwrap()["total"], 1);
+    assert_eq!(first[0]["name"], "Codeunit50200.SpinsToo");
+    let second = s.until_summary();
+    assert_eq!(second[0]["name"], "Codeunit50100.Passes", "{second:?}");
 }

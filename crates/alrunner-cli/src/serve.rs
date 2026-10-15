@@ -1,12 +1,15 @@
-//! `alrunner serve` (ADR-028): the v2 server protocol on stdin and stdout. Each `runTests` request is one
-//! `alrunner test` child process; the child's JSON becomes the `test` and `summary` lines.
+//! `alrunner serve` (ADR-028): the v2 server protocol on stdin and stdout, in this process. The compile of the
+//! last request is kept (`WarmCtx`), a test line is written as each test finishes, and `cancel` stops the run after the
+//! current test.
 
+use crate::args::{Command, TestArgs};
+use crate::run::{self, WarmCtx};
 use serde_json::{Map, Value, json};
 use std::io::{BufRead, Write};
 use std::path::PathBuf;
-use std::process::{Command, Stdio};
+use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::time::{Duration, Instant};
 
 /// The request fields of `runTests` and what each becomes.
 const RUN_TESTS_FIELDS: &[&str] = &[
@@ -34,41 +37,69 @@ fn error(message: impl Into<String>) {
     out(&json!({ "error": message.into() }));
 }
 
-/// A line of stdin, or the end of it.
 enum Input {
     Line(String),
     Eof,
 }
 
-fn reader() -> mpsc::Receiver<Input> {
+/// A run is in progress, and a `cancel` or the end of input asks it to stop after the current test.
+#[derive(Default)]
+struct Flags {
+    running: AtomicBool,
+    cancel: Arc<AtomicBool>,
+}
+
+/// Reads stdin on a thread of its own: `cancel` is answered here, at once, also while a run keeps the main thread busy;
+/// everything else is queued for the main loop.
+fn reader(flags: Arc<Flags>) -> mpsc::Receiver<Input> {
     let (tx, rx) = mpsc::channel();
     std::thread::spawn(move || {
         let stdin = std::io::stdin();
         for line in stdin.lock().lines() {
-            match line {
-                Ok(l) if l.trim().is_empty() => {}
-                Ok(l) => {
-                    if tx.send(Input::Line(l)).is_err() {
-                        return;
+            let Ok(line) = line else { break };
+            if line.trim().is_empty() {
+                continue;
+            }
+            let command = serde_json::from_str::<Value>(&line)
+                .ok()
+                .and_then(|v| v["command"].as_str().map(str::to_ascii_lowercase));
+            match command.as_deref() {
+                Some("cancel") => {
+                    let running = flags.running.load(Ordering::SeqCst);
+                    if running {
+                        flags.cancel.store(true, Ordering::SeqCst);
                     }
+                    out(&json!({ "type": "ack", "command": "cancel", "noop": !running }));
+                    continue;
                 }
-                Err(_) => break,
+                // The run in progress stops, then the loop sees the request.
+                Some("shutdown") => flags.cancel.store(true, Ordering::SeqCst),
+                _ => {}
+            }
+            if tx.send(Input::Line(line)).is_err() {
+                return;
             }
         }
+        flags.cancel.store(true, Ordering::SeqCst);
         let _ = tx.send(Input::Eof);
     });
     rx
 }
 
-/// What the server does after a request.
-enum Next {
-    Go,
-    Stop,
-}
-
 pub fn serve(daemon: &[String]) -> Result<(), String> {
-    let exe = std::env::current_exe().map_err(|e| format!("cannot find this executable: {e}"))?;
-    let rx = reader();
+    let base = daemon_args(daemon)?;
+    let flags = Arc::new(Flags::default());
+    let rx = reader(flags.clone());
+    let mut ctx = WarmCtx {
+        cancel: Some(flags.cancel.clone()),
+        on_test: Some(Arc::new(|e: al_testrun::events::TestEvent| {
+            let mut row =
+                crate::output::json_row(e.codeunit, &e.codeunit_name, &e.test, &e.outcome, &e.call_stack, e.time);
+            out(&Value::Object(test_line(&mut row)));
+        })),
+        ..WarmCtx::default()
+    };
+    crate::run::keep_backups();
     out(&json!({ "ready": true }));
     let mut n = 0u64;
     while let Ok(Input::Line(line)) = rx.recv() {
@@ -88,39 +119,31 @@ pub fn serve(daemon: &[String]) -> Result<(), String> {
             .and_then(Value::as_str)
             .unwrap_or("")
             .to_ascii_lowercase();
-        let next = match command.as_str() {
+        match command.as_str() {
             "shutdown" => {
                 out(&json!({ "status": "shutting down" }));
-                Next::Stop
+                eprintln!("[server] request {} done", n + 1);
+                return Ok(());
             }
-            "cancel" => {
-                out(&json!({ "type": "ack", "command": "cancel", "noop": true }));
-                continue;
-            }
-            "runtests" => {
-                run_tests(&exe, daemon, fields, &rx);
-                Next::Go
-            }
-            "execute" => {
-                error("execute is not implemented yet (ADR-028, step 4)");
-                Next::Go
-            }
-            "" => {
-                error("a request needs a `command`");
-                Next::Go
-            }
-            other => {
-                error(format!("unknown command `{other}`"));
-                Next::Go
-            }
-        };
+            "runtests" => run_tests(&base, fields, &mut ctx, &flags),
+            "execute" => error("execute is not implemented yet (ADR-028, step 4)"),
+            "" => error("a request needs a `command`"),
+            other => error(format!("unknown command `{other}`")),
+        }
         n += 1;
         eprintln!("[server] request {n} done");
-        if matches!(next, Next::Stop) {
-            return Ok(());
-        }
     }
     Ok(())
+}
+
+/// The `alrunner test` options of the daemon, as the template of every request's.
+fn daemon_args(daemon: &[String]) -> Result<TestArgs, String> {
+    let mut probe = vec!["test".to_string(), "APP".to_string()];
+    probe.extend(daemon.iter().cloned());
+    match crate::args::parse(probe)? {
+        Command::Test(t) => Ok(*t),
+        _ => Err("alrunner serve: options of `alrunner test` only".into()),
+    }
 }
 
 fn string_list(fields: &Map<String, Value>, name: &str) -> Result<Vec<String>, String> {
@@ -146,13 +169,8 @@ fn flag(fields: &Map<String, Value>, name: &str) -> Result<bool, String> {
     }
 }
 
-/// The child's command line for a request, and the warnings the request earns.
-fn child_args(
-    daemon: &[String],
-    fields: &Map<String, Value>,
-    json_file: &std::path::Path,
-    coverage_file: &std::path::Path,
-) -> Result<(Vec<String>, Vec<String>), String> {
+/// The `alrunner test` arguments for a request, and the warnings the request earns.
+fn request_args(base: &TestArgs, fields: &Map<String, Value>) -> Result<(TestArgs, Vec<String>), String> {
     let mut warnings = Vec::new();
     for key in fields.keys() {
         if DEFERRED.contains(&key.as_str()) {
@@ -170,173 +188,104 @@ fn child_args(
     if sources.is_empty() {
         return Err("`sourcePaths` needs at least one app folder".into());
     }
-    let mut args: Vec<String> = vec!["test".into()];
-    args.extend(sources);
-    for p in string_list(fields, "packagePaths")? {
-        args.push("--package-cache".into());
-        args.push(p);
-    }
-    args.extend(daemon.iter().cloned());
+    let mut a = base.clone();
+    a.apps = sources.into_iter().map(PathBuf::from).collect();
+    a.package_caches
+        .extend(string_list(fields, "packagePaths")?.into_iter().map(PathBuf::from));
     if let Some(t) = fields.get("test").and_then(Value::as_str).filter(|t| !t.is_empty()) {
-        args.push("--test".into());
-        args.push(t.into());
+        a.filters.push(t.into());
     }
-    for x in string_list(fields, "excludeTests")? {
-        args.push("--exclude-test".into());
-        args.push(x);
-    }
+    a.excludes.extend(string_list(fields, "excludeTests")?);
     if let Some(i) = fields.get("testIsolation").and_then(Value::as_str) {
-        if !["codeunit", "test", "disabled"].contains(&i.to_ascii_lowercase().as_str()) {
-            return Err(format!("`testIsolation` is codeunit, test or disabled, not `{i}`"));
-        }
-        args.push("--isolation".into());
-        args.push(i.into());
+        a.isolation = Some(match i.to_ascii_lowercase().as_str() {
+            "codeunit" => al_testrun::isolation::TestIsolation::Codeunit,
+            "test" => al_testrun::isolation::TestIsolation::Function,
+            "disabled" => al_testrun::isolation::TestIsolation::Disabled,
+            _ => return Err(format!("`testIsolation` is codeunit, test or disabled, not `{i}`")),
+        });
     }
-    args.push("--output-json".into());
-    args.push(json_file.display().to_string());
-    if flag(fields, "coverage")? || flag(fields, "perTestCoverage")? {
-        args.push("--coverage-json".into());
-        args.push(coverage_file.display().to_string());
-    }
-    Ok((args, warnings))
+    a.coverage = flag(fields, "coverage")? || flag(fields, "perTestCoverage")?;
+    a.quiet = true;
+    Ok((a, warnings))
 }
 
-fn run_tests(exe: &PathBuf, daemon: &[String], fields: &Map<String, Value>, rx: &mpsc::Receiver<Input>) {
-    static RUNS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-    let id = RUNS.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-    let dir = std::env::temp_dir().join(format!("alrunner-serve-{}-{id}", std::process::id()));
-    if let Err(e) = std::fs::create_dir_all(&dir) {
-        return error(format!("cannot make {}: {e}", dir.display()));
-    }
-    let (json_file, coverage_file) = (dir.join("run.json"), dir.join("coverage.json"));
-    let result = (|| -> Result<(), String> {
-        let (args, warnings) = child_args(daemon, fields, &json_file, &coverage_file)?;
-        let started = Instant::now();
-        let mut child = Command::new(exe)
-            .args(&args)
-            .stdin(Stdio::null())
-            .stdout(Stdio::null())
-            .stderr(Stdio::piped())
-            .spawn()
-            .map_err(|e| format!("cannot start {}: {e}", exe.display()))?;
-        // The child's stderr is the server's own log; the tail is kept for an error answer.
-        let stderr = child.stderr.take().expect("stderr piped");
-        let tail = std::thread::spawn(move || {
-            let mut lines = Vec::new();
-            for l in std::io::BufReader::new(stderr).lines().map_while(Result::ok) {
-                eprintln!("{l}");
-                lines.push(l);
-                if lines.len() > 20 {
-                    lines.remove(0);
-                }
-            }
-            lines
-        });
-        let mut cancelled = false;
-        let mut stop_after = false;
-        let status = loop {
-            if let Some(s) = child.try_wait().map_err(|e| e.to_string())? {
-                break s;
-            }
-            match rx.recv_timeout(Duration::from_millis(40)) {
-                Ok(Input::Line(l)) => match serde_json::from_str::<Value>(&l)
-                    .ok()
-                    .and_then(|v| v["command"].as_str().map(str::to_ascii_lowercase))
-                    .as_deref()
-                {
-                    Some("cancel") => {
-                        out(&json!({ "type": "ack", "command": "cancel", "noop": cancelled }));
-                        if !cancelled {
-                            cancelled = true;
-                            let _ = child.kill();
-                        }
-                    }
-                    Some("shutdown") => {
-                        cancelled = true;
-                        stop_after = true;
-                        let _ = child.kill();
-                    }
-                    _ => error("a run is in progress: only `cancel` and `shutdown` are answered until it ends"),
-                },
-                Ok(Input::Eof) | Err(mpsc::RecvTimeoutError::Disconnected) => {
-                    cancelled = true;
-                    stop_after = true;
-                    let _ = child.kill();
-                }
-                Err(mpsc::RecvTimeoutError::Timeout) => {}
-            }
-        };
-        let tail = tail.join().unwrap_or_default();
-        let code = status.code().unwrap_or(-1);
-        if cancelled {
-            out(&json!({
-                "type": "summary", "exitCode": 130, "passed": 0, "failed": 0, "errors": 0, "total": 0,
-                "cached": false, "protocolVersion": 2, "cancelled": true,
+fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, flags: &Flags) {
+    let (args, warnings) = match request_args(base, fields) {
+        Ok(x) => x,
+        Err(e) => return error(e),
+    };
+    let (want_coverage, want_per_test) = (
+        flag(fields, "coverage").unwrap_or(false) || flag(fields, "perTestCoverage").unwrap_or(false),
+        flag(fields, "perTestCoverage").unwrap_or(false),
+    );
+    // A cancel that arrived while nothing ran was answered as a no-op: it does not stop the next run.
+    flags.cancel.store(false, Ordering::SeqCst);
+    flags.running.store(true, Ordering::SeqCst);
+    ctx.report = None;
+    ctx.used = None;
+    let started = std::time::Instant::now();
+    // A panic anywhere in a request ends the request, not the server; what is kept is dropped, as it may be inconsistent.
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run::test_with(&args, Some(ctx))));
+    flags.running.store(false, Ordering::SeqCst);
+    let cancelled = flags.cancel.swap(false, Ordering::SeqCst);
+    match outcome {
+        Err(p) => {
+            ctx.runtime.clear();
+            let msg = p
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            error(format!("the run panicked (a runtime bug): {msg}"));
+        }
+        Ok(Err(e)) => error(e),
+        Ok(Ok(code)) => {
+            let Some(report) = ctx.report.take() else {
+                return error("the run produced no report");
+            };
+            let doc = &report.doc;
+            let mut summary = json!({
+                "type": "summary",
+                "exitCode": code,
+                "passed": doc["passed"], "failed": doc["failed"], "errors": doc["errors"],
+                "notRun": doc["notRun"], "total": doc["total"],
+                "cached": ctx.used == Some(al_testrun::runtime::WarmUse::Reused),
+                "protocolVersion": 2,
                 "wallSeconds": started.elapsed().as_secs_f64(),
-            }));
-            if stop_after {
-                out(&json!({ "status": "shutting down" }));
-                std::process::exit(0);
+            });
+            if cancelled {
+                summary["cancelled"] = json!(true);
             }
-            return Ok(());
-        }
-        // The child makes its output file before it starts to work, so an empty one means it stopped early.
-        let text = std::fs::read_to_string(&json_file)
-            .ok()
-            .filter(|t| !t.trim().is_empty())
-            .ok_or_else(|| {
-                format!(
-                    "the run produced no result (exit {code}): {}",
-                    tail.iter().rev().take(3).rev().cloned().collect::<Vec<_>>().join(" | ")
-                )
-            })?;
-        let doc: Value = serde_json::from_str(&text).map_err(|e| format!("the run's JSON is unreadable: {e}"))?;
-        for t in doc["tests"].as_array().into_iter().flatten() {
-            out(&test_line(t));
-        }
-        let mut summary = json!({
-            "type": "summary",
-            "exitCode": code,
-            "passed": doc["passed"], "failed": doc["failed"], "errors": doc["errors"],
-            "notRun": doc["notRun"], "total": doc["total"],
-            "cached": false, "protocolVersion": 2,
-            "wallSeconds": doc["wallSeconds"],
-        });
-        if !warnings.is_empty() {
-            summary["warnings"] = json!(warnings);
-        }
-        if let Ok(cov) = std::fs::read_to_string(&coverage_file) {
-            if let Ok(cov) = serde_json::from_str::<Value>(&cov) {
-                if flag(fields, "coverage")? || flag(fields, "perTestCoverage")? {
+            if !warnings.is_empty() {
+                summary["warnings"] = json!(warnings);
+            }
+            if let Some(cov) = &report.coverage {
+                if want_coverage {
                     summary["coverage"] = cov["coverage"].clone();
                 }
-                if flag(fields, "perTestCoverage")? {
+                if want_per_test {
                     summary["perTestCoverage"] = cov["perTestCoverage"].clone();
                 }
             }
+            out(&summary);
         }
-        out(&summary);
-        Ok(())
-    })();
-    let _ = std::fs::remove_dir_all(&dir);
-    if let Err(e) = result {
-        error(e);
     }
 }
 
-/// A `test` line of v2: the child's row, with `stackFrames` split out of the stack text.
-fn test_line(t: &Value) -> Value {
+/// A `test` line of v2: the row of the JSON document, with `stackFrames` split out of the stack text.
+fn test_line(row: &mut Map<String, Value>) -> Map<String, Value> {
     let mut line = Map::new();
     line.insert("type".into(), json!("test"));
     for key in ["name", "status", "durationMs", "message", "stackTrace", "notRun"] {
-        if let Some(v) = t.get(key) {
-            line.insert(key.into(), v.clone());
+        if let Some(v) = row.remove(key) {
+            line.insert(key.into(), v);
         }
     }
-    if let Some(stack) = t["stackTrace"].as_str() {
-        line.insert("stackFrames".into(), json!(stack.lines().collect::<Vec<_>>()));
+    if let Some(stack) = line.get("stackTrace").and_then(Value::as_str) {
+        let frames: Vec<&str> = stack.lines().collect();
+        line.insert("stackFrames".into(), json!(frames));
     }
-    Value::Object(line)
+    line
 }
 
 #[cfg(test)]
@@ -347,47 +296,32 @@ mod tests {
         v.as_object().unwrap().clone()
     }
 
+    fn base() -> TestArgs {
+        daemon_args(&["--define".into(), "S".into()]).unwrap()
+    }
+
     #[test]
-    fn a_run_request_becomes_the_child_command_line() {
+    fn a_run_request_becomes_the_arguments_of_a_test_run() {
         let f = fields(json!({
             "command": "runTests", "sourcePaths": ["/a", "/b"], "packagePaths": ["/p"], "test": "Codeunit1.X",
             "excludeTests": ["Codeunit1.Y"], "testIsolation": "test", "coverage": true,
         }));
-        let (a, w) = child_args(
-            &["--define".into(), "S".into()],
-            &f,
-            "/t/run.json".as_ref(),
-            "/t/c.json".as_ref(),
-        )
-        .unwrap();
+        let (a, w) = request_args(&base(), &f).unwrap();
+        assert_eq!(a.apps, [PathBuf::from("/a"), PathBuf::from("/b")]);
+        assert_eq!(a.package_caches, [PathBuf::from("/p")]);
+        assert_eq!(a.defines, ["S"]);
         assert_eq!(
-            a,
-            [
-                "test",
-                "/a",
-                "/b",
-                "--package-cache",
-                "/p",
-                "--define",
-                "S",
-                "--test",
-                "Codeunit1.X",
-                "--exclude-test",
-                "Codeunit1.Y",
-                "--isolation",
-                "test",
-                "--output-json",
-                "/t/run.json",
-                "--coverage-json",
-                "/t/c.json"
-            ]
+            (a.filters.as_slice(), a.excludes.as_slice()),
+            (&["Codeunit1.X".to_string()][..], &["Codeunit1.Y".to_string()][..])
         );
+        assert_eq!(a.isolation, Some(al_testrun::isolation::TestIsolation::Function));
+        assert!(a.coverage && a.quiet);
         assert!(w.is_empty());
     }
 
     #[test]
     fn fields_are_checked_deferred_ones_refused_and_the_other_commands_warned_about() {
-        let run = |v: Value| child_args(&[], &fields(v), "r".as_ref(), "c".as_ref());
+        let run = |v: Value| request_args(&base(), &fields(v));
         assert!(run(json!({"command": "runTests"})).unwrap_err().contains("sourcePaths"));
         assert!(
             run(json!({"sourcePaths": ["/a"], "tdd": true}))
@@ -407,10 +341,17 @@ mod tests {
 
     #[test]
     fn a_test_line_carries_the_stack_as_frames() {
-        let l = test_line(
-            &json!({"name": "Codeunit1.X", "status": "fail", "message": "m", "stackTrace": "a\nb", "durationMs": 3}),
+        let mut row = crate::output::json_row(
+            1,
+            "T",
+            "X",
+            &al_testrun::Outcome::Fail("m".into()),
+            "a\nb",
+            std::time::Duration::from_millis(3),
         );
+        let l = test_line(&mut row);
         assert_eq!(l["type"], "test");
+        assert_eq!(l["name"], "Codeunit1.X");
         assert_eq!(l["stackFrames"], json!(["a", "b"]));
         assert_eq!(l["durationMs"], 3);
     }

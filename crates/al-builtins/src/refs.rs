@@ -247,7 +247,7 @@ mod tests {
     /// the text in the id, and its first parameter is what this table says.
     #[test]
     fn ids_name_the_methods_and_overloads_they_claim() {
-        let cat = Catalog::load();
+        let cat = Catalog::shared();
         let params = |id: &str| {
             let s = cat.by_id(id).unwrap_or_else(|| panic!("{id} is not in the catalog"));
             let (recv, name) = id.rsplit_once('#').unwrap().0.split_once('.').unwrap();

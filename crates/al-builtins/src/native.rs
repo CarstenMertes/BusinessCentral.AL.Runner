@@ -536,7 +536,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
 fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
     static TABLE: std::sync::OnceLock<std::collections::HashMap<String, NativeFn>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
-        let cat = crate::catalog::Catalog::load();
+        let cat = crate::catalog::Catalog::shared();
         cat.signatures
             .iter()
             .filter_map(|sig| {

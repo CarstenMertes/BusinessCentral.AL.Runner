@@ -287,7 +287,7 @@ impl Builder<'_> {
             let mut anc = Some(parent);
             let mut found = None;
             while let Some(a) = anc {
-                if unquote(&who).eq_ignore_ascii_case(&self.items[a].name) {
+                if crate::text::unquote_double(&who).eq_ignore_ascii_case(&self.items[a].name) {
                     found = Some(a);
                     break;
                 }
@@ -304,8 +304,8 @@ impl Builder<'_> {
             if ttable == usize::MAX {
                 return;
             }
-            let own = self.stored_field(table, &unquote(&l), "DataItemLink");
-            let theirs = self.stored_field(ttable, &unquote(&field), "DataItemLink");
+            let own = self.stored_field(table, &crate::text::unquote_double(&l), "DataItemLink");
+            let theirs = self.stored_field(ttable, &crate::text::unquote_double(&field), "DataItemLink");
             if let (Some(o), Some(t)) = (own, theirs) {
                 self.items[idx].link.push((o, t));
                 items.push(target);
@@ -400,7 +400,7 @@ impl Builder<'_> {
         // The source field. A `Count` column has none.
         let source = match args.get(1) {
             Some(f) if table != usize::MAX => {
-                let f = unquote(f);
+                let f = crate::text::unquote_double(f);
                 match self.members[table]
                     .fields
                     .iter()
@@ -553,7 +553,7 @@ impl Builder<'_> {
             // `ascending(A, B)` names several columns in one direction (Base Application's "Item
             // Application Entries Inb."), as `ascending(A), ascending(B)`.
             for col in split_top(inner, ',') {
-                let col = unquote(&col);
+                let col = crate::text::unquote_double(&col);
                 match self.columns.iter().position(|c| c.name.eq_ignore_ascii_case(&col)) {
                     Some(i) if !self.columns[i].filter_element => out.push((i, asc)),
                     _ => self.reason(format!("OrderBy names `{col}`, which is not a column of the dataset")),
@@ -646,14 +646,6 @@ fn split_once_top(text: &str, sep: char) -> Option<(String, String)> {
     let first = parts[0].clone();
     let rest = text[first.len() + sep.len_utf8()..].to_string();
     Some((first, rest))
-}
-
-fn unquote(s: &str) -> String {
-    let t = s.trim();
-    t.strip_prefix('"')
-        .and_then(|r| r.strip_suffix('"'))
-        .unwrap_or(t)
-        .to_string()
 }
 
 /// A property value that is exactly one single-quoted AL string: its text.
@@ -857,7 +849,7 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
             split_once_top("Customer.\"No.\"", '.'),
             Some(("Customer".to_string(), "\"No.\"".to_string()))
         );
-        assert_eq!(unquote(" \"No.\" "), "No.");
+        assert_eq!(crate::text::unquote_double(" \"No.\" "), "No.");
     }
 
     #[test]

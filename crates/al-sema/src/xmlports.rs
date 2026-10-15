@@ -245,26 +245,6 @@ impl Layout {
     }
 }
 
-/// Splits `text` at top-level occurrences of `sep` (outside double quotes and parentheses).
-fn split_top(text: &str, sep: char) -> Vec<String> {
-    let (mut out, mut cur, mut quoted, mut depth) = (Vec::new(), String::new(), false, 0);
-    for c in text.chars() {
-        match c {
-            '"' => quoted = !quoted,
-            '(' if !quoted => depth += 1,
-            ')' if !quoted => depth -= 1,
-            c if c == sep && !quoted && depth == 0 => {
-                out.push(std::mem::take(&mut cur));
-                continue;
-            }
-            _ => {}
-        }
-        cur.push(c);
-    }
-    out.push(cur);
-    out
-}
-
 /// Everything `build` needs to know about the object being lowered.
 pub struct Context<'a> {
     pub ws: &'a Workspace,
@@ -373,8 +353,8 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                     (Some(t), Some(f)) => match layout.table_named(raw.parent, &t) {
                         Some(ln) => {
                             node.link_node = Some(ln);
-                            for pair in split_top(&f, ',') {
-                                let parts = split_top(&pair, '=');
+                            for pair in crate::text::split_top_double(&f, ',') {
+                                let parts = crate::text::split_top_double(&pair, '=');
                                 let own = parts.first().map(|p| unquote(p));
                                 let other = parts.get(1).map(|p| p.trim()).and_then(|p| {
                                     let low = p.to_ascii_lowercase();
@@ -540,20 +520,23 @@ mod tests {
     #[test]
     fn a_quote_hides_parentheses_from_the_nesting_count() {
         assert_eq!(
-            split_top("\"A(B\" = FIELD(X), C = FIELD(Y)", ','),
+            crate::text::split_top_double("\"A(B\" = FIELD(X), C = FIELD(Y)", ','),
             vec!["\"A(B\" = FIELD(X)", " C = FIELD(Y)"]
         );
         assert_eq!(
-            split_top("\"A)B\" = FIELD(X), C = FIELD(Y)", ','),
+            crate::text::split_top_double("\"A)B\" = FIELD(X), C = FIELD(Y)", ','),
             vec!["\"A)B\" = FIELD(X)", " C = FIELD(Y)"]
         );
-        assert_eq!(split_top("A = FIELD(X, Y), B", ','), vec!["A = FIELD(X, Y)", " B"]);
+        assert_eq!(
+            crate::text::split_top_double("A = FIELD(X, Y), B", ','),
+            vec!["A = FIELD(X, Y)", " B"]
+        );
     }
 
     #[test]
     fn link_fields_split_at_top_level_commas() {
         assert_eq!(
-            split_top("\"A,B\" = FIELD(X), C = FIELD(Y)", ','),
+            crate::text::split_top_double("\"A,B\" = FIELD(X), C = FIELD(Y)", ','),
             vec!["\"A,B\" = FIELD(X)", " C = FIELD(Y)"]
         );
     }

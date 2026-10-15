@@ -1437,6 +1437,14 @@ impl Session {
                     ("Find", None) => "=".to_string(),
                     _ => "-".to_string(),
                 };
+                // The characters of Which are a set: `'=<>'` is the pinned `'=><'` (documented assumption,
+                // docs/probes-needed.md; Microsoft's tests write `Find('=<>')`).
+                let which = {
+                    let mut c: Vec<char> = which.chars().collect();
+                    c.sort_unstable();
+                    c.dedup();
+                    if c == ['<', '=', '>'] { "=><".to_string() } else { which }
+                };
                 let found = match which.as_str() {
                     "-" => self.scan(rec, &t, asc, None)?,
                     "+" => self.scan(rec, &t, !asc, None)?,

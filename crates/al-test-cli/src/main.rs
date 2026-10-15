@@ -494,6 +494,7 @@ fn run_version(
         lazy: Vec::new(),
         isolation: None,
         coverage: false,
+        execute: false,
         hooks: Default::default(),
     };
     let load_time = started.elapsed();

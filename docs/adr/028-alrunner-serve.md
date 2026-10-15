@@ -42,7 +42,22 @@ The owner chose the warm design.
    `perTestCoverage`, `test`, `excludeTests`, `testIsolation`. Deferred fields (`affectedOnly`, `includeFailing`,
    `strictEnvironment`, `tdd`) answer an error; fields of other v2 commands (`code`, `captureValues`,
    `iterationTracking`) earn a `warnings` entry; others answer `unknown field`.
-9. **Not in this step:** `execute` (step 4), value capture. Incremental compile: ADR-029.
+9. **`execute`** (step 4) runs the `OnRun` trigger of one codeunit per app, or of inline `code`, in the same warm process,
+   and answers with one line without a `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace",
+   "stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. Fields: `sourcePaths` or `code` (not both),
+   `packagePaths`, `coverage`, `perTestCoverage`, `testIsolation` (checked, no effect), `captureValues` and
+   `iterationTracking` (accepted; a `warnings` entry says they are not implemented, so ALchemist's scratch runs work and show no
+   values). Which codeunit: of the codeunits with an `OnRun` trigger the lowest object id, one that declares no test
+   first. `code` that starts (after comments) with an object keyword is a whole object; anything else is a statement list
+   in the `OnRun` of codeunit "AL Runner Inline Execute". The name of a result is `Codeunit<ID>.OnRun` for `sourcePaths` and
+   `<object name>.OnRun` for `code`. An app without an `OnRun` gives no test, `exitCode` 6 and a warning. The text of every
+   `Message` call comes back in `messages`: outside a test method BC's behaviour is not pinned, so this is a tool
+   feature of scratch runs only (`docs/probes-needed.md`); `Confirm` and `StrMenu` are still refused. Inline `code` sees
+   the Base Application only when the daemon has `--bc-version`, `--dep` or `--package-cache`, or the request has
+   `packagePaths`. No `test` line is streamed. `cancel` stops an `execute` while it runs (the one routine is stopped, the answer has
+   `cancelled: true` and the test is `error` with the message `NotRun: out-of-scope: cancelled`); a test run lets the running test
+   finish.
+10. **Not in this step:** value capture (`capturedValues`, `loops`; step 5). Incremental compile: ADR-029.
 
 ## Measurements (release, 4 threads, 2026-10-15)
 

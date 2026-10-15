@@ -182,7 +182,10 @@ fn bad_requests_get_an_error_line_and_the_server_goes_on() {
             json!({"command": "runTests", "sourcePaths": ["/no/such/app"]}),
             "no such file or folder",
         ),
-        (json!({"command": "execute", "code": "x"}), "not implemented"),
+        (
+            json!({"command": "execute", "sourcePaths": ["/no/such/app"]}),
+            "no such file or folder",
+        ),
     ] {
         s.send(request);
         let l = s.line();
@@ -464,4 +467,179 @@ fn a_request_sent_during_a_run_waits_for_it() {
     assert_eq!(first[0]["name"], "Codeunit50200.SpinsToo");
     let second = s.until_summary();
     assert_eq!(second[0]["name"], "Codeunit50100.Passes", "{second:?}");
+}
+
+// ---- execute ----
+
+const SCRATCH: &str = r#"
+codeunit 50200 "Later"
+{
+    trigger OnRun()
+    begin
+        Message('later');
+    end;
+}
+
+codeunit 50150 "Scratch"
+{
+    trigger OnRun()
+    var
+        N: Integer;
+    begin
+        N := 40;
+        Message('answer %1', N + 2);
+        Message('second');
+    end;
+}
+
+codeunit 50160 "Helper"
+{
+    procedure P()
+    begin
+    end;
+}
+"#;
+
+fn started() -> Server {
+    let mut s = Server::start(&["--no-download", "--no-test-data"]);
+    assert_eq!(s.line(), json!({"ready": true}));
+    s
+}
+
+#[test]
+fn execute_runs_the_on_run_of_the_lowest_codeunit_of_an_app_and_returns_its_messages() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "scratch", SCRATCH);
+    let mut s = started();
+    s.send(json!({"command": "execute", "sourcePaths": [a]}));
+    let r = s.line();
+    // One line, no `type`, as v2 answers.
+    assert!(r.get("type").is_none(), "{r}");
+    assert_eq!(r["exitCode"], 0, "{r}");
+    let t = &r["tests"][0];
+    assert_eq!(t["name"], "Codeunit50150.OnRun", "{r}");
+    assert_eq!(t["status"], "pass");
+    assert_eq!(t["messages"], json!(["answer 42", "second"]));
+    assert_eq!(r["tests"].as_array().unwrap().len(), 1);
+    // A change in the code runs again with the new code (the warm compile takes it in).
+    write(&a, "src/T.al", &SCRATCH.replace("N := 40;", "N := 50;"));
+    s.send(json!({"command": "execute", "sourcePaths": [a]}));
+    let r = s.line();
+    assert_eq!(r["tests"][0]["messages"], json!(["answer 52", "second"]), "{r}");
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+#[test]
+fn execute_runs_inline_code_a_statement_list_or_a_whole_object() {
+    let mut s = started();
+    s.send(json!({"command": "execute", "code": "Message('hi');"}));
+    let r = s.line();
+    assert_eq!(r["exitCode"], 0, "{r}");
+    assert_eq!(r["tests"][0]["name"], "AL Runner Inline Execute.OnRun", "{r}");
+    assert_eq!(r["tests"][0]["messages"], json!(["hi"]));
+    // A comment first, then an object: used as it is.
+    s.send(json!({"command": "execute", "code": "// scratch\ncodeunit 50100 X { trigger OnRun() begin Message('from x'); Error('boom %1', 3); end; }"}));
+    let r = s.line();
+    assert_eq!(r["exitCode"], 1, "{r}");
+    let t = &r["tests"][0];
+    assert_eq!(
+        (t["name"].as_str(), t["status"].as_str()),
+        (Some("X.OnRun"), Some("fail")),
+        "{r}"
+    );
+    assert_eq!(t["message"], "boom 3");
+    assert_eq!(t["messages"], json!(["from x"]));
+    // The next statement list works after a failure.
+    s.send(json!({"command": "execute", "code": "Message(Format(6 * 7));"}));
+    assert_eq!(s.line()["tests"][0]["messages"], json!(["42"]));
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+#[test]
+fn execute_checks_its_request_and_says_what_it_does_not_do_yet() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "scratch", SCRATCH);
+    let none = app(d.path(), "none", "codeunit 50100 NoRun { procedure P() begin end; }");
+    let mut s = started();
+    let mut ask = |v: Value| {
+        s.send(v);
+        s.line()
+    };
+    assert!(
+        ask(json!({"command": "execute"}))["error"]
+            .as_str()
+            .unwrap()
+            .contains("sourcePaths")
+    );
+    assert!(
+        ask(json!({"command": "execute", "code": "x", "sourcePaths": [a]}))["error"]
+            .as_str()
+            .unwrap()
+            .contains("mutually exclusive")
+    );
+    assert!(
+        ask(json!({"command": "execute", "code": "x", "bogus": 1}))["error"]
+            .as_str()
+            .unwrap()
+            .contains("bogus")
+    );
+    assert!(
+        ask(json!({"command": "execute", "code": "x", "tdd": true}))["error"]
+            .as_str()
+            .unwrap()
+            .contains("deferred")
+    );
+    // Value capture is step 5: the run happens, and the response says so.
+    let r =
+        ask(json!({"command": "execute", "code": "Message('a');", "captureValues": true, "iterationTracking": true}));
+    assert_eq!(r["tests"][0]["messages"], json!(["a"]), "{r}");
+    assert_eq!(r["warnings"].as_array().unwrap().len(), 2, "{r}");
+    // A field of runTests: a warning, not an error.
+    let r = ask(json!({"command": "execute", "code": "Message('a');", "test": "X"}));
+    assert!(r["warnings"][0].as_str().unwrap().contains("runTests"), "{r}");
+    // An app without an OnRun: nothing ran.
+    let r = ask(json!({"command": "execute", "sourcePaths": [none]}));
+    assert_eq!(r["tests"], json!([]), "{r}");
+    assert_eq!(r["exitCode"], 6, "{r}");
+    assert!(r["warnings"][0].as_str().unwrap().contains("OnRun"), "{r}");
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+#[test]
+fn execute_and_runtests_share_the_server() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "mixed", MIXED);
+    let mut s = started();
+    s.send(json!({"command": "execute", "code": "Message('x');"}));
+    assert_eq!(s.line()["exitCode"], 0);
+    s.send(json!({"command": "runTests", "sourcePaths": [a]}));
+    let lines = s.until_summary();
+    assert_eq!(lines.last().unwrap()["total"], 2, "{lines:?}");
+    s.send(json!({"command": "execute", "code": "Message('y');"}));
+    assert_eq!(s.line()["tests"][0]["messages"], json!(["y"]));
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+#[test]
+fn cancel_stops_an_execute_that_does_not_end() {
+    let mut s = started();
+    s.send(json!({"command": "execute", "code": "Message('start'); while true do ;"}));
+    std::thread::sleep(std::time::Duration::from_millis(600));
+    s.send(json!({"command": "cancel"}));
+    // The acknowledgement comes at once, and then the answer of the stopped run.
+    let ack = s.line();
+    assert_eq!(ack, json!({"type": "ack", "command": "cancel", "noop": false}));
+    let r = s.line();
+    assert_eq!(r["cancelled"], true, "{r}");
+    assert_eq!(r["tests"][0]["status"], "error", "{r}");
+    assert!(r["tests"][0]["message"].as_str().unwrap().contains("cancelled"), "{r}");
+    // The server goes on.
+    s.send(json!({"command": "execute", "code": "Message('after');"}));
+    assert_eq!(s.line()["tests"][0]["messages"], json!(["after"]));
+    s.send(json!({"command": "shutdown"}));
+    s.line();
 }

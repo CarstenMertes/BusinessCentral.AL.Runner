@@ -109,8 +109,8 @@ fn set_permission_filter_does_not_throw_and_changes_no_row() {
 
 #[test]
 fn builtins_no_corpus_test_pins_are_refused_with_a_reason_that_says_so() {
-    let why = refusal("procedure F() var Rep: Report \"ALT R\"; begin Rep.Preview(); end;");
-    assert!(why.contains("Report.Preview"), "{why}");
+    let why = refusal("procedure F() begin Xmlport.Run(50300); end;");
+    assert!(why.contains("Xmlport.Run"), "{why}");
     assert!(why.contains("not pinned"), "{why}");
     assert!(!why.contains("is not implemented"), "{why}");
 }

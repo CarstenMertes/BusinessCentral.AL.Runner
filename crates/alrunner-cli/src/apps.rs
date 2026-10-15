@@ -175,6 +175,7 @@ pub struct BuildChoice {
 ///    compiled against, so the build the project really targets. Used when it is of the target's
 ///    major and not below the app.json floor (`application`, `platform`);
 /// 4. the newest published build of the target's major at or above the floor.
+///
 /// The build wanted may be neither cached, on disk nor published; then the feed's usual rules pick one
 /// and the run says so.
 pub fn choose_build(

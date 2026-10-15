@@ -98,8 +98,8 @@ pub enum SelectError {
     /// the app that were found without source (they do not count as found, owner decision 2026-10-15).
     Missing {
         dep: DepDecl,
-        searched: Vec<String>,
-        symbol_only: Vec<String>,
+        searched: Box<[String]>,
+        symbol_only: Box<Vec<String>>,
     },
     /// Packages exist for the id, but all are below the declared minimum.
     BelowMinimum { dep: DepDecl, found: Vec<Version> },
@@ -264,8 +264,8 @@ impl Resolver<'_> {
                 dep,
                 SelectError::Missing {
                     dep: dep.clone(),
-                    searched: self.opts.searched.clone(),
-                    symbol_only: found.iter().map(|&i| self.pool[i].origin.clone()).collect(),
+                    searched: self.opts.searched.clone().into_boxed_slice(),
+                    symbol_only: Box::new(found.iter().map(|&i| self.pool[i].origin.clone()).collect()),
                 },
             );
         }
@@ -584,7 +584,7 @@ mod tests {
             panic!("{:?}", plan.skipped)
         };
         assert_eq!(missing.id, "a");
-        assert_eq!(symbol_only, &["a_9.0.0.0.app"]);
+        assert_eq!(&symbol_only[..], ["a_9.0.0.0.app"]);
         let text = plan.skipped[0].to_string();
         assert!(
             text.contains("without AL source") && text.contains("a_9.0.0.0.app"),

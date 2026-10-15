@@ -352,6 +352,10 @@ struct Parser<'a> {
     /// In-scope namespace declarations, innermost last.
     scope: Vec<(String, String)>,
     depth: usize,
+    /// Parsing for `XmlDocument.ReadFrom`, whose errors are worded differently from an XmlPort import's.
+    dom: bool,
+    /// Where the root element starts.
+    root_at: usize,
 }
 
 type PResult<T> = Result<T, ParseError>;
@@ -359,6 +363,17 @@ type PResult<T> = Result<T, ParseError>;
 impl Parser<'_> {
     fn rest(&self) -> &str {
         &self.s[self.i..]
+    }
+    /// A well-formedness error of `XmlDocument.ReadFrom`, worded as .NET words it, at byte offset `at`
+    /// (xml/TestProbeXmlContracts.al:ReadFrom_Invalid_Statement).
+    fn fail_at<T>(&self, what: &str, at: usize) -> PResult<T> {
+        let (line, pos) = self.line_pos(at);
+        Err(ParseError::Failed {
+            message: format!("{what} Line {line}, position {pos}."),
+            line,
+            pos,
+            dom: true,
+        })
     }
     /// Line and position (both 1-based, in UTF-16 units) of byte offset `at`.
     fn line_pos(&self, at: usize) -> (usize, usize) {
@@ -416,17 +431,28 @@ impl Parser<'_> {
     }
 
     /// Decodes entity references in `raw`; `attr` also normalises white space.
-    fn decode(&self, raw: &str, attr: bool) -> PResult<String> {
+    /// The text of `raw` with its references replaced; `base` is the byte offset of `raw` in the document, for the
+    /// position of an undeclared entity.
+    fn decode(&self, raw: &str, attr: bool, base: usize) -> PResult<String> {
         let mut out = String::with_capacity(raw.len());
         let mut chars = raw.chars().peekable();
+        let mut off = 0usize;
         while let Some(c) = chars.next() {
+            let here = off;
+            off += c.len_utf8();
             match c {
                 '&' => {
                     let mut ent = String::new();
                     loop {
                         match chars.next() {
-                            Some(';') => break,
-                            Some(x) if ent.len() < 12 => ent.push(x),
+                            Some(';') => {
+                                off += 1;
+                                break;
+                            }
+                            Some(x) if ent.len() < 12 => {
+                                off += x.len_utf8();
+                                ent.push(x);
+                            }
                             _ => return Err(ParseError::Invalid),
                         }
                     }
@@ -449,13 +475,16 @@ impl Parser<'_> {
                                 .and_then(char::from_u32)
                                 .ok_or(ParseError::Invalid)?,
                         ),
-                        _ => return Err(ParseError::Invalid),
+                        e => {
+                            return self.fail_at(&format!("Reference to undeclared entity '{e}'."), base + here + 1);
+                        }
                     }
                 }
                 '<' if attr => return Err(ParseError::Invalid),
                 '\r' => {
                     if chars.peek() == Some(&'\n') {
                         chars.next();
+                        off += 1;
                     }
                     out.push(if attr { ' ' } else { '\n' });
                 }
@@ -469,13 +498,17 @@ impl Parser<'_> {
     fn quoted(&mut self) -> PResult<String> {
         let q = self.peek().ok_or(ParseError::Invalid)?;
         if q != '"' && q != '\'' {
-            return Err(ParseError::Invalid);
+            return self.fail_at(
+                &format!("'{q}' is an unexpected token. The expected token is '\"' or '''."),
+                self.i,
+            );
         }
         self.bump(1);
         let end = self.rest().find(q).ok_or(ParseError::Invalid)?;
         let raw = self.s[self.i..self.i + end].to_string();
+        let base = self.i;
         self.bump(end + 1);
-        self.decode(&raw, true)
+        self.decode(&raw, true, base)
     }
 
     fn declaration(&mut self) -> PResult<Handle> {
@@ -502,7 +535,8 @@ impl Parser<'_> {
                 _ => return Err(ParseError::Invalid),
             }
         }
-        if version.is_empty() {
+        // Only version 1.0 reads (xml/TestProbeXmlContracts.al:ReadFrom_Invalid_ResultUsed: 9.9 is refused).
+        if version != "1.0" {
             return Err(ParseError::Invalid);
         }
         Ok(new_node(XData::Declaration {
@@ -515,7 +549,9 @@ impl Parser<'_> {
 
     fn comment(&mut self) -> PResult<Handle> {
         self.expect("<!--")?;
-        let end = self.rest().find("-->").ok_or(ParseError::Invalid)?;
+        let Some(end) = self.rest().find("-->") else {
+            return self.fail_at("Unexpected end of file while parsing Comment has occurred.", self.s.len());
+        };
         let body = self.s[self.i..self.i + end].to_string();
         if body.contains("--") {
             return Err(ParseError::Invalid);
@@ -575,13 +611,14 @@ impl Parser<'_> {
             if !had_ws {
                 return Err(ParseError::Invalid);
             }
+            let an_at = self.i;
             let an = self.name()?;
             self.skip_ws();
             self.expect("=")?;
             self.skip_ws();
             let av = self.quoted()?;
             if raw_attrs.iter().any(|(n, _)| *n == an) {
-                return Err(ParseError::Invalid);
+                return self.fail_at(&format!("'{an}' is a duplicate attribute name."), an_at);
             }
             raw_attrs.push((an, av));
         };
@@ -665,6 +702,9 @@ impl Parser<'_> {
                     return Err(ParseError::Invalid);
                 } else if self.starts("<") {
                     children.push(self.element()?);
+                } else if self.peek().is_none() && self.dom {
+                    // xml/TestProbeXmlContracts.al:ReadFrom_Invalid_Statement (`<a>`): worded as an error at the root.
+                    return self.fail_at("Data at the root level is invalid.", self.root_at);
                 } else if self.peek().is_none() {
                     // Pinned for an XmlPort import (xmlport/TestXmlPortExportImportContracts.al:
                     // XmlPortImport_MalformedXml_Throws).
@@ -688,7 +728,7 @@ impl Parser<'_> {
                     }
                     // White space is kept, inside and outside the root
                     // (xml/TestXmlRuntimeContracts.al:XmlDocument_ReadFrom_KeepsWhiteSpaceInsideAndOutsideTheRoot).
-                    let text = self.decode(&raw, false)?;
+                    let text = self.decode(&raw, false, self.i - end)?;
                     children.push(new_node(XData::Text(text)));
                 }
             }
@@ -705,6 +745,28 @@ impl Parser<'_> {
             children,
             open,
         }))
+    }
+
+    /// `<!DOCTYPE name ... [ internal subset ] >`.
+    fn skip_doctype(&mut self) -> PResult<()> {
+        let mut depth = 0i32;
+        let mut quote: Option<char> = None;
+        let rest = self.rest().to_string();
+        for (n, c) in rest.char_indices() {
+            match (quote, c) {
+                (Some(q), c) if c == q => quote = None,
+                (Some(_), _) => {}
+                (None, '"' | '\'') => quote = Some(c),
+                (None, '[') => depth += 1,
+                (None, ']') => depth -= 1,
+                (None, '>') if depth <= 0 => {
+                    self.bump(n + 1);
+                    return Ok(());
+                }
+                _ => {}
+            }
+        }
+        Err(ParseError::Invalid)
     }
 
     fn document(&mut self) -> PResult<Handle> {
@@ -732,24 +794,29 @@ impl Parser<'_> {
             } else if self.starts("<?") {
                 children.push(self.pi()?);
             } else if self.starts("<!DOCTYPE") {
-                return Err(ParseError::Unsupported("DOCTYPE declarations"));
+                // A document type is read and dropped: GetDocumentType answers false and WriteTo writes none
+                // (xml/TestProbeXmlContracts.al:DocumentType_ReadWithDoctype).
+                self.skip_doctype()?;
             } else if self.starts("<") && !root_seen {
+                if !self.rest()[1..].chars().next().is_some_and(is_name_start) {
+                    return self.fail_at("Data at the root level is invalid.", self.i);
+                }
+                self.root_at = self.i;
                 children.push(self.element()?);
                 root_seen = true;
             } else if !self.starts("<") {
-                let (line, pos) = self.line_pos(self.i);
-                return Err(ParseError::Failed {
-                    message: format!("Data at the root level is invalid. Line {line}, position {pos}."),
-                    line,
-                    pos,
-                    dom: false,
-                });
+                return self.fail_at("Data at the root level is invalid.", self.i);
             } else {
-                return Err(ParseError::Invalid);
+                return self.fail_at("There are multiple root elements.", self.i + 1);
             }
         }
         if !root_seen {
-            return Err(ParseError::Invalid);
+            return Err(ParseError::Failed {
+                message: "Root element is missing.".into(),
+                line: 0,
+                pos: 0,
+                dom: true,
+            });
         }
         Ok(new_node(XData::Document { decl, children }))
     }
@@ -772,6 +839,8 @@ fn parse_document_detail(text: &str) -> Result<Result<Handle, Option<Failure>>, 
         open: Vec::new(),
         scope: Vec::new(),
         depth: 0,
+        dom: true,
+        root_at: 0,
     };
     match p.document() {
         Ok(d) => Ok(Ok(d)),
@@ -2131,21 +2200,39 @@ fn read_text_into(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value], out: 
 /// wrote, a UTF-8 document with a byte order mark). The encoding is the byte order mark's, else UTF-8;
 /// a UTF-16 document and bytes that are not UTF-8 are refused (not pinned).
 fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    // The stream is read from its position without moving it: `EOS` stays false afterwards (xml/TestProbeXmlContracts.al:
+    // ReadFrom_Stream_Encodings, `ok=Yes eos=No`).
     let bytes = match a.first() {
-        Some(Value::Library(_, h)) => match &mut *h.borrow_mut() {
-            LibraryValue::InStream(s) => s.drain(),
+        Some(Value::Library(_, h)) => match &*h.borrow() {
+            LibraryValue::InStream(s) => s.rest(),
             _ => return unsupported("XmlDocument.ReadFrom of something that is not an InStream"),
         },
         other => return unsupported(format!("XmlDocument.ReadFrom of {}", other.describe())),
     };
-    if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
-        return unsupported("XmlDocument.ReadFrom of a UTF-16 stream (not pinned)");
-    }
-    let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
-    let Ok(text) = std::str::from_utf8(body) else {
-        return unsupported("XmlDocument.ReadFrom of a stream that is not UTF-8 (not pinned)");
+    // A byte order mark names the encoding; without one, UTF-8, else UTF-16 little endian when the second byte is zero
+    // (a text written with TextEncoding::UTF16). Bytes that are neither read as no document.
+    let decoded: Option<String> = if bytes.starts_with(&[0xFF, 0xFE]) || bytes.starts_with(&[0xFE, 0xFF]) {
+        let le = bytes[0] == 0xFF;
+        let units: Vec<u16> = bytes[2..]
+            .chunks_exact(2)
+            .map(|p| if le { u16::from_le_bytes([p[0], p[1]]) } else { u16::from_be_bytes([p[0], p[1]]) })
+            .collect();
+        String::from_utf16(&units).ok()
+    } else if bytes.len() >= 2 && bytes.len() % 2 == 0 && bytes[0] != 0 && bytes[1] == 0 {
+        let units: Vec<u16> = bytes.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
+        String::from_utf16(&units).ok()
+    } else {
+        let body = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
+        std::str::from_utf8(body).ok().map(str::to_string)
     };
-    let mut args = [Value::Text(text.to_string()), a[1].clone()];
+    let Some(text) = decoded else {
+        return if c.ret_used() {
+            Ok(Value::Boolean(false))
+        } else {
+            unsupported("XmlDocument.ReadFrom of a stream whose bytes are no UTF-8 or UTF-16 text, result unused (error text not pinned)")
+        };
+    };
+    let mut args = [Value::Text(text), a[1].clone()];
     let result = read_from_text(c, None, &mut args)?;
     a[1] = args[1].clone();
     Ok(result)
@@ -2885,6 +2972,34 @@ fn manager_add_namespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]
     Ok(Value::Null)
 }
 
+/// `LookupNamespace(Prefix, var Uri)` and `HasNamespace(Prefix)` (xml/TestProbeXmlContracts.al:XPath_NamespaceManager:
+/// `p` gives `Yes urn:p`, an unknown prefix `No`). A prefix added twice answers the last one.
+fn manager_lookup_namespace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = manager_cell(r)?;
+    let prefix = arg_text(a, 0)?;
+    let found = match &*h.borrow() {
+        LibraryValue::XmlNamespaces(v) => v.iter().rev().find(|(p, _)| *p == prefix).map(|(_, u)| u.clone()),
+        _ => None,
+    };
+    match found {
+        Some(u) => {
+            a[1] = Value::Text(u);
+            Ok(Value::Boolean(true))
+        }
+        None if c.ret_used() => Ok(Value::Boolean(false)),
+        None => unsupported("XmlNamespaceManager.LookupNamespace of an unknown prefix, result unused (not pinned)"),
+    }
+}
+
+fn manager_has_namespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = manager_cell(r)?;
+    let prefix = arg_text(a, 0)?;
+    Ok(Value::Boolean(match &*h.borrow() {
+        LibraryValue::XmlNamespaces(v) => v.iter().any(|(p, _)| *p == prefix),
+        _ => false,
+    }))
+}
+
 fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     a[0] = Value::Text(serialize(&h)?);
@@ -3310,6 +3425,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         (_, "SelectSingleNode", ["Text", "XmlNamespaceManager", "XmlNode"]) if is_node => select_single_node_ns,
         ("XmlNamespaceManager", "NameTable", [] | ["XmlNameTable"]) => manager_name_table,
         ("XmlNamespaceManager", "AddNamespace", ["Text", "Text"]) => manager_add_namespace,
+        ("XmlNamespaceManager", "LookupNamespace", ["Text", "Text"]) => manager_lookup_namespace,
+        ("XmlNamespaceManager", "HasNamespace", ["Text"]) => manager_has_namespace,
         (_, "WriteTo", ["Text"]) if is_node && first_by_var => write_to_text,
         ("XmlDocument" | "XmlElement", "WriteTo", ["OutStream"] | ["XmlWriteOptions", "OutStream"]) => {
             write_to_outstream

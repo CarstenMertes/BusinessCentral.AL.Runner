@@ -1664,6 +1664,15 @@ impl Session {
         let RtType::Array(dims, _) = self.place_type(base, f) else {
             return Err(Signal::Unsupported("indexing a non-array".into()));
         };
+        // `A[x]` of a two-dimensional array is a row; what BC does with one (Clear, assignment, an argument) is
+        // not pinned (docs/probes-needed.md). It used to be read as the cell at flat position x.
+        if idx.len() != dims.len() {
+            return Err(Signal::Unsupported(format!(
+                "a row of a {}-dimensional array (indexed by {} of its dimensions): what BC does with it is not pinned (docs/probes-needed.md)",
+                dims.len(),
+                idx.len()
+            )));
+        }
         let arr = match self.read(base, f)? {
             Value::Array(a) => a,
             other => return Err(Signal::Unsupported(format!("indexing {}", other.describe()))),

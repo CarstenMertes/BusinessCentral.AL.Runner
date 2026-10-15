@@ -3986,6 +3986,15 @@ impl Lowerer<'_> {
             SyntaxKind::ParenExpr => self.place(&n.children().next().ok_or("empty parentheses")?),
             SyntaxKind::IndexExpr => {
                 let kids: Vec<SyntaxNode> = n.children().collect();
+                // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index.
+                if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_of(&kids[0]), Ty::Array(..)) {
+                    if let ir::Place::Index(root, mut idx) = self.place(&kids[0])? {
+                        for k in &kids[1..] {
+                            idx.push(self.expr(k)?);
+                        }
+                        return Ok(ir::Place::Index(root, idx));
+                    }
+                }
                 let base = self.place(&kids[0])?;
                 let idx = kids[1..].iter().map(|k| self.expr(k)).collect::<L<Vec<_>>>()?;
                 Ok(ir::Place::Index(Box::new(base), idx))

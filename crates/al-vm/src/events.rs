@@ -263,6 +263,20 @@ impl Registry {
                 }
             }
         }
+        // The order subscribers receive an event in: the static ones first, then the manual ones;
+        // by codeunit; within a codeunit by the name of the procedure, not by where it is declared
+        // (corpus handlers/ProbeEventSubscriberOrder.al:StaticSubscribers_OneCodeunit_OrderAndSharedInstance,
+        // Zeta, Alpha and Mid run as Alpha, Mid, Zeta; ManualSubscribers_BoundHighThenLow_OrderOfCalls,
+        // the manual codeunits run in the order of their ids whatever the order of the binds).
+        for list in reg.subscribers.values_mut() {
+            list.sort_by_cached_key(|s| {
+                (
+                    s.manual,
+                    s.object,
+                    program.objects[s.object].routines[s.routine].name.to_lowercase(),
+                )
+            });
+        }
         // Subscribers the compile left out (ADR-013 decision 6).
         for u in &program.uncompiled_subscribers {
             let key = match u.platform {

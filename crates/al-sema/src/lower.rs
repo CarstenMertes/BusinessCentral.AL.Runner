@@ -4293,6 +4293,15 @@ impl Lowerer<'_> {
         let kids: Vec<SyntaxNode> = n.children().collect();
         match n.kind() {
             Literal => Ok(ir::Expr::Const(self.constant(n)?)),
+            // `this` in a codeunit is the running instance (corpus handlers/ProbeEventSubscriberOrder.al:
+            // `BindSubscription(this)`).
+            NameRef
+                if crate::check::is_this_keyword(n)
+                    && self.ws.objects[self.oi].kind == ObjKind::Codeunit
+                    && !self.globals.contains_key("this") =>
+            {
+                Ok(ir::Expr::ThisInstance)
+            }
             ParenExpr => self.expr(&kids[0]),
             PrefixExpr => {
                 let op = match sig_tokens(n)[0].text().to_ascii_lowercase().as_str() {

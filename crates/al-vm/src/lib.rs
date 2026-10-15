@@ -1143,6 +1143,7 @@ impl Session {
                 self.finish_call(*object, *routine, inst, args, *try_call, f)
             }
             E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
+            E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
             E::InterfaceCall {
                 receiver,
                 targets,

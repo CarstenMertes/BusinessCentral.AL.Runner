@@ -22,7 +22,9 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v, T::Variant) => v,
         // A number into its own type is the number (what the general arm below gives, without the round trip through a
         // Decimal; the scale of a Decimal is kept).
-        (v @ Value::Integer(_), T::Integer) | (v @ Value::BigInteger(_), T::BigInteger) | (v @ Value::Decimal(_), T::Decimal) => v,
+        (v @ Value::Integer(_), T::Integer)
+        | (v @ Value::BigInteger(_), T::BigInteger)
+        | (v @ Value::Decimal(_), T::Decimal) => v,
         (Value::Null, t) => Value::default_for(t),
         (v @ Value::Boolean(_), T::Boolean) => v,
         (v @ Value::Date(..), T::Date) | (v @ Value::Time(_), T::Time) | (v @ Value::DateTime(_), T::DateTime) => v,
@@ -701,7 +703,6 @@ pub fn truthy(v: &Value) -> Result<bool, Signal> {
 mod tests {
     use super::*;
 
-
     /// What Integer arithmetic gives, worked out in 128 bits: the definition the fast path must keep
     /// (session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts for the two error texts).
     fn integer_reference(op: Arith, a: i32, b: i32) -> Option<Result<i32, (&'static str, &'static str)>> {
@@ -724,7 +725,10 @@ mod tests {
     struct Lcg(u64);
     impl Lcg {
         fn next(&mut self) -> u64 {
-            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 = self
+                .0
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
             self.0 >> 17
         }
         fn i32(&mut self) -> i32 {
@@ -770,7 +774,10 @@ mod tests {
                 other => panic!("{a} / {b}: {other:?}"),
             }
         }
-        assert!(matches!(arith(Arith::Div, &Value::Integer(1), &Value::Integer(0)), Err(Signal::Error(_))));
+        assert!(matches!(
+            arith(Arith::Div, &Value::Integer(1), &Value::Integer(0)),
+            Err(Signal::Error(_))
+        ));
     }
 
     #[test]

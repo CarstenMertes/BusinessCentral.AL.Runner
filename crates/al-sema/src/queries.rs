@@ -527,10 +527,14 @@ impl Builder<'_> {
                 self.reason(format!("OrderBy `{part}` is not understood"));
                 continue;
             };
-            let col = unquote(inner);
-            match self.columns.iter().position(|c| c.name.eq_ignore_ascii_case(&col)) {
-                Some(i) if !self.columns[i].filter_element => out.push((i, asc)),
-                _ => self.reason(format!("OrderBy names `{col}`, which is not a column of the dataset")),
+            // `ascending(A, B)` names several columns in one direction (Base Application's "Item
+            // Application Entries Inb."), as `ascending(A), ascending(B)`.
+            for col in split_top(inner, ',') {
+                let col = unquote(&col);
+                match self.columns.iter().position(|c| c.name.eq_ignore_ascii_case(&col)) {
+                    Some(i) if !self.columns[i].filter_element => out.push((i, asc)),
+                    _ => self.reason(format!("OrderBy names `{col}`, which is not a column of the dataset")),
+                }
             }
         }
         out
@@ -724,6 +728,22 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
             Some(ir::CalcValue::Filter("1..5".into()))
         );
         assert_eq!(l.column("SUM"), Some(1));
+    }
+
+    // Base Application's "Item Application Entries Inb.": `OrderBy = ascending(A, B, C, D)` names several
+    // columns in one direction, which reads as `ascending(A), ascending(B), ...` (the order by several
+    // columns in turn is docs/probes-needed.md "Rows are ordered by the OrderBy columns").
+    #[test]
+    fn one_direction_may_name_several_columns() {
+        let l = layout_of(
+            "query 50100 Q { OrderBy = ascending(Sum, No), descending(Cnt); elements { dataitem(T; T) {
+                column(No; \"No.\") { }
+                column(Sum; Amount) { }
+                column(Cnt; Qty) { }
+            } } }",
+        );
+        assert_eq!(l.reasons, Vec::<String>::new());
+        assert_eq!(l.query.order_by, vec![(1, true), (0, true), (2, false)]);
     }
 
     // corpus query/QjCustOrdersImplicitJoin.Query.al: a nested dataitem without SqlJoinType is a

@@ -28,6 +28,13 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 impl Session {
+    fn is_flow_field(field: &ir::Field) -> bool {
+        field
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("FieldClass") && v.trim().eq_ignore_ascii_case("FlowField"))
+    }
+
     fn is_flow_filter(field: &ir::Field) -> bool {
         field
             .properties
@@ -178,6 +185,14 @@ impl Session {
                         .map_err(|e| Signal::Unsupported(format!("where() of a relation: {e}")))?,
                     group: 0,
                 },
+                ir::RelationWhere::Field { own, .. } if Self::is_flow_field(&schema.fields[*own]) => {
+                    // Whether the check calculates the FlowField first is not pinned; the value as it
+                    // stands (no CalcFields) made a valid value fail (docs/probes-needed.md).
+                    return unsupported(format!(
+                        "the TableRelation of {}.{} filters by `field({})`, a FlowField of the same record: whether BC calculates it for the check is not pinned",
+                        t.name, field.name, schema.fields[*own].name
+                    ));
+                }
                 ir::RelationWhere::Field { related: p, own } => FieldFilter {
                     field: *p,
                     expr: FilterExpr::Eq(ops::convert(rec.borrow().fields[*own].clone(), &related.fields[*p].ty)?),

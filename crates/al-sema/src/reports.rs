@@ -236,6 +236,12 @@ pub fn layout(obj: &ast::Object) -> Layout {
             // "Item Tracing Specification"; handlers/TestPrecompiledOptionCaption.al:81 only opens the page)
             // never reaches it, so it refuses when the report is run, not when it is compiled.
             "allowscheduling" => out.output.push(format!("report property {name} is not supported yet")),
+            // The data item a Word layout is merged per record of: rendering only, by the
+            // documentation (docs/probes-needed.md). Base Application's "Reference No Label" is named
+            // by an action of the page Item Reference List that tests open without invoking it.
+            "wordmergedataitem" => out
+                .output
+                .push(format!("report property {name} (a layout) is not supported yet")),
             other => out
                 .reasons
                 .push(format!("report property {other} is not supported yet")),
@@ -1153,6 +1159,17 @@ mod tests {
         let output = l.output.join("; ");
         assert!(output.contains("defaultlayout"), "{output}");
         assert!(output.contains("section rendering"), "{output}");
+    }
+
+    #[test]
+    fn word_merge_data_item_refuses_the_rendering_run_not_the_declaration() {
+        // Base Application "Reference No Label" (`WordMergeDataItem = "Item Reference"`) is named by
+        // an action of the page Item Reference List that tests open without invoking it.
+        let l = layout_of(
+            "report 1 R { WordMergeDataItem = A; DefaultRenderingLayout = W; dataset { dataitem(A; Cust) { } } rendering { } }",
+        );
+        assert!(!l.reasons.join("; ").contains("wordmergedataitem"), "{:?}", l.reasons);
+        assert!(l.output.join("; ").contains("wordmergedataitem"), "{:?}", l.output);
     }
 
     #[test]

@@ -82,6 +82,8 @@ Our own diagnostics keep their `AR` codes; the AL ones are `alcodes.rs` and `che
 | 27, 28, 29 | 16 | 15 | 0 | 1 |
 
 Match: AL0161 (2 cases), AL0440, AL0162, AL0118, AL0296 (2), AL0124, AL0365, AL0132 (4), AL0385, AL0197.
+AL0122 (cases 0069, 0070, 0074, 0075): an Integer variable into a Text, a text literal into an Integer, and an
+enum into an enum of another type whose target does not state `AssignmentCompatibility = true`.
 Not checked: 0008 (AL0175, `=` between two DotNet class objects): an enum is comparable and a class is not, and the
 front end has no assembly metadata. Message text is compared as a note only (the corpus README: the text is a
 reference). A case whose code the front end does not implement is "not checked" with that reason, never a pass.

@@ -1179,9 +1179,89 @@ impl<'a> Checker<'a> {
             self.ty(sc, node);
             return;
         }
+        if node.kind() == SyntaxKind::AssignStmt {
+            let mut tys = Vec::new();
+            for child in node.children() {
+                if is_expr(child.kind()) {
+                    tys.push((self.ty(sc, &child), child));
+                } else {
+                    self.walk(sc, &child);
+                }
+            }
+            if let [(target, _), (source, rhs)] = tys.as_slice() {
+                let plain = node.children_with_tokens().any(|t| t.kind() == SyntaxKind::Assign);
+                if plain {
+                    self.al_enum_assignment(sc, rhs, target, source);
+                    self.al_integer_text_assignment(sc, rhs, target, source);
+                }
+            }
+            return;
+        }
         for child in node.children() {
             self.walk(sc, &child);
         }
+    }
+
+    /// AL0122 for an enum assigned to an enum of another type whose TARGET does not state
+    /// `AssignmentCompatibility = true` (the source's property does not help): corpus must-not-compile
+    /// 0074 and 0075, and types/PXEnumRecordRef.al:7-10 for the target that
+    /// states it. An enum the front end cannot resolve is not judged. Reported for the workspace only.
+    fn al_enum_assignment(&mut self, sc: &Scope, rhs: &SyntaxNode, target: &Ty, source: &Ty) {
+        let (Ty::Enum(t), Ty::Enum(s)) = (target, source) else {
+            return;
+        };
+        if self.ws.is_dependency(sc.oi) {
+            return;
+        }
+        let (Some(ti), Some(si)) = (self.resolve(sc, ObjKind::Enum, t), self.resolve(sc, ObjKind::Enum, s)) else {
+            return;
+        };
+        if ti == si || self.members[ti].assignment_compatible {
+            return;
+        }
+        let (tn, sn) = (self.ws.objects[ti].name.clone(), self.ws.objects[si].name.clone());
+        self.diag(
+            sc,
+            rhs,
+            "AL0122",
+            format!("Cannot implicitly convert type 'Enum \"{sn}\"' to 'Enum \"{tn}\"'"),
+        );
+    }
+
+    /// AL0122 for the two shapes the must-not-compile corpus pins: an Integer variable assigned to a
+    /// Text (case 0069, `T := I`) and a text literal of more than one character assigned to an Integer
+    /// (case 0070, `I := 'text'`; a one-character literal is a Char, which an Integer takes). Other
+    /// sources (a call, a Text variable) and targets (Code, BigInteger, ...) are not judged.
+    fn al_integer_text_assignment(&mut self, sc: &Scope, rhs: &SyntaxNode, target: &Ty, source: &Ty) {
+        if self.ws.is_dependency(sc.oi) {
+            return;
+        }
+        let message = match (target, source) {
+            (Ty::Text(len), Ty::Integer) if rhs.kind() == SyntaxKind::NameRef => {
+                let t = len.map_or("Text".to_string(), |n| format!("Text[{n}]"));
+                format!("Cannot implicitly convert type 'Integer' to '{t}'")
+            }
+            (Ty::Integer, Ty::Text(None)) if rhs.kind() == SyntaxKind::Literal => {
+                let Some(tok) = rhs
+                    .children_with_tokens()
+                    .filter_map(|e| e.into_token())
+                    .find(|t| t.kind() == SyntaxKind::StringLit)
+                else {
+                    return;
+                };
+                let text = tok.text();
+                let inner = text
+                    .get(1..text.len().saturating_sub(1))
+                    .unwrap_or("")
+                    .replace("''", "'");
+                if inner.chars().count() <= 1 {
+                    return;
+                }
+                "Cannot implicitly convert type 'Text' to 'Integer'".to_string()
+            }
+            _ => return,
+        };
+        self.diag(sc, rhs, "AL0122", message);
     }
 
     /// Infers `node` as a value, calling a parameterless callable.

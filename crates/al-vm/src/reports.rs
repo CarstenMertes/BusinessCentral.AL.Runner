@@ -1528,10 +1528,17 @@ impl Session {
         } else {
             None
         };
+        // An item that declares nested items writes its `DataItems` element even when no row reaches them
+        // (report/W3ReportDataset.al:Rows_ParentsWithoutChildRows, Rows_ParentsWithChildRowsAndSiblingItem).
+        let declares_children = match r {
+            ItemRef::Base(i) => run.report().items.iter().any(|it| it.parent == Some(i)),
+            ItemRef::Added(..) => false,
+        };
         self.dataset.as_mut().expect("a SaveAs run has a dataset").begin(
             &name,
             identity.as_ref().map(|(t, g)| (*t, g.as_str())),
             &columns,
+            declares_children,
         );
         Ok(())
     }

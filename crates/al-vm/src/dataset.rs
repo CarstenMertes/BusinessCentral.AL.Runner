@@ -280,6 +280,8 @@ pub(crate) struct Dataset {
     body: String,
     /// For every open `DataItem`: whether its own `DataItems` element is open.
     open: Vec<bool>,
+    /// For every open `DataItem`: whether its data item declares nested items (an empty `DataItems` is written).
+    declares: Vec<bool>,
     root: bool,
     /// An element written, whatever its kind.
     pub rows: usize,
@@ -300,7 +302,13 @@ impl Dataset {
     }
 
     /// Opens a row of a data item: `<DataItem ..>` and its `Columns`.
-    pub(crate) fn begin(&mut self, name: &str, identity: Option<(u32, &str)>, columns: &[Column]) {
+    pub(crate) fn begin(
+        &mut self,
+        name: &str,
+        identity: Option<(u32, &str)>,
+        columns: &[Column],
+        declares_children: bool,
+    ) {
         let depth = self.open.len();
         if depth == 0 {
             if self.rows == 0 {
@@ -360,16 +368,21 @@ impl Dataset {
         self.pad(at + 2);
         self.body.push_str("</Columns>\n");
         self.open.push(false);
+        self.declares.push(declares_children);
         self.rows += 1;
     }
 
     /// Closes the row opened last.
     pub(crate) fn end(&mut self) {
         let items_open = self.open.pop().expect("a row is open");
+        let declares = self.declares.pop().unwrap_or(false);
         let at = 4 + 4 * self.open.len();
         if items_open {
             self.pad(at + 2);
             self.body.push_str("</DataItems>\n");
+        } else if declares {
+            self.pad(at + 2);
+            self.body.push_str("<DataItems />\n");
         }
         self.pad(at);
         self.body.push_str("</DataItem>\n");

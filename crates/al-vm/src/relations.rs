@@ -218,7 +218,13 @@ impl Session {
                 self.message_value(&value)?,
                 self.caption(&related)
             ),
-            code: "DB:PrimRecordNotFound".into(),
+            // The related table "Field" (2000000041) answers DB:RecordNotFound (staging types/PZMisc.al:
+            // Validate_TableRelation_MissingFieldNumber, BC 29.0); other tables DB:PrimRecordNotFound.
+            code: if self.engine.program.objects[related.object as usize].id == Some(2_000_000_041) {
+                "DB:RecordNotFound".into()
+            } else {
+                "DB:PrimRecordNotFound".into()
+            },
             call_stack: String::new(),
         }))
     }

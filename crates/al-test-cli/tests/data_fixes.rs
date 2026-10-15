@@ -3,10 +3,7 @@
 //! xmlport/TestXmlPortTriggersReplaceViewContracts.al, xmlport/TestXmlPortTextFormatsContracts.al).
 //! AL source, compiled and run as a test codeunit. Each test names the probe it mirrors.
 
-use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
-use al_test_cli::runtime::run_codeunit;
-use al_vm::Engine;
 
 const OBJECTS: &str = r#"
 table 64000 "DF Parent" { fields { field(1; "Entry No."; Integer) { } } keys { key(PK; "Entry No.") { } } }
@@ -173,24 +170,7 @@ query 64013 "DF Q Outer Sum"
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
     let src = format!("{OBJECTS}\ncodeunit 64100 T {{ Subtype = Test; {tests} }}");
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src)],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
-    let blocked = l
-        .unsupported
-        .iter()
-        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
-        .collect();
-    let engine = Engine::new(l.program.clone(), blocked);
-    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
-    run_codeunit(&engine, &l, oi)
+    al_testkit::outcomes_in(&src, "T")
 }
 
 fn passes(tests: &str) {

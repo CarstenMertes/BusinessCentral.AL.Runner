@@ -4,7 +4,6 @@
 //! question. `RecordRef.GetBySystemId`, refused here before, is probed now (al-vm
 //! tests/record_builtins.rs).
 
-use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
 use al_test_cli::runtime::run_codeunit;
 use al_vm::Engine;
@@ -15,16 +14,7 @@ fn compile(tests: &str) -> (al_sema::lower::Lowered, usize) {
          table 62901 \"B6 Row\" {{ fields {{ field(1; Kind; Enum \"B6 Kind\") {{ }} field(2; Name; Text[20]) {{ }} }} keys {{ key(PK; Kind) {{ }} }} }}
          codeunit 62902 T {{ Subtype = Test; {tests} }}"
     );
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src)],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let l = al_testkit::compile(&src);
     let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
     (l, oi)
 }

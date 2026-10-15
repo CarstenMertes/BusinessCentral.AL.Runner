@@ -3,8 +3,6 @@
 
 use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
-use al_test_cli::runtime::run_codeunit;
-use al_vm::Engine;
 
 const OBJECTS: &str = r#"
 table 62900 "B4 Row" { fields { field(1; Code; Code[20]) { } } keys { key(PK; Code) { } } }
@@ -13,24 +11,7 @@ enum 62902 "B4 Kind" { value(0; A) { } value(1; B) { } }
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
     let src = format!("{OBJECTS}\ncodeunit 62901 T {{ Subtype = Test; {tests} }}");
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src)],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
-    let blocked = l
-        .unsupported
-        .iter()
-        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
-        .collect();
-    let engine = Engine::new(l.program.clone(), blocked);
-    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
-    run_codeunit(&engine, &l, oi)
+    al_testkit::outcomes_in(&src, "T")
 }
 
 // record/TestRecordRuntimeTextsAndViews.al:374 (Record_FilterGroup_ReturnsTheGroupJustSet_AndReadsOnlyTheCurrentGroup),
@@ -72,16 +53,7 @@ fn an_option_assigned_to_an_enum_takes_its_ordinal() {
 
 /// The `relation_arms` of the first table field named `field` of table `table` in `src`.
 fn arms(src: &str, table: &str, field: &str) -> usize {
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src.into())],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let l = al_testkit::compile(src);
     let o = l.program.objects.iter().find(|o| o.name == table).unwrap();
     o.table
         .as_ref()

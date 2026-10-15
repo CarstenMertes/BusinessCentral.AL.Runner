@@ -2,7 +2,6 @@
 //! `XmlDocument.ReadFrom(Text, XmlReadOptions, var XmlDocument)`, `BigText.Read` and
 //! `Media.ImportStream` with a file name. What no corpus test pins is refused with a reason.
 
-use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
 use al_test_cli::runtime::run_codeunit;
 use al_vm::Engine;
@@ -12,16 +11,7 @@ fn compile(tests: &str) -> (al_sema::lower::Lowered, usize) {
         "table 62800 \"B3 Row\" {{ fields {{ field(1; \"No.\"; Code[20]) {{ }} field(2; Pic; Media) {{ }} }} keys {{ key(PK; \"No.\") {{ }} }} }}
          codeunit 62801 T {{ Subtype = Test; {tests} }}"
     );
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src)],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let l = al_testkit::compile(&src);
     let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
     (l, oi)
 }

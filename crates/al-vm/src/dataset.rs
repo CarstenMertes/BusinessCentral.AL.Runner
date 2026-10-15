@@ -437,6 +437,11 @@ impl Dataset {
         out.push_str(&self.body);
         if self.root {
             out.push_str("  </DataItems>\n");
+        } else {
+            // A dataset with no row still has a DataItems element (handlers/PWReportSaveAsColumns.al:
+            // Labels_NoRowAtAll shows a line that starts with `<DataItems`); how BC spells it empty is
+            // not pinned.
+            out.push_str("  <DataItems />\n");
         }
         out.push_str("</ReportDataSet>");
         let mut bytes = vec![0xEF, 0xBB, 0xBF];

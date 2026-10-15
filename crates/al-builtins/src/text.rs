@@ -10,31 +10,41 @@
 //! Internals are free (ADR-009): nothing AL code can see changes.
 
 use std::borrow::Borrow;
-use std::cell::Cell;
 use std::fmt;
 use std::hash::{Hash, Hasher};
 use std::ops::Deref;
-use std::rc::Rc;
+use std::sync::Arc;
+use std::sync::atomic::{AtomicU8, Ordering::Relaxed};
 
-#[derive(Clone)]
 struct Inner {
     s: String,
-    /// 0 not known yet, 1 ASCII only, 2 not.
-    ascii: Cell<u8>,
+    /// 0 not known yet, 1 ASCII only, 2 not. (Atomic: rows of the test data are shared between threads, and
+    /// the flags are only hints that any thread computes the same way.)
+    ascii: AtomicU8,
     /// 0 not known yet, 1 holds the call-stack marker U+E000, 2 does not.
-    marked: Cell<u8>,
+    marked: AtomicU8,
+}
+
+impl Clone for Inner {
+    fn clone(&self) -> Inner {
+        Inner {
+            s: self.s.clone(),
+            ascii: AtomicU8::new(self.ascii.load(Relaxed)),
+            marked: AtomicU8::new(self.marked.load(Relaxed)),
+        }
+    }
 }
 
 /// A shared, copy-on-write text.
 #[derive(Clone)]
-pub struct Txt(Rc<Inner>);
+pub struct Txt(Arc<Inner>);
 
 impl Txt {
     pub fn new(s: String) -> Txt {
-        Txt(Rc::new(Inner {
+        Txt(Arc::new(Inner {
             s,
-            ascii: Cell::new(0),
-            marked: Cell::new(0),
+            ascii: AtomicU8::new(0),
+            marked: AtomicU8::new(0),
         }))
     }
 
@@ -44,12 +54,12 @@ impl Txt {
 
     /// Whether every character is ASCII; computed once for this string.
     pub fn is_ascii(&self) -> bool {
-        match self.0.ascii.get() {
+        match self.0.ascii.load(Relaxed) {
             1 => true,
             2 => false,
             _ => {
                 let a = self.0.s.is_ascii();
-                self.0.ascii.set(if a { 1 } else { 2 });
+                self.0.ascii.store(if a { 1 } else { 2 }, Relaxed);
                 a
             }
         }
@@ -58,12 +68,12 @@ impl Txt {
     /// Whether the text holds U+E000, the marker of a call stack with an untracked frame (no text function reads
     /// such a text). Computed once for this string.
     pub fn has_marker(&self) -> bool {
-        match self.0.marked.get() {
+        match self.0.marked.load(Relaxed) {
             1 => true,
             2 => false,
             _ => {
                 let m = self.0.s.contains('\u{E000}');
-                self.0.marked.set(if m { 1 } else { 2 });
+                self.0.marked.store(if m { 1 } else { 2 }, Relaxed);
                 m
             }
         }
@@ -80,9 +90,9 @@ impl Txt {
 
     /// The string for writing: copied first when another value shares it. The remembered ASCII flag is dropped.
     pub fn make_mut(&mut self) -> &mut String {
-        let inner = Rc::make_mut(&mut self.0);
-        inner.ascii.set(0);
-        inner.marked.set(0);
+        let inner = Arc::make_mut(&mut self.0);
+        inner.ascii.store(0, Relaxed);
+        inner.marked.store(0, Relaxed);
         &mut inner.s
     }
 
@@ -92,28 +102,28 @@ impl Txt {
     }
 
     pub fn push_str(&mut self, more: &str) {
-        let was_ascii = self.0.ascii.get();
-        let was_marked = self.0.marked.get();
+        let was_ascii = self.0.ascii.load(Relaxed);
+        let was_marked = self.0.marked.load(Relaxed);
         let more_ascii = more.is_ascii();
         let more_marked = more.contains('\u{E000}');
         let s = self.make_mut();
         s.push_str(more);
         // What is known of the parts is known of the whole.
         if was_ascii == 1 && more_ascii {
-            self.0.ascii.set(1);
+            self.0.ascii.store(1, Relaxed);
         } else if was_ascii == 2 || !more_ascii {
-            self.0.ascii.set(2);
+            self.0.ascii.store(2, Relaxed);
         }
         if was_marked == 2 && !more_marked {
-            self.0.marked.set(2);
+            self.0.marked.store(2, Relaxed);
         } else if was_marked == 1 || more_marked {
-            self.0.marked.set(1);
+            self.0.marked.store(1, Relaxed);
         }
     }
 
     /// An owned string: the buffer itself when this is the only holder, else a copy.
     pub fn into_string(self) -> String {
-        match Rc::try_unwrap(self.0) {
+        match Arc::try_unwrap(self.0) {
             Ok(inner) => inner.s,
             Err(shared) => shared.s.clone(),
         }
@@ -121,7 +131,7 @@ impl Txt {
 
     /// Whether both are the same buffer (a cheap equality check).
     pub fn ptr_eq(a: &Txt, b: &Txt) -> bool {
-        Rc::ptr_eq(&a.0, &b.0)
+        Arc::ptr_eq(&a.0, &b.0)
     }
 }
 
@@ -212,7 +222,7 @@ impl PartialEq<Txt> for &str {
 
 impl PartialEq for Txt {
     fn eq(&self, other: &Txt) -> bool {
-        Rc::ptr_eq(&self.0, &other.0) || self.0.s == other.0.s
+        Arc::ptr_eq(&self.0, &other.0) || self.0.s == other.0.s
     }
 }
 impl Eq for Txt {}
@@ -253,6 +263,13 @@ impl Hash for Txt {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Rows of the test data hold texts and are read from several threads (`SharedMat`).
+    #[test]
+    fn a_text_can_be_shared_between_threads() {
+        fn needs<T: Send + Sync>() {}
+        needs::<Txt>();
+    }
 
     #[test]
     fn a_clone_shares_and_a_write_copies_only_when_shared() {

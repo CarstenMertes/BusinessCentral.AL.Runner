@@ -462,8 +462,12 @@ mod tests {
         assert_eq!(decimal_formatter(None).unwrap(), "#,##0.00");
         assert_eq!(decimal_formatter(Some("1 : 1")).unwrap(), "#,##0.0");
         assert_eq!(decimal_formatter(Some("3:3")).unwrap(), "#,##0.000");
-        assert!(decimal_formatter(Some("0:5")).is_err());
-        assert!(decimal_formatter(Some("2")).is_err());
+        assert_eq!(decimal_formatter(Some("0:5")).unwrap(), "#,##0.#####");
+        assert_eq!(decimal_formatter(Some("2 : 4")).unwrap(), "#,##0.00##");
+        assert_eq!(decimal_formatter(Some("0:0")).unwrap(), "#,##0");
+        assert_eq!(decimal_formatter(Some("1")).unwrap(), "#,##0.0");
+        assert!(decimal_formatter(Some("5:2")).is_err());
+        assert!(decimal_formatter(Some("x")).is_err());
     }
 
     #[test]

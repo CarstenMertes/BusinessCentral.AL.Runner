@@ -3397,9 +3397,16 @@ impl Session {
                     // ListWithAnEditableCardPageIdEnablesBothActions).
                     let edit = name == "Edit";
                     let card = self.list_card_page(st)?;
+                    // A list without a card switches the mode of its own page, as a card does: opened for view,
+                    // Edit is enabled and View is not; opened for edit, the other way round. A list that names a
+                    // card with no row to open it for has both disabled (misc/W2ListActions.al:NoCard_WithRows,
+                    // List_NoRows, BC 27.5 and 29.0).
+                    let no_rows = st.borrow().cursor == Cursor::None;
+                    let editable = st.borrow().mode != PageMode::View;
                     let enabled = match (edit, card) {
+                        (_, None) => edit == !editable,
+                        (_, Some(_)) if no_rows => false,
                         (false, _) => true,
-                        (true, None) => false,
                         (true, Some(target)) => self.card_allows_edit(target)?,
                     };
                     return match m {

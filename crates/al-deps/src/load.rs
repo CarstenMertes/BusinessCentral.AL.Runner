@@ -344,6 +344,8 @@ pub struct Planned {
     order: Vec<usize>,
     /// Dependencies no package satisfied.
     pub skipped: Vec<SelectError>,
+    /// Optional dependencies no package satisfied (see `select::Plan::optional_missing`).
+    pub optional_missing: Vec<DepDecl>,
     application_aggregate: Vec<String>,
 }
 
@@ -420,6 +422,7 @@ pub fn plan_dependencies(req: &Request<'_>, scans: &mut ScanCache) -> Result<Pla
         notes,
         order: plan.order,
         skipped: plan.skipped,
+        optional_missing: plan.optional_missing,
         application_aggregate,
     })
 }
@@ -433,6 +436,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
         mut notes,
         order,
         skipped,
+        optional_missing: _,
         application_aggregate,
     } = planned;
     let to_read: Vec<&PathBuf> = order

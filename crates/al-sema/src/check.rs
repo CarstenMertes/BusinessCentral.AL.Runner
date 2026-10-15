@@ -1365,10 +1365,15 @@ impl<'a> Checker<'a> {
                 }
             }
             MemberExpr => {
-                // `this.Member` in a codeunit: the codeunit's own procedure or global variable. It
+                // `this.Member` in a codeunit, report, page, xmlport or query: the object's own procedure or global
+                // variable (Microsoft Learn "this keyword": a self-reference in every object type; no corpus test
+                // outside a codeunit, docs/probes-needed.md). It
                 // resolves like the bare name does, without the implicit record's members.
                 if is_this_keyword(&kids[0])
-                    && self.ws.objects[sc.oi].kind == ObjKind::Codeunit
+                    && matches!(
+                        self.ws.objects[sc.oi].kind,
+                        ObjKind::Codeunit | ObjKind::Report | ObjKind::Page | ObjKind::XmlPort | ObjKind::Query
+                    )
                     && !sc_has_var(sc, "this")
                 {
                     if let Some(e) = kids.get(1).and_then(|m| self.this_member(sc, node, m)) {

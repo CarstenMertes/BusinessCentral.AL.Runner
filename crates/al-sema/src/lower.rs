@@ -561,8 +561,26 @@ pub(crate) fn lower_core(
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
-        if prop("SaveValues").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")) && !exts.is_empty() {
-            page_reasons[oi].push("SaveValues on a page that page extensions extend is not supported yet".into());
+        // The values a SaveValues page stores are those of its variable-bound controls (corpus
+        // handlers/TestPageSaveValues.al). An extension control bound to `Rec.Field` adds none, so
+        // the stored set is the page's own. One bound to a variable is a control whose stored value
+        // no corpus test pins (docs/probes-needed.md, "SaveValues with page extensions").
+        if prop("SaveValues").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
+            && layouts[oi].iter().flat_map(|l| l.controls.iter()).any(|c| {
+                c.owner.is_some()
+                    && c.kind == ir::ControlKind::Field
+                    && !c.section.name().eq_ignore_ascii_case("label")
+                    && c.section.args().get(1).is_some_and(|src| {
+                        !matches!(
+                            crate::pages::classify_source(src, &std::collections::BTreeSet::new()),
+                            crate::pages::Source::RecField(_)
+                        ) && crate::pages::plain_name(src).is_some()
+                    })
+            })
+        {
+            page_reasons[oi].push(
+                "SaveValues on a page that a page extension extends with a control bound to a variable: whether BC stores that variable is not pinned (docs/probes-needed.md)".into(),
+            );
         }
     }
     // A page extension shares the page's `Rec`.
@@ -2258,6 +2276,12 @@ impl Lowerer<'_> {
                                     Ok(ir::Const::Decimal(id)) => id,
                                     _ => return None,
                                 }
+                            } else if text.contains('"') {
+                                // `filter(Inventory | "Non-Inventory")`: AL quotes an identifier with `"`,
+                                // the filter grammar with `'` (corpus
+                                // record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9 pins it for a
+                                // CalcFormula filter; docs/probes-needed.md for the TableRelation).
+                                rewrite_quotes(text)
                             } else {
                                 text.clone()
                             };
@@ -6300,6 +6324,26 @@ table 50912 \"ALT Head\"
     }
 
     #[test]
+    fn table_relation_where_filter_rewrites_double_quoted_names() {
+        // Base Application's `TableRelation = Item where(Type = filter(Inventory | "Non-Inventory"))`
+        // (Prod. Order Component): the filter grammar quotes with `'`, so the AL quoting is rewritten
+        // the way a CalcFormula filter's is (corpus record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9).
+        let (_, l) = lower_src(
+            "enum 50920 \"ALT Kind\" { value(0; Inventory) { } value(1; \"Non-Inventory\") { } }
+             table 50921 \"ALT Item\" { fields { field(1; \"No.\"; Code[20]) { } field(2; Type; Enum \"ALT Kind\") { } } }
+             table 50922 \"ALT Comp\" { fields {
+                field(1; \"No.\"; Code[20]) { }
+                field(2; Item; Code[20]) { TableRelation = \"ALT Item\" where(Type = filter(Inventory | \"Non-Inventory\")); }
+             } }",
+        );
+        let f = flow(&l, "ALT Comp", "Item");
+        match &f.relation_arms[0].wheres.as_ref().expect("wheres understood")[0] {
+            ir::RelationWhere::Value { text, .. } => assert_eq!(text, "Inventory | 'Non-Inventory'"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn calc_formula_filters_rewrite_double_quotes_and_flow_references_resolve() {
         let (_, l) = lower_src(FLOW_TABLES);
         let q = flow(&l, "ALT Head", "Quoted").calc.expect("lowered");
@@ -6702,6 +6746,43 @@ codeunit 50002 "C" { procedure P() var TP: TestPage "P"; begin end; }
         assert!(o.rec_slot.is_some() && o.xrec_slot.is_some());
         assert_eq!(o.globals[pg.curr_page_slot].name, "CurrPage");
         assert!(pg.unsupported.is_empty(), "{:?}", pg.unsupported);
+    }
+
+    const SAVE_VALUES_PAGE: &str = r#"
+table 50010 "SV T" { fields { field(1; "No."; Code[20]) { } field(2; Qty; Decimal) { } } }
+page 50011 "SV P" {
+    SourceTable = "SV T"; SaveValues = true; PageType = StandardDialog;
+    layout { area(Content) { field(Glob; GlobN) { } } }
+    var GlobN: Text[30];
+}
+"#;
+
+    // Handlers/TestPageSaveValues.al pins SaveValues for a page without extensions. An extension
+    // that adds only controls bound to `Rec` fields adds no variable-bound control, so what the page
+    // stores is the same set (docs/probes-needed.md, SaveValues with page extensions).
+    #[test]
+    fn save_values_with_an_extension_that_adds_only_record_fields_is_lowered() {
+        let src = format!(
+            "{SAVE_VALUES_PAGE} pageextension 50012 \"SV X\" extends \"SV P\" {{ layout {{ addlast(Content) {{ field(Q; Rec.Qty) {{ }} }} }} }}"
+        );
+        let (_, l) = lower_src(&src);
+        let pg = l.program.objects.iter().find(|o| o.name == "SV P").unwrap().page.clone().unwrap();
+        assert!(pg.unsupported.is_empty(), "{:?}", pg.unsupported);
+    }
+
+    // What BC stores for a control an extension binds to its own variable is not pinned: refused.
+    #[test]
+    fn save_values_with_an_extension_variable_control_is_refused() {
+        let src = format!(
+            "{SAVE_VALUES_PAGE} pageextension 50012 \"SV X\" extends \"SV P\" {{ layout {{ addlast(Content) {{ field(V; ExtVar) {{ }} }} }} var ExtVar: Integer; }}"
+        );
+        let (_, l) = lower_src(&src);
+        let pg = l.program.objects.iter().find(|o| o.name == "SV P").unwrap().page.clone().unwrap();
+        assert!(
+            pg.unsupported.iter().any(|w| w.contains("SaveValues") && w.contains("variable")),
+            "{:?}",
+            pg.unsupported
+        );
     }
 
     #[test]

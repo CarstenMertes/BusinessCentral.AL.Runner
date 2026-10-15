@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub enum Command {
     Help,
     Version,
+    /// `alrunner --list-assumptions`: the registry of unprobed assumptions with the counts of the last run.
+    ListAssumptions(Option<PathBuf>),
     Test(Box<TestArgs>),
     /// `alrunner warm`: find (or download) the demo backup and build its index.
     Warm(Box<TestArgs>),
@@ -56,6 +58,8 @@ pub struct TestArgs {
     pub top_refusals: Option<usize>,
     /// `--top-failures [N]`: how many failure messages to list, ranked (default 10).
     pub top_failures: Option<usize>,
+    /// `--top-assumptions [N]`: the unprobed assumptions the tests ran through, ranked by flagged passes.
+    pub top_assumptions: Option<usize>,
     /// `--refusal-detail TEXT`: the reasons that contain TEXT, grouped finer than `--top-refusals`.
     pub refusal_detail: Option<String>,
     pub allow_not_run: bool,
@@ -161,6 +165,11 @@ OUTPUT
     --top-refusals [N]   List the N most common reasons tests were not run (default 10).
     --top-failures [N]   List the N most common failure messages (default 10), numbers and quoted
                          values folded.
+    --top-assumptions [N]  List the N unprobed assumptions most passes ran through (default 10). A pass
+                         that went through one is a FLAGGED pass: the summary counts it (N passed (M
+                         flagged: rely on unprobed assumptions)), --junit lists its assumption ids in a
+                         property, --explain names them. --list-assumptions (alone) prints the registry with the
+                         counts of the last run.
     --refusal-detail TEXT  List the not-run reasons that contain TEXT (site and call arguments
                          folded, names kept), most common first (default 30 lines).
     --junit FILE         Write JUnit XML. A test that did not run is <skipped> with its reason.
@@ -294,6 +303,17 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     match first.as_str() {
         "--help" | "-h" | "help" => return Ok(Command::Help),
         "--version" | "-V" | "version" => return Ok(Command::Version),
+        "--list-assumptions" => {
+            // `--list-assumptions [--cache-dir DIR]`: the counts come from the last run that left them in the cache.
+            let mut dir = None;
+            while let Some(f) = it.next() {
+                match f.as_str() {
+                    "--cache-dir" => dir = it.next().map(PathBuf::from),
+                    other => return Err(format!("unknown option `{other}` for --list-assumptions")),
+                }
+            }
+            return Ok(Command::ListAssumptions(dir));
+        }
         "test" => {}
         "warm" => return parse_warm(it),
         "run" | "serve" | "debug" | "deps" | "package" | "helper" | "doctor" | "migrate" | "guide" => {
@@ -322,6 +342,24 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 _ => DEFAULT_TOP,
             };
             a.top_refusals = Some(n);
+            continue;
+        }
+        if flag == "--list-assumptions" {
+            return Ok(Command::ListAssumptions(a.cache_dir.clone()));
+        }
+        if flag == "--top-assumptions" {
+            let n = match it.peek() {
+                Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) => {
+                    let v = it.next().unwrap_or_default();
+                    let n = number("--top-assumptions", &v)?;
+                    if n == 0 {
+                        return Err("--top-assumptions needs a count of at least 1".into());
+                    }
+                    n
+                }
+                _ => DEFAULT_TOP,
+            };
+            a.top_assumptions = Some(n);
             continue;
         }
         if flag == "--top-failures" {
@@ -588,6 +626,18 @@ mod tests {
         let a = test_args("test --top-failures A");
         assert_eq!(a.apps, vec![PathBuf::from("A")]);
         assert!(p("test A --top-failures 0").is_err());
+    }
+
+    #[test]
+    fn assumption_options_parse() {
+        assert_eq!(test_args("test A --top-assumptions").top_assumptions, Some(DEFAULT_TOP));
+        assert_eq!(test_args("test A --top-assumptions 3").top_assumptions, Some(3));
+        assert_eq!(p("--list-assumptions").unwrap(), Command::ListAssumptions(None));
+        assert_eq!(
+            p("--list-assumptions --cache-dir /c").unwrap(),
+            Command::ListAssumptions(Some("/c".into()))
+        );
+        assert!(p("--list-assumptions --nope").is_err());
     }
 
     #[test]

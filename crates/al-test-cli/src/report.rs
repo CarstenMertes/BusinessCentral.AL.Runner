@@ -6,6 +6,7 @@ use serde::{Deserialize, Serialize};
 use std::collections::{BTreeMap, BTreeSet};
 
 pub use al_testrun::Outcome;
+use al_testrun::assumptions::Assumption;
 
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct Counts {
@@ -13,6 +14,9 @@ pub struct Counts {
     pub pass: usize,
     pub fail: usize,
     pub not_run: usize,
+    /// Of `pass`, the passes that ran through an unprobed assumption (`al_builtins::assumptions`): they
+    /// count as passes, and are flagged because a probe may still contradict the assumed behavior.
+    pub flagged: usize,
 }
 
 impl Counts {
@@ -45,6 +49,39 @@ pub struct Report {
     pub suites: Vec<SuiteReport>,
     /// How long the run took, by phase. `None` only where no run happened (unit tests).
     pub timings: Option<Timings>,
+    /// The flagged passes of the main app, one entry per test, with the ids of its assumptions.
+    pub flagged_passes: Vec<FlaggedPass>,
+    /// The assumptions the tests of every test app ran through, ranked by flagged passes
+    /// (`--top-assumptions`); empty when none was hit.
+    pub assumptions: Vec<AssumptionCount>,
+}
+
+/// A passing test that ran through unprobed assumptions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct FlaggedPass {
+    pub codeunit: u32,
+    pub test: String,
+    pub assumptions: Vec<&'static str>,
+}
+
+/// How many tests ran through one assumption.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize)]
+pub struct AssumptionCount {
+    pub id: &'static str,
+    pub flagged_passes: usize,
+    pub other_tests: usize,
+}
+
+impl AssumptionCount {
+    pub fn of(rows: &[al_testrun::flagged::Row]) -> Vec<AssumptionCount> {
+        rows.iter()
+            .map(|r| AssumptionCount {
+                id: r.assumption.info().id,
+                flagged_passes: r.flagged,
+                other_tests: r.other,
+            })
+            .collect()
+    }
 }
 
 /// Wall time of one version's run, by phase, in seconds. The report always carries it, so a reader
@@ -207,6 +244,7 @@ pub struct SuiteReport {
     pub bc_failed: usize,
     /// Of those, how many the runtime fails too. Equal to `bc_failed` when it agrees with BC.
     pub bc_failed_reproduced: usize,
+    pub flagged_passes: Vec<FlaggedPass>,
 }
 
 impl SuiteReport {
@@ -216,8 +254,9 @@ impl SuiteReport {
         oracle: &[OracleCase],
         areas: &dyn Fn(u32) -> Option<String>,
         outcome: &dyn Fn(&CaseId) -> Outcome,
+        assumptions: &dyn Fn(&CaseId) -> Vec<Assumption>,
     ) -> (SuiteReport, Vec<String>) {
-        let r = build(oracle, areas, outcome);
+        let r = build_with(oracle, areas, outcome, assumptions);
         let bc_failed_reproduced = oracle
             .iter()
             .filter(|c| c.bc_failed && matches!(outcome(&c.id), Outcome::Fail(_)))
@@ -230,6 +269,7 @@ impl SuiteReport {
                 areas: r.areas,
                 bc_failed: r.excluded_bc_failed,
                 bc_failed_reproduced,
+                flagged_passes: r.flagged_passes,
             },
             r.unmapped,
         )
@@ -241,7 +281,19 @@ pub fn build(
     area_of: &dyn Fn(u32) -> Option<String>,
     outcome: &dyn Fn(&CaseId) -> Outcome,
 ) -> Report {
+    build_with(oracle, area_of, outcome, &|_| Vec::new())
+}
+
+/// `build`, with the unprobed assumptions each test ran through: a pass with any counts as flagged.
+pub fn build_with(
+    oracle: &[OracleCase],
+    area_of: &dyn Fn(u32) -> Option<String>,
+    outcome: &dyn Fn(&CaseId) -> Outcome,
+    assumptions: &dyn Fn(&CaseId) -> Vec<Assumption>,
+) -> Report {
     let mut r = Report {
+        flagged_passes: Vec::new(),
+        assumptions: Vec::new(),
         overall: Counts::default(),
         areas: BTreeMap::new(),
         excluded_bc_failed: 0,
@@ -261,13 +313,28 @@ pub fn build(
             continue;
         };
         let o = outcome(&case.id);
+        let marks = if o == Outcome::Pass {
+            assumptions(&case.id)
+        } else {
+            Vec::new()
+        };
+        if !marks.is_empty() {
+            r.flagged_passes.push(FlaggedPass {
+                codeunit: case.id.codeunit,
+                test: case.id.name.clone(),
+                assumptions: marks.iter().map(|a| a.info().id).collect(),
+            });
+        }
         let mut targets = vec![&mut r.overall];
         let area_counts = r.areas.entry(area.clone()).or_default();
         targets.push(area_counts);
         for c in targets {
             c.total += 1;
             match o {
-                Outcome::Pass => c.pass += 1,
+                Outcome::Pass => {
+                    c.pass += 1;
+                    c.flagged += usize::from(!marks.is_empty());
+                }
                 Outcome::Fail(_) => c.fail += 1,
                 Outcome::NotRun(_) => c.not_run += 1,
             }
@@ -425,7 +492,8 @@ mod tests {
                 total: 4,
                 pass: 2,
                 fail: 1,
-                not_run: 1
+                not_run: 1,
+                flagged: 0,
             }
         );
         assert_eq!(
@@ -434,7 +502,8 @@ mod tests {
                 total: 2,
                 pass: 1,
                 fail: 1,
-                not_run: 0
+                not_run: 0,
+                flagged: 0,
             }
         );
         assert_eq!(
@@ -443,7 +512,8 @@ mod tests {
                 total: 1,
                 pass: 1,
                 fail: 0,
-                not_run: 0
+                not_run: 0,
+                flagged: 0,
             }
         );
         assert_eq!(
@@ -452,9 +522,33 @@ mod tests {
                 total: 1,
                 pass: 0,
                 fail: 0,
-                not_run: 1
+                not_run: 1,
+                flagged: 0,
             }
         );
+    }
+
+    #[test]
+    fn a_pass_that_ran_through_an_assumption_is_flagged_and_still_a_pass() {
+        let marks = |c: &CaseId| match c.name.as_str() {
+            "a" => vec![Assumption::GuidToText, Assumption::RecordGetRecordId],
+            // A failing test that hit one is not a flagged pass.
+            "b" => vec![Assumption::GuidToText],
+            _ => Vec::new(),
+        };
+        let r = build_with(&oracle(), &areas, &outcome, &marks);
+        assert_eq!((r.overall.pass, r.overall.flagged), (2, 1));
+        assert_eq!(r.areas["text"].flagged, 1);
+        assert_eq!(r.areas["record"].flagged, 0);
+        assert_eq!(
+            r.flagged_passes,
+            vec![FlaggedPass {
+                codeunit: 1,
+                test: "a".into(),
+                assumptions: vec!["guid-to-text", "record-get-record-id"]
+            }]
+        );
+        assert_eq!(build(&oracle(), &areas, &outcome).overall.flagged, 0);
     }
 
     #[test]
@@ -478,7 +572,8 @@ mod tests {
                 total: 4,
                 pass: 1,
                 fail: 0,
-                not_run: 3
+                not_run: 3,
+                flagged: 0,
             }
             .rate(),
             0.25

@@ -619,6 +619,7 @@ fn database_sid(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
     let Some(name) = args.first().and_then(text_of) else {
         return unsupported("Database.SID without a user name (whose SID it answers is not pinned)");
     };
+    crate::assumptions::assume(crate::assumptions::Assumption::DatabaseSidNumbers);
     // FNV-1a over the name's UTF-8 bytes: the same on every platform and run.
     let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)

@@ -203,6 +203,7 @@ mod tests {
             test: test.into(),
             outcome: Outcome::Pass,
             call_stack: String::new(),
+            assumptions: Vec::new(),
             time: std::time::Duration::ZERO,
             coverage,
         }

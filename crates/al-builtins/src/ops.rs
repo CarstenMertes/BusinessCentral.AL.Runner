@@ -187,8 +187,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // Format gives it (`Dimensions.Add('PackageCode', Rec.SystemId)` into a Dictionary of [Text, Text] in Base
         // Application's Config. Package Management). No corpus test assigns a Guid to a Text
         // (docs/probes-needed.md).
-        (Value::Guid(g), T::Text(max)) => Value::Text(fit(crate::format::format_guid(&g), *max)?),
-        (Value::Guid(g), T::Code(max)) => Value::Code(fit(crate::format::format_guid(&g), *max)?),
+        (Value::Guid(g), T::Text(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
+            Value::Text(fit(crate::format::format_guid(&g), *max)?)
+        }
+        (Value::Guid(g), T::Code(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
+            Value::Code(fit(crate::format::format_guid(&g), *max)?)
+        }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }
@@ -380,6 +384,9 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
         // would round or truncate: not pinned, so it stays refused below (docs/probes-needed.md).
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && whole_days(n).is_some() => {
+            if matches!(n, V::Decimal(_)) {
+                crate::assumptions::assume(crate::assumptions::Assumption::DateAddWholeDecimal);
+            }
             let n = whole_days(n).expect("whole") as i32;
             return Ok(V::Date(if op == Arith::Add { a + n } else { a - n }, *c));
         }

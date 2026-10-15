@@ -340,7 +340,14 @@ impl Session {
             "ChangeCompany" => self.change_company(&rec, args),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
-            "FilterGroup" => Self::filter_group(&rec, args),
+            "FilterGroup" => {
+                // The setter with -1 (the OR group) is pinned (record/PWFilterGroupOr.al:OrGroup_RecordRef);
+                // the getter form and the other groups are not.
+                if !matches!(args, [Value::Integer(al_builtins::filter::OR_GROUP)]) {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefFilterGroup);
+                }
+                Self::filter_group(&rec, args)
+            }
             "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),
             "GetView" => {
                 let use_names = match args.first() {

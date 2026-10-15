@@ -502,9 +502,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "System.GetLastErrorText#2" => {
             "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
         }
-        "Media.ImportFile#1" | "MediaSet.ImportFile#1" => {
-            "Media.ImportFile and MediaSet.ImportFile read a file of the service tier and are in no corpus test, so which file a test can name, the error for a missing file and what the Tenant Media row holds are not pinned"
-        }
         _ => return None,
     })
 }

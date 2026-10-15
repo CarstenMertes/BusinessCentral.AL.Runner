@@ -122,6 +122,14 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             if f.id == 2_000_000_005 {
                 continue;
             }
+            // A field with ObsoleteState = Moved has no row (Pending and Removed have one): the lookup finds nothing
+            // (types/PWMisc.al:FieldTable_MovedAndPendingField, BC 27.5 and 29.0).
+            if f.properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("ObsoleteState") && ident(v.trim()).eq_ignore_ascii_case("Moved"))
+            {
+                continue;
+            }
             let mut r = blank.row();
             r[pos(t, 1)] = Value::Integer(tid as i32);
             r[pos(t, 2)] = Value::Integer(f.id as i32);
@@ -197,14 +205,6 @@ fn field_row(
     // ObsoleteState and ObsoleteReason (TestFieldObsoleteStateVirtualTable.al:18-45).
     let state = match fprop("ObsoleteState") {
         None => 0,
-        Some(v) if ident(v).eq_ignore_ascii_case("Moved") => {
-            // A field a table extension moved to another app (Business Foundation's "Source Code"
-            // extension fields, for example). No corpus test reads the Field table for one.
-            return Err(format!(
-                "{}: ObsoleteState = Moved: whether the Field table lists a moved field, and with which ObsoleteState, is not pinned (docs/probes-needed.md)",
-                what()
-            ));
-        }
         Some(v) => ordinal_of(OBSOLETE_STATES, v)
             .ok_or_else(|| format!("{}: ObsoleteState `{v}` is not understood", what()))?,
     };

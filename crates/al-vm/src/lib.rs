@@ -874,6 +874,7 @@ impl Session {
                     self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     // The condition belongs to the loop's line, not to the body's last statement.
@@ -887,6 +888,7 @@ impl Session {
                     self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     self.restore_pos(here);
@@ -927,6 +929,7 @@ impl Session {
                     self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     i = int(&self.read(var, f)?)?;
@@ -954,6 +957,7 @@ impl Session {
                     self.write(var, item, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                 }
@@ -980,6 +984,7 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
+            S::Continue => Err(Signal::Continue),
             S::Pos(p) => {
                 if let Some(top) = self.call_stack.last_mut() {
                     top.pos = *p;
@@ -1223,6 +1228,23 @@ impl Session {
                 }
                 // `CurrFieldNo` is a property of the implicit Rec, not a catalog method: the lowerer
                 // emits this id with the Rec as receiver.
+                if id == "Record.SetCurrFieldNo#1" {
+                    let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver.as_deref(), args.first()) else {
+                        return Err(Signal::Unsupported("CurrFieldNo := without a record".into()));
+                    };
+                    let Value::Record(rec) = self.read(p, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+                    };
+                    let Value::Integer(n) = self.eval(e, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
+                    };
+                    let handle = Rc::as_ptr(&rec) as usize;
+                    match self.curr_field_no.iter_mut().rev().find(|(h, _)| *h == handle) {
+                        Some(entry) => entry.1 = n,
+                        None => self.curr_field_no.push((handle, n)),
+                    }
+                    return Ok(Value::Null);
+                }
                 if id == "Record.CurrFieldNo#1" {
                     let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
                         return Err(Signal::Unsupported("CurrFieldNo without a record".into()));

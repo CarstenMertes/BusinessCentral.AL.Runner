@@ -1775,7 +1775,11 @@ impl<'a> Checker<'a> {
                 // `Host.OpenView.Invoke()` is the control called OpenView, not the built-in method:
                 // a member that is itself the receiver of another member can only be a control
                 // (corpus handlers/TestPageActionRunPageMode.al: actions named OpenView and OpenEdit).
+                // `Part.Page` is the page the part shows, also when that page has a control called Page (Base
+                // Application's Purch. Invoice Subform has a group "Page"): real BC compiles
+                // `CurrPage.PurchLines.Page.ForceTotalsCalculation()`; no corpus test names a control Page.
                 if matches!(base_ty, Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_))
+                    && !(matches!(base_ty, Ty::TestPart(_)) && mname.eq_ignore_ascii_case("Page"))
                     && node
                         .parent()
                         .is_some_and(|p| p.kind() == MemberExpr && p.children().next().as_ref() == Some(node))
@@ -2452,7 +2456,7 @@ impl<'a> Checker<'a> {
                     return Some(E::Callable(c));
                 }
                 if let (Ty::TestPart(part), true) = (t, name.eq_ignore_ascii_case("Page")) {
-                    if resolved.is_some_and(|oi| self.named_section(oi, name).is_none()) {
+                    if resolved.is_some() {
                         return Some(E::Val(Ty::Object(ObjKind::Page, part.clone())));
                     }
                 }

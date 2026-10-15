@@ -1585,6 +1585,39 @@ mod tests {
         );
     }
 
+    /// A trigger of a page in a dependency app calls a procedure of the page its part shows
+    /// (`CurrPage.PurchLines.Page.ForceTotalsCalculation()` in Base Application's Purchase Invoice): the part's
+    /// page is reached with the page that names it. Pinned in the workspace by handlers/TestPageTempPart_Host.al
+    /// (`CurrPage.Lines.Page.SetRows`). The part's page has a group named `Page` (Base Application's Purch.
+    /// Invoice Subform does): `.Page` is still the part's page, not that control.
+    #[test]
+    fn a_page_part_s_procedure_called_from_a_dependency_page_is_compiled() {
+        let dep = [
+            (
+                "t.al",
+                "table 10 T { fields { field(1; K; Integer) { } field(2; V; Integer) { } } keys { key(PK; K) { } } }",
+            ),
+            (
+                "sub.al",
+                "namespace Ns.Docs; page 12 \"Sub\" { PageType = ListPart; SourceTable = T; layout { area(Content) { repeater(R) { field(K; Rec.K) { } } group(\"Page\") { } } } \
+                 procedure Force() begin end; }",
+            ),
+            (
+                "host.al",
+                "namespace Ns.Docs; page 11 \"Host\" { PageType = Card; SourceTable = T; layout { area(Content) { field(V; Rec.V) { \
+                 trigger OnValidate() begin AfterValid(); end; } \
+                 part(Lines; \"Sub\") { ApplicationArea = Basic, Suite; Editable = IsEditable; Enabled = IsEditable; SubPageLink = K = field(K); UpdatePropagation = Both; } } } \
+                 var IsEditable: Boolean; local procedure AfterValid() begin CurrPage.Lines.Page.Force(); end; }",
+            ),
+        ];
+        let (_, l) = compile(
+            "codeunit 1 Main { procedure Go() var TP: TestPage \"Host\"; begin TP.OpenEdit(); TP.V.SetValue(1); end; }",
+            &dep,
+        );
+        let why = reasons(&l, "Host", "AfterValid");
+        assert!(why.is_empty(), "{why:?}");
+    }
+
     #[test]
     fn reading_a_table_runs_no_trigger_and_writing_runs_the_trigger_of_that_operation() {
         let dep = [(

@@ -1014,7 +1014,7 @@ fn shift_stmts(stmts: &mut [Stmt], by: u32) {
                 }
                 shift_stmts(otherwise, by);
             }
-            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break => {}
+            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break | Stmt::Continue => {}
         }
     }
 }
@@ -1256,6 +1256,8 @@ pub enum Stmt {
     /// Marks the statement that follows it in the same list: the VM records the position as the
     /// routine's current one (`Program::positions[id]`). It does nothing else.
     Pos(u32),
+    /// `continue`: skip the rest of the loop body and go on with the next round.
+    Continue,
 }
 
 #[cfg(test)]

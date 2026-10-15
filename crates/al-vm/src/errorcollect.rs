@@ -86,7 +86,7 @@ impl Session {
     pub(crate) fn close_error_scope(&mut self, outcome: Result<(), Signal>) -> Result<(), Signal> {
         let sc = &mut self.error_scopes;
         let start = sc.starts.pop().unwrap_or(0);
-        if matches!(&outcome, Err(e) if !matches!(e, Signal::Exit(_) | Signal::Break)) {
+        if matches!(&outcome, Err(e) if !matches!(e, Signal::Exit(_) | Signal::Break | Signal::Continue)) {
             sc.held.truncate(start);
             return outcome;
         }

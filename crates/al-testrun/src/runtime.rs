@@ -2707,6 +2707,9 @@ fn bind_handlers(
     handlers: &[(UiKind, usize)],
 ) -> Result<(), String> {
     let object = instance.borrow().object as usize;
+    // TestHttpRequestPolicy is a property of the test codeunit; absent, outbound requests are allowed.
+    let policy = session.object_property(object, "TestHttpRequestPolicy");
+    session.set_http_policy(policy.as_deref());
     let mut bound = Vec::new();
     for (kind, routine) in handlers {
         bound.push(session.ui_handler(*kind, object, *routine, instance.clone())?);

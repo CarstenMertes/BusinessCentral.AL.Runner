@@ -48,7 +48,23 @@ pub enum ModuleLookup {
 }
 
 /// What builtins need from the running session.
+/// A request an `HttpClient` call sends, as a `[HttpClientHandler]` sees it (ADR-027 section 5).
+#[derive(Debug, Clone)]
+pub struct HttpOutgoing {
+    /// `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD` or the request's own method, upper case.
+    pub method: String,
+    /// The absolute uri in its normal form.
+    pub url: String,
+    pub has_secret_uri: bool,
+}
+
 pub trait Ctx: FormatCtx {
+    /// Gives `request` to the running test's `[HttpClientHandler]` and answers the response it filled; raises the
+    /// policy error without one. No request ever reaches a network.
+    fn http_send(&mut self, _request: HttpOutgoing) -> Result<crate::value::TestHttpResponseState, Signal> {
+        Err(Signal::Unsupported("an HttpClient call needs a session".into()))
+    }
+
     fn last_error(&self) -> AlError;
     fn set_last_error(&mut self, e: AlError);
     /// Record methods (`Record.Insert`, ...) need the store, triggers and

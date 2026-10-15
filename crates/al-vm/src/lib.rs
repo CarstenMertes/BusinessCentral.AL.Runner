@@ -81,6 +81,49 @@ pub struct Engine {
     /// The profiles that get an All Profile row (see `platform::profiles::profile_seeds`).
     pub(crate) profile_seeds: std::sync::OnceLock<Vec<(usize, i32)>>,
     pub(crate) delete_subscribed: std::sync::OnceLock<std::collections::HashSet<String>>,
+    /// Per object, per routine: what a call needs to know about the routine, found once (see [`RoutineFacts`]).
+    pub(crate) facts: Vec<Vec<RoutineFacts>>,
+}
+
+/// What a call of a routine asks of the routine's declaration, answered once when the engine is built instead of by
+/// scanning the attributes and the publisher table on every call.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct RoutineFacts {
+    /// The routine is an event publisher: a call raises the event (`dispatch.rs`).
+    pub publisher: bool,
+    /// `[TryFunction]`.
+    pub is_try: bool,
+    /// `[CommitBehavior(...)]`, when the routine declares one that is understood.
+    pub commit_behavior: Option<transactions::CommitBehavior>,
+    /// `[ErrorBehavior(ErrorBehavior::Collect)]`.
+    pub collects: bool,
+    /// An attribute is declared that the runtime does not understand (`CommitBehavior` other than Ignore and Error,
+    /// `ErrorBehavior` other than Collect, or more than one of either): the call takes the slow path, which reports it.
+    pub odd_attributes: bool,
+}
+
+fn routine_facts(r: &ir::Routine, publisher: bool) -> RoutineFacts {
+    let mut f = RoutineFacts {
+        publisher,
+        ..Default::default()
+    };
+    let mut commits = 0;
+    let mut collects = 0;
+    for a in &r.attributes {
+        if a.name.eq_ignore_ascii_case("TryFunction") {
+            f.is_try = true;
+        } else if a.name.eq_ignore_ascii_case("CommitBehavior") {
+            commits += 1;
+            f.commit_behavior = transactions::CommitBehavior::from_attribute(&a.text);
+            f.odd_attributes |= f.commit_behavior.is_none();
+        } else if a.name.eq_ignore_ascii_case("ErrorBehavior") {
+            collects += 1;
+            f.collects = errorcollect::declares_collect(std::slice::from_ref(a)).unwrap_or(false);
+            f.odd_attributes |= !f.collects;
+        }
+    }
+    f.odd_attributes |= commits > 1 || collects > 1;
+    f
 }
 
 impl Engine {
@@ -140,6 +183,18 @@ impl Engine {
             })
             .collect();
         let events = events::Registry::build(&program);
+        let facts = program
+            .objects
+            .iter()
+            .enumerate()
+            .map(|(o, obj)| {
+                obj.routines
+                    .iter()
+                    .enumerate()
+                    .map(|(r, routine)| routine_facts(routine, events.publishers.contains_key(&(o, r))))
+                    .collect()
+            })
+            .collect();
         let mut unevaluable_init = std::collections::HashMap::new();
         for (i, o) in program.objects.iter().enumerate() {
             for (pos, f) in o.table.iter().flat_map(|t| t.fields.iter().enumerate()) {
@@ -161,6 +216,7 @@ impl Engine {
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
             profile_seeds: Default::default(),
+            facts,
         })
     }
 }
@@ -773,7 +829,7 @@ impl Session {
         // The builtin being run (a record write that runs triggers and events) keeps its own
         // `ret_used`: the callee's builtins must not change it.
         let ret_used = self.ret_used;
-        let r = if self.engine.events.publishers.contains_key(&(object, routine)) {
+        let r = if self.engine.facts[object][routine].publisher {
             self.publish(object, routine, instance, args)
         } else {
             self.call_inner(object, routine, instance, args)
@@ -831,26 +887,36 @@ impl Session {
             instance,
             locals,
         };
-        let is_try = r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("TryFunction"));
+        let facts = engine.facts[object][routine];
+        let is_try = facts.is_try;
         // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
         // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).
         let saved_commit_behavior = self.commit_behavior;
-        for a in r
-            .attributes
-            .iter()
-            .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
-        {
-            match transactions::CommitBehavior::from_attribute(&a.text) {
-                Some(b) => self.commit_behavior = b,
-                None => {
-                    return Err(Signal::Unsupported(format!(
-                        "{} (only Ignore and Error are pinned)",
-                        a.text
-                    )));
+        let collecting;
+        if facts.odd_attributes {
+            // An attribute the runtime does not understand: the scan that reports it.
+            for a in r
+                .attributes
+                .iter()
+                .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
+            {
+                match transactions::CommitBehavior::from_attribute(&a.text) {
+                    Some(b) => self.commit_behavior = b,
+                    None => {
+                        return Err(Signal::Unsupported(format!(
+                            "{} (only Ignore and Error are pinned)",
+                            a.text
+                        )));
+                    }
                 }
             }
+            collecting = errorcollect::declares_collect(&r.attributes)?;
+        } else {
+            if let Some(b) = facts.commit_behavior {
+                self.commit_behavior = b;
+            }
+            collecting = facts.collects;
         }
-        let collecting = errorcollect::declares_collect(&r.attributes)?;
         if collecting {
             self.error_scopes.open();
         }

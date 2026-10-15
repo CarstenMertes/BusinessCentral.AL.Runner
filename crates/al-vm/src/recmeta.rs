@@ -279,7 +279,13 @@ impl Session {
                     .filters
                     .iter()
                     .find(|f| f.field == pos && f.group == r.filter_group)
-                    .or_else(|| r.filters.iter().find(|f| f.field == pos))
+                    .or_else(|| {
+                        r.filters.iter().find(|f| f.field == pos).inspect(|_| {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::GetRangeAcrossFilterGroups,
+                            )
+                        })
+                    })
                 else {
                     return unsupported(format!("{method} without a filter (error text not pinned)"));
                 };

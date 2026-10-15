@@ -133,6 +133,36 @@ registry! {
         tests: "Config. Package Management.SendTelemetryOnDeleteConfigPackage (Dimensions.Add('PackageCode', Rec.SystemId)); 15 Rapid Start tests.",
         probe: "T := G with Text[40], Text[10], Code[40]; Dict.Add('k', G); Evaluate(T, G).",
     },
+    GuidAsTextArgument => {
+        id: "guid-as-text-argument",
+        assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment.",
+        tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests.",
+        probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G).",
+    },
+    PageRowDeleteEventNotRaised => {
+        id: "page-row-delete-event-not-raised",
+        assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",
+        tests: "Base Application subscribes on the General Journal and other journals; 88 Tests-General Journal tests.",
+        probe: "Invoke the standard Delete action on a page row of a table with such a subscriber: is the subscriber run.",
+    },
+    NewRowEqualFiltersSeveralGroups => {
+        id: "new-row-equal-filters-several-groups",
+        assumed: "A new page row takes the value of a field that has equality filters in several filter groups when they all name the same value; different values are not stamped.",
+        tests: "Payment Journal and Incom. Doc. Attach. FactBox tests of Tests-General Journal (Cash Receipt Journal).",
+        probe: "Open a page on a record with SetRange(F, 'A') in group 0 and group 2, insert a row, read F.",
+    },
+    GetRangeAcrossFilterGroups => {
+        id: "get-range-across-filter-groups",
+        assumed: "GetRangeMin/Max see a filter on the field set in another filter group when the current group has none. With no filter at all it stays refused.",
+        tests: "GenJnlManagement.OpenJnl after TemplateSelection (Purchase Journal OnOpenPage); 34 Tests-General Journal tests.",
+        probe: "FilterGroup(2); SetRange(F,'T'); FilterGroup(0); GetRangeMax(F).",
+    },
+    InvisiblePartForPageCode => {
+        id: "invisible-part-for-page-code",
+        assumed: "CurrPage.<Part>.Page in the page's own code reaches a part whose Visible came out false (and its page is opened).",
+        tests: "Cash Receipt Journal OnAfterGetCurrRecord (WorkflowStatusBatch, Visible = variable); 7 Tests-General Journal tests.",
+        probe: "A page with part(P; ...) { Visible = Flag } where Flag is false at open and OnAfterGetCurrRecord calls CurrPage.P.Page.Method().",
+    },
     RecordRefFilterGroup => {
         id: "recordref-filter-group",
         assumed: "RecordRef.FilterGroup as a getter, and as a setter for a group other than -1, behaves as Record.FilterGroup. (The setter with -1 is pinned by record/PWFilterGroupOr.al:OrGroup_RecordRef.)",

@@ -363,7 +363,8 @@ impl Session {
                 // opened never raises this event. Base
                 // Application subscribes to it on General Journal and the other journals (88 tests of
                 // Tests-General Journal were refused at the open).
-                && ev != "ondeleterecordevent"
+                && !(ev == "ondeleterecordevent"
+                    && al_builtins::assumptions::hit(al_builtins::assumptions::Assumption::PageRowDeleteEventNotRaised))
             {
                 // Events a page publishes itself (IntegrationEvent) are ordinary routines.
                 let published = engine
@@ -1669,6 +1670,9 @@ impl Session {
                 .any(|o| !o.as_ref().is_some_and(|w| ops::compare(v, w).is_ok_and(|c| c.is_eq())))
             {
                 continue;
+            }
+            if single.len() > 1 {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::NewRowEqualFiltersSeveralGroups);
             }
             stamped.push((pos, v.clone()));
         }

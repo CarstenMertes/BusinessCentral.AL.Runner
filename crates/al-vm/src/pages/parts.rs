@@ -143,6 +143,13 @@ impl Session {
                         .find(|(i, _)| *i == control)
                         .map(|(_, c)| c.clone())
                 })
+                .inspect(|c| {
+                    if c.is_some() {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::InvisiblePartForPageCode,
+                        );
+                    }
+                })
                 .flatten()
         });
         match found {

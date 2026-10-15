@@ -645,6 +645,7 @@ fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
     // Microsoft's Match General Jnl Lines UT, 61 tests; unprobed, docs/probes-needed.md "A Guid assigned to a Text
     // or Code"; hard rule 3 exception, owner 2026-10-15).
     if let Some(Value::Guid(g)) = args.get(i) {
+        crate::assumptions::assume(crate::assumptions::Assumption::GuidAsTextArgument);
         return Ok(crate::format::format_guid(g));
     }
     args.get(i).and_then(text_of).map_or_else(

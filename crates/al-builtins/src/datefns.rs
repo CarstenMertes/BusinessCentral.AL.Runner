@@ -106,10 +106,13 @@ fn create_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> O
 /// `RoundDateTime(DateTime [, Precision [, Direction]])` (types/TestRoundDateTimeContracts.al): the
 /// precision is in milliseconds (default 1000; a BigInteger, Integer or Duration), the direction `=`
 /// (nearest, a tie rounds up; the default), `<` (down) or `>` (up). A precision of 0 or less and an
-/// unknown direction raise Argument errors; the undefined DateTime stays undefined. A precision that does not
-/// divide a day counts from 1899-12-30 00:00 (types/TestRoundDateTimeContracts.al:61-72, BC 27.5: 12:00:31 on
-/// 2024-03-05 rounds to 12:00:00 and 12:11:40 for a precision of 700000). 2000-01-01 fits the same three
-/// results; the origin is an assumption (docs/probes-needed.md).
+/// unknown direction raise Argument errors; the undefined DateTime stays undefined.
+///
+/// Where the multiples of a precision start is pinned only by one case: 12:00:31 on 2024-03-05 with 700000 ms
+/// rounds to 12:00:00 and 12:11:40 (types/TestRoundDateTimeContracts.al:61-72, BC 27.5). Every origin at a
+/// midnight that fits it is a Saturday (a day shifts the multiples by 300000 ms, a week by none), so the
+/// candidates (1899-12-30, 2000-01-01, ...) differ by whole weeks. They give the same multiples exactly when a
+/// week is a whole number of precisions; any other precision is refused instead of choosing an origin.
 fn round_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let invalid = |what: String, n: u32| {
         raise(
@@ -142,7 +145,12 @@ fn round_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Ou
     if t == 0 {
         return Ok(Value::DateTime(0));
     }
-    // The days from 0001-01-01 to 1899-12-30; a whole number of days leaves a precision that divides a day alone.
+    if (7 * MS_PER_DAY) % precision != 0 {
+        return unsupported(format!(
+            "RoundDateTime with a precision of {precision} ms, which a week does not hold a whole number of: where its multiples start is not pinned (docs/probes-needed.md)"
+        ));
+    }
+    // The days from 0001-01-01 to 1899-12-30, a Saturday: any other Saturday gives the same multiples here.
     let origin = 693_593 * MS_PER_DAY;
     let ms = t - 1;
     let below = ms - (ms - origin).rem_euclid(precision);
@@ -619,9 +627,9 @@ mod tests {
         call("System.CalcDate#2", vec![t(formula), from])
     }
 
-    // types/TestRoundDateTimeContracts.al:61-72: a precision of 700000 ms does not divide a day.
+    // types/TestRoundDateTimeContracts.al:61-72: a precision of 700000 ms does not divide a day but a week.
     #[test]
-    fn round_date_time_counts_a_precision_that_does_not_divide_a_day_from_1899_12_30() {
+    fn round_date_time_counts_a_precision_that_divides_a_week_but_not_a_day() {
         let at = |h: u32, m: u32, s: u32| {
             let Value::Date(d, _) = date(2024, 3, 5) else {
                 unreachable!()
@@ -640,6 +648,18 @@ mod tests {
             };
             assert_eq!(got, want, "{dir}");
         }
+    }
+
+    #[test]
+    fn round_date_time_refuses_a_precision_whose_multiples_depend_on_the_origin() {
+        let r = call(
+            "System.RoundDateTime#1",
+            vec![Value::DateTime(86_400_000 * 700_000 + 1), Value::Integer(1_100_000)],
+        );
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(m)) if m.contains("not pinned")),
+            "{r:?}"
+        );
     }
 
     #[test]

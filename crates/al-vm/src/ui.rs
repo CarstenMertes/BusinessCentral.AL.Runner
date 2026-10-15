@@ -133,6 +133,16 @@ impl Session {
             }
             _ => None,
         };
+        // A page handler whose parameter is a `Page` (and a `var Response: Action`) is a shape BC
+        // accepts; no corpus test has one, so what it is handed is not pinned (docs/probes-needed.md,
+        // "Page handlers").
+        if !ok && matches!(kind, UiKind::Page | UiKind::ModalPage) && matches!(ty(0), Some(RtType::Page(_))) {
+            return Err(format!(
+                "{} takes a Page instead of a TestPage: what a {} handler of that shape is handed and how its Response: Action is read are not pinned (docs/probes-needed.md)",
+                r.name,
+                kind.label()
+            ));
+        }
         if !ok {
             return Err(format!(
                 "{} is not shaped like a {} handler function",

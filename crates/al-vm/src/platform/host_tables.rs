@@ -23,26 +23,28 @@ pub(super) fn time_zone_rows(t: &TableDef, i: &Ident) -> Vec<Entry> {
 }
 
 /// The Feature Key table of the BC 27.5 platform: 16 rows, `Data Update Required` set for three of them
-/// (record/TestFieldLenAndFeatureKeyContracts.al:83-125). The rows
+/// (record/TestFieldLenAndFeatureKeyContracts.al:83-125) and `Enabled` None or All Users per row
+/// (record/TestFeatureKeyEnabledContracts.al:FeatureKey_Enabled_PerId_On27; the state is per tenant, and the
+/// corpus image is the 27.3 and 27.5 one). `Mandatory`, `Will Be Enabled On` and the other columns are not pinned. The rows
 /// of other majors were not measured: one poisoned entry stands for all of them, so a read is refused.
 pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>) -> Vec<Entry> {
-    const ROWS: &[(&str, bool)] = &[
-        ("AdvancedTellMe", false),
-        ("CalcOnlyVisibleFlowFields", false),
-        ("ConcealedMaskType", false),
-        ("ConcurrentInventoryPosting", false),
-        ("ConcurrentJobPosting", false),
-        ("ConcurrentResourcePosting", false),
-        ("DisableSoapWebServicesOnMicrosoftUIPages", false),
-        ("EnableMcpAccess", false),
-        ("FinancialReportDefaults", false),
-        ("FullTextSearch", false),
-        ("GLCurrencyRevaluation", true),
-        ("Manufacturing_FlushingMethod_ActivateManualWoPick", true),
-        ("ReminderTermsCommunicationTexts", false),
-        ("SalesPrices", true),
-        ("SaveValueToDatabasePromptly", false),
-        ("SemanticMetadataSearch", false),
+    const ROWS: &[(&str, bool, bool)] = &[
+        ("AdvancedTellMe", false, false),
+        ("CalcOnlyVisibleFlowFields", false, true),
+        ("ConcealedMaskType", false, true),
+        ("ConcurrentInventoryPosting", false, true),
+        ("ConcurrentJobPosting", false, true),
+        ("ConcurrentResourcePosting", false, true),
+        ("DisableSoapWebServicesOnMicrosoftUIPages", false, true),
+        ("EnableMcpAccess", false, true),
+        ("FinancialReportDefaults", false, true),
+        ("FullTextSearch", false, false),
+        ("GLCurrencyRevaluation", true, false),
+        ("Manufacturing_FlushingMethod_ActivateManualWoPick", true, false),
+        ("ReminderTermsCommunicationTexts", false, true),
+        ("SalesPrices", true, false),
+        ("SaveValueToDatabasePromptly", false, true),
+        ("SemanticMetadataSearch", false, true),
     ];
     if !al_version::feature_key_rows_known(target) {
         return vec![Entry::poisoned_prefix(
@@ -52,9 +54,12 @@ pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>
         )];
     }
     ROWS.iter()
-        .map(|(id, data_update)| {
+        .map(|(id, data_update, all_users)| {
             let mut r = blank(t);
             r[pos(t, 1)] = Value::Text((*id).into());
+            // Enabled: None or All Users, as the 27.3 and 27.5 service tiers read it
+            // (record/TestFeatureKeyEnabledContracts.al:FeatureKey_Enabled_PerId_On27).
+            r[pos(t, 2)] = option(t, 2, i32::from(*all_users));
             r[pos(t, 8)] = Value::Boolean(*data_update);
             Entry::ok(r)
         })

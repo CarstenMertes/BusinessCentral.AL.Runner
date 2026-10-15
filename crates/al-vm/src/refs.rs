@@ -586,7 +586,11 @@ impl Session {
     fn fieldref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
         let (rec, pos) = match &*lib.borrow() {
             LibraryValue::FieldRef(r, p) | LibraryValue::KeyFieldRef(r, p) => (r.clone(), *p),
-            _ => return unsupported(format!("FieldRef.{method} on a FieldRef that was never assigned")),
+            _ => {
+                return unsupported(format!(
+                    "FieldRef.{method} on a FieldRef that was never assigned: what BC does (an error, or a no-op) is not pinned (docs/probes-needed.md)"
+                ));
+            }
         };
         let t = self.table(&rec)?;
         let field = &t.fields[pos];

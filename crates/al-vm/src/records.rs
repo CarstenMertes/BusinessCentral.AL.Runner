@@ -1924,6 +1924,9 @@ impl Session {
                 let field = &schema.fields[pos];
                 // A Validate nested in an OnValidate of the same record keeps the outer call's
                 // before-image as xRec (corpus record/TestXRecContracts.al:133).
+                // `handle` is the address of `rec`, which this call borrows for as long as the entry exists, and the
+                // entry is popped below on every way out (the result is held, not `?`-ed, until then), so no other
+                // record can get the address while it is on the stack (tests/store/xrec.rs).
                 let handle = Rc::as_ptr(rec) as usize;
                 let outer = self
                     .validating

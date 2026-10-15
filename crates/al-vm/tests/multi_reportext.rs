@@ -183,17 +183,18 @@ fn the_object_id_decides_not_the_file_order() {
     assert_eq!(text(run(&src, RUN)), "Parent;G1;F1;F2;X1;X2;Y1;ChildA;Z2;Z1;");
 }
 
-// Refused until a probe pins them (ADR-025): two items one extension adds after the same anchor,
-// two extensions adding last under one item, extensions of different apps.
+// Pinned by reportextensiontrigger/TestReportExtensionSamePlaceContracts.al (bump 6): two items one
+// extension adds after the same anchor and two extensions adding last under one item are not refused.
+// Still refused until a probe pins them (ADR-025): extensions of different apps.
 #[test]
-fn unpinned_placements_and_cross_app_extensions_are_refused() {
+fn same_place_placements_are_accepted_and_cross_app_extensions_are_refused() {
     let two_after = format!(
         "{PLACED_BASE}\nreportextension 69113 \"MR E\" extends \"MR Base\" {{ dataset {{ addafter(ChildA) {{ {} {} }} }} }}",
         item("Z1"),
         item("Z2")
     );
     let r = reasons(&two_after, 1);
-    assert!(r.iter().any(|x| x.contains("added at the same place")), "{r:?}");
+    assert!(!r.iter().any(|x| x.contains("same place")), "{r:?}");
     let two_last = format!(
         "{PLACED_BASE}\nreportextension 69113 \"MR E1\" extends \"MR Base\" {{ dataset {{ addlast(Parent) {{ {} }} }} }}\nreportextension 69114 \"MR E2\" extends \"MR Base\" {{ dataset {{ addlast(Parent) {{ {} }} }} }}",
         item("L1"),
@@ -201,7 +202,7 @@ fn unpinned_placements_and_cross_app_extensions_are_refused() {
     );
     let r = reasons(&two_last, 1);
     assert!(
-        r.iter()
+        !r.iter()
             .any(|x| x.contains("add data items last under the same data item")),
         "{r:?}"
     );

@@ -40,6 +40,10 @@ impl Session {
 
     fn filter_value(&self, v: &Value) -> Result<String, Signal> {
         if let Value::Text(s) | Value::Code(s) = v {
+            // A blank text shows as two single quotes (corpus record/PWFilterGroupOr.al: `A: ''`).
+            if s.is_empty() {
+                return Ok("''".into());
+            }
             if needs_quotes(s) {
                 if s.contains(FILTER_UNPINNED) || s.contains('\'') || s.starts_with('@') {
                     return unsupported("a filter value that needs quoting and holds more filter characters");
@@ -130,13 +134,10 @@ impl Session {
         let mut r = rec.borrow_mut();
         if let Some(v) = args.first() {
             r.filter_group = match v {
-                // The OR group: filters on different fields are alternatives in BC, which the
-                // runtime does not model (every group applies as an AND). Not pinned by the
-                // corpus (docs/probes-needed.md), so refused.
-                Value::Integer(n) if *n < 0 => {
-                    return unsupported(format!(
-                        "FilterGroup({n}) (the OR group: its filters are alternatives); not pinned (docs/probes-needed.md)"
-                    ));
+                // The OR group: filters on different fields are alternatives (corpus
+                // record/PWFilterGroupOr.al). Other negative groups are not pinned.
+                Value::Integer(n) if *n < 0 && *n != al_builtins::filter::OR_GROUP => {
+                    return unsupported(format!("FilterGroup({n}) (only -1, the OR group, is pinned)"));
                 }
                 Value::Integer(n) => *n,
                 other => return unsupported(format!("FilterGroup({})", other.describe())),

@@ -158,10 +158,9 @@ fn target_text(t: &al_version::Target) -> String {
 pub fn key_for(
     apps: &[&AppSource],
     manifests: &[crate::runtime::Manifest],
-    symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
 ) -> Key {
-    key_with(apps, manifests, symbols, target, &[])
+    key_with(apps, manifests, target, &[])
 }
 
 /// [`key_for`] where `identities[i]`, when set, stands for the source of app `i`: the hash of the zip
@@ -170,18 +169,16 @@ pub fn key_for(
 pub fn key_with(
     apps: &[&AppSource],
     manifests: &[crate::runtime::Manifest],
-    symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
     identities: &[Option<[u8; 32]>],
 ) -> Key {
-    key_layer(apps, manifests, symbols, target, identities, [0; 32])
+    key_layer(apps, manifests, target, identities, [0; 32])
 }
 
 /// [`key_with`] for a layer above another: `below` is the digest of the key of the layer below.
 pub fn key_layer(
     apps: &[&AppSource],
     manifests: &[crate::runtime::Manifest],
-    symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
     identities: &[Option<[u8; 32]>],
     below: [u8; 32],
@@ -196,6 +193,13 @@ pub fn key_layer(
             dependencies: a.dependencies.clone(),
             publisher: m.publisher.clone(),
             version: m.version.clone(),
+            symbols: m
+                .symbols
+                .iter()
+                .cloned()
+                .collect::<std::collections::BTreeSet<_>>()
+                .into_iter()
+                .collect(),
             source: identities.get(i).copied().flatten().unwrap_or_else(|| source_hash(a)),
         })
         .collect();
@@ -207,10 +211,18 @@ pub fn key_layer(
             target.map(target_text).unwrap_or_default(),
             std::env::var("AL_UNPINNED_BASE_ACCESS").map_or(String::new(), |v| format!(" base-access {v}"))
         ),
-        symbols.iter().cloned().collect(),
         apps,
         below,
     )
+}
+
+/// The preprocessor symbols each dependency app is compiled with: those of its own app.json, none
+/// for the project's. (A dependency is compiled by its publisher, not by the project.)
+pub fn app_symbols(manifests: &[crate::runtime::Manifest]) -> Vec<Option<std::collections::BTreeSet<String>>> {
+    manifests
+        .iter()
+        .map(|m| Some(m.symbols.iter().cloned().collect()))
+        .collect()
 }
 
 /// The publisher whose apps make the first layer (the platform and Microsoft's apps).
@@ -330,7 +342,6 @@ pub fn layer_ranges(apps: &[&AppSource], manifests: &[crate::runtime::Manifest])
 pub fn layer_keys(
     apps: &[&AppSource],
     manifests: &[crate::runtime::Manifest],
-    symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
     identities: &[Option<[u8; 32]>],
 ) -> Vec<(std::ops::Range<usize>, Key)> {
@@ -339,7 +350,7 @@ pub fn layer_keys(
         .into_iter()
         .map(|r| {
             let ids: Vec<Option<[u8; 32]>> = r.clone().map(|i| identities.get(i).copied().flatten()).collect();
-            let key = key_layer(&apps[r.clone()], &manifests[r.clone()], symbols, target, &ids, below);
+            let key = key_layer(&apps[r.clone()], &manifests[r.clone()], target, &ids, below);
             below = key.digest();
             (r, key)
         })
@@ -388,11 +399,11 @@ pub fn write_entry(dir: &Path, key: &Key, bytes: &[u8]) -> std::io::Result<PathB
 /// Builds the entry for `apps` (dependency apps in program order) and encodes it.
 pub fn build_entry(
     apps: Vec<AppSource>,
-    symbols: &std::collections::BTreeSet<String>,
+    manifests: &[crate::runtime::Manifest],
     target: Option<&al_version::Target>,
     key: &Key,
 ) -> Vec<u8> {
-    let set = al_sema::lower::lower_for_cache(apps, symbols, target);
+    let set = al_sema::lower::lower_for_cache_with(apps, &app_symbols(manifests), &Default::default(), target);
     al_cache::build(&set, key)
 }
 
@@ -455,7 +466,6 @@ pub fn open_or_build(
     cc: &CompileCache,
     apps: &[AppSource],
     manifests: &[crate::runtime::Manifest],
-    symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
 ) -> Result<(Layers, CacheReport), String> {
     let refs: Vec<&AppSource> = apps.iter().collect();
@@ -465,7 +475,7 @@ pub fn open_or_build(
         .iter()
         .map(|&i| manifests.get(i).cloned().unwrap_or_default())
         .collect();
-    open_or_build_with(cc, &mut apps, &manifests, symbols, target, &[], &mut |_| {})
+    open_or_build_with(cc, &mut apps, &manifests, target, &[], &mut |_| {})
 }
 
 /// [`open_or_build`] with the identities of [`key_with`], for apps that are already in
@@ -475,7 +485,6 @@ pub fn open_or_build_with(
     cc: &CompileCache,
     apps: &mut [AppSource],
     manifests: &[crate::runtime::Manifest],
-    symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
     identities: &[Option<[u8; 32]>],
     prepare: &mut dyn FnMut(&mut [AppSource]),
@@ -483,7 +492,7 @@ pub fn open_or_build_with(
     let opened = std::time::Instant::now();
     let planned = {
         let dep_refs: Vec<&AppSource> = apps.iter().collect();
-        layer_keys(&dep_refs, manifests, symbols, target, identities)
+        layer_keys(&dep_refs, manifests, target, identities)
     };
     let mut report = CacheReport::default();
     let mut entries: Vec<Option<Entry>> = Vec::new();
@@ -548,7 +557,7 @@ pub fn open_or_build_with(
                     .map(|e| e.as_ref().expect("the layers below are built") as &dyn LayerSource)
                     .collect();
                 let stack = Stack::new(below).map_err(|e| format!("the layers below do not fit: {e}"))?;
-                lower_one_layer(apps, range, symbols, target, &stack)?
+                lower_one_layer(apps, manifests, range, target, &stack)?
             };
             // The layers above the first compress with its dictionary: training one takes most of
             // the time of a small layer, and the blocks are the same kind of data.
@@ -602,28 +611,35 @@ pub fn open_or_build_with(
 /// `apps[..range.start]`.
 fn lower_one_layer(
     apps: &[AppSource],
+    manifests: &[crate::runtime::Manifest],
     range: &std::ops::Range<usize>,
-    symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
     below: &Stack<'_>,
 ) -> Result<DepLayer, String> {
     if range.start == 0 {
-        let set = al_sema::lower::lower_for_cache(apps[range.clone()].to_vec(), symbols, target);
+        let set = al_sema::lower::lower_for_cache_with(
+            apps[range.clone()].to_vec(),
+            &app_symbols(&manifests[range.clone()]),
+            &Default::default(),
+            target,
+        );
         return Ok(DepLayer::whole(set));
     }
-    al_sema::lower::lower_layer(apps[..range.end].to_vec(), range.start, symbols, target, below)
+    al_sema::lower::lower_layer_with(
+        apps[..range.end].to_vec(),
+        range.start,
+        &app_symbols(&manifests[..range.end]),
+        &Default::default(),
+        target,
+        below,
+    )
 }
 
 /// The index entry of the dependency apps: what the scan of their sources found (`al_cache::index`).
 /// Its key is the key of the apps without a target: the scan depends on the sources, the preprocessor
 /// symbols and the compiler, not on the BC version.
-pub fn index_key(
-    apps: &[&AppSource],
-    manifests: &[crate::runtime::Manifest],
-    symbols: &std::collections::BTreeSet<String>,
-    identities: &[Option<[u8; 32]>],
-) -> Key {
-    key_with(apps, manifests, symbols, None, identities)
+pub fn index_key(apps: &[&AppSource], manifests: &[crate::runtime::Manifest], identities: &[Option<[u8; 32]>]) -> Key {
+    key_with(apps, manifests, None, identities)
 }
 
 /// Reads the index for `key` from `dir`: `None` when there is no file or it cannot be used (damaged,

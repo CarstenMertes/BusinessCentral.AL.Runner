@@ -517,6 +517,19 @@ fn run_version(
                 tests_s: d.as_secs_f64(),
             })
             .collect(),
+        slowest_tests: {
+            let mut all: Vec<&al_testrun::runtime::TestResult> = rt.results().iter().collect();
+            all.sort_by_key(|r| std::cmp::Reverse(r.time));
+            all.into_iter()
+                .take(10)
+                .filter(|r| !r.time.is_zero())
+                .map(|r| report::SlowTest {
+                    codeunit: r.codeunit,
+                    name: r.test.clone(),
+                    seconds: r.time.as_secs_f64(),
+                })
+                .collect()
+        },
     };
     if args.timings {
         eprintln!(
@@ -620,7 +633,12 @@ fn run_version(
     if let Some(p) = &args.junit {
         write(
             &per_version(p, version.major, all),
-            &output::junit(&cases, &outcome, bc_build.as_deref()),
+            &output::junit(
+                &cases,
+                &outcome,
+                &|c| rt.first_time(c).as_secs_f64(),
+                bc_build.as_deref(),
+            ),
         )?;
     }
     if let Some(p) = &args.junit {
@@ -633,7 +651,12 @@ fn run_version(
             );
             write(
                 &per_version(&p.with_file_name(name), version.major, all),
-                &output::junit(cases, &|c| rt.outcome_in(&suite.name, c), bc_build.as_deref()),
+                &output::junit(
+                    cases,
+                    &|c| rt.outcome_in(&suite.name, c),
+                    &|c| rt.time_in(&suite.name, c).as_secs_f64(),
+                    bc_build.as_deref(),
+                ),
             )?;
         }
     }

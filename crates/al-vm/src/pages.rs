@@ -1492,7 +1492,11 @@ impl Session {
             .properties
             .iter()
             .any(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"));
-        let which = if self.declares(st, "onfindrecord") && !has_view { "=><" } else { "-" };
+        let which = if self.declares(st, "onfindrecord") && !has_view {
+            "=><"
+        } else {
+            "-"
+        };
         if self.nav_find(st, which)? {
             st.borrow_mut().cursor = Cursor::Row;
             st.borrow_mut().landing_first = true;
@@ -3824,7 +3828,9 @@ impl Session {
         let key = self.row_key(&rec)?;
         let first = {
             let s = st.borrow();
-            s.window_from_start && s.window.len() < Self::WINDOW && s.window.first().is_some_and(|w| Self::same_key(&w.key, &key))
+            s.window_from_start
+                && s.window.len() < Self::WINDOW
+                && s.window.first().is_some_and(|w| Self::same_key(&w.key, &key))
         };
         // With the cursor off the first row, or more rows than a window, the reads are not pinned: the
         // refresh alone stays (docs/probes-needed.md).

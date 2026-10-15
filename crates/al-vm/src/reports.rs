@@ -1273,7 +1273,11 @@ impl Session {
             let Some(Some(t)) = item.table.map(|tb| self.engine.tables[tb].clone()) else {
                 continue;
             };
-            for c in item.columns.iter().filter(|c| c.include_caption && c.unsupported.is_none()) {
+            for c in item
+                .columns
+                .iter()
+                .filter(|c| c.include_caption && c.unsupported.is_none())
+            {
                 if let (Ok(name), Some(pos)) = (dataset::dataset_name(&c.name), c.field) {
                     let label = (format!("{name}Caption"), self.field_caption(&t, pos));
                     let ds = self.dataset.as_mut().expect("just set");

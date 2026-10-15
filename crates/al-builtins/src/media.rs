@@ -99,7 +99,11 @@ fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
     // A PNG without a MIME type is `image/png`, and its Tenant Media row has its size (corpus
     // media/PXMediaFileName.al: `Mime Type` is `image/png` also when it is omitted, 1 x 1).
     let size = png_size(&bytes);
-    let mime = if mime.is_empty() && size.is_some() { "image/png".to_string() } else { mime };
+    let mime = if mime.is_empty() && size.is_some() {
+        "image/png".to_string()
+    } else {
+        mime
+    };
     let (width, height) = size.unwrap_or((0, 0));
     store(c)?.objects.borrow_mut().insert(
         id,

@@ -232,7 +232,9 @@ pub(crate) fn decimal_formatter(places: Option<&str>) -> Result<String, Signal> 
         } else {
             format!("#,##0.{}{}", "0".repeat(min), "#".repeat(max - min))
         }),
-        _ => unsupported(format!("DecimalPlaces = {places} in a dataset (not a form of the pinned ones)")),
+        _ => unsupported(format!(
+            "DecimalPlaces = {places} in a dataset (not a form of the pinned ones)"
+        )),
     }
 }
 

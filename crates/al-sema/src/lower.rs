@@ -3851,7 +3851,6 @@ impl Lowerer<'_> {
                 }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
-            ContinueStmt => Ok(ir::Stmt::Continue),
             AssertErrorStmt => Ok(ir::Stmt::AssertError(self.stmt_or_empty(kids.first()))),
             other => Err(format!("statement {other:?} is not lowered yet")),
         };

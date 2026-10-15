@@ -78,7 +78,7 @@ fn gzip_new(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: &[Value]) -> Re
         Value::Library(kind, _) if kind == expected => {}
         other => {
             return unsupported(format!(
-                "DotNet GZipStream({:?}) over {}: only an {expected} is supported",
+                "DotNet GZipStream({}) over {}: only an {expected} is supported",
                 if *ordinal == COMPRESS { "Compress" } else { "Decompress" },
                 al_builtins::describe::Describe::describe(other)
             ));

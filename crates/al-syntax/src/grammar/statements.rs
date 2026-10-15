@@ -109,16 +109,6 @@ pub(crate) fn stmt(p: &mut Parser) {
         p.start(BreakStmt);
         p.bump_any();
         p.finish();
-    } else if p.at_kw("continue")
-        && (p.nth(1) == Semicolon
-            || p.nth(1) == __Last
-            || p.nth_kw(1, "end")
-            || p.nth_kw(1, "else")
-            || p.nth_kw(1, "until"))
-    {
-        p.start(ContinueStmt);
-        p.bump_any();
-        p.finish();
     } else if p.at_kw("asserterror") {
         p.start(AssertErrorStmt);
         p.bump_any();
@@ -303,30 +293,6 @@ mod tests {
         assert_eq!(
             s("asserterror Rec.Insert(false)"),
             "(AssertErrorStmt asserterror (ExprStmt (CallExpr (MemberExpr (NameRef Rec) . (NameRef Insert)) (ArgList ( (Literal false) )))))"
-        );
-    }
-
-    /// `continue` (AL 16 and later, corpus types/PUContinue.al on the staging branch): a statement of its
-    /// own, but only when nothing continues the expression, so a variable called `Continue` (common in
-    /// older code) is still a variable.
-    #[test]
-    fn continue_statement_and_a_variable_called_continue() {
-        assert_eq!(s("continue"), "(ContinueStmt continue)");
-        assert_eq!(
-            s("begin if x then continue; end"),
-            "(Block begin (IfStmt if (NameRef x) then (ContinueStmt continue)) ; end)"
-        );
-        assert_eq!(
-            s("if x then continue else y := 1"),
-            "(IfStmt if (NameRef x) then (ContinueStmt continue) else (AssignStmt (NameRef y) := (Literal 1)))"
-        );
-        assert_eq!(
-            s("Continue := true"),
-            "(AssignStmt (NameRef Continue) := (Literal true))"
-        );
-        assert_eq!(
-            s("continue.Add(1)"),
-            "(ExprStmt (CallExpr (MemberExpr (NameRef continue) . (NameRef Add)) (ArgList ( (Literal 1) ))))"
         );
     }
 

@@ -214,9 +214,22 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_098, "API Webhook Notification Aggr", Provider::Stored),
 ];
 
+/// Platform tables that only the System app of a later major declares (the registry above is checked against the System app
+/// of the first major the corpus pins, `tests/platform_tables.rs`). Ordinary stored tables here, written by install code:
+/// "Agent Install" (System Application "Agent Upgrade") and "MCP Install" insert into them, and without a provider the install
+/// baseline of those majors stopped at them and left tables unseeded. No corpus test touches them.
+pub const LATER_MAJORS: &[(u32, &str, Provider)] = &[
+    (2_000_000_297, "Agent Creation Control", Provider::Stored),
+    (2_000_000_292, "MCP Configuration", Provider::Stored),
+];
+
 /// The provider of platform table `id`, if it has one.
 pub fn provider(id: u32) -> Option<Provider> {
-    REGISTRY.iter().find(|(i, _, _)| *i == id).map(|(_, _, p)| *p)
+    REGISTRY
+        .iter()
+        .chain(LATER_MAJORS)
+        .find(|(i, _, _)| *i == id)
+        .map(|(_, _, p)| *p)
 }
 
 /// The computed-table provider of platform table `id`, if it is one.

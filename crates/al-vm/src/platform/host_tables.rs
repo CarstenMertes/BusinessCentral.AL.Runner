@@ -22,19 +22,15 @@ pub(super) fn time_zone_rows(t: &TableDef, i: &Ident) -> Vec<Entry> {
         .collect()
 }
 
-/// The Feature Key table of the BC 27.5 platform: ID, `Enabled`
-/// (None or All Users per row), `Mandatory By` (the wave the mandatory-by version falls in), `Mandatory By Version`,
-/// `Can Try`, `Is One Way` and `Data Update Required`, all from record/PFFeatureKeyColumns.al
-/// (FeatureKey_RowsPerId_PerMeasuredVersion; the state is per tenant); `Enabled` and `Data Update Required` also
-/// record/TestFeatureKeyEnabledContracts.al and record/TestFieldLenAndFeatureKeyContracts.al:83-125. The other minors of a
-/// major differ in a few rows (27.0, 28.0) and were not measured by an oracle run here; the Description columns are not
-/// pinned. The rows of BC 28.5 and 29.0 are in the same corpus file, but a run for those majors still compiles the BC 27.5 Base
-/// Application, whose `Application System Constants` answers `W1 27.5`, so the test would key on the 27.5 rows
-/// while the table answered the newer ones: a target other than 27.5 is refused until the runtime loads the matching Base Application.
+/// The Feature Key table: ID, `Enabled` (None or All Users per row), `Mandatory By` (the wave the mandatory-by version falls in),
+/// `Mandatory By Version`, `Can Try`, `Is One Way` and `Data Update Required`, per major from record/PFFeatureKeyColumns.al
+/// (FeatureKey_RowsPerId_PerMeasuredVersion; the state is per tenant); `Enabled` and `Data Update Required` of the first major
+/// also record/TestFieldLenAndFeatureKeyContracts.al:83-125. The three lists are the newest minor of each major; other
+/// minors differ in a few rows and are refused. The Description columns are not pinned.
 pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>) -> Vec<Entry> {
     // (ID, Enabled is All Users, Mandatory By Version major, Can Try, Is One Way, Data Update Required)
     type Row = (&'static str, bool, u32, bool, bool, bool);
-    const ROWS: &[Row] = &[
+    const ROWS_FIRST: &[Row] = &[
         ("AdvancedTellMe", false, 28, false, false, false),
         ("CalcOnlyVisibleFlowFields", true, 28, true, false, false),
         ("ConcealedMaskType", true, 29, false, false, false),
@@ -66,14 +62,72 @@ pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>
         ("SaveValueToDatabasePromptly", true, 29, true, false, false),
         ("SemanticMetadataSearch", true, 28, false, false, false),
     ];
-    if !al_version::feature_key_rows_known(target) {
-        return vec![Entry::poisoned_prefix(
-            blank(t),
-            0,
-            "Feature Key: its rows are served for the one major they were measured on: the other majors still run against that major's Application System Constants, whose version the corpus test keys its expected rows on (docs/probes-needed.md)".into(),
-        )];
-    }
-    let rows = ROWS;
+    const ROWS_SECOND: &[Row] = &[
+        ("AdvancedTellMe", false, 29, false, false, false),
+        ("ConcealedMaskType", true, 29, false, false, false),
+        ("ConcurrentInventoryPosting", true, 29, false, false, false),
+        ("ConcurrentJobPosting", true, 29, false, false, false),
+        ("ConcurrentResourcePosting", true, 29, false, false, false),
+        (
+            "DisableSoapWebServicesOnMicrosoftUIPages",
+            true,
+            29,
+            false,
+            false,
+            false,
+        ),
+        ("EXRPerformantTrialBalance", true, 31, true, false, false),
+        ("FinancialReportDefaults", true, 29, true, false, false),
+        ("FullTextSearch", false, 29, true, false, false),
+        (
+            "Manufacturing_FlushingMethod_ActivateManualWoPick",
+            false,
+            29,
+            false,
+            true,
+            true,
+        ),
+        ("ReminderTermsCommunicationTexts", true, 29, false, false, false),
+        ("SalesPrices", false, 31, false, true, true),
+        ("SaveValueToDatabasePromptly", true, 29, true, false, false),
+        ("SemanticMetadataSearch", false, 29, false, false, false),
+    ];
+    const ROWS_THIRD: &[Row] = &[
+        ("AcceleratedDepreciation", false, 31, false, true, true),
+        ("AdvancedTellMe", true, 30, false, false, false),
+        ("ConcurrentInventoryPosting", true, 31, false, false, false),
+        ("ConcurrentJobPosting", true, 31, false, false, false),
+        ("ConcurrentResourcePosting", true, 31, false, false, false),
+        (
+            "DisableSoapWebServicesOnMicrosoftUIPages",
+            true,
+            29,
+            false,
+            false,
+            false,
+        ),
+        ("DocumentReportExperience", true, 31, false, false, false),
+        ("EXRPerformantTrialBalance", true, 31, true, false, false),
+        ("FinancialReportDefaults", true, 29, true, false, false),
+        ("FullTextSearch", false, 30, true, false, false),
+        ("SalesPrices", false, 31, false, true, true),
+        ("SaveValueToDatabasePromptly", true, 30, true, false, false),
+        ("SemanticMetadataSearch", true, 30, false, false, false),
+    ];
+    use al_version::FeatureKeyRows;
+    let rows = match al_version::feature_key_rows(target) {
+        Some(FeatureKeyRows::Bc27) => ROWS_FIRST,
+        Some(FeatureKeyRows::Bc28) => ROWS_SECOND,
+        Some(FeatureKeyRows::Bc29) => ROWS_THIRD,
+        None => {
+            return vec![Entry::poisoned_prefix(
+                blank(t),
+                0,
+                "Feature Key: its rows are served for the minors they were measured on only (docs/probes-needed.md)"
+                    .into(),
+            )];
+        }
+    };
     rows.iter()
         .map(|(id, all_users, version, can_try, one_way, data_update)| {
             let mut r = blank(t);

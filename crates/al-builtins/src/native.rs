@@ -959,7 +959,11 @@ fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
     // A text of ASCII only is indexed by byte, with no copy: a loop of CopyStr over a long text stays linear in
     // the loop (Pageworks' asset parsing).
     let ascii = whole.is_ascii();
-    let s: Vec<u16> = if ascii { Vec::new() } else { whole.encode_utf16().collect() };
+    let s: Vec<u16> = if ascii {
+        Vec::new()
+    } else {
+        whole.encode_utf16().collect()
+    };
     let total = if ascii { whole.len() } else { s.len() };
     let pos = int_arg(args, 1).unwrap_or(1);
     // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.

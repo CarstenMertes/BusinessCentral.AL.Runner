@@ -757,3 +757,22 @@ fn a_removed_field_is_not_enumerated_and_its_field_call_raises_the_obsolete_erro
         "3NoYes,Id(1) Txt(2) Last(4) |Field Gone (3) of table ALT Removed (50910) is obsoleted, reason: probe|MetadataObsolete"
     );
 }
+
+#[test]
+fn filter_group_assigns_as_a_property_of_a_record_ref() {
+    // `RecRef.FilterGroup := 2` is the setter form of `RecRef.FilterGroup(2)` (Base Application's Find Record
+    // Management does it). RecordRef.FilterGroup itself is an assumption: no corpus test calls it
+    // (docs/probes-needed.md).
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; s: Text; begin
+            RR.Open(50900);
+            s := Format(RR.FilterGroup());
+            RR.FilterGroup := 2;
+            s += '|' + Format(RR.FilterGroup);
+            RR.FilterGroup := 0;
+            exit(s + '|' + Format(RR.FilterGroup()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "0|2|0");
+}

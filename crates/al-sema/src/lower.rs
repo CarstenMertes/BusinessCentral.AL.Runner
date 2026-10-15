@@ -2172,6 +2172,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             )
             | ("Record" | "RecordRef", "ReadIsolation" | "SecurityFiltering")
             | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")
+            | ("RecordRef", "FilterGroup")
             | ("Report", "UseRequestPage" | "Language" | "FormatRegion")
             | ("System", "WorkDate")
             | ("HttpRequestMessage", "Method" | "Content")
@@ -4536,6 +4537,15 @@ impl Lowerer<'_> {
                         args: Vec::new(),
                         ret_used: true,
                     })
+                }
+                // `GetLocation(Code)."Bin Mandatory"`: a field of what a procedure returns. A call result is not a
+                // place, so the base is evaluated and the field read off the record it gives. No corpus test
+                // reads a field of a returned record (docs/probes-needed.md).
+                Some(Res::Field { table, id })
+                    if n.kind() == MemberExpr && kids.first().is_some_and(|b| b.kind() == SyntaxKind::CallExpr) =>
+                {
+                    let pos = self.readable_field_pos(table, id)?;
+                    Ok(ir::Expr::FieldOf(Box::new(self.expr(&kids[0])?), pos))
                 }
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },

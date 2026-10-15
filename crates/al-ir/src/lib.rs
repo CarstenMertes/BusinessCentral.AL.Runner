@@ -1168,6 +1168,9 @@ pub enum Expr {
         page: Box<Expr>,
         control: usize,
     },
+    /// Field `pos` of the record `base` evaluates to (`GetLocation(Code)."Bin Mandatory"`: a field of a
+    /// procedure's result, which is not a place).
+    FieldOf(Box<Expr>, usize),
     /// The current row's value of column `column` of a query variable (`Q.Amount`).
     QueryColumn {
         query: Box<Expr>,

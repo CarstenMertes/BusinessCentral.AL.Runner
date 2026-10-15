@@ -1528,6 +1528,11 @@ impl Session {
             "Next" => {
                 let steps = match args.first() {
                     Some(Value::Integer(n)) => *n,
+                    // A whole-number Decimal (`Calendar.Next(12 / CountFrequency)`); a fraction would round or
+                    // truncate, which is not pinned.
+                    Some(Value::Decimal(d)) if d.fract().is_zero() && i32::try_from(d.trunc()).is_ok() => {
+                        i32::try_from(d.trunc()).unwrap_or(0)
+                    }
                     None => 1,
                     other => return unsupported(format!("Next({})", other.describe())),
                 };
@@ -1598,6 +1603,17 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
+                // An empty filter text removes the field's filter: a Query column does so
+                // (query/TestQueryRuntimeContracts.al:208-209, "an empty SetFilter clears the filter"), and the
+                // documentation says the same of a Record. Base Application's BOM Structure does
+                // `Item.SetFilter("No.", ItemFilter)` with an empty `ItemFilter`. The Record form is an assumption
+                // (docs/probes-needed.md).
+                if text.trim().is_empty() {
+                    let mut r = rec.borrow_mut();
+                    let group = r.filter_group;
+                    r.filters.retain(|f| !(f.field == pos && f.group == group));
+                    return Ok(Value::Null);
+                }
                 let engine = self.engine.clone();
                 let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
                 let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {

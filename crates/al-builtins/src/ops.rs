@@ -308,8 +308,11 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
-        (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && int_of(n).is_some() => {
-            let n = int_of(n).expect("int") as i32;
+        // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
+        // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
+        // would round or truncate: not pinned, so it stays refused below (docs/probes-needed.md).
+        (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && whole_days(n).is_some() => {
+            let n = whole_days(n).expect("whole") as i32;
             return Ok(V::Date(if op == Arith::Add { a + n } else { a - n }, *c));
         }
         _ => {}
@@ -367,6 +370,13 @@ fn text_like(v: &Value) -> Option<String> {
     match v {
         Value::Text(s) | Value::Code(s) => Some(s.clone()),
         _ => None,
+    }
+}
+
+fn whole_days(v: &Value) -> Option<i64> {
+    match v {
+        Value::Decimal(d) if d.fract().is_zero() => i64::try_from(d.trunc().mantissa() / 10i128.pow(d.scale())).ok(),
+        other => int_of(other),
     }
 }
 
@@ -643,6 +653,22 @@ mod tests {
             arith(Arith::Add, &Value::Date(10, false), &Value::Integer(2)),
             Ok(Value::Date(12, false))
         ));
+        assert!(matches!(
+            arith(
+                Arith::Add,
+                &Value::Date(10, false),
+                &Value::Decimal(rust_decimal::Decimal::from(3))
+            ),
+            Ok(Value::Date(13, false))
+        ));
+        assert!(
+            arith(
+                Arith::Add,
+                &Value::Date(10, false),
+                &Value::Decimal(rust_decimal::Decimal::new(25, 1))
+            )
+            .is_err()
+        );
         assert!(matches!(
             arith(Arith::Sub, &Value::Date(10, false), &Value::Date(4, false)),
             Ok(Value::Integer(6))

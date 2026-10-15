@@ -83,6 +83,49 @@ pub struct Engine {
     /// The profiles that get an All Profile row (see `platform::profiles::profile_seeds`).
     pub(crate) profile_seeds: std::sync::OnceLock<Vec<(usize, i32)>>,
     pub(crate) delete_subscribed: std::sync::OnceLock<std::collections::HashSet<String>>,
+    /// Per object, per routine: what a call needs to know about the routine, found once (see [`RoutineFacts`]).
+    pub(crate) facts: Vec<Vec<RoutineFacts>>,
+}
+
+/// What a call of a routine asks of the routine's declaration, answered once when the engine is built instead of by
+/// scanning the attributes and the publisher table on every call.
+#[derive(Clone, Copy, Default)]
+pub(crate) struct RoutineFacts {
+    /// The routine is an event publisher: a call raises the event (`dispatch.rs`).
+    pub publisher: bool,
+    /// `[TryFunction]`.
+    pub is_try: bool,
+    /// `[CommitBehavior(...)]`, when the routine declares one that is understood.
+    pub commit_behavior: Option<transactions::CommitBehavior>,
+    /// `[ErrorBehavior(ErrorBehavior::Collect)]`.
+    pub collects: bool,
+    /// An attribute is declared that the runtime does not understand (`CommitBehavior` other than Ignore and Error,
+    /// `ErrorBehavior` other than Collect, or more than one of either): the call takes the slow path, which reports it.
+    pub odd_attributes: bool,
+}
+
+fn routine_facts(r: &ir::Routine, publisher: bool) -> RoutineFacts {
+    let mut f = RoutineFacts {
+        publisher,
+        ..Default::default()
+    };
+    let mut commits = 0;
+    let mut collects = 0;
+    for a in &r.attributes {
+        if a.name.eq_ignore_ascii_case("TryFunction") {
+            f.is_try = true;
+        } else if a.name.eq_ignore_ascii_case("CommitBehavior") {
+            commits += 1;
+            f.commit_behavior = transactions::CommitBehavior::from_attribute(&a.text);
+            f.odd_attributes |= f.commit_behavior.is_none();
+        } else if a.name.eq_ignore_ascii_case("ErrorBehavior") {
+            collects += 1;
+            f.collects = errorcollect::declares_collect(std::slice::from_ref(a)).unwrap_or(false);
+            f.odd_attributes |= !f.collects;
+        }
+    }
+    f.odd_attributes |= commits > 1 || collects > 1;
+    f
 }
 
 impl Engine {
@@ -142,6 +185,18 @@ impl Engine {
             })
             .collect();
         let events = events::Registry::build(&program);
+        let facts = program
+            .objects
+            .iter()
+            .enumerate()
+            .map(|(o, obj)| {
+                obj.routines
+                    .iter()
+                    .enumerate()
+                    .map(|(r, routine)| routine_facts(routine, events.publishers.contains_key(&(o, r))))
+                    .collect()
+            })
+            .collect();
         let mut unevaluable_init = std::collections::HashMap::new();
         for (i, o) in program.objects.iter().enumerate() {
             for (pos, f) in o.table.iter().flat_map(|t| t.fields.iter().enumerate()) {
@@ -163,6 +218,7 @@ impl Engine {
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
             profile_seeds: Default::default(),
+            facts,
         })
     }
 }
@@ -296,6 +352,12 @@ pub struct Session {
     pub(crate) scratch_messages: Option<Vec<String>>,
     /// Value capture and loop tracking (`capture.rs`); `None`: off, and the statements run as they always did.
     pub(crate) capture: Option<Box<capture::Capture>>,
+    /// A capture is on and the routine running is one of the run's apps: the only thing the statements test (one byte).
+    pub(crate) capturing: bool,
+    /// The constants of the program that cost something to build (a Decimal parsed from its text, a shared text, an
+    /// Option's member list), built the first time a node is evaluated, by the address of the node: the program does not
+    /// change while the session runs.
+    constants: std::collections::HashMap<usize, Value, PtrHash>,
     /// Set from another thread to stop the AL code of this session: every loop iteration checks it
     /// and ends the running test with `Signal::Unsupported` (the runner's per-test time limit).
     pub(crate) stop: Arc<std::sync::atomic::AtomicBool>,
@@ -473,6 +535,8 @@ impl Session {
             http_policy: None,
             scratch_messages: None,
             capture: None,
+            capturing: false,
+            constants: Default::default(),
             stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             commits: 0,
             error_scopes: Default::default(),
@@ -771,7 +835,7 @@ impl Session {
         // The builtin being run (a record write that runs triggers and events) keeps its own
         // `ret_used`: the callee's builtins must not change it.
         let ret_used = self.ret_used;
-        let r = if self.engine.events.publishers.contains_key(&(object, routine)) {
+        let r = if self.engine.facts[object][routine].publisher {
             self.publish(object, routine, instance, args)
         } else {
             self.call_inner(object, routine, instance, args)
@@ -829,26 +893,35 @@ impl Session {
             instance,
             locals,
         };
-        let is_try = r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("TryFunction"));
+        let facts = engine.facts[object][routine];
+        let is_try = facts.is_try;
         // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
         // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).
         let saved_commit_behavior = self.commit_behavior;
-        for a in r
-            .attributes
-            .iter()
-            .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
-        {
-            match transactions::CommitBehavior::from_attribute(&a.text) {
-                Some(b) => self.commit_behavior = b,
-                None => {
-                    return Err(Signal::Unsupported(format!(
-                        "{} (only Ignore and Error are pinned)",
-                        a.text
-                    )));
+        let collecting = if facts.odd_attributes {
+            // An attribute the runtime does not understand: the scan that reports it.
+            for a in r
+                .attributes
+                .iter()
+                .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
+            {
+                match transactions::CommitBehavior::from_attribute(&a.text) {
+                    Some(b) => self.commit_behavior = b,
+                    None => {
+                        return Err(Signal::Unsupported(format!(
+                            "{} (only Ignore and Error are pinned)",
+                            a.text
+                        )));
+                    }
                 }
             }
-        }
-        let collecting = errorcollect::declares_collect(&r.attributes)?;
+            errorcollect::declares_collect(&r.attributes)?
+        } else {
+            if let Some(b) = facts.commit_behavior {
+                self.commit_behavior = b;
+            }
+            facts.collects
+        };
         if collecting {
             self.error_scopes.open();
         }
@@ -868,9 +941,17 @@ impl Session {
             routine,
             pos: ir::NO_POS,
         });
-        self.cap_enter_frame(object, r, &frame.locals);
-        let mut outcome = self.exec_block(&r.body, &mut frame);
-        self.cap_leave_frame(&outcome);
+        if self.capture.is_some() {
+            self.cap_enter_frame(object, r, &frame.locals);
+        }
+        let mut outcome = if self.capturing {
+            self.exec_block::<true>(&r.body, &mut frame)
+        } else {
+            self.exec_block::<false>(&r.body, &mut frame)
+        };
+        if self.capture.is_some() {
+            self.cap_leave_frame(&outcome);
+        }
         if self.fault_trace && matches!(outcome, Err(Signal::Error(_) | Signal::Unsupported(_))) {
             self.note_fault();
         }
@@ -950,17 +1031,28 @@ impl Session {
         Ok(())
     }
 
-    fn exec_block(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
-        if self.capture.as_ref().is_some_and(|c| c.tracking()) {
+    /// Runs a block. `CAP` is whether a capture watches the routine (`capture.rs`): the two instances are two
+    /// functions, so a run without a capture executes code that has no trace of it.
+    fn exec_block<const CAP: bool>(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
+        if CAP {
             return self.exec_block_captured(stmts, f);
         }
         for s in stmts {
-            self.exec(s, f)?;
+            self.exec::<false>(s, f)?;
         }
         Ok(())
     }
 
-    fn exec(&mut self, s: &ir::Stmt, f: &mut Frame) -> Result<(), Signal> {
+    /// [`Session::exec_block`] for the instance the routine running now needs.
+    fn exec_block_dyn(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
+        if self.capturing {
+            self.exec_block::<true>(stmts, f)
+        } else {
+            self.exec_block::<false>(stmts, f)
+        }
+    }
+
+    fn exec<const CAP: bool>(&mut self, s: &ir::Stmt, f: &mut Frame) -> Result<(), Signal> {
         use ir::Stmt as S;
         match s {
             S::Assume(a) => {
@@ -984,18 +1076,20 @@ impl Session {
             S::Expr(e) => self.eval(e, f).map(|_| ()),
             S::If(c, t, e) => {
                 if ops::truthy(&self.eval(c, f)?)? {
-                    self.exec_block(t, f)
+                    self.exec_block::<CAP>(t, f)
                 } else {
-                    self.exec_block(e, f)
+                    self.exec_block::<CAP>(e, f)
                 }
             }
             S::While(c, body) => {
                 let here = self.call_stack.last().map(|t| t.pos);
-                let lid = self.cap_loop_enter();
+                let lid = if CAP { self.cap_loop_enter() } else { None };
                 while ops::truthy(&self.eval(c, f)?)? {
                     self.check_stop()?;
-                    self.cap_loop_pass(lid);
-                    match self.exec_block(body, f) {
+                    if CAP {
+                        self.cap_loop_pass(lid);
+                    }
+                    match self.exec_block::<CAP>(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
@@ -1003,16 +1097,20 @@ impl Session {
                     // The condition belongs to the loop's line, not to the body's last statement.
                     self.restore_pos(here);
                 }
-                self.cap_loop_exit(lid);
+                if CAP {
+                    self.cap_loop_exit(lid);
+                }
                 Ok(())
             }
             S::Repeat(body, until) => {
                 let here = self.call_stack.last().map(|t| t.pos);
-                let lid = self.cap_loop_enter();
+                let lid = if CAP { self.cap_loop_enter() } else { None };
                 loop {
                     self.check_stop()?;
-                    self.cap_loop_pass(lid);
-                    match self.exec_block(body, f) {
+                    if CAP {
+                        self.cap_loop_pass(lid);
+                    }
+                    match self.exec_block::<CAP>(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
@@ -1022,7 +1120,9 @@ impl Session {
                         break;
                     }
                 }
-                self.cap_loop_exit(lid);
+                if CAP {
+                    self.cap_loop_exit(lid);
+                }
                 Ok(())
             }
             S::For {
@@ -1052,23 +1152,35 @@ impl Session {
                 let (from, to) = (bound(from), bound(to));
                 let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
-                let lid = self.cap_loop_enter();
+                let lid = if CAP { self.cap_loop_enter() } else { None };
+                // The type of the counter variable does not change while the loop runs: found once.
+                let slot_ty = self.place_type(var, f);
+                let option_like = matches!(slot_ty, RtType::Option(_) | RtType::Enum(_));
+                let is_boolean = matches!(slot_ty, RtType::Boolean);
+                let is_integer = matches!(slot_ty, RtType::Integer);
                 while if *down { i >= end } else { i <= end } {
                     self.check_stop()?;
-                    self.cap_loop_pass(lid);
-                    let slot_ty = self.place_type(var, f);
-                    if matches!(slot_ty, RtType::Option(_) | RtType::Enum(_)) {
+                    if CAP {
+                        self.cap_loop_pass(lid);
+                    }
+                    if option_like {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
                     }
-                    let counter = if matches!(slot_ty, RtType::Boolean) {
+                    let counter = if is_boolean {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
                         Value::Boolean(i != 0)
+                    } else if is_integer && let Ok(n) = i32::try_from(i) {
+                        // What the conversion of a BigInteger into an Integer gives, without the Decimal in between; a
+                        // counter beyond Integer takes the general path, which reports it.
+                        Value::Integer(n)
                     } else {
                         ops::convert(Value::BigInteger(i), &slot_ty)?
                     };
                     self.write(var, counter, f)?;
-                    self.cap_loop_var(var, f);
-                    match self.exec_block(body, f) {
+                    if CAP {
+                        self.cap_loop_var(var, f);
+                    }
+                    match self.exec_block::<CAP>(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
@@ -1078,7 +1190,9 @@ impl Session {
                     i = int(&bound(self.read(var, f)?))?;
                     i += if *down { -1 } else { 1 };
                 }
-                self.cap_loop_exit(lid);
+                if CAP {
+                    self.cap_loop_exit(lid);
+                }
                 Ok(())
             }
             S::Foreach { var, collection, body } => {
@@ -1099,18 +1213,24 @@ impl Session {
                         None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
                 };
-                let lid = self.cap_loop_enter();
+                let lid = if CAP { self.cap_loop_enter() } else { None };
                 for item in items {
-                    self.cap_loop_pass(lid);
+                    if CAP {
+                        self.cap_loop_pass(lid);
+                    }
                     self.write(var, item, f)?;
-                    self.cap_loop_var(var, f);
-                    match self.exec_block(body, f) {
+                    if CAP {
+                        self.cap_loop_var(var, f);
+                    }
+                    match self.exec_block::<CAP>(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
                     }
                 }
-                self.cap_loop_exit(lid);
+                if CAP {
+                    self.cap_loop_exit(lid);
+                }
                 Ok(())
             }
             S::Case {
@@ -1121,10 +1241,10 @@ impl Session {
                 let v = self.eval(scrutinee, f)?;
                 for (labels, body) in branches {
                     if self.matches_any(&v, labels, f)? {
-                        return self.exec_block(body, f);
+                        return self.exec_block::<CAP>(body, f);
                     }
                 }
-                self.exec_block(otherwise, f)
+                self.exec_block::<CAP>(otherwise, f)
             }
             S::Exit(e) => {
                 let v = match e {
@@ -1163,7 +1283,7 @@ impl Session {
                 // earlier writes are lost with it
                 // (record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
                 // Asserterror_InAModalHandler_RollsBackToTheLastCommit).
-                match self.exec_block(body, f) {
+                match self.exec_block::<CAP>(body, f) {
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).
@@ -1217,7 +1337,7 @@ impl Session {
     fn eval(&mut self, e: &ir::Expr, f: &mut Frame) -> Result<Value, Signal> {
         use ir::Expr as E;
         match e {
-            E::Const(c) => Ok(constant(c)),
+            E::Const(c) => Ok(self.constant_once(c)),
             E::Load(p) => self.read(p, f),
             E::Convert(t, e) => {
                 let v = self.eval(e, f)?;
@@ -2088,6 +2208,55 @@ fn int(v: &Value) -> Result<i64, Signal> {
 pub(crate) fn value_kind(v: &Value) -> String {
     let d = v.describe();
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
+}
+
+/// Hashes a node address: a multiply, where the default hasher reads eight bytes through SipHash.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct PtrHash(u64);
+
+impl std::hash::BuildHasher for PtrHash {
+    type Hasher = PtrHash;
+    fn build_hasher(&self) -> PtrHash {
+        PtrHash(0)
+    }
+}
+
+impl std::hash::Hasher for PtrHash {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(*b)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+    fn write_usize(&mut self, n: usize) {
+        self.0 = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+impl Session {
+    /// The value of a constant node. The ones that cost something to build are built once per session.
+    #[inline(always)]
+    fn constant_once(&mut self, c: &ir::Const) -> Value {
+        match c {
+            ir::Const::Integer(i) => Value::Integer(*i),
+            ir::Const::Boolean(b) => Value::Boolean(*b),
+            ir::Const::Decimal(_) | ir::Const::Text(_) | ir::Const::Option(..) => self.constant_cached(c),
+            other => constant(other),
+        }
+    }
+
+    #[inline(never)]
+    fn constant_cached(&mut self, c: &ir::Const) -> Value {
+        let key = c as *const ir::Const as usize;
+        if let Some(v) = self.constants.get(&key) {
+            return v.clone();
+        }
+        let v = constant(c);
+        self.constants.insert(key, v.clone());
+        v
+    }
 }
 
 fn constant(c: &ir::Const) -> Value {

@@ -210,6 +210,7 @@ fn written_locals(s: &ir::Stmt) -> Vec<usize> {
 impl Session {
     /// Turns capture on. `Session::take_capture` hands over what was collected.
     pub fn enable_capture(&mut self, cfg: CaptureConfig) {
+        self.capturing = false;
         self.capture = cfg.any().then(|| {
             Box::new(Capture {
                 cfg,
@@ -234,6 +235,8 @@ impl Session {
         c.active.clear();
         c.stmt.clear();
         c.open.clear();
+        self.capturing = false;
+        let c = self.capture.as_mut().expect("checked above");
         std::mem::take(&mut c.out)
     }
 
@@ -284,6 +287,7 @@ impl Session {
     }
 
     /// A routine starts: the locals it starts with are the baseline of what its statements write.
+    #[inline(never)]
     pub(crate) fn cap_enter_frame(&mut self, object: usize, r: &ir::Routine, locals: &[Value]) {
         if self.capture.is_none() {
             return;
@@ -302,6 +306,8 @@ impl Session {
         };
         let Some(c) = self.capture.as_mut() else { return };
         let active_at_start = c.active.len();
+        self.capturing = tracked;
+        let Some(c) = self.capture.as_mut() else { return };
         c.frames.push(CapFrame {
             tracked,
             scope: r.name.clone(),
@@ -312,6 +318,7 @@ impl Session {
     }
 
     /// A routine ends. The loops of it that are open end with it.
+    #[inline(never)]
     pub(crate) fn cap_leave_frame(&mut self, outcome: &Result<(), Signal>) {
         let Some(c) = self.capture.as_mut() else { return };
         let Some(fr) = c.frames.pop() else { return };
@@ -324,6 +331,7 @@ impl Session {
             c.close(id, by);
         }
         c.active.truncate(fr.active_at_start);
+        self.capturing = c.frames.last().is_some_and(|f| f.tracked);
     }
 
     /// A statement marker ran: the statement is one of the open loops' pass.
@@ -398,6 +406,7 @@ impl Session {
     }
 
     /// A loop statement starts. `None`: nothing is tracked.
+    #[inline(never)]
     pub(crate) fn cap_loop_enter(&mut self) -> Option<u32> {
         let c = self.capture.as_mut()?;
         if !c.cfg.loops {
@@ -429,6 +438,7 @@ impl Session {
     }
 
     /// A pass of the loop starts.
+    #[inline(never)]
     pub(crate) fn cap_loop_pass(&mut self, id: Option<u32>) {
         let (Some(id), Some(c)) = (id, self.capture.as_mut()) else {
             return;
@@ -437,6 +447,7 @@ impl Session {
     }
 
     /// The loop ends (its statement completes).
+    #[inline(never)]
     pub(crate) fn cap_loop_exit(&mut self, id: Option<u32>) {
         let (Some(id), Some(c)) = (id, self.capture.as_mut()) else {
             return;
@@ -449,6 +460,7 @@ impl Session {
     }
 
     /// The variable of a `for` or `foreach` was given the value of the pass that starts: a record for the loop statement.
+    #[inline(never)]
     pub(crate) fn cap_loop_var(&mut self, var: &ir::Place, f: &Frame) {
         if !self.capture.as_ref().is_some_and(|c| c.cfg.values && c.tracking()) {
             return;
@@ -504,21 +516,22 @@ impl Session {
     }
 
     /// Runs a block with the capture's eyes on it: a marker and the statement after it are one statement.
+    #[inline(never)]
     pub(crate) fn exec_block_captured(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
         let mut i = 0;
         while i < stmts.len() {
             if let ir::Stmt::Pos(p) = &stmts[i] {
-                self.exec(&stmts[i], f)?;
+                self.exec::<true>(&stmts[i], f)?;
                 self.cap_stmt_hit(*p);
                 // Markers of an assumption sit between the position and its statement.
                 let mut j = i + 1;
                 while let Some(m @ ir::Stmt::Assume(_)) = stmts.get(j) {
-                    self.exec(m, f)?;
+                    self.exec::<true>(m, f)?;
                     j += 1;
                 }
                 if let Some(next) = stmts.get(j) {
                     self.cap_push_stmt(*p);
-                    let r = self.exec(next, f);
+                    let r = self.exec::<true>(next, f);
                     self.cap_pop_stmt();
                     r?;
                     self.cap_after(*p, next, f);
@@ -526,7 +539,7 @@ impl Session {
                     continue;
                 }
             } else {
-                self.exec(&stmts[i], f)?;
+                self.exec::<true>(&stmts[i], f)?;
             }
             i += 1;
         }

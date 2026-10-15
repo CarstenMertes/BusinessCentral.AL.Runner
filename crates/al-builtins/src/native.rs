@@ -552,7 +552,7 @@ fn all() -> impl Iterator<Item = &'static (&'static str, NativeFn)> {
 fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
     static TABLE: std::sync::OnceLock<std::collections::HashMap<String, NativeFn>> = std::sync::OnceLock::new();
     TABLE.get_or_init(|| {
-        let cat = crate::catalog::Catalog::load();
+        let cat = crate::catalog::Catalog::shared();
         cat.signatures
             .iter()
             .filter_map(|sig| {
@@ -574,23 +574,62 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
     })
 }
 
-/// The implementation registered for overload `id`, if any.
+/// The implementation registered for overload `id`, if any. One hash probe over a table built once: the registry lists in
+/// order (the first entry for an id wins), then the implementations chosen per catalog signature, then the platform's.
 pub fn lookup(id: &str) -> Option<NativeFn> {
-    // One hash probe for the registered ids (the first registration of an id wins, as the scan it replaces did).
-    static REGISTERED: std::sync::OnceLock<std::collections::HashMap<&'static str, NativeFn>> =
+    static TABLE: std::sync::OnceLock<std::collections::HashMap<String, NativeFn, BuildFnv>> =
         std::sync::OnceLock::new();
-    let registered = REGISTERED.get_or_init(|| {
-        let mut m = std::collections::HashMap::new();
-        for (i, f) in all() {
-            m.entry(*i).or_insert(*f);
-        }
-        m
-    });
-    registered
+    TABLE
+        .get_or_init(|| {
+            let mut t = std::collections::HashMap::with_hasher(BuildFnv);
+            for (i, f) in all() {
+                t.entry((*i).to_string()).or_insert(*f);
+            }
+            for (i, f) in derived() {
+                t.entry(i.clone()).or_insert(*f);
+            }
+            for (i, f) in crate::platform_native::entries() {
+                t.entry(i.to_string()).or_insert(f);
+            }
+            t
+        })
         .get(id)
         .copied()
+}
+
+/// FNV-1a over the bytes: the ids are short ASCII names we wrote ourselves, so the default hasher's protection against
+/// chosen keys buys nothing, and its cost is more than a scan of the first entries.
+#[derive(Default, Clone, Copy)]
+struct BuildFnv;
+
+struct Fnv(u64);
+
+impl std::hash::BuildHasher for BuildFnv {
+    type Hasher = Fnv;
+    fn build_hasher(&self) -> Fnv {
+        Fnv(0xcbf2_9ce4_8422_2325)
+    }
+}
+
+impl std::hash::Hasher for Fnv {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0 ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+}
+
+/// [`lookup`] the way it was before the table: scans in the same order. The test compares the two.
+#[cfg(test)]
+fn lookup_by_scan(id: &str) -> Option<NativeFn> {
+    all()
+        .find(|(i, _)| *i == id)
+        .map(|(_, f)| *f)
         .or_else(|| derived().get(id).copied())
-        .or_else(|| crate::platform_native::lookup(id))
+        .or_else(|| crate::platform_native::lookup_by_scan(id))
 }
 
 /// Every registered id, for the conformance test.
@@ -1293,6 +1332,20 @@ fn value_kind(v: &Value) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+    #[test]
+    fn the_table_finds_what_the_scan_found_for_every_id_and_nothing_for_other_text() {
+        let mut ids = registered_ids();
+        ids.extend(crate::platform_native::entries().map(|(i, _)| i));
+        assert!(ids.len() > 500, "{}", ids.len());
+        for id in ids {
+            let (a, b) = (lookup(id), lookup_by_scan(id));
+            assert!(a.is_some() && b.is_some(), "{id}");
+            assert_eq!(a.map(|f| f as usize), b.map(|f| f as usize), "{id}");
+        }
+        for id in ["", "Nope.Nothing#9", "System.StrLen", "system.strlen#1"] {
+            assert!(lookup(id).is_none() && lookup_by_scan(id).is_none(), "{id}");
+        }
+    }
 
     // TestField with an ErrorInfo is implemented (issue 41): a check that holds raises nothing, a failing one
     // is refused at run time (al-vm recmeta.rs `test_field`, al-vm/tests/scm_service_41.rs). Issue 42 refused

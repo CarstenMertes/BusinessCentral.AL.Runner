@@ -143,10 +143,10 @@ impl Session {
         pos: usize,
         value: Value,
     ) -> Result<(), Signal> {
-        let schema = self.engine.program.objects[t.object as usize]
-            .table
-            .clone()
-            .expect("table");
+        // The table's schema is read through the engine, not copied: a copy of every field and string on each Validate
+        // was 23 % of a Tests-ERM run (docs/reviews/2026-10-pageworks-profile.md).
+        let engine = self.engine.clone();
+        let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
         let field = &schema.fields[pos];
         if field
             .properties

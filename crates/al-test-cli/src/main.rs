@@ -512,6 +512,7 @@ fn run_version(
         isolation: None,
         coverage: false,
         execute: false,
+        capture: Default::default(),
         hooks: Default::default(),
     };
     let load_time = started.elapsed();

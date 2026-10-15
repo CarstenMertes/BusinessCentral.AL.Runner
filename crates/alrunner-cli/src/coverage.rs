@@ -207,6 +207,7 @@ mod tests {
             time: std::time::Duration::ZERO,
             coverage,
             messages: Vec::new(),
+            captured: None,
         }
     }
 

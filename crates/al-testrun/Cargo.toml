@@ -20,5 +20,8 @@ sha2 = "0.10"
 rayon = "1"
 al-syntax.workspace = true
 
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
 [dev-dependencies]
 tempfile = "3"

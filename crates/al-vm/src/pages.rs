@@ -2725,8 +2725,8 @@ impl Session {
     /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
-        // SetValue through a part whose control says Editable = false writes anyway (corpus branch
-        // al-runtime-rs: testpart/TestPartCloseLinkEditableContracts.al:
+        // SetValue through a part whose control says Editable = false writes anyway
+        // (testpart/TestPartCloseLinkEditableContracts.al:
         // Parts_EnabledReadsTheControl_EditableFalseDoesNotBlockWrites). New() and Next() onto the
         // new-row line of such a part are not pinned and stay refused.
         self.activate(st, idx)?;

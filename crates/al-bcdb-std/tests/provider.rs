@@ -173,3 +173,98 @@ fn the_cached_artifact_is_the_apps_build_else_the_newest_of_the_version() {
         "{err}"
     );
 }
+
+/// A source that counts how often the table list is asked for.
+struct Counting {
+    inner: Box<dyn al_bcdb::BcSource>,
+    asked: std::sync::Arc<std::sync::atomic::AtomicUsize>,
+}
+
+impl al_bcdb::BcSource for Counting {
+    fn tables(&self) -> al_bcdb::Result<&[al_bcdb::SourceTable]> {
+        self.asked.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+        self.inner.tables()
+    }
+    fn row_count(&self, t: &al_bcdb::SourceTable) -> al_bcdb::Result<i64> {
+        self.inner.row_count(t)
+    }
+    fn columns(&self, t: &al_bcdb::SourceTable) -> al_bcdb::Result<Vec<al_bcdb::types::SysColumn>> {
+        self.inner.columns(t)
+    }
+    fn row_key_columns(&self, t: &al_bcdb::SourceTable) -> al_bcdb::Result<Vec<String>> {
+        self.inner.row_key_columns(t)
+    }
+    fn read_rows(
+        &self,
+        t: &al_bcdb::SourceTable,
+        columns: &[al_bcdb::types::SysColumn],
+        sink: &mut dyn FnMut(&[al_bcdb::value::Value]) -> al_bcdb::Result<bool>,
+    ) -> al_bcdb::Result<()> {
+        self.inner.read_rows(t, columns, sink)
+    }
+    fn banner(&self) -> al_bcdb::Result<String> {
+        self.inner.banner()
+    }
+}
+
+#[test]
+fn reading_a_table_does_not_list_and_parse_every_table_of_the_backup_again() {
+    // Parsing and sorting all table names cost milliseconds per read (a run reads dozens of tables).
+    let asked = std::sync::Arc::new(std::sync::atomic::AtomicUsize::new(0));
+    let file = al_bcdb_std::FileSource::open(fixture("typeprobe.bak")).unwrap();
+    let inner = al_bcdb::open(Box::new(file)).unwrap();
+    let src = Counting {
+        inner,
+        asked: asked.clone(),
+    };
+    let p = BackupProvider::from_source(Box::new(src), Some("TP"), "typeprobe.bak".into()).unwrap();
+    let after_open = asked.load(std::sync::atomic::Ordering::SeqCst);
+    for name in ["exttest", "exttest4", "probe", "exttest"] {
+        let per_company = name != "probe";
+        p.read(&request(name, None, per_company)).unwrap();
+    }
+    assert_eq!(
+        asked.load(std::sync::atomic::Ordering::SeqCst),
+        after_open,
+        "reads must reuse the table list parsed at open"
+    );
+}
+
+#[test]
+fn the_page_map_of_a_backup_is_kept_in_the_index_directory_and_used_by_the_next_open() {
+    let dir = tempfile::tempdir().unwrap();
+    let bak = fixture("typeprobe.bak");
+    let first = BackupProvider::open_with_index_dir(&bak, Some("TP"), Some(dir.path())).unwrap();
+    let files: Vec<_> = std::fs::read_dir(dir.path())
+        .unwrap()
+        .map(|e| e.unwrap().path())
+        .collect();
+    assert_eq!(files.len(), 1, "one index file: {files:?}");
+    let saved = std::fs::read(&files[0]).unwrap();
+    let second = BackupProvider::open_with_index_dir(&bak, Some("TP"), Some(dir.path())).unwrap();
+    assert_eq!(
+        std::fs::read(&files[0]).unwrap(),
+        saved,
+        "the second open rewrites nothing"
+    );
+    for name in ["exttest", "exttest4"] {
+        let (a, b) = (
+            first.read(&request(name, None, true)).unwrap(),
+            second.read(&request(name, None, true)).unwrap(),
+        );
+        assert_eq!(a, b, "{name}");
+    }
+    // a damaged index file is ignored and replaced
+    std::fs::write(&files[0], b"junk").unwrap();
+    BackupProvider::open_with_index_dir(&bak, Some("TP"), Some(dir.path())).unwrap();
+    assert_eq!(std::fs::read(&files[0]).unwrap(), saved);
+    // an unwritable directory is not an error
+    BackupProvider::open_with_index_dir(&bak, Some("TP"), Some(&dir.path().join("no/such/\0dir"))).unwrap();
+}
+
+#[test]
+fn a_bacpac_has_no_page_map_to_keep() {
+    let dir = tempfile::tempdir().unwrap();
+    BackupProvider::open_with_index_dir(&fixture("typeprobe.bacpac"), Some("TP"), Some(dir.path())).unwrap();
+    assert_eq!(std::fs::read_dir(dir.path()).unwrap().count(), 0);
+}

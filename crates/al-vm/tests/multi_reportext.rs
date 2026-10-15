@@ -1,5 +1,5 @@
 //! Several reportextensions that change one report run (ADR-025). Each test names the corpus test
-//! that pins it (tests/al-language/reportextensiontrigger/ on the corpus branch `al-runtime-rs`).
+//! that pins it (tests/al-language/reportextensiontrigger/).
 
 use al_builtins::native::Signal;
 use al_builtins::value::Value;

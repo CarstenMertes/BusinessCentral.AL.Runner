@@ -63,8 +63,8 @@ impl Session {
                 // The session user's row exists when a test runs: the runner's client session is the
                 // sign-in that creates it. One row, Scope Tenant, App ID Base Application, language
                 // and locale 1033, a profile id that is not blank; the profile, time zone and company
-                // are tenant data and not pinned (session/TestUserPersonalizationRowContracts.al:11-35,
-                // corpus branch al-runtime-rs d0f5d52). The profile is the default one, an assumption.
+                // are tenant data and not pinned (session/TestUserPersonalizationRowContracts.al:11-35).
+                // The profile is the default one, an assumption.
                 USER_PERSONALIZATION => {
                     let mut r = super::blank(t);
                     let mut set = |id: u32, v: Value| {

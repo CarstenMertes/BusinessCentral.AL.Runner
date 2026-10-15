@@ -399,6 +399,11 @@ impl Builder<'_> {
             match (&class, filter_element) {
                 (FieldClass::Normal, _) | (FieldClass::FlowFilter, true) => {}
                 (FieldClass::FlowField, false) if method.is_none() => {}
+                // Base Application's "Vend. Ledg. Entry Remain. Amt." sums a FlowField; the corpus pins
+                // a FlowField column only without a method (query/TestQueryJoinFlowFieldGroupBy.al).
+                (FieldClass::FlowField, false) => self.reason(format!(
+                    "column {name}: Method over a FlowField: whether BC sums the calculated values per row is not pinned (docs/probes-needed.md)"
+                )),
                 _ => self.reason(format!(
                     "column {name}: a {class:?} field in this position (or with Method) is not supported yet"
                 )),
@@ -534,8 +539,7 @@ impl Builder<'_> {
     /// Combinations whose result the corpus does not pin.
     fn validate(&mut self) {
         // Aggregates over a left outer join skip the missing side: sum 0 and count 0 for a parent
-        // without children (query/TestQueryOuterJoinDescendingSaveAsContracts.al, corpus branch
-        // now in the corpus).
+        // without children (query/TestQueryOuterJoinDescendingSaveAsContracts.al).
         // Groups without an OrderBy (query/TestQueryAggregation.al always orders its groups) have no
         // pinned order, but that only matters when a run produces several: the VM refuses then
         // (`Session::query_rows`), so a query like Base App's 1302 can be declared and used.
@@ -676,6 +680,23 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
             .position(|o| o.kind == ObjKind::Query)
             .expect("a query");
         layout(&ws, &members, oi)
+    }
+
+    // Corpus pins a FlowField column without a method (query/TestQueryJoinFlowFieldGroupBy.al, QffHeaderFlowField);
+    // an aggregate over a FlowField (Base Application's "Vend. Ledg. Entry Remain. Amt.") is in no corpus test.
+    #[test]
+    fn an_aggregate_over_a_flow_field_is_refused_with_the_open_question() {
+        let l = layout_of("query 50100 Q { elements { dataitem(T; T) { column(S; Total) { Method = Sum; } } } }");
+        let all = l.reasons.join("; ");
+        assert!(
+            all.contains("FlowField")
+                && all.contains("Method")
+                && all.contains("not pinned")
+                && all.contains("probes-needed"),
+            "{all}"
+        );
+        let l = layout_of("query 50100 Q { elements { dataitem(T; T) { column(S; Total) { } } } }");
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
     }
 
     // corpus query/QJOrderSum.Query.al: the columns, their types and the OrderBy.

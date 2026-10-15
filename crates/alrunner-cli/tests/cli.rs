@@ -596,3 +596,37 @@ fn quiet_leaves_the_call_stack_out_of_the_console() {
     let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--quiet"]);
     assert!(!text(&o).contains("CodeUnit 50200"), "{}", text(&o));
 }
+
+#[test]
+fn warm_builds_the_index_of_a_backup_so_that_the_first_run_does_not() {
+    let backup = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../al-bcdb/tests/fixtures/typeprobe.bak");
+    let cache = tempfile::tempdir().unwrap();
+    let args = [
+        "warm",
+        backup.to_str().unwrap(),
+        "--test-data-company",
+        "TP",
+        "--cache-dir",
+        cache.path().to_str().unwrap(),
+    ];
+    let o = alrunner(&args);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(text(&o).contains("built and saved"), "{}", text(&o));
+    let dir = cache.path().join("backup-index");
+    let files: Vec<_> = std::fs::read_dir(&dir).unwrap().map(|e| e.unwrap().path()).collect();
+    assert_eq!(files.len(), 1, "{files:?}");
+    let o = alrunner(&args);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    assert!(text(&o).contains("kept map and catalog used"), "{}", text(&o));
+}
+
+#[test]
+fn warm_without_a_backup_or_a_build_says_what_it_needs() {
+    let o = alrunner(&["warm"]);
+    assert_eq!(code(&o), 2);
+    assert!(
+        text(&o).contains("PATH.bak") && text(&o).contains("--bc-version"),
+        "{}",
+        text(&o)
+    );
+}

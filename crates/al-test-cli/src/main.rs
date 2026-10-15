@@ -61,6 +61,9 @@ fn run() -> Result<ExitCode, String> {
         al_test_cli::host::set_files_dir(dir.clone());
     }
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
+    if let Some(dir) = &args.must_not_compile {
+        return must_not_compile(&args, &root, dir.as_deref());
+    }
     if let Some(project) = &args.project {
         return fetch_project(&args, &root, project);
     }
@@ -109,6 +112,26 @@ fn run() -> Result<ExitCode, String> {
         print!("{}", drift_summary(&runs));
     }
     Ok(ExitCode::from(code))
+}
+
+/// `--must-not-compile`: the verdict on every case of the corpus folder (`mnc.rs`).
+fn must_not_compile(args: &Args, root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
+    let dir = dir
+        .map(Path::to_path_buf)
+        .unwrap_or_else(|| root.join("corpus/tests/must-not-compile"));
+    let major: u16 = match &args.bc_version {
+        Some(v) => v
+            .split('.')
+            .next()
+            .and_then(|m| m.parse().ok())
+            .ok_or_else(|| format!("--bc-version `{v}` is not a BC version"))?,
+        None => 29,
+    };
+    let cases = al_test_cli::mnc::read_cases(&dir)?;
+    let outcomes: Vec<_> = cases.iter().map(|c| al_test_cli::mnc::run_case(c, major)).collect();
+    print!("{}", al_test_cli::mnc::render(&outcomes, major));
+    let bad = al_test_cli::mnc::Summary::of(&outcomes).mismatched;
+    Ok(ExitCode::from(u8::from(bad > 0)))
 }
 
 /// What one version's run leaves for the comparison across versions.
@@ -165,13 +188,19 @@ fn run_version(
     // The other test apps: each against its own oracle, pinned like the main one (ADR-007).
     let mut suite_data = Vec::new();
     for suite in &version.suites {
-        pin::check(
+        // The suite's oracle is described by its own app: changes elsewhere in the corpus do not matter.
+        let scope = match suite.app.strip_prefix(cfg.corpus_repo.as_str()) {
+            Some(rest) if rest.starts_with('/') => format!("{}/", rest.trim_start_matches('/').trim_end_matches('/')),
+            _ => "tests/".to_string(),
+        };
+        pin::check_in(
             &root.join(&cfg.corpus_repo),
             suite
                 .corpus_commit
                 .as_deref()
                 .unwrap_or_else(|| version.oracle_commit(&cfg.corpus_commit)),
             &cfg.corpus_commit,
+            &scope,
         )
         .map_err(|e| format!("BC {} {}: {e}", version.bc_version, suite.name))?;
         let path = oracle_path.parent().unwrap_or(Path::new(".")).join(&suite.oracle);

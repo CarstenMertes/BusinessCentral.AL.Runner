@@ -7,6 +7,7 @@ pub mod config;
 pub mod corpus;
 pub mod drift;
 pub mod insight;
+pub mod mnc;
 pub mod oracle;
 pub mod output;
 pub mod pin;

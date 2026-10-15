@@ -8,6 +8,8 @@ pub enum Command {
     Help,
     Version,
     Test(Box<TestArgs>),
+    /// `alrunner warm`: find (or download) the demo backup and build its index.
+    Warm(Box<TestArgs>),
 }
 
 /// `alrunner test`.
@@ -47,7 +49,7 @@ pub struct TestArgs {
     pub dotnet_assembly_dirs: Vec<PathBuf>,
     pub dotnet_allow_roll_forward: bool,
     pub dotnet_timeout_secs: Option<u64>,
-    /// `--test-timeout-secs N`: a test running longer is stopped and not run (default 20; 0: no limit).
+    /// `--test-timeout-secs N`: a test that uses more CPU time is stopped and not run (default 20; 0: no limit).
     pub test_timeout_secs: Option<u64>,
     pub require_dotnet: bool,
     pub files_dir: Option<PathBuf>,
@@ -153,6 +155,14 @@ EXIT CODES
     7  some tests were not run (a refusal); --allow-not-run makes this 0
     Order when several apply: 2, 6, 1, 7.
 
+WARM
+    alrunner warm [PATH.bak] [--bc-version BUILD] [--cache-dir DIR] [--no-download]
+                  [--test-data-company NAME]
+        Finds the demo backup the way `test` does (downloading it if need be), opens it and
+        keeps its page map and catalog in the cache. The first open of a backup verifies the
+        whole file (2 to 3 s on a 900 MB backup); later opens take milliseconds. Run it once
+        before a demo on a new machine.
+
 TEST DATA
     On by default for a run that uses Microsoft's apps: the CRONUS demo company of the build is
     restored. Microsoft's tests expect it, and many of them fail on missing setup data without it.
@@ -172,7 +182,9 @@ TEST DATA
 
 OTHER
     --files-dir DIR      Let the File data type read and write real files under DIR.
-    --test-timeout-secs N  A test that runs longer than N seconds (default 20) is stopped at its
+    --test-timeout-secs N  A test that uses more than N seconds of CPU time (default 20; the
+                         load of the machine does not count; a test that hangs without
+                         computing is stopped at 10 times N of wall time) is stopped at its
                          next loop iteration and reported as not run, with the limit as the
                          reason; the codeunit's later failures are then not trusted. 0: no limit.
     --dotnet-sidecar PATH, --dotnet-assembly-dir DIR, --dotnet-allow-roll-forward,
@@ -187,6 +199,34 @@ fn number(flag: &str, v: &str) -> Result<usize, String> {
     v.parse().map_err(|_| format!("{flag} needs a number, got `{v}`"))
 }
 
+/// `alrunner warm [PATH.bak] [--bc-version V] [--cache-dir DIR] [--no-download] [--test-data-company NAME]`.
+fn parse_warm(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
+    let mut a = TestArgs {
+        test_data: true,
+        ..TestArgs::default()
+    };
+    while let Some(flag) = it.next() {
+        let mut text = || it.next().ok_or_else(|| format!("{flag} needs a value"));
+        match flag.as_str() {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--bc-version" => a.bc_version = Some(text()?),
+            "--cache-dir" => a.cache_dir = Some(text()?.into()),
+            "--no-download" => a.no_download = true,
+            "--test-data-company" => a.test_data_company = Some(text()?),
+            f if !f.starts_with("--") && is_backup(f) => a.test_data_path = Some(PathBuf::from(f)),
+            f => {
+                return Err(format!(
+                    "unknown option or argument `{f}` for `alrunner warm` (see --help)"
+                ));
+            }
+        }
+    }
+    if a.test_data_path.is_none() && a.bc_version.is_none() {
+        return Err("alrunner warm needs a backup (PATH.bak) or a build (--bc-version BUILD)".into());
+    }
+    Ok(Command::Warm(Box::new(a)))
+}
+
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut it = args.into_iter().peekable();
     let Some(first) = it.next() else {
@@ -196,6 +236,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         "--help" | "-h" | "help" => return Ok(Command::Help),
         "--version" | "-V" | "version" => return Ok(Command::Version),
         "test" => {}
+        "warm" => return parse_warm(it),
         "run" | "serve" | "debug" | "deps" | "package" | "helper" | "doctor" | "migrate" | "guide" => {
             return Err(format!(
                 "`alrunner {first}` is not implemented yet (ADR-016 lists it for a later step); only `alrunner test` exists"
@@ -338,6 +379,24 @@ mod tests {
             Command::Test(a) => *a,
             other => panic!("{other:?}"),
         }
+    }
+
+    #[test]
+    fn warm_takes_a_backup_or_a_build_and_nothing_else() {
+        match p("warm x.bak --test-data-company TP --cache-dir c").unwrap() {
+            Command::Warm(a) => {
+                assert_eq!(a.test_data_path, Some(PathBuf::from("x.bak")));
+                assert_eq!(a.test_data_company.as_deref(), Some("TP"));
+                assert_eq!(a.cache_dir, Some(PathBuf::from("c")));
+            }
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(
+            p("warm --bc-version 27.5.46862.48827 --no-download").unwrap(),
+            Command::Warm(_)
+        ));
+        assert!(p("warm").unwrap_err().contains("--bc-version"));
+        assert!(p("warm App").unwrap_err().contains("unknown"));
     }
 
     #[test]

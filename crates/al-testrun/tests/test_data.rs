@@ -374,6 +374,32 @@ codeunit 50120 "Lib" {{ procedure Missing() var S: Record "Setup"; begin S.Get('
 }
 
 #[test]
+fn a_company_independent_table_the_backup_holds_rows_for_is_seeded_too() {
+    // Application Area Setup is such a table (DataPerCompany = false): the backup keeps its rows
+    // under no company, and the session works in the restored company. The check for restored
+    // rows must ask for the table's own slot, or 563 Tests-ERM tests stay not run.
+    let dep = format!(
+        r#"{DEP}
+codeunit 2 "Company-Initialize" {{ trigger OnRun() var S: Record "Shared"; begin
+  MinimumActiveRowVersion(); S.K := 'A'; S.Insert(); end; }}
+codeunit 50120 "Lib" {{ procedure Missing() var S: Record "Shared"; begin S.Get('NOPE'); end; }}
+"#
+    );
+    let main = r#"codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Missing() var L: Codeunit "Lib"; begin L.Missing(); end; }"#;
+    let fake = Arc::new(Fake::new("CRONUS International Ltd.").table(
+        "Shared",
+        &["K", "V"],
+        vec![vec![text("A"), Cell::Int(1)]],
+    ));
+    let (rt, _) = run(main, &dep, Some(&fake));
+    match outcome(&rt, 50001, "Missing") {
+        Outcome::Fail(m) => assert!(m.contains("does not exist"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn the_install_code_of_the_app_under_test_may_change_the_restored_rows() {
     // ADR-020 (decided without owner review, 2026-10-14): the guard that keeps install code from
     // rewriting the restored company protects the dependency apps' install roots; the tested app's

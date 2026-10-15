@@ -29,17 +29,17 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 ### al-bcdb
 
 - `bacpac.rs` (417): The `.bacpac` container (port of `Bacpac.cs`). Entry: `BacpacTable` 30, `BacpacSource` 45.
-- `bak.rs` (428): The SQL Server backup path (port of `BakSource` and `TableReader.cs`). Entry: `BakSource` 29.
+- `bak.rs` (524): The SQL Server backup path (port of `BakSource` and `TableReader.cs`); `open_indexed` keeps the page map and catalog between runs. Entry: `BakSource` 29.
 - `bcp.rs` (551): Reads rows out of a bacpac's native-BCP data stream (port of `Bcp.cs`). Entry: `BacpacColumn` 31, `decimal_storage_bytes` 148, `BcpRowReader` 157.
-- `catalog.rs` (820): Reads the SQL Server system catalog base tables directly from page images (port of `Catalog.cs` and `ClusteredSeek.cs`). Entry: `PagePtr` 34, `AllocUnit` 37, `RowSet` 47, `SysObject` 56.
+- `catalog.rs` (924): `to_index_bytes`/`from_index_bytes`. Reads the SQL Server system catalog base tables directly from page images (port of `Catalog.cs` and `ClusteredSeek.cs`). Entry: `PagePtr` 34, `AllocUnit` 37, `RowSet` 47, `SysObject` 56.
 - `error.rs` (56): Errors. Entry: `Error` 10, `Result` 21.
 - `io.rs` (91): The byte source the readers work on. Entry: `ByteSource` 9.
 - `lib.rs` (27): Reads Business Central data straight out of a SQL Server native backup (`.bak`) or a cloud export (`.bacpac`).
 - `lob.rs` (217): Resolves off-row values. Entry: `LobReader` 29.
 - `model.rs` (530): Reading `model.xml`. Entry: `ModelScan` 17, `scan_streaming` 77, `split_name` 267.
 - `mtf.rs` (154): Structural parser for the Microsoft Tape Format (MTF) container a SQL Server native backup (`.bak`) is written in (port. Entry: `DataRegion` 36, `MtfFile` 44.
-- `pagefile.rs` (595): Maps SQL Server 8 KB pages inside a native full backup (`.bak`) to their file offsets by parsing the backup's structure,. Entry: `Page` 50, `PageFile` 52, `CrossCheck` 110.
-- `query.rs` (792): The BC meaning layer over a [`BcSource`] (port of the shared part of `Program.cs`). Entry: `BcTable` 15, `is_guid` 30, `parse_table_name` 50, `collate_cmp` 126.
+- `pagefile.rs` (713): `IndexStore`, `open_indexed` (a kept page map, checked against the file's length and data regions). Maps SQL Server 8 KB pages inside a native full backup (`.bak`) to their file offsets by parsing the backup's structure,. Entry: `Page` 50, `PageFile` 52, `CrossCheck` 110.
+- `query.rs` (814): `plan_read_table_in` (table list parsed once by the caller). The BC meaning layer over a [`BcSource`] (port of the shared part of `Program.cs`). Entry: `BcTable` 15, `is_guid` 30, `parse_table_name` 50, `collate_cmp` 126.
 - `records.rs` (425): Record parsers (port of `Records.cs`). Entry: `record_type` 10, `is_ghost_type` 14, `live_slot` 20, `FixedVar` 41.
 - `scsu.rs` (157): Decoder for SCSU (Standard Compression Scheme for Unicode), Unicode Technical Standard #6. Entry: `decode` 60.
 - `serve.rs` (297): Serve mode (port of `Program.Serve`). Entry: `serve` 33.
@@ -59,7 +59,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `file.rs` (66): A file as a byte source (pread), the OS side of `al-bcdb` (ADR-006). Entry: `FileSource` 17.
 - `lib.rs` (9): The OS side of `al-bcdb`: file byte source and the backup table provider for `--test-data` (ADR-020).
-- `provider.rs` (260): `BackupProvider`: the rows of a restored company from a `.bak` or `.bacpac`, one table per `read`; picks the company, finds the table by AL name and declaring app id, merges `$ext` companions; `default_backup` finds the cached artifact. Entry: `BackupProvider` 23, `default_backup` 214.
+- `provider.rs` (455): `BackupProvider` (`open_with_index_dir` keeps the backup's index in the cache dir; `cost` for `--timings`): the rows of a restored company from a `.bak` or `.bacpac`, one table per `read`; picks the company, finds the table by AL name and declaring app id, merges `$ext` companions; `default_backup` finds the cached artifact. Entry: `BackupProvider` 23, `default_backup` 214.
 
 ### al-cache
 
@@ -142,6 +142,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 ### al-sema
 
+- `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `ABSENT_ENUM_MEMBERS`).
 - `base_access.rs` (78): Page and report extension code that names the base object's members (ADR-023): which probes are pinned (`PINNED`), the `AL_UNPINNED_BASE_ACCESS` switch, the base's visible variables and procedures, and the slot of a base variable from syntax. Entry: `PINNED`, `pinned`, `scope_enabled`, `visible_vars`, `visible_procs`, `slot_of`.
 - `calcformula.rs` (513): The `CalcFormula` property of a FlowField, as syntax. Entry: `Formula` 18, `Cond` 28, `CondValue` 35, `parse` 48.
 - `check.rs` (2492): Resolves every name, member access and call in routine bodies, inferring types. Entry: `check_with` 122, `Checker` 323, `check_object` 647, `check_routine_in` 672, `CheckResult` 43, `Res` 67, `Roots` 103.
@@ -180,6 +181,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `config.rs` (292): oracle/oracle.toml: versions, suites, corpus pin. Entry: `OracleFile` 7, `VersionEntry` 16, `SuiteEntry` 51.
 - `corpus.rs` (210): Corpus discovery: test codeunits, their area folder and file. Entry: `discover` 32, `CorpusIndex` 20, `TestCodeunit` 12.
 - `drift.rs` (119): Comparing case sets across BC versions (ADR-015 3.6). Entry: `differences` 11, `common` 26, `restrict` 39, `table` 46.
+- `mnc.rs` (300): The must-not-compile corpus (`--must-not-compile [DIR]`): parse a case header, compile it alone, compare the ALnnnn codes, report match / mismatch / not checked / skipped. Entry: `parse_case`, `read_cases`, `run_case`, `render`.
 - `insight.rs` (388): --top-refusals (folded reason ranking) and --baseline-diff. Entry: `normalise_reason` 22, `top_refusals` 116, `baseline_diff` 194, `render_top` 145, `render_diff` 222.
 - `lib.rs` (22): Runs the corpus's `[Test]` codeunits and reports them against the oracle.
 - `main.rs` (806): The binary: run each oracle version, report, ratchet. Exit 0 ok, 1 regression, 2 setup error. Entry: `main` 17, `run` 40, `run_version` 135, `find_explained` 670, `drift_summary` 124.

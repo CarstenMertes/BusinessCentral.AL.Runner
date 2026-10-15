@@ -60,9 +60,9 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Decimal(d) => format_decimal(d, standard)?,
         Value::Text(t) | Value::Code(t) => t.to_string(),
         Value::Option(o, members) => match standard {
-            2 | 9 if crate::sysenum::is_field_table_type(members) => {
-                FIELD_TABLE_TYPE_ORDINALS.get(*o as usize).map_or_else(|| o.to_string(), |v| v.to_string())
-            }
+            2 | 9 if crate::sysenum::is_field_table_type(members) => FIELD_TABLE_TYPE_ORDINALS
+                .get(*o as usize)
+                .map_or_else(|| o.to_string(), |v| v.to_string()),
             2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
             _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),
         },

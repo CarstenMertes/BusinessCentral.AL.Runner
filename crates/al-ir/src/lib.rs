@@ -567,6 +567,9 @@ pub struct QueryColumn {
 /// property) is ordinary routines of the same object; this is the layout.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct Page {
+    /// The unprobed assumptions the page's layout rests on; the VM marks them when the page opens.
+    #[serde(default)]
+    pub assumes: Vec<al_builtins::assumptions::Assumption>,
     /// Controls in source order; `parent` makes the tree. `area(...)` sections
     /// are not controls.
     pub controls: Vec<Control>,
@@ -847,6 +850,9 @@ pub struct RelationArm {
     pub field: Option<usize>,
     /// Which related rows are valid; `None` when a where() clause is there but not understood.
     pub wheres: Option<Vec<RelationWhere>>,
+    /// The unprobed assumptions the arm rests on; the VM marks them when a value is validated against it.
+    #[serde(default)]
+    pub assumes: Vec<al_builtins::assumptions::Assumption>,
 }
 
 /// An arm of a relation as the Table Relations Metadata table lists it (see [`Field::relation_meta`]).
@@ -1014,7 +1020,7 @@ fn shift_stmts(stmts: &mut [Stmt], by: u32) {
                 }
                 shift_stmts(otherwise, by);
             }
-            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break => {}
+            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break | Stmt::Assume(_) => {}
         }
     }
 }
@@ -1256,6 +1262,9 @@ pub enum Stmt {
     /// Marks the statement that follows it in the same list: the VM records the position as the
     /// routine's current one (`Program::positions[id]`). It does nothing else.
     Pos(u32),
+    /// The statement that follows runs code that rests on an unprobed assumption of the lowering
+    /// (`al_builtins::assumptions`): the VM marks the assumption when this runs and does nothing else.
+    Assume(al_builtins::assumptions::Assumption),
 }
 
 #[cfg(test)]

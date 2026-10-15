@@ -771,6 +771,25 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         println!("\n{}", refusals::render_top("not-run tests", &list, n));
     }
 
+    // The assumptions the run went through: the counts are kept for `--list-assumptions`; the ranking is printed
+    // with --top-assumptions, or as a pointer when passes were flagged.
+    {
+        let rows = al_testrun::flagged::rank(
+            results
+                .iter()
+                .map(|r| (matches!(r.outcome, Outcome::Pass), r.assumptions.as_slice())),
+        );
+        al_testrun::flagged::save_hits(&al_deps::cache::cache_root_from_env(a.cache_dir.as_deref()), &rows);
+        if let Some(n) = a.top_assumptions {
+            println!("\n{}", al_testrun::flagged::render_top(&rows, n));
+        } else if counts.flagged > 0 && !a.quiet {
+            println!(
+                "\n{} passes ran through an unprobed assumption (flagged); --top-assumptions ranks the assumptions, --list-assumptions describes them.",
+                counts.flagged
+            );
+        }
+    }
+
     if let Some(n) = a.top_failures.filter(|_| counts.fail > 0) {
         let list = refusals::rank(results.iter().filter_map(|r| match &r.outcome {
             Outcome::Fail(why) => Some((
@@ -908,6 +927,12 @@ fn explain(
         "{}",
         al_testrun::explain::render_without_oracle(&head, &r.outcome, rt.detail_in("", &id))
     );
+    if !r.assumptions.is_empty() {
+        println!(
+            "{}",
+            al_testrun::flagged::render_explain(&r.assumptions, matches!(r.outcome, Outcome::Pass))
+        );
+    }
     Ok(match r.outcome {
         Outcome::Pass => 0,
         Outcome::Fail(_) => 1,

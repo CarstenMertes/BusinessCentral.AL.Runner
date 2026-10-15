@@ -590,6 +590,10 @@ impl Session {
             && kind.as_str() == "ErrorInfo"
         {
             return match self.test_field(rec, t, plain) {
+                Ok(v) => {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestFieldErrorInfoPasses);
+                    Ok(v)
+                }
                 Err(Signal::Error(_)) => unsupported(
                     "TestField with an ErrorInfo whose check fails: the error BC raises from the ErrorInfo is not pinned (docs/probes-needed.md)",
                 ),
@@ -781,6 +785,7 @@ impl Session {
                     }
                     _ => unreachable!("enum_option"),
                 };
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TransferFieldsEnumOption);
                 updates.push((dp, moved));
                 continue;
             }

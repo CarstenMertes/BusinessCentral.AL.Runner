@@ -69,6 +69,10 @@ pub struct Args {
     pub explain: Option<String>,
     /// `--top-refusals [N]`: rank the refusal reasons; N entries (default 10).
     pub top_refusals: Option<usize>,
+    /// `--top-assumptions [N]`: rank the unprobed assumptions by the flagged passes that ran through them.
+    pub top_assumptions: Option<usize>,
+    /// `--list-assumptions`: print the registry of unprobed assumptions with the counts of the last run, then stop.
+    pub list_assumptions: bool,
     /// `--top-refusals-area AREA`: the ranking counts only that area (and selects it).
     pub top_refusals_area: Option<String>,
     /// `--baseline-diff`: list what newly passes, what fails and what left the baseline.
@@ -122,6 +126,28 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 _ => DEFAULT_TOP,
             };
             a.top_refusals = Some(n);
+            continue;
+        }
+        if flag == "--list-assumptions" {
+            a.list_assumptions = true;
+            continue;
+        }
+        if flag == "--top-assumptions" {
+            let n = match it.peek() {
+                Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) => {
+                    let n = it
+                        .next()
+                        .unwrap_or_default()
+                        .parse()
+                        .map_err(|_| "--top-assumptions: number too large")?;
+                    if n == 0 {
+                        return Err("--top-assumptions needs a count of at least 1".into());
+                    }
+                    n
+                }
+                _ => DEFAULT_TOP,
+            };
+            a.top_assumptions = Some(n);
             continue;
         }
         let mut text = || it.next().ok_or_else(|| format!("{flag} needs a value"));
@@ -243,6 +269,12 @@ DIAGNOSE
                               (routine, file, line), and for a failure the error, code and stack
   --top-refusals [N]          rank the refusal reasons of the not-run cases (default 10), numbers
                               and quoted names folded together, with an example test each
+  --top-assumptions [N]       rank the unprobed assumptions (default 10) by the passes that ran through
+                              them. Such a pass is FLAGGED: the summary counts it (N passed, M flagged:
+                              rely on unprobed assumptions), --junit lists its ids in a property,
+                              --json carries them, --explain names them
+  --list-assumptions          print the registry of unprobed assumptions with the counts of the last
+                              run, then stop
   --top-refusals-area FOLDER  the same for one corpus folder; also selects that folder
   --baseline-diff             per version: cases that newly pass, cases that fail and are not in
                               the baseline, and baseline cases that no longer pass; listed by area
@@ -319,6 +351,15 @@ mod tests {
         let a = run(&["--top-refusals", "--no-deps"]).unwrap();
         assert!(a.no_deps && a.top_refusals == Some(DEFAULT_TOP));
         assert!(run(&["--top-refusals", "0"]).is_err());
+    }
+
+    #[test]
+    fn top_assumptions_takes_an_optional_count_and_list_assumptions_is_a_flag() {
+        assert_eq!(run(&["--top-assumptions"]).unwrap().top_assumptions, Some(DEFAULT_TOP));
+        assert_eq!(run(&["--top-assumptions", "4"]).unwrap().top_assumptions, Some(4));
+        assert!(run(&["--top-assumptions", "0"]).is_err());
+        assert!(run(&["--list-assumptions"]).unwrap().list_assumptions);
+        assert!(!run(&["--no-deps"]).unwrap().list_assumptions);
     }
 
     #[test]

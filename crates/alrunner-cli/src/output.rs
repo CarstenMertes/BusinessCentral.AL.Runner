@@ -8,6 +8,8 @@ use al_testrun::runtime::TestResult;
 pub struct Counts {
     pub total: usize,
     pub pass: usize,
+    /// Of the passes: the tests that ran through an unprobed assumption (`al_builtins::assumptions`).
+    pub flagged: usize,
     pub fail: usize,
     pub not_run: usize,
     /// Of the not run: the tests a missing or unusable .NET helper stopped (the reason starts with `dotnet-unavailable`).
@@ -20,7 +22,10 @@ impl Counts {
         for r in results {
             c.total += 1;
             match r.outcome {
-                Outcome::Pass => c.pass += 1,
+                Outcome::Pass => {
+                    c.pass += 1;
+                    c.flagged += usize::from(!r.assumptions.is_empty());
+                }
                 Outcome::Fail(_) => c.fail += 1,
                 Outcome::NotRun(ref why) => {
                     c.not_run += 1;
@@ -85,8 +90,13 @@ pub fn first_line(s: &str, max: usize) -> String {
 /// `Tests: 12 total, 5 passed, 1 failed, 6 not run`, and the warning that goes with a run that
 /// has no test data.
 pub fn summary_line(c: &Counts, test_data: bool) -> String {
+    let flagged = if c.flagged > 0 {
+        format!(" ({} flagged: rely on unprobed assumptions)", c.flagged)
+    } else {
+        String::new()
+    };
     format!(
-        "Tests: {} total, {} passed, {} failed, {} not run{}",
+        "Tests: {} total, {} passed{flagged}, {} failed, {} not run{}",
         c.total,
         c.pass,
         c.fail,
@@ -170,13 +180,25 @@ pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> St
                 esc(&r.codeunit_name),
                 esc(&r.test)
             );
+            // The assumptions a test ran through are a property of the test case, also of a pass: a flagged
+            // pass is still a pass for the tools that read this file.
+            let props = if r.assumptions.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<properties><property name=\"assumptions\" value=\"{}\" /></properties>",
+                    esc(&al_testrun::flagged::id_list(&r.assumptions))
+                )
+            };
             match &r.outcome {
+                Outcome::Pass if !props.is_empty() => s.push_str(&format!("{head}>{props}</testcase>\n")),
                 Outcome::Pass => s.push_str(&format!("{head} />\n")),
-                Outcome::Fail(m) if r.call_stack.is_empty() => {
-                    s.push_str(&format!("{head}><failure message=\"{}\" /></testcase>\n", esc(m)))
-                }
+                Outcome::Fail(m) if r.call_stack.is_empty() => s.push_str(&format!(
+                    "{head}>{props}<failure message=\"{}\" /></testcase>\n",
+                    esc(m)
+                )),
                 Outcome::Fail(m) => s.push_str(&format!(
-                    "{head}><failure message=\"{}\">{}</failure></testcase>\n",
+                    "{head}>{props}<failure message=\"{}\">{}</failure></testcase>\n",
                     esc(m),
                     esc(&stack_lines(&r.call_stack).join("\n"))
                 )),
@@ -203,6 +225,7 @@ mod tests {
             test: test.into(),
             outcome,
             call_stack: String::new(),
+            assumptions: Vec::new(),
         }
     }
 
@@ -211,6 +234,7 @@ mod tests {
         let c = |pass, fail, not_run| Counts {
             total: pass + fail + not_run,
             pass,
+            flagged: 0,
             fail,
             not_run,
             dotnet_unavailable: 0,
@@ -255,6 +279,43 @@ mod tests {
         let none = Counts::of(rs[..1].iter().chain(rs[2..].iter()));
         assert_eq!(exit_code(&none, false), 7);
         assert!(dotnet_warning(&none, "").is_none());
+    }
+
+    #[test]
+    fn a_pass_that_ran_through_an_assumption_is_flagged_in_the_summary_and_junit_and_still_a_pass() {
+        let mut flagged = r(1, "A", "T1", Outcome::Pass);
+        flagged.assumptions = vec![
+            al_testrun::assumptions::Assumption::GuidToText,
+            al_testrun::assumptions::Assumption::RecordGetRecordId,
+        ];
+        let rs = [
+            flagged,
+            r(1, "A", "T2", Outcome::Pass),
+            r(1, "A", "T3", Outcome::Fail("x".into())),
+        ];
+        let c = Counts::of(rs.iter());
+        assert_eq!((c.pass, c.flagged), (2, 1));
+        assert_eq!(
+            summary_line(&c, true),
+            "Tests: 3 total, 2 passed (1 flagged: rely on unprobed assumptions), 1 failed, 0 not run"
+        );
+        let clean = Counts::of(rs[1..].iter());
+        assert_eq!(
+            summary_line(&clean, true),
+            "Tests: 2 total, 1 passed, 1 failed, 0 not run"
+        );
+        let refs: Vec<&TestResult> = rs.iter().collect();
+        let x = junit(&refs, None, 0.0);
+        assert!(
+            x.contains("name=\"T1\"><properties><property name=\"assumptions\" value=\"guid-to-text,record-get-record-id\" /></properties></testcase>"),
+            "{x}"
+        );
+        assert!(x.contains("name=\"T2\" />"), "{x}");
+        assert!(x.contains("failures=\"1\""), "{x}");
+        assert!(
+            !x.contains("name=\"T1\"><skipped") && !x.contains("name=\"T1\"><failure"),
+            "{x}"
+        );
     }
 
     #[test]

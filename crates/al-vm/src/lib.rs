@@ -725,6 +725,16 @@ impl Session {
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
+        if !r.is_trigger
+            && engine.program.objects[object]
+                .report_ext
+                .as_ref()
+                .is_some_and(|e| !e.added.is_empty())
+        {
+            // A procedure of a reportextension that adds data items: it runs on the instance that runs the
+            // extension's triggers (only local procedures are reachable otherwise; reportext-procs).
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportExtLocalProcedure);
+        }
         let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len());
         for s in &r.locals {
             locals.push(self.default_value(&s.ty));
@@ -737,6 +747,7 @@ impl Session {
                 // Assigning the record to a Variant variable is a by-value copy
                 // (:TempRecord_AssignedToVariantVariable).
                 (Value::Record(rc), false) if matches!(r.locals[i].ty, RtType::Variant) && rc.borrow().temporary => {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::VariantParameterSharesTable);
                     let st = rc.borrow().clone();
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
@@ -856,6 +867,10 @@ impl Session {
     fn exec(&mut self, s: &ir::Stmt, f: &mut Frame) -> Result<(), Signal> {
         use ir::Stmt as S;
         match s {
+            S::Assume(a) => {
+                al_builtins::assumptions::assume(*a);
+                Ok(())
+            }
             S::Assign(p, e) => {
                 let v = self.eval(e, f)?;
                 self.write(p, v, f)
@@ -915,7 +930,10 @@ impl Session {
                 // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; documented
                 // assumption, docs/probes-needed.md).
                 let bound = |v: Value| match v {
-                    Value::Option(o, _) => Value::Integer(o),
+                    Value::Option(o, _) => {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::OptionForLoopBounds);
+                        Value::Integer(o)
+                    }
                     v => v,
                 };
                 let (from, to) = (bound(from), bound(to));
@@ -1175,6 +1193,7 @@ impl Session {
                 self.page_control(p, *control)
             }
             E::FieldOf(base, pos) => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldOfProcedureResult);
                 let record = self.eval(base, f)?;
                 self.read_record_field(record, *pos)
             }

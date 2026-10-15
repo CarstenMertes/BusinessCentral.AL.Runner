@@ -618,6 +618,7 @@ impl Session {
             // BC 27.5); for a page it is a documented assumption (docs/probes-needed.md). It reads the object, so
             // a page that has not run answers too.
             "ObjectId" if method.starts_with("Page.") => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageObjectId);
                 let names = match args.first() {
                     None => true,
                     Some(Value::Boolean(b)) => *b,
@@ -1030,6 +1031,9 @@ impl Session {
         let mut handler = None;
         let engine = self.engine();
         let page = page_of(&engine, st);
+        for a in &page.assumes {
+            al_builtins::assumptions::assume(*a);
+        }
         self.page_instance(st)?;
         {
             let mut s = st.borrow_mut();
@@ -1205,10 +1209,20 @@ impl Session {
 
     fn save_values(&self, st: &St) -> bool {
         let object = st.borrow().object as usize;
-        self.engine.program.objects[object]
+        let on = self.engine.program.objects[object]
             .properties
             .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("SaveValues") && v.trim().eq_ignore_ascii_case("true"))
+            .any(|(k, v)| k.eq_ignore_ascii_case("SaveValues") && v.trim().eq_ignore_ascii_case("true"));
+        // A SaveValues page that page extensions extend is driven as one without extensions (assumed).
+        if on
+            && self.engine.program.objects[object]
+                .page
+                .as_ref()
+                .is_some_and(|p| !p.extensions.is_empty())
+        {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SaveValuesWithExtensions);
+        }
+        on
     }
 
     fn var_slots(&self, st: &St) -> Vec<usize> {

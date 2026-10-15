@@ -10,6 +10,7 @@ pub mod deps;
 pub mod discover;
 pub mod dotnet;
 pub mod explain;
+pub mod flagged;
 pub mod host;
 pub mod isolation;
 pub mod observe;
@@ -34,4 +35,5 @@ pub struct CaseId {
     pub codeunit: u32,
     pub name: String,
 }
+pub use al_builtins::assumptions;
 pub use al_builtins::native::UNTRACKED_CALL_STACK;

@@ -3,6 +3,7 @@
 
 use crate::oracle::{CaseId, OracleCase};
 use crate::report::{Outcome, Report, Timings};
+use al_testrun::assumptions::Assumption;
 
 /// The CI step summary: one line for the run. The numbers per area, the phase times and the
 /// other test apps are in the JSON report and in `--timings`.
@@ -16,8 +17,13 @@ pub fn markdown(r: &Report) -> String {
         .timings
         .as_ref()
         .map_or(String::new(), |t| format!(", {}", secs(t.total_s)));
+    let flagged = if c.flagged > 0 {
+        format!(" ({} flagged: rely on unprobed assumptions)", c.flagged)
+    } else {
+        String::new()
+    };
     format!(
-        "- {version}{} passed, {} failed, {} not run of {} ({:.1}%){time}\n",
+        "- {version}{} passed{flagged}, {} failed, {} not run of {} ({:.1}%){time}\n",
         c.pass,
         c.fail,
         c.not_run,
@@ -53,6 +59,17 @@ pub fn timings_table(ts: &[Timings]) -> String {
 /// `bc_build` is the Microsoft build the dependency apps came from; it is recorded as a JUnit
 /// property so that a build change that flips a case shows its cause next to the result.
 pub fn junit(oracle: &[OracleCase], outcome: &dyn Fn(&CaseId) -> Outcome, bc_build: Option<&str>) -> String {
+    junit_with(oracle, outcome, &|_| Vec::new(), bc_build)
+}
+
+/// `junit`, with the unprobed assumptions each test ran through. A passing test that hit any stays a pass
+/// (CI tools see no failure) and carries an `assumptions` property listing their ids.
+pub fn junit_with(
+    oracle: &[OracleCase],
+    outcome: &dyn Fn(&CaseId) -> Outcome,
+    assumptions: &dyn Fn(&CaseId) -> Vec<Assumption>,
+    bc_build: Option<&str>,
+) -> String {
     let mut by_cu: std::collections::BTreeMap<u32, Vec<(&CaseId, Outcome)>> = Default::default();
     for c in oracle.iter().filter(|c| !c.bc_failed) {
         by_cu.entry(c.id.codeunit).or_default().push((&c.id, outcome(&c.id)));
@@ -78,7 +95,17 @@ pub fn junit(oracle: &[OracleCase], outcome: &dyn Fn(&CaseId) -> Outcome, bc_bui
         for (id, o) in cases {
             let head = format!("    <testcase classname=\"Codeunit {cu}\" name=\"{}\"", esc(&id.name));
             match o {
-                Outcome::Pass => s.push_str(&format!("{head} />\n")),
+                Outcome::Pass => {
+                    let marks = assumptions(id);
+                    if marks.is_empty() {
+                        s.push_str(&format!("{head} />\n"));
+                    } else {
+                        s.push_str(&format!(
+                            "{head}><properties><property name=\"assumptions\" value=\"{}\" /></properties></testcase>\n",
+                            esc(&al_testrun::flagged::id_list(&marks))
+                        ));
+                    }
+                }
                 Outcome::Fail(m) => s.push_str(&format!("{head}><failure message=\"{}\" /></testcase>\n", esc(m))),
                 Outcome::NotRun(m) => s.push_str(&format!("{head}><skipped message=\"{}\" /></testcase>\n", esc(m))),
             }
@@ -154,6 +181,46 @@ mod tests {
             markdown(&r),
             "- BC 29.0: 1 passed, 1 failed, 1 not run of 3 (33.3%), 18.75 s\n"
         );
+    }
+
+    #[test]
+    fn markdown_counts_flagged_passes_inside_the_passed_number() {
+        let marks = |c: &CaseId| {
+            if c.name == "a" {
+                vec![Assumption::GuidToText]
+            } else {
+                Vec::new()
+            }
+        };
+        let r = crate::report::build_with(&oracle(), &areas, &outcome, &marks);
+        assert_eq!(
+            markdown(&r),
+            "- 1 passed (1 flagged: rely on unprobed assumptions), 1 failed, 1 not run of 3 (33.3%)\n"
+        );
+    }
+
+    #[test]
+    fn a_flagged_pass_is_still_a_pass_in_junit_and_lists_its_ids() {
+        let marks = |c: &CaseId| {
+            if c.name == "a" {
+                vec![Assumption::GuidToText, Assumption::RecordGetRecordId]
+            } else {
+                Vec::new()
+            }
+        };
+        let xml = junit_with(&oracle(), &outcome, &marks, None);
+        assert!(
+            xml.contains(r#"<property name="assumptions" value="guid-to-text,record-get-record-id" />"#),
+            "{xml}"
+        );
+        // The same cases pass and fail as without the property.
+        let back = crate::oracle::parse_junit(&xml).unwrap();
+        let ids: Vec<_> = back.iter().map(|c| (c.id.clone(), c.bc_failed)).collect();
+        assert_eq!(
+            ids,
+            vec![(id(1, "a"), false), (id(1, "b<&>"), true), (id(2, "c"), true)]
+        );
+        assert!(!junit(&oracle(), &outcome, None).contains("assumptions"));
     }
 
     #[test]

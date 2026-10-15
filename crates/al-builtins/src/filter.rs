@@ -417,6 +417,27 @@ pub struct FieldFilter {
     pub group: i32,
 }
 
+/// The filter group `FilterGroup(-1)` writes to: its filters on different fields are alternatives
+/// (a row passes when it matches any of them), while the filters of every other group all have to
+/// match (corpus record/PWFilterGroupOr.al).
+pub const OR_GROUP: i32 = -1;
+
+/// Whether `row` passes `filters`: every filter outside the OR group matches, and, when the OR
+/// group holds filters, at least one of them does.
+pub fn row_passes(row: &[Value], filters: &[FieldFilter]) -> bool {
+    let (mut or_seen, mut or_matched) = (false, false);
+    for f in filters {
+        let matched = f.expr.matches(&row[f.field]);
+        if f.group == OR_GROUP {
+            or_seen = true;
+            or_matched |= matched;
+        } else if !matched {
+            return false;
+        }
+    }
+    !or_seen || or_matched
+}
+
 /// Total order on key tuples (field-wise `compare`; incomparable counts as equal).
 pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
     for (x, y) in a.iter().zip(b) {
@@ -448,6 +469,23 @@ mod tests {
             .matches(&Value::Integer(9))
         );
         assert!(!FilterExpr::Ne(Value::Text("a".into())).matches(&Value::Text("a".into())));
+    }
+
+    #[test]
+    fn the_or_group_is_alternatives_and_the_other_groups_all_apply() {
+        let ff = |field, v: i32, group| FieldFilter {
+            field,
+            expr: FilterExpr::Eq(Value::Integer(v)),
+            group,
+        };
+        let row = [Value::Integer(1), Value::Integer(2), Value::Integer(3)];
+        // Either of two fields matches: the row passes.
+        assert!(row_passes(&row, &[ff(0, 9, OR_GROUP), ff(1, 2, OR_GROUP)]));
+        assert!(!row_passes(&row, &[ff(0, 9, OR_GROUP), ff(1, 9, OR_GROUP)]));
+        // A filter of group 0 still has to match next to the OR group.
+        assert!(!row_passes(&row, &[ff(2, 9, 0), ff(1, 2, OR_GROUP)]));
+        assert!(row_passes(&row, &[ff(2, 3, 0), ff(1, 2, OR_GROUP)]));
+        assert!(row_passes(&row, &[]));
     }
 
     use crate::value::RtType;

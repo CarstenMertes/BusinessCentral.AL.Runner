@@ -79,7 +79,7 @@ unsafe impl Send for SharedMat {}
 unsafe impl Sync for SharedMat {}
 
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
-    filters.iter().all(|f| f.expr.matches(&row[f.field]))
+    al_builtins::filter::row_passes(row, filters)
 }
 
 /// Whether a row known only by its key can pass: the filters on key columns are decided, the
@@ -87,6 +87,7 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 fn may_pass(t: &TableDef, row: &Row, known: usize, filters: &[FieldFilter]) -> bool {
     filters
         .iter()
+        .filter(|f| f.group != al_builtins::filter::OR_GROUP)
         .filter(|f| t.keys[0].iter().position(|k| *k == f.field).is_some_and(|i| i < known))
         .all(|f| f.expr.matches(&row[f.field]))
 }

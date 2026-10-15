@@ -620,3 +620,18 @@ What changed.
 5. The perf budget measures the runtime: the per-codeunit limit of 2 s is applied to a
    codeunit's time minus its sidecar start. The start has its own limit (10 s for one process; a
    start is about 0.05 to 1.3 s). The limit was not raised.
+
+## Decided without owner review (2026-10-15, sidecar-find)
+
+- A binary outside the repository finds its helper. `alrunner` carries the sidecar sources
+  (`tools/dotnet-sidecar`, six files) built in (`al-testrun/src/dotnet.rs`, `EMBEDDED`). Lookup order is now:
+  the flag or `ALRT_DOTNET_SIDECAR`; `dotnet-sidecar/` next to the binary; the repository's sources when the
+  binary sits inside one; else the built-in sources. The last two use one cache,
+  `~/.cache/al-runtime-rs/dotnet-sidecar/<hash of the sources>`, so a copied binary reuses a helper the repository
+  build made, and otherwise builds it once from the built-in sources when a .NET 8 SDK is present. A test keeps
+  the built-in list equal to the folder.
+- A run whose tests were stopped by an unusable helper (reason `dotnet-unavailable`) prints
+  `WARNING: DotNet unavailable: N test(s) not run ...` before the results and again after the summary line, ends
+  with `Result: DOTNET UNAVAILABLE (exit 8)`, and exits 8 (before 7; `--allow-not-run` still makes it 0). Why: on
+  2026-10-15 a binary copied out of the repository lost 20 Tests-ERM and 30 NP Retail passes and looked like a
+  regression.

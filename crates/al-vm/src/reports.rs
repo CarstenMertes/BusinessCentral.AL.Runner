@@ -837,7 +837,7 @@ impl Session {
             rec.borrow_mut().filters = filters;
         }
         for i in 0..report.items.len() {
-            if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None)? {
+            if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None, &[])? {
                 return Ok(false);
             }
         }
@@ -878,10 +878,25 @@ impl Session {
     /// nested items of that row, `Break` ends this item (its `OnPostDataItem` and the later items
     /// still run), `Quit` ends the whole report without `OnPostDataItem` and `OnPostReport`
     /// (handlers/TestReportRuntimeContracts.al:322-368).
-    fn report_item(&mut self, run: &Run, r: ItemRef, parent_rec: Option<Rec>) -> Result<bool, Signal> {
+    fn report_item(
+        &mut self,
+        run: &Run,
+        r: ItemRef,
+        parent_rec: Option<Rec>,
+        enclosing: &[(ItemRef, Rec)],
+    ) -> Result<bool, Signal> {
         let item = run.item(r);
         let (owner, object) = run.owner(r);
         let rec = self.report_item_record(run, r)?;
+        // A `DataItemLinkReference` names another enclosing item than the parent.
+        let parent_rec = match item.link_item {
+            Some(li) => enclosing
+                .iter()
+                .find(|(e, _)| matches!(e, ItemRef::Base(x) if *x == li))
+                .map(|(_, rec)| rec.clone())
+                .or(parent_rec),
+            None => parent_rec,
+        };
         if let Some(parent) = parent_rec {
             // The link filter is hidden from GetFilters (handlers/TestReportRuntimeContracts.al:62-90).
             let table = self.table(&rec)?;
@@ -897,9 +912,6 @@ impl Session {
                 });
             }
         }
-        if let Some(t) = item.on_pre {
-            self.call(object, t, owner.clone(), Vec::new())?;
-        }
         // The `modify` blocks of the extensions that name this item, in object id order.
         let modifies: Vec<(usize, &ir::ReportExtModify)> = match r {
             ItemRef::Base(i) => (0..run.exts.len())
@@ -911,6 +923,24 @@ impl Session {
                 .collect(),
             ItemRef::Added(..) => Vec::new(),
         };
+        // `OnPreDataItem` of the base, with the extensions' OnBefore/OnAfterPreDataItem around it,
+        // each in object id order (corpus reportextensiontrigger/TestReportExtensionBaseMembersContracts.al:
+        // "for every trigger the base runs first, then the extensions").
+        for &(k, m) in &modifies {
+            if let Some(t) = m.before_pre {
+                let (ext_inst, e) = &run.exts[k];
+                self.call(*e, t, ext_inst.clone(), Vec::new())?;
+            }
+        }
+        if let Some(t) = item.on_pre {
+            self.call(object, t, owner.clone(), Vec::new())?;
+        }
+        for &(k, m) in &modifies {
+            if let Some(t) = m.after_pre {
+                let (ext_inst, e) = &run.exts[k];
+                self.call(*e, t, ext_inst.clone(), Vec::new())?;
+            }
+        }
         self.ret_used = true;
         let mut more = matches!(self.record_op("FindSet", &rec, &mut [])?, Value::Boolean(true));
         'rows: while more {
@@ -942,8 +972,10 @@ impl Session {
                 if run.dataset {
                     self.dataset_begin(run, r, &rec)?;
                 }
+                let mut inside = enclosing.to_vec();
+                inside.push((r, rec.clone()));
                 for child in run.children(r) {
-                    if self.report_item(run, child, Some(rec.clone()))? {
+                    if self.report_item(run, child, Some(rec.clone()), &inside)? {
                         return Ok(true);
                     }
                 }
@@ -1066,7 +1098,21 @@ impl Run {
                     };
                     match at(&out, anchor) {
                         Some(p) => {
-                            out.insert(p + usize::from(after), ItemRef::Added(k, c));
+                            // Items one extension adds after the same anchor keep their declaration
+                            // order (ChildA, Z1, Z1b), so a later one goes behind those already
+                            // placed there; the later extension's items still stand nearest the
+                            // anchor (corpus reportextensiontrigger/TestReportExtensionSamePlaceContracts.al:251).
+                            let mut q = p + usize::from(after);
+                            if after {
+                                while let Some(ItemRef::Added(kk, cc)) = out.get(q) {
+                                    if *kk == k && x.added[*cc].place == x.added[c].place {
+                                        q += 1;
+                                    } else {
+                                        break;
+                                    }
+                                }
+                            }
+                            out.insert(q, ItemRef::Added(k, c));
                             false
                         }
                         None => true,

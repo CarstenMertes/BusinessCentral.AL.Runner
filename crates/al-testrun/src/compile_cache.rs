@@ -95,7 +95,10 @@ impl Layers {
 
     /// The dependency files that did not parse when the layers were built.
     pub fn parse_problems(&self) -> Vec<(String, String)> {
-        self.entries.iter().flat_map(|e| e.parse_problems().iter().cloned()).collect()
+        self.entries
+            .iter()
+            .flat_map(|e| e.parse_problems().iter().cloned())
+            .collect()
     }
 }
 
@@ -509,9 +512,8 @@ pub fn open_or_build_with(
             let l = &mut report.layers[li];
             l.bytes = bytes.len();
             l.built = true;
-            entries[li] = Some(
-                Entry::open(bytes, key).map_err(|e| format!("a fresh compile cache entry does not open: {e}"))?,
-            );
+            entries[li] =
+                Some(Entry::open(bytes, key).map_err(|e| format!("a fresh compile cache entry does not open: {e}"))?);
             report.layers[li].build = started.elapsed();
         }
         report.built = true;
@@ -537,7 +539,9 @@ pub fn open_or_build_with(
         for f in &keep {
             let _ = std::fs::remove_file(f);
         }
-        return Err(format!("the compile cache layers do not fit each other ({why}); the files are removed"));
+        return Err(format!(
+            "the compile cache layers do not fit each other ({why}); the files are removed"
+        ));
     }
     Ok((layers, report))
 }

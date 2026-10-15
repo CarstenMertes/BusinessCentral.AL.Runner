@@ -281,14 +281,13 @@ fn layer_files_stacked_equal_the_complete_compile() {
         &Stack::new(vec![&base_layer as &dyn LayerSource]).unwrap(),
     )
     .unwrap();
-    assert!(layer.objects.iter().any(|&o| (o as usize) < layer.base_len), "the table is overridden");
+    assert!(
+        layer.objects.iter().any(|&o| (o as usize) < layer.base_len),
+        "the table is overridden"
+    );
     let (kb, ku) = (key(), upper_key(&key()));
     let eb = Entry::open(build(&base_set, &kb), &kb).unwrap();
-    let eu = Entry::open(
-        al_cache::build_layer_with_dictionary(&layer, &ku, eb.dictionary()),
-        &ku,
-    )
-    .unwrap();
+    let eu = Entry::open(al_cache::build_layer_with_dictionary(&layer, &ku, eb.dictionary()), &ku).unwrap();
     eu.verify().unwrap();
     assert_eq!(eu.base_len(), eb.len());
     let stack = Stack::new(vec![&eb as &dyn LayerSource, &eu]).unwrap();

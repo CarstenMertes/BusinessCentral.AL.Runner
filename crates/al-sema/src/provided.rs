@@ -571,7 +571,8 @@ codeunit 60031 WBar implements IWork { procedure Bump(): Integer begin exit(3); 
             } else {
                 let refs: Vec<&dyn LayerSource> = built.iter().map(|l| l as &dyn LayerSource).collect();
                 let stack = Stack::new(refs).expect("the layers fit");
-                let layer = crate::lower::lower_layer(all.clone(), below, &symbols, None, &stack).expect("a layer builds");
+                let layer =
+                    crate::lower::lower_layer(all.clone(), below, &symbols, None, &stack).expect("a layer builds");
                 overrides += layer.objects.iter().filter(|&&o| (o as usize) < layer.base_len).count();
                 built.push(layer);
             }
@@ -602,27 +603,36 @@ codeunit 60031 WBar implements IWork { procedure Bump(): Integer begin exit(3); 
     fn a_layer_that_changes_nothing_below_it_overrides_nothing() {
         let overrides = assert_stack_equals_complete(vec![
             vec![app("d1", &[], BASE)],
-            vec![app("p", &["d1"], "codeunit 60000 C { procedure P(): Integer begin exit(1); end; }")],
+            vec![app(
+                "p",
+                &["d1"],
+                "codeunit 60000 C { procedure P(): Integer begin exit(1); end; }",
+            )],
         ]);
         assert_eq!(overrides, 0);
     }
 
     #[test]
     fn a_layer_with_a_table_extension_overrides_the_table_and_what_embeds_it() {
-        let overrides = assert_stack_equals_complete(vec![
-            vec![app("d1", &[], BASE)],
-            vec![app("p", &["d1"], TABLE_EXT)],
-        ]);
+        let overrides =
+            assert_stack_equals_complete(vec![vec![app("d1", &[], BASE)], vec![app("p", &["d1"], TABLE_EXT)]]);
         assert!(overrides >= 1, "the table is lowered again with the layer");
     }
 
     #[test]
     fn a_layer_with_extensions_and_implementers_equals_the_complete_compile() {
         let overrides = assert_stack_equals_complete(vec![
-            vec![app("d1", &[], BASE), app("d2", &["d1"], OTHER), app("d3", &["d1"], MORE)],
+            vec![
+                app("d1", &[], BASE),
+                app("d2", &["d1"], OTHER),
+                app("d3", &["d1"], MORE),
+            ],
             vec![app("p", &["d1", "d2", "d3"], EVERYTHING)],
         ]);
-        assert!(overrides >= 4, "table, page, interface users and the enum ({overrides})");
+        assert!(
+            overrides >= 4,
+            "table, page, interface users and the enum ({overrides})"
+        );
     }
 
     #[test]
@@ -680,19 +690,34 @@ codeunit 61004 QUse { procedure W() var R: Record T; begin R.QX := 1; R.WX := 2;
     fn a_workspace_on_a_stack_of_layers_equals_the_eager_compile() {
         use crate::provided::{DepLayer, Stack};
         let symbols = BTreeSet::new();
-        let l1 = vec![app("d1", &[], BASE), app("d2", &["d1"], OTHER), app("d3", &["d1"], MORE)];
+        let l1 = vec![
+            app("d1", &[], BASE),
+            app("d2", &["d1"], OTHER),
+            app("d3", &["d1"], MORE),
+        ];
         let mut l12 = l1.clone();
         l12.push(app("p", &["d1", "d2", "d3"], EVERYTHING));
         let base = DepLayer::whole(lower_for_cache(l1.clone(), &symbols, None));
         let refs: Vec<&dyn LayerSource> = vec![&base];
-        let layer = crate::lower::lower_layer(l12.clone(), l1.len(), &symbols, None, &Stack::new(refs).unwrap()).unwrap();
+        let layer =
+            crate::lower::lower_layer(l12.clone(), l1.len(), &symbols, None, &Stack::new(refs).unwrap()).unwrap();
         let refs: Vec<&dyn LayerSource> = vec![&base, &layer];
         let stack = Stack::new(refs).unwrap();
-        let ws_app = app("w", &["d1", "p"], "tableextension 70000 WT2 extends T { fields { field(40; W2; Integer) { } } }\ncodeunit 70001 W { procedure G() var R: Record T; begin R.W2 := 1; R.WX := 2; end; }");
+        let ws_app = app(
+            "w",
+            &["d1", "p"],
+            "tableextension 70000 WT2 extends T { fields { field(40; W2; Integer) { } } }\ncodeunit 70001 W { procedure G() var R: Record T; begin R.W2 := 1; R.WX := 2; end; }",
+        );
         let mut apps = l12.clone();
         apps.push(ws_app);
         let kinds: Vec<AppKind> = (0..apps.len())
-            .map(|i| if i < l12.len() { AppKind::Dependency } else { AppKind::Workspace })
+            .map(|i| {
+                if i < l12.len() {
+                    AppKind::Dependency
+                } else {
+                    AppKind::Workspace
+                }
+            })
             .collect();
         let roots = Roots {
             eager: true,

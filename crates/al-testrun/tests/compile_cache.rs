@@ -497,7 +497,11 @@ fn a_change_in_the_implementation_app_rebuilds_only_its_layer() {
     let rt = layered_run(LIB, &changed, cache(dir.path(), false)).unwrap();
     assert_eq!(layer_hits(&rt), vec![true, true, false]);
     assert!(rt.phases.cache.as_ref().unwrap().built);
-    assert!(outcomes(&rt).iter().any(|l| l.contains("Calls_AcrossLayers") && l.contains("Fail")));
+    assert!(
+        outcomes(&rt)
+            .iter()
+            .any(|l| l.contains("Calls_AcrossLayers") && l.contains("Fail"))
+    );
     // The two lower files are the same files, untouched; the new layer file is beside the old.
     let after = files(dir.path());
     assert_eq!(after.len(), 4);
@@ -516,7 +520,11 @@ fn a_change_in_a_library_app_rebuilds_its_layer_and_the_layers_above_but_not_the
     let rt = layered_run(&changed, IMPL, cache(dir.path(), false)).unwrap();
     assert_eq!(layer_hits(&rt), vec![true, false, false]);
     assert_eq!(outcomes(&rt), outcomes(&layered_run(&changed, IMPL, None).unwrap()));
-    assert!(outcomes(&rt).iter().any(|l| l.contains("Calls_AcrossLayers") && l.contains("Fail")));
+    assert!(
+        outcomes(&rt)
+            .iter()
+            .any(|l| l.contains("Calls_AcrossLayers") && l.contains("Fail"))
+    );
 }
 
 #[test]

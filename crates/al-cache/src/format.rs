@@ -320,7 +320,13 @@ impl Entry {
 /// An entry that stands alone (the first layer) or is read through a [`Stack`](al_sema::provided::Stack).
 impl DepSource for Entry {
     fn len(&self) -> usize {
-        self.base_len() + self.index.objects.iter().filter(|&&o| o as u64 >= self.index.base_len).count()
+        self.base_len()
+            + self
+                .index
+                .objects
+                .iter()
+                .filter(|&&o| o as u64 >= self.index.base_len)
+                .count()
     }
     fn facts(&self, object: usize) -> &DepFacts {
         &self.index.facts[self.slot_of(object)]

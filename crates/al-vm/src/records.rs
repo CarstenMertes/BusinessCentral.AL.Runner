@@ -1646,8 +1646,12 @@ impl Session {
             }
             "SetCurrentKey" => {
                 let wanted: Vec<usize> = (0..args.len()).map(|i| arg_pos(args, i)).collect::<Result<_, _>>()?;
-                match t
-                    .keys
+                // Only the table's own keys: `t` may end with this record's earlier ad hoc key, and a
+                // prefix of it is a new ad hoc key, not that one.
+                let declared = self.engine.tables[t.object as usize]
+                    .as_ref()
+                    .map_or(t.keys.len(), |e| e.keys.len());
+                match t.keys[..declared]
                     .iter()
                     .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])
                 {

@@ -42,25 +42,39 @@ The owner chose the warm design.
    `perTestCoverage`, `test`, `excludeTests`, `testIsolation`. Deferred fields (`affectedOnly`, `includeFailing`,
    `strictEnvironment`, `tdd`) answer an error; fields of other v2 commands (`code`, `captureValues`,
    `iterationTracking`) earn a `warnings` entry; others answer `unknown field`.
-9. **Not in this step:** `execute` (step 4), value capture, incremental compile.
+9. **`execute`** (step 4) runs the `OnRun` trigger of one codeunit per app, or of inline `code`, in the same warm process,
+   and answers with one line without a `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace",
+   "stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. Fields: `sourcePaths` or `code` (not both),
+   `packagePaths`, `coverage`, `perTestCoverage`, `testIsolation` (checked, no effect), `captureValues` and
+   `iterationTracking` (accepted; a `warnings` entry says they are not implemented, so ALchemist's scratch runs work and show no
+   values). Which codeunit: of the codeunits with an `OnRun` trigger the lowest object id, one that declares no test
+   first. `code` that starts (after comments) with an object keyword is a whole object; anything else is a statement list
+   in the `OnRun` of codeunit "AL Runner Inline Execute". The name of a result is `Codeunit<ID>.OnRun` for `sourcePaths` and
+   `<object name>.OnRun` for `code`. An app without an `OnRun` gives no test, `exitCode` 6 and a warning. The text of every
+   `Message` call comes back in `messages`: outside a test method BC's behaviour is not pinned, so this is a tool
+   feature of scratch runs only (`docs/probes-needed.md`); `Confirm` and `StrMenu` are still refused. Inline `code` sees
+   the Base Application only when the daemon has `--bc-version`, `--dep` or `--package-cache`, or the request has
+   `packagePaths`. No `test` line is streamed. `cancel` stops an `execute` while it runs (the one routine is stopped, the answer has
+   `cancelled: true` and the test is `error` with the message `NotRun: out-of-scope: cancelled`); a test run lets the running test
+   finish.
+10. **Not in this step:** value capture (`capturedValues`, `loops`; step 5). Incremental compile: ADR-029.
 
 ## Measurements (release, 4 threads, 2026-10-15)
 
 | Input | one-shot `alrunner test` (compile cache hot) | serve, first request | serve, repeat (unchanged) |
 |---|---|---|---|
-| corpus app, 2 tests (Pageworks-sized app) | 1.3 s, peak 0.9 GB | 7.6 s (no compile cache) | 0.17 s; changed source 0.67 s |
-| Tests-ERM, codeunit 134000, 32 tests | 4.9 s, peak 1.3 GB (17.7 s without cache) | 18.8 s | 2.1 s (first test line after 0.3 s) |
+| corpus app, 2 tests (Pageworks-sized app) | 1.3 s, peak 0.9 GB | 1.36 s (cache hit; 7.6 s on a miss) | 0.17 s; changed source 0.37 s with ADR-029 (0.67 s without) |
+| Tests-ERM, codeunit 134000, 32 tests | 4.9 s, peak 1.3 GB (17.7 s without cache) | 4.25 s (cache hit; 18.8 s on a miss) | 2.1 s (first test line after 0.3 s) |
 
-The first request pays the full compile and holds about 3 GB afterwards (the compiled dependency apps stay in
-memory). Fifty requests with a changed source each grow resident memory by less than 60 MB (tested).
+The compile cache is on disk and keyed by the build of the executable, so the first request after a new build pays
+the miss (the same as a one-shot run). After a first request the server holds the compiled dependency apps in memory.
+Fifty requests with a changed source each grow resident memory by less than 60 MB (tested).
 
 ## Limits (honest)
 
-- The first request does not use the on-disk compile cache; it is slower than a hot one-shot run.
-- A changed source recompiles the workspace but the dependency apps are still reloaded (about 0.5 s on ERM);
-  the baseline reruns per request (0.4 to 0.8 s); `Engine` is rebuilt per request.
-- Incremental workspace compile is the next step (ADR-026 advised against per-file incremental compile; the
-  warm slot is the base for it).
+- The baseline reruns per request (0.1 to 0.8 s); `Engine` is rebuilt per request.
+- A changed source compiles only the changed objects when the change is in the code of codeunits and tables
+  (ADR-029); any other change compiles the workspace again. The dependency apps are never compiled or read again.
 
 ## Consequences
 

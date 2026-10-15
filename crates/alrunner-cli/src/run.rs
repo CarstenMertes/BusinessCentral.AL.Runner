@@ -321,9 +321,13 @@ pub struct Report {
     pub doc: serde_json::Value,
     /// With coverage: the `--coverage-json` document.
     pub coverage: Option<serde_json::Value>,
+    /// Per test of `doc["tests"]`, in its order: the text of the `Message` calls of a scratch run.
+    pub messages: Vec<Vec<String>>,
+    /// Per test of `doc["tests"]`: the name of its codeunit.
+    pub object_names: Vec<String>,
 }
 
-/// Everything the compile depends on but the selection: the workspace sources, the dependency apps, the symbols, the target.
+/// Everything the compile depends on but the selection and the text of the workspace files: the workspace file names, the dependency apps, the symbols, the target.
 fn warm_key(
     inputs: &[AppInput],
     dependencies: &al_testrun::deps::Dependencies,
@@ -335,9 +339,9 @@ fn warm_key(
     for i in inputs {
         i.source.id.hash(&mut h);
         i.source.dependencies.hash(&mut h);
-        for (path, text) in &i.source.files {
+        // The names of the files, not their text: a change of text is the warm compile's to take in.
+        for (path, _) in &i.source.files {
             path.hash(&mut h);
-            text.hash(&mut h);
         }
         i.manifest.version.hash(&mut h);
     }
@@ -428,7 +432,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         .iter()
         .filter(|f| f.tests.iter().any(|t| selection.picks(f.id, t)))
         .collect();
-    if chosen_units.is_empty() {
+    if chosen_units.is_empty() && !a.execute {
         let what = if selection.active() {
             "the selection matches no test"
         } else {
@@ -693,7 +697,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         }
     }
     let sidecar_host = host.clone();
-    let opts_only = selection.active().then(|| {
+    let opts_only = (selection.active() && !a.execute).then(|| {
         let mut v: Vec<(usize, u32)> = chosen_units.iter().map(|f| (f.app, f.id)).collect();
         v.sort_unstable();
         v.dedup();
@@ -746,6 +750,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         },
         isolation: a.isolation,
         coverage: a.coverage,
+        execute: a.execute,
         hooks,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
@@ -758,6 +763,20 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         }),
     };
     let load_time = started.elapsed();
+    // A scratch run has a run of its own for every app; a test run has one for all of them.
+    let suites: Vec<SuiteRun> = if a.execute {
+        inputs
+            .iter()
+            .enumerate()
+            .map(|(i, input)| SuiteRun {
+                name: input.source.name.clone(),
+                app: Some(i),
+                runner: None,
+            })
+            .collect()
+    } else {
+        vec![SuiteRun::everything()]
+    };
     let rt = match warm.as_deref_mut() {
         None => {
             let (all_apps, kinds, manifests) = build_apps();
@@ -768,19 +787,31 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                 &symbols,
                 Some(&chosen.target),
                 dotnet,
-                &[SuiteRun::everything()],
+                &suites,
                 &opts,
             )?
         }
         Some(w) => {
-            let key = warm_key(&inputs, &dependencies, &symbols, &format!("{:?}", chosen.target));
+            let target_key = format!("{:?} {}", chosen.target, a.execute);
+            let key = warm_key(&inputs, &dependencies, &symbols, &target_key);
+            let files: Vec<al_testrun::runtime::FileChange> = inputs
+                .iter()
+                .enumerate()
+                .flat_map(|(app, i)| {
+                    i.source
+                        .files
+                        .iter()
+                        .map(move |(path, text)| al_testrun::runtime::FileChange { app, path, text })
+                })
+                .collect();
             let (rt, used) = w.runtime.run(
                 &key,
+                &files,
                 build_apps,
                 &symbols,
                 Some(&chosen.target),
                 dotnet,
-                &[SuiteRun::everything()],
+                &suites,
                 &opts,
             )?;
             w.used = Some(used);
@@ -795,7 +826,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     let mut results: Vec<&TestResult> = rt
         .results()
         .iter()
-        .filter(|r| selection.picks(r.codeunit, &r.test))
+        .filter(|r| a.execute || selection.picks(r.codeunit, &r.test))
         .collect();
     results.sort_by_key(|r| (r.app, r.codeunit));
     let counts = Counts::of(results.iter().copied());
@@ -1126,6 +1157,8 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         w.report = Some(Report {
             doc: serde_json::from_str(&output::json(&results, code, total_time.as_secs_f64())).unwrap_or_default(),
             coverage: coverage_doc.as_deref().and_then(|d| serde_json::from_str(d).ok()),
+            messages: results.iter().map(|r| r.messages.clone()).collect(),
+            object_names: results.iter().map(|r| r.codeunit_name.clone()).collect(),
         });
     }
     if let Some(target) = &a.output_json {

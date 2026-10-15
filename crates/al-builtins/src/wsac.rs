@@ -91,14 +91,22 @@ fn add_entity_key(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
             true
         }
     })?;
-    if added || c.ret_used() {
-        return Ok(Value::Boolean(added));
+    if added {
+        return Ok(Value::Boolean(true));
     }
-    Err(Signal::Error(Box::new(crate::native::AlError {
-        message: format!("The WebServiceActionContext already has an entity key for field {field}."),
-        code: String::new(),
+    // A key for a field that already has one (also with the same value) is an invalid argument. With the result used
+    // the call answers false and the text stays in GetLastErrorText; unused, it raises
+    // (session/W5WsacDuplicateKey.al, BC 27.5 and 29.0).
+    let error = crate::native::AlError {
+        message: "An invalid argument was passed to a 'WebServiceActionContext' data type method.".into(),
+        code: "Argument".into(),
         call_stack: String::new(),
-    })))
+    };
+    if c.ret_used() {
+        c.set_last_error(error);
+        return Ok(Value::Boolean(false));
+    }
+    Err(Signal::Error(Box::new(error)))
 }
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {

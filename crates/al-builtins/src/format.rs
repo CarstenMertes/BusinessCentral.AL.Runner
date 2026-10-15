@@ -26,6 +26,13 @@ impl From<String> for FormatFail {
 }
 
 /// `Err` names the value whose format is not pinned yet.
+/// The ordinal values of the Field table's `Type` option (`OptionOrdinalValues` of System.app's table 2000000041), by
+/// member index: Integer is 34559 and Text 31488 (metadata/W6FieldKeyRows.al:Field_Type_*, BC 27.5 and 29.0).
+const FIELD_TABLE_TYPE_ORDINALS: [i32; 21] = [
+    4912, 4988, 11519, 11775, 11776, 11797, 12799, 26207, 26208, 31488, 31489, 33791, 33793, 34047, 34559, 35071,
+    35583, 36095, 36863, 37119, 37375,
+];
+
 pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, String> {
     format_value(v, length, standard, ctx).map_err(|f| match f {
         FormatFail::Unsupported(s) => s,
@@ -53,6 +60,9 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Decimal(d) => format_decimal(d, standard)?,
         Value::Text(t) | Value::Code(t) => t.to_string(),
         Value::Option(o, members) => match standard {
+            2 | 9 if crate::sysenum::is_field_table_type(members) => FIELD_TABLE_TYPE_ORDINALS
+                .get(*o as usize)
+                .map_or_else(|| o.to_string(), |v| v.to_string()),
             2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
             _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),
         },
@@ -98,7 +108,14 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         },
         // The text form of a FilterPageBuilder is only known to be non-empty
         // (filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Format_ReturnsANonEmptyRendering).
-        Value::Library(name, _) if name == "FilterPageBuilder" => "FilterPageBuilder".to_string(),
+        // A builder nobody added a control to formats as an empty text (filterpage/W3FilterPageBuilder.al:
+        // PageCaption_DefaultOfAFreshBuilder, BC 27.5 and 29.0).
+        Value::Library(name, l) if name == "FilterPageBuilder" => match &*l.borrow() {
+            crate::value::LibraryValue::FilterPageBuilder(s) if !s.controls.is_empty() => {
+                "FilterPageBuilder".to_string()
+            }
+            _ => String::new(),
+        },
         // A TableFilter field nobody set holds no filter: empty text. Base App's Change Log
         // Management.HasValue formats such a value on every insert and the tests pass on BC
         // (permissions/TestMetadataExpandedPermission.al:219-235); the text of a set filter is not
@@ -181,7 +198,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
     };
     // A Boolean pads on the right and cuts at the length (types/TestProbeScalarContracts.al:FormatBoolean_Numbers:
     // `Format(true, 10)` is `Yes       `, `Format(true, 2)` is `Ye`).
-    if matches!(v, Value::Boolean(_) | Value::Option(..)) && length > 0 {
+    if matches!(v, Value::Boolean(_) | Value::Option(..) | Value::Enum(..)) && length > 0 {
         let cut: String = s.chars().take(length as usize).collect();
         return Ok(format!(
             "{cut}{}",
@@ -507,7 +524,11 @@ fn format_date(day: i32, closing: bool, standard: i32) -> Result<String, FormatF
     }
     let month = MONTHS[m as usize - 1];
     Ok(match standard {
-        0 | 1 => format!("{c}{m:02}/{d:02}/{yy:02}"),
+        // The year has two digits from 1931 to 2030 and four otherwise, so a text reads back into the same year
+        // (controls/W2ValueControls.al:Date_SessionFormatTwoDigitYear_*: 1929 and 1930 give 10 characters, 1999
+        // to 2030 give 8, BC 27.5 and 29.0).
+        0 | 1 if (1931..=2030).contains(&y) => format!("{c}{m:02}/{d:02}/{yy:02}"),
+        0 | 1 => format!("{c}{m:02}/{d:02}/{y:04}"),
         2 => format!("{m:02}{d:02}{yy:02}{c}D"),
         3 => format!("{yy:02}/{m:02}/{d:02}"),
         4 => format!("{month} {d}, {y}"),

@@ -120,9 +120,9 @@ Lower priority or unclear:
   reaches the change.
 - **Speed today:** one filtered test 0.1 to 0.2 s total, the Pageworks suite about 1 s warm, NP
   Retail (2,300 files) compiles in 2.3 s. Small and mid-size apps are live already; large apps need
-  the incremental compile of ADR-026 (recompile only changed objects), which this use case now
-  justifies.
+  the incremental compile (ADR-029: a change in the code of codeunits and tables compiles only the
+  changed objects; measured: Tests-ERM request 5.5 s to 2.2 s, corpus app 1.3 s to 0.4 s).
 - **Needs, in order:** serve with warm state (tool-integration lane), per-test coverage (idea 7),
-  incremental compile of the workspace (ADR-026 option 3), value capture (ALchemist).
+  incremental compile of the workspace (ADR-029, built for codeunits and tables), value capture (ALchemist).
 - **Agents:** the same warm loop serves AI agents: edit a file, get the affected test results in a
   fraction of a second instead of a cold run.

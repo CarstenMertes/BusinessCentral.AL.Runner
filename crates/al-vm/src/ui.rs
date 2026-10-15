@@ -253,7 +253,7 @@ impl Session {
     /// settings and must answer true. Without a handler the platform raises "Unhandled UI:
     /// SessionSettings" (the header of session/TestSessionSettings.al); the full text is not
     /// pinned, so that is refused. What a handler's `false` means is not pinned either.
-    pub(crate) fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
+    pub(crate) fn ui_session_settings(&mut self, settings: Value) -> Result<Option<Value>, Signal> {
         let bound = self
             .ui
             .as_ref()
@@ -264,11 +264,11 @@ impl Session {
                     .into(),
             ));
         }
-        let (answer, _) = self.dispatch_ui_returning(UiKind::SessionSettings, "", vec![settings])?;
+        let (answer, mut finals) = self.dispatch_ui_returning(UiKind::SessionSettings, "", vec![settings])?;
         match answer {
             // A handler that answers false is called once and nothing is raised (session/
             // TestProbeSessionMiscContracts.al:SessionSettings_RequestUpdateFalse_Handler).
-            Value::Boolean(_) => Ok(()),
+            Value::Boolean(_) => Ok(finals.pop()),
             other => Err(Signal::Unsupported(format!(
                 "a [SessionSettingsHandler] that answers {other}",
                 other = other.describe()
@@ -409,7 +409,24 @@ impl Session {
             }))
     }
 
+    /// Keeps the text of every `Message` raised outside a test method, for a scratch run
+    /// ([`Session::take_messages`]). Without this such a call is refused.
+    pub fn capture_messages(&mut self) {
+        self.scratch_messages.get_or_insert_with(Vec::new);
+    }
+
+    /// The texts kept since [`Session::capture_messages`] (or the last call), in order.
+    pub fn take_messages(&mut self) -> Vec<String> {
+        self.scratch_messages.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
     pub(crate) fn ui_message(&mut self, text: String) -> Result<(), Signal> {
+        if self.ui.is_none() {
+            if let Some(log) = self.scratch_messages.as_mut() {
+                log.push(text);
+                return Ok(());
+            }
+        }
         self.dispatch_ui(UiKind::Message, &text.clone(), vec![Value::Text(text.into())])
             .map(|_| ())
     }

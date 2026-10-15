@@ -3,6 +3,8 @@
 - Status: Proposed (needs an owner decision: `docs/agents/brief.md` forbids any cache beyond ADR-022). Options 4 and 2 were
   decided and built on 2026-10-15 (see "Results of 2026-10-15"); Option 3 stays unbuilt.
 - Date: 2026-10-15
+- Update 2026-10-15: for the warm server (ADR-028) the in-memory part of option 3 is built, for changes in the code of
+  codeunits and tables (ADR-029). The recommendation above stands for stored results and for dependency sets.
 - Related: ADR-013 (demand-driven compile), ADR-016 (no features that only hide cost), ADR-022 (compile cache), ADR-011 (IR)
 - Changes: nothing yet. This ADR is measurement and analysis. No code was written.
 

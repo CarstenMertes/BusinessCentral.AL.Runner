@@ -58,7 +58,9 @@ impl Session {
         // A value that is only blank space is shown in single quotes (corpus
         // record/TestRecordRuntimeTextsAndViews.al:Record_GetView_And_GetFilters_Texts, the blank
         // option member: `Status: <>' '`).
-        if !text.is_empty() && text.trim().is_empty() {
+        // A value with a leading space too (filters/W4Filters.al:BlankOnlyFilterValues_MatchOnlyBlankRows:
+        // `SetRange(Txt, ' a')` shows `Txt: ' a'`).
+        if !text.is_empty() && (text.trim().is_empty() || text.starts_with(' ')) {
             return Ok(format!("'{text}'"));
         }
         Ok(text)

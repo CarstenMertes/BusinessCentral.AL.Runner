@@ -684,6 +684,61 @@ impl Session {
         ascending: bool,
         after: Option<Vec<Value>>,
     ) -> Result<Option<Vec<Value>>, Signal> {
+        if rec.borrow().field_descending {
+            return self.scan_first_field_reversed(rec, t, ascending, after);
+        }
+        self.scan_plain(rec, t, ascending, after)
+    }
+
+    /// A scan in the order `SetAscending(Field, false)` gives: the first field of the key runs backwards and the rest
+    /// of the key, then the primary key, forwards (records/W4SortKeys.al:SetAscending_SingleFieldKey: key Txt, ids
+    /// `4,2,3,1,5`, where `Ascending(false)` and a view give `4,3,2,5,1`). The rows are read in key order and sorted
+    /// again, so a walk over a big table costs more than one in the key's own order.
+    fn scan_first_field_reversed(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        forward: bool,
+        after: Option<Vec<Value>>,
+    ) -> Result<Option<Vec<Value>>, Signal> {
+        use std::cmp::Ordering;
+        let key = rec.borrow().key;
+        let mut rows: Vec<(Vec<Value>, Vec<Value>)> = Vec::new();
+        let mut cursor = None;
+        while let Some(row) = self.scan_plain(rec, t, true, cursor.take())? {
+            let pos = position(t, key, &row);
+            cursor = Some(pos.clone());
+            rows.push((pos, row));
+        }
+        let order = |a: &[Value], b: &[Value]| -> Ordering {
+            for (i, (x, y)) in a.iter().zip(b).enumerate() {
+                let o = ops::compare(x, y).unwrap_or(Ordering::Equal);
+                let o = if i == 0 { o.reverse() } else { o };
+                if o != Ordering::Equal {
+                    return o;
+                }
+            }
+            Ordering::Equal
+        };
+        rows.sort_by(|a, b| order(&a.0, &b.0));
+        let hit = if forward {
+            rows.into_iter()
+                .find(|(p, _)| after.as_deref().is_none_or(|a| order(p, a) == Ordering::Greater))
+        } else {
+            rows.into_iter()
+                .rev()
+                .find(|(p, _)| after.as_deref().is_none_or(|a| order(p, a) == Ordering::Less))
+        };
+        Ok(hit.map(|(_, row)| row))
+    }
+
+    fn scan_plain(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        ascending: bool,
+        after: Option<Vec<Value>>,
+    ) -> Result<Option<Vec<Value>>, Signal> {
         let temporary = rec.borrow().temporary;
         self.unseeded_read(t, temporary, "reading rows")?;
         self.coverage_read(t, temporary)?;
@@ -1504,7 +1559,7 @@ impl Session {
             "FindFirst" | "FindSet" | "FindLast" | "Find" => {
                 let asc = {
                     let r = rec.borrow();
-                    r.ascending && !r.field_descending
+                    r.ascending
                 };
                 let which = match (method, args.first()) {
                     ("FindLast", _) => "+".to_string(),
@@ -1620,7 +1675,7 @@ impl Session {
                 };
                 let (key, asc) = {
                     let r = rec.borrow();
-                    (r.key, r.ascending && !r.field_descending)
+                    (r.key, r.ascending)
                 };
                 let forward = (steps >= 0) == asc;
                 let mut moved = 0;

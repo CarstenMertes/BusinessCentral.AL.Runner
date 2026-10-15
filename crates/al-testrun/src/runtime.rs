@@ -151,6 +151,8 @@ pub struct TestResult {
     /// With `RunOptions::coverage`: the statements the test ran, as (position id, runs), sorted by id. Position ids
     /// index `CorpusRuntime::coverage_statements`' `pos` and `Program::positions`.
     pub coverage: Vec<(u32, u32)>,
+    /// With `RunOptions::execute`: the text of the `Message` calls the run made, in order.
+    pub messages: Vec<String>,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -233,6 +235,8 @@ struct Unit {
     without_baseline: bool,
     /// Count the statements each test runs (`RunOptions::coverage`).
     coverage: bool,
+    /// Run the `OnRun` trigger as the one test (`RunOptions::execute`).
+    execute: bool,
     hooks: crate::events::Hooks,
 }
 
@@ -244,6 +248,7 @@ type UnitOutcomes = (
     Vec<(String, std::time::Duration)>,
     Vec<(String, Vec<Assumption>)>,
     Vec<(String, Vec<(u32, u32)>)>,
+    Vec<(String, Vec<String>)>,
 );
 
 struct UnitResult {
@@ -283,7 +288,7 @@ fn run_unit(
             si: u.si,
             oi: u.oi,
             id: u.id,
-            result: Ok((Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())),
+            result: Ok((Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())),
             took: started.elapsed(),
             sidecar_start: std::time::Duration::ZERO,
         };
@@ -292,10 +297,11 @@ fn run_unit(
         let mut stacks = Vec::new();
         let mut times = Vec::new();
         let mut hits = Vec::new();
+        let mut messages = Vec::new();
         if u.coverage {
             crate::coverage::begin();
         }
-        let done = run_codeunit_full(
+        let done = run_codeunit_core(
             engine,
             lowered,
             u.oi,
@@ -305,9 +311,11 @@ fn run_unit(
             &mut stacks,
             &mut times,
             &mut hits,
+            &mut messages,
             limit,
+            u.execute,
         );
-        (done, stacks, times, hits, crate::coverage::finish())
+        (done, stacks, times, hits, crate::coverage::finish(), messages)
     }))
     .map_err(|p| {
         p.downcast_ref::<String>()
@@ -329,7 +337,7 @@ fn run_unit(
             coverage,
         };
         match &result {
-            Ok((done, stacks, times, _, covs)) => {
+            Ok((done, stacks, times, _, covs, _)) => {
                 for (test, outcome) in done.iter().filter(|(t, _)| !have.contains(t)) {
                     let stack = stacks.iter().find(|(n, _)| n == test).map(|(_, s)| s.clone());
                     let time = times
@@ -367,6 +375,34 @@ fn run_unit(
         took: started.elapsed(),
         sidecar_start: crate::dotnet::take_start_time(),
     }
+}
+
+/// The codeunit a scratch run executes in the app `app` (the program's numbering; `None`: any app that is not a
+/// dependency): of the codeunits with an `OnRun` trigger the one with the lowest id, a codeunit that declares no test
+/// before one that does.
+fn on_run_target(lowered: &Lowered, app: Option<usize>) -> Option<usize> {
+    lowered
+        .program
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(oi, o)| {
+            o.kind == "codeunit"
+                && o.id.is_some()
+                && !lowered.dependency[*oi]
+                && app.is_none_or(|a| o.app as usize == a)
+                && o.routines
+                    .iter()
+                    .any(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnRun"))
+        })
+        .min_by_key(|(_, o)| {
+            let is_test = test_routines(o).next().is_some()
+                || o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.eq_ignore_ascii_case("Test"));
+            (is_test, o.id)
+        })
+        .map(|(oi, _)| oi)
 }
 
 /// Whether object `oi` is a test codeunit that `suite` runs under the selection `only`.
@@ -434,6 +470,9 @@ pub struct RunOptions {
     /// Count how often each statement of the workspace's apps runs, per test (`alrunner test --coverage`).
     /// Off, a run pays one branch per statement.
     pub coverage: bool,
+    /// A scratch run (`alrunner serve`'s `execute`): the `OnRun` trigger of one codeunit per `SuiteRun`'s app runs
+    /// instead of the tests, and the text of its `Message` calls is kept in `TestResult::messages`.
+    pub execute: bool,
     /// Callbacks while the run goes on: a line per test as it finishes, and a flag that stops the run after the
     /// current test (`alrunner serve`).
     pub hooks: crate::events::Hooks,
@@ -454,6 +493,174 @@ pub struct Compiled {
     compile_cache_skipped: bool,
     source_index: Option<&'static str>,
     compile_time: std::time::Duration,
+    /// What the incremental update needs, when the compile used the dependency cache (`update_files`).
+    incr: Option<Incr>,
+}
+
+/// What [`Compiled::update_files`] needs of the compile it renews.
+struct Incr {
+    layers: crate::compile_cache::Layers,
+    roots: al_sema::check::Roots,
+    catalog: al_builtins::catalog::Catalog,
+    /// Whether the weighing of the install baseline was on (`compile_suites`).
+    try_skip: bool,
+    symbols: BTreeSet<String>,
+}
+
+/// A workspace file whose text is not the one the compile has.
+pub struct FileChange<'a> {
+    /// The app, as the caller numbered the apps of the run.
+    pub app: usize,
+    pub path: &'a str,
+    pub text: &'a str,
+}
+
+impl Compiled {
+    /// The lowered program of the compile.
+    pub fn lowered(&self) -> &Lowered {
+        &self.lowered
+    }
+
+    /// Whether `other` holds the same lowering as this one: the program, why routines are refused, the
+    /// calls and the diagnostics. An error names the first thing that differs. What the incremental update
+    /// has to give (ADR-029).
+    pub fn same_lowering_as(&self, other: &Compiled) -> Result<(), String> {
+        let (a, b) = (&self.lowered, &other.lowered);
+        if a.program != b.program {
+            let objects = a
+                .program
+                .objects
+                .iter()
+                .zip(&b.program.objects)
+                .position(|(x, y)| x != y);
+            return Err(format!(
+                "the program differs (first object that differs: {:?}; positions equal: {}; counts {} and {})",
+                objects.map(|i| format!("{} {}", a.program.objects[i].kind, a.program.objects[i].name)),
+                a.program.positions == b.program.positions,
+                a.program.objects.len(),
+                b.program.objects.len()
+            ));
+        }
+        if a.unsupported != b.unsupported {
+            return Err("the reasons routines are refused differ".into());
+        }
+        if a.calls != b.calls {
+            return Err("the calls differ".into());
+        }
+        if a.al_diagnostics != b.al_diagnostics {
+            return Err(format!(
+                "the diagnostics differ: {:?} and {:?}",
+                a.al_diagnostics, b.al_diagnostics
+            ));
+        }
+        if (&a.dependency, &a.provided) != (&b.dependency, &b.provided) {
+            return Err("the object flags differ".into());
+        }
+        if (self.baseline, &self.baseline_note) != (other.baseline, &other.baseline_note) {
+            return Err(format!(
+                "the baseline decision differs: {:?} {:?} and {:?} {:?}",
+                self.baseline, self.baseline_note, other.baseline, other.baseline_note
+            ));
+        }
+        Ok(())
+    }
+
+    /// Takes new texts of workspace files into the compile without compiling everything again
+    /// (ADR-029): when the files differ from the old ones only in the code of routines of codeunits,
+    /// only the objects of those files are checked and lowered again, and the result is what a complete
+    /// compile of the new texts gives. An error says why not (a declaration changed, another kind of
+    /// object, the compile did not use the dependency cache, ...); the compile is then in no usable
+    /// state and the caller compiles again.
+    pub fn update_files(&mut self, changes: &[FileChange]) -> Result<(), String> {
+        let started = std::time::Instant::now();
+        let Compiled {
+            ws,
+            lowered,
+            baseline,
+            baseline_note,
+            order,
+            suites,
+            opts_only,
+            incr,
+            compile_time,
+            ..
+        } = self;
+        let incr = incr.as_ref().ok_or("the compile did not use the dependency cache")?;
+        let mut files = Vec::new();
+        for c in changes {
+            let app = order
+                .iter()
+                .position(|&o| o == c.app)
+                .ok_or("an app the compile does not have")?;
+            let fi = ws
+                .files
+                .iter()
+                .position(|f| f.app == app && f.path == c.path)
+                .ok_or("a file the compile does not have")?;
+            files.push((fi, c.text));
+        }
+        let dirty: Vec<usize> = (0..ws.objects.len())
+            .filter(|&oi| files.iter().any(|&(fi, _)| ws.objects[oi].file == fi))
+            .collect();
+        al_sema::incremental::eligible(ws, &dirty)?;
+        let t_replace = std::time::Instant::now();
+        for &(fi, text) in &files {
+            ws.replace_file(fi, text.to_string())?;
+        }
+        let t_replace = t_replace.elapsed();
+        // A complete compile of tests that look free of data would try the demand-driven compile first.
+        if incr.try_skip && crate::observe::text_looks_pure(&ws.apps, &ws.kinds, &incr.symbols, opts_only.as_deref()) {
+            return Err("the tests look free of data: a complete compile weighs the baseline first".into());
+        }
+        let src = incr.layers.stack().map_err(|why| format!("compile cache: {why}"))?;
+        al_sema::lower::relower_objects(ws, &incr.catalog, incr.roots.clone(), &src, lowered, &dirty)?;
+        if incr.try_skip {
+            let selected = selected_tests(lowered, suites, opts_only);
+            *baseline_note = crate::observe::may_observe_baseline(lowered, &selected);
+            *baseline = baseline_note.is_some();
+        }
+        // The source lines of an app that includes its source in the symbols.
+        {
+            let program = std::sync::Arc::make_mut(&mut lowered.program);
+            for sf in &mut program.sources {
+                let Some(_) = program.apps.get(sf.app as usize).filter(|a| a.include_source) else {
+                    continue;
+                };
+                if !files
+                    .iter()
+                    .any(|&(fi, _)| ws.files[fi].path == sf.path && ws.files[fi].app == sf.app as usize)
+                {
+                    continue;
+                }
+                if let Some((_, text)) = ws
+                    .apps
+                    .get(sf.app as usize)
+                    .and_then(|a| a.files.iter().find(|(p, _)| *p == sf.path))
+                {
+                    sf.lines = text.split('\n').map(|l| l.trim_end_matches('\r').to_string()).collect();
+                }
+            }
+        }
+        if !lowered.al_diagnostics.is_empty() {
+            eprintln!(
+                "compile: {} error(s) the AL compiler would give for the workspace's code",
+                lowered.al_diagnostics.len()
+            );
+            for d in lowered.al_diagnostics.iter().take(100) {
+                eprintln!("compile: error {} {}: {}", d.code, d.file, d.message);
+            }
+        }
+        *compile_time = started.elapsed();
+        if std::env::var_os("ALRUNNER_INCR_TIMINGS").is_some() {
+            eprintln!(
+                "incremental: replacing {} file(s) {:.3} s, all {:.3} s",
+                files.len(),
+                t_replace.as_secs_f64(),
+                compile_time.as_secs_f64()
+            );
+        }
+        Ok(())
+    }
 }
 
 /// What a warm server keeps between requests (ADR-028): the last compile, and which test codeunits it was compiled for.
@@ -464,6 +671,8 @@ pub struct Warm {
 
 struct WarmSlot {
     key: String,
+    /// The text of every workspace file the compile was made from: (app, path, hash of the text).
+    files: Vec<(usize, String, u64)>,
     /// The codeunits the compile reached, by (app, id) as the caller gave them; `None`: all of them.
     compiled_for: Option<std::collections::BTreeSet<(usize, u32)>>,
     compiled: Compiled,
@@ -474,6 +683,8 @@ struct WarmSlot {
 pub enum WarmUse {
     /// The compile of an earlier request was used as it was.
     Reused,
+    /// The code of some routines changed: only the objects of those files were compiled again (ADR-029).
+    Updated,
     /// The inputs changed or the earlier compile did not reach the selected tests: compiled again.
     Compiled,
 }
@@ -483,14 +694,22 @@ impl Warm {
         Warm::default()
     }
 
+    /// The compile that is kept.
+    pub fn compiled(&self) -> Option<&Compiled> {
+        self.slot.as_ref().map(|s| &s.compiled)
+    }
+
     /// Runs like [`CorpusRuntime::try_run_suites_with`], keeping the compile for the next call. `key` names everything
-    /// the compile depends on except the selection (the sources, the dependency apps, the symbols, the target). With the
-    /// same key and a selection the earlier compile reached, nothing is compiled. A different selection compiles for
-    /// the earlier and the new one together, so a client that asks for one test after another converges.
+    /// the compile depends on except the selection and the text of the workspace files (the dependency apps, the
+    /// symbols, the target, the names of the files); `files` are those texts. With the same key and a selection the
+    /// earlier compile reached, nothing is compiled when the texts are the same, and only what changed is when they
+    /// differ in the code of routines ([`Compiled::update_files`]). A different selection compiles for the earlier and
+    /// the new one together, so a client that asks for one test after another converges.
     #[allow(clippy::too_many_arguments)]
     pub fn run(
         &mut self,
         key: &str,
+        files: &[FileChange<'_>],
         build: impl FnOnce() -> (Vec<al_sema::workspace::AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>),
         symbols: &BTreeSet<String>,
         target: Option<&al_version::Target>,
@@ -498,6 +717,16 @@ impl Warm {
         suites: &[SuiteRun],
         opts: &RunOptions,
     ) -> Result<(CorpusRuntime, WarmUse), String> {
+        use std::hash::{Hash, Hasher};
+        let mut build = Some(build);
+        let hashes: Vec<(usize, String, u64)> = files
+            .iter()
+            .map(|f| {
+                let mut h = std::collections::hash_map::DefaultHasher::new();
+                f.text.hash(&mut h);
+                (f.app, f.path.to_string(), h.finish())
+            })
+            .collect();
         let wanted: Option<std::collections::BTreeSet<(usize, u32)>> =
             opts.only.as_ref().map(|v| v.iter().copied().collect());
         let covers = |have: &Option<std::collections::BTreeSet<(usize, u32)>>| match (have, &wanted) {
@@ -505,18 +734,75 @@ impl Warm {
             (Some(h), Some(w)) => w.is_subset(h),
             (Some(_), None) => false,
         };
-        let reusable = self
-            .slot
-            .as_ref()
-            .is_some_and(|s| s.key == key && covers(&s.compiled_for));
         let mut used = WarmUse::Reused;
+        let mut reusable = false;
+        let mut broken = false;
+        if let Some(slot) = self.slot.as_mut().filter(|s| s.key == key && covers(&s.compiled_for)) {
+            let same_files = slot.files.len() == hashes.len()
+                && slot.files.iter().zip(&hashes).all(|(a, b)| a.0 == b.0 && a.1 == b.1);
+            if same_files {
+                let changed: Vec<FileChange> = files
+                    .iter()
+                    .zip(slot.files.iter().zip(&hashes))
+                    .filter(|(_, (old, new))| old.2 != new.2)
+                    .map(|(f, _)| FileChange {
+                        app: f.app,
+                        path: f.path,
+                        text: f.text,
+                    })
+                    .collect();
+                if changed.is_empty() {
+                    reusable = true;
+                } else if std::env::var_os("ALRUNNER_NO_INCREMENTAL").is_none() {
+                    // (ALRUNNER_NO_INCREMENTAL=1 compiles all of it when a text changed, to measure what the update saves.)
+                    match slot.compiled.update_files(&changed) {
+                        Ok(()) => {
+                            slot.files = hashes.clone();
+                            reusable = true;
+                            used = WarmUse::Updated;
+                            // ALRUNNER_CHECK_INCREMENTAL=1: a complete compile of the same texts must hold the same
+                            // lowering. A run that fails here has found a defect of the update.
+                            if std::env::var_os("ALRUNNER_CHECK_INCREMENTAL").is_some() {
+                                let (apps, kinds, manifests) = build.take().expect("built once")();
+                                let compile_opts = RunOptions {
+                                    only: slot.compiled_for.as_ref().map(|u| u.iter().copied().collect()),
+                                    ..opts.clone()
+                                };
+                                let full = CorpusRuntime::compile_suites(
+                                    apps,
+                                    kinds,
+                                    &manifests,
+                                    symbols,
+                                    target,
+                                    suites,
+                                    &compile_opts,
+                                )?;
+                                slot.compiled.same_lowering_as(&full).map_err(|why| {
+                                    format!("the incremental compile differs from the complete one: {why}")
+                                })?;
+                                retire(full);
+                            }
+                        }
+                        Err(why) => {
+                            eprintln!("compile: all of it again ({why})");
+                            broken = true;
+                        }
+                    }
+                }
+            }
+        }
+        if broken {
+            if let Some(old) = self.slot.take() {
+                retire(old.compiled);
+            }
+        }
         if !reusable {
             used = WarmUse::Compiled;
             let union = match (self.slot.as_ref().filter(|s| s.key == key), &wanted) {
                 (Some(s), Some(w)) => s.compiled_for.as_ref().map(|h| h.union(w).copied().collect()),
                 _ => wanted.clone(),
             };
-            let (apps, kinds, manifests) = build();
+            let (apps, kinds, manifests) = build.take().expect("built once")();
             let compile_opts = RunOptions {
                 only: union.as_ref().map(|u| u.iter().copied().collect()),
                 ..opts.clone()
@@ -529,6 +815,7 @@ impl Warm {
                 CorpusRuntime::compile_suites(apps, kinds, &manifests, symbols, target, suites, &compile_opts)?;
             self.slot = Some(WarmSlot {
                 key: key.to_string(),
+                files: hashes,
                 compiled_for: union,
                 compiled,
             });
@@ -710,6 +997,7 @@ impl CorpusRuntime {
         // must show no outcome that changes. A run with a custom test runner keeps it too.
         let try_skip = baseline_wanted
             && std::env::var_os("AL_FORCE_BASELINE").is_none()
+            && !opts.execute
             && suites.iter().all(|s| s.runner.is_none());
         let compile_started = std::time::Instant::now();
         // The compile cache holds the dependency apps, which come first in the program (ADR-022).
@@ -879,18 +1167,27 @@ impl CorpusRuntime {
                 kinds = Vec::new();
             }
         }
-        let (ws, mut lowered, cache_report) = match compiled {
-            Some((ws, lowered)) => (ws, lowered, None),
+        let (ws, mut lowered, cache_report, layers) = match compiled {
+            Some((ws, lowered)) => (ws, lowered, None, None),
             None => match opts.compile_cache.as_ref().filter(|_| use_cache) {
                 Some(cc) => {
-                    let (ws, lowered, report) =
-                        compile_with_cache(cc, apps, kinds, manifests, symbols, target, &lazy, &identities, roots)?;
+                    let (ws, lowered, report, layers) = compile_with_cache(
+                        cc,
+                        apps,
+                        kinds,
+                        manifests,
+                        symbols,
+                        target,
+                        &lazy,
+                        &identities,
+                        roots.clone(),
+                    )?;
                     if try_skip && !weighed {
                         let selected = selected_tests(&lowered, suites, &only);
                         baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
                         baseline = baseline_note.is_some();
                     }
-                    (ws, lowered, report)
+                    (ws, lowered, report, layers)
                 }
                 None => {
                     fill_all(&mut apps);
@@ -899,13 +1196,13 @@ impl CorpusRuntime {
                     let load = started.elapsed();
                     // Without a weighed answer, weigh on the compiled program, which has the baseline's
                     // roots: the rule only looks at what the tests reach.
-                    let (ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, roots);
+                    let (ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, roots.clone());
                     if try_skip && !weighed {
                         let selected = selected_tests(&lowered, suites, &only);
                         baseline_note = crate::observe::may_observe_baseline(&lowered, &selected);
                         baseline = baseline_note.is_some();
                     }
-                    (ws, lowered, None)
+                    (ws, lowered, None, None)
                 }
             },
         };
@@ -992,6 +1289,13 @@ impl CorpusRuntime {
             compile_cache_skipped,
             source_index,
             compile_time,
+            incr: layers.map(|layers| Incr {
+                layers,
+                roots,
+                catalog,
+                try_skip,
+                symbols: symbols.clone(),
+            }),
         })
     }
 
@@ -1016,6 +1320,7 @@ impl CorpusRuntime {
             compile_cache_skipped,
             source_index,
             compile_time: compile_phase,
+            incr: _,
         } = compiled;
         let (baseline_wanted, baseline, compile_cache_skipped, source_index) =
             (*baseline_wanted, *baseline, *compile_cache_skipped, *source_index);
@@ -1109,6 +1414,22 @@ impl CorpusRuntime {
         let mut units: Vec<Unit> = Vec::new();
         let mut list: Vec<TestResult> = Vec::new();
         for (si, suite) in suites.iter().enumerate() {
+            if opts.execute {
+                // A scratch run: the `OnRun` trigger of one codeunit of the suite's app.
+                if let Some(oi) = on_run_target(lowered, suite.app) {
+                    units.push(Unit {
+                        si,
+                        oi,
+                        id: lowered.program.objects[oi].id.unwrap_or(0),
+                        isolation: TestIsolation::default(),
+                        without_baseline: false,
+                        coverage: opts.coverage,
+                        execute: true,
+                        hooks: opts.hooks.clone(),
+                    });
+                }
+                continue;
+            }
             let isolation = match suite.runner {
                 None => Ok(TestIsolation::default()),
                 Some(r) => runner_isolation(lowered, r),
@@ -1124,6 +1445,7 @@ impl CorpusRuntime {
                         isolation: opts.isolation.unwrap_or(*i),
                         without_baseline: false,
                         coverage: opts.coverage,
+                        execute: false,
                         hooks: opts.hooks.clone(),
                     }),
                     Err(why) => {
@@ -1140,6 +1462,7 @@ impl CorpusRuntime {
                                 assumptions: Vec::new(),
                                 time: std::time::Duration::ZERO,
                                 coverage: Vec::new(),
+                                messages: Vec::new(),
                             });
                         }
                     }
@@ -1244,7 +1567,8 @@ impl CorpusRuntime {
                         call_stack: String,
                         assumptions: Vec<Assumption>,
                         time: std::time::Duration,
-                        coverage: Vec<(u32, u32)>| {
+                        coverage: Vec<(u32, u32)>,
+                        messages: Vec<String>| {
                 list.push(TestResult {
                     suite: r.si,
                     app: order[o.app as usize],
@@ -1256,10 +1580,11 @@ impl CorpusRuntime {
                     assumptions,
                     time,
                     coverage,
+                    messages,
                 })
             };
             match r.result {
-                Ok((done, stacks, times, hits, mut covs)) => {
+                Ok((done, stacks, times, hits, mut covs, mut msgs)) => {
                     for (name, outcome) in done {
                         let stack = stacks.iter().find(|(n, _)| *n == name).map(|(_, s)| s.clone());
                         let marks = hits.iter().find(|(n, _)| *n == name).map(|(_, h)| h.clone());
@@ -1276,14 +1601,37 @@ impl CorpusRuntime {
                             .position(|(n, _)| *n == name)
                             .map(|i| std::mem::take(&mut covs[i].1))
                             .unwrap_or_default();
-                        push(&mut list, &name, &outcome, stack.unwrap_or_default(), marks, time, cov);
+                        let said = msgs
+                            .iter()
+                            .position(|(n, _)| *n == name)
+                            .map(|i| std::mem::take(&mut msgs[i].1))
+                            .unwrap_or_default();
+                        push(
+                            &mut list,
+                            &name,
+                            &outcome,
+                            stack.unwrap_or_default(),
+                            marks,
+                            time,
+                            cov,
+                            said,
+                        );
                         times_by_case.insert((r.si, r.id, name.to_lowercase()), time);
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
                     }
                 }
                 Err(msg) => {
                     panics += 1;
-                    for t in test_routines(&lowered.program.objects[r.oi]) {
+                    let panicked: Vec<&al_ir::Routine> = if opts.execute {
+                        lowered.program.objects[r.oi]
+                            .routines
+                            .iter()
+                            .filter(|t| t.is_trigger && t.name.eq_ignore_ascii_case("OnRun"))
+                            .collect()
+                    } else {
+                        test_routines(&lowered.program.objects[r.oi]).collect()
+                    };
+                    for t in panicked {
                         let outcome = Outcome::NotRun(format!("runtime panic (bug): {msg}"));
                         push(
                             &mut list,
@@ -1292,6 +1640,7 @@ impl CorpusRuntime {
                             String::new(),
                             Vec::new(),
                             std::time::Duration::ZERO,
+                            Vec::new(),
                             Vec::new(),
                         );
                         outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
@@ -1467,6 +1816,15 @@ fn save_index(
     crate::compile_cache::write_index(&cc.dir, key, &index);
 }
 
+/// What the compile with the cache gives: the workspace, its lowering, the report, and the opened layers
+/// when the entry was used (the incremental compile reads the dependency facts from them).
+type CachedCompile = (
+    al_sema::Workspace,
+    Lowered,
+    Option<crate::compile_cache::CacheReport>,
+    Option<crate::compile_cache::Layers>,
+);
+
 /// The compile of a run with the compile cache (ADR-022): the key of the dependency apps (the
 /// first `kinds` entries), the entry from the cache folder or built now, then the cached compile.
 /// An entry that does not fit or is damaged is ignored (and removed), and the run compiles without
@@ -1482,7 +1840,7 @@ fn compile_with_cache(
     lazy: &[Option<al_sema::LazySource>],
     identities: &[Option<[u8; 32]>],
     roots: al_sema::check::Roots,
-) -> Result<(al_sema::Workspace, Lowered, Option<crate::compile_cache::CacheReport>), String> {
+) -> Result<CachedCompile, String> {
     use crate::compile_cache as cache;
     use al_sema::provided::DepSource;
     let n_dep = kinds.iter().take_while(|k| **k == al_sema::AppKind::Dependency).count();
@@ -1552,7 +1910,7 @@ fn compile_with_cache(
             report.relowered = (0..lowered.provided.len())
                 .filter(|&i| lowered.dependency[i] && !lowered.provided[i])
                 .count();
-            Ok((ws, lowered, Some(report)))
+            Ok((ws, lowered, Some(report), Some(layers)))
         }
         Err(failed) => {
             let (ws, why) = *failed;
@@ -1567,7 +1925,7 @@ fn compile_with_cache(
                 return Err(format!("--require-compile-cache: {}", report.notes.join("; ")));
             }
             let (ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, roots);
-            Ok((ws, lowered, Some(report)))
+            Ok((ws, lowered, Some(report), None))
         }
     }
 }
@@ -1757,11 +2115,44 @@ pub fn run_codeunit_full(
     object: usize,
     baseline: Option<&al_vm::Baseline>,
     isolation: TestIsolation,
-    mut observe: Option<&mut Observer>,
+    observe: Option<&mut Observer>,
     stacks: &mut Vec<(String, String)>,
     times: &mut Vec<(String, std::time::Duration)>,
     hits: &mut Vec<(String, Vec<Assumption>)>,
     limit: Option<std::time::Duration>,
+) -> Vec<(String, Outcome)> {
+    run_codeunit_core(
+        engine,
+        lowered,
+        object,
+        baseline,
+        isolation,
+        observe,
+        stacks,
+        times,
+        hits,
+        &mut Vec::new(),
+        limit,
+        false,
+    )
+}
+
+/// [`run_codeunit_full`], or with `execute` the `OnRun` trigger of the codeunit run as its one test, with the text of
+/// the `Message` calls it made kept in `messages` (a scratch run).
+#[allow(clippy::too_many_arguments)]
+fn run_codeunit_core(
+    engine: &Arc<Engine>,
+    lowered: &Lowered,
+    object: usize,
+    baseline: Option<&al_vm::Baseline>,
+    isolation: TestIsolation,
+    mut observe: Option<&mut Observer>,
+    stacks: &mut Vec<(String, String)>,
+    times: &mut Vec<(String, std::time::Duration)>,
+    hits: &mut Vec<(String, Vec<Assumption>)>,
+    messages: &mut Vec<(String, Vec<String>)>,
+    limit: Option<std::time::Duration>,
+    execute: bool,
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
@@ -1774,14 +2165,21 @@ pub fn run_codeunit_full(
         session.enable_coverage();
     }
     let instance = session.instance(object);
+    let is_on_run = |r: usize| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun");
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
+            if execute {
+                return is_on_run(r);
+            }
             obj.routines[r]
                 .attributes
                 .iter()
                 .any(|a| a.name.eq_ignore_ascii_case("Test"))
         })
         .collect();
+    if execute {
+        session.capture_messages();
+    }
     let all = |o: Outcome| {
         tests
             .iter()
@@ -1825,6 +2223,7 @@ pub fn run_codeunit_full(
     session.in_test_codeunit = true;
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
+        .filter(|_| !execute)
     {
         if let Some(reason) = blocked_reason(lowered, object, on_run) {
             return all(Outcome::NotRun(format!("OnRun: {reason}")));
@@ -1877,7 +2276,13 @@ pub fn run_codeunit_full(
             Outcome::NotRun(reason.clone())
         } else {
             let bound = handlers.unwrap_or_default();
-            match bind_handlers(&mut session, &instance, &bound) {
+            // A scratch run has no UI scope: its `Message` calls are kept, not handled.
+            let bound_ok = if execute {
+                Ok(())
+            } else {
+                bind_handlers(&mut session, &instance, &bound)
+            };
+            match bound_ok {
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
                     session.last_error = Default::default();
@@ -1896,7 +2301,16 @@ pub fn run_codeunit_full(
                     session.tx_model = model;
                     let commits_before = session.commits;
                     session.clear_stop();
-                    let watchdog = limit.map(|l| Watchdog::start(session.stop_flag(), l));
+                    // A scratch run is stopped by `cancel` too, and has a watchdog for that even without a limit.
+                    let cancel = if execute { crate::events::cancel_flag() } else { None };
+                    let watchdog = match (limit, &cancel) {
+                        (None, None) => None,
+                        (l, _) => Some(Watchdog::start_cancellable(
+                            session.stop_flag(),
+                            l.unwrap_or(std::time::Duration::from_secs(u32::MAX.into())),
+                            cancel.clone(),
+                        )),
+                    };
                     session.set_runner_frames(runner_frames(&lowered.program, engine));
                     // A panic in the test is a runtime bug: it is caught here, so that it ends this codeunit and not
                     // the process (a server must outlive it). The session is not trusted after it.
@@ -1964,6 +2378,10 @@ pub fn run_codeunit_full(
                         }
                         // A refused test did not run: what it wrote before the refusal must not
                         // reach the next test of the codeunit.
+                        Err(Signal::Unsupported(_)) if execute && crate::events::cancelled() => {
+                            session.rollback_transaction();
+                            Outcome::NotRun("cancelled".into())
+                        }
                         Err(Signal::Unsupported(r)) => {
                             session.rollback_transaction();
                             refused_mid_run.get_or_insert_with(|| format!("{}: {r}", routine.name));
@@ -2015,6 +2433,9 @@ pub fn run_codeunit_full(
             hits.push((routine.name.clone(), marks));
         }
         let took = test_started.elapsed();
+        if execute {
+            messages.push((routine.name.clone(), session.take_messages()));
+        }
         times.push((routine.name.clone(), took));
         let cov = if covering { session.take_coverage() } else { Vec::new() };
         if crate::events::wants_events() {
@@ -2086,7 +2507,18 @@ const WATCHDOG_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 impl Watchdog {
     /// Watches the calling thread.
+    #[cfg(test)]
     fn start(flag: Arc<std::sync::atomic::AtomicBool>, limit: std::time::Duration) -> Watchdog {
+        Watchdog::start_cancellable(flag, limit, None)
+    }
+
+    /// [`Watchdog::start`] that also stops the routine when `cancel` is set (a scratch run: `cancel` ends it at once;
+    /// a test run lets the running test finish).
+    fn start_cancellable(
+        flag: Arc<std::sync::atomic::AtomicBool>,
+        limit: std::time::Duration,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Watchdog {
         let clock = crate::cpuclock::ThreadClock::current();
         // The thread's CPU clock counts from the thread's birth, and a worker thread runs many tests:
         // the limit is measured from the reading at the start of this test.
@@ -2102,6 +2534,13 @@ impl Watchdog {
                 match rx.recv_timeout(WATCHDOG_POLL) {
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     _ => return false,
+                }
+                if cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    return false;
                 }
                 let used = clock
                     .as_ref()

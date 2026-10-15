@@ -134,12 +134,15 @@ fn emit_version(major: u16) -> u32 {
 impl Session {
     /// The error BC raises when code names an object that no app declares
     /// (codeunit/TestCodeunitRunErrorTextsAndModels.al:162-196 for `CodeUnit`,
-    /// recordref/TestRecordRefRuntimeContracts.al:30 for `Table`). The text names the calling object, which is the object whose code
-    /// runs now.
+    /// recordref/TestRecordRefRuntimeContracts.al:30 for `Table`). The text names the outermost running object (the test codeunit when a
+    /// helper issues the call).
     pub(crate) fn missing_object(&self, kind: &str, id: i64) -> Signal {
+        // The outermost running object is named, not the helper that issued the call: a test that calls a helper
+        // codeunit that runs a missing codeunit reads "from the object <the test codeunit>" (misc/W5MissingObject.al:
+        // MissingCodeunit_FromHelperCodeunit, BC 27.5 and 29.0).
         let caller = self
             .frames
-            .last()
+            .first()
             .map(|&o| self.engine.program.objects[o].name.as_str())
             .unwrap_or_default();
         let major = self.engine.target.as_ref().map_or(29, |t| t.bc.major);

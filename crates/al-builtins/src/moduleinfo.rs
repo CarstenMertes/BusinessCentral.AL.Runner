@@ -112,8 +112,8 @@ fn get_module(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         }
         ModuleLookup::NotInstalled if c.ret_used() => Ok(Value::Boolean(false)),
         ModuleLookup::NotInstalled => Err(Signal::Error(Box::new(AlError {
-            message: format!("No installed extension was found with ID {}.", plain_guid(&id)),
-            code: String::new(),
+            message: format!("No installed extension was found with ID '{}'.", plain_guid(&id)),
+            code: "App".into(),
             call_stack: String::new(),
         }))),
     }
@@ -163,13 +163,34 @@ fn data_version(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out 
     version_of(state_of(r, true)?)
 }
 
-/// Not null: the package id is a second id the manifest does not carry; it is the app id with its last
-/// byte flipped, which differs from it and is stable (session/TestMiscTypes.al, TestBCPlatformContracts.al
-/// ask only that it is not null).
+/// The package id of the app with id `app` (16 bytes in text order): a service tier assigns it when it
+/// publishes the app, so the runtime makes one up that follows the app id. The corpus pins that it is not empty
+/// for a real app, differs from the app id in its first characters (session/W5ModuleInfo.al:
+/// ModuleInfo_PackageId_ComparedToId), is one value for all objects of the app (AllObj, AllObjWithCaption) and
+/// differs between apps (record/TestAllObjOwningAppPerKind.al:109-132). The null id has the null package id
+/// (W5ModuleInfo.al:ModuleInfo_NullId_Properties).
+pub fn package_id_of(app: [u8; 16]) -> [u8; 16] {
+    if app == [0; 16] {
+        return [0; 16];
+    }
+    // Two 64-bit FNV-1a lanes over the id and a fixed salt, laid out as a version 4 guid.
+    let salt = b"al-runtime/package-id/v1";
+    let mut out = [0u8; 16];
+    for (lane, chunk) in out.chunks_mut(8).enumerate() {
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325 ^ (lane as u64).wrapping_mul(0x9e37_79b9_7f4a_7c15);
+        for b in app.iter().chain(salt) {
+            h ^= u64::from(*b);
+            h = h.wrapping_mul(0x0000_0100_0000_01b3);
+        }
+        chunk.copy_from_slice(&h.to_be_bytes());
+    }
+    out[6] = (out[6] & 0x0f) | 0x40;
+    out[8] = (out[8] & 0x3f) | 0x80;
+    out
+}
+
 fn package_id(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    let mut id = state(r)?.id;
-    id[15] ^= 0x01;
-    Ok(Value::Guid(id))
+    Ok(Value::Guid(package_id_of(state(r)?.id)))
 }
 
 fn dependencies(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {

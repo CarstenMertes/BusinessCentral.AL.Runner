@@ -286,6 +286,9 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// A scratch run (`alrunner serve`'s `execute`): the text of every `Message` raised outside a test
+    /// method, in order. `None`: such a call is refused, as BC's behaviour then is not pinned.
+    pub(crate) scratch_messages: Option<Vec<String>>,
     /// Set from another thread to stop the AL code of this session: every loop iteration checks it
     /// and ends the running test with `Signal::Unsupported` (the runner's per-test time limit).
     pub(crate) stop: Arc<std::sync::atomic::AtomicBool>,
@@ -460,6 +463,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            scratch_messages: None,
             stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             commits: 0,
             error_scopes: Default::default(),
@@ -794,6 +798,19 @@ impl Session {
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
+                // An array passed by value is a copy: the callee's writes and Clear do not reach the caller
+                // (misc/W5Clear.al:Clear_ArrayPassedByValue).
+                (Value::Array(a), false) => {
+                    let items: Vec<Value> = a
+                        .borrow()
+                        .iter()
+                        .map(|v| match v {
+                            Value::Record(rc) => self.record_by_value(rc),
+                            other => other.clone(),
+                        })
+                        .collect();
+                    Value::Array(Rc::new(RefCell::new(items)))
+                }
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }
@@ -996,18 +1013,17 @@ impl Session {
                 body,
             } => {
                 let (from, to) = (self.eval(from, f)?, self.eval(to, f)?);
-                // No corpus test loops over a Boolean (`for B := false to true`), which Microsoft's tests do:
-                // whether it runs for false then true is not pinned (docs/probes-needed.md).
+                // A loop over a Boolean (`for Stepwise := false to true do`, 27 Microsoft codeunits) runs for false and
+                // then for true, the variable holding the Boolean each round (registry entry for-boolean). Not pinned.
                 if matches!(from, Value::Boolean(_)) || matches!(to, Value::Boolean(_)) {
-                    return Err(Signal::Unsupported(
-                        "for loop over a Boolean: whether it runs for false and then true, and the value left in the variable, are not pinned (docs/probes-needed.md)".into(),
-                    ));
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
                 }
                 // Option bounds of an Integer loop take its type as an assignment does: the ordinal (Microsoft's
                 // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; pinned by the
                 // corpus Option_InCaseAndLoopBounds, types/ for_to_option).
                 let bound = |v: Value| match v {
                     Value::Option(o, _) | Value::Enum(_, o) => Value::Integer(o),
+                    Value::Boolean(b) => Value::Integer(i32::from(b)),
                     v => v,
                 };
                 if matches!(from, Value::Enum(..)) || matches!(to, Value::Enum(..)) {
@@ -1022,7 +1038,13 @@ impl Session {
                     if matches!(slot_ty, RtType::Option(_) | RtType::Enum(_)) {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
                     }
-                    self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
+                    let counter = if matches!(slot_ty, RtType::Boolean) {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
+                        Value::Boolean(i != 0)
+                    } else {
+                        ops::convert(Value::BigInteger(i), &slot_ty)?
+                    };
+                    self.write(var, counter, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
@@ -2139,6 +2161,9 @@ impl al_builtins::native::Ctx for Session {
         self.temp_files += 1;
         format!("{}{}.tmp", al_builtins::file::TEMP_DIR, self.temp_files)
     }
+    fn session_profile(&self) -> Option<(String, [u8; 16], String)> {
+        self.personalization_of_session_user()
+    }
     fn session_locale(&self) -> Option<(i32, i32, String)> {
         Some((
             self.global_language,
@@ -2157,7 +2182,11 @@ impl al_builtins::native::Ctx for Session {
             .program
             .apps
             .get(self.engine.program.objects[obj].app as usize)?;
-        Some((app.name.clone(), app.resources.clone()))
+        // BC names the app `<name> by <publisher> <version>` (session/W5NavAppResources.al:GetResourceAsText_NameMatching).
+        Some((
+            format!("{} by {} {}", app.name, app.publisher, app.version),
+            app.resources.clone(),
+        ))
     }
     fn runner_call_stack(&self) -> String {
         self.runner_frames.clone()
@@ -2177,13 +2206,22 @@ impl al_builtins::native::Ctx for Session {
     fn application_module(&self) -> al_builtins::value::ModuleInfoState {
         let bc = self.engine.target.as_ref().map(|t| &t.bc);
         let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
+        // Build and revision of the base application are not zero (session/W5ModuleInfo.al:
+        // ModuleInfo_NullId_Properties); the artifact's own numbers when the run knows them, else 1.
+        let (build, revision) = bc
+            .and_then(|b| b.build.as_deref())
+            .and_then(|s| {
+                let n: Vec<i32> = s.split('.').filter_map(|p| p.parse().ok()).collect();
+                (n.len() >= 2).then(|| (n[n.len() - 2], n[n.len() - 1]))
+            })
+            .unwrap_or((1, 1));
         al_builtins::value::ModuleInfoState {
             // The module BC answers for the null app id: the base application W1 (session/
             // TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).
             id: [0; 16],
             name: "W1".into(),
             publisher: "Microsoft".into(),
-            version: Some([major, minor, 0, 0]),
+            version: Some([major, minor, build, revision]),
             dependencies: Vec::new(),
             synthesized: true,
         }
@@ -2239,7 +2277,7 @@ impl al_builtins::native::Ctx for Session {
     fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
         Session::ui_str_menu(self, options, default, instruction)
     }
-    fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
+    fn ui_session_settings(&mut self, settings: Value) -> Result<Option<Value>, Signal> {
         Session::ui_session_settings(self, settings)
     }
     fn ui_send_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<Option<Value>, Signal> {

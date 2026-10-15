@@ -23,7 +23,7 @@ built on the language, not on BC's internals".
 | 1 | `alrunner test` flags LethAL uses, v2-shaped `--output-json` | done (this page, sections 1 to 5) |
 | 2 | Cobertura coverage (`--coverage`, `--coverage-out`), per-test statements (`--coverage-json`) | done (sections 3 and 4a) |
 | 3 | `alrunner serve` (`runTests`, `cancel`, `shutdown`) | done (section 4b; ADR-028, Proposed) |
-| 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | not yet |
+| 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | done (section 4b; ADR-028) |
 | 5 | `captureValues`, `iterationTracking` | not yet |
 | 6 | `alrunner debug --stdio` (DAP) | not yet |
 
@@ -160,7 +160,7 @@ error at start-up (exit 2).
 | Command | v3 |
 |---|---|
 | `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test`, `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `code`, `captureValues`, `iterationTracking`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
-| `execute` | `{"error": "execute is not implemented yet"}` (step 4). |
+| `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` are accepted and earn a `warnings` entry (step 5): `capturedValues` and `loops` are not sent. Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. Details in ADR-028, item 9. |
 | `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. |
 | `shutdown` | `{"status":"shutting down"}`, then exit 0. EOF on stdin exits too. |
 
@@ -168,16 +168,20 @@ Differences a client must adapt to:
 
 1. **Test lines stream**, one per test as it finishes, then the summary.
 2. The server is **warm and in-process**: compiled dependency apps and test data stay in memory. Same sources as the
-   last request: the compiled workspace is reused and `cached` is `true`. A changed source recompiles, so a change
-   always shows. Every request starts from the same post-install database, so nothing leaks between requests.
-   The first request is slow (full compile, about 3 GB resident with Microsoft's apps); repeats take 0.2 to 2 s.
+   last request: the compiled workspace is reused and `cached` is `true`. A changed source always shows. When only the
+   code of routines of codeunits, tables or table extensions changed, just those objects are compiled again and the
+   summary has `incremental: true` (ADR-029; a request takes 0.4 s on the corpus app and 2.2 s on Tests-ERM, of which
+   1.8 s is the tests); any other change compiles the workspace again. Every request starts from the same post-install
+   database, so nothing leaks between requests. The first request after a new build of `alrunner` builds the
+   dependency cache (a minute with Microsoft's apps, then 3 GB resident); with the cache on disk it takes as long as a
+   one-shot run. Repeats take 0.2 to 2 s.
    A panic in a test is reported as an error for that test and the server goes on.
 3. `test` lines have `type`, `name`, `status` (`pass`, `fail`, `error`), `durationMs`, `message`, `stackTrace`,
    `stackFrames` (the AL stack split into lines), and `notRun: true` for a test that did not run (status `error`, message
    `NotRun: out-of-scope: <reason>`; see section 4). `errorKind`, `alSourceFile`, `alSourceLine` are not sent.
 4. The `summary` has `exitCode` (the exit code of `alrunner test`, section 5), `passed`, `failed`, `errors` (= not run),
-   `notRun`, `total`, `cached`, `protocolVersion`, `wallSeconds`, `warnings` when there are some, `cancelled` when
-   cancelled, and `coverage` / `perTestCoverage` when asked for (section 4a shapes). `compilationErrors`,
+   `notRun`, `total`, `cached`, `incremental` when only some objects were compiled again, `protocolVersion`, `wallSeconds`,
+   `warnings` when there are some, `cancelled` when cancelled, and `coverage` / `perTestCoverage` when asked for (section 4a shapes). `compilationErrors`,
    `changedFiles`, `selection`, `companyInitFailures`, `sourceScanFailures` are not sent.
 5. A run that cannot start (a bad path, an app that does not load) answers `{"error": "the run produced no result (exit 2): ..."}`
    instead of a summary with exit code 2 or 3.

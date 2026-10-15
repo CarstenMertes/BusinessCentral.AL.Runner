@@ -1448,6 +1448,10 @@ impl<'a> Checker<'a> {
                     self.ty(sc, k);
                 }
                 E::Val(match base {
+                    // Fewer indices than dimensions: a row, indexed further by a chained `[y]` (`A[x] [y]`).
+                    Ty::Array(dims, el) if kids.len() - 1 < dims.len() => {
+                        Ty::Array(dims[kids.len() - 1..].to_vec(), el)
+                    }
                     Ty::Array(_, el) => *el,
                     Ty::Text(_) | Ty::Code(_) => Ty::Char,
                     _ => Ty::Unknown,

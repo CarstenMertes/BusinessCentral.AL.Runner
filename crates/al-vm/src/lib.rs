@@ -911,6 +911,14 @@ impl Session {
                         "for loop over a Boolean: whether it runs for false and then true, and the value left in the variable, are not pinned (docs/probes-needed.md)".into(),
                     ));
                 }
+                // Option bounds of an Integer loop take its type as an assignment does: the ordinal (Microsoft's
+                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; documented
+                // assumption, docs/probes-needed.md).
+                let bound = |v: Value| match v {
+                    Value::Option(o, _) => Value::Integer(o),
+                    v => v,
+                };
+                let (from, to) = (bound(from), bound(to));
                 let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
                 while if *down { i >= end } else { i <= end } {
@@ -1675,6 +1683,15 @@ impl Session {
         let RtType::Array(dims, _) = self.place_type(base, f) else {
             return Err(Signal::Unsupported("indexing a non-array".into()));
         };
+        // `A[x]` of a two-dimensional array is a row; what BC does with one (Clear, assignment, an argument) is
+        // not pinned (docs/probes-needed.md). It used to be read as the cell at flat position x.
+        if idx.len() != dims.len() {
+            return Err(Signal::Unsupported(format!(
+                "a row of a {}-dimensional array (indexed by {} of its dimensions): what BC does with it is not pinned (docs/probes-needed.md)",
+                dims.len(),
+                idx.len()
+            )));
+        }
         let arr = match self.read(base, f)? {
             Value::Array(a) => a,
             other => return Err(Signal::Unsupported(format!("indexing {}", other.describe()))),

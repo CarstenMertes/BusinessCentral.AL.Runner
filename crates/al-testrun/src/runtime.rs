@@ -56,6 +56,9 @@ pub struct Manifest {
     pub resources: Vec<(String, Vec<u8>)>,
     /// `resourceExposurePolicy.includeSourceInSymbolFile`: the Code Coverage table shows the source lines.
     pub include_source: bool,
+    /// `preprocessorSymbols` of the app's own app.json. A dependency app is compiled with these;
+    /// the project's symbols apply to the workspace apps only (the publisher compiled the dependency).
+    pub symbols: Vec<String>,
 }
 
 /// The manifest fields `NavApp.GetCurrentModuleInfo` reports, from `dir/app.json`.
@@ -95,6 +98,12 @@ pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
         include_source: manifest["resourceExposurePolicy"]["includeSourceInSymbolFile"]
             .as_bool()
             .unwrap_or(false),
+        symbols: manifest["preprocessorSymbols"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .filter_map(|s| s.as_str().map(String::from))
+            .collect(),
     })
 }
 
@@ -535,6 +544,20 @@ impl CorpusRuntime {
         };
         let suites = &suites_in[..];
         let manifests = &manifests[..];
+        // A dependency app is compiled with the symbols of its own app.json, the project's apps with the
+        // project's (hard rule 6: a project that defines CLEAN25 does not change Base Application).
+        let dep_symbols: Vec<Option<BTreeSet<String>>> = kinds
+            .iter()
+            .enumerate()
+            .map(|(i, k)| {
+                (*k == al_sema::AppKind::Dependency).then(|| {
+                    manifests
+                        .get(i)
+                        .map(|m| m.symbols.iter().cloned().collect())
+                        .unwrap_or_default()
+                })
+            })
+            .collect();
         // The apps whose files hold no text yet, in program order.
         let lazy: Vec<Option<al_sema::LazySource>> =
             order.iter().map(|&i| opts.lazy.get(i).cloned().flatten()).collect();
@@ -580,14 +603,17 @@ impl CorpusRuntime {
             // index is saved for the next run.
             let cc = opts.compile_cache.as_ref();
             let (ws, filled) = match (any_lazy, cc) {
-                (true, Some(cc)) => match lazy_index(cc, &apps, manifests, symbols, &lazy, &identities) {
+                (true, Some(cc)) => match lazy_index(cc, &apps, manifests, &lazy, &identities) {
                     Ok(deps) => {
                         source_index = Some("read");
-                        (al_sema::Workspace::load_apps_lazy(apps, kinds, symbols, deps), false)
+                        (
+                            al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, deps),
+                            false,
+                        )
                     }
                     Err(key) => {
                         fill_all(&mut apps);
-                        let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
+                        let ws = al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new());
                         save_index(cc, &ws, &lazy, &key);
                         source_index = Some("built");
                         (ws, true)
@@ -595,7 +621,10 @@ impl CorpusRuntime {
                 },
                 _ => {
                     fill_all(&mut apps);
-                    (al_sema::Workspace::load_apps(apps, kinds, symbols), true)
+                    (
+                        al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new()),
+                        true,
+                    )
                 }
             };
             let load = started.elapsed();
@@ -641,7 +670,7 @@ impl CorpusRuntime {
                 None => {
                     fill_all(&mut apps);
                     let started = std::time::Instant::now();
-                    let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
+                    let ws = al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new());
                     let load = started.elapsed();
                     // Without a weighed answer, weigh on the compiled program, which has the baseline's
                     // roots: the rule only looks at what the tests reach.
@@ -1033,7 +1062,6 @@ fn lazy_index(
     cc: &crate::compile_cache::CompileCache,
     apps: &[al_sema::workspace::AppSource],
     manifests: &[Manifest],
-    symbols: &BTreeSet<String>,
     lazy: &[Option<al_sema::LazySource>],
     identities: &[Option<[u8; 32]>],
 ) -> Result<Vec<Option<al_sema::LazyDep>>, Box<al_cache::Key>> {
@@ -1044,7 +1072,7 @@ fn lazy_index(
         .map(|&i| manifests.get(i).cloned().unwrap_or_default())
         .collect();
     let ids: Vec<Option<[u8; 32]>> = which.iter().map(|&i| identities[i]).collect();
-    let key = crate::compile_cache::index_key(&refs, &mans, symbols, &ids);
+    let key = crate::compile_cache::index_key(&refs, &mans, &ids);
     let fits = |index: &Vec<Vec<al_sema::FileIndex>>| {
         index.len() == which.len() && index.iter().zip(&which).all(|(f, &i)| f.len() == apps[i].files.len())
     };
@@ -1098,6 +1126,18 @@ fn compile_with_cache(
     use crate::compile_cache as cache;
     use al_sema::provided::DepSource;
     let n_dep = kinds.iter().take_while(|k| **k == al_sema::AppKind::Dependency).count();
+    let dep_symbols: Vec<Option<BTreeSet<String>>> = kinds
+        .iter()
+        .enumerate()
+        .map(|(i, k)| {
+            (*k == al_sema::AppKind::Dependency).then(|| {
+                manifests
+                    .get(i)
+                    .map(|m| m.symbols.iter().cloned().collect())
+                    .unwrap_or_default()
+            })
+        })
+        .collect();
     // The text of a lazily read app is read when something needs it: building an entry does, a hit
     // does not.
     let filled = std::cell::Cell::new(false);
@@ -1114,7 +1154,6 @@ fn compile_with_cache(
         cc,
         &mut apps[..n_dep],
         &manifests[..n_dep],
-        symbols,
         target,
         &identities[..n_dep.min(identities.len())],
         &mut |a| fill(a),
@@ -1131,21 +1170,21 @@ fn compile_with_cache(
     // A lazily read app is loaded from its index when there is one: its sources are neither read nor
     // scanned. Otherwise they are read now (once), scanned, and the index is saved.
     let ws = if lazy.iter().any(Option::is_some) {
-        match lazy_index(cc, &apps, manifests, symbols, lazy, identities) {
+        match lazy_index(cc, &apps, manifests, lazy, identities) {
             Ok(deps) => {
                 report.source_index = Some("read");
-                al_sema::Workspace::load_apps_lazy(apps, kinds, symbols, deps)
+                al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, deps)
             }
             Err(key) => {
                 fill(&mut apps);
-                let ws = al_sema::Workspace::load_apps(apps, kinds, symbols);
+                let ws = al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new());
                 save_index(cc, &ws, lazy, &key);
                 report.source_index = Some("built");
                 ws
             }
         }
     } else {
-        al_sema::Workspace::load_apps(apps, kinds, symbols)
+        al_sema::Workspace::load_apps_symbols(apps, kinds, symbols, &dep_symbols, Vec::new())
     };
     let load = started.elapsed();
     match al_sema::lower::compile_loaded_cached(ws, load, &catalog, roots.clone(), &stack) {

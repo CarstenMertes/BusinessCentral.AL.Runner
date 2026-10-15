@@ -4,7 +4,7 @@ use sha2::{Digest, Sha256};
 
 /// The format integer of the entry file. Bump it when the layout of the file or of a type it
 /// stores changes. (Any change to the compiler already changes `Key::runtime_build`.)
-pub const FORMAT: u32 = 5;
+pub const FORMAT: u32 = 6;
 
 /// One dependency app, as the compile saw it.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -14,6 +14,9 @@ pub struct AppKey {
     pub dependencies: Vec<String>,
     pub publisher: String,
     pub version: String,
+    /// The preprocessor symbols the app is compiled with: those of its own app.json, sorted. The
+    /// project's symbols are not an input of a dependency layer.
+    pub symbols: Vec<String>,
     /// A hash of the app's source, made by the caller: of every path and byte, or, for a zip package,
     /// of the name, size and CRC-32 of every entry (the zip directory), which needs no read of the data.
     pub source: [u8; 32],
@@ -29,8 +32,6 @@ pub struct Key {
     pub runtime_build: [u8; 32],
     /// The target BC version and runtime (`Target`, ADR-015), as text. Empty: none.
     pub target: String,
-    /// The preprocessor symbols the sources were parsed with, sorted.
-    pub symbols: Vec<String>,
     /// The apps of this layer, in program order (dependencies first). The first layer holds the
     /// platform and Microsoft's apps; every other layer holds the apps above it (ADR-022, layers).
     pub apps: Vec<AppKey>,
@@ -53,31 +54,23 @@ fn put_list<S: AsRef<[u8]>>(h: &mut Sha256, items: &[S]) {
 
 impl Key {
     /// A key with the current [`FORMAT`].
-    pub fn new(runtime_build: [u8; 32], target: String, symbols: Vec<String>, apps: Vec<AppKey>) -> Key {
-        Key::layered(runtime_build, target, symbols, apps, [0; 32])
+    pub fn new(runtime_build: [u8; 32], target: String, apps: Vec<AppKey>) -> Key {
+        Key::layered(runtime_build, target, apps, [0; 32])
     }
 
     /// A key for a layer above another: `below` is the digest of the key of the layer below.
-    pub fn layered(
-        runtime_build: [u8; 32],
-        target: String,
-        mut symbols: Vec<String>,
-        apps: Vec<AppKey>,
-        below: [u8; 32],
-    ) -> Key {
-        symbols.sort();
+    pub fn layered(runtime_build: [u8; 32], target: String, apps: Vec<AppKey>, below: [u8; 32]) -> Key {
         Key {
             format: FORMAT,
             runtime_build,
             target,
-            symbols,
             apps,
             below,
         }
     }
 
     /// The names of the fields, for the test that every field has a miss test.
-    pub const FIELDS: [&'static str; 6] = ["format", "runtime_build", "target", "symbols", "apps", "below"];
+    pub const FIELDS: [&'static str; 5] = ["format", "runtime_build", "target", "apps", "below"];
 
     /// The digest of the key. Equal keys give equal digests; a key that differs in any field
     /// gives a different one.
@@ -86,7 +79,6 @@ impl Key {
             format,
             runtime_build,
             target,
-            symbols,
             apps,
             below,
         } = self;
@@ -95,7 +87,6 @@ impl Key {
         h.update(format.to_le_bytes());
         put(&mut h, runtime_build);
         put(&mut h, target.as_bytes());
-        put_list(&mut h, symbols);
         put(&mut h, below);
         h.update((apps.len() as u64).to_le_bytes());
         for a in apps {
@@ -105,6 +96,7 @@ impl Key {
                 dependencies,
                 publisher,
                 version,
+                symbols,
                 source,
             } = a;
             put(&mut h, id.as_bytes());
@@ -112,6 +104,7 @@ impl Key {
             put_list(&mut h, dependencies);
             put(&mut h, publisher.as_bytes());
             put(&mut h, version.as_bytes());
+            put_list(&mut h, symbols);
             put(&mut h, source);
         }
         h.finalize().into()
@@ -136,7 +129,6 @@ mod tests {
         Key::new(
             [7; 32],
             "BC 27.5 runtime 16.0".into(),
-            vec!["CLEAN27".into(), "CLEAN26".into()],
             vec![
                 AppKey {
                     id: "a".into(),
@@ -144,6 +136,7 @@ mod tests {
                     dependencies: vec!["s".into()],
                     publisher: "Microsoft".into(),
                     version: "27.5.0.0".into(),
+                    symbols: vec![],
                     source: [1; 32],
                 },
                 AppKey {
@@ -152,6 +145,7 @@ mod tests {
                     dependencies: vec!["a".into()],
                     publisher: "Microsoft".into(),
                     version: "27.5.0.0".into(),
+                    symbols: vec![],
                     source: [2; 32],
                 },
             ],
@@ -167,7 +161,6 @@ mod tests {
             ("format", |k| k.format += 1),
             ("runtime_build", |k| k.runtime_build[31] ^= 1),
             ("target", |k| k.target = "BC 28.0 runtime 17.0".into()),
-            ("symbols", |k| k.symbols.push("EXTRA".into())),
             ("apps", |k| k.apps.reverse()),
             ("below", |k| k.below[5] ^= 1),
         ];
@@ -191,6 +184,7 @@ mod tests {
             ("dependencies", |a| a.dependencies.push("x".into())),
             ("publisher", |a| a.publisher = "Other".into()),
             ("version", |a| a.version = "27.5.0.1".into()),
+            ("symbols", |a| a.symbols.push("EXTRA".into())),
             ("source", |a| a.source[0] ^= 1),
         ];
         let base = sample();

@@ -119,18 +119,30 @@ impl Session {
                 Ok(Value::Null)
             }
             "System.GetCollectedErrors#1" => {
-                // Every corpus call passes no argument; what Clear does is not pinned.
-                if args.iter().any(|a| !matches!(a, Value::Null)) {
-                    return Some(Err(Signal::Unsupported(
-                        "GetCollectedErrors with its Clear argument (not pinned)".into(),
-                    )));
-                }
+                // The list is what the scope holds; with `Clear` true the scope is emptied afterwards, as the
+                // documentation says (handlers/PWRefusedBuiltins.al:FieldError_WithErrorInfo_InCollectScope pins the
+                // list a call with true returns; that it empties the scope is the documented meaning only).
+                let clear = match args.first() {
+                    None | Some(Value::Null) => false,
+                    Some(Value::Boolean(b)) => *b,
+                    Some(other) => {
+                        return Some(Err(Signal::Unsupported(format!(
+                            "GetCollectedErrors with {}",
+                            al_builtins::describe::Describe::describe(other)
+                        ))));
+                    }
+                };
                 let copies = self
                     .error_scopes
                     .visible()
                     .iter()
                     .filter_map(al_builtins::errorinfo::copy_of)
                     .collect();
+                if clear {
+                    if let Some(&s) = self.error_scopes.starts.last() {
+                        self.error_scopes.held.truncate(s);
+                    }
+                }
                 Ok(Value::List(Rc::new(RefCell::new(copies))))
             }
             _ => return None,

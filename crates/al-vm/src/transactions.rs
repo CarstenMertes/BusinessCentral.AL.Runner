@@ -100,6 +100,13 @@ pub(crate) fn al_error(message: &str) -> Signal {
     al_error_code(message, "")
 }
 
+/// `Session::tx_phase`: nothing of the transaction has run yet.
+pub(crate) const TX_FRESH: u8 = 0;
+/// `Session::tx_phase`: a read call has started the transaction.
+pub(crate) const TX_READ: u8 = 1;
+/// `Session::tx_phase`: a write call has started the transaction.
+pub(crate) const TX_WRITE: u8 = 2;
+
 pub(crate) fn al_error_code(message: &str, code: &str) -> Signal {
     Signal::Error(AlError {
         message: message.to_string(),
@@ -163,7 +170,8 @@ impl Session {
         self.tx_model == TxModel::None && self.tx_world == 0
     }
 
-    /// `Commit()`. A `[CommitBehavior(Ignore)]` scope turns it into a no-op, and exempts it from
+    /// `Commit()`. The next transaction's type is Update until a set changes it
+    /// (session/ProbeSystemEnumMembers.al:94-112, TestClearAllTransactionTypeContracts.al:245-253). A `[CommitBehavior(Ignore)]` scope turns it into a no-op, and exempts it from
     /// the `AutoRollback` refusal (record/TestTransactionModelAutoRollback.al:Test07); the
     /// `AutoRollback` refusal outranks `[CommitBehavior(Error)]` (:Test08).
     pub(crate) fn commit_builtin(&mut self) -> Result<(), Signal> {
@@ -183,6 +191,9 @@ impl Session {
             return Err(Signal::Error(e));
         }
         self.commit_transaction();
+        // The next transaction has not started and its type is Update (see `tx_phase`).
+        self.tx_phase = TX_FRESH;
+        self.transaction_type = 1;
         Ok(())
     }
 

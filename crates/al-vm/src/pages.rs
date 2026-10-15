@@ -12,6 +12,7 @@ use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::pagefmt::{self, Blank, ControlFormat};
 use al_builtins::value::{ControlRef, ControlTarget, Cursor, PageMode, PageState, RecordState, RtType, Value};
+use al_data::Store as _;
 use al_ir as ir;
 use rust_decimal::prelude::ToPrimitive;
 use std::cell::RefCell;
@@ -3957,7 +3958,23 @@ impl Session {
                 },
                 None => None,
             };
-            f.decimal_places = expr.and_then(|e| pagefmt::parse_precision(&e));
+            f.decimal_places = expr.as_deref().and_then(pagefmt::parse_precision);
+            // AutoFormatType 1, 2, 4 and 5 (on the control, else on the table field): the places of an
+            // amount or a unit amount, from the currency the expression names
+            // (autoformat/PWAutoFormatTypes.al, see `auto_format_places`).
+            if f.decimal_places.is_none() {
+                let kind = lit("autoformattype").or_else(|| from_field("autoformattype"));
+                if let Some(kind) = kind
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|k| matches!(*k, "1" | "2" | "4" | "5"))
+                {
+                    let expr = expr
+                        .or_else(|| from_field("autoformatexpression").map(|e| unquote(&e)))
+                        .unwrap_or_default();
+                    f.decimal_places = Some(self.auto_format_places(kind, &expr)?);
+                }
+            }
         }
         f.blank_zero = lit("blankzero")
             .or_else(|| from_field("blankzero"))
@@ -3978,6 +3995,65 @@ impl Session {
             });
         }
         Ok(f)
+    }
+
+    /// The places a decimal control with `AutoFormatType` 1, 2, 4 or 5 shows (corpus autoformat/PWAutoFormatTypes.al,
+    /// BC 27.5; the setup does not matter in any of the three setups probed, so General Ledger Setup is not read):
+    /// 1 and 4 are amounts, 2 and 5 unit amounts. A blank expression gives 2:2 for an amount and 2:5 for a unit
+    /// amount (:98-175). A currency code that exists gives the currency's "Amount Decimal Places" or
+    /// "Unit-Amount Decimal Places" (:177-195), both empty gives 2:2 (:197-217), and a code that is no
+    /// currency gives 2:5 (:263-290). A currency with only one of the two places empty is not pinned.
+    fn auto_format_places(&mut self, kind: &str, expr: &str) -> Result<(u32, u32), Signal> {
+        let unit = matches!(kind, "2" | "5");
+        if expr.trim().is_empty() {
+            return Ok(if unit { (2, 5) } else { (2, 2) });
+        }
+        let engine = self.engine();
+        let Some(oi) = engine
+            .program
+            .objects
+            .iter()
+            .position(|o| o.id == Some(4) && o.table.is_some())
+        else {
+            return unsupported(format!(
+                "AutoFormatType {kind} with the currency `{expr}`: the Currency table is not in the program (not pinned)"
+            ));
+        };
+        let Some(t) = engine.tables[oi].clone() else {
+            return unsupported("AutoFormatType with a currency: the Currency table did not compile");
+        };
+        let field = |name: &str| t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(name));
+        let (Some(amount_at), Some(unit_at)) = (field("Amount Decimal Places"), field("Unit-Amount Decimal Places"))
+        else {
+            return unsupported("AutoFormatType with a currency: the Currency table has no decimal places fields");
+        };
+        let Ok(key) = ops::convert(Value::Text(expr.to_string()), &t.fields[0].ty) else {
+            return Ok((2, 5));
+        };
+        let row = self
+            .store
+            .get(&self.cx, &t, &[key])
+            .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
+        let Some(row) = row else {
+            return Ok((2, 5));
+        };
+        let text = |at: usize| {
+            al_builtins::native::text_of(&row[at])
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        };
+        let (amount, unit_places) = (text(amount_at), text(unit_at));
+        if amount.is_empty() && unit_places.is_empty() {
+            return Ok((2, 2));
+        }
+        let wanted = if unit { unit_places } else { amount };
+        match pagefmt::parse_decimal_places(&wanted) {
+            Some(p) if !wanted.is_empty() => Ok(p),
+            _ => unsupported(format!(
+                "AutoFormatType {kind} with the currency `{expr}`, whose places are `{wanted}` (one of the two empty is not pinned)"
+            )),
+        }
     }
 
     fn control_text(&mut self, st: &St, idx: usize, v: &Value) -> Result<String, Signal> {
@@ -4005,29 +4081,6 @@ impl Session {
             return unsupported(format!("control text of a {name} value"));
         }
         let f = self.control_format(st, idx)?;
-        // The unit amount formats (AutoFormatType 2 and 5, enum "Auto Format" UnitAmountFormat and
-        // UnitAmountFormatNoSymbol) take their decimals from General Ledger Setup (default 2:5) or the
-        // currency, through Base Application's `Amount AutoFormat` codeunit, which the runtime does not
-        // call. A value with more than two decimals would be rounded to two here, which BC does not do
-        // in the default setup (Tests-ERM codeunit 134833): refused (docs/probes-needed.md).
-        if let Value::Decimal(d) = v {
-            if f.decimal_places.is_none() && d.scale() > 2 && d.normalize().scale() > 2 {
-                let kind = match self.control_field(st, idx) {
-                    Some(fld) => fld
-                        .properties
-                        .iter()
-                        .find(|(k, _)| k.eq_ignore_ascii_case("AutoFormatType"))
-                        .map(|(_, v)| v.trim().to_string()),
-                    None => None,
-                };
-                if matches!(kind.as_deref(), Some("2" | "5")) {
-                    return unsupported(format!(
-                        "a control with AutoFormatType = {}: its decimals come from General Ledger Setup or the currency, and the value has more than two; not pinned (docs/probes-needed.md)",
-                        kind.unwrap_or_default()
-                    ));
-                }
-            }
-        }
         let engine = self.engine();
         let caption = move |id: u32, ordinal: i32| {
             let o = &engine.program.objects[id as usize];

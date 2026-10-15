@@ -133,6 +133,16 @@ impl Session {
             }
             _ => None,
         };
+        // A page handler whose parameter is a `Page` (and a `var Response: Action`) is a shape BC
+        // accepts; no corpus test has one, so what it is handed is not pinned (docs/probes-needed.md,
+        // "Page handlers").
+        if !ok && matches!(kind, UiKind::Page | UiKind::ModalPage) && matches!(ty(0), Some(RtType::Page(_))) {
+            return Err(format!(
+                "{} takes a Page instead of a TestPage: what a {} handler of that shape is handed and how its Response: Action is read are not pinned (docs/probes-needed.md)",
+                r.name,
+                kind.label()
+            ));
+        }
         if !ok {
             return Err(format!(
                 "{} is not shaped like a {} handler function",
@@ -256,7 +266,6 @@ impl Session {
     /// (handlers/TestNotificationSendRecallContracts.al:59-93, BC 27.5). Returns the notification
     /// as the handler left it.
     pub(crate) fn ui_send_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<Option<Value>, Signal> {
-        self.recalled_notifications.retain(|r| *r != id);
         if !self.sent_notifications.contains(&id) {
             self.sent_notifications.push(id);
         }
@@ -271,35 +280,22 @@ impl Session {
         Ok(finals.pop())
     }
 
-    /// `Notification.Recall()`: true for a notification that was sent, false for one never sent
-    /// (the recall handler does not run then). A bound `[RecallNotificationHandler]` runs with the
-    /// sender's current notification and must answer true; with none bound nothing happens
-    /// (handlers/TestNotificationSendRecallContracts.al:95-131, BC 27.5). A second `Recall` of the
-    /// same notification is not pinned.
+    /// `Notification.Recall()`: true for a notification that was sent, false for one never sent (the recall
+    /// handler does not run then). A bound `[RecallNotificationHandler]` runs with the sender's current
+    /// notification, at every Recall, and what it answers does not matter; with none bound nothing happens
+    /// (handlers/TestNotificationSendRecallContracts.al:95-131, handlers/ProbeNotificationRecallEdges.al,
+    /// BC 27.5).
     pub(crate) fn ui_recall_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<bool, Signal> {
-        if self.recalled_notifications.contains(&id) {
-            return Err(Signal::Unsupported(
-                "Notification.Recall of a notification already recalled (not pinned)".into(),
-            ));
-        }
-        let Some(i) = self.sent_notifications.iter().position(|s| *s == id) else {
+        if !self.sent_notifications.contains(&id) {
             return Ok(false);
-        };
+        }
         let bound = self
             .ui
             .as_ref()
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::RecallNotification));
         if bound {
-            let (answer, _) = self.dispatch_ui_returning(UiKind::RecallNotification, "", vec![notification])?;
-            if !matches!(answer, Value::Boolean(true)) {
-                return Err(Signal::Unsupported(format!(
-                    "a [RecallNotificationHandler] that answers {answer} (only true is pinned)",
-                    answer = answer.describe()
-                )));
-            }
+            self.dispatch_ui_returning(UiKind::RecallNotification, "", vec![notification])?;
         }
-        self.sent_notifications.remove(i);
-        self.recalled_notifications.push(id);
         Ok(true)
     }
 

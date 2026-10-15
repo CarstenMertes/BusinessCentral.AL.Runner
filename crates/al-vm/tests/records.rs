@@ -626,8 +626,6 @@ codeunit 50100 C
 
 #[test]
 fn clear_of_an_empty_temporary_record_resets_fields_and_filters() {
-    // Nothing pins what Clear does to the rows of a temporary table (docs/probes-needed.md), but
-    // with no rows both readings give the same state, so that case is run.
     let r = run(
         "procedure F(): Text var R: Record \"ALT T\" temporary; begin
             R.\"No.\" := 'a'; R.Grp := 7; R.SetRange(Grp, 7);
@@ -640,17 +638,18 @@ fn clear_of_an_empty_temporary_record_resets_fields_and_filters() {
 }
 
 #[test]
-fn clear_of_a_temporary_record_that_holds_rows_is_refused() {
+fn clear_of_a_temporary_record_that_holds_rows_keeps_the_rows() {
+    // types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount (BC 27.5): the buffer and the
+    // filters are reset, the rows stay and the record stays temporary.
     let r = run(
         "procedure F(): Text var R: Record \"ALT T\" temporary; begin
-            R.\"No.\" := 'a'; R.Insert(); Clear(R); exit('ran');
+            R.\"No.\" := 'a'; R.Insert(); R.\"No.\" := 'b'; R.Insert(); R.SetRange(\"No.\", 'a');
+            Clear(R);
+            exit(R.\"No.\" + '|' + Format(R.Count()) + '|' + R.GetFilters() + '|' + Format(R.IsTemporary()));
         end;",
         "F",
     );
-    match r {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("temporary"), "{why}"),
-        other => panic!("{other:?}"),
-    }
+    assert_eq!(text(r), "|2||Yes");
 }
 
 #[test]
@@ -711,4 +710,41 @@ fn copy_filter_copies_one_fields_filter_to_a_field_of_another_record() {
         "F",
     );
     assert_eq!(text(r), "1..5|1..5||No");
+}
+
+// record/ProbeClearAllSetKeyHyperlink.al:276-318 (BC 27.5): SetCurrentKey on a FlowField goes through, on a FlowFilter
+// field or a Blob it raises `Sorting cannot be done based on the <field> field(s) in the <table> table.` (DB:Ok).
+#[test]
+fn set_current_key_on_a_flow_field_works_and_on_a_flow_filter_or_blob_raises() {
+    let src = "table 50950 \"Rb\" { fields { field(1; Id; Integer) { } field(4; Flow; Integer) { FieldClass = FlowField; CalcFormula = count(\"ALT T\"); }
+        field(5; FlowFilt; Integer) { FieldClass = FlowFilter; } field(6; Pic; Blob) { } } keys { key(PK; Id) { } } }
+        codeunit 50101 C2 { procedure F(): Text var R: Record Rb; S: Text; begin
+            R.SetCurrentKey(Flow); if R.FindFirst() then; S := 'flow ok';
+            asserterror R.SetCurrentKey(FlowFilt); S += '|' + GetLastErrorText() + '|' + GetLastErrorCode();
+            asserterror R.SetCurrentKey(Pic); S += '|' + GetLastErrorText(); exit(S); end; }";
+    let full = format!("{TABLE}\n{src}");
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), full)],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked: Vec<Vec<Option<String>>> = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C2").unwrap();
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    let out = text(s.call(oi, 0, inst, vec![]).map(|(v, _)| v));
+    assert_eq!(
+        out,
+        "flow ok|Sorting cannot be done based on the FlowFilt field(s) in the Rb table.|DB:Ok|Sorting cannot be done based on the Pic field(s) in the Rb table."
+    );
 }

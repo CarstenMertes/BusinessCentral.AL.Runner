@@ -509,3 +509,28 @@ fn overloads_that_differ_only_in_the_table_of_a_record_parameter_pick_by_table()
         }";
     assert_eq!(text(run(src, "F", vec![])), "12");
 }
+
+// codeunit/PWCodeCoverageRows.al:DumpRows (BC 27.5): StrSubstNo of an Option field with an OptionCaption reads the
+// caption, as Format does ("Non Applicable", not the member NonApplicable).
+#[test]
+fn strsubstno_of_an_option_field_reads_its_caption() {
+    let src = "table 50300 T { fields { field(1; K; Code[10]) { } field(2; St; Option) { OptionMembers = Covered,NonApplicable; OptionCaption = 'Covered,Non Applicable'; } } keys { key(PK; K) { } } }
+        codeunit 50100 C { procedure F(): Text var R: Record T; begin R.St := R.St::NonApplicable;
+            exit(Format(R.St) + '|' + StrSubstNo('%1/%2', R.K, R.St)); end; }";
+    assert_eq!(text(run(src, "F", vec![])), "Non Applicable|/Non Applicable");
+}
+
+// types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms (BC 27.5): Evaluate into an enum reads a member name in any
+// case, a caption, or an ordinal (also one no member has); format 9 reads names too; anything else is rejected.
+#[test]
+fn evaluate_into_an_enum_reads_names_captions_and_ordinals() {
+    let src = "enum 50400 \"Kind\" { Extensible = true; value(0; None) { Caption = 'No Kind'; } value(1; Alpha) { } value(5; \"Beta Gamma\") { } }
+        codeunit 50100 C { procedure F(): Text var K: Enum Kind; S: Text; begin
+            S += Format(Evaluate(K, 'Beta Gamma')) + Format(K, 0, 2) + ',';
+            K := K::None; S += Format(Evaluate(K, 'beta gamma')) + Format(K, 0, 2) + ',';
+            K := K::Alpha; S += Format(Evaluate(K, 'No Kind')) + ',';
+            K := K::None; S += Format(Evaluate(K, '5')) + Format(K, 0, 2) + ',';
+            K := K::None; S += Format(Evaluate(K, '5', 9)) + Format(Evaluate(K, 'Alpha', 9)) + ',';
+            S += Format(Evaluate(K, 'Nope')) + Format(Evaluate(K, '7')) + Format(K, 0, 2); exit(S); end; }";
+    assert_eq!(text(run(src, "F", vec![])), "Yes5,Yes5,Yes,Yes5,YesYes,NoYes7");
+}

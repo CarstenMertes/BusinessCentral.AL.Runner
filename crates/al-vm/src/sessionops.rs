@@ -212,34 +212,50 @@ impl Session {
                 }
                 return Ok(Value::Boolean(self.lock_timeout));
             }
-            // The type of the transaction. A test starts as UpdateNoLocks, not Update, and a set before
-            // any database access takes effect; once the transaction has written, a read answers
-            // Update and a set to another type is ignored without an error
-            // (session/TestClearAllTransactionTypeContracts.al:224-253). A set to Update itself after a
-            // write is session/TestDatabaseExtended.al:Database_CurrentTransactionType_SetAfterWriteOp_
-            // Throws, which expects an error whose text is not pinned: refused. A set after a read only
-            // is not pinned either and takes effect (docs/probes-needed.md).
+            // The type of the transaction (session/ProbeSystemEnumMembers.al:60-161, BC 27.5;
+            // TestClearAllTransactionTypeContracts.al:224-253):
+            // - a test starts as UpdateNoLocks, and a set before any database call takes effect;
+            // - after a Commit() the next transaction's type is Update, and a set takes effect again;
+            // - once a write call has run (also a DeleteAll that finds no row) the type stays as it was: a
+            //   set to Report or Snapshot, or to the type it has, goes through without effect, and a set
+            //   to Update raises DB:CannotChangeTransactionType;
+            // - once a read call has run, a set of Report reads back as Update.
+            // Every other set after the transaction has started is not pinned and refused.
             "Database.CurrentTransactionType#1" => {
+                use crate::transactions::{TX_FRESH, TX_READ, TX_WRITE};
                 let members: std::sync::Arc<[String]> = al_builtins::sysenum::option_members("TransactionType")
                     .expect("a system option")
                     .into();
-                let wrote = self.tx_wrote || self.in_write_transaction();
-                match args.first() {
-                    None | Some(Value::Null) => {
-                        let t = if wrote { 1 } else { self.transaction_type };
-                        return Ok(Value::Option(t, members));
+                let new = match args.first() {
+                    None | Some(Value::Null) => return Ok(Value::Option(self.transaction_type, members)),
+                    Some(Value::Option(t, _)) => *t,
+                    Some(other) => return unsupported(format!("CurrentTransactionType set to {}", other.describe())),
+                };
+                let (update, snapshot, report) = (1, 2, 4);
+                match self.tx_phase {
+                    TX_FRESH => self.transaction_type = new,
+                    TX_WRITE if new == self.transaction_type => {}
+                    TX_WRITE if new == snapshot || new == report => {}
+                    TX_WRITE if new == update => {
+                        let name = |t: i32| members.get(t as usize).cloned().unwrap_or_default();
+                        return Err(crate::transactions::al_error_code(
+                            &format!(
+                                "The transaction type cannot be changed after a transaction has started.\r\\\r\\A transaction starts when the first database operation, such as FIND, NEXT, INSERT, DELETE, MODIFY, SUM, or COUNT, is run.\r\\\r\\The error occurred because the transaction type was changed from {} to {}.",
+                                name(self.transaction_type),
+                                name(new)
+                            ),
+                            "DB:CannotChangeTransactionType",
+                        ));
                     }
-                    Some(Value::Option(t, _)) if !wrote => {
-                        self.transaction_type = *t;
-                        return Ok(Value::Null);
-                    }
-                    Some(Value::Option(t, _)) if *t != 1 => return Ok(Value::Null),
-                    Some(_) => {
-                        return unsupported(
-                            "Database.CurrentTransactionType set to Update after a write (BC raises an error whose text is not pinned)",
-                        );
+                    TX_READ if new == report => self.transaction_type = update,
+                    _ => {
+                        return unsupported(format!(
+                            "Database.CurrentTransactionType set to {} after a database call (not pinned)",
+                            members.get(new as usize).cloned().unwrap_or_default()
+                        ));
                     }
                 }
+                return Ok(Value::Null);
             }
             _ => {}
         }

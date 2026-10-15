@@ -74,14 +74,20 @@ fn layout_row(o: &Object, l: &al_ir::LayoutDecl, t: &TableDef, r: &mut al_data::
         .position(|f| f.eq_ignore_ascii_case(&ident(format)))
         .ok_or_else(|| format!("{}: Type `{format}` is not pinned", what()))?;
     r[pos(t, 7)] = option(t, 7, format as i32);
-    // Caption is the Caption literal; Description the Summary literal, else the layout's name.
+    // Caption is the Caption literal, else the layout's name; Description the Summary literal, else the layout's name.
     let literal = |name: &str| -> Result<Option<String>, String> {
         lprop(l, name)
             .map(|v| string_lit(v).ok_or_else(|| format!("{}: {name} `{v}` is not a literal", what())))
             .transpose()
     };
-    // A layout without a Caption reads blank here (assumed: docs/probes-needed.md).
-    r[pos(t, 3)] = Value::Text(literal("Caption")?.unwrap_or_default().chars().take(250).collect());
+    // A layout without a Caption reads its name (session/PWPlatformTables.al:126-139).
+    r[pos(t, 3)] = Value::Text(
+        literal("Caption")?
+            .unwrap_or_else(|| l.name.clone())
+            .chars()
+            .take(250)
+            .collect(),
+    );
     r[pos(t, 10)] = Value::Text(
         literal("Summary")?
             .unwrap_or_else(|| l.name.clone())

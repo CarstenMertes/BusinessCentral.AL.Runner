@@ -51,11 +51,13 @@ fn apps(base: &str) -> (Vec<AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>) {
                 publisher: "Me".into(),
                 version: "1.0.0.0".into(),
                 resources: vec![],
+                include_source: false,
             },
             Manifest {
                 publisher: "Microsoft".into(),
                 version: "27.5.0.0".into(),
                 resources: vec![],
+                include_source: false,
             },
         ],
     )

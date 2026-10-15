@@ -54,6 +54,8 @@ pub struct Manifest {
     pub version: String,
     /// The files under the manifest's `resourceFolders`, named relative to their folder.
     pub resources: Vec<(String, Vec<u8>)>,
+    /// `resourceExposurePolicy.includeSourceInSymbolFile`: the Code Coverage table shows the source lines.
+    pub include_source: bool,
 }
 
 /// The manifest fields `NavApp.GetCurrentModuleInfo` reports, from `dir/app.json`.
@@ -90,6 +92,9 @@ pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
         publisher: s("publisher"),
         version: s("version"),
         resources,
+        include_source: manifest["resourceExposurePolicy"]["includeSourceInSymbolFile"]
+            .as_bool()
+            .unwrap_or(false),
     })
 }
 
@@ -697,6 +702,24 @@ impl CorpusRuntime {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();
             app.resources = m.resources.clone();
+            app.include_source = m.include_source;
+        }
+        // The source lines of an app that includes its source in the symbols (the Code Coverage `Line`).
+        {
+            let program = std::sync::Arc::make_mut(&mut lowered.program);
+            for sf in &mut program.sources {
+                let Some(app) = program.apps.get(sf.app as usize).filter(|a| a.include_source) else {
+                    continue;
+                };
+                let _ = app;
+                if let Some((_, text)) = ws
+                    .apps
+                    .get(sf.app as usize)
+                    .and_then(|a| a.files.iter().find(|(p, _)| *p == sf.path))
+                {
+                    sf.lines = text.split('\n').map(|l| l.trim_end_matches('\r').to_string()).collect();
+                }
+            }
         }
         let blocked: Vec<Vec<Option<String>>> = lowered
             .unsupported

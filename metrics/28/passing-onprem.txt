@@ -47,3 +47,4 @@
 61243 SaveAsXml_ReportDataFile_IsADataSet
 61243 SaveAsXml_RunsTheReportOnce_AndClosesTheRequestPage
 61243 TemporaryPath_EndsWithTheTempFolderAndABackslash
+61260 CodeCoverageRows_OfAnAppWithSource_HoldTheSourceLines

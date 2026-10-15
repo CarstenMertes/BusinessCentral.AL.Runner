@@ -264,7 +264,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             },
             &mut scans,
         )?;
-        let todo: Vec<DepDecl> = round
+        let required: Vec<DepDecl> = round
             .skipped
             .iter()
             .filter_map(|e| match e {
@@ -275,6 +275,20 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             // The feed holds only Microsoft's apps: do not select a build for anything else.
             .filter(|d| d.publisher.is_empty() || d.publisher.eq_ignore_ascii_case("Microsoft"))
             .collect();
+        // When a build is needed anyway, the optional roots (the platform's `System`, the `Application` floor) come from it
+        // too if no directory holds them: without `System` the platform tables are missing, and a run whose cache another
+        // run had filled would see something else than one on a fresh machine. Nothing is requested for them alone.
+        let mut seen_ids: HashSet<String> = required.iter().map(|d| d.id.to_ascii_lowercase()).collect();
+        let optional: Vec<DepDecl> = round
+            .optional_missing
+            .iter()
+            .filter(|_| !required.is_empty())
+            .filter(|d| !tried.contains(&dep_key(d)))
+            .filter(|d| d.publisher.is_empty() || d.publisher.eq_ignore_ascii_case("Microsoft"))
+            .filter(|d| seen_ids.insert(d.id.to_ascii_lowercase()))
+            .cloned()
+            .collect();
+        let todo: Vec<DepDecl> = required.into_iter().chain(optional).collect();
         planned = Some(round);
         if todo.is_empty() {
             break;
@@ -847,6 +861,7 @@ mod tests {
         assert_eq!(
             names(&p),
             [
+                "System",
                 "System Application",
                 "Any",
                 "System Application Test Library",
@@ -856,7 +871,7 @@ mod tests {
         let used = p.artifact.as_ref().unwrap();
         assert_eq!(used.build.to_string(), "27.5.46862.56249", "the newest 27.5 build");
         assert_eq!(used.origin, Origin::Published);
-        assert_eq!(used.fetched.len(), 3);
+        assert_eq!(used.fetched.len(), 4, "the three libraries and the platform's System");
         // Source comes from the downloaded archives with the app name as the path prefix.
         let satl = p
             .loaded
@@ -906,8 +921,9 @@ mod tests {
             &p,
         )
         .unwrap();
-        assert_eq!(names(&out), ["System Application", "Base Application"]);
-        assert_eq!(out.loaded.apps[1].version.to_string(), "27.5.46862.56249");
+        // The platform's `System` is an optional root of the project: with a build chosen anyway, it comes from it.
+        assert_eq!(names(&out), ["System", "System Application", "Base Application"]);
+        assert_eq!(out.loaded.apps[2].version.to_string(), "27.5.46862.56249");
         // Warm: the record beside the cached file names the build, so the variables fill again.
         let again = run(
             &alpkg,
@@ -1032,6 +1048,7 @@ mod tests {
         assert_eq!(
             names(&out),
             [
+                "System",
                 "System Application",
                 "Any",
                 "System Application Test Library",
@@ -1603,12 +1620,12 @@ mod tests {
                 &project(),
             )
             .unwrap();
-            assert_eq!(p.artifact.unwrap().fetched.len(), 3);
+            assert_eq!(p.artifact.unwrap().fetched.len(), 4);
             let served = server.served.load(std::sync::atomic::Ordering::SeqCst);
-            // The index, the directory, three entries: not the whole artifact.
+            // The index, the directory, four entries: not the whole artifact.
             assert!(served < total, "served {served} of {total}");
-            // index + tail + (directory is inside the tail: tiny fixture) + 3 entries
-            assert_eq!(server.requests.load(std::sync::atomic::Ordering::SeqCst), 1 + 1 + 3);
+            // index + tail + (directory is inside the tail: tiny fixture) + 4 entries
+            assert_eq!(server.requests.load(std::sync::atomic::Ordering::SeqCst), 1 + 1 + 4);
         } // the server is gone
         let cdn = HttpCdn::new("http://127.0.0.1:9");
         let again = run(

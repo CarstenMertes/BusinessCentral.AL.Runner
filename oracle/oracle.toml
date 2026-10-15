@@ -3,6 +3,11 @@
 # CI run of the pin, or of the commit named by the version's own `corpus_commit`, which the CLI
 # accepts only when the corpus diff since that commit adds files under tests/ and changes none
 # (ADR-007).
+#
+# `bc_build` pins the Microsoft build the runtime loads for that major (Base Application, test
+# libraries, demo data): local runs and CI load the same apps, and a build Microsoft publishes later
+# changes no result until the pin is moved on purpose (the ratchet baselines are recorded against it).
+# The artifact cache key of CI follows the pin (`--print-builds`).
 corpus_repo = "corpus"
 corpus_app = "corpus/tests/al-language"
 corpus_commit = "2c09ecd4c10a4a7146db05441bf6e5adffb65261"
@@ -10,6 +15,7 @@ corpus_commit = "2c09ecd4c10a4a7146db05441bf6e5adffb65261"
 [[version]]
 major = 27
 bc_version = "27.5"
+bc_build = "27.5.46862.56249"
 workflow_run = 38739215829
 artifact_id = 11976017829
 junit = "27/junit.xml"
@@ -26,6 +32,7 @@ baseline = "metrics/27/passing-onprem.txt"
 [[version]]
 major = 28
 bc_version = "28.5"
+bc_build = "28.5.54151.56267"
 workflow_run = 38739215829
 artifact_id = 11975934783
 junit = "28/junit.xml"
@@ -72,6 +79,7 @@ baseline = "metrics/28/passing-isolation-codeunit.txt"
 [[version]]
 major = 29
 bc_version = "29.0"
+bc_build = "29.0.54011.56262"
 workflow_run = 38739215829
 artifact_id = 11975599580
 junit = "29/junit.xml"

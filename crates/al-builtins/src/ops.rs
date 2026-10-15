@@ -77,6 +77,25 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // the assignment compiles (the target must state AssignmentCompatibility, AL0122) is the checker's.
         (Value::Enum(_, o), T::Enum(to)) => Value::Enum(*to, o),
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
+        // An Enum value into an Option or an Integer is its ordinal, a BigInteger into an Option likewise (an ordinal
+        // beyond the members is kept, as for an Integer). Not pinned by the corpus (docs/probes-needed.md).
+        (Value::Enum(_, o), T::Option(m))
+            if crate::assumptions::hit(crate::assumptions::Assumption::EnumOptionIntegerOrdinal) =>
+        {
+            Value::Option(o, m.clone().into())
+        }
+        (Value::Enum(_, o), T::Integer)
+            if crate::assumptions::hit(crate::assumptions::Assumption::EnumOptionIntegerOrdinal) =>
+        {
+            Value::Integer(o)
+        }
+        (Value::BigInteger(n), T::Option(m)) => match i32::try_from(n) {
+            Ok(o) => {
+                crate::assumptions::assume(crate::assumptions::Assumption::EnumOptionIntegerOrdinal);
+                Value::Option(o, m.clone().into())
+            }
+            Err(_) => return unsupported(format!("{n} as an Option ordinal (beyond Integer)")),
+        },
         (Value::Option(o, _), T::Integer) => Value::Integer(o),
         (Value::Integer(n), T::Duration) => Value::Duration(i64::from(n)),
         (Value::BigInteger(n), T::Duration) => Value::Duration(n),
@@ -599,6 +618,37 @@ mod tests {
         ));
         assert!(matches!(
             convert(Value::BigInteger(5), &RtType::Enum(5056)),
+            Err(Signal::Unsupported(_))
+        ));
+    }
+
+    // An Enum value into an Option or an Integer, and a BigInteger into an Option, go by ordinal. Nothing in the corpus
+    // pins them (docs/probes-needed.md); Microsoft's tests need them: the FlowField filter
+    // `"Source Subtype" = field("Document Type")` of Sales Line "Reserved Quantity" (Option column, Enum field),
+    // `DequeueInteger` of an enqueued enum in Library - Variable Storage, and the loop
+    // `for FromSalesLineDisc."Sales Type" := ...::Customer to ...::Campaign` in Sales Price Calc. Mgt.
+    #[test]
+    fn an_enum_converts_to_an_option_and_an_integer_by_ordinal_and_a_biginteger_to_an_option() {
+        let members = || RtType::Option(vec!["A".into(), "B".into(), "C".into()]);
+        assert!(matches!(convert(Value::Enum(37, 2), &members()), Ok(Value::Option(2, m)) if m.len() == 3));
+        assert!(matches!(
+            convert(Value::Enum(37, 9), &members()),
+            Ok(Value::Option(9, _))
+        ));
+        assert!(matches!(
+            convert(Value::Enum(37, 2), &RtType::Integer),
+            Ok(Value::Integer(2))
+        ));
+        assert!(matches!(
+            convert(Value::BigInteger(1), &members()),
+            Ok(Value::Option(1, _))
+        ));
+        assert!(matches!(
+            convert(Value::BigInteger(0), &members()),
+            Ok(Value::Option(0, _))
+        ));
+        assert!(matches!(
+            convert(Value::BigInteger(i64::MAX), &members()),
             Err(Signal::Unsupported(_))
         ));
     }

@@ -1003,22 +1003,30 @@ impl Session {
                 // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; pinned by the
                 // corpus Option_InCaseAndLoopBounds, types/ for_to_option).
                 let bound = |v: Value| match v {
-                    Value::Option(o, _) => Value::Integer(o),
+                    Value::Option(o, _) | Value::Enum(_, o) => Value::Integer(o),
                     v => v,
                 };
+                if matches!(from, Value::Enum(..)) || matches!(to, Value::Enum(..)) {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
+                }
                 let (from, to) = (bound(from), bound(to));
                 let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
                 while if *down { i >= end } else { i <= end } {
                     self.check_stop()?;
                     let slot_ty = self.place_type(var, f);
+                    if matches!(slot_ty, RtType::Option(_) | RtType::Enum(_)) {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
+                    }
                     self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
                     }
-                    i = int(&self.read(var, f)?)?;
+                    // The counter is read back from the variable, which may be an Option (an Option field as the
+                    // loop variable, Sales Price Calc. Mgt.): its ordinal.
+                    i = int(&bound(self.read(var, f)?))?;
                     i += if *down { -1 } else { 1 };
                 }
                 Ok(())

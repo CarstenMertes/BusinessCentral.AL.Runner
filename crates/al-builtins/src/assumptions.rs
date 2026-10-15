@@ -237,6 +237,24 @@ registry! {
         tests: "Library code that sets a key containing a FlowField in the buckets.",
         probe: "SetCurrentKey(FlowField) then FindSet over rows whose primary key order differs from their flowed values.",
     },
+    EnumOptionIntegerOrdinal => {
+        id: "enum-option-integer-ordinal",
+        assumed: "An Enum value converts into an Option or an Integer, and a BigInteger into an Option, by ordinal; an ordinal beyond the members is kept. (Integer into Option, Option into Integer and Option into Enum are pinned by types/PROptionInteger.al and types/PEOptionEnumBigText.al.)",
+        tests: "Sales Line UpdatePlanned (the FlowField filter of Reserved Quantity: Option column against an Enum field) in about 7,000 Tests-ERM and Tests-SCM tests; Library - Variable Storage DequeueInteger of an enqueued enum (ERM TestMultipleGenJnlLines).",
+        probe: "Opt := Variant(EnumValue), Int := Variant(EnumValue), a FlowField filter and a SetRange that compare an Option column with an Enum field, with an ordinal the Option lacks. Corpus-topic issue 67.",
+    },
+    ForOptionVariable => {
+        id: "for-option-variable",
+        assumed: "A for loop whose variable is an Option or Enum field or variable runs once per ordinal, holds the member in each round and is read back before it counts up; Enum bounds count as their ordinal. (An Integer loop with an Option bound is pinned by types/PROptionInteger.al.)",
+        tests: "Sales Price Calc. Mgt. FindSalesLineDisc (for \"Sales Type\" := Customer to Campaign), reached by Job Consumption Basic and ERM Dimension Sales tests.",
+        probe: "for R.Opt := R.Opt::A to R.Opt::C over an Option field and an Option variable; the value after the loop; a body that changes the variable.",
+    },
+    RecordIdInMessage => {
+        id: "record-id-in-message",
+        assumed: "A RecordId as a %1 of an error, or in TestField and FieldError text, reads as Format(RecordId) does (Table: key1,key2). (Format(RecordId) is pinned by record/TestProbeRecordRefContracts.al:472-502.)",
+        tests: "Gen. Jnl.-Post Line PostVend (ERM Gen. Lines for Vendor, over 1,000 Tests-ERM and Tests-General Journal tests).",
+        probe: "Error('%1', Rec.RecordId), StrSubstNo and TestField on a RecordId field, with a text key that needs quotes.",
+    },
 }
 
 thread_local! {

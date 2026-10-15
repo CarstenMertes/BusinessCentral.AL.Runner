@@ -88,10 +88,11 @@ impl Lowerer<'_> {
                     .collect();
                 al_builtins::platform_native::find(&self.ws.objects[self.oi].name, &r.name(), &types)
             })
-            .flatten();
-        if let Some(entry) = native {
+            .flatten()
+            .and_then(|entry| ir::BuiltinId::of(entry.id));
+        if let Some(id) = native {
             let call = ir::Expr::Builtin {
-                id: entry.id.to_string(),
+                id,
                 receiver: None,
                 args: (0..params)
                     .map(|i| ir::Arg::Value(ir::Expr::Load(ir::Place::Local(i))))
@@ -439,7 +440,7 @@ impl Lowerer<'_> {
             let value = self.expr(&kids[1])?;
             let value = self.convert_to(&Ty::Integer, &self.ty_of(&kids[1]), value)?;
             return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
-                id: "Record.SetCurrFieldNo#1".into(),
+                id: ir::BuiltinId::of("Record.SetCurrFieldNo#1").ok_or("Record.SetCurrFieldNo#1 has no builtin id")?,
                 receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
                 args: vec![ir::Arg::Value(value)],
                 ret_used: false,
@@ -527,7 +528,7 @@ impl Lowerer<'_> {
                 };
                 let rhs = self.expr(&kids[1])?;
                 return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
-                    id,
+                    id: super::call::builtin_id(&id)?,
                     receiver,
                     args: vec![ir::Arg::Value(rhs)],
                     ret_used: false,
@@ -553,7 +554,7 @@ impl Lowerer<'_> {
                 }
                 let rhs = self.expr(&kids[1])?;
                 return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
-                    id,
+                    id: super::call::builtin_id(&id)?,
                     receiver: None,
                     args: vec![ir::Arg::Value(rhs)],
                     ret_used: false,

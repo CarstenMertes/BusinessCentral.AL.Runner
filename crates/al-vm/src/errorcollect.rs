@@ -14,6 +14,7 @@
 //! - `HasCollectedErrors` is a within-scope predicate and answers true outside any (finding D).
 
 use crate::{AlError, Session, Signal};
+use al_builtins::builtin_id::ids;
 use al_builtins::value::Value;
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -106,21 +107,25 @@ impl Session {
     }
 
     /// The error-collection builtins; `None` when `id` is not one of them.
-    pub(crate) fn error_collection_op(&mut self, id: &str, args: &[Value]) -> Option<Result<Value, Signal>> {
+    pub(crate) fn error_collection_op(
+        &mut self,
+        id: al_ir::BuiltinId,
+        args: &[Value],
+    ) -> Option<Result<Value, Signal>> {
         Some(match id {
-            "System.IsCollectingErrors#1" => Ok(Value::Boolean(!self.error_scopes.starts.is_empty())),
+            ids::SYSTEM_ISCOLLECTINGERRORS_1 => Ok(Value::Boolean(!self.error_scopes.starts.is_empty())),
             // Outside a scope the platform computes 0 < 0 - (-1), which is true
             // (errorinfo/TestErrorInfoType.al:133-141, corpus docs/al-language-coverage-gaps.md:518).
-            "System.HasCollectedErrors#1" => Ok(Value::Boolean(
+            ids::SYSTEM_HASCOLLECTEDERRORS_1 => Ok(Value::Boolean(
                 self.error_scopes.starts.is_empty() || !self.error_scopes.visible().is_empty(),
             )),
-            "System.ClearCollectedErrors#1" => {
+            ids::SYSTEM_CLEARCOLLECTEDERRORS_1 => {
                 if let Some(&s) = self.error_scopes.starts.last() {
                     self.error_scopes.held.truncate(s);
                 }
                 Ok(Value::Null)
             }
-            "System.GetCollectedErrors#1" => {
+            ids::SYSTEM_GETCOLLECTEDERRORS_1 => {
                 // The list is what the scope holds; with `Clear` true the scope is emptied afterwards, as the
                 // documentation says (handlers/PWRefusedBuiltins.al:FieldError_WithErrorInfo_InCollectScope pins the
                 // list a call with true returns; that it empties the scope is the documented meaning only).

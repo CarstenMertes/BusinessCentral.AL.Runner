@@ -296,7 +296,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
                 }
                 Expr::Builtin { id, receiver, args, .. } => {
                     if let Some(r) = receiver {
-                        if let Some(rest) = id.strip_prefix("Record.") {
+                        if let Some(rest) = id.name().strip_prefix("Record.") {
                             let method = rest.split('#').next().unwrap_or("");
                             if matches!(method, "Insert" | "Modify" | "Rename" | "ModifyAll") {
                                 let place = match &**r {

@@ -472,7 +472,7 @@ impl Walk<'_> {
             }
             Expr::InterfaceTest { value, .. } => self.expr(value),
             Expr::Builtin { id, receiver, args, .. } => {
-                builtin(id)?;
+                builtin(id.name())?;
                 if let Some(r) = receiver {
                     self.arg(r)?;
                 }

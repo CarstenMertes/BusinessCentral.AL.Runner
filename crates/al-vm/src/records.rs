@@ -1740,11 +1740,6 @@ impl Session {
                 Ok(Value::Null)
             }
             "Rename" => {
-                if rec.borrow().temp_id.is_some() && rec.borrow().fields.iter().any(|f| matches!(f, Value::Blob(_))) {
-                    // streams/TestBlobRenameIsolation.al: BC keeps an unpersisted Blob write across a
-                    // temporary Rename but loses one persisted with Modify; no model here does both.
-                    return unsupported("Rename of a temporary record with a Blob field");
-                }
                 // Fields that relate to this table follow the rename; a temporary record has none.
                 let refs = if rec.borrow().temporary {
                     Vec::new()
@@ -1753,6 +1748,16 @@ impl Session {
                 };
                 let old = rec.borrow().fields.clone();
                 let mut new = old.clone();
+                // A temporary record loses its Blob values in a Rename, whether the write was persisted or not
+                // (streams/TestProbeStreamContracts.al:TempRename_UnpersistedBlobWrite, TempRename_PersistedBlobWrite,
+                // TempRename_BlobInsertedWithValueThenRename).
+                if rec.borrow().temp_id.is_some() {
+                    for (i, f) in t.fields.iter().enumerate() {
+                        if matches!(new[i], Value::Blob(_)) {
+                            new[i] = self.default_value(&f.ty);
+                        }
+                    }
+                }
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
                     if let Some(v) = args.get(n) {

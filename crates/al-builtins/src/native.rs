@@ -1064,6 +1064,11 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 "Clear of a DotNet variable that holds a {ty}: whether BC disposes the object is not pinned"
             ));
         }
+        // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
+        Value::Library(name, _) if name == "OutStream" || name == "InStream" => Value::Library(
+            name.clone(),
+            std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
+        ),
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
     Ok(Value::Null)

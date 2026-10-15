@@ -2152,6 +2152,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
         (receiver, name),
         ("FieldRef" | "TestField", "Value")
+            | ("InStream" | "OutStream", "Position")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
             | ("Notification", "Id" | "Message" | "Scope")
             | (

@@ -88,8 +88,16 @@ fn decimal(text: &str) -> Result<Parsed, Signal> {
             "Evaluate of `{text}` into Decimal (form not pinned by the corpus)"
         ));
     }
+    // More than 18 significant digits do not evaluate, and a value below 1E-28 reads as zero (types/TestProbeStreamContracts.al:
+    // WriteDecimal_ManyDigits, `19_digits_text`, `1e_minus_29`).
+    let digits: String = format!("{int}{}", frac.unwrap_or("")).trim_start_matches('0').to_string();
+    // An integer part of 18 digits does not fit either (`123456789012345678` fails, `123456789012.345678` reads).
+    if digits.len() > 18 || int.trim_start_matches('0').len() >= 18 {
+        return Ok(Parsed::Rejected);
+    }
     match text.parse::<Decimal>() {
         Ok(d) => Ok(Parsed::Value(Value::Decimal(d))),
+        Err(_) if digits.is_empty() || frac.is_some_and(|f| f.len() > 28) => Ok(Parsed::Value(Value::Decimal(Decimal::ZERO))),
         Err(_) => unsupported(format!("Evaluate of `{text}` outside the Decimal range")),
     }
 }

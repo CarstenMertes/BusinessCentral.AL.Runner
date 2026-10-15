@@ -244,6 +244,8 @@ fn normal_date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 fn closing_date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     match &a[0] {
         Value::Date(n, _) if *n > 0 => Ok(Value::Date(*n, true)),
+        // streams/TestProbeStreamContracts.al:WriteDate_ClosingDates, `closing_0D`.
+        Value::Date(0, _) => raise("The date is not valid.".to_string(), "DateInvalid"),
         other => unsupported(format!("ClosingDate of {}", other.describe())),
     }
 }
@@ -826,7 +828,10 @@ mod tests {
         let closing = call("System.ClosingDate#1", vec![date(2026, 3, 31)]).unwrap();
         is_date(call("System.NormalDate#1", vec![closing]), 2026, 3, 31);
         is_date(call("System.NormalDate#1", vec![date(2026, 3, 1)]), 2026, 3, 1);
-        refused(call("System.ClosingDate#1", vec![Value::Date(0, false)]));
+        assert!(matches!(
+            call("System.ClosingDate#1", vec![Value::Date(0, false)]),
+            Err(Signal::Error(e)) if e.code == "DateInvalid"
+        ));
     }
 
     #[test]

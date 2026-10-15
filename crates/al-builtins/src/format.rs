@@ -46,7 +46,9 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         },
         Value::Integer(i) => i.to_string(),
         Value::BigInteger(i) => i.to_string(),
-        Value::Byte(b) => b.to_string(),
+        // A Byte formats as the character of that code (streams/TestProbeStreamContracts.al:Read_IntoTypes,
+        // `integer_into_byte`: 2 is `\u0002`).
+        Value::Byte(b) => char::from(*b).to_string(),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         Value::Decimal(d) => format_decimal(d, standard)?,
         Value::Text(t) | Value::Code(t) => t.clone(),

@@ -1566,10 +1566,11 @@ impl Session {
                                         al_builtins::stream::BlobBuf {
                                             bytes: b.bytes.clone(),
                                             write_pos: 0,
-                                            // A copy shows the bytes, but CalcFields fetches the Blob from the
-                                            // stored row again (types/ProbeTypeFormsAndFilters.al:
+                                            // A copy shows the bytes (and a stream over it reads them, streams/
+                                            // TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes), but CalcFields
+                                            // fetches the Blob from the stored row again (types/ProbeTypeFormsAndFilters.al:
                                             // FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
-                                            loaded: false,
+                                            loaded: true,
                                         },
                                     )))
                                 }

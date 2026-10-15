@@ -497,6 +497,9 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Record.FieldError#3" | "FieldRef.FieldError#3" => {
             "FieldError with an ErrorInfo: the error it raises (its text, whether it is collected) is not pinned"
         }
+        "System.GetDotNetType#1" => {
+            "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
+        }
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
@@ -1158,6 +1161,14 @@ fn value_kind(v: &Value) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    // Base Application's Web Request Helper casts a caught .NET exception with `GetDotNetType(WebException)`
+    // after a web request failed; no corpus test calls GetDotNetType (issue 34).
+    #[test]
+    fn get_dot_net_type_is_refused_with_its_reason() {
+        let why = refusal("System.GetDotNetType#1").unwrap_or_default();
+        assert!(why.contains("GetDotNetType") && why.contains("not pinned"), "{why}");
+    }
 
     #[derive(Default)]
     pub(crate) struct TestCtx {

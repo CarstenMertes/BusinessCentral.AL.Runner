@@ -1143,6 +1143,7 @@ impl Session {
             }
             E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
             E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
+            E::Refused(why) => Err(Signal::Unsupported(why.clone())),
             E::InterfaceCall {
                 receiver,
                 targets,

@@ -4963,6 +4963,19 @@ impl Lowerer<'_> {
             None if self.runtime_refusal(node).is_some() => Err(self.runtime_refusal(node).unwrap_or_default()),
             // `Window.Open(..)` in a report extension, where `Window` is a variable of the base report.
             None if self.base_member(callee).is_some() => Err(self.base_member(callee).unwrap_or_default()),
+            // `CurrPage.<AddIn>.Method()`: refused when it runs, so code that never reaches it still runs
+            // (Base Application's "Item Tracking Lines" calls its barcode add-in only after the client said it
+            // is supported). Control add-ins are not modelled; no corpus test calls one.
+            None if callee.kind() == SyntaxKind::MemberExpr
+                && callee.children().next().and_then(|b| self.control_add_in(&b)).is_some() =>
+            {
+                let why = callee
+                    .children()
+                    .next()
+                    .and_then(|b| self.control_add_in(&b))
+                    .unwrap_or_default();
+                Ok(ir::Expr::Refused(format!("call `{}`: {why}", node.text())))
+            }
             None => Err(format!("call `{}` has no callee the checker resolved", node.text())),
             Some(r) => Err(format!(
                 "call `{}` to {} is not lowered yet",

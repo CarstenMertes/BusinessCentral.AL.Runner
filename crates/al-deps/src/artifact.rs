@@ -277,12 +277,13 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             .collect();
         // When a build is needed anyway, the optional roots (the platform's `System`, the `Application` floor) come from it
         // too if no directory holds them: without `System` the platform tables are missing, and a run whose cache another
-        // run had filled would see something else than one on a fresh machine. Nothing is requested for them alone.
+        // run had filled would see something else than one on a fresh machine. Nothing is requested for them alone, unless
+        // a build is chosen already (a cache folder that holds the other apps of a build, but not `System`, is completed).
         let mut seen_ids: HashSet<String> = required.iter().map(|d| d.id.to_ascii_lowercase()).collect();
         let optional: Vec<DepDecl> = round
             .optional_missing
             .iter()
-            .filter(|_| !required.is_empty())
+            .filter(|_| !required.is_empty() || chosen.is_some())
             .filter(|d| !tried.contains(&dep_key(d)))
             .filter(|d| d.publisher.is_empty() || d.publisher.eq_ignore_ascii_case("Microsoft"))
             .filter(|d| seen_ids.insert(d.id.to_ascii_lowercase()))
@@ -838,6 +839,48 @@ mod tests {
                 .any(|t| t.contains("System Application") && t.contains("without AL source")),
             "{text:?}"
         );
+    }
+
+    #[test]
+    fn a_cache_that_holds_the_other_apps_of_a_build_but_not_system_is_completed() {
+        fn remove_system(dir: &Path) {
+            for e in std::fs::read_dir(dir).unwrap().flatten() {
+                let p = e.path();
+                if p.is_dir() {
+                    remove_system(&p);
+                } else if p
+                    .file_name()
+                    .is_some_and(|n| n.to_string_lossy().starts_with("System.app"))
+                {
+                    std::fs::remove_file(p).unwrap();
+                }
+            }
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        let first = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert!(names(&first).contains(&"System"), "{:?}", names(&first));
+        // A cache an older loader filled: every app of the build but the platform's System.
+        remove_system(&cache);
+        let again = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &project(),
+        )
+        .unwrap();
+        assert!(names(&again).contains(&"System"), "{:?}", names(&again));
+        assert_eq!(again.artifact.unwrap().fetched, [SYSTEM_APP_ENTRY]);
     }
 
     #[test]

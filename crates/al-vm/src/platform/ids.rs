@@ -12,6 +12,19 @@ pub(crate) fn package_id(app: [u8; 16]) -> [u8; 16] {
     al_builtins::moduleinfo::package_id_of(app)
 }
 
+/// The runtime package id of an app: its package id for the app under test, another one for a dependency app (Base
+/// Application), as AllObj reports it for the app's objects and Published Application lists it
+/// (metadata/W6AllObj.al:AllObj_PackageIds_ThisApp_BaseApp_Platform).
+pub(crate) fn runtime_package_id(app: [u8; 16], dependency: bool) -> [u8; 16] {
+    let package = package_id(app);
+    if !dependency || app == [0; 16] {
+        return package;
+    }
+    let mut salted = package;
+    salted[15] ^= 0x5a;
+    package_id(salted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

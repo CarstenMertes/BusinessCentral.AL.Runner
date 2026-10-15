@@ -351,17 +351,12 @@ fn package_of(c: &Catalog, o: &Object) -> [u8; 16] {
 /// "App Runtime Package ID": the package id for an object of the app under test, a different one for an object of a
 /// dependency app (Base Application), and none for a platform object (metadata/W6AllObj.al:
 /// AllObj_PackageIds_ThisApp_BaseApp_Platform, BC 27.5 and 29.0).
-fn runtime_package_id(c: &Catalog, o: &Object, package: [u8; 16]) -> [u8; 16] {
+fn runtime_package_id(c: &Catalog, o: &Object) -> [u8; 16] {
     if is_platform(o) {
         return [0; 16];
     }
     let dependency = c.apps.get(o.app as usize).is_some_and(|a| a.dependency);
-    if dependency {
-        let mut salted = package;
-        salted[15] ^= 0x5a;
-        return ids::package_id(salted);
-    }
-    package
+    ids::runtime_package_id(c.owner(o), dependency)
 }
 
 pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
@@ -380,7 +375,7 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             let pkg = package_of(&c, o);
             r[pos(t, 4)] = Value::Text(o.name.clone().into());
             r[pos(t, 60)] = Value::Guid(pkg);
-            r[pos(t, 61)] = Value::Guid(runtime_package_id(&c, o, pkg));
+            r[pos(t, 61)] = Value::Guid(runtime_package_id(&c, o));
             r[pos(t, 62)] = Value::Text(namespace(o).into());
             Ok(())
         },
@@ -406,7 +401,7 @@ pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entr
             r[pos(t, 20)] = Value::Text(truncate(&caption(o), 249).into());
             r[pos(t, 30)] = Value::Text(subtype_text(&c, o)?.into());
             r[pos(t, 60)] = Value::Guid(pkg);
-            r[pos(t, 61)] = Value::Guid(runtime_package_id(&c, o, pkg));
+            r[pos(t, 61)] = Value::Guid(runtime_package_id(&c, o));
             r[pos(t, 62)] = Value::Guid(if carries_app_id(base_kind(o)) { owner } else { [0; 16] });
             r[pos(t, 63)] = Value::Text(namespace(o).into());
             Ok(())

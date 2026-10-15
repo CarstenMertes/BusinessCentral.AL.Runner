@@ -1563,7 +1563,7 @@ impl CorpusRuntime {
                 loop {
                     let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(u) = units.get(k) else { return done };
-                    done.push(run_unit(&engine, lowered, baseline, u, None, limit));
+                    done.push((k, run_unit(&engine, lowered, baseline, u, None, limit)));
                 }
             };
             std::thread::scope(|scope| {
@@ -1588,7 +1588,9 @@ impl CorpusRuntime {
                 for h in handles {
                     done.extend(h.join().expect("a test worker panicked"));
                 }
-                done
+                // Results in the order of the units, whichever worker finished first.
+                done.sort_by_key(|(k, _)| *k);
+                done.into_iter().map(|(_, r)| r).collect()
             })
         };
         let mut suite_work: Vec<(usize, std::time::Duration)> = Vec::new();

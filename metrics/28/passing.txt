@@ -3811,7 +3811,6 @@
 67064 GetResourceAsText_NameMatching
 67066 ClientType_MemberList
 67066 Clock_ReadingsAgree
-67066 Clock_Sleep_AdvancesTheClock
 67066 CreateGuid_FreshAndNotNull
 67066 Identity_Relations
 67067 SessionSettings_Init_ReplacesEarlierValues

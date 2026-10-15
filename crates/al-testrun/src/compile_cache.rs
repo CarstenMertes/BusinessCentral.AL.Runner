@@ -139,19 +139,18 @@ pub fn source_hash(app: &AppSource) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// The target as the key holds it: every field, written out.
+/// The target as the key holds it. Compiling the dependency apps reads the target only through the
+/// builtins catalog, which depends on the runtime version (`Catalog::for_target`); the BC version and
+/// build do not change a compile (the build is in the apps' own versions and source hashes). Keeping
+/// them out lets projects on one BC build whose app.json names another BC minor share a layer.
 fn target_text(t: &al_version::Target) -> String {
-    // Destructured without `..`: a field added to the target must be written here to compile.
-    let al_version::Target { bc, runtime } = t;
-    let al_version::BcVersion { major, minor, build } = bc;
+    // Destructured without `..`: a field added to the target must be decided here to compile.
+    let al_version::Target { bc: _, runtime } = t;
     let al_version::Runtime {
         major: rt_major,
         minor: rt_minor,
     } = runtime;
-    format!(
-        "bc {major}.{minor} build {} runtime {rt_major}.{rt_minor}",
-        build.as_deref().unwrap_or("-")
-    )
+    format!("runtime {rt_major}.{rt_minor}")
 }
 
 /// The key of the entry for the dependency `apps` (program order), their manifests, the

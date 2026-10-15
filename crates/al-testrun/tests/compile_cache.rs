@@ -328,6 +328,14 @@ fn the_key_changes_with_a_byte_of_source_a_symbol_or_the_target() {
         base,
         compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest()
     );
+    // The BC version and build of the target do not change a compile of the dependency apps, only
+    // the runtime does (the catalog): 27.0 and 27.5 share a layer, 27 and 28 (runtime 16 and 17) do not.
+    let key_of = |bc: &str| {
+        let t = al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), Some(&t)).digest()
+    };
+    assert_eq!(key_of("27.0"), key_of("27.5.46862.48827"));
+    assert_ne!(key_of("27.0"), key_of("28.0"));
 }
 
 #[test]

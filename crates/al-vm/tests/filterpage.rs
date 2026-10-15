@@ -168,7 +168,7 @@ fn set_view_round_trips() {
             B.AddTable('Universal', Database::\"ALT Universal\");
             exit(Format(B.SetView('Universal', 'WHERE(\"Integer Field\"=FILTER(>4711))')) + '|' + B.GetView('Universal'));
         end;"),
-        "Yes|SORTING(Entry No.) WHERE(Integer Field=FILTER(>4711))"
+        "Yes|VERSION(1) SORTING(Entry No.) WHERE(Integer Field=FILTER(>4711))"
     );
 }
 
@@ -200,7 +200,7 @@ fn use_names_spells_an_option_filter_as_a_name_or_an_ordinal() {
             B.AddField('Ref', Fld, 'Active');
             exit(B.GetView('Ref', true) + '|' + B.GetView('Ref', false));
         end;"),
-        "SORTING(Entry No.) WHERE(Option Field=FILTER(Active))|SORTING(Field1) WHERE(Field14=FILTER(2))"
+        "VERSION(1) SORTING(Entry No.) WHERE(Option Field=FILTER(Active))|VERSION(1) SORTING(Field1) WHERE(Field14=FILTER(2))"
     );
 }
 
@@ -257,7 +257,7 @@ fn assignment_copies_the_controls_and_shares_the_records() {
             C.AddTable('OnlyOnCopy', Database::\"ALT Composite\");
             exit(Format(C.Count()) + '|' + Format(A.Count()) + '|' + A.Name(1) + '|' + C.GetView('Shared'));
         end;"),
-        "2|1|Shared|SORTING(Entry No.) WHERE(Integer Field=FILTER(>4711))"
+        "2|1|Shared|VERSION(1) SORTING(Entry No.) WHERE(Integer Field=FILTER(>4711))"
     );
     assert_eq!(
         f("var A, C: FilterPageBuilder; begin
@@ -266,7 +266,7 @@ fn assignment_copies_the_controls_and_shares_the_records() {
             C.SetView('Universal', 'WHERE(\"Integer Field\"=FILTER(>4711))');
             exit(A.GetView('Universal'));
         end;"),
-        "SORTING(Entry No.) WHERE(Integer Field=FILTER(>4711))"
+        "VERSION(1) SORTING(Entry No.) WHERE(Integer Field=FILTER(>4711))"
     );
 }
 

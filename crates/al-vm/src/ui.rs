@@ -292,7 +292,7 @@ impl Session {
     /// settings and must answer true. Without a handler the platform raises "Unhandled UI:
     /// SessionSettings" (the header of session/TestSessionSettings.al); the full text is not
     /// pinned, so that is refused. What a handler's `false` means is not pinned either.
-    pub(crate) fn ui_session_settings(&mut self, settings: Value) -> Result<(), Signal> {
+    pub(crate) fn ui_session_settings(&mut self, settings: Value) -> Result<Option<Value>, Signal> {
         let bound = self
             .ui
             .as_ref()
@@ -303,11 +303,11 @@ impl Session {
                     .into(),
             ));
         }
-        let (answer, _) = self.dispatch_ui_returning(UiKind::SessionSettings, "", vec![settings])?;
+        let (answer, mut finals) = self.dispatch_ui_returning(UiKind::SessionSettings, "", vec![settings])?;
         match answer {
             // A handler that answers false is called once and nothing is raised (session/
             // TestProbeSessionMiscContracts.al:SessionSettings_RequestUpdateFalse_Handler).
-            Value::Boolean(_) => Ok(()),
+            Value::Boolean(_) => Ok(finals.pop()),
             other => Err(Signal::Unsupported(format!(
                 "a [SessionSettingsHandler] that answers {other}",
                 other = other.describe()

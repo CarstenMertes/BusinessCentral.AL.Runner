@@ -110,7 +110,6 @@ impl Session {
     fn format_record_fields(&self, rec: &Rc<RefCell<RecordState>>, only: Option<usize>) -> Result<String, Signal> {
         const SYSTEM_FIELD_BASE: u32 = 2_000_000_000;
         let t = self.table(rec)?;
-        let ir_table = self.engine.program.objects[t.object as usize].table.as_ref();
         let fields = rec.borrow().fields.clone();
         let one = |pos: usize| -> Result<String, Signal> {
             let value = &fields[pos];
@@ -134,14 +133,13 @@ impl Session {
             .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE)
             .collect();
         order.sort_by_key(|&i| t.fields[i].id);
-        let flow_filter = |i: usize| ir_table.and_then(|s| s.fields.get(i)).is_some_and(|f| f.flow_filter);
-        // The FlowFilter fields come last, with the value the field holds (0 for an Integer) whatever
-        // filter was set on them (types/ProbeTypeFormsAndFilters.al:FormatRecord_WithFlowFilter_BeforeAndAfterSetRange,
-        // BC 27.5). Where they stand among the FlowFields is not pinned.
-        let (filters, rest): (Vec<usize>, Vec<usize>) = order.into_iter().partition(|&i| flow_filter(i));
-        let (normal, calculated): (Vec<usize>, Vec<usize>) = rest.into_iter().partition(|&i| t.fields[i].stored);
+        // The stored fields come first, then the FlowFields and the FlowFilter fields together in field number
+        // order; a FlowFilter field shows the value the field holds (0 for an Integer) whatever filter was set on it
+        // (types/ProbeTypeFormsAndFilters.al:FormatRecord_WithFlowFilter_BeforeAndAfterSetRange and
+        // types/W7FormatRecord.al:FormatRecord_FlowFilterField, BC 27.5 and 29.0).
+        let (normal, calculated): (Vec<usize>, Vec<usize>) = order.into_iter().partition(|&i| t.fields[i].stored);
         let mut parts = Vec::new();
-        for i in normal.into_iter().chain(calculated).chain(filters) {
+        for i in normal.into_iter().chain(calculated) {
             parts.push(one(i)?);
         }
         Ok(parts.join("\t"))

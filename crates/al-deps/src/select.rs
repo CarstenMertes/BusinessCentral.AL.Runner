@@ -166,6 +166,10 @@ pub struct Plan {
     pub notes: Vec<String>,
     /// Dependencies that no package satisfied (only with `MissingPolicy::Skip`).
     pub skipped: Vec<SelectError>,
+    /// Optional dependencies nobody satisfied (the platform's `System` and the `Application` floor of an app are
+    /// optional roots). They are not an error, but a run that can get them from Microsoft's build should: the platform
+    /// tables (`Integer`, `Company`, `AllObj`, ...) are `System`'s.
+    pub optional_missing: Vec<DepDecl>,
 }
 
 /// Chooses a package for every dependency of `project`, transitively, and
@@ -342,6 +346,7 @@ impl Resolver<'_> {
                 "optional dependency `{}` {} was not found; skipped",
                 dep.name, dep.min
             ));
+            self.plan.optional_missing.push(dep.clone());
             return Ok(());
         }
         match (self.opts.missing, &err) {

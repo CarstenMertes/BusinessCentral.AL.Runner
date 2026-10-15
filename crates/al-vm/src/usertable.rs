@@ -142,6 +142,26 @@ impl Session {
     }
 
     /// The compiled table `id`, if the program holds it (a table nothing reaches is not compiled).
+    /// Profile id, profile app id and company of the User Personalization row of the session user, if the row is there.
+    pub(crate) fn personalization_of_session_user(&self) -> Option<(String, [u8; 16], String)> {
+        let t = self.table_def(2_000_000_073)?;
+        let sid = self.host.identity.user_security_id();
+        let row = self.store.get(&self.cx, &t, &[Value::Guid(sid)]).ok()??;
+        let text = |p: usize| match &row[p] {
+            Value::Text(s) | Value::Code(s) => s.to_string(),
+            _ => String::new(),
+        };
+        let by_id = |id: u32| t.fields.iter().position(|f| f.id == id);
+        let by_name = |n: &str| t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(n));
+        let profile = text(by_id(9)?);
+        let app = match &row[by_id(10)?] {
+            Value::Guid(g) => *g,
+            _ => [0; 16],
+        };
+        let company = text(by_name("Company")?);
+        Some((profile, app, company))
+    }
+
     fn table_def(&self, id: u32) -> Option<Arc<TableDef>> {
         self.compiled_table(id).and_then(|i| self.engine.tables[i].clone())
     }

@@ -45,6 +45,8 @@ pub struct ControlFormat {
     /// The session's work date, which a Date control reads from the shorthand `w`
     /// (handlers/TestPageTemporalSetValue_Tests.al:272-286). `None` where the caller has none.
     pub work_date: Option<i32>,
+    /// Today's date as a day number, for the shorthand `t` (session/W5WorkDateShorthand.al).
+    pub today: Option<i32>,
 }
 
 /// `2 : 2`, `0 : 5` or `3` as (min, max) places.
@@ -321,8 +323,12 @@ fn parse_typed(
         T::Date => {
             if t.is_empty() {
                 Value::Date(0, false)
-            } else if t == "w" {
+            } else if matches!(t.to_ascii_lowercase().as_str(), "w" | "workdate") {
+                // The shorthands, in any case: w and workdate are the work date, t and today the system date
+                // (session/W5WorkDateShorthand.al, BC 27.5 and 29.0).
                 Value::Date(f.work_date?, false)
+            } else if matches!(t.to_ascii_lowercase().as_str(), "t" | "today") {
+                Value::Date(f.today?, false)
             } else {
                 // The ISO spelling, else `M/D/Y` as the control shows it; a two-digit year is
                 // read as 1930-2029, as Evaluate does.
@@ -333,7 +339,9 @@ fn parse_typed(
                 let (m, d, y) = (p.next()?, p.next()?, p.next()?);
                 let (m, d, mut yy): (u32, u32, i32) = (m.parse().ok()?, d.parse().ok()?, y.parse().ok()?);
                 if y.len() <= 2 {
-                    yy += if yy < 30 { 2000 } else { 1900 };
+                    // 00 to 30 are 2000 to 2030, 31 to 99 are 1931 to 1999 (controls/W2ValueControls.al:
+                    // Date_SessionFormatTwoDigitYear_Later, `06/15/30` is 2030-06-15).
+                    yy += if yy <= 30 { 2000 } else { 1900 };
                 }
                 if p.next().is_some()
                     || !(1..=12).contains(&m)

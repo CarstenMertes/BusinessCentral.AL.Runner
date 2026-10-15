@@ -53,7 +53,7 @@ pub(super) fn published_application_rows(p: &Providers, t: &TableDef) -> Vec<Ent
             let id = al_builtins::ops::parse_guid(&a.id)?;
             let pkg = ids::package_id(id);
             let mut r = blank(t);
-            r[pos(t, 1)] = Value::Guid(pkg);
+            r[pos(t, 1)] = Value::Guid(ids::runtime_package_id(id, a.dependency));
             r[pos(t, 2)] = Value::Guid(pkg);
             r[pos(t, 3)] = Value::Guid(id);
             r[pos(t, 4)] = Value::Text(a.name.clone().into());

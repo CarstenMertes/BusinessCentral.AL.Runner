@@ -306,7 +306,24 @@ fn run_version(
     }
 
     // ADR-015 3.2: the corpus runs as the oracle's BC version with the corpus app's runtime.
-    let leg = version.bc();
+    let mut leg = version.bc();
+    // `--bc-version` with a full build runs the corpus on that build instead of the pinned one (to try a build Microsoft
+    // published later; the ratchet compares with the pinned build's baseline, so use `--no-ratchet`).
+    if let Some(asked) = args
+        .bc_version
+        .as_deref()
+        .and_then(|r| al_version::BcVersion::parse(r).ok())
+        .filter(|r| r.build.is_some() && (r.major, r.minor) == (leg.major, leg.minor))
+    {
+        if asked.build != leg.build {
+            eprintln!(
+                "note: BC build {} instead of the pinned {}",
+                asked.build.as_deref().unwrap_or(""),
+                leg.build.as_deref().unwrap_or("(none)")
+            );
+            leg.build = asked.build;
+        }
+    }
     let app_versions = target::read_app_versions(&root.join(&cfg.corpus_app))?;
     let mut chosen = al_version::choose_target(Some(&leg), &app_versions, &leg).map_err(|e| e.to_string())?;
     println!("target: BC {}, runtime {}", chosen.target.bc, chosen.target.runtime);

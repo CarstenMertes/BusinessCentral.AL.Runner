@@ -158,12 +158,6 @@ registry! {
         probe: "Already probed: the probe of the next corpus bump says LoadFields does NOT read the row and Ok := LoadFields(..) is false.",
         note: "CONTRADICTED by a probe (corpus bump 9): fix the implementation and delete this entry.",
     },
-    TestFieldErrorInfoPasses => {
-        id: "testfield-errorinfo-pass",
-        assumed: "TestField(Field [, Value], ErrorInfo) whose check holds raises nothing and is the check of the overload without the ErrorInfo; a failing check is refused.",
-        tests: "Gen. Jnl.-Check Line (176 calls); 478 Tests-SCM-Manufacturing tests.",
-        probe: "TestField(F, ErrorInfo.Create()) on a blank and a filled field, with and without ErrorBehavior::Collect (the owner's probe is pending).",
-    },
     DatabaseSidNumbers => {
         id: "database-sid-numbers",
         assumed: "Database.SID answers S-1-5-21-a-b-c-rid with a fixed domain part and a stable hash of the name as the rid.",

@@ -584,21 +584,29 @@ impl Session {
     }
 
     pub(crate) fn test_field(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
-        // `TestField(Field [, Value], ErrorInfo)`: the check is the one without the ErrorInfo, and one
-        // that holds raises nothing (documentation only, docs/probes-needed.md, issue 41; Base
-        // Application's "Gen. Jnl.-Check Line" calls it 176 times over). What a failing one raises
-        // from the ErrorInfo is not pinned: refused.
-        if let Some((Value::Library(kind, _), plain)) = args.split_last()
+        // `TestField(Field [, Value], ErrorInfo)`: a check that holds raises nothing and leaves the ErrorInfo as it
+        // was. A failing one raises the same text and code as the form without an ErrorInfo, whatever Message the
+        // ErrorInfo carries; in a collecting scope a collectible ErrorInfo is collected instead (a copy with its own
+        // Message, the tested FieldNo and the TableId), and a call that is not collectible keeps FieldNo and TableId
+        // 0 on the caller's variable (types/PUTestFieldErrorInfo.al, BC 27.5 and 29.0).
+        if let Some((info @ Value::Library(kind, _), plain)) = args.split_last()
             && kind.as_str() == "ErrorInfo"
         {
             return match self.test_field(rec, t, plain) {
-                Ok(v) => {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestFieldErrorInfoPasses);
-                    Ok(v)
+                Err(Signal::Error(e)) => {
+                    if let Some(copy) = al_builtins::errorinfo::copy_of(info) {
+                        let pos = arg_pos(plain, 0)?;
+                        let collectible = al_builtins::errorinfo::set_origin_of(
+                            &copy,
+                            self.engine.program.objects[t.object as usize].id.unwrap_or(0) as i32,
+                            t.fields[pos].id as i32,
+                        );
+                        if collectible && self.collect_error(&copy) {
+                            return Ok(Value::Null);
+                        }
+                    }
+                    Err(Signal::Error(e))
                 }
-                Err(Signal::Error(_)) => unsupported(
-                    "TestField with an ErrorInfo whose check fails: the error BC raises from the ErrorInfo is not pinned (docs/probes-needed.md)",
-                ),
                 other => other,
             };
         }

@@ -394,7 +394,7 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// Tables with an ad-hoc key appended, by (table object, key fields): see `Session::table`.
     pub(crate) initial_cache: std::collections::HashMap<usize, Option<Vec<Value>>>,
-    pub(crate) adhoc_tables: RefCell<std::collections::HashMap<(u32, Vec<usize>), Arc<al_data::TableDef>>>,
+    pub(crate) adhoc_tables: RefCell<AdhocTables>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
     /// `Database.LockTimeoutDuration` in milliseconds.
@@ -2192,6 +2192,9 @@ impl Session {
         Ok((arr, flat))
     }
 }
+
+/// Tables with an extra ad-hoc key, by (table object, key fields).
+pub(crate) type AdhocTables = std::collections::HashMap<(u32, Vec<usize>), Arc<al_data::TableDef>>;
 
 /// Facts about a table object that never change during a run.
 #[derive(Debug, Clone, Copy, Default)]

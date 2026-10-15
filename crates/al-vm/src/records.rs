@@ -87,7 +87,7 @@ impl Session {
                 None => self.default_value(&f.ty),
             })
             .collect();
-        if !self.initial_cache.contains_key(&table) {
+        if let std::collections::hash_map::Entry::Vacant(slot) = self.initial_cache.entry(table) {
             let scalar = fields.iter().all(|v| {
                 matches!(
                     v,
@@ -110,7 +110,7 @@ impl Session {
                         | Value::Enum(..)
                 )
             });
-            self.initial_cache.insert(table, scalar.then(|| fields.clone()));
+            slot.insert(scalar.then(|| fields.clone()));
         }
         fields
     }

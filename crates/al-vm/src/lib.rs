@@ -1148,18 +1148,26 @@ impl Session {
                 let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
                 let lid = if CAP { self.cap_loop_enter() } else { None };
+                // The type of the counter variable does not change while the loop runs: found once.
+                let slot_ty = self.place_type(var, f);
+                let option_like = matches!(slot_ty, RtType::Option(_) | RtType::Enum(_));
+                let is_boolean = matches!(slot_ty, RtType::Boolean);
+                let is_integer = matches!(slot_ty, RtType::Integer);
                 while if *down { i >= end } else { i <= end } {
                     self.check_stop()?;
                     if CAP {
                         self.cap_loop_pass(lid);
                     }
-                    let slot_ty = self.place_type(var, f);
-                    if matches!(slot_ty, RtType::Option(_) | RtType::Enum(_)) {
+                    if option_like {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
                     }
-                    let counter = if matches!(slot_ty, RtType::Boolean) {
+                    let counter = if is_boolean {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
                         Value::Boolean(i != 0)
+                    } else if is_integer && let Ok(n) = i32::try_from(i) {
+                        // What the conversion of a BigInteger into an Integer gives, without the Decimal in between; a
+                        // counter beyond Integer takes the general path, which reports it.
+                        Value::Integer(n)
                     } else {
                         ops::convert(Value::BigInteger(i), &slot_ty)?
                     };

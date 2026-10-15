@@ -369,10 +369,12 @@ impl Session {
         let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
         let event_stats = Rc::new(platform::EventStats::default());
+        let media = al_builtins::media::MediaStore::default();
         let mut store = al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(
             &engine,
             ident.clone(),
             event_stats.clone(),
+            media.clone(),
         )));
         if let Some(td) = &engine.test_data {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
@@ -445,7 +447,7 @@ impl Session {
             lock_timeout: true,
             transaction_type: 0,
             tx_phase: crate::transactions::TX_FRESH,
-            media: Default::default(),
+            media,
             dotnet: Default::default(),
             application_areas: String::new(),
             report_init_depth: None,

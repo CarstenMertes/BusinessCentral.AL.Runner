@@ -10,7 +10,9 @@
 use crate::describe::Describe;
 use crate::native::{Ctx, NativeFn, Signal};
 use crate::value::{LibraryValue, Value};
+use std::cell::RefCell;
 use std::collections::HashMap;
+use std::rc::Rc;
 
 pub type Id = [u8; 16];
 
@@ -20,13 +22,28 @@ pub struct MediaObject {
     pub bytes: Vec<u8>,
     pub mime: String,
     pub description: String,
+    /// Width and height of a PNG picture; 0 for content that is no PNG (not pinned).
+    pub width: i32,
+    pub height: i32,
+}
+
+/// The size a PNG header gives (`IHDR` at byte 16: width and height, big endian).
+fn png_size(b: &[u8]) -> Option<(i32, i32)> {
+    if b.len() < 24 || b[..8] != [0x89, b'P', b'N', b'G', 0x0d, 0x0a, 0x1a, 0x0a] {
+        return None;
+    }
+    let w = u32::from_be_bytes(b[16..20].try_into().ok()?);
+    let h = u32::from_be_bytes(b[20..24].try_into().ok()?);
+    Some((i32::try_from(w).ok()?, i32::try_from(h).ok()?))
 }
 
 /// The session's media: objects by id and the members of each set by set id.
-#[derive(Debug, Default)]
+///
+/// The maps are shared handles: the `Tenant Media` table of the session reads the same objects.
+#[derive(Debug, Default, Clone)]
 pub struct MediaStore {
-    pub objects: HashMap<Id, MediaObject>,
-    pub sets: HashMap<Id, Vec<Id>>,
+    pub objects: Rc<RefCell<HashMap<Id, MediaObject>>>,
+    pub sets: Rc<RefCell<HashMap<Id, Vec<Id>>>>,
 }
 
 type Out = Result<Value, Signal>;
@@ -79,12 +96,19 @@ fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
         Some(_) => text_arg(a, 2)?,
     };
     let id = c.new_guid();
-    store(c)?.objects.insert(
+    // A PNG without a MIME type is `image/png`, and its Tenant Media row has its size (corpus
+    // media/PXMediaFileName.al: `Mime Type` is `image/png` also when it is omitted, 1 x 1).
+    let size = png_size(&bytes);
+    let mime = if mime.is_empty() && size.is_some() { "image/png".to_string() } else { mime };
+    let (width, height) = size.unwrap_or((0, 0));
+    store(c)?.objects.borrow_mut().insert(
         id,
         MediaObject {
             bytes,
             mime,
             description,
+            width,
+            height,
         },
     );
     Ok(id)
@@ -98,12 +122,13 @@ fn media_id(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
     Ok(Value::Guid(id_of(&r)?))
 }
 
-/// The importing methods fill an empty field only. Replacing or extending what a field already
-/// holds is not pinned, so it is refused.
+/// `Media.ImportStream` gives the field a new media. `MediaSet.ImportStream` fills an empty set only;
+/// extending what a set already holds is not pinned, so it is refused.
 fn media_import(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    if id_of(&r)? != [0; 16] {
-        return unsupported("Media.ImportStream into a field that already has a value (not pinned)");
-    }
+    // A field that already holds a media takes the new one (corpus media/PXMediaFileName.al:
+    // ImportStream_DescriptionOnly_AndEmptyDescription imports into the same field twice); what becomes
+    // of the old media object is not pinned, it stays.
+    id_of(&r)?;
     let id = import_object(c, a)?;
     if let Some(slot) = r {
         *slot = Value::Guid(id);
@@ -119,7 +144,7 @@ fn set_import(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     // (media/TestMediaSetPersistence.al:127-155).
     let member = import_object(c, a)?;
     let set = c.new_guid();
-    store(c)?.sets.insert(set, vec![member]);
+    store(c)?.sets.borrow_mut().insert(set, vec![member]);
     if let Some(slot) = r {
         *slot = Value::Guid(set);
     }
@@ -131,7 +156,7 @@ fn media_export(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
     if id == [0; 16] {
         return unsupported("Media.ExportStream of an empty field (not pinned)");
     }
-    let Some(obj) = store(c)?.objects.get(&id).cloned() else {
+    let Some(obj) = store(c)?.objects.borrow().get(&id).cloned() else {
         return unsupported("Media.ExportStream of a media the session does not hold");
     };
     let Some(Value::Library(_, h)) = a.first() else {
@@ -153,7 +178,7 @@ fn set_count(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
     if id == [0; 16] {
         return Ok(Value::Integer(0));
     }
-    let n = store(c)?.sets.get(&id).map_or(0, Vec::len);
+    let n = store(c)?.sets.borrow().get(&id).map_or(0, Vec::len);
     Ok(Value::Integer(n as i32))
 }
 
@@ -164,7 +189,7 @@ fn set_item(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     };
     let item = usize::try_from(*i - 1)
         .ok()
-        .and_then(|i| store(c).ok()?.sets.get(&id)?.get(i).copied());
+        .and_then(|i| store(c).ok()?.sets.borrow().get(&id)?.get(i).copied());
     match item {
         Some(m) => Ok(Value::Guid(m)),
         None => unsupported(format!("MediaSet.Item({i}) outside the set (error text not pinned)")),
@@ -176,7 +201,9 @@ fn set_remove(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Some(Value::Guid(m)) = a.first() else {
         return unsupported("MediaSet.Remove with this argument");
     };
-    let Some(members) = store(c)?.sets.get_mut(&id) else {
+    let store = store(c)?;
+    let mut sets = store.sets.borrow_mut();
+    let Some(members) = sets.get_mut(&id) else {
         return Ok(Value::Boolean(false));
     };
     let before = members.len();

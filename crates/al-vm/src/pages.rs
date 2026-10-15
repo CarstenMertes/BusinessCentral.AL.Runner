@@ -4064,7 +4064,7 @@ impl Session {
             let shown = if n.eq_ignore_ascii_case("Media") {
                 Some(*id)
             } else if n.eq_ignore_ascii_case("MediaSet") {
-                self.media.sets.get(id).and_then(|m| m.first().copied())
+                self.media.sets.borrow().get(id).and_then(|m| m.first().copied())
             } else {
                 None
             };

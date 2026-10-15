@@ -1200,14 +1200,19 @@ impl Session {
             }
         }
         // handlers/TestReportSaveAsColumnTypesContracts.al:372-388: false with the text and the code
-        // `ReportProcessingOnly`, no trigger runs and nothing is written. With the answer dropped
-        // BC's behaviour is not pinned.
+        // `ReportProcessingOnly`, no trigger runs and nothing is written.
         if schema.report().processing_only {
+            // With the answer dropped (the statement form) the same error is raised (handlers/
+            // TestReportSaveAsColumnDetailsContracts.al:197-207, handlers/PWReportSaveAsColumns.al:255-265).
             if !result_used {
-                return unsupported(format!(
-                    "Report.SaveAs of \"{}\", which is ProcessingOnly, with the result unused (not pinned)",
-                    schema.name()
-                ));
+                return Err(Signal::Error(al_builtins::native::AlError {
+                    message: format!(
+                        "Report {} is a processing-only report. Output cannot be rendered and saved to a file.",
+                        self.object_id_of(schema.object as u32)
+                    ),
+                    code: "ReportProcessingOnly".into(),
+                    call_stack: String::new(),
+                }));
             }
             self.last_error = al_builtins::native::AlError {
                 message: format!(
@@ -1253,6 +1258,23 @@ impl Session {
         }
         let enters = self.report_enter_world(&schema, false)?;
         let outer = self.dataset.replace(Dataset::default());
+        // The Labels block is written for IncludeCaption even when the data item has no row at all
+        // (handlers/TestReportSaveAsColumnDetailsContracts.al:191-194, handlers/PWReportSaveAsColumns.al:
+        // Labels_NoRowAtAll), so the labels of the report's own items are known before any row.
+        for item in &schema.report().items {
+            let Some(Some(t)) = item.table.map(|tb| self.engine.tables[tb].clone()) else {
+                continue;
+            };
+            for c in item.columns.iter().filter(|c| c.include_caption && c.unsupported.is_none()) {
+                if let (Ok(name), Some(pos)) = (dataset::dataset_name(&c.name), c.field) {
+                    let label = (format!("{name}Caption"), self.field_caption(&t, pos));
+                    let ds = self.dataset.as_mut().expect("just set");
+                    if !ds.labels.contains(&label) {
+                        ds.labels.push(label);
+                    }
+                }
+            }
+        }
         let ran = self.report_in_world(enters, |s| s.report_body(&inst, &schema, false, Some(&parameters)));
         let written = std::mem::replace(&mut self.dataset, outer);
         match ran {
@@ -1513,13 +1535,8 @@ impl Session {
             Value::Guid(_) => {
                 let g = al_builtins::format::try_format(&value, 0, 0, self).map_err(Signal::Unsupported)?;
                 let g = g.trim_matches(|ch| ch == '{' || ch == '}');
-                if g.chars().any(|ch| ch.is_ascii_alphabetic()) {
-                    return unsupported(format!(
-                        "report column {}: a Guid with hex letters in a dataset (their case is not pinned)",
-                        c.name
-                    ));
-                }
-                g.to_string()
+                // Hex letters are written in lower case (handlers/TestReportSaveAsColumnDetailsContracts.al:8-9).
+                g.to_lowercase()
             }
             other => {
                 return unsupported(format!(

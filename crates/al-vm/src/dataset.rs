@@ -211,22 +211,28 @@ impl Header {
 pub(crate) const DECIMAL_FORMATTER: &str = "#,##0.00";
 
 /// The `decimalformatter` of a Decimal column. `places` is the `DecimalPlaces` of the column, else
-/// of the field, as written. `1 : 1` gives `#,##0.0` and `3 : 3` gives `#,##0.000`
-/// (handlers/TestReportSaveAsColumnTypesContracts.al:230-244); no property is the default. A range
-/// with different bounds, a single number and `0` places are not pinned.
+/// of the field, as written: `min : max` gives `#,##0.` followed by `min` zeros and `max - min` hash
+/// signs (`2 : 4` is `#,##0.00##`, `0 : 2` is `#,##0.##`, `0 : 5` is `#,##0.#####`), no dot when
+/// `max` is 0 (`0 : 0` is `#,##0`); a single number `n` is `n : n` (`1` is `#,##0.0`). No property is
+/// the default (handlers/TestReportSaveAsColumnTypesContracts.al:230-244,
+/// handlers/TestReportSaveAsColumnDetailsContracts.al:12-14, handlers/PWReportSaveAsColumns.al:199-211).
 pub(crate) fn decimal_formatter(places: Option<&str>) -> Result<String, Signal> {
     let Some(places) = places else {
         return Ok(DECIMAL_FORMATTER.to_string());
     };
-    let both: Vec<&str> = places.split(':').map(str::trim).collect();
-    match both.as_slice() {
-        [a, b] if a == b => match a.parse::<usize>() {
-            Ok(n) if n > 0 => Ok(format!("#,##0.{}", "0".repeat(n))),
-            _ => unsupported(format!("DecimalPlaces = {places} in a dataset (not pinned)")),
-        },
-        _ => unsupported(format!(
-            "DecimalPlaces = {places} in a dataset (only `n : n` is pinned)"
-        )),
+    let parse = |t: &str| t.trim().parse::<usize>().ok();
+    let (min, max) = match places.split(':').collect::<Vec<_>>().as_slice() {
+        [n] => (parse(n), parse(n)),
+        [a, b] => (parse(a), parse(b)),
+        _ => (None, None),
+    };
+    match (min, max) {
+        (Some(min), Some(max)) if min <= max => Ok(if max == 0 {
+            "#,##0".to_string()
+        } else {
+            format!("#,##0.{}{}", "0".repeat(min), "#".repeat(max - min))
+        }),
+        _ => unsupported(format!("DecimalPlaces = {places} in a dataset (not a form of the pinned ones)")),
     }
 }
 

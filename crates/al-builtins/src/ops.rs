@@ -393,6 +393,21 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
 /// Text compares ordinally (case-sensitive): docs/probes-needed.md.
 pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     use Value as V;
+    // The cases a scan compares millions of times (keys of integers, decimals and text) answer without
+    // converting to a Decimal or copying a text; the result is the one of the general path below.
+    match (l, r) {
+        (V::Integer(a), V::Integer(b)) => return Ok(a.cmp(b)),
+        (V::BigInteger(a), V::BigInteger(b)) => return Ok(a.cmp(b)),
+        (V::Integer(a), V::BigInteger(b)) => return Ok(i64::from(*a).cmp(b)),
+        (V::BigInteger(a), V::Integer(b)) => return Ok(a.cmp(&i64::from(*b))),
+        (V::Decimal(a), V::Decimal(b)) => return Ok(a.cmp(b)),
+        (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b))
+            if !a.contains(crate::native::UNTRACKED_CALL_STACK) && !b.contains(crate::native::UNTRACKED_CALL_STACK) =>
+        {
+            return Ok(a.cmp(b));
+        }
+        _ => {}
+    }
     if let (Some(a), Some(b)) = (as_decimal(l), as_decimal(r)) {
         if !matches!(l, V::Char(_)) || !matches!(r, V::Text(_) | V::Code(_)) {
             return Ok(a.cmp(&b));

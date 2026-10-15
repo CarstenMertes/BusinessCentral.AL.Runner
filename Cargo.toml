@@ -4,7 +4,10 @@ members = ["crates/*"]
 
 [workspace.package]
 edition = "2024"
+version = "3.0.0-alpha.1"
 license = "MIT"
+authors = ["Stefan Maron"]
+repository = "https://github.com/StefanMaron/al-runtime-rs"
 rust-version = "1.85"
 
 [workspace.dependencies]

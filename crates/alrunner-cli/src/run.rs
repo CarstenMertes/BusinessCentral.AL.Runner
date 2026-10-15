@@ -408,7 +408,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     }
 
     if !a.quiet {
-        println!("alrunner {}", env!("CARGO_PKG_VERSION"));
+        println!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
         println!(
             "target: BC {}, runtime {}{}",
             chosen.target.bc,

@@ -1,0 +1,14 @@
+{
+  "id": "5f1f0c1e-0000-4000-8000-000000000002",
+  "name": "Smoke Test",
+  "publisher": "al-runtime-rs",
+  "version": "1.0.0.0",
+  "dependencies": [
+    {
+      "id": "5f1f0c1e-0000-4000-8000-000000000001",
+      "name": "Smoke App",
+      "publisher": "al-runtime-rs",
+      "version": "1.0.0.0"
+    }
+  ]
+}

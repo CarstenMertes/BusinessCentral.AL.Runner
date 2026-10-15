@@ -162,7 +162,7 @@ runtime defects, not differences between the restored company and a freshly prep
   over it adds rows the backup lacks (the autoincrement rows of an install trigger), and skipping the
   install roots leaves tables the backup does not hold without their seeds. Install code reads the
   restored rows, so `if not Setup.Get() then Insert` finds the row.
-- **Install code may not rewrite restored rows**: in install scope the store refuses `Modify`,
+- **(Superseded by the Accepted amendment, 2026-10-15: install code may change restored rows.)** Install code may not rewrite restored rows: in install scope the store refuses `Modify`,
   `Delete`, `Rename` and `DeleteAll` of a row the backing holds (a key test, `MemStore::guarded`). v2
   allows it. The refusal ends that root with its reason in the `baseline:` notes; an `Insert` of a
   restored key fails with BC's "already exists" and rolls the root back, so nothing is duplicated.
@@ -241,78 +241,59 @@ is 30 to 60 ms. Each table read also parsed and sorted the names of all 4,100 ta
 - `--timings` prints one `test data:` line: open time, whether the kept index was used, number of table reads,
   rows and time.
 
-## Amendment (Proposed, 2026-10-15): install code and restored rows
+## Amendment (Accepted, owner 2026-10-15): install code may change restored rows freely
 
-Status: **Proposed.** Nothing below is built. It changes the guard of "Install code may not rewrite restored
-rows", so it waits for the owner.
+This replaces "Install code may not rewrite restored rows" (the guard) and the exception for the app under
+test's install codeunits. Owner decision, 2026-10-15: "Why not completely allowing". The model is AL Runner v2's
+(`TestDataProvisioner.Arm` before the install triggers, `RecordPatches.TestDataHydration`):
 
-### What was found first (built, no ADR needed)
+1. A table is loaded from the backup the first time anything touches it, install triggers and Company-Initialize
+   included (unchanged: `Backing`, one read per table per run).
+2. Install code and Company-Initialize run on top of those rows and may modify, rename and delete them, and
+   insert rows (an insert of a restored key still fails with BC's "already exists"). Nothing is refused.
+3. The state after the install code is what every test codeunit is reset to, not the raw backup. As built, this
+   needed no new code: the first write to a table copies the backing's rows into the store, so the captured
+   baseline holds the table with the install code's changes; a table install code never wrote has no entry in the
+   baseline and reads the backing, so a test that first touches it gets the backup's rows as the backup holds
+   them. Test `tests_are_reset_to_the_state_after_install_code_not_to_the_raw_backup` pins both.
 
-The 563 Tests-ERM tests that stopped with "IsEmpty on Application Area Setup: ... the install baseline could not
-create them" were not caused by the guard. `Session::backs_rows` asked the backup for the table's rows under the
-session company. Application Area Setup is `DataPerCompany = false`, so the backup keeps its one row under no
-company, the answer was always "no rows", and the table counted as unseeded whenever Company-Initialize stopped
-early. Fixed (it asks for the table's own slot; test
-`a_company_independent_table_the_backup_holds_rows_for_is_seeded_too`). Tests-ERM 27.5 per-test outcomes are
-identical before and after (887 passed, 1 failed, 8,445 not run); the 563 moved to the next blocker (602 tests:
-`DotNet new ...AzureADGraphClient.GraphQuery` in Copilot Capability Install). Unseeded tables went from 4 to 2.
+Built: the guard (`MemStore::guard_backed_rows`, `Session::allow_restored_rows_to_change`) is removed. While
+install code runs, the store writes down every change to a row the backing holds (`RestoredChange`), and the
+baseline prints one `baseline: install code changed restored rows of <table>: ...` line per table, with the
+names of the fields whose values differ (system fields apart).
 
-### The question that remains
+### What BC has, and why this is safe
 
-With the enum assignment in `Electronic Document Format.InsertElectronicFormat` fixed, Company-Initialize reaches
-`InitApplicationAreasForSaaS` -> `Application Area Mgmt.SetExperienceTier`. That inserts a row if
-`GetApplicationAreaSetupRecFromCompany` finds none and then modifies the row to the tier's areas. Application Area
-Setup holds one restored row, so the guard refuses the Modify and the root stops there. Company-Initialize
-then does not reach `SatisfactionSurveyMgt.ResetCache`, `UpgradeTag.SetAllUpgradeTags` and the
-`OnCompanyInitialize` subscribers. (Not observable today: the run stops earlier, at the enum.)
+The backup is a database in which Company-Initialize and the install triggers already ran, followed by the demo
+data load; a real test run starts on it and does not run them again. Running them on top is the runtime's way to
+get what the backup lacks (apps it does not know, state kept outside tables). A rewrite of a restored row is
+either a no-op, a repeat of what already happened, or a replacement of a demo value by the value install code
+would write; the owner accepts the latter.
 
-### What BC has in this state
+### Measurement (2026-10-15, BC 27.5, `tools/bucket_diff.py` on JUnit, per test)
 
-The backup is a database in which Company-Initialize and every install trigger already ran, when the company and
-the apps were created, and in which the demo data was loaded afterwards. A real test run starts on that database
-and does not run Company-Initialize or `OnInstallApp*` again. So in real BC, for every app the backup knows:
+| Run | Passed / failed / not run | Tests with another outcome |
+|---|---|---|
+| Tests-ERM, main before and after | 867 / 1 / 8,465 both | 0 |
+| NP Retail, main before and after | 325 / 0 / 4,488 both | 0 |
+| Tests-ERM with laptop issue 29 (Option to Enum) merged into a scratch branch, before and after | 870 / 1 / 8,462 both | 0 |
+| NP Retail with issue 29, before and after | 325 / 0 / 4,488 both | 0 |
+| Corpus baselines 27, 28, 29 | no baseline case changes (the 51 cases that fail without being in the baseline are the same on main) | 0 |
+| `demand_vs_eager`, `cache_vs_uncached`, `baseline_rule_check` | 0 outcome differences | 0 |
 
-- a row install code writes is already there, with the value install code wrote, or with a value a later step
-  (the demo-data load, a setup page) changed it to; and
-- a row the install code would insert but the backup lacks was deleted or never created, on purpose or because
-  that step is not part of the demo database.
+No test goes from pass to fail or not run. Which restored tables install code changes:
 
-Re-running the code on top of the rows is therefore not something BC does. It is the runtime's way to get state
-that is not in the backup: the platform tables (not restored), isolated storage, number sequences (SQL sequences,
-not tables, so `bcdb` does not read them), and apps the backup does not know (the app under test and its
-non-Microsoft dependencies).
-
-### Options
-
-1. **Keep the guard.** Strict and explicit. Cost: Company-Initialize stops at SetExperienceTier on every run, so
-   the tables after it are never written by it (the restored rows cover most of them) and the
-   `OnCompanyInitialize` subscribers do not run.
-2. **A Modify (or Rename, Delete) of a restored row is allowed when it writes the values the row already has.**
-   The state afterwards is identical to not running the statement, so no outcome can differ because of the write
-   itself. A write of different values keeps the refusal. Not guessed: the rule is a comparison, and the refusal
-   still names the first differing field. Cost: SetExperienceTier may write a different tier than the demo
-   company holds (the demo company's tier is not known to me); then the root still stops there and nothing is
-   lost against today. Risk: code after the write now runs and may insert rows the backup lacks (inserts of new
-   keys were always allowed), which can change a currently passing test. Measure first.
-3. **With test data, skip the install roots and Company-Initialize of every app the backup knows**, run only the
-   roots of apps it does not know. This is BC's own order of events. Cost: loses what install code does outside
-   tables (isolated storage, number sequences, event-subscriber side effects like `OnCompanyInitialize`
-   registering rows in tables the backup does not have, and rows in the 8 platform tables not loaded), so it
-   needs a list of what only the roots provide before it is safe. It also changes which tests pass today.
-   How to tell "the backup knows the app": the app id suffix of the backup's table names and the `NAV App Installed
-   App` table, both readable without symbols.
-
-### Recommendation
-
-Option 2, then re-measure. It cannot change a state the run reads (a no-op write is skipped), it removes the stop
-at SetExperienceTier if the demo tier equals the one Company-Initialize sets, and it keeps every refusal that
-protects the restored data. Option 3 is the cleaner model of BC but needs the "what only the roots provide" list
-first; the number-sequence and isolated-storage state of the roots would be the first to check.
-
-What I need from the owner: accept option 2, 3 or 1. For option 2 I would build it test-first on a fake provider
-(equal write passes, different write refuses), measure Tests-ERM with data before and after with
-`tools/bucket_diff.py`, and run the baseline, demand/eager, cache/uncached and baseline-rule checks. It also
-needs the enum fix in `InsertElectronicFormat` to be observable on real data.
+- Tests-ERM with issue 29: only **Application Area Setup**, one Modify (by `SetExperienceTier`, reached once
+  Company-Initialize gets past the enum assignment). It writes the values the row holds; only `SystemRowVersion`
+  differs. A rule that allowed only no-op writes (system fields apart) would have been enough for Tests-ERM.
+- NP Retail: **Application Area Setup**, two Modifies, by the NPR apps' own install code. They set the NPR
+  application areas (`NPR Retail`, `NPR Ticket Advanced`, ...: fields the backup does not know, so they differ).
+  A no-op-only rule would have refused them. This is the case the owner's decision covers.
+- Without issue 29, Company-Initialize stops at the enum assignment before any restored row is changed, so
+  the Tests-ERM run shows no change at all. With the guard and issue 29, Company-Initialize stopped at
+  `SetExperienceTier`; now it goes on and stops at `DotNet new ...AzureADGraphClient.GraphQuery` (602 tests).
+- The pass counts changed from earlier runs (887 / 355 on the morning's main, 867 / 325 on the main used here):
+  that is main moving between the runs, identical in the before and after columns above.
 
 ## Conformance
 

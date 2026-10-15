@@ -99,9 +99,22 @@ pub struct MemStore {
     virtuals: Option<std::rc::Rc<dyn VirtualTables>>,
     /// Rows a table holds before anything wrote to it (ADR-020).
     backing: Option<std::rc::Rc<dyn Backing>>,
-    /// While set, a change to a row of the backing (a modify, delete or rename) is refused. Install
-    /// code runs under it: a restored company is not rewritten by the code that sets one up.
-    guard_backed: bool,
+    /// While set, a change to a row of the backing (a modify, delete or rename) is written down
+    /// here and allowed (ADR-020 amendment: install code may change restored rows). Shared by the
+    /// clones of the store, so a snapshot or a rollback does not lose it.
+    restored_log: Option<std::rc::Rc<std::cell::RefCell<Vec<RestoredChange>>>>,
+}
+
+/// A change to a row the restored company holds, made while recording was on.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RestoredChange {
+    pub table: String,
+    /// `Modify`, `Delete`, `Rename` or `DeleteAll`.
+    pub op: &'static str,
+    /// A Modify that writes the values the row already has, system fields apart. Every other change is `false`.
+    pub same: bool,
+    /// For a Modify with other values: the names of the fields whose values differ.
+    pub fields: Vec<String>,
 }
 
 fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
@@ -134,29 +147,46 @@ impl MemStore {
         self
     }
 
-    /// Refuses (`true`) or allows (`false`) changes to the rows the backing holds. Inserts of other
-    /// keys are always allowed.
-    pub fn guard_backed_rows(&mut self, on: bool) {
-        self.guard_backed = on;
+    /// Starts (`true`) or stops (`false`) writing down the changes made to rows the backing holds.
+    /// Changes are never refused (ADR-020 amendment). Starting clears the record.
+    pub fn record_restored_changes(&mut self, on: bool) {
+        self.restored_log = on.then(Default::default);
     }
 
-    /// Whether the guard forbids changing the row with this key: the backing holds it.
-    fn guarded(&self, cx: &AccessContext, t: &TableDef, key: &Key) -> bool {
-        if !self.guard_backed {
-            return false;
-        }
-        let slot = slot(cx, t);
-        self.backing
+    /// The changes written down since recording started.
+    pub fn restored_changes(&self) -> Vec<RestoredChange> {
+        self.restored_log
             .as_ref()
-            .and_then(|b| b.rows(&slot.0, slot.1))
-            .is_some_and(|r| r.0.contains_key(key))
+            .map(|l| l.borrow().clone())
+            .unwrap_or_default()
     }
 
-    fn refuse_guarded(t: &TableDef, what: &str) -> StoreError {
-        StoreError::Refused(format!(
-            "{what} of a row of {} that the restored company holds (install code does not rewrite restored rows)",
-            t.name
-        ))
+    /// Writes down a change to the row with this key if recording is on and the backing holds the
+    /// row. `new` is the row a Modify writes.
+    fn note_restored(&self, cx: &AccessContext, t: &TableDef, key: &Key, op: &'static str, new: Option<&Row>) {
+        let Some(log) = &self.restored_log else { return };
+        let slot = slot(cx, t);
+        let Some(rows) = self.backing.as_ref().and_then(|b| b.rows(&slot.0, slot.1)) else {
+            return;
+        };
+        let Some(old) = rows.0.get(key) else { return };
+        let fields: Vec<String> = new
+            .map(|n| {
+                (0..old.len().min(n.len()))
+                    .filter(|&i| format!("{:?}", n[i]) != format!("{:?}", old[i]))
+                    // The system fields (id from 2000000000: SystemModifiedAt, SystemRowVersion ...) change
+                    // with every write and do not count as a different value.
+                    .filter_map(|i| t.fields.get(i).filter(|f| f.id < 2_000_000_000).map(|f| f.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let same = new.is_some() && fields.is_empty();
+        log.borrow_mut().push(RestoredChange {
+            table: t.name.clone(),
+            op,
+            same,
+            fields,
+        });
     }
 
     /// The rows table `object` has to offer `company`, if the store has a backing.
@@ -354,9 +384,7 @@ impl Store for MemStore {
             return Err(self.read_only(t, "Modify"));
         }
         let k = Key(t.primary_key(&row));
-        if self.guarded(cx, t, &k) {
-            return Err(Self::refuse_guarded(t, "Modify"));
-        }
+        self.note_restored(cx, t, &k, "Modify", Some(&row));
         let table = self.table_mut(cx, t);
         if !table.contains_key(&k) {
             return Ok(WriteOutcome::NotFound);
@@ -370,9 +398,7 @@ impl Store for MemStore {
         if self.virtual_of(t).is_some() {
             return Err(self.read_only(t, "Delete"));
         }
-        if self.guarded(cx, t, &Key(pk.to_vec())) {
-            return Err(Self::refuse_guarded(t, "Delete"));
-        }
+        self.note_restored(cx, t, &Key(pk.to_vec()), "Delete", None);
         Ok(match self.table_mut(cx, t).remove(&Key(pk.to_vec())) {
             Some(_) => {
                 self.touch(cx, t);
@@ -393,9 +419,7 @@ impl Store for MemStore {
             return Err(self.read_only(t, "Rename"));
         }
         let new_k = Key(t.primary_key(&row));
-        if self.guarded(cx, t, &Key(old.to_vec())) {
-            return Err(Self::refuse_guarded(t, "Rename"));
-        }
+        self.note_restored(cx, t, &Key(old.to_vec()), "Rename", None);
         let table = self.table_mut(cx, t);
         if !table.contains_key(&Key(old.to_vec())) {
             return Ok(RenameOutcome::NotFound);
@@ -468,8 +492,8 @@ impl Store for MemStore {
                     .collect()
             })
             .unwrap_or_default();
-        if doomed.iter().any(|k| self.guarded(cx, t, k)) {
-            return Err(Self::refuse_guarded(t, "DeleteAll"));
+        for k in &doomed {
+            self.note_restored(cx, t, k, "DeleteAll", None);
         }
         let table = self.table_mut(cx, t);
         for k in &doomed {
@@ -734,34 +758,34 @@ mod tests {
     }
 
     #[test]
-    fn the_guard_refuses_changes_to_backing_rows_only() {
+    fn changes_to_backing_rows_are_allowed_and_written_down_when_recording() {
         let (mut s, _) = backed();
         let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
-        s.guard_backed_rows(true);
-        let refused = |r: Result<_, StoreError>| matches!(r, Err(StoreError::Refused(_)));
-        assert!(refused(s.modify(&cx, &t, crate::contract::row("A", 9, 9)).map(|_| ())));
-        assert!(refused(s.delete(&cx, &t, &[Value::Code("A".into())]).map(|_| ())));
-        assert!(refused(
-            s.rename(&cx, &t, &[Value::Code("A".into())], crate::contract::row("Z", 1, 1))
-                .map(|_| ())
-        ));
-        assert!(refused(s.delete_all(&cx, &t, &[]).map(|_| ())));
-        // a row the guarded code made itself is its own to change
-        s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap();
-        assert_eq!(
-            s.modify(&cx, &t, crate::contract::row("D", 5, 3)).unwrap(),
-            WriteOutcome::Done
-        );
-        assert_eq!(
-            s.delete(&cx, &t, &[Value::Code("D".into())]).unwrap(),
-            WriteOutcome::Done
-        );
-        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 3);
-        s.guard_backed_rows(false);
+        s.record_restored_changes(true);
+        // the same values: allowed, and said to be the same
+        let same = s.get(&cx, &t, &[Value::Code("A".into())]).unwrap().unwrap();
+        assert_eq!(s.modify(&cx, &t, same).unwrap(), WriteOutcome::Done);
+        // other values, a delete, a rename, a DeleteAll: allowed
         assert_eq!(
             s.modify(&cx, &t, crate::contract::row("A", 9, 9)).unwrap(),
             WriteOutcome::Done
         );
+        assert_eq!(
+            s.rename(&cx, &t, &[Value::Code("B".into())], crate::contract::row("Z", 1, 1))
+                .unwrap(),
+            RenameOutcome::Renamed
+        );
+        // a row the code made itself is not a restored row
+        s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap();
+        s.modify(&cx, &t, crate::contract::row("D", 5, 3)).unwrap();
+        s.delete(&cx, &t, &[Value::Code("D".into())]).unwrap();
+        let got: Vec<(&str, bool)> = s.restored_changes().iter().map(|c| (c.op, c.same)).collect();
+        assert_eq!(got, vec![("Modify", true), ("Modify", false), ("Rename", false)]);
+        assert!(s.restored_changes().iter().all(|c| c.table == t.name));
+        s.delete_all(&cx, &t, &[]).unwrap();
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 0);
+        s.record_restored_changes(false);
+        assert!(s.restored_changes().is_empty());
     }
 
     #[test]

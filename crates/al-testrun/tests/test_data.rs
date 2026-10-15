@@ -290,7 +290,7 @@ codeunit 50112 "Installer C" { Subtype = Install;
 "#;
 
 #[test]
-fn install_code_sees_the_restored_rows_and_cannot_overwrite_or_duplicate_them() {
+fn install_code_sees_the_restored_rows_may_change_them_and_cannot_duplicate_them() {
     let fake = Arc::new(Fake::new("CRONUS International Ltd.").table(
         "Setup",
         &["Primary Key", "Value"],
@@ -300,7 +300,9 @@ fn install_code_sees_the_restored_rows_and_cannot_overwrite_or_duplicate_them() 
         r#"codeunit 50001 "T" { Subtype = Test;
   [Test] procedure Restored() var S: Record "Setup"; begin
     S.Get('');
-    if S.Value <> 'restored' then Error('value %1', S.Value);
+    // Installer B rewrote the restored row (ADR-020 amendment: install code may change restored
+    // rows); Installer C's insert of the restored key failed with 'already exists' and left no row.
+    if S.Value <> 'overwritten' then Error('value %1', S.Value);
     if S.Count() <> 2 then Error('count %1', S.Count());
     S.Get('NEW');
     if S.Value <> 'new-from-install' then Error('new row %1', S.Value);
@@ -309,6 +311,38 @@ fn install_code_sees_the_restored_rows_and_cannot_overwrite_or_duplicate_them() 
         Some(&fake),
     );
     assert_eq!(outcome(&rt, 50001, "Restored"), Outcome::Pass);
+}
+
+#[test]
+fn tests_are_reset_to_the_state_after_install_code_not_to_the_raw_backup() {
+    // The model is AL Runner v2's (ADR-020 amendment): install code runs on top of the restored
+    // rows and may change them; the state after it is what every test codeunit starts from. A table
+    // no install code touched is first loaded by the test, as the backup holds it.
+    let fake = Arc::new(customers().table(
+        "Setup",
+        &["Primary Key", "Value"],
+        vec![vec![text(""), text("restored")]],
+    ));
+    let dep = format!(
+        r#"{DEP}
+codeunit 50111 "Installer B" {{ Subtype = Install;
+  trigger OnInstallAppPerCompany() var S: Record "Setup"; begin
+    S.Get(''); S.Value := 'after-install'; S.Modify();
+  end; }}
+"#
+    );
+    let main = r#"
+codeunit 50001 "T1" { Subtype = Test; [Test] procedure Go() var S: Record "Setup"; C: Record "Customer"; begin
+  S.Get(''); if S.Value <> 'after-install' then Error('first sees %1', S.Value);
+  if C.Count() <> 2 then Error('customers %1', C.Count());
+  S.Value := 'by-test-1'; S.Modify(); C.DeleteAll(); Commit(); end; }
+codeunit 50002 "T2" { Subtype = Test; [Test] procedure Go() var S: Record "Setup"; C: Record "Customer"; begin
+  S.Get(''); if S.Value <> 'after-install' then Error('second sees %1', S.Value);
+  if C.Count() <> 2 then Error('customers after reset %1', C.Count()); end; }
+"#;
+    let (rt, _) = run(main, &dep, Some(&fake));
+    assert_eq!(counted(&rt, 50001, "Go"), Outcome::Pass);
+    assert_eq!(counted(&rt, 50002, "Go"), Outcome::Pass);
 }
 
 #[test]

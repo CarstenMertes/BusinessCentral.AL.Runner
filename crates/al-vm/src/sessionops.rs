@@ -240,6 +240,17 @@ impl Session {
                 }
                 return Ok(Value::Boolean(self.lock_timeout));
             }
+            // `LockTimeoutDuration` reads and sets the lock wait. Base Application's "Job Queue Entry".GetRecLockedExtendedTimeout reads it,
+            // sets 600 and puts the value it read back (Microsoft's job queue tests need it). What it reads before any set is
+            // not pinned: the runtime answers 0 and no wait is modelled (docs/probes-needed.md, row LockTimeoutDuration).
+            "Database.LockTimeoutDuration#1" => {
+                match args.first() {
+                    None | Some(Value::Null) => {}
+                    Some(Value::Integer(n)) => self.lock_timeout_duration = *n,
+                    Some(other) => return unsupported(format!("LockTimeoutDuration with {}", other.describe())),
+                }
+                return Ok(Value::Integer(self.lock_timeout_duration));
+            }
             // The type of the transaction (session/ProbeSystemEnumMembers.al:60-161, BC 27.5;
             // TestClearAllTransactionTypeContracts.al:224-253):
             // - a test starts as UpdateNoLocks, and a set before any database call takes effect;

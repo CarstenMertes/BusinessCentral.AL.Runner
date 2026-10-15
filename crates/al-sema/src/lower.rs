@@ -3547,7 +3547,9 @@ impl Lowerer<'_> {
         };
         // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
         // would answer the default value of the return type, which is not what the platform answers.
-        if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
+        // The platform's Base64Convert codeunit is the one the runtime implements (al-vm platformnative.rs).
+        let implemented = self.ws.objects[self.oi].name == "Base64Convert";
+        if body.is_empty() && !implemented && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
             self.reasons.push(format!(
                 "[Native] procedure `{}` is implemented by the platform and has no AL body (what it answers is not pinned)",
                 r.name()

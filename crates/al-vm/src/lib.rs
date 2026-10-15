@@ -31,6 +31,7 @@ mod interfaces;
 mod pages;
 mod partial;
 mod platform;
+mod platformnative;
 mod queries;
 mod recmeta;
 mod records;
@@ -297,6 +298,8 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
+    /// `Database.LockTimeoutDuration`: set and read back, no wait is modelled.
+    pub(crate) lock_timeout_duration: i32,
     /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
     /// method starts at 0, UpdateNoLocks (`start_test_method`).
     pub(crate) transaction_type: i32,
@@ -457,6 +460,7 @@ impl Session {
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
+            lock_timeout_duration: 0,
             transaction_type: 0,
             tx_phase: crate::transactions::TX_FRESH,
             media,
@@ -785,6 +789,18 @@ impl Session {
                 (Value::Record(rc), false) => self.record_by_value(&rc),
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
+        }
+        // A `[Native]` procedure of the platform's Base64Convert codeunit: the service tier implements it
+        // (platformnative.rs).
+        if r.body.is_empty()
+            && r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Native"))
+            && engine.program.objects[object].name == "Base64Convert"
+        {
+            let args: Vec<Value> = locals[..r.params].to_vec();
+            let v = self.base64_native(&r.name, &args)?;
+            let mut finals = locals;
+            finals.truncate(r.params);
+            return Ok((v, finals));
         }
         let mut frame = Frame {
             object,

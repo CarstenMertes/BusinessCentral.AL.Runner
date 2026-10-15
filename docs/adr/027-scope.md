@@ -177,9 +177,12 @@ Each item: the question, why v3 could differ from v2, and the recommended defaul
 2. **Permissions:** all permissions granted in 3.0, documented. A permission check mode can
    come later as an opt-in flag (docs/ideas.md, idea 12).
 3. **Not-run tests in CI:** exit code 7 fails CI by default; `--allow-not-run` opts out.
-4. **Background sessions:** `StartSession` and `TaskScheduler.CreateTask` run their codeunit
-   inline, flagged as an unprobed assumption (rule 3 exception) until a probe pins when and
-   how BC runs them in a test session.
+4. **Background sessions (revised the same day after the probe):** the default matches BC in
+   a test: `TaskScheduler.CreateTask` returns an id, `TaskExists`/`CancelTask` work, and the task
+   never runs (platform/W6TaskScheduler.al); `StartSession` raises BC's error unless
+   TestIsolation = Disabled (session/TestStartSessionRecord.al). An opt-in flag
+   (`--run-background-tasks`) runs the task codeunit inline, as a `Codeunit.Run`, and every test
+   that passes through it is flagged as differing from BC.
 
 The other open decisions take the recommended defaults listed above (decided by the
 orchestrator, recorded in docs/owner-review.md): no localhost, no mail outbox, no report

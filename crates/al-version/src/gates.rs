@@ -121,12 +121,23 @@ pub fn has(target: Option<&Target>, gate: Gate) -> bool {
     target.is_none_or(|t| t.has(gate))
 }
 
-/// Whether the rows of the Feature Key table are known for this target: they were measured on BC 27.5
-/// (record/PFFeatureKeyColumns.al, record/TestFieldLenAndFeatureKeyContracts.al `#if not BC28PLUS`) and the run of any
-/// other major still compiles the BC 27.5 Base Application, whose `Application System Constants` answers `W1 27.5`, so the
-/// corpus test would key on the 27.5 rows. It is not a gate: no behaviour switches on it.
-pub fn feature_key_rows_known(target: Option<&Target>) -> bool {
-    target.is_some_and(|t| t.bc.major == 27)
+/// Which list of Feature Key rows a target has (record/PFFeatureKeyColumns.al keys them on the version of the application):
+/// the rows differ per minor, and were measured on the newest minor of each major. The 27.0 and 28.0 rows differ from
+/// those and are not served.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureKeyRows {
+    Bc27,
+    Bc28,
+    Bc29,
+}
+
+pub fn feature_key_rows(target: Option<&Target>) -> Option<FeatureKeyRows> {
+    match target.map(|t| (t.bc.major, t.bc.minor))? {
+        (27, _) => Some(FeatureKeyRows::Bc27),
+        (28, 5) => Some(FeatureKeyRows::Bc28),
+        (29, 0) => Some(FeatureKeyRows::Bc29),
+        _ => None,
+    }
 }
 
 /// Whether the platform tables of System.app that are `Scope = OnPrem`, internal or removed are known for

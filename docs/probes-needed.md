@@ -687,6 +687,12 @@ Each check rejects only the shape a corpus case pins. The wider rule is not gues
 | `RecordRef.Copy(FromRecordRef [, ShareTable])` and `Copy(var FromRecord [, ShareTable])` (`Purch.-Post (Yes/No)`; 80 tests) | No corpus test calls them. What is copied (field values only, or also filters, key and table view) and what `ShareTable` changes are not pinned. REFUSED | `RecordRef.Copy` from a RecordRef and from a Record that carry a filter, a key and a table view, then `Count`, `GetFilters`, `CurrentKey` and the field values; with `ShareTable` true and a change through the copy |
 | `ClientType::Teams` (`Media Repository.GetForCurrentClientType`; 82 tests) | The member list of `ClientType` holds only the members session/ProbeSystemEnumMembers.al prints; `Teams` is not among them, so its ordinal (the gap at 12 is a guess) is not pinned. REFUSED with the member named | `Format(ClientType::Teams, 0, 2)` and `Format(ClientType::Teams)` |
 
+## TableRelation filtered by a FlowField (Pageworks, 2026-10-15)
+
+| Area | Assumption | Probe wanted |
+|---|---|---|
+| `TableRelation = T.F where(X = field(FlowFieldOfTheRecord))` (a Pageworks test: 9 tests of its dataset field config) | No corpus test filters a relation by a FlowField of the same record. Whether `Validate` calculates the FlowField before it builds the relation filter is not pinned. REFUSED: reading it as it stands (no CalcFields) gave a blank and made `Validate` fail with "cannot be found in the related table" for a value that exists, which a real BC run of the owner's test does not. | A table with a FlowField `Flow` (`lookup` of an Integer from a parent row) and a field `R` with `TableRelation = Field."No." where(TableNo = field(Flow))`, a row whose parent holds a real table number and a field number of it: `Validate(R, <field no>)` with no `CalcFields` first, and again after `CalcFields(Flow)`. Does it succeed in both? Repeat with a Code lookup and a `T.Code where(Grp = field(Flow))` relation, and with the FlowField as a condition `if (Flow = const(X)) ...` |
+
 ## Tests-SCM-Service: LoadFields, TestField with an ErrorInfo, WordMergeDataItem, Time and Option arithmetic (issue 41)
 
 | Area | Assumption | Probe wanted |

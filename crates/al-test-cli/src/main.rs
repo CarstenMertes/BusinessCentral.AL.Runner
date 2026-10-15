@@ -370,7 +370,6 @@ fn run_version(
             cc,
             &apps[first_dep..],
             &manifests[first_dep..],
-            &symbols,
             Some(&chosen.target),
         )?;
         let verified = std::time::Instant::now();

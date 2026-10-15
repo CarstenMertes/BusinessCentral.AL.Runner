@@ -4011,6 +4011,15 @@ impl Lowerer<'_> {
             SyntaxKind::ParenExpr => self.place(&n.children().next().ok_or("empty parentheses")?),
             SyntaxKind::IndexExpr => {
                 let kids: Vec<SyntaxNode> = n.children().collect();
+                // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index.
+                if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_of(&kids[0]), Ty::Array(..)) {
+                    if let ir::Place::Index(root, mut idx) = self.place(&kids[0])? {
+                        for k in &kids[1..] {
+                            idx.push(self.expr(k)?);
+                        }
+                        return Ok(ir::Place::Index(root, idx));
+                    }
+                }
                 let base = self.place(&kids[0])?;
                 let idx = kids[1..].iter().map(|k| self.expr(k)).collect::<L<Vec<_>>>()?;
                 Ok(ir::Place::Index(Box::new(base), idx))
@@ -5164,12 +5173,22 @@ pub fn lower_for_cache(
     symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
 ) -> crate::provided::DepSet {
+    lower_for_cache_with(apps, &[], symbols, target)
+}
+
+/// [`lower_for_cache`] where app `i` with `app_symbols[i]` set is preprocessed with those symbols.
+pub fn lower_for_cache_with(
+    apps: Vec<crate::workspace::AppSource>,
+    app_symbols: &[Option<std::collections::BTreeSet<String>>],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+) -> crate::provided::DepSet {
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
     };
     let kinds = vec![crate::workspace::AppKind::Dependency; apps.len()];
-    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let ws = Workspace::load_apps_symbols(apps, kinds, symbols, app_symbols, Vec::new());
     let members = crate::members::build(&ws);
     let roots = crate::check::Roots {
         eager: true,
@@ -5226,12 +5245,24 @@ pub fn lower_layer(
     target: Option<&al_version::Target>,
     below: &dyn crate::provided::DepSource,
 ) -> Result<crate::provided::DepLayer, String> {
+    lower_layer_with(apps, n_below_apps, &[], symbols, target, below)
+}
+
+/// [`lower_layer`] where app `i` with `app_symbols[i]` set is preprocessed with those symbols.
+pub fn lower_layer_with(
+    apps: Vec<crate::workspace::AppSource>,
+    n_below_apps: usize,
+    app_symbols: &[Option<std::collections::BTreeSet<String>>],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    below: &dyn crate::provided::DepSource,
+) -> Result<crate::provided::DepLayer, String> {
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
     };
     let kinds = vec![crate::workspace::AppKind::Dependency; apps.len()];
-    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let ws = Workspace::load_apps_symbols(apps, kinds, symbols, app_symbols, Vec::new());
     let n_prov = below.len();
     if n_prov > ws.objects.len() {
         return Err(format!(

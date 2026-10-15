@@ -26,13 +26,13 @@ fn key() -> Key {
     Key::new(
         [9; 32],
         "BC 27.5".into(),
-        vec![],
         vec![AppKey {
             id: "d".into(),
             name: "d".into(),
             dependencies: vec![],
             publisher: "p".into(),
             version: "1.0.0.0".into(),
+            symbols: vec![],
             source: [3; 32],
         }],
     )
@@ -252,13 +252,13 @@ fn upper_key(below: &Key) -> Key {
     Key::layered(
         [9; 32],
         "BC 27.5".into(),
-        vec![],
         vec![AppKey {
             id: "u".into(),
             name: "u".into(),
             dependencies: vec!["d".into()],
             publisher: "p".into(),
             version: "1.0.0.0".into(),
+            symbols: vec![],
             source: [4; 32],
         }],
         below.digest(),

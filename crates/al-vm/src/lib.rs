@@ -391,7 +391,9 @@ pub struct Session {
     pub(crate) error_scopes: errorcollect::Scopes,
     /// Records (by handle) whose field a TestPage write is validating, with the field's number:
     /// what `CurrFieldNo` reads in the field's OnValidate.
-    pub(crate) curr_field_no: Vec<(usize, i32)>,
+    /// Held weakly: a record that is gone cannot be mistaken for a later one that reuses its address (a stale
+    /// entry made `CurrFieldNo` read 3 in a Validate on a new record).
+    pub(crate) curr_field_no: Vec<(std::rc::Weak<RefCell<RecordState>>, i32)>,
     /// Tables with an ad-hoc key appended, by (table object, key fields): see `Session::table`.
     pub(crate) initial_cache: std::collections::HashMap<usize, Option<Vec<Value>>>,
     pub(crate) adhoc_tables: RefCell<AdhocTables>,
@@ -1577,8 +1579,13 @@ impl Session {
                     let Value::Integer(n) = self.eval(e, f)? else {
                         return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
                     };
-                    let handle = Rc::as_ptr(&rec) as usize;
-                    match self.curr_field_no.iter_mut().rev().find(|(h, _)| *h == handle) {
+                    let handle = Rc::downgrade(&rec);
+                    match self
+                        .curr_field_no
+                        .iter_mut()
+                        .rev()
+                        .find(|(h, _)| std::rc::Weak::ptr_eq(h, &handle))
+                    {
                         Some(entry) => entry.1 = n,
                         None => self.curr_field_no.push((handle, n)),
                     }
@@ -1731,11 +1738,11 @@ impl Session {
     /// What `CurrFieldNo` reads on `rec`: the field number a TestPage write is validating on this
     /// record, 0 anywhere else (handlers/TestPageCurrFieldNo_Tests.al:36-123).
     fn curr_field_of(&self, rec: &Rc<RefCell<RecordState>>) -> i32 {
-        let handle = Rc::as_ptr(rec) as usize;
+        let handle = Rc::downgrade(rec);
         self.curr_field_no
             .iter()
             .rev()
-            .find(|(h, _)| *h == handle)
+            .find(|(h, _)| std::rc::Weak::ptr_eq(h, &handle))
             .map_or(0, |(_, n)| *n)
     }
 

@@ -620,6 +620,20 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
                     format!("({})", c.notes.join("; "))
                 }
             );
+            for (i, l) in c.layers.iter().enumerate() {
+                eprintln!(
+                    "compile cache: layer {} of {} ({}): {}, {:.1} MB",
+                    i + 1,
+                    c.layers.len(),
+                    l.apps.join(", "),
+                    if l.hit {
+                        "hit".to_string()
+                    } else {
+                        format!("built in {}", secs(l.build))
+                    },
+                    l.bytes as f64 / 1e6
+                );
+            }
             eprintln!(
                 "compile cache: {:.1} MB, {} dependency objects, {} compiled again because the workspace extends or implements what they embed",
                 c.bytes as f64 / 1e6,

@@ -1572,6 +1572,10 @@ impl Watchdog {
     fn start(flag: Arc<std::sync::atomic::AtomicBool>, limit: std::time::Duration) -> Watchdog {
         #[cfg(unix)]
         let clock = thread_cpu_clock();
+        // The thread's CPU clock counts from the thread's birth, and a worker thread runs many tests:
+        // the limit is measured from the reading at the start of this test.
+        #[cfg(unix)]
+        let base = clock.and_then(cpu_time).unwrap_or_default();
         let (done, rx) = std::sync::mpsc::channel::<()>();
         let thread = std::thread::spawn(move || {
             let started = std::time::Instant::now();
@@ -1585,7 +1589,7 @@ impl Watchdog {
                     _ => return false,
                 }
                 #[cfg(unix)]
-                let used = clock.and_then(cpu_time);
+                let used = clock.and_then(cpu_time).map(|cpu| cpu.saturating_sub(base));
                 #[cfg(not(unix))]
                 let used: Option<std::time::Duration> = None;
                 match used {
@@ -3462,5 +3466,26 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
             x = x.wrapping_add(std::hint::black_box(1));
         }
         assert!(w.finish() && x > 0, "a thread that computed was not stopped");
+    }
+
+    /// The limit is per test: the CPU time a thread used before the test started does not count.
+    /// Three tests on one thread, each using 60 % of the limit, all stay under it.
+    #[cfg(unix)]
+    #[test]
+    fn the_cpu_limit_is_measured_from_the_start_of_each_test() {
+        let limit = std::time::Duration::from_millis(500);
+        for n in 0..3 {
+            let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let w = Watchdog::start(flag.clone(), limit);
+            let clock = thread_cpu_clock().expect("a CPU clock");
+            let from = cpu_time(clock).expect("a reading");
+            let mut x = 0u64;
+            while cpu_time(clock).expect("a reading") - from < limit * 6 / 10 {
+                x = x.wrapping_add(std::hint::black_box(1));
+            }
+            // Let the watchdog poll once more after the work.
+            std::thread::sleep(WATCHDOG_POLL * 3);
+            assert!(!w.finish() && x > 0, "test {n} was stopped under 60 % of the limit");
+        }
     }
 }

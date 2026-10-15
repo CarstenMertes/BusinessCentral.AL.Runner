@@ -916,12 +916,21 @@ fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Re
 fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let s: Vec<u16> = text_arg(args, 0)?.encode_utf16().collect();
     let pos = int_arg(args, 1).unwrap_or(1);
+    // types/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.
     if pos < 1 {
-        return unsupported("CopyStr with Position < 1");
+        return raise(
+            format!("The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to 2,147,483,647."),
+            "OutsidePermittedRange",
+        );
     }
     let start = (pos as usize - 1).min(s.len());
     let end = match int_arg(args, 2) {
-        Some(len) if len < 0 => return unsupported("CopyStr with a negative Length"),
+        Some(len) if len < 0 => {
+            return raise(
+                format!("The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: {len}. The permitted range is: from 0 to 2,147,483,647."),
+                "OutsidePermittedRange",
+            );
+        }
         Some(len) => (start + len as usize).min(s.len()),
         None => s.len(),
     };

@@ -147,6 +147,34 @@ pub fn is_client_type(members: &[String]) -> bool {
     members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
 }
 
+/// Whether `members` are those of the Field table's `Type` option, whose ordinals are not its positions.
+pub fn is_field_table_type(members: &[String]) -> bool {
+    const MEMBERS: [&str; 21] = [
+        "TableFilter",
+        "RecordID",
+        "OemText",
+        "Date",
+        "Time",
+        "DateFormula",
+        "Decimal",
+        "Media",
+        "MediaSet",
+        "Text",
+        "Code",
+        "Binary",
+        "BLOB",
+        "Boolean",
+        "Integer",
+        "OemCode",
+        "Option",
+        "BigInteger",
+        "Duration",
+        "GUID",
+        "DateTime",
+    ];
+    members.len() == MEMBERS.len() && members.iter().zip(MEMBERS).all(|(a, b)| a == b)
+}
+
 /// Whether `members` is the `FieldType` option. AL cannot read its ordinals, so `Format(x, 0, 2)`
 /// prints the member name like any other format (recordref/TestPlatformOptionsLockingContracts.al:
 /// 76, "format 2 prints the name too, not an ordinal").

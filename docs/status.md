@@ -75,7 +75,7 @@ The corpus repo holds AL files the real compiler rejects (`tests/must-not-compil
 submodule does not carry them yet). Each records the AL codes (`// @expect AL0161 | text`). The front end must
 report the same codes. Run: `al-test-cli --must-not-compile DIR [--bc-version N]`, or
 `AL_MNC_DIR=DIR cargo test -p al-test-cli --test must_not_compile`; the test skips with a message when the folder is absent.
-Our own diagnostics keep their `AR` codes; the AL ones are `alcodes.rs` and `check.rs` (`al_unresolved_name`).
+Our own diagnostics keep their `AR` codes; the AL ones are `alcodes.rs` and `check/infer.rs` (`al_unresolved_name`).
 
 | BC major | Cases | Match | Mismatch | Not checked |
 |---|---:|---:|---:|---:|

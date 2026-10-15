@@ -1405,6 +1405,24 @@ impl<'a> Checker<'a> {
         );
     }
 
+    /// AL0132 (corpus must-not-compile 0107): `Length` on a Text or Code, which have no such method (`StrLen` is the
+    /// function). Only that name is judged: the catalog is not complete enough to reject other unknown methods.
+    fn al_text_has_no_length(&mut self, sc: &Scope, node: &SyntaxNode, base: &Ty, name: &str) {
+        if !matches!(base, Ty::Text(_) | Ty::Code(_))
+            || !name.eq_ignore_ascii_case("Length")
+            || self.ws.is_dependency(sc.oi)
+        {
+            return;
+        }
+        let shown = if matches!(base, Ty::Text(_)) { "Text" } else { "Code" };
+        self.diag(
+            sc,
+            node,
+            "AL0132",
+            format!("'{shown}' does not contain a definition for 'Length'"),
+        );
+    }
+
     /// The AR1002 text. On a builtin type it says the name is in no version of the
     /// catalog, and how far the docs behind the catalog reach (ADR-015 3.3 point 5).
     fn no_member(&self, name: &str, t: &Ty) -> String {
@@ -1802,6 +1820,7 @@ impl<'a> Checker<'a> {
                     None => {
                         self.diag(sc, node, "AR1002", self.no_member(&mname, &base_ty));
                         self.al_unknown_record_member(sc, node, &base_ty, &mname);
+                        self.al_text_has_no_length(sc, node, &base_ty, &mname);
                         E::Val(Ty::Unknown)
                     }
                 }
@@ -2149,6 +2168,33 @@ impl<'a> Checker<'a> {
             .iter()
             .map(|p| proc_cand(p))
             .collect();
+        // `this.BaseVar` where the base report's or page's variable is not protected, or `this.LocalProc()` where the
+        // procedure is local: AL0161, as for the bare name (corpus must-not-compile 0122).
+        if own.is_empty()
+            && !self.ws.is_dependency(sc.oi)
+            && matches!(
+                self.ws.objects[sc.oi].kind,
+                ObjKind::ReportExtension | ObjKind::PageExtension
+            )
+            && let Some(b) = self.ws.extension_target(sc.oi)
+            && self.base_proc_cands(sc, &n).is_empty()
+        {
+            let base = self.ws.object_ast(b);
+            let is_var = crate::base_access::declares_var(&base, &n);
+            let is_local_proc = base
+                .routines()
+                .any(|r| r.name().eq_ignore_ascii_case(&n) && r.is_local());
+            if is_var || is_local_proc {
+                let shown = if is_var { n.clone() } else { format!("{n}()") };
+                self.diag(
+                    sc,
+                    member,
+                    "AL0161",
+                    format!("'{shown}' is inaccessible due to its protection level"),
+                );
+                return Some(E::Val(Ty::Unknown));
+            }
+        }
         // In an extension `this` is the base object, and both the base's procedures and the extension's own are
         // reachable through it (types/PYThisExtensions.al: this.BaseProc, this.ExtProc, this.BasePageProc, this.ExtPageProc).
         if sc.self_obj != sc.oi || sc.base_obj.is_some() {

@@ -81,7 +81,7 @@ registry! {
     },
     RecordGetRecordId => {
         id: "record-get-record-id",
-        assumed: "Record.Get(RecordId) loads the row the RecordId names, as RecordRef.Get(RecordId) does; a RecordId of another table is refused.",
+        assumed: "Record.Get(RecordId) of a row that does not exist fails like Get(key) with the same error text; a RecordId of another table is refused. (A row that exists is pinned by record/TestSetAutoCalcFieldsOnGet.Codeunit.al.)",
         tests: "Item Category Management (ItemCategory.Get(RecId)); 29 Tests-SCM tests.",
         probe: "Get(RecordId) on a missing row (result used and unused) and with a RecordId of another table.",
     },
@@ -135,7 +135,7 @@ registry! {
     },
     RecordRefFilterGroup => {
         id: "recordref-filter-group",
-        assumed: "RecordRef.FilterGroup (call and setter form) behaves as Record.FilterGroup.",
+        assumed: "RecordRef.FilterGroup as a getter, and as a setter for a group other than -1, behaves as Record.FilterGroup. (The setter with -1 is pinned by record/PWFilterGroupOr.al:OrGroup_RecordRef.)",
         tests: "Find Record Management.FindRecordByDescriptionAndView; 12 Tests-SCM tests.",
         probe: "The Record.FilterGroup test through RecordRef.Open, FieldRef.SetRange and RecordRef.GetFilters.",
     },
@@ -226,20 +226,14 @@ registry! {
     },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",
-        assumed: "A request-page parameters text without data item filters writes <DataItems /> in the XmlWriter's short form.",
-        tests: "Report request pages in Tests-ERM.",
+        assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",
+        tests: "Report SaveAs datasets of reports with no rows in Tests-ERM.",
         probe: "Confirmed by a corpus bump 9 probe (empty DataItems); delete when the bump is merged.",
         note: "Probably pinned by corpus bump 9 (\"Empty DataItems <DataItems /> confirmed\"): check and delete.",
     },
-    VariantParameterSharesTable => {
-        id: "variant-parameter-shares-table",
-        assumed: "A temporary record handed to a Variant parameter shares the caller's table for writes as well as reads.",
-        tests: "Assert.RecordCount(Variant, N) and Library helpers that insert through a Variant; Tests-ERM.",
-        probe: "The callee inserting into the record behind a Variant parameter, then the caller counting.",
-    },
     SetCurrentKeyFlowField => {
         id: "setcurrentkey-flowfield",
-        assumed: "SetCurrentKey on a FlowField is accepted and orders by the primary key.",
+        assumed: "A walk over a key that holds a FlowField orders by the primary key. (That SetCurrentKey accepts a FlowField is pinned by record/ProbeClearAllSetKeyHyperlink.al:SetCurrentKey_OnFlowFieldFlowFilterBlob_Outcome, which does not read the order.)",
         tests: "Library code that sets a key containing a FlowField in the buckets.",
         probe: "SetCurrentKey(FlowField) then FindSet over rows whose primary key order differs from their flowed values.",
     },

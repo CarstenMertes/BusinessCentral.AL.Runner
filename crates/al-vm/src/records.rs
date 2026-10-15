@@ -1406,7 +1406,8 @@ impl Session {
             }
             "Get" => {
                 // `Get(RecordId)`: the row the RecordId names, as RecordRef.Get(RecordId) does (corpus
-                // recordref/TestRecordRefKeys.al:48). The Record form has no corpus test (Base Application's Item
+                // recordref/TestRecordRefKeys.al:48). The Record form is pinned for a row that exists
+                // (record/TestSetAutoCalcFieldsOnGet.Codeunit.al:68-79; Base Application's Item
                 // Category Management does `ItemCategory.Get(RecId)`); the RecordId of another table is refused.
                 let from_id: Option<Vec<Value>> = match args {
                     [Value::Library(_, l)] => match &*l.borrow() {
@@ -1420,9 +1421,7 @@ impl Session {
                     },
                     _ => None,
                 };
-                if from_id.is_some() {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordGetRecordId);
-                }
+                let by_record_id = from_id.is_some();
                 let args = from_id.as_deref().unwrap_or(args);
                 let mut pk = Vec::new();
                 for (n, &field) in t.keys[0].iter().enumerate() {
@@ -1442,6 +1441,11 @@ impl Session {
                         Ok(Value::Boolean(true))
                     }
                     None => {
+                        // A row that is there is pinned (record/TestSetAutoCalcFieldsOnGet.Codeunit.al:68-79);
+                        // the not-found outcome of the RecordId form is not.
+                        if by_record_id {
+                            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordGetRecordId);
+                        }
                         let mut ident = rec.borrow().fields.clone();
                         for (n, &field) in t.keys[0].iter().enumerate() {
                             ident[field] = match (args.get(n), &t.fields[field].ty) {

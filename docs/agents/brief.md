@@ -33,6 +33,14 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   lands. This is evidence, not a guess: a behavior no test requires is still refused.
   The code path must mark the assumption when it runs (its probes-needed row id),
   so a test that passes through it is reported as a flagged pass, never as a clean one.
+  How: add an entry (id, assumed behavior, Microsoft tests, probe wanted) to
+  `crates/al-builtins/src/assumptions.rs` and call `assumptions::assume(Assumption::YourId)` on the
+  path (at runtime, or `Checker::assume` / `Lowerer::assume` for a compile-time choice, which becomes
+  an `ir::Stmt::Assume`). Mark only the part no corpus test pins. Regenerate the table in
+  `docs/probes-needed.md` with `UPDATE_ASSUMPTIONS_DOC=1 cargo test -p al-builtins assumptions`.
+  When a probe pins it, delete the entry: the compiler lists the marker sites that remain.
+  `alrunner test --top-assumptions` ranks the entries by flagged passes; `--list-assumptions`
+  prints the registry with the counts of the last run (also in `al-test-cli`).
 - **Unsupported is refused explicitly.** Use a lowering reason, a diagnostic in
   `al-sema`, or `Signal::Unsupported`. Never run a guessed or partial behavior
   silently.

@@ -747,7 +747,6 @@ impl Session {
                 // Assigning the record to a Variant variable is a by-value copy
                 // (:TempRecord_AssignedToVariantVariable).
                 (Value::Record(rc), false) if matches!(r.locals[i].ty, RtType::Variant) && rc.borrow().temporary => {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::VariantParameterSharesTable);
                     let st = rc.borrow().clone();
                     Value::Record(Rc::new(RefCell::new(st)))
                 }

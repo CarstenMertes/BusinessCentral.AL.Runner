@@ -60,11 +60,11 @@ pub(crate) fn record_ref_value(rec: &crate::records::Rec) -> Value {
 }
 
 fn al_error(message: String) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message,
         code: "Dialog".into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 fn int_arg(args: &[Value], i: usize) -> Result<i64, Signal> {
@@ -157,11 +157,11 @@ impl Session {
                 let (table, key) = match &*lib.borrow() {
                     LibraryValue::RecordId { table, key, .. } => (*table, key.clone()),
                     _ => {
-                        return Err(Signal::Error(al_builtins::native::AlError {
+                        return Err(Signal::Error(Box::new(al_builtins::native::AlError {
                             message: "The record is not open.".into(),
                             code: "RecordNotOpened".into(),
                             call_stack: String::new(),
-                        }));
+                        })));
                     }
                 };
                 let Value::Record(rec) = self.default_value(&RtType::Record(table, false)) else {
@@ -327,11 +327,11 @@ impl Session {
                 let dst = match &*lib.borrow() {
                     LibraryValue::RecordRef(r) => r.clone(),
                     LibraryValue::Empty => {
-                        return Err(Signal::Error(AlError {
+                        return Err(Signal::Error(Box::new(AlError {
                             message: "The record is not open.".into(),
                             code: "RecordNotOpened".into(),
                             call_stack: String::new(),
-                        }));
+                        })));
                     }
                     _ => return unsupported("RecordRef.Copy on a RecordRef opened on a system table"),
                 };
@@ -414,7 +414,7 @@ impl Session {
                     };
                     match t.fields.iter().position(|f| i64::from(f.id) == i64::from(*n)) {
                         Some(p) => positions.push(Value::Integer(p as i32)),
-                        None => return Err(Signal::Error(al_builtins::native::unpinned_error())),
+                        None => return Err(Signal::Error(Box::new(al_builtins::native::unpinned_error()))),
                     }
                 }
                 self.load_fields_op(method, &rec, &t, &positions)
@@ -525,11 +525,11 @@ impl Session {
                 match reached {
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
                     // record/TestRowVersionFieldNumberFieldActiveContracts.al:84-86.
-                    None => Err(Signal::Error(al_builtins::native::AlError {
+                    None => Err(Signal::Error(Box::new(al_builtins::native::AlError {
                         message: "Index out of bounds.".into(),
                         code: "IndexOutOfBounds".into(),
                         call_stack: String::new(),
-                    })),
+                    }))),
                 }
             }
             "KeyCount" => Ok(Value::Integer(key_count(&self.base_table(&t)) as i32)),
@@ -544,11 +544,11 @@ impl Session {
                     let i = int_arg(std::slice::from_ref(v), 0)?;
                     let count = key_count(&bt) as i64;
                     if i < 1 || i > count {
-                        return Err(Signal::Error(AlError {
+                        return Err(Signal::Error(Box::new(AlError {
                             message: format!("The {} table does not have an active key at index {i}.", t.name),
                             code: "DB:KeyNotFound".into(),
                             call_stack: String::new(),
-                        }));
+                        })));
                     }
                     let mut r = rec.borrow_mut();
                     if (i as usize) <= base {
@@ -653,11 +653,11 @@ impl Session {
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::KeyFieldRef(rec, pos))),
                     // types/TestTypeSystemContracts.al:261 pins the fragment "Index out of bounds"
                     // (recordref/TestBCSumIndexFieldContracts.al:188-198 pins that it throws).
-                    None => Err(Signal::Error(AlError {
+                    None => Err(Signal::Error(Box::new(AlError {
                         message: "Index out of bounds".into(),
                         code: String::new(),
                         call_stack: String::new(),
-                    })),
+                    }))),
                 }
             }
             other => unsupported(format!("KeyRef.{other}")),
@@ -672,11 +672,11 @@ impl Session {
             _ if matches!(method, "Name" | "Number" | "Type" | "Length" | "Record")
                 || (method == "Value" && args.is_empty()) =>
             {
-                return Err(Signal::Error(AlError {
+                return Err(Signal::Error(Box::new(AlError {
                     message: "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized.".into(),
                     code: "NotInitialized".into(),
                     call_stack: String::new(),
-                }));
+                })));
             }
             _ => {
                 return unsupported(format!(

@@ -111,7 +111,7 @@ impl Session {
         let worker = self.bg_worker.take().expect("the worker is still set");
         match ran {
             Ok(_) => Ok(Ok(worker.result.unwrap_or_else(|| V::Dictionary(Default::default())))),
-            Err(Signal::Error(e)) => Ok(Err(e)),
+            Err(Signal::Error(e)) => Ok(Err(*e)),
             Err(other) => Err(other),
         }
     }
@@ -131,7 +131,7 @@ impl Session {
         let completion = matches!(args.get(2), Some(V::Boolean(true)));
         let results = match self.bg_run_worker(codeunit, params)? {
             Ok(r) => r,
-            Err(e) => return Err(Signal::Error(e)),
+            Err(e) => return Err(Signal::Error(Box::new(e))),
         };
         if completion {
             // The task id the completion trigger receives is not pinned: a fresh one (docs/probes-needed.md).

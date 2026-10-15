@@ -111,11 +111,11 @@ fn get_module(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             unsupported("GetModuleInfo of an app outside the workspace (Microsoft apps, ADR-013)")
         }
         ModuleLookup::NotInstalled if c.ret_used() => Ok(Value::Boolean(false)),
-        ModuleLookup::NotInstalled => Err(Signal::Error(AlError {
+        ModuleLookup::NotInstalled => Err(Signal::Error(Box::new(AlError {
             message: format!("No installed extension was found with ID '{}'.", plain_guid(&id)),
             code: "App".into(),
             call_stack: String::new(),
-        })),
+        }))),
     }
 }
 
@@ -283,11 +283,11 @@ fn resource(c: &dyn Ctx, name: &str) -> Result<Vec<u8>, Signal> {
     };
     match resources.into_iter().find(|(n, _)| n == name) {
         Some((_, bytes)) => Ok(bytes),
-        None => Err(Signal::Error(AlError {
+        None => Err(Signal::Error(Box::new(AlError {
             message: format!("A resource matching '{name}' could not be found in app '{app}'."),
             code: String::new(),
             call_stack: String::new(),
-        })),
+        }))),
     }
 }
 

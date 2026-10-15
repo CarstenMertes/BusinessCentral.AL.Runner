@@ -176,9 +176,13 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
         }
     }
     session.trace_faults(false);
+    // The workspace app's own install codeunits run here, once, so that the data they write is part of what every
+    // test codeunit starts from (publishing the app runs them once; they are not re-run for each codeunit).
+    let workspace_installs = crate::runtime::run_install_codeunits(lowered, &mut session);
     let restored = session.restored_changes();
     session.set_install_scope(false);
-    let baseline = session.capture_baseline();
+    let mut baseline = session.capture_baseline();
+    baseline.workspace_installs = Some(workspace_installs);
     let filled = baseline.nonempty_tables();
     // A table the restored company holds rows for is seeded, whether or not a root could write it.
     let unseeded = touched

@@ -22,20 +22,20 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 fn error<T>(message: String) -> Result<T, Signal> {
-    Err(Signal::Error(AlError {
+    Err(Signal::Error(Box::new(AlError {
         message,
         code: String::new(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 /// An error with a pinned code.
 fn error_code<T>(message: String, code: &str) -> Result<T, Signal> {
-    Err(Signal::Error(AlError {
+    Err(Signal::Error(Box::new(AlError {
         message,
         code: code.into(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 fn big(args: &[Value], i: usize) -> Option<i64> {

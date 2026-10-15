@@ -254,11 +254,11 @@ impl Session {
                     };
                     if n < 0 {
                         // Corpus query/TestQueryTopProperty.al:178.
-                        return Err(Signal::Error(AlError {
+                        return Err(Signal::Error(Box::new(AlError {
                             message: "Top number of rows cannot be negative".into(),
                             code: String::new(),
                             call_stack: String::new(),
-                        }));
+                        })));
                     }
                     if qs.borrow().run.is_some() {
                         return unsupported("TopNumberOfRows on an open query (not pinned)");
@@ -274,11 +274,11 @@ impl Session {
                     Some(Value::Option(i, _)) => {
                         if members[*i as usize].eq_ignore_ascii_case("Validated") {
                             // query/TestQueryRuntimeContracts.al:Query_SecurityFiltering_DefaultAndValidated
-                            return Err(Signal::Error(AlError {
+                            return Err(Signal::Error(Box::new(AlError {
                                 message: "SECURITYFILTERING cannot be set to \"Validated\" on a Query.".into(),
                                 code: "Argument".into(),
                                 call_stack: String::new(),
-                            }));
+                            })));
                         }
                         qs.borrow_mut().security_filtering = Some(*i);
                         Ok(Value::Null)
@@ -397,14 +397,14 @@ impl Session {
                     .query
                     .as_ref()
                     .expect("a query object");
-                Err(Signal::Error(AlError {
+                Err(Signal::Error(Box::new(AlError {
                     message: format!(
                         "You have not yet retrieved a data row for this query. The value for column '{}' can only be accessed after a row is retrieved with a call to the READ function.",
                         def.columns[column].name
                     ),
                     code: "QueryNoDataSet".into(),
                     call_stack: String::new(),
-                }))
+                })))
             }
         }
     }

@@ -20,19 +20,19 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 
 /// An argument error: code `Argument` (filterpage/W3FilterPageBuilder.al, BC 27.5 and 29.0).
 fn arg_error(message: String) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message,
         code: "Argument".into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 fn al_error(message: String) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message,
         code: String::new(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// The caption of a builder nobody assigned one to: the platform's localized default, which the

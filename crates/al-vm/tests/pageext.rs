@@ -425,7 +425,9 @@ fn an_extension_action_runs_its_trigger_against_the_current_row() {
     );
     assert_eq!(
         text(r),
-        "ext-open;ext-agr:A;ext-agr:B;ext-agr:A;stamp:B;|ext action refused"
+        // The page reads the current row again after an action (corpus handlers/
+        // TestPageExtensionBaseMembersContracts.al:195-218), so the extension's OnAfterGetRecord runs.
+        "ext-open;ext-agr:A;ext-agr:B;ext-agr:A;stamp:B;ext-agr:B;|ext action refused"
     );
 }
 

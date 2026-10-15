@@ -32,6 +32,40 @@ pub struct BaselineRun {
     /// Roots that ran to their end, and all roots.
     pub ran: usize,
     pub total: usize,
+    /// Changes the roots made to rows the restored company holds (allowed, ADR-020 amendment).
+    pub restored: Vec<al_data::memory::RestoredChange>,
+}
+
+impl BaselineRun {
+    /// One line per table the roots changed restored rows of: how many by kind, and how many
+    /// Modify wrote the values the row already had.
+    pub fn restored_lines(&self) -> Vec<String> {
+        let mut by_table: std::collections::BTreeMap<&str, (usize, usize, usize, usize)> = Default::default();
+        let mut fields: std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> = Default::default();
+        for c in &self.restored {
+            fields
+                .entry(&c.table)
+                .or_default()
+                .extend(c.fields.iter().map(String::as_str));
+            let e = by_table.entry(&c.table).or_default();
+            match (c.op, c.same) {
+                ("Modify", true) => e.0 += 1,
+                ("Modify", false) => e.1 += 1,
+                ("Rename", _) => e.2 += 1,
+                _ => e.3 += 1,
+            }
+        }
+        by_table
+            .into_iter()
+            .map(|(t, (same, other, rename, delete))| {
+                let names = fields[t].iter().copied().collect::<Vec<_>>().join(", ");
+                format!(
+                    "install code changed restored rows of {t}: {same} Modify with the values the row has, {other} Modify with other values{}, {rename} Rename, {delete} Delete",
+                    if names.is_empty() { String::new() } else { format!(" (fields: {names})") }
+                )
+            })
+            .collect()
+    }
 }
 
 fn is_install(o: &al_ir::Object) -> bool {
@@ -142,6 +176,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
         }
     }
     session.trace_faults(false);
+    let restored = session.restored_changes();
     session.set_install_scope(false);
     let baseline = session.capture_baseline();
     let filled = baseline.nonempty_tables();
@@ -158,6 +193,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
         notes,
         ran,
         total: roots.len(),
+        restored,
     })
 }
 
@@ -213,7 +249,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
         }
         fn expr(&mut self, e: &Expr) {
             match e {
-                Expr::Const(_) | Expr::BaseInstance => {}
+                Expr::Const(_) | Expr::BaseInstance | Expr::ThisInstance => {}
                 Expr::Load(p) => self.place(p),
                 Expr::Unary(_, a) | Expr::Convert(_, a) | Expr::DotNetCoerce(_, a) | Expr::DotNetOperand(a, _) => {
                     self.expr(a)

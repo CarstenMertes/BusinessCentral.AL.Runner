@@ -147,15 +147,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             Some(g) => Value::Guid(g),
             None => return unsupported(format!("text `{s}` into a Guid (error text not pinned yet)")),
         },
-        // An Option assigned to an Enum (Base Application does it for document types): BC takes the enum
-        // value for the option's ordinal, but no corpus test pins that, or the error for an ordinal the
-        // enum lacks (docs/probes-needed.md).
-        (v @ Value::Option(..), T::Enum(_)) => {
-            return unsupported(format!(
-                "assigning {} to an Enum: which enum value an Option ordinal selects, and the error for an ordinal the enum lacks, are not pinned (docs/probes-needed.md)",
-                v.describe()
-            ));
-        }
+        // An Option converts to an Enum by its ordinal, with or without `AssignmentCompatibility`, blank member
+        // ' ' giving 0; an ordinal the enum lacks raises no error, the enum holds that number
+        // (corpus types/PEOptionEnumBigText.al:68-141, :171-184, probed on BC 27.5).
+        (Value::Option(o, _), T::Enum(id)) => Value::Enum(*id, o),
         // An Integer into an Enum slot (a Record.Get key for an Enum field, Base Application's deferral
         // codeunit passes document types as Integer). Only `Enum.FromInteger` is pinned
         // (types/TestEnum.al:83-91); the implicit form is not (docs/probes-needed.md).

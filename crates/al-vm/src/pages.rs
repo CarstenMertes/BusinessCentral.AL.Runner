@@ -657,7 +657,17 @@ impl Session {
                             st.borrow_mut().editable_preset = Some(on);
                             Ok(Value::Null)
                         }
-                        None => Ok(Value::Boolean(st.borrow().editable_preset.unwrap_or(true))),
+                        // What it was set to, else the page's own `Editable` property (corpus
+                        // handlers/PWPageVariableEditable.al:187-205: a page with `Editable = false`
+                        // reads No before it runs).
+                        None => {
+                            let engine = self.engine();
+                            let object = st.borrow().object as usize;
+                            let own = !engine.program.objects[object].properties.iter().any(|(k, v)| {
+                                k.eq_ignore_ascii_case("Editable") && v.trim().eq_ignore_ascii_case("false")
+                            });
+                            Ok(Value::Boolean(st.borrow().editable_preset.unwrap_or(own)))
+                        }
                     };
                 }
                 match args.first() {
@@ -1014,7 +1024,7 @@ impl Session {
             s.refused = false;
             s.pending = None;
             s.result = None;
-            s.editable_off = s.editable_preset == Some(false);
+            s.editable_off = false;
             s.caption = None;
             s.opening = true;
             s.parts = Vec::new();
@@ -1071,6 +1081,12 @@ impl Session {
             // OnInit has run (handlers/TestPageOnInit_Tests.al:188).
             if !std::mem::take(&mut st.borrow_mut().inited) {
                 self.page_trigger(st, "oninit", vec![])?;
+            }
+            // `Editable(false)` on the variable before it runs applies after OnInit: OnInit still
+            // reads Yes (corpus handlers/PWPageVariableEditable.al:221-240).
+            {
+                let mut s = st.borrow_mut();
+                s.editable_off = s.editable_preset == Some(false);
             }
             // The parts' OnInit runs between the host's OnInit and its OnOpenPage (corpus
             // testpart/TestPartTriggerOrderAndRefresh.al:236-247).
@@ -2053,8 +2069,21 @@ impl Session {
             return unsupported(format!("{how}() on a page without a source table"));
         }
         // Leaving a row saves it.
+        let anchor = st.borrow_mut().after_new.take();
         if let Left::Stay = self.leave_row(st, how)? {
             return Ok(Value::Boolean(false));
+        }
+        // A new line saved in the middle of a list: Next() goes to the row below the one it was
+        // started under, not to the row after its own key (corpus
+        // handlers/ProbeTestPageForms.al:227-253, where a row with the last key, added below row 2,
+        // is followed by row 3 and not by the blank line).
+        let cursor_now = st.borrow().cursor;
+        if let ("Next", Some(anchor), Cursor::Row) = (how, anchor, cursor_now) {
+            if self.next_below_anchor(st, anchor)? {
+                st.borrow_mut().cursor = Cursor::Row;
+                self.arrive(st)?;
+                return Ok(Value::Boolean(true));
+            }
         }
         let r = self.page_move_inner(st, how);
         self.torn_down_on_error(st, r).map(Value::Boolean)
@@ -2075,6 +2104,31 @@ impl Session {
             }
             other => other,
         }
+    }
+
+    /// Moves the page's record to the row after `anchor` in key order, when there is one and it is
+    /// not the row just saved; else leaves the record as it was and answers false.
+    fn next_below_anchor(&mut self, st: &St, anchor: Vec<Value>) -> Result<bool, Signal> {
+        if self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord") {
+            return Ok(false);
+        }
+        let rec = self.page_rec(st);
+        let saved = rec.borrow().fields.clone();
+        rec.borrow_mut().fields = anchor;
+        self.ret_used = true;
+        let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
+        let found = matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true));
+        let moved = found && {
+            self.ret_used = true;
+            matches!(self.record_op("Next", &rec, &mut [Value::Integer(1)])?, Value::Integer(n) if n != 0)
+        };
+        let table = self.table(&rec)?;
+        let same = moved && Self::same_values(&table.primary_key(&rec.borrow().fields), &table.primary_key(&saved));
+        if moved && !same {
+            return Ok(true);
+        }
+        rec.borrow_mut().fields = saved;
+        Ok(false)
     }
 
     fn page_move_inner(&mut self, st: &St, how: &str) -> Result<bool, Signal> {
@@ -2564,6 +2618,10 @@ impl Session {
         let rec = self.page_rec(st);
         self.set_xrec(st);
         self.note_lower_key(st)?;
+        // A list line started below a stored row: remember the row (see `PageState::after_new`).
+        let anchor = (keep_focus && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
+            .then(|| rec.borrow().fields.clone());
+        st.borrow_mut().after_new = anchor;
         let table = rec.borrow().table as usize;
         let fresh = self.initial_fields(table);
         rec.borrow_mut().fields = fresh;
@@ -2637,6 +2695,9 @@ impl Session {
             return Ok(());
         }
         self.ret_used = false;
+        // The page saves the row on fresh table globals: what an action set in them is gone (corpus
+        // record/PWTableGlobals.al:408-431: OnModify reads Counter 0 though the action set 7).
+        self.reset_table_globals(&rec);
         self.page_xrec = Some(self.page_xrec_fields(st));
         let modified = self.record_op("Modify", &rec, &mut [Value::Boolean(true)]);
         self.page_xrec = None;
@@ -2730,6 +2791,14 @@ impl Session {
         // (testpart/TestPartCloseLinkEditableContracts.al:
         // Parts_EnabledReadsTheControl_EditableFalseDoesNotBlockWrites). New() and Next() onto the
         // new-row line of such a part are not pinned and stay refused.
+        // A validation through the page starts on fresh table globals, also when the line is saved
+        // first because the focus leaves the key control (corpus record/PWTableGlobals.al:392-405,
+        // PageInsert_NewThenSetTxtThenClose_ValidationBeforeInsert: OnInsert reads Counter 0 though
+        // OnNewRecord set 9).
+        if matches!(page_of(&self.engine(), st).controls[idx].binding, ir::Binding::Field(_)) && self.has_source(st) {
+            let rec = self.page_rec(st);
+            self.reset_table_globals(&rec);
+        }
         self.activate(st, idx)?;
         // Only an Update() requested by this call's triggers refreshes at its end.
         st.borrow_mut().refresh = false;
@@ -3113,6 +3182,14 @@ impl Session {
             }
         }
         match m {
+            // `Ctl.Value := x` is the setter form of the property, and does what SetValue does
+            // (corpus handlers/ProbeTestPageForms.al:109-131: OnValidate runs with the assigned text).
+            "Value" if !args.is_empty() && self.in_cue_group(st, idx) => Ok(Value::Null),
+            "Value" if !args.is_empty() => {
+                let r = self.control_set_value(st, idx, args)?;
+                self.resync_parts_linked_by(st, idx)?;
+                Ok(r)
+            }
             "Value" => {
                 if self.shows_no_row(st, idx) {
                     return Ok(Value::Text(String::new()));
@@ -3525,20 +3602,51 @@ impl Session {
         let engine = self.engine();
         // A client sends the row it stands on to the server before it runs an action (corpus
         // handlers/TestPageAutoSplitKey_Tests.al:TestPage_ActionInvoke_OnANewSubpageRow_*).
+        let was_dirty = st.borrow().dirty;
         if st.borrow().host.is_some() {
             self.save_row(st)?;
         }
         st.borrow_mut().refresh = false;
+        // An edit the client sends before the action (a control SetValue left the page dirty) is
+        // saved, and the saved row is read again: OnAfterGetRecord of the base runs before the
+        // action (corpus handlers/TestPageExtensionBaseAccessContracts.al:338-342, where the base
+        // copies a variable an extension control set into a variable the action logs).
+        if was_dirty && !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+            st.borrow_mut().refresh = true;
+            self.run_refresh(st)?;
+            st.borrow_mut().refresh = false;
+        }
         // RunObject wins over OnAction when an action declares both (handlers/TestPageRunObjectContracts.al:371-390).
         if page_of(&engine, st).controls[idx].run_object.is_some() {
             return self.run_object_action(st, idx);
         } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
+            let before = (self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
+                .then(|| self.page_rec(st).borrow().fields.clone());
             let r = self.control_routine(st, idx, r);
             if r.is_err() {
                 st.borrow_mut().refresh = false;
             }
             r?;
+            // What the action left in Rec is saved when the client leaves the row (corpus
+            // record/PWTableGlobals.al:408-431, PageModify_AfterActionChangedRec_NoValidation).
+            if let Some(before) =
+                before.filter(|_| st.borrow().cursor == Cursor::Row && !st.borrow().draft && !st.borrow().refresh)
+            {
+                let rec = self.page_rec(st);
+                if !Self::same_values(&rec.borrow().fields, &before) {
+                    st.borrow_mut().dirty = true;
+                    self.save_row(st)?;
+                }
+            }
             self.settle_after_action(st)?;
+            // The client reads the current row again after every action, so OnAfterGetCurrRecord of
+            // the page and of its extensions runs again (corpus
+            // handlers/TestPageExtensionBaseMembersContracts.al:195-218: "ext AfterGetCurrRecord"
+            // after the extension's action and after the base's). A page that serves its rows from
+            // OnFindRecord is left as `CurrPage.Update` alone re-reads it (re-anchoring not pinned).
+            if !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+                st.borrow_mut().refresh = true;
+            }
             self.run_refresh(st)?;
         }
         Ok(Value::Null)
@@ -3925,7 +4033,7 @@ impl Session {
         let row = self
             .store
             .get(&self.cx, &t, &[key])
-            .map_err(|e| Signal::Unsupported(format!("store error {e:?}")))?;
+            .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
         let Some(row) = row else {
             return Ok((2, 5));
         };

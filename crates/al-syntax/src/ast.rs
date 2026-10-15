@@ -80,11 +80,16 @@ fn walk_outside_routines(node: &SyntaxNode, mut f: impl FnMut(&SyntaxNode)) {
 
 /// AL identifiers compare case-insensitively; quoted ones lose their quotes.
 pub fn ident_text(tok: &SyntaxToken) -> String {
-    let t = tok.text();
-    t.strip_prefix('"')
-        .and_then(|t| t.strip_suffix('"'))
-        .unwrap_or(t)
-        .to_string()
+    unquote_ident(tok.text())
+}
+
+/// A quoted name loses its quotes and a doubled quote inside it becomes one quote. Text that is not quoted is
+/// returned as it is.
+pub fn unquote_ident(t: &str) -> String {
+    match t.strip_prefix('"').and_then(|t| t.strip_suffix('"')) {
+        Some(inner) => inner.replace("\"\"", "\""),
+        None => t.to_string(),
+    }
 }
 
 fn significant_tokens(node: &SyntaxNode) -> impl Iterator<Item = SyntaxToken> {
@@ -717,6 +722,14 @@ impl Attribute {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn unquoting_an_identifier_unescapes_a_doubled_quote() {
+        assert_eq!(unquote_ident("\"A.\"\"B (C)\"\"\""), "A.\"B (C)\"");
+        assert_eq!(unquote_ident("\"Plain name\""), "Plain name");
+        assert_eq!(unquote_ident("Bare"), "Bare");
+        assert_eq!(unquote_ident("\"\""), "");
+    }
 
     #[test]
     fn a_section_argument_read_as_an_object_name() {

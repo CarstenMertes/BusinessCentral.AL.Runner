@@ -254,6 +254,13 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
             let ordinal = (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
                 .then(|| text.parse::<i32>().ok())
                 .flatten();
+            // With format 9 an ordinal that no member has is not pinned (format 0 accepts it:
+            // types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms, `unknownOrdinal_result`).
+            if number == 9 && ordinal.is_some_and(|n| !members.iter().any(|(o, _)| *o == n)) {
+                return unsupported(format!(
+                    "Evaluate of the number `{text}` into an Enum with format 9, though no member has that ordinal (not pinned)"
+                ));
+            }
             let captions = c.enum_captions(*id);
             let found = ordinal
                 .or_else(|| {

@@ -566,7 +566,13 @@ impl Session {
                 Some(Value::Record(x.clone()))
             }
             (None, Some(_)) => {
+                // In a procedure that no operation of the record variable called (a plain call), xRec
+                // is a blank record, not a copy of the row: Get, Insert, Modify and edits of the
+                // variable do not reach it; only the globals it was given stay (corpus
+                // record/PWTableGlobals.al:196-260, XRecPlainProc_*).
                 let mut st = rec.borrow().clone();
+                let table = rec.borrow().table as usize;
+                st.fields = self.initial_fields(table);
                 st.globals = rec.borrow().globals.xrec();
                 Some(Value::Record(Rc::new(RefCell::new(st))))
             }
@@ -1418,7 +1424,13 @@ impl Session {
                     None => {
                         let mut ident = rec.borrow().fields.clone();
                         for (n, &field) in t.keys[0].iter().enumerate() {
-                            ident[field] = pk[n].clone();
+                            ident[field] = match (args.get(n), &t.fields[field].ty) {
+                                // The message names the key as the caller gave it: an Option for an Enum key
+                                // reads 'Three', not the ordinal the enum lacks
+                                // (corpus types/PEOptionEnumBigText.al:225-259, probed on BC 27.5).
+                                (Some(o @ Value::Option(..)), RtType::Enum(_)) => o.clone(),
+                                _ => pk[n].clone(),
+                            };
                         }
                         self.fail(&t, &ident, false)
                     }

@@ -754,6 +754,9 @@ impl CorpusRuntime {
             for n in &b.notes {
                 eprintln!("baseline: {n}");
             }
+            for l in b.restored_lines() {
+                eprintln!("baseline: {l}");
+            }
             eprintln!(
                 "baseline: {} of {} install roots ran to their end; {} tables hold rows, {} are unseeded, {:.2} s",
                 b.ran,
@@ -1383,9 +1386,6 @@ pub fn run_codeunit_full(
     }
     // What publishing the app does first: run its install codeunits, then commit.
     session.set_install_scope(true);
-    // These are the app under test's own install codeunits (a project's fixture): they may change
-    // the restored company's rows. Only the dependency apps' roots are guarded (ADR-020).
-    session.allow_restored_rows_to_change();
     let skipped_installs = run_install_codeunits(lowered, &mut session);
     session.set_install_scope(false);
     session.in_test_codeunit = true;
@@ -1462,7 +1462,7 @@ pub fn run_codeunit_full(
                     // The reason names the limit; the VM only knows that it was stopped.
                     let result = match result {
                         Err(Signal::Unsupported(_)) if timed_out => Err(Signal::Unsupported(format!(
-                            "the test ran longer than the time limit of {} s and was stopped (--test-timeout-secs); BC may have ended it differently or not at all",
+                            "the test used more than the time limit of {} s of CPU time and was stopped (--test-timeout-secs); BC may have ended it differently or not at all",
                             limit.map_or(0, |l| l.as_secs())
                         ))),
                         r => r,
@@ -1552,22 +1552,83 @@ pub fn run_codeunit_full(
     out
 }
 
-/// Sets a session's stop flag when a test runs longer than its limit. One thread per test that is
-/// run; it sleeps until the deadline or until `finish`.
+/// Sets a session's stop flag when a test has used more than its limit of CPU time. The time the
+/// test thread computes is counted, not the wall time, so the load of the machine cannot stop a
+/// test (an outcome must not depend on it). A wall-clock backstop, `WALL_BACKSTOP` times the limit,
+/// still ends a test that hangs without computing. One thread per test that is run; it polls
+/// until the limit or until `finish`. Where the thread's CPU clock cannot be read, the wall clock
+/// counts.
 struct Watchdog {
     done: std::sync::mpsc::Sender<()>,
     thread: std::thread::JoinHandle<bool>,
 }
 
+/// How many times the limit the wall clock may run before a test that does not compute is stopped.
+const WALL_BACKSTOP: u32 = 10;
+/// How often the watchdog reads the CPU clock.
+const WATCHDOG_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The CPU time the calling thread has used so far, and a handle to read it from another thread.
+#[cfg(unix)]
+fn thread_cpu_clock() -> Option<libc::clockid_t> {
+    let mut id: libc::clockid_t = 0;
+    // SAFETY: `id` is a valid out pointer; the thread is the calling one.
+    let rc = unsafe { libc::pthread_getcpuclockid(libc::pthread_self(), &mut id) };
+    (rc == 0).then_some(id)
+}
+
+#[cfg(not(unix))]
+fn thread_cpu_clock() -> Option<()> {
+    None
+}
+
+#[cfg(unix)]
+fn cpu_time(id: libc::clockid_t) -> Option<std::time::Duration> {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `ts` is a valid out pointer.
+    let rc = unsafe { libc::clock_gettime(id, &mut ts) };
+    (rc == 0).then(|| std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
+}
+
 impl Watchdog {
+    /// Watches the calling thread.
     fn start(flag: Arc<std::sync::atomic::AtomicBool>, limit: std::time::Duration) -> Watchdog {
+        #[cfg(unix)]
+        let clock = thread_cpu_clock();
+        // The thread's CPU clock counts from the thread's birth, and a worker thread runs many tests:
+        // the limit is measured from the reading at the start of this test.
+        #[cfg(unix)]
+        let base = clock.and_then(cpu_time).unwrap_or_default();
         let (done, rx) = std::sync::mpsc::channel::<()>();
-        let thread = std::thread::spawn(move || match rx.recv_timeout(limit) {
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+        let thread = std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let stop = |flag: &std::sync::atomic::AtomicBool| {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 true
+            };
+            loop {
+                match rx.recv_timeout(WATCHDOG_POLL) {
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    _ => return false,
+                }
+                #[cfg(unix)]
+                let used = clock.and_then(cpu_time).map(|cpu| cpu.saturating_sub(base));
+                #[cfg(not(unix))]
+                let used: Option<std::time::Duration> = None;
+                match used {
+                    Some(cpu) => {
+                        if cpu >= limit || started.elapsed() >= limit * WALL_BACKSTOP {
+                            return stop(&flag);
+                        }
+                    }
+                    // No CPU clock: the wall clock counts.
+                    None => {
+                        if started.elapsed() >= limit {
+                            return stop(&flag);
+                        }
+                    }
+                }
             }
-            _ => false,
         });
         Watchdog { done, thread }
     }
@@ -3405,5 +3466,49 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
         }
         assert!(matches!(get("After"), Outcome::Pass));
         assert!(matches!(get("AfterFails"), Outcome::NotRun(_)));
+    }
+
+    /// The limit counts the CPU time of the test thread: a thread that waits is not stopped at the
+    /// limit (the machine's load must not decide an outcome), one that computes is.
+    #[cfg(unix)]
+    #[test]
+    fn the_time_limit_counts_cpu_time_not_wall_time() {
+        let limit = std::time::Duration::from_millis(200);
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let w = Watchdog::start(flag.clone(), limit);
+        std::thread::sleep(limit * 3);
+        assert!(!w.finish(), "a thread that waited was stopped");
+        assert!(!flag.load(std::sync::atomic::Ordering::Relaxed));
+
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let w = Watchdog::start(flag.clone(), limit);
+        let started = std::time::Instant::now();
+        let mut x = 0u64;
+        while !flag.load(std::sync::atomic::Ordering::Relaxed) && started.elapsed() < std::time::Duration::from_secs(10)
+        {
+            x = x.wrapping_add(std::hint::black_box(1));
+        }
+        assert!(w.finish() && x > 0, "a thread that computed was not stopped");
+    }
+
+    /// The limit is per test: the CPU time a thread used before the test started does not count.
+    /// Three tests on one thread, each using 60 % of the limit, all stay under it.
+    #[cfg(unix)]
+    #[test]
+    fn the_cpu_limit_is_measured_from_the_start_of_each_test() {
+        let limit = std::time::Duration::from_millis(500);
+        for n in 0..3 {
+            let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+            let w = Watchdog::start(flag.clone(), limit);
+            let clock = thread_cpu_clock().expect("a CPU clock");
+            let from = cpu_time(clock).expect("a reading");
+            let mut x = 0u64;
+            while cpu_time(clock).expect("a reading") - from < limit * 6 / 10 {
+                x = x.wrapping_add(std::hint::black_box(1));
+            }
+            // Let the watchdog poll once more after the work.
+            std::thread::sleep(WATCHDOG_POLL * 3);
+            assert!(!w.finish() && x > 0, "test {n} was stopped under 60 % of the limit");
+        }
     }
 }

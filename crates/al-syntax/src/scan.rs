@@ -113,11 +113,7 @@ impl Tok<'_> {
     }
     /// `"Quoted"` loses its quotes.
     fn ident_text(&self) -> String {
-        self.text
-            .strip_prefix('"')
-            .and_then(|t| t.strip_suffix('"'))
-            .unwrap_or(self.text)
-            .to_string()
+        crate::ast::unquote_ident(self.text)
     }
 }
 

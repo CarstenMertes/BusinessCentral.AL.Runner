@@ -43,13 +43,6 @@ fn passes(o: &[(String, Outcome)], test: &str) {
     }
 }
 
-fn not_run(o: &[(String, Outcome)], test: &str) -> String {
-    match o.iter().find(|(n, _)| n == test).map(|(_, o)| o) {
-        Some(Outcome::NotRun(why)) => why.clone(),
-        other => panic!("{test} was expected to be refused, got {other:?}"),
-    }
-}
-
 /// `EI.Message := 'x'` is the property form of `EI.Message('x')`; the storage and the getter are
 /// pinned through the call form (errorinfo/TestErrorInfoType.al:249-271 Message and
 /// DetailedMessage, :284-307 Verbosity, :313-345 CustomDimensions, errorinfo/
@@ -121,11 +114,10 @@ fn record_properties_and_work_date_assign() {
     }
 }
 
-/// Nothing in the corpus sets `ErrorInfo.RecordId` (only `Create(.., Record)` fills it,
-/// errorinfo/TestErrorInfoType.al:360-377), and whether the assignment also sets `TableId` is not
-/// pinned. A routine that does not reach the assignment runs; one that does is refused there.
+/// `ErrorInfo.RecordId` can be assigned and read back (record/ProbePropertyAssignmentForms.al:
+/// ErrorInfo_RecordId_AssignAndDefault); a routine that does not reach the assignment runs as well.
 #[test]
-fn assigning_error_info_record_id_is_refused_only_where_it_runs() {
+fn assigning_error_info_record_id_runs() {
     let o = outcomes(
         r#"codeunit 50001 "Helper" {
   procedure Fill(var EI: ErrorInfo; Rid: RecordId; Go: Boolean) begin if Go then EI.RecordId := Rid; end; }
@@ -136,7 +128,7 @@ codeunit 50000 "T" { Subtype = Test;
     EI := ErrorInfo.Create(); H.Fill(EI, Rid, true); end; }"#,
     );
     passes(&o, "NotReached");
-    assert!(not_run(&o, "Reached").contains("RecordId"));
+    passes(&o, "Reached");
 }
 
 /// Unqualified in a dataitem trigger, `FilterGroup := g` and `MarkedOnly := b` act on the
@@ -190,17 +182,19 @@ fn the_odata_v4_client_type_member_exists_and_differs_from_the_others() {
     passes(&o, "Names");
 }
 
-/// Microsoft's tests call `BindSubscription(this)`. No corpus test passes `this` as an argument
-/// (the Spy codeunits are variables), and the IR has no place for the running instance, so the
-/// routine is refused with a reason that names `this`, not "`this` is not assignable".
+/// Microsoft's tests call `BindSubscription(this)`. The corpus pins it (handlers/
+/// ProbeEventSubscriberOrder.al: BindSubscription_This_BindsOwnInstance): `this` is the running
+/// instance. A codeunit that is not Manual gets the binding error of any other codeunit.
 #[test]
-fn this_passed_by_reference_is_refused_with_its_own_reason() {
+fn this_passed_to_bind_subscription_is_the_running_instance() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
   [Test] procedure Bind() begin BindSubscription(this); end; }"#,
     );
-    let why = not_run(&o, "Bind");
-    assert!(why.contains("`this`") && !why.contains("not assignable"), "{why}");
+    match o.iter().find(|(n, _)| n == "Bind").map(|(_, o)| o) {
+        Some(Outcome::Fail(why)) => assert!(why.contains("does not use manual binding"), "{why}"),
+        other => panic!("{other:?}"),
+    }
 }
 
 /// `Enum::Ns.Sub."Name".FromInteger(n)` names the enum through its namespace

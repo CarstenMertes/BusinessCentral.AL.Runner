@@ -140,7 +140,15 @@ impl Lexer<'_> {
             b'\'' => self.string(start),
             b'"' => {
                 self.pos += 1;
-                self.eat_while(|b| b != b'"' && b != b'\n');
+                // A doubled quote inside the name is one escaped quote (see `ast::unquote_ident`).
+                loop {
+                    self.eat_while(|b| b != b'"' && b != b'\n');
+                    if self.peek(0) == b'"' && self.peek(1) == b'"' {
+                        self.pos += 2;
+                    } else {
+                        break;
+                    }
+                }
                 if self.peek(0) == b'"' {
                     self.pos += 1;
                     self.push(QuotedIdent, start);
@@ -278,6 +286,25 @@ mod tests {
     #[test]
     fn empty_input_has_no_tokens() {
         assert!(lex("").is_empty());
+    }
+
+    // A doubled quote inside a quoted identifier is one escaped quote. Microsoft's page "Sales Order Statistics"
+    // declares `field("TotalAdjCostLCY[2] - TotalSalesLineLCY[2].""Unit Cost (LCY)"""; ...)`, which real BC
+    // compiles (no corpus test uses it; issue 30).
+    #[test]
+    fn a_doubled_quote_inside_a_quoted_identifier_is_one_escaped_quote() {
+        assert_eq!(
+            significant(r#"X."A.""B (C)""".Y "" Z"#),
+            vec![
+                (Ident, "X"),
+                (Dot, "."),
+                (QuotedIdent, r#""A.""B (C)""""#),
+                (Dot, "."),
+                (Ident, "Y"),
+                (QuotedIdent, r#""""#),
+                (Ident, "Z"),
+            ]
+        );
     }
 
     #[test]

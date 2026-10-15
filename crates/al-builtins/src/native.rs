@@ -496,9 +496,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "FileUpload.CreateInStream#1" | "FileUpload.CreateInStream#2" => {
             "FileUpload.CreateInStream is in no corpus test, so what a FileUpload holds without a client and the stream it opens is not pinned"
         }
-        "BigText.Read#1" => {
-            "BigText.Read is in no corpus test, so the encoding it reads with and whether it replaces or appends to the text are not pinned"
-        }
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }

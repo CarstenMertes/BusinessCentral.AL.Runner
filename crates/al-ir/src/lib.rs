@@ -1125,6 +1125,8 @@ pub enum Expr {
     /// The instance of the page or report that the running extension extends (ADR-023). A call
     /// with `instance: Some(BaseInstance)` runs a procedure of the base object on it.
     BaseInstance,
+    /// `this` in a codeunit: the running instance as a Codeunit value.
+    ThisInstance,
     /// `value is I` (`cast` false: a Boolean) or `value as I` (`cast` true: the same interface
     /// value) on an interface value. `objects` are the codeunits that implement `I`.
     InterfaceTest {

@@ -2152,7 +2152,7 @@ fn is_stmt(k: SyntaxKind) -> bool {
 fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
         (receiver, name),
-        ("FieldRef", "Value")
+        ("FieldRef" | "TestField", "Value")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
             | ("Notification", "Id" | "Message" | "Scope")
             | (
@@ -3824,7 +3824,8 @@ impl Lowerer<'_> {
                     .as_ref()
                     .is_some_and(|s| !s.instance || (s.receiver == "Record" && self.rec_slot.is_some()));
             if let Some(sig) = sig.filter(|_| member || implicit) {
-                if al_builtins::native::lookup(&id).is_none() {
+                // A test page control's setter form is run by the test client, not a native builtin.
+                if al_builtins::native::lookup(&id).is_none() && !id.starts_with("TestField.") {
                     return Err(match al_builtins::native::refusal(&id) {
                         Some(why) => format!("builtin {id}: {why} (docs/probes-needed.md)"),
                         None => format!("builtin {id} is not implemented"),
@@ -4323,6 +4324,15 @@ impl Lowerer<'_> {
         let kids: Vec<SyntaxNode> = n.children().collect();
         match n.kind() {
             Literal => Ok(ir::Expr::Const(self.constant(n)?)),
+            // `this` in a codeunit is the running instance (corpus handlers/ProbeEventSubscriberOrder.al:
+            // `BindSubscription(this)`).
+            NameRef
+                if crate::check::is_this_keyword(n)
+                    && self.ws.objects[self.oi].kind == ObjKind::Codeunit
+                    && !self.globals.contains_key("this") =>
+            {
+                Ok(ir::Expr::ThisInstance)
+            }
             ParenExpr => self.expr(&kids[0]),
             PrefixExpr => {
                 let op = match sig_tokens(n)[0].text().to_ascii_lowercase().as_str() {

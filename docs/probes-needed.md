@@ -946,7 +946,6 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 
 | Area | Assumption | Probe wanted |
 |---|---|---|
-| `BigText.Read(InStream)` | Nothing in the corpus calls it (693 Tests-ERM tests reach it through Email Item `GetBodyTextFromBlob`). REFUSED | `CreateInStream(IS, TextEncoding::UTF8)` and the default, over bytes with and without a byte order mark and a non-ASCII text; `Read` into an empty BigText and one that has text (replace or append); `Length`, `GetSubText` afterwards; the return value |
 | `Media.ImportStream(InStream, Description, MimeType, FileName)` | The three-argument forms are pinned (media/TestMediaPngImport.al). What the file name changes (the Tenant Media row's file name, anything a test reads) is not. REFUSED (117 tests) | The form with a file name on a Media field, then `Rec.Pic.MediaId`, the "Tenant Media" row's `File Name`, `Description` and `Mime Type` through `Rec.Pic.ExportFile`/`ExportStream` |
 | `XmlDocument.ReadFrom(Text, XmlReadOptions, var XmlDocument)` | The form without options keeps white space (xml/TestXmlRuntimeContracts.al:99). A default `XmlReadOptions` may not (its `PreserveWhitespace` property). Implemented for a document without white space between tags or around the root, where the options cannot matter; refused otherwise | `ReadFrom` with a default `XmlReadOptions` and with `PreserveWhitespace(true)` and `(false)` on `<root>  <a/>  </root>` and ` <root/> `, then `WriteTo` |
 | `SecretText.Unwrap()` | Returns the text the secret carries (types/TestSecretText.al:43 calls it the one API returning the plain text; the compile-time scope is OnPrem). Implemented without a runtime pin of the value | `Unwrap` of `SecretStrSubstNo('a-%1', S)` and of an unassigned SecretText, from an OnPrem app |
@@ -956,7 +955,6 @@ result as `DotNet("")` and lowering refuses it before the run. Read before the b
 | Area | Assumption | Probe wanted |
 |---|---|---|
 | `RecordRef.FilterGroup` | Behaves as `Record.FilterGroup` (the group it sets, or the current one; a group shows only its own filters), because a RecordRef holds the same record buffer. Pinned for Record (record/TestRecordRuntimeTextsAndViews.al:374); no corpus test calls it on a RecordRef. A negative group stays refused (see the FilterGroup(-1) section) | The test at record/TestRecordRuntimeTextsAndViews.al:374 through `RecordRef.Open`, `FieldRef.SetRange` and `RecordRef.GetFilters`; also `RecordRef.GetTable(Rec)` and `SetTable` carrying the group |
-| An Option assigned to an Enum | BC takes the enum value for the option's ordinal (Base Application assigns an Option document type to an Enum field). No corpus test pins it, nor the error for an ordinal the enum lacks. REFUSED (208 Tests-ERM tests) | `Opt := Opt::B; Enum := Opt;` with an enum whose ordinals are not 0, 1, 2 (explicit values), and an ordinal the enum does not have; with `AssignmentCompatibility = true` on the enum and without; as an argument and as a field assignment |
 
 ## NP Retail blockers (np-blockers)
 

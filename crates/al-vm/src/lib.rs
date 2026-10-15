@@ -587,18 +587,17 @@ impl Session {
         al_builtins::value::TempId::new(self.next_temp, self.temp_release.clone())
     }
 
-    /// The runner marks the time install codeunits run: `DataTransfer` is usable in it.
+    /// The runner marks the time install codeunits run: `DataTransfer` is usable in it. Changes
+    /// install code makes to rows the restored company holds are allowed and written down
+    /// (ADR-020 amendment).
     pub fn set_install_scope(&mut self, on: bool) {
         self.install_scope = on;
-        // Install code does not rewrite the rows of a restored company (ADR-020).
-        self.store.guard_backed_rows(on);
+        self.store.record_restored_changes(on);
     }
 
-    /// Lets install code in scope change the rows of the restored company: used for the install
-    /// codeunits of the app under test, which are the project's own fixture (ADR-020). The
-    /// dependency apps' install roots keep the guard.
-    pub fn allow_restored_rows_to_change(&mut self) {
-        self.store.guard_backed_rows(false);
+    /// The changes made to restored rows since install scope was last entered.
+    pub fn restored_changes(&self) -> Vec<al_data::memory::RestoredChange> {
+        self.store.restored_changes()
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
@@ -1145,6 +1144,7 @@ impl Session {
                 self.finish_call(*object, *routine, inst, args, *try_call, f)
             }
             E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
+            E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
             E::InterfaceCall {
                 receiver,
                 targets,

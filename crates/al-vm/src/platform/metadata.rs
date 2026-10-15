@@ -580,11 +580,10 @@ fn field_relations(
             r[pos(t, 4)] = Value::Integer(k as i32 + 1);
             r[pos(t, 8)] = Value::Integer(*own as i32);
             let filter = arm.filters.get(k).copied().unwrap_or(false);
-            match arm.values.get(k) {
-                Some(Some(v)) => r[pos(t, 9)] = Value::Text(v.clone()),
-                // A filter whose members are not all named options reads a blank value: its text form is not
-                // pinned (docs/probes-needed.md, "Table Relations Metadata").
-                _ => {}
+            // A filter whose members are not all named options reads a blank value: its text form is not
+            // pinned (docs/probes-needed.md, "Probe fixes (corpus 345627d)").
+            if let Some(Some(v)) = arm.values.get(k) {
+                r[pos(t, 9)] = Value::Text(v.clone());
             }
             if filter {
                 // Condition Type: CONST is the first member, FILTER the second (session/PWPlatformTables.al:109-123).

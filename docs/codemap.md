@@ -261,7 +261,14 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `hostvalues.rs` (259): Builtins that answer from the host (ADR-006). Entry: `datetime_of_unix_millis` 26, `Replaced` 142.
 - `interfaces.rs` (106): Interface variables: dispatch through the implementing codeunit. Entry: `interface_test` 32, `interface_target` 54, `enum_implementation` 81.
 - `lib.rs` (1532): The tree-walking interpreter: Engine (immutable program), Session (all mutable state). Entry: `Engine` 46, `Session` 141, `call` 500, `call_inner` 529, `exec` 630, `eval` 791, `read` 1142, `write` 1189, `record` 1385, `finish_call` 1060.
-- `pages.rs` (3735): The page test client (ADR-012): open, navigate, read and write controls, close. Entry: `page_op` 345, `page_open` 742, `open_page_as` 860, `test_page_op` 456, `page_instance` 761, `construct_page` 800, `page_close` 1092, `close_with` 1107.
+- `pages.rs` (432): The page test client (ADR-012): shared helpers, page triggers and events, the handle to a control. The rest is split by topic into `pages/`.
+- `pages/pageops.rs` (538): The `TestPage.*` and `TestField.*` methods. Entry: `page_op`, `test_page_op`.
+- `pages/open.rs` (891): Opening and closing a page, rows loaded on open. Entry: `page_open`, `open_page_as`, `page_close`, `close_with`.
+- `pages/rows.rs` (976): The row window, navigation, `GoToKey`, `Find`, modal answers. Entry: `populate_window`, `page_move`, `page_go_to_key`.
+- `pages/draft.rs` (304): New rows, drafts, saving a row, activating a control.
+- `pages/controls.rs` (588): Writing a control and the `TestField` methods. Entry: `control_set_value`, `test_control_op`.
+- `pages/actions.rs` (676): Control navigation, lookups, invoking actions, refresh after an action.
+- `pages/format.rs` (435): Reading a control: value, text, type, caption, editable, enabled, visible.
 - `pages/areas.rs` (104): Application areas on the test client.
 - `pages/background.rs` (257): Page background tasks under the test client. Entry: `BgWorker` 11.
 - `pages/filter.rs` (135): `TestPage.Filter` / `TestPart.Filter` (the `TestFilter` handle).

@@ -1,0 +1,304 @@
+use super::*;
+
+impl Session {
+    /// `TestPage.New()` (corpus handlers/TestPageInsertAllowed_Tests.al:70 New_OnInsertAllowedFalsePage_IsDenied,
+    /// handlers/TestPageOpenNewAfterGetCurrRecord.al New_OnAnOpenCard_RunsOnAfterGetCurrRecordForTheNewRecord).
+    pub(super) fn new_record(&mut self, st: &St) -> Result<Value, Signal> {
+        self.refuse_read_only_part(st, "New()")?;
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let insert_denied = engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("InsertAllowed") && v.trim().eq_ignore_ascii_case("false"));
+        if insert_denied {
+            return Err(error("New method failed because Insert is not allowed."));
+        }
+        match self.leave_row(st, "New")? {
+            Left::Stay => Ok(Value::Null),
+            Left::Go => self.start_draft(st, true).map(|_| Value::Null),
+        }
+    }
+
+    /// Saves the row the cursor is leaving. A started line whose insert fails does not raise:
+    /// New(), Next() and Last() stay on it with one validation error on its key control; Previous()
+    /// and First() move on and the insert fails again at Close()
+    /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30).
+    pub(super) fn leave_row(&mut self, st: &St, how: &str) -> Result<Left, Signal> {
+        let r = self.save_row(st);
+        match r {
+            Err(Signal::Error(e)) if st.borrow().draft && st.borrow().dirty => match how {
+                "New" | "Next" | "Last" => {
+                    let key_ctl = self.key_control(st);
+                    let mut s = st.borrow_mut();
+                    if !s.refused {
+                        s.errors.push((key_ctl, e.message));
+                        s.refused = true;
+                    }
+                    Ok(Left::Stay)
+                }
+                "Previous" | "First" => {
+                    let fields = self.page_rec(st).borrow().fields.clone();
+                    let mut s = st.borrow_mut();
+                    s.pending = Some(fields);
+                    s.draft = false;
+                    s.dirty = false;
+                    Ok(Left::Go)
+                }
+                _ => Err(Signal::Error(e)),
+            },
+            Err(e) => Err(e),
+            Ok(()) => Ok(Left::Go),
+        }
+    }
+
+    /// The control bound to the first field of the primary key.
+    pub(super) fn key_control(&self, st: &St) -> usize {
+        if !self.has_source(st) {
+            return 0;
+        }
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let table = self.page_rec(st).borrow().table as usize;
+        let key0 = engine.program.objects[table].table.as_ref().map(|t| t.keys[0][0]);
+        page.controls
+            .iter()
+            .position(|c| matches!(c.binding, ir::Binding::Field(p) if Some(p) == key0))
+            .unwrap_or(0)
+    }
+
+    /// xRec := Rec, the row as the client read it.
+    pub(super) fn set_xrec(&mut self, st: &St) {
+        if !self.has_source(st) {
+            return;
+        }
+        let fields = self.page_rec(st).borrow().fields.clone();
+        self.set_xrec_fields(st, fields);
+    }
+
+    /// xRec holds `fields`: the row as it was read.
+    pub(super) fn set_xrec_fields(&mut self, st: &St, fields: Vec<Value>) {
+        if !self.has_source(st) {
+            return;
+        }
+        let object = st.borrow().object as usize;
+        let Some(slot) = self.engine.program.objects[object].xrec_slot else {
+            return;
+        };
+        let inst = st.borrow().instance.clone().expect("open page");
+        if let Value::Record(x) = &inst.borrow().globals[slot] {
+            x.borrow_mut().fields = fields;
+        }
+    }
+
+    pub(super) fn page_xrec_fields(&self, st: &St) -> Vec<Value> {
+        if !self.has_source(st) {
+            return Vec::new();
+        }
+        let object = st.borrow().object as usize;
+        let slot = self.engine.program.objects[object]
+            .xrec_slot
+            .expect("page with a source table");
+        let inst = st.borrow().instance.clone().expect("open page");
+        let v = inst.borrow().globals[slot].clone();
+        match v {
+            Value::Record(x) => x.borrow().fields.clone(),
+            _ => Vec::new(),
+        }
+    }
+
+    pub(super) fn same_values(a: &[Value], b: &[Value]) -> bool {
+        a.len() == b.len()
+            && a.iter()
+                .zip(b)
+                .all(|(x, y)| ops::compare(x, y).map(|o| o.is_eq()).unwrap_or(false))
+    }
+
+    /// The stored row with `rec`'s primary key, whatever the view says.
+    pub(super) fn stored_row(&mut self, rec: &Rec) -> Result<Option<Vec<Value>>, Signal> {
+        let table = self.table(rec)?;
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        probe.borrow_mut().filters.clear();
+        let mut pk = table.primary_key(&rec.borrow().fields);
+        self.ret_used = true;
+        Ok(match self.record_op("Get", &probe, &mut pk)? {
+            Value::Boolean(true) => Some(probe.borrow().fields.clone()),
+            _ => None,
+        })
+    }
+
+    /// A new record on the page: xRec stays on the row the cursor was on, Rec starts from the table's
+    /// defaults, OnNewRecord runs with BelowxRec true (corpus
+    /// handlers/TestPageCreateModeNewRecordArgs.al:243-270), then the row is populated
+    /// (handlers/TestPageOpenNewAfterGetCurrRecord.al:1-12: OnAfterGetCurrRecord runs after OnNewRecord).
+    pub(super) fn start_draft(&mut self, st: &St, keep_focus: bool) -> Result<(), Signal> {
+        if !self.has_source(st) {
+            return unsupported("a new record on a page without a source table");
+        }
+        let rec = self.page_rec(st);
+        self.set_xrec(st);
+        self.note_lower_key(st)?;
+        // A list line started below a stored row: remember the row (see `PageState::after_new`).
+        let anchor = (keep_focus && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
+            .then(|| rec.borrow().fields.clone());
+        st.borrow_mut().after_new = anchor;
+        let table = rec.borrow().table as usize;
+        let fresh = self.initial_fields(table);
+        rec.borrow_mut().fields = fresh;
+        self.stamp_from_filters(st, true)?;
+        let engine = self.engine();
+        let page = page_of(&engine, st);
+        let first = page.controls.iter().position(|c| c.kind == ir::ControlKind::Field);
+        {
+            let mut s = st.borrow_mut();
+            s.cursor = if page.controls.iter().any(|c| c.kind == ir::ControlKind::Repeater) {
+                Cursor::NewLine
+            } else {
+                Cursor::Row
+            };
+            s.draft = true;
+            s.dirty = false;
+            s.refused = false;
+            if !keep_focus {
+                s.focus = first;
+                s.focus_in_row = true;
+            } else {
+                // Focus stays on the control of the row the cursor left
+                // (corpus handlers/TestPageBlankKeyInsert.al, List_NewRow_FocusStays...).
+                s.focus_in_row = false;
+            }
+        }
+        let existed = self.stored_row(&rec)?.is_some();
+        st.borrow_mut().draft_stored = existed;
+        self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
+        self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        // A new row nobody has saved raises OnAfterGetCurrRecord but no OnAfterGetRecord (corpus
+        // pageupdate/TestPageUpdateNewRow.al:OpenNew_TraceIsOneOnAfterGetCurrRecord).
+        self.populate_expressions(st)?;
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        // Page code that inserts the new row itself (a template step) hands the page the stored row.
+        if !existed && self.stored_row(&rec)?.is_some() {
+            let mut s = st.borrow_mut();
+            s.draft = false;
+            s.cursor = Cursor::Row;
+            drop(s);
+            self.set_xrec(st);
+        }
+        Ok(())
+    }
+
+    /// Writes what the client holds for the current row: inserts a typed new record, modifies an
+    /// edited one when a value really differs (corpus handlers/TestPageSameValueSetValue_Tests.al:1-30).
+    pub(super) fn save_row(&mut self, st: &St) -> Result<(), Signal> {
+        let (cursor, draft, dirty) = {
+            let s = st.borrow();
+            (s.cursor, s.draft, s.dirty)
+        };
+        if cursor == Cursor::None || !dirty || !self.has_source(st) {
+            return Ok(());
+        }
+        if draft {
+            return self.insert_draft(st);
+        }
+        let rec = self.page_rec(st);
+        if Self::same_values(&rec.borrow().fields, &self.page_xrec_fields(st)) {
+            st.borrow_mut().dirty = false;
+            return Ok(());
+        }
+        // corpus handlers/TestPageTriggerEvents.al (ModifyRecordEvent_RunsAfterThePagesOwnOnModifyRecordTrigger)
+        let keep = self.page_trigger_answer(st, "onmodifyrecord", vec![])?;
+        if keep == Some(false) {
+            return Ok(());
+        }
+        if !self.page_event(st, "onmodifyrecordevent", Some(true), None)? {
+            return Ok(());
+        }
+        self.ret_used = false;
+        // The page saves the row on fresh table globals: what an action set in them is gone (corpus
+        // record/PWTableGlobals.al:408-431: OnModify reads Counter 0 though the action set 7).
+        self.reset_table_globals(&rec);
+        self.page_xrec = Some(self.page_xrec_fields(st));
+        let modified = self.record_op("Modify", &rec, &mut [Value::Boolean(true)]);
+        self.page_xrec = None;
+        modified?;
+        st.borrow_mut().dirty = false;
+        self.set_xrec(st);
+        Ok(())
+    }
+
+    /// OnInsertRecord decides whether the typed record is inserted at all (corpus
+    /// handlers/TestPageRecordTriggers.al:76 OnInsertRecord_ReturningFalse_SuppressesTheInsert).
+    pub(super) fn insert_draft(&mut self, st: &St) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        // BelowxRec is Yes for a row added with New() at the end, as it is for OnNewRecord (corpus
+        // handlers/TestPageRuntimeContracts.al:197-211 TestPage_New_AtTheEnd_PassesBelowxRecTrueToOnInsertRecord).
+        // A row added in the middle is not pinned; it is given the same Yes as OnNewRecord gets.
+        let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(true)])?;
+        if go == Some(false) {
+            return Ok(());
+        }
+        if !self.page_event(st, "oninsertrecordevent", Some(true), Some(true))? {
+            return Ok(());
+        }
+        self.auto_split_key(st)?;
+        self.ret_used = false;
+        self.immediate_errors = true;
+        let inserted = self.record_op("Insert", &rec, &mut [Value::Boolean(true)]);
+        self.immediate_errors = false;
+        inserted?;
+        {
+            let mut s = st.borrow_mut();
+            s.draft = false;
+            s.dirty = false;
+            s.cursor = Cursor::Row;
+        }
+        self.set_xrec(st);
+        // The parts of a new host row link to it once it is stored, with the number its OnInsert
+        // gave it (corpus handlers/TestPageOpenNewPartLink.al).
+        if !st.borrow().parts.is_empty() {
+            self.sync_parts(st)?;
+        }
+        Ok(())
+    }
+
+    /// Focus moves to control `idx`. On a new record of a page that inserts as you go, moving from
+    /// a control of that row to a non-key control inserts it (corpus
+    /// handlers/TestPageBlankKeyInsert.al:1-25 and its List_NewRow_Focus... arm: after New() the
+    /// focus still sits on the old row's control).
+    pub(super) fn activate(&mut self, st: &St, idx: usize) -> Result<(), Signal> {
+        let (prev, in_row) = {
+            let s = st.borrow();
+            (s.focus, s.focus_in_row)
+        };
+        if prev == Some(idx) {
+            return Ok(());
+        }
+        {
+            let mut s = st.borrow_mut();
+            s.focus = Some(idx);
+            s.focus_in_row = true;
+        }
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let delayed = engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("DelayedInsert") && v.trim().eq_ignore_ascii_case("true"));
+        let page = page_of(&engine, st);
+        let non_key = match page.controls[idx].binding {
+            ir::Binding::Field(pos) => {
+                let table = self.page_rec(st).borrow().table as usize;
+                !engine.program.objects[table]
+                    .table
+                    .as_ref()
+                    .is_some_and(|t| t.keys[0].contains(&pos))
+            }
+            _ => false,
+        };
+        if st.borrow().draft && in_row && prev.is_some() && !delayed && non_key {
+            self.insert_draft(st)?;
+        }
+        Ok(())
+    }
+}

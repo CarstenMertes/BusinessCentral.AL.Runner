@@ -2853,6 +2853,7 @@
 60687 EditableBoundToPageVariable_FollowsTheRow
 60687 NoEditableProperty_StaysEditable
 60687 NotEditableControl_StillReadsItsValue
+60691 SetValue_AcceptsTheOrdinalOfAnEnumMember
 60691 SetValue_OnAPlainTextFieldPersistsToTheRow
 60691 SetValue_RejectsAStringThatIsNotAnEnumMember
 60691 SetValue_ResolvesAnEnumMemberByName
@@ -4757,6 +4758,9 @@
 69183 Card_ReadsAfterEachAction
 69183 FindList_OnFindRecordAndOnNextRecord
 69183 List_ReadsAfterEachAction
+69185 EnumToEnum_InFieldAssignmentAndKey
+69185 EnumToEnum_TargetAllowsAssignment_Ordinals
+69185 IntegerToEnum_AssignmentKeyAndSetRange
 69186 Link_ToParent_Control
 69187 ImportStream_DescriptionAndMimeType_TenantMediaRow
 69187 ImportStream_DescriptionOnly_AndEmptyDescription
@@ -5285,6 +5289,7 @@
 69932 AssertEquals_Dur_Zero
 69932 AssertEquals_Enm_Caption
 69932 AssertEquals_Enm_Name_IsRefused
+69932 AssertEquals_Enm_Ordinal
 69932 AssertEquals_Enm_Value
 69932 AssertEquals_Flag_False
 69932 AssertEquals_Flag_True

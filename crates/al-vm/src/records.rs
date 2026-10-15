@@ -1434,6 +1434,19 @@ impl Session {
                                 // reads 'Three', not the ordinal the enum lacks
                                 // (corpus types/PEOptionEnumBigText.al:225-259, probed on BC 27.5).
                                 (Some(o @ Value::Option(..)), RtType::Enum(_)) => o.clone(),
+                                // Whether the message names an enum of another type, or an Integer, by the
+                                // caller's value or by the key's is not pinned (docs/probes-needed.md); found
+                                // and not found are (types/PXEnumRecordRef.al:123,127,154,156).
+                                (Some(Value::Enum(from, _)), RtType::Enum(to)) if from != to && !self.ret_used => {
+                                    return Err(Signal::Unsupported(
+                                        "the not-found error of a Get keyed by an enum of another type: the identification text is not pinned (docs/probes-needed.md)".into(),
+                                    ));
+                                }
+                                (Some(Value::Integer(_)), RtType::Enum(_)) if !self.ret_used => {
+                                    return Err(Signal::Unsupported(
+                                        "the not-found error of a Get keyed by an Integer on an Enum field: the identification text is not pinned (docs/probes-needed.md)".into(),
+                                    ));
+                                }
                                 _ => pk[n].clone(),
                             };
                         }
@@ -1668,8 +1681,12 @@ impl Session {
             }
             "SetCurrentKey" => {
                 let wanted: Vec<usize> = (0..args.len()).map(|i| arg_pos(args, i)).collect::<Result<_, _>>()?;
-                match t
-                    .keys
+                // Only the table's own keys: `t` may end with this record's earlier ad hoc key, and a
+                // prefix of it is a new ad hoc key, not that one.
+                let declared = self.engine.tables[t.object as usize]
+                    .as_ref()
+                    .map_or(t.keys.len(), |e| e.keys.len());
+                match t.keys[..declared]
                     .iter()
                     .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])
                 {

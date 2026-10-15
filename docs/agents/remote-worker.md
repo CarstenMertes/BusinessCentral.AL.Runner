@@ -160,3 +160,28 @@ Paste this into the session on the laptop, from the repository clone. It uses
 ```
 /loop Work through the GitHub issues of StefanMaron/al-runtime-rs, one at a time, following docs/agents/remote-worker.md. Before the first issue, read docs/agents/remote-worker.md, docs/agents/brief.md, CLAUDE.md, docs/architecture.md, docs/status.md, docs/codemap.md and docs/adr/README.md. Each round: find the oldest open issue with label agent-ready and without the labels in-progress, ready-for-review and blocked; claim it (label in-progress, comment "Taking this."); make a worktree and branch remote/<number>-<slug> from origin/main; do the work with red/green TDD under the rules in docs/agents/brief.md; run all finishing gates (baselines for BC 27, 28 and 29, ./check.sh, the release-only tests, tools/demand_vs_eager.sh run when it applies, merge origin/main, regenerate baselines, ./check.sh again); push the branch only; comment the report in the format of docs/agents/remote-worker.md on the issue; add label ready-for-review and remove in-progress; remove the worktree; then take the next issue. If an issue is blocked (needs a probe, an ADR decision, an oracle change, or is unclear), comment why, label it blocked, remove in-progress, and move on. Never push main or the corpus repo, never merge, never close issues, never edit corpus/ or oracle/, never weaken a baseline, run corpus runs one at a time under a memory cap or timeout, and keep public comments factual and short. Open a new issue only for a bug you found or for self-picked work when the queue is empty, with label found-by-agent. Never stop the loop. If an issue you labelled in-progress is still open from an earlier round, resume it first. When no matching issue is left: (1) fetch origin, run `alrunner test` on Tests-ERM of the BC 27.5 artifact with `--top-refusals 40` (the plain command loads test data), (2) pick the highest-ranked refusal that no open issue and no recent commit on main mentions, (3) open an issue for it with labels agent-ready and found-by-agent (goal, facts with counts, scope, done-when, as in the other issues), and take it. If even that finds nothing, schedule the next round in 15 minutes and look again. Each round ends with the next round scheduled, never with a stop.
 ```
+
+## Corpus writer mode (from 2026-10-15)
+
+Owner decision: the remote worker writes corpus probes full time, one whole topic at
+a time (every method and overload of a type, with edge cases and error texts), so
+later runtime fixes find their pin already there. The working method is
+`docs/agents/corpus-writer.md`: a local BC 29 container, observe then assert, your own
+corpus branch `al-runtime-rs-writer-laptop`, ids 70000-74999, names prefixed `LT `.
+GitHub CI of the corpus repo is only the final check for BC 27 and 28.
+
+Topic issues carry the label `corpus-topic`. Each round: take the oldest open
+`corpus-topic` issue without `in-progress`, `ready-for-review` or `blocked`; claim it;
+write and measure the probes locally until green on BC 29; merge
+`al-runtime-rs-staging` into your branch; push your branch; dispatch the corpus
+matrix on it; comment the report (topic, members pinned with file names, members
+left and why, findings that surprised you, the CI run) and label `ready-for-review`.
+The publisher (a local agent) merges your branch into staging. When no topic issue is
+left, take the next type from `docs/corpus-coverage.md` (pinned X of Y per type),
+open a `corpus-topic` issue for it labelled `found-by-agent`, and take it.
+
+Starting prompt for this mode:
+
+```
+/loop Write corpus probes for StefanMaron/al-runtime-rs, one topic at a time, following the "Corpus writer mode" section of docs/agents/remote-worker.md and docs/agents/corpus-writer.md. Before the first topic, read both files, CLAUDE.md and docs/probes-needed.md, and set up the local BC 29 container as the guide says. Each round: take the oldest open GitHub issue with label corpus-topic and without in-progress, ready-for-review and blocked; claim it (label in-progress, comment "Taking this."); pin every member of the topic on the local BC 29 container with observe-then-assert, asserting only the measured facts; merge al-runtime-rs-staging into your branch al-runtime-rs-writer-laptop; push that branch only; dispatch the corpus matrix on it; comment the report; label ready-for-review and remove in-progress; take the next topic. If an issue you labelled in-progress is still open, resume it first. When no topic issue is left, open one for the type with the fewest pinned members in docs/corpus-coverage.md (labels corpus-topic and found-by-agent) and take it. Never push al-runtime-rs, al-runtime-rs-staging or master of the corpus repo, never edit or delete an existing corpus test, never change al-runtime-rs code, and keep public comments factual and short. Never stop the loop; if blocked, comment why, label blocked, and move to the next topic.
+```

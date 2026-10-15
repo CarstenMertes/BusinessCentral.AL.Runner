@@ -432,7 +432,7 @@ impl Walk<'_> {
                 self.expr(a)?;
                 self.expr(b)
             }
-            Expr::Unary(_, a) => self.expr(a),
+            Expr::Unary(_, a) | Expr::FieldOf(a, _) => self.expr(a),
             Expr::In(a, set) => {
                 self.expr(a)?;
                 set.iter().try_for_each(|s| self.set_elem(s))

@@ -3804,6 +3804,18 @@ impl Lowerer<'_> {
     }
 
     fn assign(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Stmt> {
+        // `CurrFieldNo := FieldNo(..)` before a Validate (Base Application's "Purchase Header".
+        // BuyfromContactLookup, after the user picked a contact). The corpus only reads CurrFieldNo
+        // (handlers/TestPageCurrFieldNo_Tests.al), so what the OnValidate that follows reads is not pinned:
+        // refused when it runs, so code that does not reach it still runs, as a control add-in call is.
+        if kids[0].kind() == SyntaxKind::NameRef
+            && matches!(self.res(&kids[0]), Some(Res::Global(g)) if g == "currfieldno" && !self.globals.contains_key(g))
+        {
+            return Ok(ir::Stmt::Expr(ir::Expr::Refused(
+                "assigning CurrFieldNo: whether the OnValidate a later Validate runs reads the assigned number is not pinned (docs/probes-needed.md)"
+                    .into(),
+            )));
+        }
         // `X.Property := value` on a DotNet value (ADR-014).
         if let Some(Res::DotNetMember(name)) = self.res(&kids[0]).cloned() {
             if kids[0].kind() == SyntaxKind::MemberExpr {
@@ -4538,6 +4550,21 @@ impl Lowerer<'_> {
                         args: Vec::new(),
                         ret_used: true,
                     })
+                }
+                // A field of the record a procedure returns: `SalesLine.GetSalesHeader()."Prices Including
+                // VAT"` (Base Application's "Sales Alloc. Acc. Mgt."). The returned record is a value
+                // (corpus tableglobals/TestTableGlobalsRecordVariable.al:248, `Row := Maker.Make()`), so the
+                // read takes the field of that value; no place exists to load from.
+                Some(Res::Field { table, id })
+                    if n.kind() == MemberExpr && kids.first().is_some_and(|b| b.kind() == SyntaxKind::CallExpr) =>
+                {
+                    let base = kids[0].clone();
+                    let pos = if matches!(self.ty_of(&base), Ty::Record { temporary: true, .. }) {
+                        self.field_pos(table, id).ok_or_else(|| "field position".to_string())?
+                    } else {
+                        self.readable_field_pos(table, id)?
+                    };
+                    Ok(ir::Expr::FieldOf(Box::new(self.expr(&base)?), pos))
                 }
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },

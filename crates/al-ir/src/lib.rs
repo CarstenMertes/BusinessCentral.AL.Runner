@@ -1203,6 +1203,9 @@ pub enum Expr {
         args: Vec<Arg>,
         ret_used: bool,
     },
+    /// Field at position `.1` of the record value expression `.0` yields, for a record that is no
+    /// place: `SalesLine.GetSalesHeader()."Prices Including VAT"` reads a field of a returned record.
+    FieldOf(Box<Expr>, usize),
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

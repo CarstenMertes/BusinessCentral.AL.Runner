@@ -1678,6 +1678,21 @@ impl<'a> Checker<'a> {
                 if let Some(r) = self.field_res(sc, &base_ty, &mname) {
                     self.record(sc, node, r);
                 }
+                // `CurrPage.<Part>.Page` in page code is the page the part shows (corpus
+                // handlers/TestPageTempPart_Host.al:32), even when that page has a control or action
+                // group named `Page` (Base Application's "Purch. Invoice Subform" has `group("Page")`,
+                // and "Purchase Invoice" calls `CurrPage.PurchLines.Page.ForceTotalsCalculation()`).
+                if let Ty::TestPart(part) = &base_ty {
+                    if mname.eq_ignore_ascii_case("Page") && kids[0].kind() == MemberExpr {
+                        let host = kids[0].children().next().and_then(|h| {
+                            let r = h.text_range();
+                            self.types.get(&(sc.file, r.start().into(), r.end().into())).cloned()
+                        });
+                        if matches!(host, Some(Ty::Object(ObjKind::Page, _))) {
+                            return E::Val(Ty::Object(ObjKind::Page, part.clone()));
+                        }
+                    }
+                }
                 // `Host.OpenView.Invoke()` is the control called OpenView, not the built-in method:
                 // a member that is itself the receiver of another member can only be a control
                 // (corpus handlers/TestPageActionRunPageMode.al: actions named OpenView and OpenEdit).

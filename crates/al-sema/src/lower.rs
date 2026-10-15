@@ -4097,9 +4097,17 @@ impl Lowerer<'_> {
         else {
             return Ok(());
         };
+        // Only the same parameter types are AL0440; a different signature is an overload (corpus
+        // pageext/POPageExtOverload.al on the staging branch).
+        let mine = ast::routines_in(self.ws.object_ast(object).syntax())
+            .into_iter()
+            .find(|r| usize::from(r.syntax().text_range().start()) == offset);
+        let same_signature = |b: &ast::Routine| {
+            mine.as_ref()
+                .is_none_or(|m| crate::alcodes::signature(m) == crate::alcodes::signature(b))
+        };
         if crate::base_access::visible_procs(&self.ws.object_ast(base), &name)
-            .next()
-            .is_some()
+            .any(|b| same_signature(&b))
         {
             return Err(format!(
                 "AL0440: the {noun} extension declares a method `{name}` that the {noun} it extends already defines (BC does not compile it)"

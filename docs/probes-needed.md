@@ -991,3 +991,10 @@ Each check rejects only the shape a corpus case pins. The wider rule is not gues
 | AL0118 | A bare call of an unknown name is refused in a codeunit without `TableNo` (case 0005). Tables, pages, reports and extensions are not judged (an implicit record or a base object may supply the name). | The same call in a table, page and report. |
 | AL0197 | Same app, object type, namespace and name. Case 0016 pins two codeunits in one namespace. Two extension objects with one name, and the same name in two namespaces, are assumed. | Both. |
 | AL0175 | NOT CHECKED. `=` between two DotNet values is an error for a class and fine for an enum. The front end has no assembly metadata. | None: needs the .NET sidecar's type metadata at compile time (an ADR). |
+
+## Page extension overload of a base page procedure: the run-time error of an argument that does not fit (2026-10-15)
+
+| Case | What the probe pins | Status |
+|---|---|---|
+| A page extension procedure with the name and different parameter types of a base procedure | It compiles and is an overload: from the extension `Describe(5)` calls the base's Integer procedure, `Describe('t')` and `Describe(true)` the extension's (tests/al-language/pageext/POPageExtOverload.al on the corpus branch al-runtime-rs-staging, d8b08a4) | Implemented: the lowering refuses AL0440 only for the same parameter types, and the checker offers the base's procedures next to the extension's |
+| `Describe(1.5)` (Decimal) with candidates Integer, Text and Boolean | Resolves to the Integer overload and raises at run time; the text of that error is not in the probe (it uses `asserterror` and no text) | REFUSED ("rounding 1.5 into Integer"). Probe wanted: the `GetLastErrorText` and `GetLastErrorCode` of passing a non-integral Decimal to an Integer parameter; and whether an assignment `I := 1.5` rounds |

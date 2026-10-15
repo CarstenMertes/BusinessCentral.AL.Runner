@@ -284,10 +284,14 @@ fn format_time_12h(ms_of_day: i64) -> String {
     format!("{h12:02}:{m:02} {ap}")
 }
 
-/// The milliseconds of a time of day as `.fff`, nothing when there are none. A count that ends in a
-/// zero (`.120` or `.12`) is not measured (docs/probes-needed.md), but prints padded like `.007`.
+/// The milliseconds of a time of day as `.fff` without trailing zeros, nothing when there are none
+/// (text/TestProbeTextDateFormatContracts.al:Format_MillisecondsTimeDateTimeDuration: `.007`, `.12`, `.5`).
 fn millis(ms: i64) -> String {
-    if ms == 0 { String::new() } else { format!(".{ms:03}") }
+    if ms == 0 {
+        String::new()
+    } else {
+        format!(".{ms:03}").trim_end_matches('0').to_string()
+    }
 }
 
 /// A Time, from its milliseconds since midnight (types/TestFormatEvaluateTextContracts.al:

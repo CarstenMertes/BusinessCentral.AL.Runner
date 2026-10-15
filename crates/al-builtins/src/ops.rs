@@ -321,6 +321,15 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::DateTime)
                 .ok_or_else(|| Signal::Unsupported("DateTime out of range (error text not pinned yet)".into()));
         }
+        // Time + an Integer adds milliseconds (json/TestProbeJsonContracts.al:ValueTypes_DurationTimeDateTime
+        // `100000T + 123`; text/TestProbeTextDateFormatContracts.al:387 `120000T + 7`). Past midnight is not pinned.
+        (V::Time(a), n) | (n, V::Time(a)) if op == Arith::Add && *a > 0 && int_of(n).is_some() => {
+            return int_of(n)
+                .and_then(|n| a.checked_add(n))
+                .filter(|t| (1..=86_400_000).contains(t))
+                .map(V::Time)
+                .ok_or_else(|| Signal::Unsupported("Time moved outside the day (not pinned)".into()));
+        }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && int_of(n).is_some() => {

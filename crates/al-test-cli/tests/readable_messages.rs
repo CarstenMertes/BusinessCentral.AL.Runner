@@ -50,12 +50,12 @@ const KEPT: &[(&str, &str, &str)] = &[
         "`class` is a unit enum: the debug text is the variant name (Normal, FlowField)",
     ),
     (
-        "al-sema/src/lower.rs",
+        "al-sema/src/lower/stmt.rs",
         r#"other => Err(format!("statement {other:?} is not lowered yet")),"#,
         "`other` is a syntax kind: the debug text is its name",
     ),
     (
-        "al-sema/src/lower.rs",
+        "al-sema/src/lower/expr.rs",
         r#"other => Err(format!("expression {other:?} `{}` is not lowered yet", n.text())),"#,
         "`other` is a syntax kind: the debug text is its name",
     ),

@@ -61,7 +61,7 @@ pub fn corpus_coverage(root: &std::path::Path, corpus_commit: &str) -> Result<Co
     let dependencies = crate::deps::load(&tests.join("al-language"), &[fixture], &[])?;
     kinds.extend(dependencies.apps.iter().map(|_| al_sema::AppKind::Dependency));
     apps.extend(dependencies.apps);
-    let ws = Workspace::load_apps(apps, kinds, &["BC27PLUS".to_string()].into());
+    let ws = Workspace::load_apps(apps, kinds, &al_version::corpus_symbols(al_version::MIN_BC_MAJOR));
     let members = al_sema::members::build(&ws);
     let catalog = Catalog::load();
     let checked = al_sema::check::check(&ws, &members, &catalog);

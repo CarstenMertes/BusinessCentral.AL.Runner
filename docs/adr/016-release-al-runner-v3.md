@@ -672,3 +672,21 @@ The owner asked for a first public build before gate P. The gates in section 7 s
   executable and drags in .NET, the SDK and gigabytes of DLLs.
 - **A hosted proxy for Microsoft's artifacts.** Redistribution (section 5).
 - **Bundle Microsoft apps in the release.** ADR-013 forbids it.
+
+## Owner decision (2026-10-15): v3 replaces v2; server mode and debugging are in scope
+
+The deferral of server mode and watch mode (2026-10-13) is lifted: v3 is to replace v2 in
+every way. For the tools that call v2 (ALchemist, LethAL; see docs/integrations/alchemist-lethal.md):
+
+- **As close to v2 as possible, but no dead weight.** v3 keeps its own clean command line
+  (no `al-runner` launcher). Where a v2 interface shape is a poor decision, v3 changes it and
+  documents the change.
+- **Tools adapt when they move to v3.** A migration document for tool authors,
+  `docs/integrations/migrating-tools-to-v3.md`, lists every difference (command, flags,
+  `--version` text, JSON fields, protocol messages, exit codes) with the exact change a tool
+  needs. It is written so an AI-assisted maintainer can apply it directly, and it grows with
+  each step below.
+- **Order:** (1) v2-shaped `--output-json` and the flags LethAL uses on `alrunner test`;
+  (2) Cobertura coverage; (3) `alrunner serve` with runTests and shutdown; (4) execute and
+  cancel; (5) value capture and iteration tracking; (6) DAP debugging, with its own ADR.
+  All six are in v3.0.

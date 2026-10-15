@@ -2173,13 +2173,22 @@ impl al_builtins::native::Ctx for Session {
     fn application_module(&self) -> al_builtins::value::ModuleInfoState {
         let bc = self.engine.target.as_ref().map(|t| &t.bc);
         let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
+        // Build and revision of the base application are not zero (session/W5ModuleInfo.al:
+        // ModuleInfo_NullId_Properties); the artifact's own numbers when the run knows them, else 1.
+        let (build, revision) = bc
+            .and_then(|b| b.build.as_deref())
+            .and_then(|s| {
+                let n: Vec<i32> = s.split('.').filter_map(|p| p.parse().ok()).collect();
+                (n.len() >= 2).then(|| (n[n.len() - 2], n[n.len() - 1]))
+            })
+            .unwrap_or((1, 1));
         al_builtins::value::ModuleInfoState {
             // The module BC answers for the null app id: the base application W1 (session/
             // TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).
             id: [0; 16],
             name: "W1".into(),
             publisher: "Microsoft".into(),
-            version: Some([major, minor, 0, 0]),
+            version: Some([major, minor, build, revision]),
             dependencies: Vec::new(),
             synthesized: true,
         }

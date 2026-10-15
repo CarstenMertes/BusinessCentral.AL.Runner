@@ -20,6 +20,9 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
     Ok(match (v, t) {
         (v, T::Variant) => v,
+        // A number into its own type is the number (what the general arm below gives, without the round trip through a
+        // Decimal; the scale of a Decimal is kept).
+        (v @ Value::Integer(_), T::Integer) | (v @ Value::BigInteger(_), T::BigInteger) | (v @ Value::Decimal(_), T::Decimal) => v,
         (Value::Null, t) => Value::default_for(t),
         (v @ Value::Boolean(_), T::Boolean) => v,
         (v @ Value::Date(..), T::Date) | (v @ Value::Time(_), T::Time) | (v @ Value::DateTime(_), T::DateTime) => v,
@@ -306,6 +309,29 @@ pub enum Arith {
 }
 
 pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
+    use Value as V;
+    // Integer with Integer is done in 32 bits: the same results and errors as the general path below, which goes
+    // through a Decimal (session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts for the two error texts). `/` is a
+    // Decimal quotient and stays below. `MIN mod -1` is 0, as the Decimal remainder is.
+    if let (V::Integer(a), V::Integer(b)) = (l, r) {
+        let n = match op {
+            Arith::Add => a.checked_add(*b),
+            Arith::Sub => a.checked_sub(*b),
+            Arith::Mul => a.checked_mul(*b),
+            Arith::IntDiv | Arith::Mod if *b == 0 => return raise("Attempted to divide by zero.", "AL:DivideByZero"),
+            Arith::IntDiv => a.checked_div(*b),
+            Arith::Mod => Some(a.wrapping_rem(*b)),
+            Arith::Div => return arith_general(op, l, r),
+        };
+        return match n {
+            Some(n) => Ok(V::Integer(n)),
+            None => raise("Arithmetic operation resulted in an overflow.", "AL:Overflow"),
+        };
+    }
+    arith_general(op, l, r)
+}
+
+fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     use Value as V;
     // An Option takes part in arithmetic as its ordinal, an Integer (types/PROptionInteger.al:OptionMember_AsInteger:
     // `Opt + 1`, `Opt * 2`).
@@ -674,6 +700,97 @@ pub fn truthy(v: &Value) -> Result<bool, Signal> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+
+    /// What Integer arithmetic gives, worked out in 128 bits: the definition the fast path must keep
+    /// (session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts for the two error texts).
+    fn integer_reference(op: Arith, a: i32, b: i32) -> Option<Result<i32, (&'static str, &'static str)>> {
+        const OVERFLOW: (&str, &str) = ("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+        const ZERO: (&str, &str) = ("Attempted to divide by zero.", "AL:DivideByZero");
+        let (x, y) = (i128::from(a), i128::from(b));
+        let wide = match op {
+            Arith::Add => x + y,
+            Arith::Sub => x - y,
+            Arith::Mul => x * y,
+            Arith::IntDiv | Arith::Mod if y == 0 => return Some(Err(ZERO)),
+            Arith::IntDiv => x / y,
+            Arith::Mod => x % y,
+            Arith::Div => return None,
+        };
+        Some(i32::try_from(wide).map_err(|_| OVERFLOW))
+    }
+
+    /// Tiny deterministic generator: the property test needs no crate.
+    struct Lcg(u64);
+    impl Lcg {
+        fn next(&mut self) -> u64 {
+            self.0 = self.0.wrapping_mul(6364136223846793005).wrapping_add(1442695040888963407);
+            self.0 >> 17
+        }
+        fn i32(&mut self) -> i32 {
+            const EDGES: [i32; 8] = [0, 1, -1, 2, -2, i32::MAX, i32::MIN, 46341];
+            match self.next() % 4 {
+                0 => EDGES[(self.next() % 8) as usize],
+                1 => (self.next() % 2001) as i32 - 1000,
+                _ => self.next() as u32 as i32,
+            }
+        }
+    }
+
+    #[test]
+    fn integer_arithmetic_gives_what_the_definition_gives_for_random_and_edge_operands() {
+        let mut rng = Lcg(7);
+        let mut cases: Vec<(i32, i32)> = vec![];
+        for a in [0, 1, -1, i32::MAX, i32::MIN] {
+            for b in [0, 1, -1, i32::MAX, i32::MIN] {
+                cases.push((a, b));
+            }
+        }
+        cases.extend((0..20_000).map(|_| (rng.i32(), rng.i32())));
+        for (a, b) in cases {
+            for op in [Arith::Add, Arith::Sub, Arith::Mul, Arith::IntDiv, Arith::Mod] {
+                let got = arith(op, &Value::Integer(a), &Value::Integer(b));
+                let want = integer_reference(op, a, b).expect("not a division");
+                match (got, want) {
+                    (Ok(Value::Integer(g)), Ok(w)) => assert_eq!(g, w, "{a} {op:?} {b}"),
+                    (Err(Signal::Error(e)), Err((message, code))) => {
+                        assert_eq!((e.message.as_str(), e.code.as_str()), (message, code), "{a} {op:?} {b}")
+                    }
+                    (got, want) => panic!("{a} {op:?} {b}: got {got:?}, want {want:?}"),
+                }
+            }
+        }
+    }
+
+    #[test]
+    fn integer_division_with_a_slash_stays_a_decimal() {
+        for (a, b) in [(7, 2), (-7, 2), (6, 3), (i32::MIN, -1)] {
+            match arith(Arith::Div, &Value::Integer(a), &Value::Integer(b)) {
+                Ok(Value::Decimal(d)) => assert_eq!(d, Decimal::from(a) / Decimal::from(b), "{a} / {b}"),
+                other => panic!("{a} / {b}: {other:?}"),
+            }
+        }
+        assert!(matches!(arith(Arith::Div, &Value::Integer(1), &Value::Integer(0)), Err(Signal::Error(_))));
+    }
+
+    #[test]
+    fn converting_a_value_into_its_own_type_gives_the_value() {
+        for i in [0, 1, -1, i32::MAX, i32::MIN] {
+            assert!(matches!(convert(Value::Integer(i), &RtType::Integer), Ok(Value::Integer(g)) if g == i));
+        }
+        for i in [0i64, i64::MAX, i64::MIN] {
+            assert!(matches!(convert(Value::BigInteger(i), &RtType::BigInteger), Ok(Value::BigInteger(g)) if g == i));
+        }
+        for s in ["0", "1.50", "-0.000001", "79228162514264337593543950335"] {
+            let d = Decimal::from_str(s).unwrap();
+            // The scale is kept: 1.50 stays 1.50.
+            match convert(Value::Decimal(d), &RtType::Decimal) {
+                Ok(Value::Decimal(g)) => assert_eq!((g, g.scale()), (d, d.scale())),
+                other => panic!("{s}: {other:?}"),
+            }
+        }
+    }
+
     use std::str::FromStr;
 
     fn d(s: &str) -> Value {

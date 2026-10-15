@@ -97,7 +97,7 @@ enum Kind {
 fn kind_of_field(ty: &RtType, compressed: bool) -> Kind {
     match ty {
         RtType::DateFormula => Kind::DateFormula,
-        RtType::Library(n) if n.eq_ignore_ascii_case("Blob") => Kind::Blob { compressed },
+        RtType::Library(al_builtins::library_kind::LibraryKind::Blob) => Kind::Blob { compressed },
         RtType::Text(_) => Kind::Text,
         RtType::Code(_) => Kind::Code,
         RtType::Boolean => Kind::Bool,
@@ -112,7 +112,9 @@ fn kind_of_field(ty: &RtType, compressed: bool) -> Kind {
         RtType::DateTime => Kind::DateTime,
         RtType::Duration => Kind::Duration,
         RtType::Guid => Kind::Guid,
-        RtType::Library(n) if n.eq_ignore_ascii_case("Media") || n.eq_ignore_ascii_case("MediaSet") => Kind::Guid,
+        RtType::Library(
+            al_builtins::library_kind::LibraryKind::Media | al_builtins::library_kind::LibraryKind::MediaSet,
+        ) => Kind::Guid,
         other => Kind::Unsupported(other.describe()),
     }
 }

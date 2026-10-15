@@ -240,7 +240,7 @@ pub(super) fn write_into(out: &Value, src: &Value, count: Option<i64>) -> Option
         if mode_of(state) != COMPRESS {
             return unsupported("CopyStream into a GZipStream that decompresses (not pinned)");
         }
-        if !matches!(src, Value::Library(kind, _) if kind == "InStream") {
+        if !matches!(src, Value::Library(al_builtins::library_kind::LibraryKind::InStream, _)) {
             return unsupported("CopyStream into a GZipStream from something that is not an InStream");
         }
         let bytes = drain_in(&mut src.clone())?;

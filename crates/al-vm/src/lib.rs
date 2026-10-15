@@ -1960,9 +1960,10 @@ impl Session {
         // `:=` between FilterPageBuilders copies the control collection and shares the records
         // (corpus filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Assignment_*).
         let v = match v {
-            Value::Library(n, cell) if n == "FilterPageBuilder" => {
-                Value::Library(n, filterpage::copy_for_assignment(&cell))
-            }
+            Value::Library(al_builtins::library_kind::LibraryKind::FilterPageBuilder, cell) => Value::Library(
+                al_builtins::library_kind::LibraryKind::FilterPageBuilder,
+                filterpage::copy_for_assignment(&cell),
+            ),
             v => v,
         };
         // `:=` between records copies the fields into the target record (ADR-010).

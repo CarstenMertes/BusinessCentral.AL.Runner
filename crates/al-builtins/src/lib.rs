@@ -1,6 +1,7 @@
 //! The AL standard library: builtin signatures (generated from the docs, see
 //! ADR-008) and, later, the value model and native implementations.
 
+pub mod library_kind;
 pub mod signature;
 pub mod stream;
 pub mod text;

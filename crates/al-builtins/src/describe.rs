@@ -67,7 +67,7 @@ impl Describe for Value {
                 Err(_) => "array".into(),
             },
             Value::Codeunit(_) => "Codeunit instance".into(),
-            Value::Library(name, _) => name.clone(),
+            Value::Library(name, _) => name.to_string(),
             Value::Record(r) => {
                 let (table, temporary) = match r.try_borrow() {
                     Ok(r) => (Some(r.table), r.temporary),
@@ -126,7 +126,7 @@ impl Describe for RtType {
             RtType::Page(_) => "Page".into(),
             RtType::Query(_) => "Query".into(),
             RtType::Interface(_) => "Interface".into(),
-            RtType::Library(name) => name.clone(),
+            RtType::Library(name) => name.to_string(),
             RtType::DotNet(_) => "DotNet".into(),
         }
     }

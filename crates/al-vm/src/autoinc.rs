@@ -113,11 +113,20 @@ impl Session {
                 call_stack: String::new(),
             })));
         }
-        let has_media = self.engine.program.objects[t.object as usize].table.as_ref().is_some_and(|s| {
-            s.fields
-                .iter()
-                .any(|f| matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("Media") || n.eq_ignore_ascii_case("MediaSet")))
-        });
+        let has_media = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .is_some_and(|s| {
+                s.fields.iter().any(|f| {
+                    matches!(
+                        &f.ty,
+                        RtType::Library(
+                            al_builtins::library_kind::LibraryKind::Media
+                                | al_builtins::library_kind::LibraryKind::MediaSet
+                        )
+                    )
+                })
+            });
         if has_media {
             return error("Truncate is not supported when the field has Media and/or MediaSet fields.");
         }

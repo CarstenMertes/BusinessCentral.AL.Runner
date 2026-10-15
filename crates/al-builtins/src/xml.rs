@@ -92,7 +92,7 @@ fn new_node(data: XData) -> Handle {
 }
 
 fn tagged(name: &str, h: Handle) -> Value {
-    Value::Library(name.to_string(), h)
+    Value::Library(name.into(), h)
 }
 
 fn is_xml(h: &Handle) -> bool {

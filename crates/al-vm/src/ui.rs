@@ -136,20 +136,38 @@ impl Session {
             UiKind::SessionSettings => {
                 r.params == 1
                     && r.by_var == [true]
-                    && matches!(ty(0), Some(RtType::Library(n)) if n == "SessionSettings")
+                    && matches!(
+                        ty(0),
+                        Some(RtType::Library(al_builtins::library_kind::LibraryKind::SessionSettings))
+                    )
             }
             // SendNotificationHandler(var Notification: Notification): Boolean
             // (handlers/TestNotificationHandler.al:74-85).
             UiKind::SendNotification | UiKind::RecallNotification => {
-                r.params == 1 && r.by_var == [true] && matches!(ty(0), Some(RtType::Library(n)) if n == "Notification")
+                r.params == 1
+                    && r.by_var == [true]
+                    && matches!(
+                        ty(0),
+                        Some(RtType::Library(al_builtins::library_kind::LibraryKind::Notification))
+                    )
             }
             // HttpClientHandler(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
             // (session/PZHttpHandler.al).
             UiKind::HttpClient => {
                 r.params == 2
                     && r.by_var == [false, true]
-                    && matches!(ty(0), Some(RtType::Library(n)) if n == "TestHttpRequestMessage")
-                    && matches!(ty(1), Some(RtType::Library(n)) if n == "TestHttpResponseMessage")
+                    && matches!(
+                        ty(0),
+                        Some(RtType::Library(
+                            al_builtins::library_kind::LibraryKind::TestHttpRequestMessage
+                        ))
+                    )
+                    && matches!(
+                        ty(1),
+                        Some(RtType::Library(
+                            al_builtins::library_kind::LibraryKind::TestHttpResponseMessage
+                        ))
+                    )
             }
         };
         let page = match ty(0) {

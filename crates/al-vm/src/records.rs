@@ -1048,20 +1048,9 @@ impl Session {
                 Ok(Value::Null)
             }
             "Clear" => {
-                // Whether Clear also empties the table of a temporary record is not pinned
-                // (docs/probes-needed.md). Where the table holds no row both readings give the same
-                // state, so only that case runs.
-                if rec.borrow().temporary {
-                    let rows = self
-                        .store_for(rec)
-                        .count(&cx, &t, &[])
-                        .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
-                    if rows > 0 {
-                        return unsupported(
-                            "Clear of a temporary record that holds rows (whether the table is emptied is not pinned)",
-                        );
-                    }
-                }
+                // Clear resets the buffer, the filters and the keys but does not empty the table of a
+                // temporary record: its rows stay and it stays temporary
+                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount, BC 27.5).
                 let fresh = self.initial_fields(t.object as usize);
                 // Clear sets the table's globals back to their initial values (ADR-021 decision 4;
                 // corpus probe TableGlobals_Clear_WhatHappensToTheGlobals).

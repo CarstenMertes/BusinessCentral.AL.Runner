@@ -131,6 +131,9 @@ impl Session {
             // when the report has no Caption (handlers/PWRefusedBuiltins.al:78-107, BC 27.5; also through a Report
             // variable).
             "Report.ObjectId#1" => {
+                // `CurrReport.ObjectId` has no receiver value: it is the running report
+                // (handlers/PWRefusedBuiltins.al:ReportObjectId_CurrReportInCaptionedReport).
+                let receiver = receiver.or_else(|| Some(Value::Codeunit(running.clone())));
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
                 let o = &schema.engine.program.objects[schema.object];

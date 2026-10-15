@@ -279,6 +279,20 @@ fn blob_create_in(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
     Ok(Value::Null)
 }
 
+/// `CreateInStream(var InStream [, Encoding])` over no bytes (a `FileUpload` no client filled).
+pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
+    let enc = Encoding::from_arg(a)?;
+    let b = BlobCell::new(BlobBuf {
+        bytes: Vec::new(),
+        write_pos: 0,
+        loaded: true,
+    });
+    set_stream(
+        &a[0],
+        LibraryValue::InStream(InState::live(std::sync::Arc::new(b), enc)),
+    )
+}
+
 fn blob_has_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     // streams/TestInOutStream.al InOutStream_WriteText_BlobHasValue: true after Get without CalcFields.
     Ok(Value::Boolean(!blob_of(r)?.borrow().bytes.is_empty()))

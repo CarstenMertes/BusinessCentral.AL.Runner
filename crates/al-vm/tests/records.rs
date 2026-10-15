@@ -626,8 +626,6 @@ codeunit 50100 C
 
 #[test]
 fn clear_of_an_empty_temporary_record_resets_fields_and_filters() {
-    // Nothing pins what Clear does to the rows of a temporary table (docs/probes-needed.md), but
-    // with no rows both readings give the same state, so that case is run.
     let r = run(
         "procedure F(): Text var R: Record \"ALT T\" temporary; begin
             R.\"No.\" := 'a'; R.Grp := 7; R.SetRange(Grp, 7);
@@ -640,17 +638,18 @@ fn clear_of_an_empty_temporary_record_resets_fields_and_filters() {
 }
 
 #[test]
-fn clear_of_a_temporary_record_that_holds_rows_is_refused() {
+fn clear_of_a_temporary_record_that_holds_rows_keeps_the_rows() {
+    // types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount (BC 27.5): the buffer and the
+    // filters are reset, the rows stay and the record stays temporary.
     let r = run(
         "procedure F(): Text var R: Record \"ALT T\" temporary; begin
-            R.\"No.\" := 'a'; R.Insert(); Clear(R); exit('ran');
+            R.\"No.\" := 'a'; R.Insert(); R.\"No.\" := 'b'; R.Insert(); R.SetRange(\"No.\", 'a');
+            Clear(R);
+            exit(R.\"No.\" + '|' + Format(R.Count()) + '|' + R.GetFilters() + '|' + Format(R.IsTemporary()));
         end;",
         "F",
     );
-    match r {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("temporary"), "{why}"),
-        other => panic!("{other:?}"),
-    }
+    assert_eq!(text(r), "|2||Yes");
 }
 
 #[test]

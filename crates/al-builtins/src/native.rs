@@ -493,9 +493,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Report.Preview#1" => {
             "Report.Preview is in no corpus test, so whether a run of a test (Run, SaveAs, a request page) is a preview is not pinned"
         }
-        "FileUpload.CreateInStream#1" | "FileUpload.CreateInStream#2" => {
-            "FileUpload.CreateInStream is in no corpus test, so what a FileUpload holds without a client and the stream it opens is not pinned"
-        }
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }

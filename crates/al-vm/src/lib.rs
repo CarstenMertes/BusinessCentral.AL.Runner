@@ -725,24 +725,14 @@ impl Session {
         }
         for (i, a) in args.into_iter().enumerate().take(r.params) {
             locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {
-                // A temporary record with rows handed to a Variant parameter: a by-value copy is an empty
-                // buffer (record/TestTempTableContracts.al:141-148), but Microsoft's Assert.RecordCount
-                // counts the caller's rows through a Variant, so the Variant is not a plain by-value copy.
-                // What it is is not pinned by the corpus (docs/probes-needed.md).
-                (Value::Record(rc), false)
-                    if matches!(r.locals[i].ty, RtType::Variant) && {
-                        let s = rc.borrow();
-                        s.temporary
-                            && s.temp_id
-                                .as_ref()
-                                .and_then(|id| self.temps.get(&id.id()))
-                                .is_some_and(|store| store.has_rows(s.table))
-                    } =>
-                {
-                    return Err(Signal::Unsupported(
-                        "a temporary record with rows handed to a Variant parameter (whether the Variant shares its table is not pinned)"
-                            .into(),
-                    ));
+                // A temporary record handed to a Variant parameter keeps its table: the callee counts the
+                // caller's rows through the Variant, though a by-value copy is an empty buffer
+                // (recordref/PWRecordMisc.al:TempRecord_PassedToVariantParameter_ByValue, record/TestTempTableContracts.al:141-148).
+                // Assigning the record to a Variant variable is a by-value copy
+                // (:TempRecord_AssignedToVariantVariable).
+                (Value::Record(rc), false) if matches!(r.locals[i].ty, RtType::Variant) && rc.borrow().temporary => {
+                    let st = rc.borrow().clone();
+                    Value::Record(Rc::new(RefCell::new(st)))
                 }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
@@ -1592,6 +1582,12 @@ impl Session {
                 other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
             };
         }
+        // A record assigned to a Variant is a by-value copy: a temporary record's copy is an empty table of its own
+        // (recordref/PWRecordMisc.al:TempRecord_AssignedToVariantVariable and :TempRecord_VariantModifiedAfterAssign).
+        let v = match &v {
+            Value::Record(rc) if matches!(self.place_type(p, f), RtType::Variant) => self.record_by_value(rc),
+            _ => v,
+        };
         match p {
             ir::Place::Local(i) => f.locals[*i] = v,
             ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = v,
@@ -1616,19 +1612,17 @@ impl Session {
         Ok(())
     }
 
-    /// `Text[i] := c`: sets one character of a text. Pinned only for an empty or growing text at
-    /// the next position within the declared length (handlers/TestPageFieldFormats_Tests.al:58-66);
-    /// a position outside that, a value that is not one UTF-16 character, and a Code are refused.
+    /// `Text[i] := c`: sets one character of a text or code, at a position inside it or the next one within
+    /// the declared length (handlers/TestPageFieldFormats_Tests.al:58-66,
+    /// types/TestCharIndexAssignContracts.al:CharacterAssignedIntoAPosition); a position outside that and a value
+    /// that is not one UTF-16 character are refused.
     fn write_char(&mut self, base: &ir::Place, idx: &[ir::Expr], v: Value, f: &mut Frame) -> Result<(), Signal> {
-        let max = match self.place_type(base, f) {
-            RtType::Text(m) => m,
-            // Base Application's `Company Information.IsDigit` does `Letter: Code[1]; Letter[1] := c`.
-            RtType::Code(_) => {
-                return Err(Signal::Unsupported(
-                    "assigning a character into a Code: whether BC upper-cases it is not pinned (docs/probes-needed.md)".into(),
-                ));
-            }
-            _ => None,
+        // A Code takes the character upper-cased (types/TestCharIndexAssignContracts.al:CharacterAssignedIntoAPosition:
+        // `Letter[1] := 'a'` gives `A`, `Ten[3] := 'z'` gives `ABZDE`).
+        let (max, is_code) = match self.place_type(base, f) {
+            RtType::Text(m) => (m, false),
+            RtType::Code(m) => (m, true),
+            _ => (None, false),
         };
         let [e] = idx else {
             return Err(Signal::Unsupported("a text indexed with several positions".into()));
@@ -1638,7 +1632,7 @@ impl Session {
             Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
             Err(_) => None,
         };
-        let Value::Text(s) = self.read(base, f)? else {
+        let (Value::Text(s) | Value::Code(s)) = self.read(base, f)? else {
             return Err(Signal::Unsupported(
                 "assigning a character into a value that is no text".into(),
             ));
@@ -1659,6 +1653,9 @@ impl Session {
         }
         let text = String::from_utf16(&units)
             .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
+        if is_code {
+            return self.write(base, Value::Code(text.to_uppercase()), f);
+        }
         self.write(base, Value::Text(text), f)
     }
 

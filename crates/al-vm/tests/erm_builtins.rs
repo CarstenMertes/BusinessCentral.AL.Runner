@@ -85,13 +85,12 @@ fn http_request_message_method_round_trips() {
 }
 
 #[test]
-fn http_request_message_method_nobody_set_is_refused_not_guessed() {
-    // Nothing in the corpus says what a new request's method is.
+fn http_request_message_method_nobody_set_is_get() {
+    // types/TestHttpRequestFileUploadFieldErrorContracts.al:HttpRequestMessage_Defaults_AndSetRequestUri (BC 27.5).
     let r = run("procedure F(): Text var Req: HttpRequestMessage; begin exit(Req.Method); end;");
-    assert!(
-        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("Method") && m.contains("not pinned")),
-        "{r:?}"
-    );
+    assert_eq!(text(r), "GET");
+    let r = run("procedure F(): Text var Req: HttpRequestMessage; begin exit(Req.GetRequestUri()); end;");
+    assert_eq!(text(r), "");
 }
 
 #[test]

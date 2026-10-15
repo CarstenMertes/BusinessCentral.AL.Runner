@@ -26,9 +26,16 @@ fn with_state<R>(r: Option<&mut Value>, f: impl FnOnce(&mut ErrorInfoState) -> R
     let Some(Value::Library(_, cell)) = r else {
         return unsupported("ErrorInfo method without a receiver");
     };
-    match &mut *cell.borrow_mut() {
+    let mut held = cell.borrow_mut();
+    // A declared but never created ErrorInfo takes a property and gives it back
+    // (types/TestHttpRequestFileUploadFieldErrorContracts.al:FieldError_WithErrorInfoAndWithText sets
+    // `Message` on one and raises it). Its other defaults are assumed to be those of `Create()`
+    // (docs/probes-needed.md).
+    if matches!(&*held, LibraryValue::Empty) {
+        *held = LibraryValue::ErrorInfo(fresh(String::new(), true));
+    }
+    match &mut *held {
         LibraryValue::ErrorInfo(s) => Ok(f(s)),
-        // A declared but never created ErrorInfo: what its defaults are is not pinned.
         other => unsupported(format!(
             "ErrorInfo method on an ErrorInfo nobody created ({})",
             other.describe()

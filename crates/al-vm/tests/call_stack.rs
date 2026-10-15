@@ -395,37 +395,50 @@ codeunit 50100 C
     );
 }
 
-// The frames BC puts between a table event's subscriber and the record operation are not pinned,
-// so the live stack is refused there rather than answered without them.
+// A subscriber of a table event stands directly above the code that raised it: BC puts no frame of its own between
+// them (session/TestSessionCallstackSourcesContracts.al:Callstack_FromTablePageReportAndExtensionCode, `table event`).
 #[test]
-fn session_callstack_in_a_table_event_subscriber_is_refused() {
+fn session_callstack_in_a_table_event_subscriber_has_no_frame_for_the_event() {
     let src = r#"table 50103 "Stack Row"
 {
     fields { field(1; PK; Integer) { } }
     keys { key(PK; PK) { Clustered = true; } }
 }
 
+codeunit 50102 "Stack Log"
+{
+    SingleInstance = true;
+    var
+        Seen: Text;
+    procedure Put(T: Text) begin Seen := T; end;
+    procedure Take(): Text begin exit(Seen); end;
+}
+
 codeunit 50101 Sub
 {
     [EventSubscriber(ObjectType::Table, Database::"Stack Row", 'OnAfterInsertEvent', '', false, false)]
     local procedure Handle(var Rec: Record "Stack Row")
+    var
+        L: Codeunit "Stack Log";
     begin
-        if SessionInformation.Callstack = '' then;
+        L.Put(SessionInformation.Callstack);
     end;
 }
 
 codeunit 50100 C
 {
-    procedure Caller()
+    procedure Caller(): Text
     var
         R: Record "Stack Row";
+        L: Codeunit "Stack Log";
     begin
         R.Insert(true);
+        exit(L.Take());
     end;
 }
 "#;
-    match run(src, "Caller") {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("Callstack"), "{why}"),
-        other => panic!("{other:?}"),
-    }
+    assert_eq!(
+        text(run(src, "Caller")),
+        format!("\"Sub\"(CodeUnit 50101).Handle line 4 - {APP}\\\"C\"(CodeUnit 50100).Caller line 5 - {APP}\\")
+    );
 }

@@ -945,6 +945,11 @@ pub struct Routine {
     /// `Empty` line); [`NO_POS`] without source.
     #[serde(default = "no_pos")]
     pub begin_pos: u32,
+    /// The nearest enclosing section of a trigger that is not at the object's own level: its keyword
+    /// in lower case and its first argument (`("action", "PageAction")`, `("dataitem", "Row")`).
+    /// BC names such a trigger in a call stack as `"<name> - <trigger>"`.
+    #[serde(default)]
+    pub container: Option<(String, String)>,
 }
 
 fn no_pos() -> u32 {
@@ -1233,6 +1238,7 @@ mod tests {
         Routine {
             name: "R".into(),
             field: None,
+            container: None,
             is_trigger: false,
             attributes: vec![],
             params: 0,
@@ -1340,6 +1346,7 @@ mod tests {
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,
+                    container: None,
                     is_trigger: false,
                     attributes: vec![Attribute {
                         name: "Test".into(),

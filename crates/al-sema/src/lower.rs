@@ -3528,9 +3528,17 @@ impl Lowerer<'_> {
                 let id: u32 = s.args().first()?.parse().ok()?;
                 self.table_of[self.oi].and_then(|t| self.field_pos(t, id))
             });
+        let container = r.syntax().ancestors().find_map(ast::Section::cast).map(|sec| {
+            let arg = sec.args().first().cloned().unwrap_or_default();
+            (
+                sec.name().to_ascii_lowercase(),
+                arg.trim().trim_matches('"').to_string(),
+            )
+        });
         ir::Routine {
             name: r.name(),
             field,
+            container,
             is_trigger: r.is_trigger(),
             attributes: self.attributes_of(r),
             params,
@@ -3609,6 +3617,7 @@ impl Lowerer<'_> {
         ir::Routine {
             name: r.name(),
             field: None,
+            container: None,
             is_trigger: r.is_trigger(),
             attributes: self.attributes_of(r),
             params: 0,

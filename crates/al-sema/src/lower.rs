@@ -793,26 +793,6 @@ pub(crate) fn lower_core(
             );
         }
     }
-    // Two extensions that add items last under one base item: the order is not pinned (ADR-025).
-    for (&base, exts) in &changing {
-        let mut seen: Vec<(usize, usize)> = Vec::new();
-        for &e in exts {
-            let Some(x) = ext_irs[e].as_ref() else { continue };
-            for a in x.added.iter().filter(|a| a.place == ir::AddedPlace::Last) {
-                if let Some(p) = a.base_parent {
-                    if seen.iter().any(|&(q, other)| q == p && other != e) {
-                        if let Some(r) = report_irs[base].as_mut() {
-                            r.unsupported.push(format!(
-                                "two reportextensions add data items last under the same data item ({}): their order is not pinned",
-                                a.item.name
-                            ));
-                        }
-                    }
-                    seen.push((p, e));
-                }
-            }
-        }
-    }
     // Why a variable of an xmlport or report is refused, and the report extension that changes a
     // run: the cache supplies them for its objects.
     let n_objects = ws.objects.len();

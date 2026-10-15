@@ -41,7 +41,12 @@ impl BaselineRun {
     /// Modify wrote the values the row already had.
     pub fn restored_lines(&self) -> Vec<String> {
         let mut by_table: std::collections::BTreeMap<&str, (usize, usize, usize, usize)> = Default::default();
+        let mut fields: std::collections::BTreeMap<&str, std::collections::BTreeSet<&str>> = Default::default();
         for c in &self.restored {
+            fields
+                .entry(&c.table)
+                .or_default()
+                .extend(c.fields.iter().map(String::as_str));
             let e = by_table.entry(&c.table).or_default();
             match (c.op, c.same) {
                 ("Modify", true) => e.0 += 1,
@@ -53,8 +58,10 @@ impl BaselineRun {
         by_table
             .into_iter()
             .map(|(t, (same, other, rename, delete))| {
+                let names = fields[t].iter().copied().collect::<Vec<_>>().join(", ");
                 format!(
-                    "install code changed restored rows of {t}: {same} Modify with the values the row has, {other} Modify with other values, {rename} Rename, {delete} Delete"
+                    "install code changed restored rows of {t}: {same} Modify with the values the row has, {other} Modify with other values{}, {rename} Rename, {delete} Delete",
+                    if names.is_empty() { String::new() } else { format!(" (fields: {names})") }
                 )
             })
             .collect()

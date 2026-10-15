@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-data/src/memory.rs",
+        r#".filter(|&i| format!("{:?}", n[i]) != format!("{:?}", old[i]))"#,
+        "equality of two values (Value has no PartialEq) for the record of changes to restored rows, never shown",
+    ),
+    (
         "al-data/src/contract.rs",
         r#"other => panic!("{other:?}"),"#,
         "the conformance suite asserts on a store outcome; a failing test prints it",

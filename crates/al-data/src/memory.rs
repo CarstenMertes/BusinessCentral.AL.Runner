@@ -111,8 +111,10 @@ pub struct RestoredChange {
     pub table: String,
     /// `Modify`, `Delete`, `Rename` or `DeleteAll`.
     pub op: &'static str,
-    /// A Modify that writes the values the row already has. Every other change is `false`.
+    /// A Modify that writes the values the row already has, system fields apart. Every other change is `false`.
     pub same: bool,
+    /// For a Modify with other values: the names of the fields whose values differ.
+    pub fields: Vec<String>,
 }
 
 fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
@@ -153,7 +155,10 @@ impl MemStore {
 
     /// The changes written down since recording started.
     pub fn restored_changes(&self) -> Vec<RestoredChange> {
-        self.restored_log.as_ref().map(|l| l.borrow().clone()).unwrap_or_default()
+        self.restored_log
+            .as_ref()
+            .map(|l| l.borrow().clone())
+            .unwrap_or_default()
     }
 
     /// Writes down a change to the row with this key if recording is on and the backing holds the
@@ -165,11 +170,22 @@ impl MemStore {
             return;
         };
         let Some(old) = rows.0.get(key) else { return };
-        let same = new.is_some_and(|n| format!("{n:?}") == format!("{old:?}"));
+        let fields: Vec<String> = new
+            .map(|n| {
+                (0..old.len().min(n.len()))
+                    .filter(|&i| format!("{:?}", n[i]) != format!("{:?}", old[i]))
+                    // The system fields (id from 2000000000: SystemModifiedAt, SystemRowVersion ...) change
+                    // with every write and do not count as a different value.
+                    .filter_map(|i| t.fields.get(i).filter(|f| f.id < 2_000_000_000).map(|f| f.name.clone()))
+                    .collect()
+            })
+            .unwrap_or_default();
+        let same = new.is_some() && fields.is_empty();
         log.borrow_mut().push(RestoredChange {
             table: t.name.clone(),
             op,
             same,
+            fields,
         });
     }
 

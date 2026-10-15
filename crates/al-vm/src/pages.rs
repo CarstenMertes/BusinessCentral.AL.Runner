@@ -2535,10 +2535,10 @@ impl Session {
         }
         let mut key = origin;
         self.page_go_to_key(st, &mut key)?;
-        // A FindFirstField whose result is not used raises when no row carries the value
-        // (handlers/TestPagePlatformPageSourceTable_Tests.al:125-131, the whole message). The same
-        // for FindNextField and FindPreviousField is not pinned: they keep answering false.
-        if how == "FindFirstField" && !result_used {
+        // A Find...Field whose result is not used raises when no row carries the value
+        // (handlers/TestPagePlatformPageSourceTable_Tests.al:125-131, the whole message; controls/W2FindFieldAssign.al:
+        // FindNextField_MissWithResultUnused and FindPreviousField_MissWithResultUnused, BC 27.5 and 29.0).
+        if !result_used {
             return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
         }
         Ok(Value::Boolean(false))
@@ -3197,6 +3197,10 @@ impl Session {
                 // A Date adds how the client reads one (controls/W2ValueControls.al:Date_IsoSpellings and
                 // session/W5WorkDateShorthand.al, BC 27.5 and 29.0); the text holds a CR, a backslash, a CR and
                 // a backslash where one would expect line breaks.
+                // An Integer variable adds why (controls/W2FindFieldAssign.al:ValueAssign_IntegerControl_TextAndNonNumber).
+                if !rec_bound && matches!(ty, RtType::Integer) {
+                    msg.push_str(&format!(" The value \"{text}\" can't be evaluated into type Integer."));
+                }
                 if matches!(ty, RtType::Date) {
                     msg.push_str(&format!(
                         " The format of the Date '{text}' does not match your device's date settings.\r\\\r\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."

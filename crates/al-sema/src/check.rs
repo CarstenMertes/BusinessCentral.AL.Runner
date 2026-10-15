@@ -1431,11 +1431,15 @@ impl<'a> Checker<'a> {
                 // own types wins over one that only takes them as a Variant (Reservation Management has
                 // `SetReservSource(Variant)` and `SetReservSource(RecordRef)`; passing a RecordRef picks the latter).
                 let fit = args.iter().zip(&c.param_tys).filter(|(a, p)| fits(a, p)).count();
-                let exact = args
-                    .iter()
-                    .zip(&c.param_tys)
-                    .filter(|(a, p)| !matches!(a, Ty::Unknown) && a.to_string().eq_ignore_ascii_case(p))
-                    .count();
+                // Only among the procedures AL code declares: the catalog's overloads keep their order.
+                let exact = if matches!(c.target, Res::Proc { .. }) {
+                    args.iter()
+                        .zip(&c.param_tys)
+                        .filter(|(a, p)| !matches!(a, Ty::Unknown) && a.to_string().eq_ignore_ascii_case(p))
+                        .count()
+                } else {
+                    0
+                };
                 let score = fit * 1000 + exact;
                 if best.is_none_or(|(_, s)| score > s) {
                     best = Some((c, score));

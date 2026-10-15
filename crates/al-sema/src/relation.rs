@@ -315,7 +315,7 @@ mod tests {
         ParsedArm {
             conditions: conds.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
             filter_conditions: conds.iter().map(|_| false).collect(),
-            condition_raw: conds.iter().map(|(_, b)| format!("'{b}'")).collect(),
+            condition_raw: conds.iter().map(|(_, b)| b.to_string()).collect(),
             path: path.iter().map(|s| s.to_string()).collect(),
             wheres,
         }

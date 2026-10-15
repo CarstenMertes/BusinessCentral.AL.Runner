@@ -27,7 +27,9 @@ before you open a source file.
    behavior) may be implemented before a probe exists. Cite that test in the
    code comment, add a `docs/probes-needed.md` row, and queue the probe. When
    the probe lands it wins; fix the code if it disagrees. Error texts still come
-   only from the corpus.
+   only from the corpus. Every such code path marks its assumption when it runs,
+   and a test that passes through one is reported as a flagged pass ("passed,
+   relies on an unprobed assumption"), counted apart from clean passes.
 4. **Unsupported is refused explicitly, never run silently.** Refuse
    statically wherever possible: a lowering reason, or a diagnostic in
    `al-sema`, so the runner reports the test as not run before it starts.

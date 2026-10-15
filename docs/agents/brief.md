@@ -31,6 +31,8 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   Microsoft test (app, codeunit, test name) in the code comment, add the
   `docs/probes-needed.md` row, and say so in your report. The probe wins when it
   lands. This is evidence, not a guess: a behavior no test requires is still refused.
+  The code path must mark the assumption when it runs (its probes-needed row id),
+  so a test that passes through it is reported as a flagged pass, never as a clean one.
 - **Unsupported is refused explicitly.** Use a lowering reason, a diagnostic in
   `al-sema`, or `Signal::Unsupported`. Never run a guessed or partial behavior
   silently.

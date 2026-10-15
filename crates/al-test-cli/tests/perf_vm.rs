@@ -17,9 +17,13 @@
 //! ```
 
 use al_sema::AppKind;
+#[path = "support/meter.rs"]
+mod meter;
+
 use al_test_cli::runtime;
 use al_testrun::Outcome;
 use al_testrun::runtime::{CorpusRuntime, RunOptions, SuiteRun};
+use meter::Meter;
 use std::path::{Path, PathBuf};
 
 /// One benchmark: the test codeunit, the iterations of its loop (the unit of the limits; the number in the AL file), the
@@ -89,92 +93,6 @@ fn root() -> PathBuf {
         .unwrap()
 }
 
-/// A counter of the user-space instructions of the calling thread, or the CPU time of it where the kernel refuses.
-enum Meter {
-    Instructions(i32),
-    CpuTime,
-}
-
-#[cfg(target_os = "linux")]
-impl Meter {
-    fn new() -> Meter {
-        // struct perf_event_attr, size 112 (PERF_ATTR_SIZE_VER5), as words: type | size, config, sample_period,
-        // sample_type, read_format, flags (disabled = bit 0, exclude_kernel = bit 5, exclude_hv = bit 6).
-        const PERF_TYPE_HARDWARE: u64 = 0;
-        const PERF_COUNT_HW_INSTRUCTIONS: u64 = 1;
-        let mut attr = [0u64; 14];
-        attr[0] = PERF_TYPE_HARDWARE | (112u64 << 32);
-        attr[1] = PERF_COUNT_HW_INSTRUCTIONS;
-        attr[5] = 1 | (1 << 5) | (1 << 6);
-        // SAFETY: `attr` is a valid, fully initialised perf_event_attr of the size it declares.
-        let fd = unsafe { libc::syscall(libc::SYS_perf_event_open, attr.as_ptr(), 0, -1, -1, 0) };
-        if fd >= 0 && std::env::var_os("AL_VM_BENCH_CPU_TIME").is_none() {
-            Meter::Instructions(fd as i32)
-        } else {
-            Meter::CpuTime
-        }
-    }
-
-    fn name(&self) -> &'static str {
-        match self {
-            Meter::Instructions(_) => "instructions",
-            Meter::CpuTime => "thread CPU time (ns)",
-        }
-    }
-
-    /// Runs `f` and returns what it cost.
-    fn measure<T>(&self, f: impl FnOnce() -> T) -> (T, u64) {
-        const ENABLE: libc::c_ulong = 0x2400;
-        const DISABLE: libc::c_ulong = 0x2401;
-        const RESET: libc::c_ulong = 0x2403;
-        match self {
-            Meter::Instructions(fd) => {
-                // SAFETY: `fd` is a perf event descriptor that this value owns; the ioctls take no argument.
-                unsafe {
-                    libc::ioctl(*fd, RESET, 0);
-                    libc::ioctl(*fd, ENABLE, 0);
-                }
-                let out = f();
-                let mut count = 0u64;
-                // SAFETY: as above; `count` is 8 bytes, the size of one counter value.
-                unsafe {
-                    libc::ioctl(*fd, DISABLE, 0);
-                    libc::read(*fd, (&mut count as *mut u64).cast(), 8);
-                }
-                (out, count)
-            }
-            Meter::CpuTime => {
-                let t = thread_cpu_ns();
-                let out = f();
-                (out, thread_cpu_ns() - t)
-            }
-        }
-    }
-}
-
-#[cfg(target_os = "linux")]
-fn thread_cpu_ns() -> u64 {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: `ts` is a valid timespec for the call to fill in.
-    unsafe { libc::clock_gettime(libc::CLOCK_THREAD_CPUTIME_ID, &mut ts) };
-    ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
-}
-
-#[cfg(not(target_os = "linux"))]
-impl Meter {
-    fn new() -> Meter {
-        Meter::CpuTime
-    }
-    fn name(&self) -> &'static str {
-        "thread CPU time (ns)"
-    }
-    fn measure<T>(&self, f: impl FnOnce() -> T) -> (T, u64) {
-        let t = std::time::Instant::now();
-        let out = f();
-        (out, t.elapsed().as_nanos() as u64)
-    }
-}
-
 /// The cost of running the tests of `codeunit` (compile excluded) and whether they passed.
 fn cost(meter: &Meter, codeunit: u32) -> (u64, bool) {
     let app = runtime::load_app(&root().join("crates/al-test-cli/tests/vm-bench")).unwrap();
@@ -216,7 +134,7 @@ fn the_interpreter_stays_within_its_instruction_budget() {
     if cfg!(debug_assertions) {
         panic!("perf budgets are only meaningful in --release; this is a debug build");
     }
-    let meter = Meter::new();
+    let meter = Meter::new(false);
     let counting = matches!(meter, Meter::Instructions(_));
     eprintln!("vm budget: counting {}", meter.name());
     let empty = least(&meter, EMPTY);

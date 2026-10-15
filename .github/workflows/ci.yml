@@ -270,7 +270,8 @@ jobs:
           submodules: true
       - uses: ./.github/actions/setup
 
-      # Wall-clock budgets (issue #1): cold compile of the corpus within 1 s, parser throughput at
+      # Budgets (issue #1): the cold compile of the corpus in instructions per object (wall time is printed only: a shared runner
+      # varies by 20 % from day to day), parser throughput at
       # least 50 MB/s, and the VM budget (ADR-031: instructions per iteration of the tests/vm-bench programs; where the runner
       # allows no hardware counter it falls back to CPU time with wider limits). #[ignore]d in plain `cargo test` because they only mean something in release.
       # This job runs nothing else at the same time, so the numbers are not disturbed.

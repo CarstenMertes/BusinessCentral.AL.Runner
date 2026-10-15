@@ -3628,7 +3628,9 @@ impl Session {
             r?;
             // What the action left in Rec is saved when the client leaves the row (corpus
             // record/PWTableGlobals.al:408-431, PageModify_AfterActionChangedRec_NoValidation).
-            if let Some(before) = before.filter(|_| st.borrow().cursor == Cursor::Row && !st.borrow().draft && !st.borrow().refresh) {
+            if let Some(before) =
+                before.filter(|_| st.borrow().cursor == Cursor::Row && !st.borrow().draft && !st.borrow().refresh)
+            {
                 let rec = self.page_rec(st);
                 if !Self::same_values(&rec.borrow().fields, &before) {
                     st.borrow_mut().dirty = true;

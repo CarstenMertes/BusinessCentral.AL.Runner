@@ -18,3 +18,4 @@ mod temp_tables;
 mod transactions;
 mod userpersonalization;
 mod usertable;
+mod xrec;

@@ -860,10 +860,13 @@ impl Session {
                     .get(&cx, &t, &pk)
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?;
             }
-            let Some(Value::Blob(src)) = stored.as_ref().map(|row| row[pos].clone()) else {
-                return unsupported("CalcFields of a Blob whose row is gone (error text not pinned)");
+            // A row that is not stored (a copy of a record never inserted) leaves the Blob empty: the buffer
+            // showed `*` after `Copy1 := Row`, and CalcFields reads nothing back
+            // (types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
+            let bytes = match stored.as_ref().map(|row| row[pos].clone()) {
+                Some(Value::Blob(src)) => src.borrow().bytes.clone(),
+                _ => Vec::new(),
             };
-            let bytes = src.borrow().bytes.clone();
             let mut b = buf.borrow_mut();
             b.bytes = bytes;
             b.loaded = true;
@@ -1009,9 +1012,28 @@ impl Session {
             self.gate_write(method)?;
             self.user_bulk_refusal(&t, rec.borrow().temporary, method)?;
             // A write call starts the transaction, also a DeleteAll that finds no row
-            // (session/TestClearAllTransactionTypeContracts.al:245-252, session/TestDatabaseExtended.al:
+            // (session/ProbeSystemEnumMembers.al:143-161, session/TestDatabaseExtended.al:
             // Database_CurrentTransactionType_SetAfterWriteOp_Throws over fixture DeleteAlls).
-            self.tx_wrote = true;
+            self.tx_phase = crate::transactions::TX_WRITE;
+        } else if self.tx_phase == crate::transactions::TX_FRESH
+            && !rec.borrow().temporary
+            && matches!(
+                method,
+                "Get"
+                    | "GetBySystemId"
+                    | "Find"
+                    | "FindFirst"
+                    | "FindLast"
+                    | "FindSet"
+                    | "Next"
+                    | "Count"
+                    | "IsEmpty"
+                    | "CalcFields"
+                    | "CalcSums"
+            )
+        {
+            // A read call starts it too (session/ProbeSystemEnumMembers.al:94-112).
+            self.tx_phase = crate::transactions::TX_READ;
         }
         match method {
             "Init" => {
@@ -1026,20 +1048,9 @@ impl Session {
                 Ok(Value::Null)
             }
             "Clear" => {
-                // Whether Clear also empties the table of a temporary record is not pinned
-                // (docs/probes-needed.md). Where the table holds no row both readings give the same
-                // state, so only that case runs.
-                if rec.borrow().temporary {
-                    let rows = self
-                        .store_for(rec)
-                        .count(&cx, &t, &[])
-                        .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
-                    if rows > 0 {
-                        return unsupported(
-                            "Clear of a temporary record that holds rows (whether the table is emptied is not pinned)",
-                        );
-                    }
-                }
+                // Clear resets the buffer, the filters and the keys but does not empty the table of a
+                // temporary record: its rows stay and it stays temporary
+                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount, BC 27.5).
                 let fresh = self.initial_fields(t.object as usize);
                 // Clear sets the table's globals back to their initial values (ADR-021 decision 4;
                 // corpus probe TableGlobals_Clear_WhatHappensToTheGlobals).
@@ -1669,14 +1680,29 @@ impl Session {
                             .table
                             .as_ref()
                             .expect("table");
+                        // A FlowFilter field and a Blob cannot order rows: `Sorting cannot be done based on the
+                        // <field> field(s) in the <table> table.` (code DB:Ok; record/ProbeClearAllSetKeyHyperlink.al:
+                        // 276-318, BC 27.5; the error is raised here, whether BC raises it here or at the
+                        // read is not observable in the probe). A FlowField is accepted and orders by the
+                        // primary key: the order it gives BC is not pinned (docs/probes-needed.md).
                         if let Some(&bad) = wanted.iter().find(|&&p| {
-                            !t.fields[p].stored || {
-                                matches!(t.fields[p].ty, RtType::Library(_) | RtType::Variant)
-                                    || schema.fields[p].flow_filter
-                            }
+                            matches!(t.fields[p].ty, RtType::Library(_) | RtType::Variant)
+                                || schema.fields[p].flow_filter
                         }) {
+                            return Err(crate::transactions::al_error_code(
+                                &format!(
+                                    "Sorting cannot be done based on the {} field(s) in the {} table.",
+                                    t.fields[bad].name, t.name
+                                ),
+                                "DB:Ok",
+                            ));
+                        }
+                        if let Some(&bad) = wanted
+                            .iter()
+                            .find(|&&p| !t.fields[p].stored && !schema.fields[p].calc.is_some())
+                        {
                             return unsupported(format!(
-                                "SetCurrentKey on {}, which is not a stored field that can order rows (not pinned)",
+                                "SetCurrentKey on {}, which cannot order rows (not pinned)",
                                 t.fields[bad].name
                             ));
                         }

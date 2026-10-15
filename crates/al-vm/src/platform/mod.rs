@@ -179,12 +179,19 @@ pub(crate) struct Providers {
     aggregate: permissions::Cache,
     grants: permissions::Grants,
     events: Rc<EventStats>,
+    /// The session's media: the rows of `Tenant Media`.
+    media: al_builtins::media::MediaStore,
     /// (subscriber codeunit id, lower-case function) to (object, routine); built on first use.
     event_index: RefCell<Option<EventIndex>>,
 }
 
 impl Providers {
-    pub(crate) fn new(engine: &Arc<Engine>, ident: Ident, events: Rc<EventStats>) -> Providers {
+    pub(crate) fn new(
+        engine: &Arc<Engine>,
+        ident: Ident,
+        events: Rc<EventStats>,
+        media: al_builtins::media::MediaStore,
+    ) -> Providers {
         let served = engine
             .program
             .objects
@@ -218,6 +225,7 @@ impl Providers {
             aggregate: RefCell::default(),
             grants: Default::default(),
             events,
+            media,
             event_index: RefCell::new(None),
         }
     }
@@ -254,14 +262,17 @@ impl Providers {
         Some(row)
     }
 
-    /// A filter on a column the session changes cannot be answered from the shared listing.
-    fn event_filter_refusal(t: &TableDef, filters: &[FieldFilter]) -> Result<(), StoreError> {
-        if filters.iter().any(|f| matches!(t.fields[f.field].id, 8 | 13)) {
-            return Err(refused(
-                "Event Subscription: a filter on \"Number of Calls\" or \"Active Manual Instances\" is not answered",
-            ));
+    /// A filter on a column the session changes cannot be answered from the shared listing: the rows
+    /// are read with the session's counts first (record/ProbePlatformTables.al: `EventSubscription_FilterOnNumberOfCalls`).
+    fn event_filtered_listing(&self, t: &TableDef, filters: &[FieldFilter]) -> Result<Option<mat::Mat>, StoreError> {
+        if !filters.iter().any(|f| matches!(t.fields[f.field].id, 8 | 13)) {
+            return Ok(None);
         }
-        Ok(())
+        let listed = self.listed(t, Virtual::EventSubscription)?;
+        Ok(Some(listed.mapped(|row| {
+            self.with_event_stats(t, Some(row.clone()))
+                .unwrap_or_else(|| row.clone())
+        })))
     }
 
     pub(super) fn engine(&self) -> Arc<Engine> {
@@ -286,11 +297,47 @@ impl Providers {
     /// Whether the listing of `kind` is the same for every session of the engine. Session, Active
     /// Session and Time Zone list the host's identity of this session.
     fn shares(kind: Virtual) -> bool {
-        !matches!(kind, Virtual::Session | Virtual::ActiveSession | Virtual::TimeZone)
+        !matches!(
+            kind,
+            Virtual::Session | Virtual::ActiveSession | Virtual::TimeZone | Virtual::TenantMedia
+        )
     }
 
     fn kind(&self, t: &TableDef) -> Virtual {
         self.served[t.object as usize].expect("serves() was true")
+    }
+
+    /// One `Tenant Media` row per imported media object, in id order: ID, Description, Content, Mime
+    /// Type, Height, Width and File Name (empty), as the importing methods leave them (corpus
+    /// media/PXMediaFileName.al, media/TestMediaSetPersistence.al:180-207).
+    fn tenant_media_rows(&self, t: &TableDef) -> Vec<mat::Entry> {
+        let objects = self.media.objects.borrow();
+        let mut ids: Vec<_> = objects.keys().copied().collect();
+        ids.sort();
+        ids.into_iter()
+            .map(|id| {
+                let o = &objects[&id];
+                let mut row = blank(t);
+                row[pos(t, 1)] = Value::Guid(id);
+                // The four argument import: what the file name changes in this row (its File Name, and
+                // the Description and Mime Type the platform derives from it when they are empty) is not
+                // pinned (docs/probes-needed.md, `Media.ImportStream(.., FileName)`).
+                if !o.file_name.is_empty() {
+                    return mat::Entry::poisoned(
+                        row,
+                        "a Tenant Media row of a media imported with a file name: its File Name, Description and Mime Type are not pinned".into(),
+                    );
+                }
+                row[pos(t, 2)] = Value::Text(o.description.clone());
+                let blob = al_builtins::stream::new_blob();
+                al_builtins::stream::write_bytes(&blob, &o.bytes);
+                row[pos(t, 3)] = Value::Blob(blob);
+                row[pos(t, 4)] = Value::Text(o.mime.clone());
+                row[pos(t, 5)] = Value::Integer(o.height);
+                row[pos(t, 6)] = Value::Integer(o.width);
+                mat::Entry::ok(row)
+            })
+            .collect()
     }
 
     /// The rows of a table that is listed in full.
@@ -312,11 +359,8 @@ impl Providers {
                     self.engine().program.objects[t.object as usize].id.unwrap_or(0)
                 )));
             }
-            Virtual::TenantMedia => {
-                return Err(refused(
-                    "Tenant Media: media live in the session's media store, which this table does not read yet (ADR-017)",
-                ));
-            }
+            // The media the session imported, read fresh each time (they change between reads).
+            Virtual::TenantMedia => return Ok(Listed::Own(Rc::new(mat::Mat::new(t, self.tenant_media_rows(t))))),
             _ => {}
         }
         let build = || mat::Mat::new(t, self.list_rows(t, kind));
@@ -337,7 +381,7 @@ impl Providers {
     fn list_rows(&self, t: &TableDef, kind: Virtual) -> Vec<mat::Entry> {
         match kind {
             Virtual::ApiWebhookEntity | Virtual::TenantMedia | Virtual::Unprovided => {
-                unreachable!("refused before listing")
+                unreachable!("refused or listed before")
             }
             Virtual::XmlPortMetadata => metadata::xmlport_metadata_rows(self, t),
             Virtual::EventSubscription => metadata::event_subscription_rows(self, t),
@@ -483,7 +527,9 @@ impl VirtualTables for Providers {
             Virtual::Date => date::next(t, scan),
             Virtual::WindowsLanguage => host_tables::windows_language_next(t, scan),
             Virtual::EventSubscription => {
-                Self::event_filter_refusal(t, scan.filters)?;
+                if let Some(m) = self.event_filtered_listing(t, scan.filters)? {
+                    return m.next(t, scan);
+                }
                 Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.next(t, scan)?))
             }
             k => self.listed(t, k)?.next(t, scan),
@@ -510,7 +556,9 @@ impl VirtualTables for Providers {
             Virtual::Date => date::count(t, filters),
             Virtual::WindowsLanguage => host_tables::windows_language_count(t, filters),
             Virtual::EventSubscription => {
-                Self::event_filter_refusal(t, filters)?;
+                if let Some(m) = self.event_filtered_listing(t, filters)? {
+                    return m.count(t, filters);
+                }
                 self.listed(t, Virtual::EventSubscription)?.count(t, filters)
             }
             k => self.listed(t, k)?.count(t, filters),

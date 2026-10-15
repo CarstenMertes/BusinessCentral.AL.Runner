@@ -150,7 +150,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `lib.rs` (16): Crate root of the semantic model.
 - `lower.rs` (4806): Lowers resolved syntax to the typed IR (ADR-011). Anything inexpressible becomes a refusal reason on the routine. Entry: `lower_with_positions` 33, `Lowered` 17, `Lowerer` 1110, `routine` 2390, `stmt` 2585, `expr` 2946, `call` 3276, `compile_apps_with` 3543, `compile_with_roots` 3566.
 - `members.rs` (708): Members of objects: table fields (extensions merged), enum values, procedure signatures. Entry: `MemberTable` 108, `build` 147, `FieldInfo` 15, `ProcSig` 48.
-- `provided.rs` (330): Dependency objects whose lowered form comes from a compile cache (ADR-022): `DepFacts`, `DepBlock`, `DepSource`, which blocks the workspace invalidates (`relower_set`). Entry: `DepSet` 76, `relower_set` 150, `touched` 120, `check_identity` 100.
+- `provided.rs` (450): Dependency objects whose lowered form comes from a compile cache (ADR-022): `DepFacts`, `DepBlock`, `DepSource`, layers (`DepLayer`, `LayerSource`, `Stack`), which blocks the workspace or a layer invalidates (`relower_set`). Entry: `DepSet` 76, `relower_set` 150, `touched` 120, `check_identity` 100.
 - `pages.rs` (932): Pages for the test client (ADR-012). Entry: `expand` 153, `expand_ranges` 159, `control_sections` 143, `classify_source` 81.
 - `queries.rs` (760): Query objects (corpus query/). Entry: `QueryLayout` 16, `layout` 56.
 - `relation.rs` (359): `TableRelation` property text → arms (before names are resolved). Entry: `ParsedArm` 13, `ParsedWhere` 23, `parse` 262.
@@ -356,13 +356,18 @@ functions or methods; the file is in the module list above.
 ### Compile cache: a run that finds the dependency apps already lowered (ADR-022)
 
 1. `CorpusRuntime::try_run_suites_with` (testrun/runtime.rs), with `RunOptions::compile_cache`: the apps are put in the
-   program order a cache needs, dependency apps first (the caller's order is kept in `order` for `TestResult::app`,
+   program order a cache needs, dependency apps first, Microsoft's before the others and every app after the apps it
+   depends on (`compile_cache::dependency_order`; the caller's order is kept in `order` for `TestResult::app`,
    `SuiteRun::app` and `RunOptions::only`). No cache with `AL_EAGER_DEPENDENCIES` or without dependency apps.
-2. `compile_with_cache` -> `compile_cache::open_or_build`: `key_for` (executable hash, target, symbols, each app's
-   manifest and source hash) -> `read_entry` (`al_cache::Entry::open` checks header, index, dictionary; a refused file is
-   removed and reported) or, on a miss, `build_entry` = `lower::lower_for_cache` (the complete compile of the dependency
-   apps alone, `Lowered::exported`) -> `al_cache::build` -> `write_entry`.
-3. `lower::compile_loaded_cached`: `Workspace::load_apps` for all apps; `provided::check_identity`; `relower_set` (the
+2. `compile_with_cache` -> `compile_cache::open_or_build_with`: the dependency set is cached in layers (owner decision
+   2026-10-15): `layer_ranges` (layer 1 = the Microsoft apps, then one layer per other app), `layer_keys` (each layer's key
+   holds its own apps and the digest of the key below: executable hash, target, symbols, manifest and source hash) ->
+   `read_entry` per layer (`al_cache::Entry::open` checks header, index, dictionary; a refused file is removed and
+   reported). Each missing layer is built, lowest first: layer 1 = `lower::lower_for_cache` (the complete compile of the
+   Microsoft apps), a higher layer = `lower::lower_layer` (compiles the layer's apps with the layers below taken from a
+   `provided::Stack`, keeps its own objects and the lower objects it changes) -> `al_cache::build_layer` -> `write_entry`.
+3. `lower::compile_loaded_cached` on the `Stack` of all layers (an object comes from the highest layer that holds it):
+   `Workspace::load_apps` for all apps; `provided::check_identity`; `relower_set` (the
    dependency objects whose `DepFacts::embeds` the workspace extends or implements, with the objects that extend each
    other); the blocks of the others are read in parallel (`DepSource::block`); the checker skips them
    (`Roots::provided`); `lower_core` takes their pieces from the blocks and their facts (`Shared`: page reasons, parts,

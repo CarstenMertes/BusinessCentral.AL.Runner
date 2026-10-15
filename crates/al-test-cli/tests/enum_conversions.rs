@@ -1,5 +1,5 @@
 //! An Enum from an enum of another type, and from an Integer, as the probe of corpus
-//! tests/al-language/types/PXEnumRecordRef.al (codeunit 69185, corpus branch `al-runtime-rs-staging` at
+//! tests/al-language/types/PXEnumRecordRef.al (codeunit 69185, corpus at
 //! ae3fe88, written against a real BC 27.5 service tier) pins it. The procedures below are those probes with the observer replaced
 //! by `Error` on a difference; each cites its probe lines. The compile errors (AL0122) are tested in
 //! `al-sema/src/alcodes.rs`.

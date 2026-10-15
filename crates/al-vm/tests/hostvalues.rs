@@ -17,6 +17,7 @@ table 50900 "ALT T"
     }
     keys { key(PK; "No.") { } }
 }
+table 50902 "ALT FF" { fields { field(1; K; Integer) { } field(2; Flt; Integer) { FieldClass = FlowFilter; } field(3; Txt; Text[10]) { } } keys { key(PK; K) { } } }
 table 50901 "ALT Temp" { TableType = Temporary; fields { field(1; K; Integer) { } } keys { key(PK; K) { } } }
 "#;
 
@@ -389,10 +390,10 @@ fn is_session_active_is_false_for_an_unknown_id_and_refused_for_the_running_sess
 
 // ------------------------------------------------------------------ the transaction type
 
-// session/TestClearAllTransactionTypeContracts.al:224-238: a test starts as UpdateNoLocks (not Update), and
-// a set before any database access takes effect.
+// session/TestClearAllTransactionTypeContracts.al:224-238 and session/ProbeSystemEnumMembers.al:78-92 (BC 27.5): a
+// test starts as UpdateNoLocks (not Update), and a set before any database call takes effect.
 #[test]
-fn the_transaction_type_starts_as_update_no_locks_and_a_set_before_any_write_takes_effect() {
+fn the_transaction_type_starts_as_update_no_locks_and_a_set_before_any_call_takes_effect() {
     assert_eq!(
         text(
             "",
@@ -403,66 +404,129 @@ fn the_transaction_type_starts_as_update_no_locks_and_a_set_before_any_write_tak
     assert_eq!(
         text(
             "",
-            "Database.CurrentTransactionType(TransactionType::Browse); \
+            "Database.CurrentTransactionType(TransactionType::Report); \
+             exit(Format(Database.CurrentTransactionType()) + '|' + Format(Database.CurrentTransactionType(), 0, 2));"
+        ),
+        "Report|4"
+    );
+}
+
+// The ordinals: UpdateNoLocks 0, Update 1, Snapshot 2, Browse 3, Report 4 (ProbeSystemEnumMembers.al:60-76).
+#[test]
+fn the_transaction_type_members_have_the_platforms_ordinals() {
+    assert_eq!(
+        text(
+            "",
+            "exit(Format(TransactionType::Update, 0, 2) + Format(TransactionType::Snapshot, 0, 2) + Format(TransactionType::Report, 0, 2) + Format(TransactionType::UpdateNoLocks, 0, 2) + Format(TransactionType::Browse, 0, 2));"
+        ),
+        "12403"
+    );
+}
+
+// ProbeSystemEnumMembers.al:8-41: ClientType ordinals, with gaps.
+#[test]
+fn the_client_type_members_have_the_platforms_ordinals() {
+    let body = [
+        "Default",
+        "Windows",
+        "SOAP",
+        "OData",
+        "Api",
+        "Background",
+        "Management",
+        "Web",
+        "Tablet",
+        "Phone",
+        "Desktop",
+        "ChildSession",
+        "ODataV4",
+    ]
+    .iter()
+    .map(|m| format!("Format(ClientType::{m}, 0, 2) + ','"))
+    .collect::<Vec<_>>()
+    .join(" + ");
+    assert_eq!(text("", &format!("exit({body});")), "1,2,4,5,14,7,8,3,9,10,11,15,13,");
+}
+
+// ProbeSystemEnumMembers.al:94-112: a read starts the transaction; a set of Report after it reads as Update, and the
+// Commit leaves Update as the type of the next transaction, which a set changes again.
+#[test]
+fn a_set_after_a_read_and_after_a_commit() {
+    assert_eq!(
+        text(
+            "R: Record \"ALT T\";",
+            "if R.FindFirst() then; Database.CurrentTransactionType(TransactionType::Report); \
+             exit(Format(Database.CurrentTransactionType()));"
+        ),
+        "Update"
+    );
+    assert_eq!(
+        text(
+            "R: Record \"ALT T\";",
+            "Database.CurrentTransactionType(TransactionType::Report); Commit(); \
+             exit(Format(Database.CurrentTransactionType()));"
+        ),
+        "Update"
+    );
+    assert_eq!(
+        text(
+            "R: Record \"ALT T\";",
+            "Commit(); Database.CurrentTransactionType(TransactionType::Browse); \
              exit(Format(Database.CurrentTransactionType()));"
         ),
         "Browse"
     );
 }
 
-// :241-253: once the transaction has written, the type reads Update and a set to another type is ignored
-// without an error. A set to Update itself is :TestDatabaseExtended.al:Database_CurrentTransactionType_
-// SetAfterWriteOp_Throws, which expects an error whose text is not pinned: refused.
+// :114-141 and :143-161: after a write call (also a DeleteAll that finds no row) the type stays as it was, a set to
+// Report or to the same type goes through without effect, and a set to Update raises
+// DB:CannotChangeTransactionType.
 #[test]
-fn after_a_write_the_transaction_type_is_update_and_a_set_to_another_type_is_ignored() {
+fn after_a_write_a_set_is_ignored_or_refused() {
+    let out = text(
+        "R: Record \"ALT T\"; S: Text;",
+        "R.\"No.\" := 1; R.Insert(); S := Format(Database.CurrentTransactionType()); \
+         Database.CurrentTransactionType(TransactionType::Report); S += '|' + Format(Database.CurrentTransactionType()); \
+         Database.CurrentTransactionType(TransactionType::UpdateNoLocks); \
+         asserterror Database.CurrentTransactionType(TransactionType::Update); \
+         exit(S + '|' + GetLastErrorCode() + '|' + GetLastErrorText() + '|' + Format(Database.CurrentTransactionType()));",
+    );
     assert_eq!(
-        text(
-            "R: Record \"ALT T\";",
-            "R.\"No.\" := 1; R.Insert(); \
-             Database.CurrentTransactionType(TransactionType::Snapshot); \
-             exit(Format(Database.CurrentTransactionType()));"
-        ),
-        "Update"
+        out,
+        "UpdateNoLocks|UpdateNoLocks|DB:CannotChangeTransactionType|The transaction type cannot be changed after a transaction has started.\r\\\r\\A transaction starts when the first database operation, such as FIND, NEXT, INSERT, DELETE, MODIFY, SUM, or COUNT, is run.\r\\\r\\The error occurred because the transaction type was changed from UpdateNoLocks to Update.|UpdateNoLocks"
     );
-    let r = run(
-        "procedure F() var R: Record \"ALT T\"; begin R.\"No.\" := 1; R.Insert(); \
-         Database.CurrentTransactionType(TransactionType::Update); end;",
+    // A DeleteAll of no row starts it as well; after a Commit the type is Update and a set to Snapshot is ignored
+    // (TestClearAllTransactionTypeContracts.al:245-253).
+    let out = text(
+        "R: Record \"ALT T\";",
+        "R.SetRange(\"No.\", -77); R.DeleteAll(); Database.CurrentTransactionType(TransactionType::Report); \
+         exit(Format(Database.CurrentTransactionType()));",
     );
-    assert!(
-        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("CurrentTransactionType")),
-        "{r:?}"
+    assert_eq!(out, "UpdateNoLocks");
+    let out = text(
+        "R: Record \"ALT T\";",
+        "Commit(); R.DeleteAll(); Database.CurrentTransactionType(TransactionType::Snapshot); \
+         exit(Format(Database.CurrentTransactionType()));",
     );
-}
-
-// session/TestClearAllTransactionTypeContracts.al:245-252 (Commit, then a write) and
-// session/TestDatabaseExtended.al:Database_CurrentTransactionType_SetAfterWriteOp_Throws (the write was committed):
-// a write call has started the transaction, also a DeleteAll that finds no row.
-#[test]
-fn a_committed_write_has_started_the_transaction() {
-    assert_eq!(
-        text(
-            "R: Record \"ALT T\";",
-            "R.DeleteAll(); Commit(); \
-             Database.CurrentTransactionType(TransactionType::Snapshot); \
-             exit(Format(Database.CurrentTransactionType()));"
-        ),
-        "Update"
-    );
+    assert_eq!(out, "Update");
 }
 
 #[test]
-fn hyperlink_lowers_and_is_refused_only_when_it_runs() {
-    // Nothing pins what a test run does with a URL the client would open (docs/probes-needed.md), so
-    // a call is refused at run time; a routine that only mentions it still lowers and runs, which
-    // is how pages of Base Application with a `Hyperlink` call in an unused routine stay usable.
+fn hyperlink_raises_unhandled_ui_when_it_runs() {
+    // record/ProbeClearAllSetKeyHyperlink.al:322-338 (BC 27.5): there is no handler for a Hyperlink, so a
+    // call raises `Unhandled UI: Hyperlink <url>` with the code MissingUIHandler; a routine that only
+    // mentions it runs.
     assert_eq!(
         text("", "if false then Hyperlink('https://example.com'); exit('ran');"),
         "ran"
     );
-    match run("procedure F(): Text begin Hyperlink('https://example.com'); exit('ran'); end;") {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("Hyperlink"), "{why}"),
-        other => panic!("{other:?}"),
-    }
+    assert_eq!(
+        text(
+            "",
+            "asserterror Hyperlink('https://example.com/probe'); exit(GetLastErrorText() + '|' + GetLastErrorCode());"
+        ),
+        "Unhandled UI: Hyperlink https://example.com/probe|MissingUIHandler"
+    );
 }
 
 // ---------------------------------------------------------------- randomness
@@ -657,4 +721,18 @@ fn format_of_a_record_joins_the_formats_of_its_fields_by_tab() {
          if Format(R) <> Format(Ref) then exit('ref differs'); exit(Format(R));",
     );
     assert_eq!(t, "5\t2\tx");
+}
+
+// types/ProbeTypeFormsAndFilters.al:FormatRecord_WithFlowFilter_BeforeAndAfterSetRange (BC 27.5): a FlowFilter field is
+// the last of the text, with the value it holds (0), whatever filter was set on it.
+#[test]
+fn format_of_a_record_ends_with_its_flow_filter_fields_at_their_value() {
+    assert_eq!(
+        text(
+            "R: Record \"ALT FF\"; S: Text;",
+            "R.K := 1; R.Txt := 'x'; R.Insert(); R.Get(1); S := Format(R); R.SetRange(Flt, 3); S += '|' + Format(R); \
+             R.SetRange(Flt, 3, 8); S += '|' + Format(R); exit(S);"
+        ),
+        "1\tx\t0|1\tx\t0|1\tx\t0"
+    );
 }

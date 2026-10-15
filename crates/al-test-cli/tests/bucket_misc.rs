@@ -144,3 +144,25 @@ fn recall_runs_the_recall_handler_with_the_current_notification() {
             Log += 'recall msg=' + Notif.Message() + ';'; exit(true); end;"
     ));
 }
+
+// handlers/ProbeNotificationRecallEdges.al (BC 27.5): every Recall of a sent notification runs the recall handler and
+// answers true, whatever the handler answers; a Send whose handler answered false is a Send all the same.
+#[test]
+fn recall_runs_the_handler_each_time_and_answers_true() {
+    passes(&format!(
+        "{HELPERS}
+        var Log: Text;
+        [Test] [HandlerFunctions('SendTrue,RecallFalse')]
+        procedure Twice() var N: Notification; begin
+            Log := ''; N.Message('m'); N.Send(); Check('Yes', Format(N.Recall())); Check('Yes', Format(N.Recall()));
+            Check('send;recallFalse;recallFalse;', Log); end;
+        [Test] [HandlerFunctions('SendFalse,RecallTrue')]
+        procedure AfterAFalseSend() var N: Notification; begin
+            Log := ''; N.Message('m'); Check('Yes', Format(N.Send())); Check('Yes', Format(N.Recall()));
+            Check('sendFalse;recallTrue;', Log); end;
+        [SendNotificationHandler] procedure SendTrue(var Notif: Notification): Boolean begin Log += 'send;'; exit(true); end;
+        [SendNotificationHandler] procedure SendFalse(var Notif: Notification): Boolean begin Log += 'sendFalse;'; exit(false); end;
+        [RecallNotificationHandler] procedure RecallFalse(var Notif: Notification): Boolean begin Log += 'recallFalse;'; exit(false); end;
+        [RecallNotificationHandler] procedure RecallTrue(var Notif: Notification): Boolean begin Log += 'recallTrue;'; exit(true); end;"
+    ));
+}

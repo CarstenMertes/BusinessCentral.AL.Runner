@@ -51,11 +51,13 @@ fn apps(base: &str) -> (Vec<AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>) {
                 publisher: "Me".into(),
                 version: "1.0.0.0".into(),
                 resources: vec![],
+                include_source: false,
             },
             Manifest {
                 publisher: "Microsoft".into(),
                 version: "27.5.0.0".into(),
                 resources: vec![],
+                include_source: false,
             },
         ],
     )
@@ -326,6 +328,14 @@ fn the_key_changes_with_a_byte_of_source_a_symbol_or_the_target() {
         base,
         compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest()
     );
+    // The BC version and build of the target do not change a compile of the dependency apps, only
+    // the runtime does (the catalog): 27.0 and 27.5 share a layer, 27 and 28 (runtime 16 and 17) do not.
+    let key_of = |bc: &str| {
+        let t = al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), Some(&t)).digest()
+    };
+    assert_eq!(key_of("27.0"), key_of("27.5.46862.48827"));
+    assert_ne!(key_of("27.0"), key_of("28.0"));
 }
 
 #[test]
@@ -396,4 +406,312 @@ fn reportextensions_round_trip_and_a_format_1_file_is_rejected_and_rebuilt() {
             .unwrap()
             .hit
     );
+}
+
+// ---- layers (owner decision 2026-10-15) ----------------------------------------------------
+
+const LIB: &str = r#"
+tableextension 50200 LibCustExt extends Cust { fields { field(50200; LibNote; Text[20]) { } } }
+codeunit 50201 LibGreet implements IGreet { procedure Hello(): Text begin exit('lib'); end; }
+codeunit 50202 Lib { procedure Note(var C: Record Cust): Text begin exit(C.LibNote); end; procedure Version(): Integer begin exit(1); end; }
+"#;
+
+const IMPL: &str = r#"
+tableextension 50300 ImplCustExt extends Cust { fields { field(50300; ImplNote; Text[20]) { } } }
+codeunit 50301 ImplGreet implements IGreet { procedure Hello(): Text begin exit('impl'); end; }
+codeunit 50302 Impl
+{
+    procedure Both(var C: Record Cust): Text begin exit(C.LibNote + C.ImplNote); end;
+    procedure Version(): Integer var L: Codeunit Lib; begin exit(L.Version() + 10); end;
+}
+"#;
+
+const LAYER_TESTS: &str = r#"
+codeunit 60200 LayerTests
+{
+    Subtype = Test;
+    [Test] procedure Fields_AcrossLayers() var C: Record Cust; I: Codeunit Impl; begin C.LibNote := 'a'; C.ImplNote := 'b'; if I.Both(C) <> 'ab' then Error('both'); end;
+    [Test] procedure Calls_AcrossLayers() var I: Codeunit Impl; begin if I.Version() <> 11 then Error('version'); end;
+    [Test] procedure Interfaces_AcrossLayers() var D: Codeunit Dep; L: Codeunit LibGreet; M: Codeunit ImplGreet; begin if D.Say(L) <> 'lib' then Error('lib'); if D.Say(M) <> 'impl' then Error('impl'); end;
+}
+"#;
+
+/// The caller's order is the workspace first, then the implementation app, the partner library and
+/// the Microsoft app: the layers must not depend on it.
+fn layered_run(lib: &str, imp: &str, cc: Option<CompileCache>) -> Result<CorpusRuntime, String> {
+    let man = |p: &str, v: &str| Manifest {
+        publisher: p.into(),
+        version: v.into(),
+        resources: vec![],
+        ..Default::default()
+    };
+    CorpusRuntime::try_run_suites_with(
+        vec![
+            app("main", &["impl"], LAYER_TESTS),
+            app("impl", &["lib", "base"], imp),
+            app("lib", &["base"], lib),
+            app("base", &[], BASE),
+        ],
+        vec![
+            al_sema::AppKind::Workspace,
+            al_sema::AppKind::Dependency,
+            al_sema::AppKind::Dependency,
+            al_sema::AppKind::Dependency,
+        ],
+        &[
+            man("Me", "1.0.0.0"),
+            man("Me", "1.0.0.0"),
+            man("Acme", "2.0.0.0"),
+            man("Microsoft", "27.5.0.0"),
+        ],
+        &Default::default(),
+        None,
+        Default::default(),
+        &[SuiteRun::everything()],
+        &RunOptions {
+            compile_cache: cc,
+            ..Default::default()
+        },
+    )
+}
+
+/// Which layers of the run were found: the Microsoft layer first.
+fn layer_hits(rt: &CorpusRuntime) -> Vec<bool> {
+    rt.phases.cache.as_ref().unwrap().layers.iter().map(|l| l.hit).collect()
+}
+
+#[test]
+fn the_dependency_set_is_cached_as_layers_microsoft_first_then_one_per_other_app() {
+    let dir = tempfile::tempdir().unwrap();
+    let want = outcomes(&layered_run(LIB, IMPL, None).unwrap());
+    assert!(want.iter().all(|l| l.contains("Pass")), "{want:?}");
+    let first = layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&first), vec![false, false, false]);
+    assert_eq!(files(dir.path()).len(), 3, "one file per layer");
+    assert_eq!(outcomes(&first), want);
+    let second = layered_run(LIB, IMPL, cache(dir.path(), true)).unwrap();
+    assert_eq!(layer_hits(&second), vec![true, true, true]);
+    assert!(second.phases.cache.as_ref().unwrap().hit);
+    assert_eq!(outcomes(&second), want);
+}
+
+#[test]
+fn a_change_in_the_implementation_app_rebuilds_only_its_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let before = files(dir.path());
+    let changed = IMPL.replace("L.Version() + 10", "L.Version() + 20");
+    // With the cache required, the changed layer is missing: an error naming it.
+    assert!(layered_run(LIB, &changed, cache(dir.path(), true)).is_err());
+    let rt = layered_run(LIB, &changed, cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&rt), vec![true, true, false]);
+    assert!(rt.phases.cache.as_ref().unwrap().built);
+    assert!(
+        outcomes(&rt)
+            .iter()
+            .any(|l| l.contains("Calls_AcrossLayers") && l.contains("Fail"))
+    );
+    // The two lower files are the same files, untouched; the new layer file is beside the old.
+    let after = files(dir.path());
+    assert_eq!(after.len(), 4);
+    for f in before.iter().filter(|f| after.contains(f)) {
+        assert!(f.exists());
+    }
+    assert!(after.iter().filter(|f| before.contains(f)).count() >= 3);
+    assert_eq!(outcomes(&rt), outcomes(&layered_run(LIB, &changed, None).unwrap()));
+}
+
+#[test]
+fn a_change_in_a_library_app_rebuilds_its_layer_and_the_layers_above_but_not_the_microsoft_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let changed = LIB.replace("exit(1)", "exit(2)");
+    let rt = layered_run(&changed, IMPL, cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&rt), vec![true, false, false]);
+    assert_eq!(outcomes(&rt), outcomes(&layered_run(&changed, IMPL, None).unwrap()));
+    assert!(
+        outcomes(&rt)
+            .iter()
+            .any(|l| l.contains("Calls_AcrossLayers") && l.contains("Fail"))
+    );
+}
+
+#[test]
+fn a_change_in_a_microsoft_app_rebuilds_every_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let rt = {
+        let man = |p: &str, v: &str| Manifest {
+            publisher: p.into(),
+            version: v.into(),
+            resources: vec![],
+            ..Default::default()
+        };
+        CorpusRuntime::try_run_suites_with(
+            vec![
+                app("main", &["impl"], LAYER_TESTS),
+                app("impl", &["lib", "base"], IMPL),
+                app("lib", &["base"], LIB),
+                app("base", &[], BASE),
+            ],
+            vec![
+                al_sema::AppKind::Workspace,
+                al_sema::AppKind::Dependency,
+                al_sema::AppKind::Dependency,
+                al_sema::AppKind::Dependency,
+            ],
+            &[
+                man("Me", "1.0.0.0"),
+                man("Me", "1.0.0.0"),
+                man("Acme", "2.0.0.0"),
+                man("Microsoft", "27.5.0.1"),
+            ],
+            &Default::default(),
+            None,
+            Default::default(),
+            &[SuiteRun::everything()],
+            &RunOptions {
+                compile_cache: cache(dir.path(), false),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(layer_hits(&rt), vec![false, false, false]);
+}
+
+#[test]
+fn a_missing_lower_layer_file_is_rebuilt_and_the_layers_above_it_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let report = layered_run(LIB, IMPL, cache(dir.path(), true)).unwrap();
+    let microsoft = report.phases.cache.as_ref().unwrap().layers[0].file.clone();
+    std::fs::remove_file(&microsoft).unwrap();
+    let rt = layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&rt), vec![false, true, true]);
+    assert_eq!(outcomes(&rt), outcomes(&layered_run(LIB, IMPL, None).unwrap()));
+}
+
+#[test]
+fn a_damaged_upper_layer_never_changes_an_outcome() {
+    let dir = tempfile::tempdir().unwrap();
+    let want = outcomes(&layered_run(LIB, IMPL, None).unwrap());
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let report = layered_run(LIB, IMPL, cache(dir.path(), true)).unwrap();
+    let top = report.phases.cache.as_ref().unwrap().layers[2].file.clone();
+    let good = std::fs::read(&top).unwrap();
+    for bad in [good[..good.len() / 2].to_vec(), vec![1; 3000], Vec::new()] {
+        std::fs::write(&top, &bad).unwrap();
+        let rt = layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+        assert_eq!(layer_hits(&rt), vec![true, true, false]);
+        assert_eq!(outcomes(&rt), want);
+    }
+}
+
+// ---- a base layer shared by projects with different Microsoft apps (2026-10-15) -------------
+
+fn named(id: &str, name: &str, deps: &[&str], src: &str) -> AppSource {
+    AppSource {
+        name: name.into(),
+        ..app(id, deps, src)
+    }
+}
+
+fn ms(version: &str) -> Manifest {
+    Manifest {
+        publisher: "Microsoft".into(),
+        version: version.into(),
+        resources: vec![],
+        ..Default::default()
+    }
+}
+
+const ASSERT_LIB: &str =
+    "codeunit 50400 \"Assert\" { procedure IsTrue(B: Boolean) begin if not B then Error('assert'); end; }";
+const ANY_LIB: &str = "codeunit 50410 \"Any\" { procedure Int(): Integer begin exit(7); end; }";
+const SHOPIFY: &str =
+    "codeunit 50420 \"Shopify Thing\" { procedure N(): Integer var C: Record Cust; begin exit(C.Count()); end; }";
+
+const BASE_TEST: &str = r#"
+codeunit 60300 SharedTests
+{
+    Subtype = Test;
+    [Test] procedure Uses_Base() var D: Codeunit Dep; A: Codeunit Assert; begin A.IsTrue(D.Count() = 0); end;
+}
+"#;
+
+/// The dependency apps of a project, in the order given: Microsoft's core and test libraries.
+/// `which` picks them from the five Microsoft apps below; the order of `which` is the caller's order.
+fn shared_run(which: &[&str], cc: Option<CompileCache>) -> Result<CorpusRuntime, String> {
+    let all = |n: &str| -> (AppSource, Manifest) {
+        match n {
+            "base" => (named("base", "Base Application", &[], BASE), ms("27.5.0.0")),
+            "assert" => (named("assert", "Library Assert", &["base"], ASSERT_LIB), ms("27.5.0.0")),
+            "any" => (named("any", "Any", &["base"], ANY_LIB), ms("27.5.0.0")),
+            "shopify" => (
+                named("shopify", "Shopify Connector", &["base"], SHOPIFY),
+                ms("27.5.0.0"),
+            ),
+            _ => unreachable!(),
+        }
+    };
+    let mut apps = vec![app("main", &["base", "assert"], BASE_TEST)];
+    let mut kinds = vec![al_sema::AppKind::Workspace];
+    let mut mans = vec![Manifest::default()];
+    for n in which {
+        let (a, m) = all(n);
+        apps.push(a);
+        kinds.push(al_sema::AppKind::Dependency);
+        mans.push(m);
+    }
+    CorpusRuntime::try_run_suites_with(
+        apps,
+        kinds,
+        &mans,
+        &Default::default(),
+        None,
+        Default::default(),
+        &[SuiteRun::everything()],
+        &RunOptions {
+            compile_cache: cc,
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn two_projects_with_different_microsoft_test_libraries_share_the_base_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    let want = outcomes(&shared_run(&["assert", "base"], None).unwrap());
+    assert!(want.iter().all(|l| l.contains("Pass")), "{want:?}");
+    let first = shared_run(&["assert", "base"], cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&first), vec![false, false]);
+    // Another project: more Microsoft apps, in another order. Only the Base Application layer is common.
+    let second = shared_run(&["shopify", "any", "assert", "base"], cache(dir.path(), false)).unwrap();
+    let layers = &second.phases.cache.as_ref().unwrap().layers;
+    assert_eq!(layers.len(), 4, "base, then Any, Library Assert, Shopify Connector");
+    assert_eq!(layers[0].apps, vec!["Base Application"]);
+    assert_eq!(
+        layers.iter().map(|l| l.hit).collect::<Vec<_>>(),
+        vec![true, false, false, false]
+    );
+    assert_eq!(outcomes(&second), want);
+    // A third project that drops Shopify: the layers it shares with the second are found.
+    let third = shared_run(&["base", "any", "assert"], cache(dir.path(), true)).unwrap();
+    assert_eq!(layer_hits(&third), vec![true, true, true]);
+    assert_eq!(outcomes(&third), want);
+}
+
+#[test]
+fn the_layers_do_not_depend_on_the_order_the_apps_come_in() {
+    let dir = tempfile::tempdir().unwrap();
+    shared_run(&["base", "assert", "any"], cache(dir.path(), false)).unwrap();
+    for order in [
+        ["any", "assert", "base"],
+        ["assert", "base", "any"],
+        ["any", "base", "assert"],
+    ] {
+        let rt = shared_run(&order, cache(dir.path(), true)).unwrap();
+        assert_eq!(layer_hits(&rt), vec![true, true, true], "{order:?}");
+    }
 }

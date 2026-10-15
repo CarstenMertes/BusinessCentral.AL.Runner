@@ -97,23 +97,26 @@ impl Session {
             }
             // `CurrReport.Language := n` and `CurrReport.Language` read it back at once
             // (handlers/TestReportCurrReportLanguage.al:58-84). Language 0 is rejected by BC with an error
-            // that names the language (:87-103); its text is in no corpus line, so it is refused. A
-            // language nobody set is not pinned. The runtime's culture is fixed (en-US): the language is
-            // kept and changes no formatting.
+            // that names the language: `Invalid language ID supplied: 0.` / Argument, and the language stays as it
+            // was (record/ProbeClearAllSetKeyHyperlink.al:341-353, BC 27.5); another language that is not
+            // positive is not pinned. A language nobody set reads as the session's, 1033. The runtime's culture
+            // is fixed (en-US): the language is kept and changes no formatting (dates and decimals read
+            // the same after 1031, ibid.).
             "Report.Language#1" => match args.first() {
                 Some(Value::Integer(n)) if *n > 0 => {
                     self.curr_report_language = Some(*n);
                     Ok(Value::Null)
                 }
-                Some(Value::Integer(n)) => unsupported(format!(
-                    "CurrReport.Language set to {n}: BC rejects it with an error naming the language, whose text is not pinned (docs/probes-needed.md)"
+                Some(Value::Integer(0)) => Err(crate::transactions::al_error_code(
+                    "Invalid language ID supplied: 0.",
+                    "Argument",
                 )),
-                None => match self.curr_report_language {
-                    Some(n) => Ok(Value::Integer(n)),
-                    None => unsupported(
-                        "CurrReport.Language of a report that has not set one: the default is not pinned (docs/probes-needed.md)",
-                    ),
-                },
+                Some(Value::Integer(n)) => unsupported(format!(
+                    "CurrReport.Language set to {n}: only 0 is pinned as invalid (docs/probes-needed.md)"
+                )),
+                None => Ok(Value::Integer(
+                    self.curr_report_language.unwrap_or(self.global_language),
+                )),
                 Some(other) => unsupported(format!("CurrReport.Language with {}", other.describe())),
             },
             // `FormatRegion` only takes effect when a Word or Excel layout renders; a run that writes the
@@ -123,6 +126,43 @@ impl Session {
                 Some(Value::Text(_) | Value::Code(_)) => Ok(Value::Null),
                 None => Ok(Value::Text(String::new())),
                 Some(other) => unsupported(format!("CurrReport.FormatRegion with {}", other.describe())),
+            },
+            // `ObjectId(UseNames)`: `Report 69730`, or with names (the default) `Report <Caption>`, the object name
+            // when the report has no Caption (handlers/PWRefusedBuiltins.al:78-107, BC 27.5; also through a Report
+            // variable).
+            "Report.ObjectId#1" => {
+                // `CurrReport.ObjectId` has no receiver value: it is the running report
+                // (handlers/PWRefusedBuiltins.al:ReportObjectId_CurrReportInCaptionedReport).
+                let receiver = receiver.or_else(|| Some(Value::Codeunit(running.clone())));
+                let inst = self.report_instance(receiver, false)?.0;
+                let schema = self.report_schema(&inst)?;
+                let o = &schema.engine.program.objects[schema.object];
+                let names = match args.first() {
+                    None => true,
+                    Some(Value::Boolean(b)) => *b,
+                    Some(other) => return unsupported(format!("Report.ObjectId with {}", other.describe())),
+                };
+                if !names {
+                    return Ok(Value::Text(format!("Report {}", o.id.unwrap_or(0))));
+                }
+                let caption = match o.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("Caption")) {
+                    Some((_, v)) => match crate::recmeta::string_literal(v) {
+                        Some(c) => c,
+                        None => return unsupported("Report.ObjectId of a report whose Caption is not a literal"),
+                    },
+                    None => o.name.clone(),
+                };
+                Ok(Value::Text(format!("Report {caption}")))
+            }
+            // `CurrReport.Preview()` is false in a report run by `Report.Run` (with and without the request
+            // page) and `RunModal` (handlers/TestReportRequestPageUpdateObjectIdContracts.al:
+            // RequestPageUpdate_RefreshesTheOtherControls, ObjectIdAndPreview_WithoutTheRequestPage_AndWithRunModal).
+            // Execute, SaveAs and the request page's preview action are not pinned.
+            "Report.Preview#1" => match self.report_preview_pinned.last() {
+                Some(true) => Ok(Value::Boolean(false)),
+                _ => unsupported(
+                    "Report.Preview outside a report started by Run or RunModal (whether an Execute, a SaveAs or a request page preview is a preview is not pinned)",
+                ),
             },
             "Report.UseRequestPage#1" => {
                 let inst = self.report_instance(receiver, false)?.0;
@@ -587,8 +627,10 @@ impl Session {
         // requestpage section opens its page as well (handlers/TestReportRuntimeContracts.al:416-440).
         let shows_page = entry == Entry::Run && window;
         let enters = self.report_enter_world(schema, shows_page)?;
-        self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None))
-            .map(|_| ())
+        self.report_preview_pinned.push(entry == Entry::Run);
+        let ran = self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None));
+        self.report_preview_pinned.pop();
+        ran.map(|_| ())
     }
 
     /// Runs `body` as the platform runs a report: a run that enters no world still begins a
@@ -1173,13 +1215,7 @@ impl Session {
         // `ReportProcessingOnly`, no trigger runs and nothing is written. With the answer dropped
         // BC's behaviour is not pinned.
         if schema.report().processing_only {
-            if !result_used {
-                return unsupported(format!(
-                    "Report.SaveAs of \"{}\", which is ProcessingOnly, with the result unused (not pinned)",
-                    schema.name()
-                ));
-            }
-            self.last_error = al_builtins::native::AlError {
+            let error = al_builtins::native::AlError {
                 message: format!(
                     "Report {} is a processing-only report. Output cannot be rendered and saved to a file.",
                     self.object_id_of(schema.object as u32)
@@ -1187,6 +1223,13 @@ impl Session {
                 code: "ReportProcessingOnly".into(),
                 call_stack: String::new(),
             };
+            // The statement form raises the same error (handlers/TestReportSaveAsColumnDetailsContracts.al:
+            // ProcessingOnlyReport_StatementFormRaises, handlers/PWReportSaveAsColumns.al:
+            // ProcessingOnly_AnswerDropped_AsserterrorForm); with the answer used it is returned as false.
+            if !result_used {
+                return Err(Signal::Error(error));
+            }
+            self.last_error = error;
             return Ok(Value::Boolean(false));
         }
         if let Some(why) = schema.report().dataset_unsupported.first() {
@@ -1223,7 +1266,10 @@ impl Session {
         }
         let enters = self.report_enter_world(&schema, false)?;
         let outer = self.dataset.replace(Dataset::default());
+        self.dataset_labels(&schema);
+        self.report_preview_pinned.push(false);
         let ran = self.report_in_world(enters, |s| s.report_body(&inst, &schema, false, Some(&parameters)));
+        self.report_preview_pinned.pop();
         let written = std::mem::replace(&mut self.dataset, outer);
         match ran {
             Ok(true) => {
@@ -1243,6 +1289,10 @@ impl Session {
                 let extended = !schema.report().extensions.is_empty();
                 match (layout, extended) {
                     (ir::ReportLayout::None, _) => Err(Signal::Error(e)),
+                    // An error of a trigger reaches a SaveAs whose result is not used, also with a layout
+                    // (handlers/TestReportCurrReportLanguage.al:TestReport_SettingCurrReportLanguageToZero_IsRejectedAsInvalid:
+                    // `asserterror Probe.SaveAs(..)` on a report with an RDLC layout).
+                    (ir::ReportLayout::Rdlc, false) if !result_used => Err(Signal::Error(e)),
                     (ir::ReportLayout::Rdlc, false) => {
                         self.last_error = e;
                         Ok(Value::Boolean(false))
@@ -1256,6 +1306,21 @@ impl Session {
                 }
             }
             Err(other) => Err(other),
+        }
+    }
+
+    /// `RequestOptionsPage.Update(SaveRecord)` in a request page trigger. With `false` the controls show
+    /// the variables as they are now, which they do on every read here, so nothing is left to do
+    /// (handlers/TestReportRequestPageUpdateObjectIdContracts.al:RequestPageUpdate_RefreshesTheOtherControls:
+    /// a handler sets Source to 21 and reads Derived 42 that the trigger set before it called Update(false)).
+    /// `true` saves the record: not pinned.
+    pub(crate) fn request_page_update(&mut self, args: &[Value]) -> Result<Value, Signal> {
+        match args.first() {
+            Some(Value::Boolean(false)) => Ok(Value::Null),
+            other => unsupported(format!(
+                "RequestPage.Update with SaveRecord {} (only false is pinned; whether true saves the record is not)",
+                other.map_or("missing".to_string(), |v| v.describe())
+            )),
         }
     }
 
@@ -1357,6 +1422,33 @@ impl Session {
             &columns,
         );
         Ok(())
+    }
+
+    /// The Labels block of the top-level data items is written even when no row reaches the column
+    /// (handlers/TestReportSaveAsColumnDetailsContracts.al:LabelsAreWrittenForAnEmptyDataItem,
+    /// handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll). Items nested in another are added when a
+    /// row reaches them: whether an unreached nested item writes its labels is not pinned.
+    fn dataset_labels(&mut self, schema: &Schema) {
+        let engine = self.engine.clone();
+        for item in schema.report().items.iter().filter(|i| i.parent.is_none()) {
+            let Some(t) = item.table.and_then(|t| engine.tables.get(t)).and_then(|t| t.clone()) else {
+                continue;
+            };
+            for c in item
+                .columns
+                .iter()
+                .filter(|c| c.include_caption && c.unsupported.is_none())
+            {
+                let (Some(pos), Ok(name)) = (c.field, dataset::dataset_name(&c.name)) else {
+                    continue;
+                };
+                let label = (format!("{name}Caption"), self.field_caption(&t, pos));
+                let ds = self.dataset.as_mut().expect("a SaveAs run has a dataset");
+                if !ds.labels.contains(&label) {
+                    ds.labels.push(label);
+                }
+            }
+        }
     }
 
     /// The table id and the lower case GUID of the row `rec` stands on.
@@ -1478,14 +1570,10 @@ impl Session {
             }
             Value::Guid(_) => {
                 let g = al_builtins::format::try_format(&value, 0, 0, self).map_err(Signal::Unsupported)?;
-                let g = g.trim_matches(|ch| ch == '{' || ch == '}');
-                if g.chars().any(|ch| ch.is_ascii_alphabetic()) {
-                    return unsupported(format!(
-                        "report column {}: a Guid with hex letters in a dataset (their case is not pinned)",
-                        c.name
-                    ));
-                }
-                g.to_string()
+                // Lower case, braces dropped (handlers/TestReportSaveAsColumnDetailsContracts.al:
+                // UndefinedTimesGuidsHoursAndDecimalPlaces, handlers/PWReportSaveAsColumns.al:
+                // Undefined_TimeDateTime_SingleDigitHour_GuidWithHexLetters); the null Guid is zeros, not blank.
+                g.trim_matches(|ch| ch == '{' || ch == '}').to_ascii_lowercase()
             }
             other => {
                 return unsupported(format!(

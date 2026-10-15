@@ -56,6 +56,7 @@ fn run(only: &[u32], cache: Option<&std::path::Path>) -> CorpusRuntime {
         publisher: p.into(),
         version: "1.0.0.0".into(),
         resources: vec![],
+        include_source: false,
     };
     CorpusRuntime::try_run_suites_with(
         vec![app("main", &["base"], MAIN), app("base", &[], BASE)],
@@ -114,7 +115,12 @@ fn a_pure_test_starts_without_the_baseline() {
 fn a_test_that_reads_a_table_gets_the_baseline() {
     both(&[60102], |rt| {
         assert!(!rt.phases.baseline_skipped);
-        assert!(rt.phases.baseline_why.as_deref().is_some_and(|w| w.contains("record")));
+        assert!(
+            rt.phases
+                .baseline_why
+                .as_deref()
+                .is_some_and(|w| w.to_lowercase().contains("record"))
+        );
         assert_eq!(outcome(rt, "SeesTheInstallRow"), Outcome::Pass);
     });
 }
@@ -191,6 +197,7 @@ fn run_lazy(only: &[u32], cache: &std::path::Path, base: &str) -> (CorpusRuntime
         publisher: p.into(),
         version: "1.0.0.0".into(),
         resources: vec![],
+        include_source: false,
     };
     let loader = std::sync::Arc::new(TextLoader {
         texts: vec![base.to_string()],

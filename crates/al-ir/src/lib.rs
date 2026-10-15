@@ -73,6 +73,10 @@ pub struct SourceFile {
     /// Index into `Program::apps`.
     pub app: u32,
     pub path: String,
+    /// The text of the file, line by line, for an app whose manifest has
+    /// `resourceExposurePolicy.includeSourceInSymbolFile` (the Code Coverage table shows it); else empty.
+    #[serde(default)]
+    pub lines: Vec<String>,
 }
 
 /// "No position": a routine the compiler made up (a page expression), which has no source.
@@ -119,6 +123,10 @@ pub struct AppInfo {
     /// far as BC's behaviour goes. The app under test is not.
     #[serde(default)]
     pub dependency: bool,
+    /// The manifest says `resourceExposurePolicy.includeSourceInSymbolFile = true`: the app's source
+    /// lines are known (`SourceFile::lines`).
+    #[serde(default)]
+    pub include_source: bool,
 }
 
 /// A `.NET` type declared by a `dotnet { }` block.
@@ -146,7 +154,7 @@ pub enum DotNetOp {
     Set(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Object {
     /// `codeunit`, `table`, ...
     pub kind: String,
@@ -838,6 +846,13 @@ pub struct RelationArm {
 pub struct MetaRelationArm {
     /// Positions of the own fields the arm's conditions name.
     pub conditions: Vec<usize>,
+    /// Parallel to `conditions`: the condition is `Field = filter(...)`, not `const(...)`.
+    #[serde(default)]
+    pub filters: Vec<bool>,
+    /// Parallel to `conditions`: the Condition Value text the table lists, when it is known: the
+    /// ordinal of a `const` option member, the ordinals of a `filter(A | B)` joined by `|`.
+    #[serde(default)]
+    pub values: Vec<Option<String>>,
     /// Object index of the related table.
     pub table: usize,
     /// Position of the related field; `None`: the first primary key field.
@@ -940,6 +955,11 @@ pub struct Routine {
     /// `Empty` line); [`NO_POS`] without source.
     #[serde(default = "no_pos")]
     pub begin_pos: u32,
+    /// The nearest enclosing section of a trigger that is not at the object's own level: its keyword
+    /// in lower case and its first argument (`("action", "PageAction")`, `("dataitem", "Row")`).
+    /// BC names such a trigger in a call stack as `"<name> - <trigger>"`.
+    #[serde(default)]
+    pub container: Option<(String, String)>,
 }
 
 fn no_pos() -> u32 {
@@ -1122,6 +1142,9 @@ pub enum Expr {
     BaseInstance,
     /// `this` in a codeunit: the running instance as a Codeunit value.
     ThisInstance,
+    /// Code that lowers but refuses when it runs, with the reason (a call of a control add-in procedure:
+    /// control add-ins are not modelled).
+    Refused(String),
     /// `value is I` (`cast` false: a Boolean) or `value as I` (`cast` true: the same interface
     /// value) on an interface value. `objects` are the codeunits that implement `I`.
     InterfaceTest {
@@ -1228,6 +1251,7 @@ mod tests {
         Routine {
             name: "R".into(),
             field: None,
+            container: None,
             is_trigger: false,
             attributes: vec![],
             params: 0,
@@ -1335,6 +1359,7 @@ mod tests {
                 routines: vec![Routine {
                     name: "P".into(),
                     field: None,
+                    container: None,
                     is_trigger: false,
                     attributes: vec![Attribute {
                         name: "Test".into(),

@@ -152,6 +152,12 @@ impl Catalog {
             .unwrap_or_default()
     }
 
+    /// Whether any type of the catalog, in any version, has a method or function called `name`
+    /// (case-insensitive). A name for which this is false is a name no AL type can supply.
+    pub fn knows_name(&self, name: &str) -> bool {
+        self.signatures.iter().any(|s| s.name.eq_ignore_ascii_case(name))
+    }
+
     /// Overloads callable unqualified as `name(...)` at this catalog's runtime.
     pub fn global(&self, name: &str) -> Vec<&Signature> {
         self.globals

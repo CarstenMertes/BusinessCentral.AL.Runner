@@ -102,6 +102,44 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         {
             String::new()
         }
+        // A JSON value formats as its compact text. Pinned: an empty JsonObject is `{}` and a null token `null`
+        // (types/ProbeTypeFormsAndFilters.al:Clear_JsonTypes_GiveFreshUnassigned, BC 27.5); an object or array
+        // gives its compact text; any other value is not pinned.
+        Value::Library(name, l) if matches!(name.as_str(), "JsonObject" | "JsonArray" | "JsonValue" | "JsonToken") => {
+            let container = matches!(&*l.borrow(), crate::value::LibraryValue::Json(c)
+                if matches!(&c.node, crate::json::JsonNode::Object(k) if !k.is_empty())
+                    || matches!(&c.node, crate::json::JsonNode::Array(_)));
+            if container {
+                let mut out = String::new();
+                crate::json::write_text(l, &mut out)
+                    .map_err(|_| "Format of a JSON value the writer refuses".to_string())?;
+                out
+            } else {
+                match &*l.borrow() {
+                    crate::value::LibraryValue::Json(c) => match &c.node {
+                        crate::json::JsonNode::Object(k) if k.is_empty() => "{}".to_string(),
+                        // {"a":1} formats as `{"a":1}` (streams/ProbeJsonAndInStreamBytes.al:ReadFrom_InStream_WithBomAndWithout).
+                        crate::json::JsonNode::Object(_) | crate::json::JsonNode::Array(_) => String::new(),
+                        crate::json::JsonNode::Scalar(crate::json::Scalar::Null) => "null".to_string(),
+                        _ => {
+                            return Err(format!(
+                                "Format of {name} with content (standard format {standard}) is not pinned yet"
+                            )
+                            .into());
+                        }
+                    },
+                    crate::value::LibraryValue::Empty if name == "JsonObject" => "{}".to_string(),
+                    crate::value::LibraryValue::Empty if matches!(name.as_str(), "JsonValue" | "JsonToken") => {
+                        "null".to_string()
+                    }
+                    _ => {
+                        return Err(
+                            format!("Format of a {name} (standard format {standard}) is not pinned yet").into(),
+                        );
+                    }
+                }
+            }
+        }
         // A WebServiceActionContext has no text form (session/TestWebServiceActionContext.al:615-650).
         Value::Library(name, _) if name == "WebServiceActionContext" => String::new(),
         // A RecordId reads `Table: key1,key2` (corpus record/TestRecordRecordId.al:42-56 only needs

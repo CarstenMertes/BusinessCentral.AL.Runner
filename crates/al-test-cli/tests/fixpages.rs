@@ -89,6 +89,7 @@ page 64016 "FP Plain List"
     actions { area(Processing) { action(SelectionFilter) { trigger OnAction() var Selected: Record "FP Row"; Log: Codeunit "FP Log"; begin
         CurrPage.SetSelectionFilter(Selected); Log.Add('filters=[' + Selected.GetFilters() + '] count=' + Format(Selected.Count())); end; } } }
 }
+report 64021 "FP Captioned" { Caption = 'FP Caption'; ProcessingOnly = true; UseRequestPage = false; }
 report 64020 "FP Report"
 {
     ProcessingOnly = true; UseRequestPage = false;
@@ -259,6 +260,18 @@ fn set_selection_filter_filters_to_the_row_the_list_stands_on() {
         [Test] procedure Selection() var L: TestPage \"FP Plain List\"; Log: Codeunit \"FP Log\"; begin Seed();
           L.OpenView(); L.GoToKey(2); L.SelectionFilter.Invoke();
           Check('filters=[No.: 2] count=1;', Log.Take()); L.Close(); end;"
+    ));
+}
+
+// handlers/PWRefusedBuiltins.al:78-107 (BC 27.5): Report.ObjectId(false) is `Report <id>`, ObjectId(true) and ObjectId()
+// `Report <Caption>`, the report's name when it has no Caption.
+#[test]
+fn report_object_id_reads_the_id_or_the_caption() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] procedure ObjectId() var A: Report \"FP Captioned\"; B: Report \"FP Report\"; begin
+          Check('Report 64021', A.ObjectId(false)); Check('Report FP Caption', A.ObjectId(true)); Check('Report FP Caption', A.ObjectId());
+          Check('Report 64020', B.ObjectId(false)); Check('Report FP Report', B.ObjectId(true)); end;"
     ));
 }
 

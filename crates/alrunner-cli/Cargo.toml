@@ -1,9 +1,10 @@
 [package]
 name = "alrunner-cli"
-version = "0.1.0"
+version.workspace = true
 edition.workspace = true
 license.workspace = true
 rust-version.workspace = true
+build = "build.rs"
 description = "alrunner: the user command line of AL Runner v3 (ADR-016)"
 
 [[bin]]

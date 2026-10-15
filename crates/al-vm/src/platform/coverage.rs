@@ -25,10 +25,8 @@
 //!   "source cannot be viewed" text; the `begin` and `end` lines are `Empty` rows; the status is
 //!   Covered, Not Covered or Non Applicable (codeunit/TestCodeCoverageLineTextContracts.al).
 //!
-//! Not pinned, and set to a stated default (docs/probes-needed.md, "Code coverage rows"): which
-//! other source lines have a row, `Line` of an app that shows its source, the `Method Id` column,
-//! the hits of a `Trigger/Function` row, whether an object that was never entered while recording
-//! has rows.
+//! Not pinned, and set to a stated default (docs/probes-needed.md, "Code coverage rows"): `Line` of an
+//! app that shows its source, the `Method Id` column, the hits of a `Trigger/Function` row.
 
 use crate::Session;
 use al_builtins::filter::FieldFilter;
@@ -81,21 +79,39 @@ impl Session {
     }
 
     /// A routine starts while recording. Returns what to restore when it ends, if it started a test.
+    ///
+    /// Only a `[Test]` procedure that AL code calls while no recorded test runs is noted as a test
+    /// (codeunit/TestCodeCoveragePerTest.al:RecordedTest_RunsTripled is called directly). A test the
+    /// runner starts while recording is on (codeunit/PWCodeCoverageRows.al:Outlives_2_...) is not, nor is
+    /// a test procedure that runs inside a recorded one (NestedTest_TestsRunAndLookupRows: one Tests
+    /// Run row for the outer test, no Test Lookup row for the inner `[Test]` procedure).
     pub(crate) fn coverage_enter(&mut self, object: usize, routine: usize) -> Option<TestScope> {
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
+        let from_al = !self.frames.is_empty();
         let rec = &mut self.recorder;
         rec.entered.insert(object);
         rec.dirty = true;
         if r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test")) {
-            rec.tests.push((object, routine));
-            let previous = rec.current_test.replace(rec.tests.len() as i32);
-            return Some(TestScope(previous));
+            if from_al && rec.current_test.is_none() {
+                rec.tests.push((object, routine));
+                let previous = rec.current_test.replace(rec.tests.len() as i32);
+                return Some(TestScope(previous));
+            }
+            return None;
         }
         if let Some(test) = rec.current_test {
             rec.lookups.insert((test, object, routine));
         }
         None
+    }
+
+    /// A rollback took the rows written by the last read: write what was recorded again at the next read.
+    pub(crate) fn coverage_rolled_back(&mut self) {
+        let rec = &mut self.recorder;
+        if !rec.entered.is_empty() || !rec.tests.is_empty() {
+            rec.dirty = true;
+        }
     }
 
     pub(crate) fn coverage_leave(&mut self, scope: TestScope) {
@@ -187,81 +203,91 @@ impl Session {
         }
     }
 
+    /// The Code Coverage rows of every object a routine of which ran while recording
+    /// (codeunit/PWCodeCoverageRows.al:Rows_AllLinesOfSmallCodeunit_OneProcedureRun and the `Hits_*` tests,
+    /// BC 27.5; onprem coverage/TestCodeCoverageSourceLinesContracts.al for the lines inside a routine):
+    /// - one `Object` row at line 0, status Non Applicable;
+    /// - for each routine, one row for every line from its declaration to its `end`: the declaration is
+    ///   `Trigger/Function`, a line where a statement starts is `Code`, every other line (`var`, a variable,
+    ///   `begin`, a blank line, a comment, `end`) is `Empty`. Nothing outside the routines has a row;
+    /// - the hits of a `Code` line are the largest count of the statements that start on it, its status is
+    ///   Covered when all of them ran, Partially Covered when some did and Not Covered when none did.
     fn coverage_rows(&self, t: &TableDef) -> Vec<Row> {
         let program = &self.engine.program;
         let rec = &self.recorder;
-        // Per object: the declaration lines, and the statement lines with their hits.
-        let mut headers: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
-        let mut header_ids: BTreeSet<u32> = BTreeSet::new();
-        // The `begin` and `end` lines of a routine are `Empty` rows (codeunit/TestCodeCoverageLineTextContracts.al:
-        // 26 and 30 of the probe procedure).
-        let mut frame_lines: BTreeMap<usize, BTreeSet<u32>> = BTreeMap::new();
-        for &oi in &rec.entered {
-            for r in &program.objects[oi].routines {
-                if let Some(p) = program.pos(r.pos) {
-                    headers.entry(oi).or_default().insert(p.line);
-                    header_ids.insert(r.pos);
-                    for id in [r.begin_pos, r.end_pos] {
-                        if let Some(p) = program.pos(id) {
-                            frame_lines.entry(oi).or_default().insert(p.line);
-                            header_ids.insert(id);
-                        }
-                    }
-                }
-            }
-        }
-        let mut code: BTreeMap<(usize, u32), u32> = BTreeMap::new();
-        for (id, p) in program.positions.iter().enumerate() {
-            let oi = p.object as usize;
-            if !rec.entered.contains(&oi) || header_ids.contains(&(id as u32)) {
-                continue;
-            }
-            let hits = rec.hits.get(id).copied().unwrap_or(0);
-            let e = code.entry((oi, p.line)).or_insert(0);
-            *e = (*e).max(hits);
-        }
         let mut out = Vec::new();
-        let mut row = |oi: usize, line: u32, kind: &str, hits: u32| {
+        let mut row = |oi: usize, line: u32, text: Option<&str>, kind: &str, hits: u32, status: &str| {
             let o = &program.objects[oi];
             let mut r = super::blank(t);
             r[super::pos(t, 1)] = Self::option_member(t, 1, &o.kind);
             r[super::pos(t, 2)] = Value::Integer(o.id.unwrap_or(0) as i32);
             r[super::pos(t, 3)] = Value::Integer(line as i32);
             r[super::pos(t, 4)] = Self::option_member(t, 4, kind);
-            r[super::pos(t, 5)] = Value::Text(NO_SOURCE.into());
+            r[super::pos(t, 5)] = Value::Text(text.unwrap_or(NO_SOURCE).into());
             r[super::pos(t, 6)] = Value::Integer(hits as i32);
-            let status = match (kind, hits) {
-                ("Code", 0) => "NotCovered",
-                ("Code", _) => "Covered",
-                _ => "NonApplicable",
-            };
             r[super::pos(t, 7)] = Self::option_member(t, 7, status);
             out.push(r);
         };
-        for (oi, lines) in &headers {
-            if program.objects[*oi].id.is_none() {
+        for &oi in &rec.entered {
+            let o = &program.objects[oi];
+            if o.id.is_none() {
                 continue;
             }
-            for &line in lines {
-                row(*oi, line, "Trigger/Function", 0);
+            // The positions that are no statement: the declaration, `begin` and `end` of each routine.
+            let mut frame: BTreeSet<u32> = BTreeSet::new();
+            for r in &o.routines {
+                frame.extend([r.pos, r.begin_pos, r.end_pos]);
             }
-        }
-        for (oi, lines) in &frame_lines {
-            if program.objects[*oi].id.is_none() {
-                continue;
+            // Per line: (statements, statements that ran, largest count).
+            let mut statements: BTreeMap<u32, (u32, u32, u32)> = BTreeMap::new();
+            for (id, p) in program.positions.iter().enumerate() {
+                if p.object as usize != oi || frame.contains(&(id as u32)) {
+                    continue;
+                }
+                let hits = rec.hits.get(id).copied().unwrap_or(0);
+                let e = statements.entry(p.line).or_default();
+                e.0 += 1;
+                e.1 += u32::from(hits > 0);
+                e.2 = e.2.max(hits);
             }
-            for &line in lines {
-                if !headers.get(oi).is_some_and(|h| h.contains(&line)) && !code.contains_key(&(*oi, line)) {
-                    row(*oi, line, "Empty", 0);
+            let mut headers: BTreeSet<u32> = BTreeSet::new();
+            let mut lines: BTreeSet<u32> = BTreeSet::new();
+            for r in &o.routines {
+                let Some(first) = program.pos(r.pos).map(|p| p.line) else {
+                    continue;
+                };
+                let last = program.pos(r.end_pos).map_or(first, |p| p.line).max(first);
+                headers.insert(first);
+                lines.extend(first..=last);
+            }
+            // An app that includes its source in the symbols shows the line as written
+            // (onprem coverage/TestCodeCoverageSourceLinesContracts.al:60-74); any other shows the platform's text.
+            let source: Option<&Vec<String>> = o
+                .routines
+                .iter()
+                .find_map(|r| program.pos(r.pos))
+                .and_then(|p| program.sources.get(p.file as usize))
+                .filter(|sf| {
+                    program.apps.get(sf.app as usize).is_some_and(|a| a.include_source) && !sf.lines.is_empty()
+                })
+                .map(|sf| &sf.lines);
+            let text = |line: u32| source.map(|l| l.get(line as usize - 1).map_or("", String::as_str));
+            row(oi, 0, None, "Object", 0, "NonApplicable");
+            for &line in &lines {
+                let text = text(line);
+                match statements.get(&line) {
+                    _ if headers.contains(&line) => row(oi, line, text, "Trigger/Function", 0, "NonApplicable"),
+                    Some(&(total, ran, max)) => {
+                        let status = match (ran, total) {
+                            (0, _) => "NotCovered",
+                            (r, t) if r == t => "Covered",
+                            _ => "PartiallyCovered",
+                        };
+                        row(oi, line, text, "Code", max, status)
+                    }
+                    None => row(oi, line, text, "Empty", 0, "NonApplicable"),
                 }
             }
-        }
-        for ((oi, line), hits) in &code {
-            // A line that holds a declaration is that row, not a statement row.
-            if program.objects[*oi].id.is_none() || headers.get(oi).is_some_and(|h| h.contains(line)) {
-                continue;
-            }
-            row(*oi, *line, "Code", *hits);
         }
         out
     }

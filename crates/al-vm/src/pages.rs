@@ -12,6 +12,7 @@ use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::pagefmt::{self, Blank, ControlFormat};
 use al_builtins::value::{ControlRef, ControlTarget, Cursor, PageMode, PageState, RecordState, RtType, Value};
+use al_data::Store as _;
 use al_ir as ir;
 use rust_decimal::prelude::ToPrimitive;
 use std::cell::RefCell;
@@ -1482,9 +1483,26 @@ impl Session {
     /// the new-row line, else nothing. The expressions of the controls are evaluated for
     /// an empty view too (corpus autoformat/TestAutoFormatExpressionTiming.al:5-12).
     fn page_first_row(&mut self, st: &St) -> Result<(), Signal> {
-        if self.nav_find(st, "-")? {
+        // A page that serves its rows from OnFindRecord is asked `=><` when it opens (corpus
+        // pageext/PCCurrRecordReads.al:FindList_OnFindRecordAndOnNextRecord, `open`).
+        // That is pinned for the default order; a page with a SourceTableView (a descending order
+        // among them) keeps the `-` assumed so far, as the client's blank key would sit at the other end.
+        let object = st.borrow().object as usize;
+        let has_view = self.engine.program.objects[object]
+            .properties
+            .iter()
+            .any(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"));
+        let which = if self.declares(st, "onfindrecord") && !has_view {
+            "=><"
+        } else {
+            "-"
+        };
+        if self.nav_find(st, which)? {
             st.borrow_mut().cursor = Cursor::Row;
-            self.arrive(st)?;
+            st.borrow_mut().landing_first = true;
+            let r = self.arrive(st);
+            st.borrow_mut().landing_first = false;
+            r?;
             // The window starts at the first row of the view.
             let from_start = self.is_list(st);
             st.borrow_mut().window_from_start = from_start;
@@ -1890,6 +1908,8 @@ impl Session {
         let start = self.row_key(&rec)?;
         let mut keys = Vec::new();
         let mut walked = 0;
+        let mut end_reached = false;
+        let opening = std::mem::take(&mut st.borrow_mut().landing_first);
         for i in 0..Self::WINDOW {
             let key = self.row_key(&rec)?;
             let stored = rec.borrow().fields.clone();
@@ -1903,9 +1923,36 @@ impl Session {
                 break;
             }
             if !self.nav_next(st, 1)? {
+                end_reached = true;
                 break;
             }
             walked += 1;
+        }
+        // A view that ends inside the window: the client puts its first row back without asking
+        // the page, reads it again, then asks OnNextRecord(-1) and OnFindRecord(`=`) and reads it
+        // once more (corpus pageext/PCCurrRecordReads.al:List_ReadsAfterEachAction and
+        // FindList_OnFindRecordAndOnNextRecord, `open` of a list of 3 rows: five reads). Only the
+        // count is pinned, for a table of 3 rows.
+        let find_page = self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord");
+        let end_reached = end_reached && opening;
+        if end_reached && find_page && self.declares(st, "onaftergetrecord") {
+            if let Some(first) = keys.first() {
+                rec.borrow_mut().fields = first.stored.clone();
+            }
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            if self.declares(st, "onnextrecord") {
+                self.nav_next(st, -1)?;
+            }
+            if self.declares(st, "onfindrecord") {
+                self.nav_find(st, "=")?;
+            }
+            if let Some(row) = keys.first() {
+                rec.borrow_mut().fields = row.shown.clone();
+                self.set_xrec_fields(st, row.stored.clone());
+            }
+            st.borrow_mut().window = keys;
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+            return Ok(());
         }
         // Back on the row the cursor is on. A page that serves its rows from triggers steps back
         // through them: the row is not necessarily in the table.
@@ -1929,6 +1976,9 @@ impl Session {
         // raises OnAfterGetRecord 21 times when it opens, rows 1 to 20 and then row 1 again
         // (corpus handlers/TestPageRuntimeContracts.al:121-136 TestPage_List_OpenReads21Rows).
         self.page_trigger(st, "onaftergetrecord", vec![])?;
+        if end_reached {
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+        }
         Ok(())
     }
 
@@ -2130,7 +2180,70 @@ impl Session {
         Ok(false)
     }
 
+    /// A move of a list whose whole view the client has read (fewer rows than a window) is served
+    /// from the client's rows: the new row is read, a page with OnFindRecord is asked `=` for it,
+    /// the row is read again, and OnAfterGetCurrRecord ends the move; `Last` on a page without
+    /// OnFindRecord starts with an OnAfterGetCurrRecord (corpus pageext/PCCurrRecordReads.al:
+    /// List_ReadsAfterEachAction `next`, `last`, `first`; FindList_OnFindRecordAndOnNextRecord
+    /// `next`, `last`, `previous`, `first`, pinned for a table of 3 rows). `None` when the move is not
+    /// one of those.
+    fn move_in_client_rows(&mut self, st: &St, how: &str) -> Result<Option<bool>, Signal> {
+        let find_page = self.declares(st, "onfindrecord");
+        if !self.declares(st, "onaftergetrecord")
+            || !self.is_list(st)
+            || st.borrow().cursor != Cursor::Row
+            || st.borrow().draft
+            || st.borrow().stale
+            || !st.borrow().window_from_start
+            || st.borrow().window.is_empty()
+            || st.borrow().window.len() >= Self::WINDOW
+        {
+            return Ok(None);
+        }
+        let rec = self.page_rec(st);
+        let key = self.row_key(&rec)?;
+        let window = st.borrow().window.clone();
+        let Some(at) = window.iter().position(|w| Self::same_key(&w.key, &key)) else {
+            return Ok(None);
+        };
+        let target = match how {
+            "First" => 0,
+            "Last" => window.len() - 1,
+            "Next" if at + 1 < window.len() => at + 1,
+            "Previous" if at > 0 => at - 1,
+            _ => return Ok(None),
+        };
+        if how == "Last" && !find_page {
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        }
+        self.read_client_row(st, target)?;
+        Ok(Some(true))
+    }
+
+    /// The reads of a move onto row `target` of the rows the client holds (see `move_in_client_rows`).
+    fn read_client_row(&mut self, st: &St, target: usize) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        let stored = st.borrow().window[target].stored.clone();
+        rec.borrow_mut().fields = stored;
+        self.populate_current(st)?;
+        if self.declares(st, "onfindrecord") {
+            self.nav_find(st, "=")?;
+        }
+        self.populate_current(st)?;
+        let shown = rec.borrow().fields.clone();
+        if let Some(w) = st.borrow_mut().window.get_mut(target) {
+            w.shown = shown;
+        }
+        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        Ok(())
+    }
+
     fn page_move_inner(&mut self, st: &St, how: &str) -> Result<bool, Signal> {
+        if let Some(r) = self.move_in_client_rows(st, how)? {
+            return Ok(r);
+        }
         let cursor = st.borrow().cursor;
         let landed = match how {
             "First" => self.nav_find(st, "-")?,
@@ -2200,6 +2313,27 @@ impl Session {
                 None => Ok(self.default_value(&table.fields[f].ty)),
             })
             .collect::<Result<_, _>>()?;
+        // A list that serves its rows from OnFindRecord and holds its whole view goes to a row it
+        // holds as a move does (corpus pageext/PCCurrRecordReads.al:FindList_OnFindRecordAndOnNextRecord
+        // `gotokey_2`, a table of 3 rows).
+        if self.declares(st, "onfindrecord")
+            && self.declares(st, "onaftergetrecord")
+            && self.is_list(st)
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && !st.borrow().stale
+        {
+            let held = {
+                let s = st.borrow();
+                (s.window_from_start && s.window.len() < Self::WINDOW)
+                    .then(|| s.window.iter().position(|w| Self::same_key(&w.key, &want)))
+                    .flatten()
+            };
+            if let Some(at) = held {
+                self.read_client_row(st, at)?;
+                return Ok(Value::Boolean(true));
+            }
+        }
         let before_fields = rec.borrow().fields.clone();
         let (before_cursor, before_draft) = (st.borrow().cursor, st.borrow().draft);
         let mut at = self.nav_find(st, "-")?;
@@ -3615,6 +3749,26 @@ impl Session {
             self.run_refresh(st)?;
             st.borrow_mut().refresh = false;
         }
+        // The client reads the row it stands on before an action runs (corpus
+        // pageext/PCCurrRecordReads.al:Card_ReadsAfterEachAction and List_ReadsAfterEachAction: one
+        // OnAfterGetRecord before the action's own trigger, only when the row is not dirty, which has
+        // its re-read above).
+        let reads_rows = !was_dirty
+            && self.declares(st, "onaftergetrecord")
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord")
+            && self.has_source(st)
+            && st.borrow().open
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && page_of(&engine, st).controls[idx].run_object.is_none()
+            && page_of(&engine, st).controls[idx].trigger("onaction").is_some();
+        if reads_rows {
+            let rec = self.page_rec(st);
+            if self.stored_row(&rec)?.is_some() {
+                self.populate_current(st)?;
+            }
+        }
         // RunObject wins over OnAction when an action declares both (handlers/TestPageRunObjectContracts.al:371-390).
         if page_of(&engine, st).controls[idx].run_object.is_some() {
             return self.run_object_action(st, idx);
@@ -3644,11 +3798,51 @@ impl Session {
             // after the extension's action and after the base's). A page that serves its rows from
             // OnFindRecord is left as `CurrPage.Update` alone re-reads it (re-anchoring not pinned).
             if !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+                // The reads the page does when it opens come first, then the refresh's own: a card
+                // reads its row twice, a list the rows of its window as it opens plus one (corpus
+                // pageext/PCCurrRecordReads.al:Card_ReadsAfterEachAction, List_ReadsAfterEachAction,
+                // pinned for a card and a list of 3 rows with the cursor on the first).
+                if reads_rows && !st.borrow().refresh {
+                    self.read_page_again(st)?;
+                }
                 st.borrow_mut().refresh = true;
             }
             self.run_refresh(st)?;
         }
         Ok(Value::Null)
+    }
+
+    /// The reads of an action that did not call `CurrPage.Update`, before the refresh's own (see
+    /// `action_invoke`).
+    fn read_page_again(&mut self, st: &St) -> Result<(), Signal> {
+        if !st.borrow().open || st.borrow().cursor != Cursor::Row || st.borrow().draft {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        if self.stored_row(&rec)?.is_none() {
+            return Ok(());
+        }
+        if !self.is_list(st) {
+            return self.populate_current(st);
+        }
+        let key = self.row_key(&rec)?;
+        let first = {
+            let s = st.borrow();
+            s.window_from_start
+                && s.window.len() < Self::WINDOW
+                && s.window.first().is_some_and(|w| Self::same_key(&w.key, &key))
+        };
+        // With the cursor off the first row, or more rows than a window, the reads are not pinned: the
+        // refresh alone stays (docs/probes-needed.md).
+        if !first {
+            return Ok(());
+        }
+        st.borrow_mut().landing_first = true;
+        let r = self.populate_window(st);
+        st.borrow_mut().landing_first = false;
+        r?;
+        st.borrow_mut().window_from_start = true;
+        Ok(())
     }
 
     /// The re-read `CurrPage.Update` asked for, once the call that made it has returned: the
@@ -3957,7 +4151,23 @@ impl Session {
                 },
                 None => None,
             };
-            f.decimal_places = expr.and_then(|e| pagefmt::parse_precision(&e));
+            f.decimal_places = expr.as_deref().and_then(pagefmt::parse_precision);
+            // AutoFormatType 1, 2, 4 and 5 (on the control, else on the table field): the places of an
+            // amount or a unit amount, from the currency the expression names
+            // (autoformat/PWAutoFormatTypes.al, see `auto_format_places`).
+            if f.decimal_places.is_none() {
+                let kind = lit("autoformattype").or_else(|| from_field("autoformattype"));
+                if let Some(kind) = kind
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|k| matches!(*k, "1" | "2" | "4" | "5"))
+                {
+                    let expr = expr
+                        .or_else(|| from_field("autoformatexpression").map(|e| unquote(&e)))
+                        .unwrap_or_default();
+                    f.decimal_places = Some(self.auto_format_places(kind, &expr)?);
+                }
+            }
         }
         f.blank_zero = lit("blankzero")
             .or_else(|| from_field("blankzero"))
@@ -3980,6 +4190,65 @@ impl Session {
         Ok(f)
     }
 
+    /// The places a decimal control with `AutoFormatType` 1, 2, 4 or 5 shows (corpus autoformat/PWAutoFormatTypes.al,
+    /// BC 27.5; the setup does not matter in any of the three setups probed, so General Ledger Setup is not read):
+    /// 1 and 4 are amounts, 2 and 5 unit amounts. A blank expression gives 2:2 for an amount and 2:5 for a unit
+    /// amount (:98-175). A currency code that exists gives the currency's "Amount Decimal Places" or
+    /// "Unit-Amount Decimal Places" (:177-195), both empty gives 2:2 (:197-217), and a code that is no
+    /// currency gives 2:5 (:263-290). A currency with only one of the two places empty is not pinned.
+    fn auto_format_places(&mut self, kind: &str, expr: &str) -> Result<(u32, u32), Signal> {
+        let unit = matches!(kind, "2" | "5");
+        if expr.trim().is_empty() {
+            return Ok(if unit { (2, 5) } else { (2, 2) });
+        }
+        let engine = self.engine();
+        let Some(oi) = engine
+            .program
+            .objects
+            .iter()
+            .position(|o| o.id == Some(4) && o.table.is_some())
+        else {
+            return unsupported(format!(
+                "AutoFormatType {kind} with the currency `{expr}`: the Currency table is not in the program (not pinned)"
+            ));
+        };
+        let Some(t) = engine.tables[oi].clone() else {
+            return unsupported("AutoFormatType with a currency: the Currency table did not compile");
+        };
+        let field = |name: &str| t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(name));
+        let (Some(amount_at), Some(unit_at)) = (field("Amount Decimal Places"), field("Unit-Amount Decimal Places"))
+        else {
+            return unsupported("AutoFormatType with a currency: the Currency table has no decimal places fields");
+        };
+        let Ok(key) = ops::convert(Value::Text(expr.to_string()), &t.fields[0].ty) else {
+            return Ok((2, 5));
+        };
+        let row = self
+            .store
+            .get(&self.cx, &t, &[key])
+            .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
+        let Some(row) = row else {
+            return Ok((2, 5));
+        };
+        let text = |at: usize| {
+            al_builtins::native::text_of(&row[at])
+                .unwrap_or_default()
+                .trim()
+                .to_string()
+        };
+        let (amount, unit_places) = (text(amount_at), text(unit_at));
+        if amount.is_empty() && unit_places.is_empty() {
+            return Ok((2, 2));
+        }
+        let wanted = if unit { unit_places } else { amount };
+        match pagefmt::parse_decimal_places(&wanted) {
+            Some(p) if !wanted.is_empty() => Ok(p),
+            _ => unsupported(format!(
+                "AutoFormatType {kind} with the currency `{expr}`, whose places are `{wanted}` (one of the two empty is not pinned)"
+            )),
+        }
+    }
+
     fn control_text(&mut self, st: &St, idx: usize, v: &Value) -> Result<String, Signal> {
         // A Media control shows the id of its media, a MediaSet control the id of the first media
         // of its set; lowercase, no braces, empty when there is none
@@ -3988,7 +4257,7 @@ impl Session {
             let shown = if n.eq_ignore_ascii_case("Media") {
                 Some(*id)
             } else if n.eq_ignore_ascii_case("MediaSet") {
-                self.media.sets.get(id).and_then(|m| m.first().copied())
+                self.media.sets.borrow().get(id).and_then(|m| m.first().copied())
             } else {
                 None
             };
@@ -4005,29 +4274,6 @@ impl Session {
             return unsupported(format!("control text of a {name} value"));
         }
         let f = self.control_format(st, idx)?;
-        // The unit amount formats (AutoFormatType 2 and 5, enum "Auto Format" UnitAmountFormat and
-        // UnitAmountFormatNoSymbol) take their decimals from General Ledger Setup (default 2:5) or the
-        // currency, through Base Application's `Amount AutoFormat` codeunit, which the runtime does not
-        // call. A value with more than two decimals would be rounded to two here, which BC does not do
-        // in the default setup (Tests-ERM codeunit 134833): refused (docs/probes-needed.md).
-        if let Value::Decimal(d) = v {
-            if f.decimal_places.is_none() && d.scale() > 2 && d.normalize().scale() > 2 {
-                let kind = match self.control_field(st, idx) {
-                    Some(fld) => fld
-                        .properties
-                        .iter()
-                        .find(|(k, _)| k.eq_ignore_ascii_case("AutoFormatType"))
-                        .map(|(_, v)| v.trim().to_string()),
-                    None => None,
-                };
-                if matches!(kind.as_deref(), Some("2" | "5")) {
-                    return unsupported(format!(
-                        "a control with AutoFormatType = {}: its decimals come from General Ledger Setup or the currency, and the value has more than two; not pinned (docs/probes-needed.md)",
-                        kind.unwrap_or_default()
-                    ));
-                }
-            }
-        }
         let engine = self.engine();
         let caption = move |id: u32, ordinal: i32| {
             let o = &engine.program.objects[id as usize];

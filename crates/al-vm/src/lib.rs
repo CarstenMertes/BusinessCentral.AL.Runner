@@ -218,8 +218,6 @@ pub struct Session {
     guid_seed: i32,
     /// Ids of the notifications a `[SendNotificationHandler]` took in this session.
     pub(crate) sent_notifications: Vec<[u8; 16]>,
-    /// Ids of the notifications `Recall` has taken back.
-    pub(crate) recalled_notifications: Vec<[u8; 16]>,
     /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
     pub(crate) rng: al_host::random::NetRandom,
     /// How many `Randomize()` calls without a seed the session has seen.
@@ -299,9 +297,10 @@ pub struct Session {
     /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
     /// method starts at 0, UpdateNoLocks (`start_test_method`).
     pub(crate) transaction_type: i32,
-    /// A write has been called since the test method started: the transaction has started, so
-    /// `CurrentTransactionType` reads Update and refuses a set to another type.
-    pub(crate) tx_wrote: bool,
+    /// How far the transaction has started since the test method began or the last `Commit()`:
+    /// `TX_FRESH` (nothing yet), `TX_READ` (a read call) or `TX_WRITE` (a write call, also a DeleteAll that
+    /// finds no row). `CurrentTransactionType` depends on it (`sessionops.rs`).
+    pub(crate) tx_phase: u8,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
@@ -339,6 +338,9 @@ pub struct Session {
     /// none (al-vm pages/runobject.rs).
     pub(crate) lenient_bind: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// For each report body running, innermost last: whether `CurrReport.Preview()` is pinned to be
+    /// false for it (it was started by `Run` or `RunModal`).
+    pub(crate) report_preview_pinned: Vec<bool>,
     /// The dataset a `Report.SaveAs(.., Xml, ..)` run is writing (al-vm reports.rs).
     pub(crate) dataset: Option<crate::dataset::Dataset>,
 }
@@ -370,10 +372,12 @@ impl Session {
         let random_seed = host.random_seed;
         let ident = platform::Ident::of(&host);
         let event_stats = Rc::new(platform::EventStats::default());
+        let media = al_builtins::media::MediaStore::default();
         let mut store = al_data::memory::MemStore::with_virtual_tables(Rc::new(platform::Providers::new(
             &engine,
             ident.clone(),
             event_stats.clone(),
+            media.clone(),
         )));
         if let Some(td) = &engine.test_data {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
@@ -399,7 +403,6 @@ impl Session {
             next_guid: 0,
             guid_seed: random_seed,
             sent_notifications: Vec::new(),
-            recalled_notifications: Vec::new(),
             rng: al_host::random::NetRandom::new(random_seed),
             unseeded_randomizes: 0,
             next_row_version: 0,
@@ -446,8 +449,8 @@ impl Session {
             curr_field_no: Vec::new(),
             lock_timeout: true,
             transaction_type: 0,
-            tx_wrote: false,
-            media: Default::default(),
+            tx_phase: crate::transactions::TX_FRESH,
+            media,
             dotnet: Default::default(),
             application_areas: String::new(),
             report_init_depth: None,
@@ -455,6 +458,7 @@ impl Session {
             report_trigger: None,
             report_flow: None,
             report_executed: Vec::new(),
+            report_preview_pinned: Vec::new(),
             dataset: None,
             lenient_bind: false,
         };
@@ -467,7 +471,7 @@ impl Session {
     pub fn start_test_method(&mut self) {
         self.application_areas.clear();
         self.transaction_type = 0;
-        self.tx_wrote = false;
+        self.tx_phase = crate::transactions::TX_FRESH;
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).
@@ -486,6 +490,10 @@ impl Session {
     pub fn rollback_transaction(&mut self) {
         self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
+        // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
+        // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
+        // recorded is written into them again at the next read.
+        self.coverage_rolled_back();
         for (slot, value) in std::mem::take(&mut self.truncate_undo) {
             self.autoinc.insert(slot, value);
         }
@@ -723,24 +731,14 @@ impl Session {
         }
         for (i, a) in args.into_iter().enumerate().take(r.params) {
             locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {
-                // A temporary record with rows handed to a Variant parameter: a by-value copy is an empty
-                // buffer (record/TestTempTableContracts.al:141-148), but Microsoft's Assert.RecordCount
-                // counts the caller's rows through a Variant, so the Variant is not a plain by-value copy.
-                // What it is is not pinned by the corpus (docs/probes-needed.md).
-                (Value::Record(rc), false)
-                    if matches!(r.locals[i].ty, RtType::Variant) && {
-                        let s = rc.borrow();
-                        s.temporary
-                            && s.temp_id
-                                .as_ref()
-                                .and_then(|id| self.temps.get(&id.id()))
-                                .is_some_and(|store| store.has_rows(s.table))
-                    } =>
-                {
-                    return Err(Signal::Unsupported(
-                        "a temporary record with rows handed to a Variant parameter (whether the Variant shares its table is not pinned)"
-                            .into(),
-                    ));
+                // A temporary record handed to a Variant parameter keeps its table: the callee counts the
+                // caller's rows through the Variant, though a by-value copy is an empty buffer
+                // (recordref/PWRecordMisc.al:TempRecord_PassedToVariantParameter_ByValue, record/TestTempTableContracts.al:141-148).
+                // Assigning the record to a Variant variable is a by-value copy
+                // (:TempRecord_AssignedToVariantVariable).
+                (Value::Record(rc), false) if matches!(r.locals[i].ty, RtType::Variant) && rc.borrow().temporary => {
+                    let st = rc.borrow().clone();
+                    Value::Record(Rc::new(RefCell::new(st)))
                 }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
@@ -1143,6 +1141,7 @@ impl Session {
             }
             E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
             E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
+            E::Refused(why) => Err(Signal::Unsupported(why.clone())),
             E::InterfaceCall {
                 receiver,
                 targets,
@@ -1269,6 +1268,7 @@ impl Session {
                     || id.starts_with("Xmlport.")
                     || id.starts_with("Report.")
                     || id.starts_with("FilterPageBuilder.")
+                    || id == "RequestPage.Update#1"
                     || id == "Database.IsInWriteTransaction#1"
                 {
                     let recv = match receiver.as_deref() {
@@ -1288,6 +1288,9 @@ impl Session {
                     }
                     if id.starts_with("Xmlport.") {
                         return self.xmlport_builtin(id, recv, &values, *ret_used);
+                    }
+                    if id == "RequestPage.Update#1" {
+                        return self.request_page_update(&values);
                     }
                     if id.starts_with("Report.") {
                         self.ret_used = *ret_used;
@@ -1319,11 +1322,36 @@ impl Session {
                 }
                 for (a, v) in args.iter().zip(values) {
                     if let ir::Arg::Ref(p) = a {
+                        let v = if id.starts_with("InStream.Read") {
+                            self.fit_stream_read(p, v, f)?
+                        } else {
+                            v
+                        };
                         self.write(p, v, f)?;
                     }
                 }
                 Ok(ret)
             }
+        }
+    }
+
+    /// What `InStream.Read` stores in a Text or Code variable: a Code takes the characters
+    /// upper-cased and cut to its length without an error (streams/ProbeJsonAndInStreamBytes.al:
+    /// InStreamRead_Text_ReturnValueIsLength reads `toolongvalueforcode` into a Code[10] and gets
+    /// `TOOLONGVAL`). A Text that is too short for the characters is not pinned.
+    fn fit_stream_read(&mut self, p: &ir::Place, v: Value, f: &mut Frame) -> Result<Value, Signal> {
+        match (&v, self.place_type(p, f)) {
+            (Value::Code(t), RtType::Code(max)) => {
+                let up = t.to_uppercase();
+                Ok(Value::Code(match max {
+                    Some(m) => up.chars().take(m as usize).collect(),
+                    None => up,
+                }))
+            }
+            (Value::Text(t), RtType::Text(Some(m))) if t.chars().count() > m as usize => Err(Signal::Unsupported(
+                "InStream.Read of more characters than the Text variable holds (not pinned)".into(),
+            )),
+            _ => Ok(v),
         }
     }
 
@@ -1527,7 +1555,10 @@ impl Session {
                                         al_builtins::stream::BlobBuf {
                                             bytes: b.bytes.clone(),
                                             write_pos: 0,
-                                            loaded: b.loaded,
+                                            // A copy shows the bytes, but CalcFields fetches the Blob from the
+                                            // stored row again (types/ProbeTypeFormsAndFilters.al:
+                                            // FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
+                                            loaded: false,
                                         },
                                     )))
                                 }
@@ -1562,6 +1593,12 @@ impl Session {
                 other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
             };
         }
+        // A record assigned to a Variant is a by-value copy: a temporary record's copy is an empty table of its own
+        // (recordref/PWRecordMisc.al:TempRecord_AssignedToVariantVariable and :TempRecord_VariantModifiedAfterAssign).
+        let v = match &v {
+            Value::Record(rc) if matches!(self.place_type(p, f), RtType::Variant) => self.record_by_value(rc),
+            _ => v,
+        };
         match p {
             ir::Place::Local(i) => f.locals[*i] = v,
             ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = v,
@@ -1586,19 +1623,17 @@ impl Session {
         Ok(())
     }
 
-    /// `Text[i] := c`: sets one character of a text. Pinned only for an empty or growing text at
-    /// the next position within the declared length (handlers/TestPageFieldFormats_Tests.al:58-66);
-    /// a position outside that, a value that is not one UTF-16 character, and a Code are refused.
+    /// `Text[i] := c`: sets one character of a text or code, at a position inside it or the next one within
+    /// the declared length (handlers/TestPageFieldFormats_Tests.al:58-66,
+    /// types/TestCharIndexAssignContracts.al:CharacterAssignedIntoAPosition); a position outside that and a value
+    /// that is not one UTF-16 character are refused.
     fn write_char(&mut self, base: &ir::Place, idx: &[ir::Expr], v: Value, f: &mut Frame) -> Result<(), Signal> {
-        let max = match self.place_type(base, f) {
-            RtType::Text(m) => m,
-            // Base Application's `Company Information.IsDigit` does `Letter: Code[1]; Letter[1] := c`.
-            RtType::Code(_) => {
-                return Err(Signal::Unsupported(
-                    "assigning a character into a Code: whether BC upper-cases it is not pinned (docs/probes-needed.md)".into(),
-                ));
-            }
-            _ => None,
+        // A Code takes the character upper-cased (types/TestCharIndexAssignContracts.al:CharacterAssignedIntoAPosition:
+        // `Letter[1] := 'a'` gives `A`, `Ten[3] := 'z'` gives `ABZDE`).
+        let (max, is_code) = match self.place_type(base, f) {
+            RtType::Text(m) => (m, false),
+            RtType::Code(m) => (m, true),
+            _ => (None, false),
         };
         let [e] = idx else {
             return Err(Signal::Unsupported("a text indexed with several positions".into()));
@@ -1608,7 +1643,7 @@ impl Session {
             Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
             Err(_) => None,
         };
-        let Value::Text(s) = self.read(base, f)? else {
+        let (Value::Text(s) | Value::Code(s)) = self.read(base, f)? else {
             return Err(Signal::Unsupported(
                 "assigning a character into a value that is no text".into(),
             ));
@@ -1629,6 +1664,9 @@ impl Session {
         }
         let text = String::from_utf16(&units)
             .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
+        if is_code {
+            return self.write(base, Value::Code(text.to_uppercase()), f);
+        }
         self.write(base, Value::Text(text), f)
     }
 
@@ -1881,6 +1919,9 @@ impl al_builtins::native::Ctx for Session {
     }
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         Some(self.engine.program.objects[id as usize].enum_values.clone())
+    }
+    fn enum_captions(&self, id: u32) -> Vec<(i32, String)> {
+        self.engine.program.objects[id as usize].enum_captions.clone()
     }
     fn commit(&mut self) -> Result<(), Signal> {
         self.commit_builtin()

@@ -4,7 +4,8 @@ As of `main` on 2026-10-14. Oracles: BC 27.5, 28.5 and 29.0 (corpus CI runs 3853
 38536067343 and 38537727198), corpus `6219bf4`.
 Regenerate the numbers with
 `./target/release/al-test-cli --root . --markdown pass-rate.md`; CI uploads
-the same report as a `pass-rate-<date>` artifact.
+the same report as a `pass-rate-<date>` artifact. The markdown is one line per BC
+version (counts, rate, total time). Per-area counts and phase times are in `--json`.
 
 ## BC versions (ADR-015)
 
@@ -81,8 +82,8 @@ Our own diagnostics keep their `AR` codes; the AL ones are `alcodes.rs` and `che
 | 27, 28, 29 | 16 | 15 | 0 | 1 |
 
 Match: AL0161 (2 cases), AL0440, AL0162, AL0118, AL0296 (2), AL0124, AL0365, AL0132 (4), AL0385, AL0197.
-AL0122 for an enum assigned to an enum of another type (cases 0074 and 0075 of the corpus branch
-`al-runtime-rs-staging`, not in the submodule yet) matches too; the other AL0122 cases (0069, 0070: Integer and Text) are mismatches there.
+AL0122 (cases 0069, 0070, 0074, 0075): an Integer variable into a Text, a text literal into an Integer, and an
+enum into an enum of another type whose target does not state `AssignmentCompatibility = true`.
 Not checked: 0008 (AL0175, `=` between two DotNet class objects): an enum is comparable and a class is not, and the
 front end has no assembly metadata. Message text is compared as a note only (the corpus README: the text is a
 reference). A case whose code the front end does not implement is "not checked" with that reason, never a pass.

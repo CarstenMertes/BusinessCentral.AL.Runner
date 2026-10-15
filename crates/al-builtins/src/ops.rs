@@ -72,7 +72,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (v @ Value::Enum(from, _), T::Enum(to)) if from == *to => v,
         // An enum of another type converts by its ordinal; an ordinal the target lacks is kept (Format shows
         // the number, AsInteger gives it). The same in a field, a Get key and a SetRange value (corpus
-        // types/PXEnumRecordRef.al:7-10, :74-135, branch al-runtime-rs-staging, probed on BC 27.5). Whether
+        // types/PXEnumRecordRef.al:7-10, :74-135, probed on BC 27.5). Whether
         // the assignment compiles (the target must state AssignmentCompatibility, AL0122) is the checker's.
         (Value::Enum(_, o), T::Enum(to)) => Value::Enum(*to, o),
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
@@ -150,7 +150,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Option(o, _), T::Enum(id)) => Value::Enum(*id, o),
         // An Integer converts to the enum value of that ordinal, with or without AssignmentCompatibility; an
         // ordinal the enum lacks is kept. The same in a field, a Get key and a SetRange value (corpus
-        // types/PXEnumRecordRef.al:11-12, :137-196, branch al-runtime-rs-staging, probed on BC 27.5).
+        // types/PXEnumRecordRef.al:11-12, :137-196, probed on BC 27.5).
         (Value::Integer(n), T::Enum(id)) => Value::Enum(*id, n),
         // A BigInteger is not probed (docs/probes-needed.md).
         (v @ Value::BigInteger(_), T::Enum(_)) => {
@@ -414,7 +414,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::BigInteger(a), V::Duration(b)) => a.cmp(b),
         (V::Enum(ea, a), V::Enum(eb, b)) if ea == eb => a.cmp(b),
         // Two enum types compare by ordinal: an ordinal converted into an enum that lacks it equals the
-        // source (corpus types/PXEnumRecordRef.al:93-97,106, branch al-runtime-rs-staging, both enums with
+        // source (corpus types/PXEnumRecordRef.al:93-97,106, both enums with
         // AssignmentCompatibility; other pairs are an assumption, docs/probes-needed.md).
         (V::Enum(_, a), V::Enum(_, b)) => a.cmp(b),
         (V::DateFormula(a), V::DateFormula(b)) => crate::datefns::formula_text(a).cmp(&crate::datefns::formula_text(b)),
@@ -483,7 +483,7 @@ mod tests {
         Value::Decimal(Decimal::from_str(s).unwrap())
     }
 
-    // corpus types/PXEnumRecordRef.al:74-108, :137-196 (branch al-runtime-rs-staging): an Enum of another
+    // corpus types/PXEnumRecordRef.al:74-108, :137-196: an Enum of another
     // type and an Integer become the target enum's value of that ordinal, a lacking ordinal kept.
     #[test]
     fn an_enum_of_another_type_and_an_integer_convert_by_ordinal() {

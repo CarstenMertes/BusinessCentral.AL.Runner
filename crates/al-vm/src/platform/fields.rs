@@ -197,6 +197,14 @@ fn field_row(
     // ObsoleteState and ObsoleteReason (TestFieldObsoleteStateVirtualTable.al:18-45).
     let state = match fprop("ObsoleteState") {
         None => 0,
+        Some(v) if ident(v).eq_ignore_ascii_case("Moved") => {
+            // A field a table extension moved to another app (Business Foundation's "Source Code"
+            // extension fields, for example). No corpus test reads the Field table for one.
+            return Err(format!(
+                "{}: ObsoleteState = Moved: whether the Field table lists a moved field, and with which ObsoleteState, is not pinned (docs/probes-needed.md)",
+                what()
+            ));
+        }
         Some(v) => ordinal_of(OBSOLETE_STATES, v)
             .ok_or_else(|| format!("{}: ObsoleteState `{v}` is not understood", what()))?,
     };
@@ -224,8 +232,9 @@ fn field_row(
         match (f.relation_arms.as_slice(), f.relation_meta.as_slice()) {
             ([], []) if f.relation => return Err(format!("{}: the TableRelation is not understood", what())),
             ([], []) => None,
-            // A relation with one arm that has an `if` condition is conditional too (corpus
-            // handlers/ProbeObjectMetadataTables.al:230-247: `if (Cond = const(One)) T.Id` reads 0/0).
+            // A relation whose only arm has an `if` condition is conditional too: 0 and 0
+            // (handlers/ProbeObjectMetadataTables.al:FieldTable_RelationTableNo_OfConditionalRelations,
+            // EnumConditionRef; a `where(...)` clause does not make a relation conditional, :FilterConditionRef).
             ([arm], _) if !arm.conditions.is_empty() => return Ok(()),
             ([arm], _) => Some((arm.table, arm.field, arm.table_name.clone())),
             ([], [m]) => Some((Some(m.table), m.field, c.objects[m.table].name.clone())),

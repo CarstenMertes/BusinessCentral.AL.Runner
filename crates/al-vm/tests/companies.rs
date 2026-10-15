@@ -560,10 +560,10 @@ fn text_in(tables: &str, vars: &str, body: &str) -> String {
 
 // Microsoft's Assert.RecordCount(Variant, N) counts a caller's temporary record through a Variant parameter (Tests-ERM
 // Price Source List UT.T001 expects 2 on BC). A by-value copy of a temporary record is an empty buffer
-// (record/TestTempTableContracts.al:141-148); what a Variant holds is not pinned, so a temporary record with
-// rows handed to a Variant parameter is refused, and an empty one still goes through.
+// (record/TestTempTableContracts.al:141-148), but a Variant parameter keeps the caller's table
+// (recordref/PWRecordMisc.al:TempRecord_PassedToVariantParameter_ByValue).
 #[test]
-fn a_temporary_record_with_rows_handed_to_a_variant_parameter_is_refused() {
+fn a_temporary_record_handed_to_a_variant_parameter_keeps_its_rows() {
     let tables = r#"
 table 50930 "TS Src" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
 codeunit 50932 "TS Assert" { procedure RecordCount(RecVariant: Variant): Integer var RR: RecordRef; begin RR.GetTable(RecVariant); exit(RR.Count()); end; }
@@ -574,13 +574,10 @@ codeunit 50932 "TS Assert" { procedure RecordCount(RecVariant: Variant): Integer
         "exit(Format(A.RecordCount(T)));",
     );
     assert_eq!(out, "0");
-    let r = run_with(
+    let out = text_in(
         tables,
         "A: Codeunit \"TS Assert\"; T: Record \"TS Src\" temporary;",
-        "T.Id := 1; T.Insert(); exit(Format(A.RecordCount(T)));",
+        "T.Id := 1; T.Insert(); T.Id := 2; T.Insert(); exit(Format(A.RecordCount(T)) + Format(T.Count()));",
     );
-    assert!(
-        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("Variant parameter")),
-        "{r:?}"
-    );
+    assert_eq!(out, "22");
 }

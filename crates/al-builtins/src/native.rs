@@ -94,6 +94,10 @@ pub trait Ctx: FormatCtx {
     fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {
         None
     }
+    /// The captions the values of enum object `id` declare, as (ordinal, caption).
+    fn enum_captions(&self, _id: u32) -> Vec<(i32, String)> {
+        Vec::new()
+    }
     /// Builtins that read or change session state (number sequences, the transaction state): the
     /// VM implements them. `id` is the catalog overload id (`NumberSequence.Next#1`); `args` holds
     /// the call's arguments, with `var` parameters written back in place.
@@ -405,6 +409,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.RunRequestPage#2", vm_only),
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
+    ("Report.ObjectId#1", vm_only),
+    ("Report.Preview#1", vm_only),
+    ("RequestPage.Update#1", vm_only),
     ("Report.Language#1", vm_only),
     ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file
@@ -482,20 +489,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
 /// `docs/probes-needed.md`, "Builtins refused until a probe pins them").
 pub fn refusal(id: &str) -> Option<&'static str> {
     Some(match id {
-        "Report.ObjectId#1" => {
-            "the text of Report.ObjectId (the id or the name, with or without the object type) is not pinned"
-        }
-        "RequestPage.Update#1" => {
-            "RequestPage.Update (RequestOptionsPage.Update(SaveRecord)) is in no corpus test, so what it re-evaluates on the request page and whether it saves the record is not pinned"
-        }
-        "Report.Preview#1" => {
-            "Report.Preview is in no corpus test, so whether a run of a test (Run, SaveAs, a request page) is a preview is not pinned"
-        }
-        "FileUpload.CreateInStream#1" | "FileUpload.CreateInStream#2" => {
-            "FileUpload.CreateInStream is in no corpus test, so what a FileUpload holds without a client and the stream it opens is not pinned"
-        }
-        "Record.FieldError#3" | "FieldRef.FieldError#3" => {
-            "FieldError with an ErrorInfo: the error it raises (its text, whether it is collected) is not pinned"
+        "System.GetDotNetType#1" => {
+            "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
         }
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
@@ -503,8 +498,14 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "RecordRef.GetBySystemId#1" => {
             "RecordRef.GetBySystemId is in no corpus test (only Record.GetBySystemId is), so whether it behaves as the Record form, loads the row into the RecordRef and how it answers a RecordRef that is not open are not pinned"
         }
-        "Media.ImportStream#2" => {
-            "Media.ImportStream with a file name: what the file name is stored as (the Tenant Media row) is not pinned; only the form with a description and a MIME type is (media/TestMediaPngImport.al)"
+        "System.GetLastErrorText#2" => {
+            "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
+        }
+        "System.CaptionClassTranslate#1" => {
+            "CaptionClassTranslate is in no corpus test, so how it resolves a caption class expression (the area, the language, the Caption Class codeunit event) is not pinned"
+        }
+        "TestRequestPage.Editable#1" => {
+            "TestRequestPage.Editable is in no corpus test (only the control form is, handlers/TestReqPageBoundVisibility.al), so whether the request page itself is editable is not pinned"
         }
         _ => return None,
     })
@@ -815,11 +816,16 @@ fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Resul
     Ok(Value::Null)
 }
 
-/// `Hyperlink(Url)` asks the client to open a page. What a test run does with that is not pinned
-/// (docs/probes-needed.md), so the call is refused when it runs; a routine that only contains it
-/// still lowers and runs.
-fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    unsupported("Hyperlink opens the client's browser; what a test run does with it is not pinned")
+/// `Hyperlink(Url)` asks the client to open a page. A test has no handler for it, so the platform raises
+/// `Unhandled UI: Hyperlink <url>` (record/ProbeClearAllSetKeyHyperlink.al:322-338, BC 27.5); a routine
+/// that only mentions the call still runs.
+fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let url = text_arg(args, 0)?;
+    Err(Signal::Error(AlError {
+        message: format!("Unhandled UI: Hyperlink {url}"),
+        code: "MissingUIHandler".into(),
+        call_stack: String::new(),
+    }))
 }
 
 /// `Variant2Date(Variant)`: the Date a Variant holds (session/TestFinalCoverage.al:79-88). Another
@@ -1158,6 +1164,14 @@ fn value_kind(v: &Value) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    // Base Application's Web Request Helper casts a caught .NET exception with `GetDotNetType(WebException)`
+    // after a web request failed; no corpus test calls GetDotNetType (issue 34).
+    #[test]
+    fn get_dot_net_type_is_refused_with_its_reason() {
+        let why = refusal("System.GetDotNetType#1").unwrap_or_default();
+        assert!(why.contains("GetDotNetType") && why.contains("not pinned"), "{why}");
+    }
 
     #[derive(Default)]
     pub(crate) struct TestCtx {

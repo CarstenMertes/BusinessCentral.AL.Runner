@@ -83,32 +83,36 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         "reportlayouttype" => Some(&["RDLC", "Word", "Excel", "Custom"]),
         "reportformat" => Some(&["Pdf", "Word", "Excel", "Html", "Xml"]),
         "errortype" => Some(&["Client", "Internal"]),
-        // The ordinals are not pinned: the corpus only calls `Session.CurrentClientType()` and
-        // `DefaultClientType()` (session/TestSessionExtended.al:21,31) and names Default and Web
-        // (session/TestFinalCoverage.al:110,120). Nothing may print them as numbers.
+        // The ordinals are the platform's, with gaps, so the list is indexed by ordinal and a gap is a blank
+        // member (session/ProbeSystemEnumMembers.al:8-41, BC 27.5): Default 1, Windows 2, Web 3, SOAP 4,
+        // OData 5, Background 7, Management 8, Tablet 9, Phone 10, Desktop 11, ODataV4 13, Api 14,
+        // ChildSession 15. `NAS` is not probed; it is placed at 6, the free slot before Background (an
+        // assumption, docs/probes-needed.md). Ordinal 0 and 12 have no member.
         "clienttype" => Some(&[
+            "",
             "Default",
             "Windows",
+            "Web",
             "SOAP",
             "OData",
-            "Api",
             "NAS",
             "Background",
             "Management",
             "Tablet",
             "Phone",
-            "Web",
             "Desktop",
-            "ChildSession",
-            // Named by Microsoft's code (Price List Lines); the position is not pinned either.
+            "",
             "ODataV4",
+            "Api",
+            "ChildSession",
         ]),
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).
         "executioncontext" => Some(&["Normal", "Install", "Upgrade"]),
-        // Only Standard is pinned (session/TestEnvironmentUserTenantContracts.al:247: a test run
-        // formats as `Standard`). The other members and all ordinals are not pinned.
-        "executionmode" => Some(&["Standard", "Debug", "Profile"]),
+        // Standard and Debug only (corpus must-not-compile 0010 to 0013 and 0019: Install, Uninstall, Upgrade,
+        // Report and Profile do not exist). A test run formats as `Standard`
+        // (session/TestEnvironmentUserTenantContracts.al:247); the ordinals are not pinned.
+        "executionmode" => Some(&["Standard", "Debug"]),
         // Only `LocalScope` is named by the corpus; the ordinals are not pinned.
         "notificationscope" => Some(&["LocalScope", "GlobalScope"]),
         "webserviceactionresultcode" => Some(&["None", "Get", "Created", "Updated", "Deleted"]),

@@ -272,6 +272,8 @@ pub struct PageState {
     pub window_from_start: bool,
     /// A read has run to the end of the view and read the last two rows once more.
     pub window_eof: bool,
+    /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
+    pub landing_first: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).
@@ -369,6 +371,7 @@ impl PageState {
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,
+            landing_first: false,
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),
@@ -754,7 +757,7 @@ pub struct ErrorInfoState {
     /// Indexes into the `Verbosity` and `DataClassification` members.
     pub verbosity: i32,
     pub data_classification: i32,
-    /// `None` until a test sets one: the default is not pinned.
+    /// `None` until a test sets one: reads as Client.
     pub error_type: Option<i32>,
     pub collectible: bool,
     pub table_id: i32,
@@ -762,7 +765,8 @@ pub struct ErrorInfoState {
     pub record_id: Option<Value>,
     pub field_no: i32,
     pub page_no: i32,
-    pub custom_dimensions: Vec<(String, String)>,
+    /// The dictionary the test assigned, held by reference.
+    pub custom_dimensions: Option<Value>,
 }
 
 /// What a `ModuleInfo` reports: an app's manifest (corpus session/TestNavAppExtended.al,

@@ -134,12 +134,13 @@ impl Session {
             .collect();
         order.sort_by_key(|&i| t.fields[i].id);
         let flow_filter = |i: usize| ir_table.and_then(|s| s.fields.get(i)).is_some_and(|f| f.flow_filter);
-        let (normal, calculated): (Vec<usize>, Vec<usize>) = order
-            .into_iter()
-            .filter(|&i| !flow_filter(i))
-            .partition(|&i| t.fields[i].stored);
+        // The FlowFilter fields come last, with the value the field holds (0 for an Integer) whatever
+        // filter was set on them (types/ProbeTypeFormsAndFilters.al:FormatRecord_WithFlowFilter_BeforeAndAfterSetRange,
+        // BC 27.5). Where they stand among the FlowFields is not pinned.
+        let (filters, rest): (Vec<usize>, Vec<usize>) = order.into_iter().partition(|&i| flow_filter(i));
+        let (normal, calculated): (Vec<usize>, Vec<usize>) = rest.into_iter().partition(|&i| t.fields[i].stored);
         let mut parts = Vec::new();
-        for i in normal.into_iter().chain(calculated) {
+        for i in normal.into_iter().chain(calculated).chain(filters) {
             parts.push(one(i)?);
         }
         Ok(parts.join("\t"))

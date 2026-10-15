@@ -438,8 +438,11 @@ struct Arm {
     related_table: u32,
     related_field: u32,
     conditions: Vec<u32>,
-    /// The ordinal each condition's `const(...)` names, when the relation is understood.
-    values: Vec<Option<i32>>,
+    /// The Condition Value text of each condition (the ordinal a `const(...)` names, the ordinals of a
+    /// `filter(A | B)` joined by `|`), when it is known.
+    values: Vec<Option<String>>,
+    /// Each condition is a `filter(...)` (Condition Type FILTER) and not a `const(...)`.
+    filters: Vec<bool>,
 }
 
 /// The first primary key field of a compiled table.
@@ -489,8 +492,8 @@ fn arms_of(c: &Catalog, table: &al_ir::Table, f: &al_ir::Field, what: &str) -> R
                 .conditions
                 .iter()
                 .map(|cond| match &cond.value {
-                    al_ir::Const::Enum(_, v) => Some(*v),
-                    al_ir::Const::Option(i, _) => Some(*i),
+                    al_ir::Const::Enum(_, v) => Some(v.to_string()),
+                    al_ir::Const::Option(i, _) => Some(i.to_string()),
                     _ => None,
                 })
                 .collect();
@@ -499,6 +502,7 @@ fn arms_of(c: &Catalog, table: &al_ir::Table, f: &al_ir::Field, what: &str) -> R
                 related_field,
                 conditions,
                 values,
+                filters: Vec::new(),
             });
         }
         return Ok(out);
@@ -535,7 +539,8 @@ fn arms_of(c: &Catalog, table: &al_ir::Table, f: &al_ir::Field, what: &str) -> R
             related_table,
             related_field,
             conditions,
-            values: Vec::new(),
+            values: arm.values.clone(),
+            filters: arm.filters.clone(),
         });
     }
     Ok(out)
@@ -574,8 +579,16 @@ fn field_relations(
             let mut r = row.clone();
             r[pos(t, 4)] = Value::Integer(k as i32 + 1);
             r[pos(t, 8)] = Value::Integer(*own as i32);
-            if let Some(Some(v)) = arm.values.get(k) {
-                r[pos(t, 9)] = Value::Text(v.to_string());
+            let filter = arm.filters.get(k).copied().unwrap_or(false);
+            match arm.values.get(k) {
+                Some(Some(v)) => r[pos(t, 9)] = Value::Text(v.clone()),
+                // A filter whose members are not all named options reads a blank value: its text form is not
+                // pinned (docs/probes-needed.md, "Table Relations Metadata").
+                _ => {}
+            }
+            if filter {
+                // Condition Type: CONST is the first member, FILTER the second (session/PWPlatformTables.al:109-123).
+                r[pos(t, 7)] = option(t, 7, 1);
             }
             rows.push(r);
         }

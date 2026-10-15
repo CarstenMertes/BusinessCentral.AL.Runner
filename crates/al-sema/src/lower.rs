@@ -2309,11 +2309,37 @@ impl Lowerer<'_> {
         let mut arms = Vec::new();
         for a in parsed {
             let mut conditions = Vec::new();
-            for (name, _) in &a.conditions {
+            let mut filters = Vec::new();
+            let mut values = Vec::new();
+            for (k, (name, text)) in a.conditions.iter().enumerate() {
                 let Some(pos) = field_pos(own, name) else {
                     return Vec::new();
                 };
                 conditions.push(pos);
+                let is_filter = a.filter_conditions.get(k).copied().unwrap_or(false);
+                filters.push(is_filter);
+                // The value the table lists: the ordinal of an option member, the ordinals of an alternative
+                // `A | B` of members joined by `|` (session/PWPlatformTables.al:109-123). Any other
+                // shape of a filter is not pinned.
+                let members = match &own.fields[pos].ty {
+                    Ty::Option(m) => Some(m),
+                    _ => None,
+                };
+                let ordinal = |word: &str| {
+                    let word = word.trim().trim_matches('"');
+                    members?
+                        .iter()
+                        .position(|m| m.eq_ignore_ascii_case(word))
+                        .map(|i| i.to_string())
+                };
+                values.push(if is_filter {
+                    text.split('|')
+                        .map(ordinal)
+                        .collect::<Option<Vec<_>>>()
+                        .map(|v| v.join("|"))
+                } else {
+                    ordinal(text)
+                });
             }
             let resolve = |parts: &[String]| match self.ws.resolve_relation_target(file, ObjKind::Table, parts) {
                 Resolution::Found(t) => Some(t),
@@ -2332,6 +2358,8 @@ impl Lowerer<'_> {
             };
             arms.push(ir::MetaRelationArm {
                 conditions,
+                filters,
+                values,
                 table,
                 field,
             });

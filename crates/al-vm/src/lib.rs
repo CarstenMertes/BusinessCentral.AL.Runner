@@ -299,9 +299,10 @@ pub struct Session {
     /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
     /// method starts at 0, UpdateNoLocks (`start_test_method`).
     pub(crate) transaction_type: i32,
-    /// A write has been called since the test method started: the transaction has started, so
-    /// `CurrentTransactionType` reads Update and refuses a set to another type.
-    pub(crate) tx_wrote: bool,
+    /// How far the transaction has started since the test method began or the last `Commit()`:
+    /// `TX_FRESH` (nothing yet), `TX_READ` (a read call) or `TX_WRITE` (a write call, also a DeleteAll that
+    /// finds no row). `CurrentTransactionType` depends on it (`sessionops.rs`).
+    pub(crate) tx_phase: u8,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
@@ -446,7 +447,7 @@ impl Session {
             curr_field_no: Vec::new(),
             lock_timeout: true,
             transaction_type: 0,
-            tx_wrote: false,
+            tx_phase: crate::transactions::TX_FRESH,
             media: Default::default(),
             dotnet: Default::default(),
             application_areas: String::new(),
@@ -467,7 +468,7 @@ impl Session {
     pub fn start_test_method(&mut self) {
         self.application_areas.clear();
         self.transaction_type = 0;
-        self.tx_wrote = false;
+        self.tx_phase = crate::transactions::TX_FRESH;
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).
@@ -1531,7 +1532,10 @@ impl Session {
                                         al_builtins::stream::BlobBuf {
                                             bytes: b.bytes.clone(),
                                             write_pos: 0,
-                                            loaded: b.loaded,
+                                            // A copy shows the bytes, but CalcFields fetches the Blob from the
+                                            // stored row again (types/ProbeTypeFormsAndFilters.al:
+                                            // FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
+                                            loaded: false,
                                         },
                                     )))
                                 }
@@ -1885,6 +1889,9 @@ impl al_builtins::native::Ctx for Session {
     }
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         Some(self.engine.program.objects[id as usize].enum_values.clone())
+    }
+    fn enum_captions(&self, id: u32) -> Vec<(i32, String)> {
+        self.engine.program.objects[id as usize].enum_captions.clone()
     }
     fn commit(&mut self) -> Result<(), Signal> {
         self.commit_builtin()

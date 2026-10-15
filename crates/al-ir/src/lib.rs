@@ -836,6 +836,13 @@ pub struct RelationArm {
 pub struct MetaRelationArm {
     /// Positions of the own fields the arm's conditions name.
     pub conditions: Vec<usize>,
+    /// Parallel to `conditions`: the condition is `Field = filter(...)`, not `const(...)`.
+    #[serde(default)]
+    pub filters: Vec<bool>,
+    /// Parallel to `conditions`: the Condition Value text the table lists, when it is known: the
+    /// ordinal of a `const` option member, the ordinals of a `filter(A | B)` joined by `|`.
+    #[serde(default)]
+    pub values: Vec<Option<String>>,
     /// Object index of the related table.
     pub table: usize,
     /// Position of the related field; `None`: the first primary key field.

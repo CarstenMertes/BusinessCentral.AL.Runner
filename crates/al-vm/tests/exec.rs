@@ -519,3 +519,18 @@ fn strsubstno_of_an_option_field_reads_its_caption() {
             exit(Format(R.St) + '|' + StrSubstNo('%1/%2', R.K, R.St)); end; }";
     assert_eq!(text(run(src, "F", vec![])), "Non Applicable|/Non Applicable");
 }
+
+// types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms (BC 27.5): Evaluate into an enum reads a member name in any
+// case, a caption, or an ordinal (also one no member has); format 9 reads names too; anything else is rejected.
+#[test]
+fn evaluate_into_an_enum_reads_names_captions_and_ordinals() {
+    let src = "enum 50400 \"Kind\" { Extensible = true; value(0; None) { Caption = 'No Kind'; } value(1; Alpha) { } value(5; \"Beta Gamma\") { } }
+        codeunit 50100 C { procedure F(): Text var K: Enum Kind; S: Text; begin
+            S += Format(Evaluate(K, 'Beta Gamma')) + Format(K, 0, 2) + ',';
+            K := K::None; S += Format(Evaluate(K, 'beta gamma')) + Format(K, 0, 2) + ',';
+            K := K::Alpha; S += Format(Evaluate(K, 'No Kind')) + ',';
+            K := K::None; S += Format(Evaluate(K, '5')) + Format(K, 0, 2) + ',';
+            K := K::None; S += Format(Evaluate(K, '5', 9)) + Format(Evaluate(K, 'Alpha', 9)) + ',';
+            S += Format(Evaluate(K, 'Nope')) + Format(Evaluate(K, '7')) + Format(K, 0, 2); exit(S); end; }";
+    assert_eq!(text(run(src, "F", vec![])), "Yes5,Yes5,Yes,Yes5,YesYes,NoYes7");
+}

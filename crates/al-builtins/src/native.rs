@@ -94,6 +94,10 @@ pub trait Ctx: FormatCtx {
     fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {
         None
     }
+    /// The captions the values of enum object `id` declare, as (ordinal, caption).
+    fn enum_captions(&self, _id: u32) -> Vec<(i32, String)> {
+        Vec::new()
+    }
     /// Builtins that read or change session state (number sequences, the transaction state): the
     /// VM implements them. `id` is the catalog overload id (`NumberSequence.Next#1`); `args` holds
     /// the call's arguments, with `var` parameters written back in place.

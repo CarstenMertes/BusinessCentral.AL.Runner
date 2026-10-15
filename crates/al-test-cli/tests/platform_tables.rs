@@ -370,7 +370,9 @@ codeunit 50000 "T" { Subtype = Test;
   [Test] procedure Layouts() var L: Record "Report Layout List"; begin L.SetRange("Report ID", 50002); if L.Count() <> 2 then Error('count %1', L.Count());
     L.SetRange(Name, 'L1'); L.FindFirst(); if L."Layout Format" <> L."Layout Format"::Excel then Error('format'); if L.IsObsolete then Error('obsolete');
     if L.ExcelLayoutMultipleDataSheets <> L.ExcelLayoutMultipleDataSheets::"Multiple data sheets" then Error('sheets');
-    L.SetRange(Name, 'L2'); L.FindFirst(); if not L.IsObsolete then Error('not obsolete'); end;
+    L.SetRange(Name, 'L2'); L.FindFirst(); if not L.IsObsolete then Error('not obsolete');
+    // A layout with no Caption or Summary reads its name for both (session/PWPlatformTables.al:126-139).
+    if L.Caption <> 'L2' then Error('caption [%1]', L.Caption); if L.Description <> 'L2' then Error('description'); end;
   [Test] procedure Metadata() var M: Record "Report Metadata"; begin M.Get(50002); if M.ProcessingOnly then Error('processing'); if M.UseRequestPage then Error('request page'); if M.FirstDataItemTableID <> Database::Thing then Error('table'); end;
   [Test] procedure DataItems() var D: Record "Report Data Items"; begin D.SetRange("Report ID", 50002); if D.Count() <> 2 then Error('count'); D.FindFirst();
     if D.Name <> 'Thing' then Error('name'); if D."Indentation Level" <> 0 then Error('indent'); if D."Request Filter Fields" <> '3,1' then Error('rff %1', D."Request Filter Fields");
@@ -732,4 +734,38 @@ fn a_published_application_row_passes_the_tenant_filter_of_the_retention_policy_
         al_sema::check::Roots::default(),
     );
     passes(&o, "OwnRowPassesTheTenantFilter");
+}
+
+/// A relation whose condition is `Kind = filter(A | B)` lists one row with Condition Type FILTER and the member
+/// ordinals joined by `|` (session/PWPlatformTables.al:109-123, BC 27.5).
+#[test]
+fn a_filter_condition_of_option_members_lists_the_ordinals() {
+    let o = outcomes(
+        r#"table 50001 "Target" { fields { field(1; Id; Code[10]) { } } keys { key(PK; Id) { Clustered = true; } } }
+table 50002 "Source" { fields { field(1; Id; Integer) { } field(2; Kind; Option) { OptionMembers = A,B,C; }
+    field(3; Ref; Code[10]) { TableRelation = if (Kind = filter(A | B)) Target.Id; } }
+  keys { key(PK; Id) { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Rows() var R: Record "Table Relations Metadata"; begin
+    R.SetRange("Table ID", 50002); R.SetRange("Field No.", 3); R.FindFirst();
+    if R."Condition Field No." <> 2 then Error('field %1', R."Condition Field No.");
+    if Format(R."Condition Type") <> 'FILTER' then Error('type %1', Format(R."Condition Type"));
+    if R."Condition Value" <> '0|1' then Error('value %1', R."Condition Value"); end; }"#,
+    );
+    passes(&o, "Rows");
+}
+
+/// types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes (BC 27.5): a record assigned from one that
+/// was never inserted shows its Blob as filled, and CalcFields then reads the Blob back empty (no stored row).
+#[test]
+fn calc_fields_of_a_blob_whose_row_is_not_stored_leaves_it_empty() {
+    let o = outcomes(
+        r#"table 50001 "Blobby" { fields { field(1; Id; Integer) { } field(2; Pic; Blob) { } } keys { key(PK; Id) { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Copy() var R: Record "Blobby"; C: Record "Blobby"; Out: OutStream; Ins: InStream; T: Text; begin
+    R.Id := 1; R.Pic.CreateOutStream(Out); Out.WriteText('abc'); C := R;
+    if not C.Pic.HasValue() then Error('copy has no blob'); C.CalcFields(Pic); C.Pic.CreateInStream(Ins); Ins.ReadText(T);
+    if T <> '' then Error('blob %1', T); end; }"#,
+    );
+    passes(&o, "Copy");
 }

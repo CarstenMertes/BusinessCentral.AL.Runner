@@ -854,10 +854,13 @@ impl Session {
                     .get(&cx, &t, &pk)
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?;
             }
-            let Some(Value::Blob(src)) = stored.as_ref().map(|row| row[pos].clone()) else {
-                return unsupported("CalcFields of a Blob whose row is gone (error text not pinned)");
+            // A row that is not stored (a copy of a record never inserted) leaves the Blob empty: the buffer
+            // showed `*` after `Copy1 := Row`, and CalcFields reads nothing back
+            // (types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
+            let bytes = match stored.as_ref().map(|row| row[pos].clone()) {
+                Some(Value::Blob(src)) => src.borrow().bytes.clone(),
+                _ => Vec::new(),
             };
-            let bytes = src.borrow().bytes.clone();
             let mut b = buf.borrow_mut();
             b.bytes = bytes;
             b.loaded = true;
@@ -1003,9 +1006,28 @@ impl Session {
             self.gate_write(method)?;
             self.user_bulk_refusal(&t, rec.borrow().temporary, method)?;
             // A write call starts the transaction, also a DeleteAll that finds no row
-            // (session/TestClearAllTransactionTypeContracts.al:245-252, session/TestDatabaseExtended.al:
+            // (session/ProbeSystemEnumMembers.al:143-161, session/TestDatabaseExtended.al:
             // Database_CurrentTransactionType_SetAfterWriteOp_Throws over fixture DeleteAlls).
-            self.tx_wrote = true;
+            self.tx_phase = crate::transactions::TX_WRITE;
+        } else if self.tx_phase == crate::transactions::TX_FRESH
+            && !rec.borrow().temporary
+            && matches!(
+                method,
+                "Get"
+                    | "GetBySystemId"
+                    | "Find"
+                    | "FindFirst"
+                    | "FindLast"
+                    | "FindSet"
+                    | "Next"
+                    | "Count"
+                    | "IsEmpty"
+                    | "CalcFields"
+                    | "CalcSums"
+            )
+        {
+            // A read call starts it too (session/ProbeSystemEnumMembers.al:94-112).
+            self.tx_phase = crate::transactions::TX_READ;
         }
         match method {
             "Init" => {

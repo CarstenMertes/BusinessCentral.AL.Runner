@@ -106,7 +106,7 @@ fn key_count(t: &TableDef) -> usize {
 /// field-number order, system fields left out.
 fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
     let mut v: Vec<usize> = (0..t.fields.len())
-        .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE && s.field_enabled(t, i))
+        .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE && s.field_enabled(t, i) && !s.field_removed(t, i))
         .collect();
     v.sort_by_key(|&i| t.fields[i].id);
     v
@@ -115,6 +115,13 @@ fn enumerable_fields(s: &Session, t: &TableDef) -> Vec<usize> {
 impl Session {
     /// A field without `Enabled = false` (record/TestRowVersionFieldNumberFieldActiveContracts.al:
     /// a disabled field is not counted, not listed, not `FieldExist` and not `FieldActive`).
+    /// A field with `ObsoleteState = Removed`: RecordRef does not count it, list it or find it
+    /// (recordref/PWRecordMisc.al:109-167, BC 27.5).
+    pub(crate) fn field_removed(&self, t: &TableDef, pos: usize) -> bool {
+        self.field_property(t, pos, "ObsoleteState")
+            .is_some_and(|v| v.trim().eq_ignore_ascii_case("Removed"))
+    }
+
     pub(crate) fn field_enabled(&self, t: &TableDef, pos: usize) -> bool {
         self.field_property(t, pos, "Enabled")
             .is_none_or(|v| !v.trim().eq_ignore_ascii_case("false"))
@@ -396,6 +403,25 @@ impl Session {
             "Field" => {
                 let no = int_arg(args, 0)?;
                 match t.fields.iter().position(|f| i64::from(al_field_no(f.id)) == no) {
+                    // A removed field raises the obsolete error with its reason (recordref/PWRecordMisc.al:128-167).
+                    Some(pos) if self.field_removed(&t, pos) => {
+                        let Some(reason) = self
+                            .field_property(&t, pos, "ObsoleteReason")
+                            .and_then(|r| crate::recmeta::string_literal(&r))
+                        else {
+                            return unsupported(format!(
+                                "RecordRef.Field({no}) of a removed field without an ObsoleteReason (the text is not pinned)"
+                            ));
+                        };
+                        let table_id = self.engine.program.objects[t.object as usize].id.unwrap_or(0);
+                        Err(crate::transactions::al_error_code(
+                            &format!(
+                                "Field {} ({no}) of table {} ({table_id}) is obsoleted, reason: {reason}",
+                                t.fields[pos].name, t.name
+                            ),
+                            "MetadataObsolete",
+                        ))
+                    }
                     Some(pos) => Ok(handle("FieldRef", LibraryValue::FieldRef(rec, pos))),
                     None => unsupported(format!(
                         "RecordRef.Field({no}) on a field {} does not have (error text not pinned yet)",
@@ -408,7 +434,10 @@ impl Session {
                 // Field 0 (SystemRowVersion) and a disabled field do not exist
                 // (record/TestRowVersionFieldNumberFieldActiveContracts.al:73-75, 120-121).
                 Ok(Value::Boolean(t.fields.iter().enumerate().any(|(i, f)| {
-                    i64::from(f.id) == no && f.id != SYSTEM_ROW_VERSION_ID && self.field_enabled(&t, i)
+                    i64::from(f.id) == no
+                        && f.id != SYSTEM_ROW_VERSION_ID
+                        && self.field_enabled(&t, i)
+                        && !self.field_removed(&t, i)
                 })))
             }
             "FieldCount" => Ok(Value::Integer(enumerable_fields(self, &t).len() as i32)),

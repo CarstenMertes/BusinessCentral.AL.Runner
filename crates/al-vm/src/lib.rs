@@ -905,6 +905,14 @@ impl Session {
                         "for loop over a Boolean: whether it runs for false and then true, and the value left in the variable, are not pinned (docs/probes-needed.md)".into(),
                     ));
                 }
+                // Option bounds of an Integer loop take its type as an assignment does: the ordinal (Microsoft's
+                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; documented
+                // assumption, docs/probes-needed.md).
+                let bound = |v: Value| match v {
+                    Value::Option(o, _) => Value::Integer(o),
+                    v => v,
+                };
+                let (from, to) = (bound(from), bound(to));
                 let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
                 while if *down { i >= end } else { i <= end } {

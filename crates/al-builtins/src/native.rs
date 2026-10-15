@@ -496,6 +496,9 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "System.GetDotNetType#1" => {
             "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
         }
+        "Record.TestField#2" | "Record.TestField#4" => {
+            "TestField with an ErrorInfo is in no corpus test, so the error it raises (the text, which of the ErrorInfo's properties it keeps, and whether ErrorBehavior::Collect collects it) is not pinned"
+        }
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
@@ -1171,6 +1174,16 @@ fn value_kind(v: &Value) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    // TestField with an ErrorInfo (Microsoft's Gen. Jnl.-Check Line, 478 Tests-SCM-Manufacturing tests): no corpus test
+    // calls it (issue 42).
+    #[test]
+    fn test_field_with_an_error_info_is_refused_with_its_reason() {
+        for id in ["Record.TestField#2", "Record.TestField#4"] {
+            let why = refusal(id).unwrap_or_default();
+            assert!(why.contains("ErrorInfo") && why.contains("not pinned"), "{id}: {why}");
+        }
+    }
 
     // Base Application's Web Request Helper casts a caught .NET exception with `GetDotNetType(WebException)`
     // after a web request failed; no corpus test calls GetDotNetType (issue 34).

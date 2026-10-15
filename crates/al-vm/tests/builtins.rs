@@ -1387,3 +1387,15 @@ fn copy_filter_between_filter_groups_and_from_code_to_text() {
         "NCLCSRTS:TableEqualValue|old|The type of the constant must be compatible with that of the TextF field, and the length of the constant must not exceed the length of the field.\r\\\r\\Type: Text <-- Code\r\\Field: TextF <-- CodeF\r\\Table: T|<>Z|[]"
     );
 }
+
+// A `for` loop over an Integer whose bounds are Option values (Microsoft's "Library - Manufacturing" loops
+// `for Day := FromDay to ToDay` with `FromDay: Option`): the bounds take the loop variable's type as an assignment
+// does, an Option becoming its ordinal (`ops::convert`). Documented assumption (docs/probes-needed.md). Issue 42.
+#[test]
+fn a_for_loop_over_an_integer_takes_option_bounds_by_ordinal() {
+    let r = text_of(
+        "O1: Option A,B,C,D; O2: Option A,B,C,D; I: Integer; s: Text;",
+        "O1 := O1::B; O2 := O2::D; for I := O1 to O2 do s += Format(I); for I := O2 downto O1 do s += Format(I); exit(s);",
+    );
+    assert_eq!(r.unwrap(), "123321");
+}

@@ -2,6 +2,7 @@
 
 use crate::apps::{self, AppInput};
 use crate::args::{DEFAULT_TOP, TestArgs};
+use crate::coverage;
 use crate::output::{self, Counts};
 use crate::testdata;
 use al_bcdb_std::BackupProvider;
@@ -295,6 +296,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         write_file(p, "")?;
     }
     if let Some(Some(p)) = &a.output_json {
+        write_file(p, "")?;
+    }
+    for p in [&a.coverage_out, &a.coverage_json].into_iter().flatten() {
         write_file(p, "")?;
     }
     // A backup named on the command line is opened before the long part: a wrong path or company
@@ -629,6 +633,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             n => Some(std::time::Duration::from_secs(n)),
         },
         isolation: a.isolation,
+        coverage: a.coverage,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
             && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
@@ -885,6 +890,30 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         );
     }
 
+    if a.coverage {
+        let cwd = std::env::current_dir().unwrap_or_default();
+        let labels = |app: usize, file: &str| coverage::label(&inputs[app].path, file, &cwd);
+        let names: Vec<String> = inputs.iter().map(|i| i.json.name.clone()).collect();
+        let statements = rt.coverage_statements();
+        let cwd_text = cwd.to_string_lossy().replace('\\', "/");
+        let cobertura_path = a
+            .coverage_out
+            .clone()
+            .unwrap_or_else(|| PathBuf::from("coverage.cobertura.xml"));
+        write_file(
+            &cobertura_path,
+            &coverage::cobertura(statements, &results, &names, &labels, &cwd_text),
+        )?;
+        if let Some(path) = &a.coverage_json {
+            write_file(path, &coverage::json(statements, &results, &labels))?;
+        }
+        say!(
+            "coverage: {} statements of {} app(s); Cobertura in {}",
+            statements.len(),
+            inputs.len(),
+            cobertura_path.display()
+        );
+    }
     let total_time = started.elapsed();
     if let Some(path) = &a.junit {
         write_file(

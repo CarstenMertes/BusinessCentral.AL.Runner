@@ -24,7 +24,11 @@ pub enum FilterExpr {
 impl FilterExpr {
     /// Whether a field value passes. Values that cannot be compared do not pass.
     pub fn matches(&self, v: &Value) -> bool {
-        let cmp = |x: &Value| compare(v, x).ok();
+        // A text of spaces only is blank to a filter: `SetRange(Txt, ' ')` finds the rows holding '', ' ' and '  ', and
+        // `<> ' '` finds the others (filters/W4Filters.al:BlankOnlyFilterValues_MatchOnlyBlankRows, BC 27.5 and 29.0).
+        // Other trailing spaces are not pinned.
+        let v = &blank_if_spaces(v);
+        let cmp = |x: &Value| compare(v, &blank_if_spaces(x)).ok();
         match self {
             FilterExpr::Range(lo, hi) => {
                 lo.as_ref()
@@ -43,6 +47,14 @@ impl FilterExpr {
             FilterExpr::Or(xs) => xs.iter().any(|x| x.matches(v)),
             FilterExpr::And(xs) => xs.iter().all(|x| x.matches(v)),
         }
+    }
+}
+
+fn blank_if_spaces(v: &Value) -> Value {
+    match v {
+        Value::Text(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Text(String::new()),
+        Value::Code(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Code(String::new()),
+        other => other.clone(),
     }
 }
 

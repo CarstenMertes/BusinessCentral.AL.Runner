@@ -376,11 +376,8 @@ impl Session {
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
             "FilterGroup" => {
-                // The setter with -1 (the OR group) is pinned (record/PWFilterGroupOr.al:OrGroup_RecordRef);
-                // the getter form and the other groups are not.
-                if !matches!(args, [Value::Integer(al_builtins::filter::OR_GROUP)]) {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefFilterGroup);
-                }
+                // The getter and the setter for any group are pinned (filters/W4Filters.al:RecordRef_FilterGroup_*,
+                // record/PWFilterGroupOr.al:OrGroup_RecordRef).
                 Self::filter_group(&rec, args)
             }
             "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),

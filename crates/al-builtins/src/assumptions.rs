@@ -133,12 +133,6 @@ registry! {
         tests: "Config. Package Management.SendTelemetryOnDeleteConfigPackage (Dimensions.Add('PackageCode', Rec.SystemId)); 15 Rapid Start tests.",
         probe: "T := G with Text[40], Text[10], Code[40]; Dict.Add('k', G); Evaluate(T, G).",
     },
-    RecordRefFilterGroup => {
-        id: "recordref-filter-group",
-        assumed: "RecordRef.FilterGroup as a getter, and as a setter for a group other than -1, behaves as Record.FilterGroup. (The setter with -1 is pinned by record/PWFilterGroupOr.al:OrGroup_RecordRef.)",
-        tests: "Find Record Management.FindRecordByDescriptionAndView; 12 Tests-SCM tests.",
-        probe: "The Record.FilterGroup test through RecordRef.Open, FieldRef.SetRange and RecordRef.GetFilters.",
-    },
     DatabaseSidNumbers => {
         id: "database-sid-numbers",
         assumed: "Database.SID answers S-1-5-21-a-b-c-rid with a fixed domain part and a stable hash of the name as the rid.",
@@ -175,12 +169,6 @@ registry! {
         tests: "Report SaveAs datasets of reports with no rows in Tests-ERM.",
         probe: "Confirmed by a corpus bump 9 probe (empty DataItems); delete when the bump is merged.",
         note: "Probably pinned by corpus bump 9 (\"Empty DataItems <DataItems /> confirmed\"): check and delete.",
-    },
-    SetCurrentKeyFlowField => {
-        id: "setcurrentkey-flowfield",
-        assumed: "A walk over a key that holds a FlowField orders by the primary key. (That SetCurrentKey accepts a FlowField is pinned by record/ProbeClearAllSetKeyHyperlink.al:SetCurrentKey_OnFlowFieldFlowFilterBlob_Outcome, which does not read the order.)",
-        tests: "Library code that sets a key containing a FlowField in the buckets.",
-        probe: "SetCurrentKey(FlowField) then FindSet over rows whose primary key order differs from their flowed values.",
     },
 }
 

@@ -1767,13 +1767,13 @@ impl Session {
                             .as_ref()
                             .expect("table");
                         // A FlowFilter field and a Blob cannot order rows: `Sorting cannot be done based on the
-                        // <field> field(s) in the <table> table.` (code DB:Ok; record/ProbeClearAllSetKeyHyperlink.al:
-                        // 276-318, BC 27.5; the error is raised here, whether BC raises it here or at the
-                        // read is not observable in the probe). A FlowField is accepted and orders by the
-                        // primary key: the order it gives BC is not pinned (docs/probes-needed.md).
+                        // <field> field(s) in the <table> table.` (code DB:Ok; records/W4SortKeys.al:SetCurrentKey_NotStoredFields
+                        // and record/ProbeClearAllSetKeyHyperlink.al:276-318, BC 27.5 and 29.0). A FlowField and a Media
+                        // field are accepted and leave the current key the primary key (`CurrentKey()` answers `[Id]`).
+                        let is_blob =
+                            |p: usize| matches!(&t.fields[p].ty, RtType::Library(n) if n.eq_ignore_ascii_case("blob"));
                         if let Some(&bad) = wanted.iter().find(|&&p| {
-                            matches!(t.fields[p].ty, RtType::Library(_) | RtType::Variant)
-                                || schema.fields[p].flow_filter
+                            is_blob(p) || matches!(t.fields[p].ty, RtType::Variant) || schema.fields[p].flow_filter
                         }) {
                             return Err(crate::transactions::al_error_code(
                                 &format!(
@@ -1783,19 +1783,21 @@ impl Session {
                                 "DB:Ok",
                             ));
                         }
-                        if let Some(&bad) = wanted
-                            .iter()
-                            .find(|&&p| !t.fields[p].stored && !schema.fields[p].calc.is_some())
-                        {
+                        let unordered = |p: usize| {
+                            schema.fields[p].calc.is_some()
+                                || matches!(&t.fields[p].ty, RtType::Library(n) if n.eq_ignore_ascii_case("media") || n.eq_ignore_ascii_case("mediaset"))
+                        };
+                        if wanted.iter().all(|&p| unordered(p)) {
+                            let mut r = rec.borrow_mut();
+                            r.key = 0;
+                            r.adhoc = None;
+                            return Ok(Value::Boolean(true));
+                        }
+                        if let Some(&bad) = wanted.iter().find(|&&p| unordered(p) || !t.fields[p].stored) {
                             return unsupported(format!(
-                                "SetCurrentKey on {}, which cannot order rows (not pinned)",
+                                "SetCurrentKey on {} together with other fields: whether the key stays the primary key is not pinned",
                                 t.fields[bad].name
                             ));
-                        }
-                        if wanted.iter().any(|&p| !t.fields[p].stored) {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::SetCurrentKeyFlowField,
-                            );
                         }
                         // `t` already holds this record's earlier ad hoc key, if any.
                         let index = self.engine.tables[t.object as usize]

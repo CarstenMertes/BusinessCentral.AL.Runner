@@ -23,4 +23,4 @@ pub mod value;
 pub mod zip;
 
 pub use error::{Error, Result};
-pub use source::{BcSource, SourceTable, open};
+pub use source::{BcSource, SourceTable, open, open_indexed};

@@ -259,6 +259,11 @@ pub struct Roots {
     pub provided_queries: Vec<Option<crate::queries::QueryLayout>>,
 }
 
+/// Members that platform enums do not have, as the AL compiler says (corpus must-not-compile 0010
+/// to 0013, BC 27.5: ExecutionMode has Standard and Debug). Only members a case pins are listed;
+/// the member lists in `al_builtins::sysenum` are not complete enough to judge a name absent.
+const ABSENT_ENUM_MEMBERS: &[(&str, &[&str])] = &[("ExecutionMode", &["Install", "Uninstall", "Upgrade", "Report"])];
+
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
     check_with(ws, members, catalog, Roots::default())
 }
@@ -331,6 +336,7 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
     };
     let rest_started = std::time::Instant::now();
     let positions: HashMap<&str, usize> = ws.files.iter().enumerate().map(|(i, f)| (f.path.as_str(), i)).collect();
+    c.diags.extend(crate::alcodes::check_workspace(ws));
     c.diags
         .sort_by_key(|d| (positions.get(d.file.as_str()).copied(), d.offset));
     // Without a demand state (the eager compile) every dependency object is lowered, so every one
@@ -1010,6 +1016,10 @@ impl<'a> Checker<'a> {
             }
             if let (Some(n), Some(t)) = (r.return_name(), r.return_type()) {
                 locals.insert(n.to_lowercase(), Ty::from_type_ref(&t));
+            } else if let Some(t) = r.return_type() {
+                // An unnamed return value is used by the code that runs as well (an interface it
+                // names must be compiled, or the routine is refused for it).
+                self.touch_ty(file, &Ty::from_type_ref(&t));
             }
             for v in r.local_var_decls() {
                 let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
@@ -1066,6 +1076,55 @@ impl<'a> Checker<'a> {
         self.types
             .insert((sc.file, r.start().into(), r.end().into()), t.clone());
         t
+    }
+
+    /// The AL compiler's own diagnostics for a name that resolved to nothing (`alcodes.rs`). Both
+    /// are reported for the code of the workspace only, never for a dependency.
+    fn al_unresolved_name(&mut self, sc: &Scope, node: &SyntaxNode) {
+        if self.ws.is_dependency(sc.oi) {
+            return;
+        }
+        let name = name_of(node);
+        let kind = self.ws.objects[sc.oi].kind;
+        // AL0161 (corpus must-not-compile 0001, 0002; handlers/TestPageExtensionBaseAccessContracts.al,
+        // header): a page extension names a base page variable that is not `protected`, or calls a
+        // `local` base procedure. The extension's own variables and parameters were looked up first.
+        if kind == ObjKind::PageExtension {
+            if let Some(b) = self.ws.extension_target(sc.oi) {
+                if self.ws.objects[b].kind == ObjKind::Page {
+                    let base = self.ws.object_ast(b);
+                    let is_var = crate::base_access::declares_var(&base, &name);
+                    let is_local_proc = base
+                        .routines()
+                        .any(|r| r.name().eq_ignore_ascii_case(&name) && r.is_local());
+                    if is_var || is_local_proc {
+                        let shown = if is_var { name.clone() } else { format!("{name}()") };
+                        self.diag(
+                            sc,
+                            node,
+                            "AL0161",
+                            format!("'{shown}' is inaccessible due to its protection level"),
+                        );
+                        return;
+                    }
+                }
+            }
+            return;
+        }
+        // AL0118 (corpus must-not-compile 0005): a call of a bare name in a codeunit without
+        // `TableNo` that is no procedure of the codeunit and no system function. Nothing else can
+        // supply a bare name there. Objects with an implicit record or a base object (tables,
+        // pages, reports, extensions) are not judged: members of what they extend are out of reach.
+        let is_callee =
+            node.parent().is_some_and(|p| p.kind() == SyntaxKind::CallExpr) && node.prev_sibling().is_none();
+        if kind == ObjKind::Codeunit && sc.rec.is_none() && is_callee {
+            self.diag(
+                sc,
+                node,
+                "AL0118",
+                format!("The name '{name}' does not exist in the current context."),
+            );
+        }
     }
 
     /// The AR1002 text. On a builtin type it says the name is in no version of the
@@ -1545,6 +1604,19 @@ impl<'a> Checker<'a> {
                 {
                     self.record(sc, node, Res::OptionValue(i as i32));
                 }
+                // AL0132 (corpus must-not-compile 0010 to 0013): members the compiler does not have.
+                if !self.ws.is_dependency(sc.oi)
+                    && ABSENT_ENUM_MEMBERS
+                        .iter()
+                        .any(|(e, ms)| e.eq_ignore_ascii_case(n) && ms.iter().any(|m| m.eq_ignore_ascii_case(rhs)))
+                {
+                    self.diag(
+                        sc,
+                        node,
+                        "AL0132",
+                        format!("'{n}' does not contain a definition for '{rhs}'"),
+                    );
+                }
             }
             _ => {}
         }
@@ -1555,6 +1627,7 @@ impl<'a> Checker<'a> {
             Some(e) => e,
             None => {
                 self.diag(sc, node, "AR1000", format!("unresolved name `{}`", name_of(node)));
+                self.al_unresolved_name(sc, node);
                 E::Val(Ty::Unknown)
             }
         }
@@ -1918,8 +1991,8 @@ impl<'a> Checker<'a> {
             Ty::Unknown | Ty::Variant if receiver_of(t).is_none() => return Some(E::Val(Ty::Unknown)),
             // A RecordRef writes to a table that is known only when the code runs; the write raises
             // the platform's database events whatever the table is.
-            Ty::Builtin(b) if b.eq_ignore_ascii_case("RecordRef") => {
-                self.touch_global_ops(demand::record_ops(name));
+            Ty::Builtin(b) if b.eq_ignore_ascii_case("RecordRef") || b.eq_ignore_ascii_case("FieldRef") => {
+                self.touch_recref_ops(demand::record_ops(name));
             }
             Ty::Record { table, .. } => {
                 let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {

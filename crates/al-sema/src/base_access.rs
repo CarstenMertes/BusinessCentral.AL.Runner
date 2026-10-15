@@ -13,8 +13,7 @@
 use al_syntax::ast;
 
 /// Probe ids whose behavior a corpus test pins. The ids are the ones of ADR-023: `P1` to `P10` for
-/// pages, `R1` to `R4` for reports. Pinned on BC 27.5 by the corpus branch `al-runtime-rs`
-/// (tests/al-language/..., cite by that path until the submodule bump):
+/// pages, `R1` to `R4` for reports. Pinned on BC 27.5 by the corpus (tests/al-language/...):
 ///
 /// - P1, P2, P5: handlers/TestPageExtensionBaseAccessContracts.al:275 (reads), :288 (writes seen
 ///   by the base and a second extension, also Record filters, List, Dictionary).

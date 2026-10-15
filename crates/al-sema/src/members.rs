@@ -331,7 +331,7 @@ fn own_members(ws: &Workspace, i: usize) -> Members {
                 on_validate: None,
                 on_lookup: None,
                 // SystemId's caption is pinned by record/TestRecordSystemId.al:178, the others by
-                // record/TestPlatformMetadataDeclarationContracts.al:233-250 (corpus branch al-runtime-rs d0f5d52).
+                // record/TestPlatformMetadataDeclarationContracts.al:233-250.
                 properties: match *id {
                     2000000000 => vec![("Caption".into(), "'System ID'".into())],
                     2000000001 => vec![("Caption".into(), "'Created At'".into())],

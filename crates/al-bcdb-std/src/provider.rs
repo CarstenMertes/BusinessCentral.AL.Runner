@@ -8,13 +8,15 @@
 //! the fields of the compiled program.
 
 use crate::FileSource;
-use al_bcdb::query::{self, BcTable, ReadRequest, plan_read_table};
+use al_bcdb::io::ByteSource as _;
+use al_bcdb::query::{self, BcTable, ReadRequest, plan_read_table_in};
 use al_bcdb::source::BcSource;
 use al_bcdb::symbols::{eq_ci, normalize_sql_name};
 use al_bcdb::value::Value;
 use al_host::testdata::{Cell, TableError, TableProvider, TableRequest, TableRows};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicU64, Ordering};
 
 /// The company of Microsoft's demo database, and of the corpus's oracle.
 pub const DEFAULT_COMPANY: &str = "CRONUS International Ltd.";
@@ -27,6 +29,71 @@ pub struct BackupProvider {
     /// The company's name as AL sees it (`CRONUS International Ltd.`).
     company: String,
     source: String,
+    /// How the open went and what reads cost, for `--timings`.
+    cost: Cost,
+}
+
+#[derive(Default)]
+struct Cost {
+    open: std::time::Duration,
+    /// "kept map and catalog used", "map and catalog built and kept", or "not kept".
+    index: &'static str,
+    reads: AtomicU64,
+    rows: AtomicU64,
+    read_nanos: AtomicU64,
+}
+
+/// The page-map index of one backup, kept as a file.
+struct FileIndexStore {
+    file: PathBuf,
+    saved: std::sync::atomic::AtomicBool,
+}
+
+impl FileIndexStore {
+    fn for_backup(dir: &Path, backup: &Path, source: &FileSource) -> FileIndexStore {
+        // FNV-1a: stable across Rust versions, unlike the standard hasher.
+        let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+        let mut feed = |bytes: &[u8]| {
+            for b in bytes {
+                h = (h ^ u64::from(*b)).wrapping_mul(0x0100_0000_01b3);
+            }
+        };
+        let canonical = backup.canonicalize().unwrap_or_else(|_| backup.to_path_buf());
+        feed(canonical.to_string_lossy().as_bytes());
+        feed(&source.len().to_le_bytes());
+        let mtime = std::fs::metadata(backup)
+            .and_then(|m| m.modified())
+            .ok()
+            .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
+            .map_or(0, |d| d.as_nanos());
+        feed(&mtime.to_le_bytes());
+        let stem = backup
+            .file_stem()
+            .map_or_else(|| "backup".to_string(), |s| s.to_string_lossy().into_owned());
+        FileIndexStore {
+            file: dir.join(format!("{stem}-{h:016x}.pagemap")),
+            saved: false.into(),
+        }
+    }
+}
+
+impl al_bcdb::pagefile::IndexStore for FileIndexStore {
+    fn load(&self) -> Option<Vec<u8>> {
+        std::fs::read(&self.file).ok()
+    }
+
+    fn save(&self, bytes: &[u8]) {
+        self.saved.store(true, Ordering::Relaxed);
+        let _ = (|| -> std::io::Result<()> {
+            if let Some(dir) = self.file.parent() {
+                std::fs::create_dir_all(dir)?;
+            }
+            // Written aside and renamed, so a run that reads while another writes sees all or nothing.
+            let tmp = self.file.with_extension(format!("tmp{}", std::process::id()));
+            std::fs::write(&tmp, bytes)?;
+            std::fs::rename(&tmp, &self.file)
+        })();
+    }
 }
 
 fn cell(v: &Value) -> Cell {
@@ -72,13 +139,51 @@ impl BackupProvider {
     /// [`DEFAULT_COMPANY`]. A database with several companies and none of them the demo company
     /// needs the name.
     pub fn open(path: &Path, company: Option<&str>) -> Result<BackupProvider, String> {
+        Self::open_with_index_dir(path, company, None)
+    }
+
+    /// [`open`](BackupProvider::open), keeping the backup's page map in `index_dir` (one file per
+    /// backup, named for its path, length and modification time). A directory that cannot be
+    /// written to costs the saving, never the run.
+    pub fn open_with_index_dir(
+        path: &Path,
+        company: Option<&str>,
+        index_dir: Option<&Path>,
+    ) -> Result<BackupProvider, String> {
+        let started = std::time::Instant::now();
         let file = FileSource::open(path)?;
-        let src = al_bcdb::open(Box::new(file)).map_err(|e| format!("{}: {e}", path.display()))?;
-        let tables = query::bc_tables(&*src).map_err(|e| format!("{}: {e}", path.display()))?;
-        let companies = query::companies(&*src).map_err(|e| format!("{}: {e}", path.display()))?;
+        let (opened, index) = match index_dir {
+            Some(dir) => {
+                let store = FileIndexStore::for_backup(dir, path, &file);
+                let r = al_bcdb::open_indexed(Box::new(file), &store);
+                let state = if store.saved.load(Ordering::Relaxed) {
+                    "kept map and catalog built and saved"
+                } else {
+                    "kept map and catalog used"
+                };
+                (r, state)
+            }
+            None => (al_bcdb::open(Box::new(file)), "map and catalog not kept"),
+        };
+        let src = opened.map_err(|e| format!("{}: {e}", path.display()))?;
         let file_name = path
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+        let mut p = Self::from_source(src, company, file_name).map_err(|e| format!("{}: {e}", path.display()))?;
+        p.cost.open = started.elapsed();
+        p.cost.index = index;
+        Ok(p)
+    }
+
+    /// A provider over an opened source; `source` is the name the summary line shows.
+    pub fn from_source(
+        src: Box<dyn BcSource>,
+        company: Option<&str>,
+        source: String,
+    ) -> Result<BackupProvider, String> {
+        let tables = query::bc_tables(&*src).map_err(|e| e.to_string())?;
+        let companies = companies_of(&tables);
+        let file_name = source;
         let sql_company = pick_company(&companies, company, &file_name)?;
         let company = al_company_name(&*src, &tables, &sql_company);
         Ok(BackupProvider {
@@ -87,6 +192,7 @@ impl BackupProvider {
             sql_company,
             company,
             source: file_name,
+            cost: Cost::default(),
         })
     }
 
@@ -133,6 +239,18 @@ impl BackupProvider {
         }
         hits.first().copied().ok_or(TableError::Absent)
     }
+}
+
+/// The companies of a table list: the distinct company segments, ordinal order.
+fn companies_of(tables: &[BcTable]) -> Vec<String> {
+    let mut v: Vec<String> = tables
+        .iter()
+        .filter_map(|t| t.company.clone())
+        .filter(|c| !c.is_empty())
+        .collect();
+    v.sort();
+    v.dedup();
+    v
 }
 
 /// Which company a database restores.
@@ -220,12 +338,41 @@ impl TableProvider for BackupProvider {
         self.source.clone()
     }
 
+    fn cost(&self) -> Option<String> {
+        let c = &self.cost;
+        let ms = |ns: u64| ns as f64 / 1e6;
+        Some(format!(
+            "opened in {:.0} ms ({}); {} table read(s), {} rows, {:.0} ms",
+            c.open.as_secs_f64() * 1e3,
+            c.index,
+            c.reads.load(Ordering::Relaxed),
+            c.rows.load(Ordering::Relaxed),
+            ms(c.read_nanos.load(Ordering::Relaxed))
+        ))
+    }
+
     fn read(&self, req: &TableRequest) -> Result<Arc<TableRows>, TableError> {
+        let started = std::time::Instant::now();
+        let r = self.read_table(req);
+        if let Ok(rows) = &r {
+            self.cost.reads.fetch_add(1, Ordering::Relaxed);
+            self.cost.rows.fetch_add(rows.rows.len() as u64, Ordering::Relaxed);
+            self.cost
+                .read_nanos
+                .fetch_add(started.elapsed().as_nanos() as u64, Ordering::Relaxed);
+        }
+        r
+    }
+}
+
+impl BackupProvider {
+    fn read_table(&self, req: &TableRequest) -> Result<Arc<TableRows>, TableError> {
         let table = self.find(req)?;
         let reader = |e: al_bcdb::Error| TableError::Reader(e.to_string());
-        let plan = plan_read_table(
+        let plan = plan_read_table_in(
             &*self.src,
             None,
+            &self.tables,
             table,
             &ReadRequest {
                 merge_extensions: true,

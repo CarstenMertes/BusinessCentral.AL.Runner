@@ -1,2 +1,3 @@
 target/
 *.alcc
+__pycache__/

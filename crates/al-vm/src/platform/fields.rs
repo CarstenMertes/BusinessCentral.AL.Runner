@@ -62,7 +62,7 @@ fn type_ordinal(ty: &RtType) -> Option<i32> {
 }
 
 /// The Field "Len" column: the declared length of a Text or Code, else the type's storage size
-/// (record/TestFieldLenAndFeatureKeyContracts.al:104-129, corpus branch al-runtime-rs d0f5d52).
+/// (record/TestFieldLenAndFeatureKeyContracts.al:104-129).
 fn field_len(ty: &RtType) -> Option<i32> {
     Some(match ty {
         RtType::Text(Some(n)) | RtType::Code(Some(n)) => *n as i32,

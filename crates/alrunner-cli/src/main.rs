@@ -45,6 +45,13 @@ fn real_main() -> ExitCode {
             println!("alrunner {}", env!("CARGO_PKG_VERSION"));
             ExitCode::SUCCESS
         }
+        Command::Warm(a) => match run::warm(&a) {
+            Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(2)
+            }
+        },
         Command::Test(a) => match run::test(&a) {
             Ok(code) => ExitCode::from(code),
             Err(e) => {

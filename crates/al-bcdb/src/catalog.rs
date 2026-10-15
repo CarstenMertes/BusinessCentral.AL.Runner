@@ -175,19 +175,7 @@ impl Catalog {
         for (i, au) in alloc_units.iter().enumerate() {
             au_index.entry((au.owner_id, au.ty)).or_insert(i);
         }
-        let mut cat = Catalog {
-            alloc_units,
-            au_index,
-            rowsets: Vec::new(),
-            rowset_index: HashMap::new(),
-            objects: Vec::new(),
-            total_object_count: 0,
-            clustered_seeks: AtomicUsize::new(0),
-            clustered_seek_declines: AtomicUsize::new(0),
-            meta: Mutex::new(HashMap::new()),
-            rowset_cols: Mutex::new(HashMap::new()),
-            au_pages: Mutex::new(HashMap::new()),
-        };
+        let mut cat = Catalog::assemble(alloc_units, au_index, Vec::new(), Vec::new(), 0);
         let mut rowsets = Vec::new();
         cat.walk_rowset(pf, SYSROWSETS_ROWSET_ID, &mut |page, slot| {
             rowsets.push(parse_rowset(page, slot)?);
@@ -226,6 +214,123 @@ impl Catalog {
         cat.objects = objects;
         cat.total_object_count = total;
         Ok(cat)
+    }
+
+    fn assemble(
+        alloc_units: Vec<AllocUnit>,
+        au_index: HashMap<(i64, u8), usize>,
+        rowsets: Vec<RowSet>,
+        objects: Vec<SysObject>,
+        total_object_count: usize,
+    ) -> Catalog {
+        let mut rowset_index = HashMap::with_capacity(rowsets.len());
+        for (i, rs) in rowsets.iter().enumerate() {
+            rowset_index.entry((rs.id_major, rs.id_minor)).or_insert(i);
+        }
+        Catalog {
+            alloc_units,
+            au_index,
+            rowsets,
+            rowset_index,
+            objects,
+            total_object_count,
+            clustered_seeks: AtomicUsize::new(0),
+            clustered_seek_declines: AtomicUsize::new(0),
+            meta: Mutex::new(HashMap::new()),
+            rowset_cols: Mutex::new(HashMap::new()),
+            au_pages: Mutex::new(HashMap::new()),
+        }
+    }
+
+    /// The part of the catalog `open` reads from the system tables, as bytes a caller can keep:
+    /// allocation units, rowsets and the user tables' names. Column layouts are read on demand
+    /// and are not part of it.
+    pub fn to_index_bytes(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(32 + self.alloc_units.len() * 40 + self.rowsets.len() * 25);
+        let put = |b: &mut Vec<u8>, v: u64| b.extend_from_slice(&v.to_le_bytes());
+        put(&mut b, self.alloc_units.len() as u64);
+        put(&mut b, self.rowsets.len() as u64);
+        put(&mut b, self.objects.len() as u64);
+        put(&mut b, self.total_object_count as u64);
+        for a in &self.alloc_units {
+            put(&mut b, a.auid as u64);
+            b.push(a.ty);
+            put(&mut b, a.owner_id as u64);
+            for (p, f) in [a.first_page, a.root_page, a.first_iam_page] {
+                b.extend_from_slice(&p.to_le_bytes());
+                b.extend_from_slice(&f.to_le_bytes());
+            }
+        }
+        for r in &self.rowsets {
+            put(&mut b, r.rowset_id as u64);
+            b.extend_from_slice(&r.id_major.to_le_bytes());
+            b.extend_from_slice(&r.id_minor.to_le_bytes());
+            put(&mut b, r.rows as u64);
+            b.push(r.compression_level);
+        }
+        for o in &self.objects {
+            b.extend_from_slice(&o.object_id.to_le_bytes());
+            b.extend_from_slice(&(o.name.len() as u32).to_le_bytes());
+            b.extend_from_slice(o.name.as_bytes());
+        }
+        b
+    }
+
+    /// The catalog from [`to_index_bytes`](Catalog::to_index_bytes); `None` when the bytes do not
+    /// parse exactly.
+    pub fn from_index_bytes(bytes: &[u8]) -> Option<Catalog> {
+        let at = std::cell::Cell::new(0usize);
+        let take = |n: usize| -> Option<&[u8]> {
+            let from = at.get();
+            let s = bytes.get(from..from.checked_add(n)?)?;
+            at.set(from + n);
+            Some(s)
+        };
+        let u64_ = || Some(u64::from_le_bytes(take(8)?.try_into().ok()?));
+        let i32_ = || Some(i32::from_le_bytes(take(4)?.try_into().ok()?));
+        let u16_ = || Some(u16::from_le_bytes(take(2)?.try_into().ok()?));
+        let (na, nr, no) = (u64_()? as usize, u64_()? as usize, u64_()? as usize);
+        let total = u64_()? as usize;
+        // Every record is at least 8 bytes: a count the bytes cannot hold is damage, caught before allocating.
+        if na.checked_add(nr)?.checked_add(no)?.checked_mul(8)? > bytes.len() {
+            return None;
+        }
+        let mut alloc_units = Vec::with_capacity(na);
+        let mut au_index = HashMap::with_capacity(na);
+        for i in 0..na {
+            let auid = u64_()? as i64;
+            let ty = take(1)?[0];
+            let owner_id = u64_()? as i64;
+            let ptr = || Some((i32_()?, u16_()?));
+            let au = AllocUnit {
+                auid,
+                ty,
+                owner_id,
+                first_page: ptr()?,
+                root_page: ptr()?,
+                first_iam_page: ptr()?,
+            };
+            au_index.entry((au.owner_id, au.ty)).or_insert(i);
+            alloc_units.push(au);
+        }
+        let mut rowsets = Vec::with_capacity(nr);
+        for _ in 0..nr {
+            rowsets.push(RowSet {
+                rowset_id: u64_()? as i64,
+                id_major: i32_()?,
+                id_minor: i32_()?,
+                rows: u64_()? as i64,
+                compression_level: take(1)?[0],
+            });
+        }
+        let mut objects = Vec::with_capacity(no);
+        for _ in 0..no {
+            let object_id = i32_()?;
+            let n = u32::from_le_bytes(take(4)?.try_into().ok()?) as usize;
+            let name = String::from_utf8(take(n)?.to_vec()).ok()?;
+            objects.push(SysObject { object_id, name });
+        }
+        (at.get() == bytes.len()).then(|| Catalog::assemble(alloc_units, au_index, rowsets, objects, total))
     }
 
     pub fn au_for_rowset(&self, rowset_id: i64) -> Result<&AllocUnit> {

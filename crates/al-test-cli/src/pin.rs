@@ -11,6 +11,13 @@ use std::process::Command;
 
 /// Accepts `recorded` as the commit of an oracle when the corpus pin is `pinned`.
 pub fn check(repo: &Path, recorded: &str, pinned: &str) -> Result<(), String> {
+    check_in(repo, recorded, pinned, "tests/")
+}
+
+/// Like [`check`], looking only at the files under `scope` (a path inside the corpus repo). A test app
+/// that has its own oracle and shares no file with the others (the isolation probe) is described by
+/// the oracle as long as that app is unchanged, whatever happens to the other apps.
+pub fn check_in(repo: &Path, recorded: &str, pinned: &str, scope: &str) -> Result<(), String> {
     if recorded == pinned {
         return Ok(());
     }
@@ -26,7 +33,7 @@ pub fn check(repo: &Path, recorded: &str, pinned: &str) -> Result<(), String> {
             recorded,
             pinned,
             "--",
-            "tests/",
+            scope,
             // The corpus's compile log: not a test, rewritten by every compile.
             ":(exclude,glob)tests/**/.dev/**",
         ])
@@ -144,6 +151,28 @@ mod tests {
         let new = commit(d.path());
         assert_eq!(check(d.path(), &mid, &new), Ok(()));
         assert_eq!(check(d.path(), &old, &new), Ok(()));
+    }
+
+    /// An oracle for one test app is not made stale by a change in another app (the isolation probe and the
+    /// OnPrem app share no file); a change in its own app still is.
+    #[test]
+    fn a_change_in_another_test_app_does_not_stale_a_scoped_oracle() {
+        let (d, old) = repo();
+        put(d.path(), "tests/probe/a.al", "one");
+        put(d.path(), "tests/other/app.json", "one");
+        let mid = commit(d.path());
+        put(d.path(), "tests/other/app.json", "two");
+        let new = commit(d.path());
+        assert!(
+            check(d.path(), &mid, &new).is_err(),
+            "the unscoped check sees the other app"
+        );
+        assert_eq!(check_in(d.path(), &mid, &new, "tests/probe/"), Ok(()));
+        put(d.path(), "tests/probe/a.al", "two");
+        let newer = commit(d.path());
+        let e = check_in(d.path(), &mid, &newer, "tests/probe/").unwrap_err();
+        assert!(e.contains("tests/probe/a.al"), "{e}");
+        let _ = old;
     }
 
     #[test]

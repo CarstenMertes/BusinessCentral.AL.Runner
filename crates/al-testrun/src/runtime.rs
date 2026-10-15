@@ -663,6 +663,17 @@ impl CorpusRuntime {
                 eprintln!("parse: ... {} more", unparsed.len() - 10);
             }
         }
+        // Code the AL compiler rejects (must-not-compile corpus, `alcodes.rs`). Said, not acted on: the
+        // run goes on, so an error found here that BC would not give shows in the output, not as a refusal.
+        if !lowered.al_diagnostics.is_empty() {
+            eprintln!(
+                "compile: {} error(s) the AL compiler would give for the workspace's code",
+                lowered.al_diagnostics.len()
+            );
+            for d in lowered.al_diagnostics.iter().take(10) {
+                eprintln!("compile: error {} {}: {}", d.code, d.file, d.message);
+            }
+        }
         if std::env::var_os("AL_REACH_REPORT").is_some() {
             eprintln!("{}", crate::reach::report(&ws, &lowered));
         }
@@ -1428,7 +1439,7 @@ pub fn run_codeunit_full(
                     // The reason names the limit; the VM only knows that it was stopped.
                     let result = match result {
                         Err(Signal::Unsupported(_)) if timed_out => Err(Signal::Unsupported(format!(
-                            "the test ran longer than the time limit of {} s and was stopped (--test-timeout-secs); BC may have ended it differently or not at all",
+                            "the test used more than the time limit of {} s of CPU time and was stopped (--test-timeout-secs); BC may have ended it differently or not at all",
                             limit.map_or(0, |l| l.as_secs())
                         ))),
                         r => r,
@@ -1518,22 +1529,79 @@ pub fn run_codeunit_full(
     out
 }
 
-/// Sets a session's stop flag when a test runs longer than its limit. One thread per test that is
-/// run; it sleeps until the deadline or until `finish`.
+/// Sets a session's stop flag when a test has used more than its limit of CPU time. The time the
+/// test thread computes is counted, not the wall time, so the load of the machine cannot stop a
+/// test (an outcome must not depend on it). A wall-clock backstop, `WALL_BACKSTOP` times the limit,
+/// still ends a test that hangs without computing. One thread per test that is run; it polls
+/// until the limit or until `finish`. Where the thread's CPU clock cannot be read, the wall clock
+/// counts.
 struct Watchdog {
     done: std::sync::mpsc::Sender<()>,
     thread: std::thread::JoinHandle<bool>,
 }
 
+/// How many times the limit the wall clock may run before a test that does not compute is stopped.
+const WALL_BACKSTOP: u32 = 10;
+/// How often the watchdog reads the CPU clock.
+const WATCHDOG_POLL: std::time::Duration = std::time::Duration::from_millis(50);
+
+/// The CPU time the calling thread has used so far, and a handle to read it from another thread.
+#[cfg(unix)]
+fn thread_cpu_clock() -> Option<libc::clockid_t> {
+    let mut id: libc::clockid_t = 0;
+    // SAFETY: `id` is a valid out pointer; the thread is the calling one.
+    let rc = unsafe { libc::pthread_getcpuclockid(libc::pthread_self(), &mut id) };
+    (rc == 0).then_some(id)
+}
+
+#[cfg(not(unix))]
+fn thread_cpu_clock() -> Option<()> {
+    None
+}
+
+#[cfg(unix)]
+fn cpu_time(id: libc::clockid_t) -> Option<std::time::Duration> {
+    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
+    // SAFETY: `ts` is a valid out pointer.
+    let rc = unsafe { libc::clock_gettime(id, &mut ts) };
+    (rc == 0).then(|| std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
+}
+
 impl Watchdog {
+    /// Watches the calling thread.
     fn start(flag: Arc<std::sync::atomic::AtomicBool>, limit: std::time::Duration) -> Watchdog {
+        #[cfg(unix)]
+        let clock = thread_cpu_clock();
         let (done, rx) = std::sync::mpsc::channel::<()>();
-        let thread = std::thread::spawn(move || match rx.recv_timeout(limit) {
-            Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
+        let thread = std::thread::spawn(move || {
+            let started = std::time::Instant::now();
+            let stop = |flag: &std::sync::atomic::AtomicBool| {
                 flag.store(true, std::sync::atomic::Ordering::Relaxed);
                 true
+            };
+            loop {
+                match rx.recv_timeout(WATCHDOG_POLL) {
+                    Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
+                    _ => return false,
+                }
+                #[cfg(unix)]
+                let used = clock.and_then(cpu_time);
+                #[cfg(not(unix))]
+                let used: Option<std::time::Duration> = None;
+                match used {
+                    Some(cpu) => {
+                        if cpu >= limit || started.elapsed() >= limit * WALL_BACKSTOP {
+                            return stop(&flag);
+                        }
+                    }
+                    // No CPU clock: the wall clock counts.
+                    None => {
+                        if started.elapsed() >= limit {
+                            return stop(&flag);
+                        }
+                    }
+                }
             }
-            _ => false,
         });
         Watchdog { done, thread }
     }
@@ -3371,5 +3439,28 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
         }
         assert!(matches!(get("After"), Outcome::Pass));
         assert!(matches!(get("AfterFails"), Outcome::NotRun(_)));
+    }
+
+    /// The limit counts the CPU time of the test thread: a thread that waits is not stopped at the
+    /// limit (the machine's load must not decide an outcome), one that computes is.
+    #[cfg(unix)]
+    #[test]
+    fn the_time_limit_counts_cpu_time_not_wall_time() {
+        let limit = std::time::Duration::from_millis(200);
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let w = Watchdog::start(flag.clone(), limit);
+        std::thread::sleep(limit * 3);
+        assert!(!w.finish(), "a thread that waited was stopped");
+        assert!(!flag.load(std::sync::atomic::Ordering::Relaxed));
+
+        let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
+        let w = Watchdog::start(flag.clone(), limit);
+        let started = std::time::Instant::now();
+        let mut x = 0u64;
+        while !flag.load(std::sync::atomic::Ordering::Relaxed) && started.elapsed() < std::time::Duration::from_secs(10)
+        {
+            x = x.wrapping_add(std::hint::black_box(1));
+        }
+        assert!(w.finish() && x > 0, "a thread that computed was not stopped");
     }
 }

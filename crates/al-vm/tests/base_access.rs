@@ -3,8 +3,7 @@
 //! The mechanism (checker scope, `Place::BaseGlobal`, `Expr::BaseInstance`, the instance link) with
 //! the probes pinned in `base_access::PINNED`. Each case names its probe and the corpus test that
 //! pins it (tests/al-language/handlers/TestPageExtensionBaseAccessContracts.al and
-//! reportextensiontrigger/TestReportExtensionBaseMembersContracts.al on the corpus branch
-//! `al-runtime-rs`). `base_access_refused.rs` checks that an unpinned case is refused.
+//! reportextensiontrigger/TestReportExtensionBaseMembersContracts.al). `base_access_refused.rs` checks that an unpinned case is refused.
 
 use al_builtins::native::Signal;
 use al_builtins::value::Value;

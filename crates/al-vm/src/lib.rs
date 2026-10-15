@@ -338,6 +338,9 @@ pub struct Session {
     /// none (al-vm pages/runobject.rs).
     pub(crate) lenient_bind: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// For each report body running, innermost last: whether `CurrReport.Preview()` is pinned to be
+    /// false for it (it was started by `Run` or `RunModal`).
+    pub(crate) report_preview_pinned: Vec<bool>,
     /// The dataset a `Report.SaveAs(.., Xml, ..)` run is writing (al-vm reports.rs).
     pub(crate) dataset: Option<crate::dataset::Dataset>,
 }
@@ -453,6 +456,7 @@ impl Session {
             report_trigger: None,
             report_flow: None,
             report_executed: Vec::new(),
+            report_preview_pinned: Vec::new(),
             dataset: None,
             lenient_bind: false,
         };
@@ -1261,6 +1265,7 @@ impl Session {
                     || id.starts_with("Xmlport.")
                     || id.starts_with("Report.")
                     || id.starts_with("FilterPageBuilder.")
+                    || id == "RequestPage.Update#1"
                     || id == "Database.IsInWriteTransaction#1"
                 {
                     let recv = match receiver.as_deref() {
@@ -1280,6 +1285,9 @@ impl Session {
                     }
                     if id.starts_with("Xmlport.") {
                         return self.xmlport_builtin(id, recv, &values, *ret_used);
+                    }
+                    if id == "RequestPage.Update#1" {
+                        return self.request_page_update(&values);
                     }
                     if id.starts_with("Report.") {
                         self.ret_used = *ret_used;

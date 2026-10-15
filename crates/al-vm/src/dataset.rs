@@ -211,21 +211,34 @@ impl Header {
 pub(crate) const DECIMAL_FORMATTER: &str = "#,##0.00";
 
 /// The `decimalformatter` of a Decimal column. `places` is the `DecimalPlaces` of the column, else
-/// of the field, as written. `1 : 1` gives `#,##0.0` and `3 : 3` gives `#,##0.000`
-/// (handlers/TestReportSaveAsColumnTypesContracts.al:230-244); no property is the default. A range
-/// with different bounds, a single number and `0` places are not pinned.
+/// of the field, as written: `min : max`, or one number for both. The format is `#,##0`, then the
+/// minimum number of zeros after the point and the further optional places as `#`
+/// (handlers/TestReportSaveAsColumnDetailsContracts.al:UndefinedTimesGuidsHoursAndDecimalPlaces and
+/// handlers/PWReportSaveAsColumns.al:DecimalPlaces_SingleNumberRangeAndZero): `2 : 4` gives
+/// `#,##0.00##`, `0 : 0` gives `#,##0`, `1` gives `#,##0.0`, `0 : 5` gives `#,##0.#####`, `0 : 2`
+/// gives `#,##0.##`, `1 : 1` gives `#,##0.0`, `3 : 3` gives `#,##0.000`
+/// (handlers/TestReportSaveAsColumnTypesContracts.al:230-244). No property is the default.
 pub(crate) fn decimal_formatter(places: Option<&str>) -> Result<String, Signal> {
     let Some(places) = places else {
         return Ok(DECIMAL_FORMATTER.to_string());
     };
-    let both: Vec<&str> = places.split(':').map(str::trim).collect();
-    match both.as_slice() {
-        [a, b] if a == b => match a.parse::<usize>() {
-            Ok(n) if n > 0 => Ok(format!("#,##0.{}", "0".repeat(n))),
-            _ => unsupported(format!("DecimalPlaces = {places} in a dataset (not pinned)")),
-        },
+    let bound = |t: &str| t.trim().parse::<usize>().ok();
+    let (min, max) = match places.split_once(':') {
+        Some((a, b)) => (bound(a), bound(b)),
+        None => (bound(places), bound(places)),
+    };
+    match (min, max) {
+        (Some(min), Some(max)) if min <= max => {
+            let mut f = String::from("#,##0");
+            if max > 0 {
+                f.push('.');
+                f.push_str(&"0".repeat(min));
+                f.push_str(&"#".repeat(max - min));
+            }
+            Ok(f)
+        }
         _ => unsupported(format!(
-            "DecimalPlaces = {places} in a dataset (only `n : n` is pinned)"
+            "DecimalPlaces = {places} in a dataset (not a number or a range of two)"
         )),
     }
 }
@@ -431,6 +444,11 @@ impl Dataset {
         out.push_str(&self.body);
         if self.root {
             out.push_str("  </DataItems>\n");
+        } else if self.body.is_empty() {
+            // A report with no row at all still writes the element (handlers/PWReportSaveAsColumns.al:
+            // Labels_NoRowAtAll keeps every line that starts with `<DataItems` and sees one). Only that
+            // prefix is pinned; the XmlWriter's short form is assumed (docs/probes-needed.md).
+            out.push_str("  <DataItems />\n");
         }
         out.push_str("</ReportDataSet>");
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
@@ -449,8 +467,18 @@ mod tests {
         assert_eq!(decimal_formatter(None).unwrap(), "#,##0.00");
         assert_eq!(decimal_formatter(Some("1 : 1")).unwrap(), "#,##0.0");
         assert_eq!(decimal_formatter(Some("3:3")).unwrap(), "#,##0.000");
-        assert!(decimal_formatter(Some("0:5")).is_err());
-        assert!(decimal_formatter(Some("2")).is_err());
+        // handlers/TestReportSaveAsColumnDetailsContracts.al and handlers/PWReportSaveAsColumns.al
+        for (places, want) in [
+            ("2 : 4", "#,##0.00##"),
+            ("0 : 0", "#,##0"),
+            ("1", "#,##0.0"),
+            ("0 : 5", "#,##0.#####"),
+            ("0 : 2", "#,##0.##"),
+        ] {
+            assert_eq!(decimal_formatter(Some(places)).unwrap(), want, "{places}");
+        }
+        assert!(decimal_formatter(Some("4 : 2")).is_err());
+        assert!(decimal_formatter(Some("x")).is_err());
     }
 
     #[test]

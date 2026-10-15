@@ -1450,6 +1450,7 @@ impl<'a> Checker<'a> {
                 if matches!(base_ty, Ty::Object(ObjKind::Query, _))
                     && node.parent().is_some_and(|p| p.kind() == CallExpr)
                     && node.prev_sibling().is_none()
+                    && self.field_res(sc, &base_ty, &mname).is_some()
                 {
                     if let Some(recv) = receiver_of(&base_ty) {
                         let c = self.catalog_cands(&recv, &mname, true, &base_ty);

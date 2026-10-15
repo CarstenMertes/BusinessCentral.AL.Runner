@@ -169,12 +169,12 @@ pub fn render_table(names: &[String]) -> String {
     out.push_str(
         "// Every overload id of the catalog, the registered natives and the ids the lowering invents, sorted.\n\n",
     );
-    let _ = writeln!(out, "pub(crate) const NAMES: [&str; {}] = [", names.len());
+    let _ = writeln!(out, "pub(crate) static NAMES: [&str; {}] = [", names.len());
     for n in names {
         let _ = writeln!(out, "    \"{}\",", n.replace('\\', "\\\\").replace('"', "\\\""));
     }
     out.push_str("];\n\n");
-    let _ = writeln!(out, "pub(crate) const CLASSES: [Class; {}] = [", names.len());
+    let _ = writeln!(out, "pub(crate) static CLASSES: [Class; {}] = [", names.len());
     for n in names {
         let _ = writeln!(out, "    Class::{},", class_of(n).variant());
     }

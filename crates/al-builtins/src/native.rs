@@ -28,6 +28,8 @@ pub enum Signal {
     Error(AlError),
     Exit(Option<Value>),
     Break,
+    /// `continue`: ends the turn of the innermost loop (AL 16 and later).
+    Continue,
     /// Behaviour the runtime does not implement yet, met at run time (an edge
     /// case no corpus test pins). The runner reports the test as not run.
     Unsupported(String),
@@ -567,6 +569,7 @@ pub fn lookup(id: &str) -> Option<NativeFn> {
         .find(|(i, _)| *i == id)
         .map(|(_, f)| *f)
         .or_else(|| derived().get(id).copied())
+        .or_else(|| crate::platform_native::lookup(id))
 }
 
 /// Every registered id, for the conformance test.

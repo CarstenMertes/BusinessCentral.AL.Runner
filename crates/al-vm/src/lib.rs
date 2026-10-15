@@ -294,6 +294,8 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
+    /// `Database.LockTimeoutDuration` in milliseconds.
+    pub(crate) lock_timeout_duration: i64,
     /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
     /// method starts at 0, UpdateNoLocks (`start_test_method`).
     pub(crate) transaction_type: i32,
@@ -448,6 +450,7 @@ impl Session {
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
+            lock_timeout_duration: 10,
             transaction_type: 0,
             tx_phase: crate::transactions::TX_FRESH,
             media,
@@ -807,7 +810,7 @@ impl Session {
         let ret = match outcome {
             Ok(()) => None,
             Err(Signal::Exit(v)) => v,
-            Err(Signal::Break) => None,
+            Err(Signal::Break | Signal::Continue) => None,
             Err(e) => {
                 // Variables set before the error stay set for the caller that catches it
                 // (error-handling/TestTryFunctionContracts.al, codeunit/TestScopeIsolationContracts.al).
@@ -874,6 +877,7 @@ impl Session {
                     self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     // The condition belongs to the loop's line, not to the body's last statement.
@@ -887,6 +891,8 @@ impl Session {
                     self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        // `continue` in a repeat goes to the until check (corpus types/PUContinue.al).
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     self.restore_pos(here);
@@ -927,6 +933,7 @@ impl Session {
                     self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     i = int(&self.read(var, f)?)?;
@@ -945,7 +952,9 @@ impl Session {
                 let items: Vec<Value> = match coll {
                     Value::List(l) => l.borrow().clone(),
                     // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
-                    other => match al_builtins::xml::node_list_items(&other) {
+                    other => match al_builtins::json::array_items(&other)
+                        .or_else(|| al_builtins::xml::node_list_items(&other))
+                    {
                         Some(items) => items,
                         None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
@@ -954,6 +963,7 @@ impl Session {
                     self.write(var, item, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                 }
@@ -980,6 +990,7 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
+            S::Continue => Err(Signal::Continue),
             S::Pos(p) => {
                 if let Some(top) = self.call_stack.last_mut() {
                     top.pos = *p;

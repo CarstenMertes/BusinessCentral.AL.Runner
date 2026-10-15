@@ -2514,6 +2514,9 @@ pub fn node_list_items(v: &Value) -> Option<Vec<Value>> {
     let Value::Library(_, h) = v else { return None };
     match &*h.borrow() {
         LibraryValue::XmlList(items) => Some(items.iter().map(|n| tagged("XmlNode", n.clone())).collect()),
+        // An XmlAttributeCollection gives its XmlAttributes in document order (types/PVLabelSplitForeach.al,
+        // staging 8217373).
+        LibraryValue::XmlAttrs(owner) => Some(attrs_of(owner).into_iter().map(|a| tagged("XmlAttribute", a)).collect()),
         _ => None,
     }
 }

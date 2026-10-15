@@ -1002,7 +1002,7 @@ fn shift_stmts(stmts: &mut [Stmt], by: u32) {
                 }
                 shift_stmts(otherwise, by);
             }
-            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break => {}
+            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break | Stmt::Continue => {}
         }
     }
 }
@@ -1237,6 +1237,9 @@ pub enum Stmt {
     },
     Exit(Option<Expr>),
     Break,
+    /// `continue`: the rest of the loop body is skipped; a `for` counter still moves, a `repeat` goes to
+    /// its `until` check (corpus types/PUContinue.al).
+    Continue,
     AssertError(Vec<Stmt>),
     /// Marks the statement that follows it in the same list: the VM records the position as the
     /// routine's current one (`Program::positions[id]`). It does nothing else.

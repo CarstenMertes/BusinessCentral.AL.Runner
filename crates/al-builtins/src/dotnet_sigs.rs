@@ -18,6 +18,8 @@ pub enum Ret {
     Text,
     /// A `DotNet` object (for example `Instance()`); its type stays "known at run time".
     Object,
+    /// No result (a setter): the call is a statement.
+    Void,
 }
 
 /// `Microsoft.Dynamics.Nav.Types.ALConfigSettings`.
@@ -57,6 +59,7 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (AL_CONFIG_SETTINGS, "IsSaaS", Ret::Boolean),
     (TENANT_SETTINGS_HELPER, "IsSandbox", Ret::Boolean),
     (TENANT_SETTINGS_HELPER, "IsProduction", Ret::Boolean),
+    (TENANT_SETTINGS_HELPER, "SetTestTenantEnvironmentType", Ret::Void),
     (TENANT_SETTINGS_HELPER, "GetEnvironmentName", Ret::Text),
     (TENANT_SETTINGS_HELPER, "GetLinkedPowerPlatformEnvironmentId", Ret::Text),
     (TENANT_SETTINGS_HELPER, "GetEnvironmentApplicationSetting", Ret::Text),

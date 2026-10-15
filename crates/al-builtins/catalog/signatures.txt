@@ -55,7 +55,7 @@ Database.ImportData static (ShowDialog: Boolean, var FileName: Text, ?IncludeApp
 Database.IsInWriteTransaction static () -> Boolean
 Database.LastUsedRowVersion static () -> BigInteger
 Database.LockTimeout static (?LockTimeout: Boolean) -> Boolean?
-Database.LockTimeoutDuration static (?LockTimeoutDuration: Integer) -> Integer?
+Database.LockTimeoutDuration static (?LockTimeoutDuration: Duration) -> Duration?
 Database.MinimumActiveRowVersion static () -> BigInteger
 Database.RegisterTableConnection static (Type: TableConnectionType, Name: Text, Connection: Text)
 Database.SID static (?UserAccount: Text) -> Text

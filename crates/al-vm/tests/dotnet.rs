@@ -368,6 +368,23 @@ fn an_unregistered_member_of_a_registered_type_is_refused_by_name_not_forwarded(
     assert_eq!(host.log(), vec![]);
 }
 
+/// The test library's setter reaches `SetTestTenantEnvironmentType`; it changes nothing a test can see
+/// (corpus tests/al-language-onprem/session/PVEnvironmentTestability.al, staging 8217373).
+#[test]
+fn set_test_tenant_environment_type_is_accepted_and_changes_nothing() {
+    let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
+    let mut c = cfg(&host);
+    c.registry = Arc::new(Registry::builtin());
+    let r = run_with(
+        c,
+        "H: DotNet NavTenantSettingsHelper; Before: Boolean; After: Boolean;",
+        "Before := H.IsSandbox(); H.SetTestTenantEnvironmentType(not Before); After := H.IsSandbox(); exit(Format(Before = After));",
+        ": Text",
+    );
+    assert_eq!(text(r), "Yes");
+    assert_eq!(host.log(), vec![]);
+}
+
 #[test]
 fn a_registry_member_without_a_pin_does_not_build() {
     fn nothing(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {
@@ -1288,6 +1305,7 @@ fn the_declared_result_types_match_the_registry() {
         let args: Vec<Value> = match *member {
             "GetEnvironmentApplicationSetting" => vec![Value::Text("x".into())],
             "GetEffectivePermissionForObject" => continue, // needs a Guid; the AL test above runs it
+            "SetTestTenantEnvironmentType" => vec![Value::Boolean(false)],
             _ => vec![],
         };
         let mut s = Session::new(Engine::new(al_ir::Program::default(), vec![]));
@@ -1305,6 +1323,7 @@ fn the_declared_result_types_match_the_registry() {
             Ret::Integer => matches!(v, Value::Integer(_)),
             Ret::Text => matches!(v, Value::Text(_)),
             Ret::Object => matches!(v, Value::DotNet(_)),
+            Ret::Void => matches!(v, Value::Null),
         };
         assert!(ok, "{clr}.{member} declares {ret:?} but returns {v:?}");
     }

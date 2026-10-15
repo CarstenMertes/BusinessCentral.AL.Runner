@@ -212,6 +212,17 @@ impl Session {
                 }
                 return Ok(Value::Boolean(self.lock_timeout));
             }
+            // Set when given a value, read otherwise. Only "positive" is pinned (corpus types/PVLabelSplitForeach.al
+            // on the staging branch: positive, 10 ms on the probe tier, "the exact default is a server setting").
+            "Database.LockTimeoutDuration#1" => {
+                match args.first() {
+                    None | Some(Value::Null) => {}
+                    Some(Value::Duration(d)) => self.lock_timeout_duration = *d,
+                    Some(Value::Integer(i)) => self.lock_timeout_duration = i64::from(*i),
+                    Some(other) => return unsupported(format!("LockTimeoutDuration with {}", other.describe())),
+                }
+                return Ok(Value::Duration(self.lock_timeout_duration));
+            }
             // The type of the transaction (session/ProbeSystemEnumMembers.al:60-161, BC 27.5;
             // TestClearAllTransactionTypeContracts.al:224-253):
             // - a test starts as UpdateNoLocks, and a set before any database call takes effect;

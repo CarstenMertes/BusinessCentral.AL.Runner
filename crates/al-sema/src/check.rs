@@ -2230,7 +2230,9 @@ impl<'a> Checker<'a> {
                             al_builtins::dotnet_sigs::Ret::Boolean => Ty::Boolean,
                             al_builtins::dotnet_sigs::Ret::Integer => Ty::Integer,
                             al_builtins::dotnet_sigs::Ret::Text => Ty::Text(None),
-                            al_builtins::dotnet_sigs::Ret::Object => Ty::DotNet(String::new()),
+                            al_builtins::dotnet_sigs::Ret::Object | al_builtins::dotnet_sigs::Ret::Void => {
+                                Ty::DotNet(String::new())
+                            }
                         },
                     );
                 return Some(E::Callable(vec![Cand {

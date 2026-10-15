@@ -3514,13 +3514,37 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
-        let body = match r.body() {
+        let mut body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
         // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
         // would answer the default value of the return type, which is not what the platform answers.
-        if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
+        // A few have an implementation here (`platform_native`, pinned by the corpus); the others are refused.
+        let native = (body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")))
+            .then(|| {
+                let types: Vec<String> = r
+                    .params()
+                    .map(|p| p.type_ref().map(|t| t.type_name().to_lowercase()).unwrap_or_default())
+                    .collect();
+                al_builtins::platform_native::find(&self.ws.objects[self.oi].name, &r.name(), &types)
+            })
+            .flatten();
+        if let Some(entry) = native {
+            let call = ir::Expr::Builtin {
+                id: entry.id.to_string(),
+                receiver: None,
+                args: (0..params)
+                    .map(|i| ir::Arg::Value(ir::Expr::Load(ir::Place::Local(i))))
+                    .collect(),
+                ret_used: ret_ty.is_some(),
+            };
+            body = vec![if ret_ty.is_some() {
+                ir::Stmt::Exit(Some(call))
+            } else {
+                ir::Stmt::Expr(call)
+            }];
+        } else if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
             self.reasons.push(format!(
                 "[Native] procedure `{}` is implemented by the platform and has no AL body (what it answers is not pinned)",
                 r.name()
@@ -3788,6 +3812,7 @@ impl Lowerer<'_> {
                 }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
+            ContinueStmt => Ok(ir::Stmt::Continue),
             AssertErrorStmt => Ok(ir::Stmt::AssertError(self.stmt_or_empty(kids.first()))),
             other => Err(format!("statement {other:?} is not lowered yet")),
         };
@@ -4901,6 +4926,8 @@ impl Lowerer<'_> {
                             0,
                         )))))
                     }
+                    // A Label is its text: the variable holds none (reads lower to the constant).
+                    Some(r) if sig.instance && sig.receiver == "Label" => Some(Box::new(ir::Arg::Value(self.expr(r)?))),
                     Some(r) if sig.instance => Some(Box::new(match self.place(r) {
                         Ok(p) => ir::Arg::Ref(p),
                         Err(_) => ir::Arg::Value(self.expr(r)?),

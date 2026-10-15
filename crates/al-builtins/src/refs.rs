@@ -138,6 +138,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "FieldRef.TestField#35",
     "FieldRef.FieldError#1",
     "FieldRef.FieldError#2",
+    "FieldRef.FieldError#3",
     "KeyRef.Record#1",
 ];
 
@@ -212,6 +213,7 @@ record_methods! {
     "Record.Copy#1" => "Copy",
     "Record.FieldError#1" => "FieldError",
     "Record.FieldError#2" => "FieldError",
+    "Record.FieldError#3" => "FieldError",
     "Record.AddLink#1" => "AddLink",
     "Record.DeleteLink#1" => "DeleteLink",
     "Record.DeleteLinks#1" => "DeleteLinks",
@@ -257,12 +259,11 @@ mod tests {
         for (id, method) in RECORD_METHODS {
             assert_eq!(&cat.by_id(id).unwrap().name, method, "{id}");
         }
-        // No ErrorInfo overload of TestField or FieldError is registered.
+        // The only ErrorInfo overloads registered are those of FieldError (handlers/PWRefusedBuiltins.al:113-168);
+        // TestField has none.
         for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {
-            assert!(
-                !cat.by_id(id).unwrap().params.iter().any(|p| p.ty == "ErrorInfo"),
-                "{id}"
-            );
+            let has = cat.by_id(id).unwrap().params.iter().any(|p| p.ty == "ErrorInfo");
+            assert_eq!(has, id.contains("FieldError#3"), "{id}");
         }
     }
 }

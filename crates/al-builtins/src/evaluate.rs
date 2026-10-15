@@ -243,39 +243,38 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
                 None => return unsupported(format!("Evaluate of `{text}` into Version (only a.b.c.d is pinned)")),
             }
         }
-        // An enum: format 9 reads the ordinal that `Format(Enum, 0, 9)` writes (this runtime's
-        // Format, docs/probes-needed.md); format 0 reads a member name, as the InitValue of a field does
-        // (types/TestBlankEnumInitTests.Codeunit.al:92). A text that matches no member is rejected.
+        // An enum reads an ordinal (also one no member has), a member name in any case or a caption, with
+        // format 0 and with format 9 (types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms, BC 27.5; the
+        // InitValue of a field reads a name the same way, types/TestBlankEnumInitTests.Codeunit.al:92). A
+        // text that is none of these is rejected.
         Value::Enum(id, _) => {
             let Some(members) = c.enum_members(*id) else {
                 return unsupported("Evaluate into an Enum without its members");
             };
-            let found = if number == 9 {
-                text.parse::<i32>()
-                    .ok()
-                    .filter(|_| text.bytes().all(|b| b.is_ascii_digit()))
-                    .and_then(|n| members.iter().find(|(o, _)| *o == n).map(|(o, _)| *o))
-            } else {
-                // Format 0 reads a member name, or the ordinal of a member (`Evaluate(K, '1')` gives the member
-                // with ordinal 1: corpus types/PEOptionEnumBigText.al:155-157, probed on BC 27.5). An ordinal
-                // the enum lacks is not pinned.
-                let ordinal = text
-                    .parse::<i32>()
-                    .ok()
-                    .filter(|_| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()));
-                match members.iter().find(|(_, n)| *n == text) {
-                    Some((o, _)) => Some(*o),
-                    None => match ordinal {
-                        Some(n) if members.iter().any(|(o, _)| *o == n) => Some(n),
-                        Some(_) => {
-                            return unsupported(format!(
-                                "Evaluate of the number `{text}` into an Enum that has no member with that ordinal (not pinned)"
-                            ));
-                        }
-                        None => None,
-                    },
-                }
-            };
+            let ordinal = (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| text.parse::<i32>().ok())
+                .flatten();
+            // With format 9 an ordinal that no member has is not pinned (format 0 accepts it:
+            // types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms, `unknownOrdinal_result`).
+            if number == 9 && ordinal.is_some_and(|n| !members.iter().any(|(o, _)| *o == n)) {
+                return unsupported(format!(
+                    "Evaluate of the number `{text}` into an Enum with format 9, though no member has that ordinal (not pinned)"
+                ));
+            }
+            let captions = c.enum_captions(*id);
+            let found = ordinal
+                .or_else(|| {
+                    members
+                        .iter()
+                        .find(|(_, n)| n.eq_ignore_ascii_case(&text))
+                        .map(|(o, _)| *o)
+                })
+                .or_else(|| {
+                    captions
+                        .iter()
+                        .find(|(_, n)| n.eq_ignore_ascii_case(&text))
+                        .map(|(o, _)| *o)
+                });
             match found {
                 Some(o) => Parsed::Value(Value::Enum(*id, o)),
                 None => Parsed::Rejected,

@@ -211,6 +211,32 @@ fn a_column_nothing_pins_is_refused_where_code_reads_it() {
     );
 }
 
+// Issue 35: Business Foundation's table extensions on "Source Code" declare fields with
+// `ObsoleteState = Moved`; Base Application's Dimension Management scans the Field table for all
+// tables. No corpus test reads the Field table for a moved field, so a read that reaches one is
+// refused with a reason that names the state.
+#[test]
+fn a_moved_field_is_refused_where_the_field_table_is_scanned_and_not_where_a_filter_excludes_it() {
+    let o = outcomes(
+        r#"table 50001 "Moved Host" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+tableextension 50002 "Moved Ext" extends "Moved Host" { fields { field(50000; Gone; Boolean) { ObsoleteState = Moved; ObsoleteReason = 'x'; ObsoleteTag = '1'; MovedTo = '437dbf0e-84ff-417a-965d-ed2bb9650972'; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure ScansAllFields() var F: Record Field; begin F.SetRange(Class, F.Class::Normal); if F.FindSet() then repeat until F.Next() = 0; end;
+  [Test] procedure ScansOtherTable() var F: Record Field; begin F.SetRange(TableNo, 50001); F.SetRange("No.", 1); if F.FindFirst() then; end; }"#,
+    );
+    let why = not_run(&o, "ScansAllFields");
+    assert!(
+        why.contains("ObsoleteState = Moved") && why.contains("not pinned"),
+        "{why}"
+    );
+    assert!(!why.contains("is not understood"), "{why}");
+    // A filter that excludes the field's row never reaches it.
+    assert!(
+        !matches!(o.iter().find(|(n, _)| n == "ScansOtherTable").map(|(_, o)| o), Some(Outcome::NotRun(w)) if w.contains("Moved")),
+        "{o:?}"
+    );
+}
+
 #[test]
 fn registry_providers_are_virtual_or_stored() {
     for (_, name, p) in REGISTRY {
@@ -370,7 +396,9 @@ codeunit 50000 "T" { Subtype = Test;
   [Test] procedure Layouts() var L: Record "Report Layout List"; begin L.SetRange("Report ID", 50002); if L.Count() <> 2 then Error('count %1', L.Count());
     L.SetRange(Name, 'L1'); L.FindFirst(); if L."Layout Format" <> L."Layout Format"::Excel then Error('format'); if L.IsObsolete then Error('obsolete');
     if L.ExcelLayoutMultipleDataSheets <> L.ExcelLayoutMultipleDataSheets::"Multiple data sheets" then Error('sheets');
-    L.SetRange(Name, 'L2'); L.FindFirst(); if not L.IsObsolete then Error('not obsolete'); end;
+    L.SetRange(Name, 'L2'); L.FindFirst(); if not L.IsObsolete then Error('not obsolete');
+    // A layout with no Caption or Summary reads its name for both (session/PWPlatformTables.al:126-139).
+    if L.Caption <> 'L2' then Error('caption [%1]', L.Caption); if L.Description <> 'L2' then Error('description'); end;
   [Test] procedure Metadata() var M: Record "Report Metadata"; begin M.Get(50002); if M.ProcessingOnly then Error('processing'); if M.UseRequestPage then Error('request page'); if M.FirstDataItemTableID <> Database::Thing then Error('table'); end;
   [Test] procedure DataItems() var D: Record "Report Data Items"; begin D.SetRange("Report ID", 50002); if D.Count() <> 2 then Error('count'); D.FindFirst();
     if D.Name <> 'Thing' then Error('name'); if D."Indentation Level" <> 0 then Error('indent'); if D."Request Filter Fields" <> '3,1' then Error('rff %1', D."Request Filter Fields");
@@ -732,4 +760,55 @@ fn a_published_application_row_passes_the_tenant_filter_of_the_retention_policy_
         al_sema::check::Roots::default(),
     );
     passes(&o, "OwnRowPassesTheTenantFilter");
+}
+
+/// A relation whose condition is `Kind = filter(A | B)` lists one row with Condition Type FILTER and the member
+/// ordinals joined by `|` (session/PWPlatformTables.al:109-123, BC 27.5).
+#[test]
+fn a_filter_condition_of_option_members_lists_the_ordinals() {
+    let o = outcomes(
+        r#"table 50001 "Target" { fields { field(1; Id; Code[10]) { } } keys { key(PK; Id) { Clustered = true; } } }
+table 50002 "Source" { fields { field(1; Id; Integer) { } field(2; Kind; Option) { OptionMembers = A,B,C; }
+    field(3; Ref; Code[10]) { TableRelation = if (Kind = filter(A | B)) Target.Id; } }
+  keys { key(PK; Id) { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Rows() var R: Record "Table Relations Metadata"; begin
+    R.SetRange("Table ID", 50002); R.SetRange("Field No.", 3); R.FindFirst();
+    if R."Condition Field No." <> 2 then Error('field %1', R."Condition Field No.");
+    if Format(R."Condition Type") <> 'FILTER' then Error('type %1', Format(R."Condition Type"));
+    if R."Condition Value" <> '0|1' then Error('value %1', R."Condition Value"); end; }"#,
+    );
+    passes(&o, "Rows");
+}
+
+/// types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes (BC 27.5): a record assigned from one that
+/// was never inserted shows its Blob as filled, and CalcFields then reads the Blob back empty (no stored row).
+#[test]
+fn calc_fields_of_a_blob_whose_row_is_not_stored_leaves_it_empty() {
+    let o = outcomes(
+        r#"table 50001 "Blobby" { fields { field(1; Id; Integer) { } field(2; Pic; Blob) { } } keys { key(PK; Id) { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Copy() var R: Record "Blobby"; C: Record "Blobby"; Out: OutStream; Ins: InStream; T: Text; begin
+    R.Id := 1; R.Pic.CreateOutStream(Out); Out.WriteText('abc'); C := R;
+    if not C.Pic.HasValue() then Error('copy has no blob'); C.CalcFields(Pic); C.Pic.CreateInStream(Ins); Ins.ReadText(T);
+    if T <> '' then Error('blob %1', T); end; }"#,
+    );
+    passes(&o, "Copy");
+}
+
+/// A filter on "Number of Calls" or "Active Manual Instances" is answered from the session's counts
+/// (session/PWPlatformTables.al:EventSubscription_FilterOnNumberOfCalls, BC 27.5 observes it).
+#[test]
+fn event_subscriptions_can_be_filtered_on_the_session_counts() {
+    let o = outcomes(
+        r#"codeunit 50001 "Pub" { [IntegrationEvent(false, false)] procedure OnThing() begin end; procedure Raise() begin OnThing(); end; }
+codeunit 50002 "Sub" { [EventSubscriber(ObjectType::Codeunit, Codeunit::"Pub", 'OnThing', '', false, false)] local procedure H1() begin end; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Counts() var E: Record "Event Subscription"; P: Codeunit "Pub"; begin
+    E.SetFilter("Number of Calls", '>0'); if E.Count() <> 0 then Error('before %1', E.Count());
+    P.Raise(); E.Reset(); E.SetFilter("Number of Calls", '>0'); E.SetRange("Subscriber Codeunit ID", 50002);
+    if E.Count() <> 1 then Error('after %1', E.Count()); E.FindFirst(); if E."Number of Calls" <> 1 then Error('calls');
+    E.Reset(); E.SetRange("Subscriber Codeunit ID", 50002); E.SetRange("Active Manual Instances", 0); if E.Count() <> 1 then Error('manual'); end; }"#,
+    );
+    passes(&o, "Counts");
 }

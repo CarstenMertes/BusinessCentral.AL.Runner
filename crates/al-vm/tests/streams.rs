@@ -461,17 +461,22 @@ fn text_encodings_decide_the_bytes_per_character() {
 }
 
 #[test]
-fn json_write_to_an_out_stream_refuses_text_whose_bytes_are_not_pinned() {
-    // Text that is not ASCII on a Windows stream, or a UTF-16 stream: the bytes real BC writes
-    // are not pinned.
-    assert!(refused(
-        base!("A: JsonArray;"),
-        "A.Add('\u{e9}'); B.Data.CreateOutStream(O); A.WriteTo(O); exit('');"
-    ));
-    assert!(refused(
-        base!("A: JsonArray;"),
-        "A.Add(1); B.Data.CreateOutStream(O, TextEncoding::UTF16); A.WriteTo(O); exit('');"
-    ));
+fn json_write_to_an_out_stream_writes_utf8_whatever_the_stream_encoding() {
+    // streams/ProbeJsonAndInStreamBytes.al:WriteTo_OutStream_Windows_AsciiAndNonAscii, :..._Utf16_...,
+    // :..._MsDos_...: the bytes are UTF-8 on every stream (BC 27.5).
+    let read = "B.Data.CreateInStream(I); while not I.EOS() do begin I.Read(V); T += Format(V) + ','; end; exit(T);";
+    for enc in [
+        "",
+        ", TextEncoding::UTF16",
+        ", TextEncoding::MSDos",
+        ", TextEncoding::Windows",
+    ] {
+        let t = text(
+            base!("A: JsonArray; V: Byte;"),
+            &format!("A.Add('\u{e9}'); B.Data.CreateOutStream(O{enc}); A.WriteTo(O); {read}"),
+        );
+        assert_eq!(t, "91,34,195,169,34,93,", "{enc}");
+    }
 }
 
 #[test]
@@ -541,7 +546,8 @@ fn json_read_from_an_in_stream_parses_what_the_stream_holds() {
         ),
         "YesYes"
     );
-    // The default (Windows) stream with a non-ASCII byte, and a UTF-16 stream, are refused.
+    // The default (Windows) stream with a non-ASCII byte that is not UTF-8, and a UTF-16 stream (its bytes hold
+    // NUL characters), are refused: what BC reads there is not pinned.
     assert!(refused(
         vars,
         "B.Data.CreateOutStream(O); O.WriteText('[\"\u{e9}\"]'); B.Data.CreateInStream(I); Ok := A.ReadFrom(I); exit('');"
@@ -550,6 +556,15 @@ fn json_read_from_an_in_stream_parses_what_the_stream_holds() {
         vars,
         "B.Data.CreateOutStream(O, TextEncoding::UTF16); O.WriteText('[1]'); B.Data.CreateInStream(I, TextEncoding::UTF16); Ok := A.ReadFrom(I); exit('');"
     ));
+    // UTF-8 bytes on a default stream parse, whatever the stream's encoding
+    // (streams/ProbeJsonAndInStreamBytes.al:ReadFrom_InStream_WithBomAndWithout).
+    assert_eq!(
+        text(
+            vars,
+            "B.Data.CreateOutStream(O, TextEncoding::UTF8); O.WriteText('[\"\u{e9}\"]'); B.Data.CreateInStream(I); Ok := A.ReadFrom(I); exit(Format(Ok) + Format(A.Count()));"
+        ),
+        "Yes1"
+    );
 }
 
 #[test]
@@ -576,8 +591,13 @@ fn read_into_a_text_reads_back_what_write_of_a_text_wrote() {
          I.Read(A); I.Read(C); exit(A + '|' + C + '|' + Format(I.EOS()));",
     );
     assert_eq!(t, "abc|de|Yes");
-    assert!(refused(
-        base!("A: Text;"),
-        "B.Data.CreateOutStream(O); O.WriteText('abc'); B.Data.CreateInStream(I); I.Read(A); exit(A);"
-    ));
+    // A stream without a zero byte gives the rest, with no error
+    // (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_OnWriteTextContent_NoTerminator).
+    assert_eq!(
+        text(
+            base!("A: Text;"),
+            "B.Data.CreateOutStream(O); O.WriteText('abc'); B.Data.CreateInStream(I); I.Read(A); exit(A + Format(I.EOS()));"
+        ),
+        "abcYes"
+    );
 }

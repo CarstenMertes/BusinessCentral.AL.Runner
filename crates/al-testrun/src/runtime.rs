@@ -54,6 +54,8 @@ pub struct Manifest {
     pub version: String,
     /// The files under the manifest's `resourceFolders`, named relative to their folder.
     pub resources: Vec<(String, Vec<u8>)>,
+    /// `resourceExposurePolicy.includeSourceInSymbolFile`: the Code Coverage table shows the source lines.
+    pub include_source: bool,
 }
 
 /// The manifest fields `NavApp.GetCurrentModuleInfo` reports, from `dir/app.json`.
@@ -90,6 +92,9 @@ pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
         publisher: s("publisher"),
         version: s("version"),
         resources,
+        include_source: manifest["resourceExposurePolicy"]["includeSourceInSymbolFile"]
+            .as_bool()
+            .unwrap_or(false),
     })
 }
 
@@ -583,8 +588,11 @@ impl CorpusRuntime {
                 }
             };
             let load = started.elapsed();
+            // Without the baseline's roots, and without the workspace's procedures no selected test names:
+            // a helper beside the tests that touches tables must not pull the dependency apps in.
             let first_roots = al_sema::check::Roots {
                 baseline: false,
+                reach_only: true,
                 ..roots.clone()
             };
             let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
@@ -686,6 +694,24 @@ impl CorpusRuntime {
             app.publisher = m.publisher.clone();
             app.version = m.version.clone();
             app.resources = m.resources.clone();
+            app.include_source = m.include_source;
+        }
+        // The source lines of an app that includes its source in the symbols (the Code Coverage `Line`).
+        {
+            let program = std::sync::Arc::make_mut(&mut lowered.program);
+            for sf in &mut program.sources {
+                let Some(app) = program.apps.get(sf.app as usize).filter(|a| a.include_source) else {
+                    continue;
+                };
+                let _ = app;
+                if let Some((_, text)) = ws
+                    .apps
+                    .get(sf.app as usize)
+                    .and_then(|a| a.files.iter().find(|(p, _)| *p == sf.path))
+                {
+                    sf.lines = text.split('\n').map(|l| l.trim_end_matches('\r').to_string()).collect();
+                }
+            }
         }
         let blocked: Vec<Vec<Option<String>>> = lowered
             .unsupported
@@ -2616,6 +2642,8 @@ page 60709 "PH Ro" { PageType = Card; SourceTable = "PH Row"; layout { area(Cont
 page 60710 "PH Desc" { PageType = List; SourceTable = "PH Row"; SourceTableView = sorting("No.") order(descending); layout { area(Content) { repeater(R) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } } }
 table 60704 "PH Lk" { LookupPageId = "PH Card"; fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
 page 60705 "PH Saved" { PageType = StandardDialog; SaveValues = true; layout { area(Content) { field(Rem; RemTxt) { } } } var RemTxt: Text[30]; }
+page 60711 "PH Saved X" { PageType = StandardDialog; SaveValues = true; SourceTable = "PH Row"; layout { area(Content) { field(RemX; RemTxt) { } } } var RemTxt: Text[30]; }
+pageextension 60712 "PH Saved XE" extends "PH Saved X" { layout { addlast(Content) { field(DescX; Rec.Descr) { } } } }
 codeunit 60703 PhT
 {
     Subtype = Test;
@@ -2699,6 +2727,16 @@ codeunit 60703 PhT
         if Seen <> 'kept' then Error('got %1', Seen);
     end;
 
+    // handlers/TestPageSaveValues.al as above, on a SaveValues page that an extension extends with a
+    // control bound to a field of Rec (it adds no variable-bound control: docs/probes-needed.md)
+    [Test] [HandlerFunctions('SaveRemX')]
+    procedure SaveValuesOnAnExtendedPageKeepsWhatOkStored()
+    begin
+        Seen := 'x'; Page.RunModal(Page::"PH Saved X");
+        Seen := ''; Page.RunModal(Page::"PH Saved X");
+        if Seen <> 'kept' then Error('got %1', Seen);
+    end;
+
     // handlers/TestPageTrapSharedScope_Tests.al:87: a page still held by the caller keeps the trap
     [Test]
     procedure TrapSurvivesWhileAnotherVariableHoldsThePage()
@@ -2762,6 +2800,11 @@ codeunit 60703 PhT
         if Seen = 'x' then begin P.Rem.SetValue('kept'); P.OK().Invoke(); end
         else begin Seen := P.Rem.Value(); P.Cancel().Invoke(); end;
     end;
+    [ModalPageHandler] procedure SaveRemX(var P: TestPage "PH Saved X")
+    begin
+        if Seen = 'x' then begin P.RemX.SetValue('kept'); P.OK().Invoke(); end
+        else begin Seen := P.RemX.Value(); P.Cancel().Invoke(); end;
+    end;
     [ModalPageHandler] procedure OkModal(var P: TestPage "PH Card") begin P.OK().Invoke(); end;
     [ModalPageHandler] procedure Nothing(var P: TestPage "PH Card") begin end;
     [ModalPageHandler] procedure CancelIt(var P: TestPage "PH Card") begin P.Cancel().Invoke(); end;
@@ -2784,6 +2827,7 @@ codeunit 60703 PhT
             "PlainModalHasNoCancel",
             "IdZeroUsesLookupPageId",
             "SaveValuesKeepsWhatOkStored",
+            "SaveValuesOnAnExtendedPageKeepsWhatOkStored",
             "TrapSurvivesWhileAnotherVariableHoldsThePage",
             "UpdateSavesTheNewRowAndRefreshesIt",
             "CurrPageEditableFalseInOnOpenPageNarrowsEverything",

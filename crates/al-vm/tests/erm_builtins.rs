@@ -85,13 +85,12 @@ fn http_request_message_method_round_trips() {
 }
 
 #[test]
-fn http_request_message_method_nobody_set_is_refused_not_guessed() {
-    // Nothing in the corpus says what a new request's method is.
+fn http_request_message_method_nobody_set_is_get() {
+    // types/TestHttpRequestFileUploadFieldErrorContracts.al:HttpRequestMessage_Defaults_AndSetRequestUri (BC 27.5).
     let r = run("procedure F(): Text var Req: HttpRequestMessage; begin exit(Req.Method); end;");
-    assert!(
-        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("Method") && m.contains("not pinned")),
-        "{r:?}"
-    );
+    assert_eq!(text(r), "GET");
+    let r = run("procedure F(): Text var Req: HttpRequestMessage; begin exit(Req.GetRequestUri()); end;");
+    assert_eq!(text(r), "");
 }
 
 #[test]
@@ -110,19 +109,8 @@ fn set_permission_filter_does_not_throw_and_changes_no_row() {
 
 #[test]
 fn builtins_no_corpus_test_pins_are_refused_with_a_reason_that_says_so() {
-    for (body, name) in [
-        (
-            "procedure F(): Text var Rep: Report \"ALT R\"; begin exit(Rep.ObjectId(false)); end;",
-            "Report.ObjectId",
-        ),
-        (
-            "procedure F() var R: Record \"ALT T\"; E: ErrorInfo; begin R.FieldError(Descr, E); end;",
-            "Record.FieldError",
-        ),
-    ] {
-        let why = refusal(body);
-        assert!(why.contains(name), "{name}: {why}");
-        assert!(why.contains("not pinned"), "{name}: {why}");
-        assert!(!why.contains("is not implemented"), "{name}: {why}");
-    }
+    let why = refusal("procedure F() var Rep: Report \"ALT R\"; begin Rep.Preview(); end;");
+    assert!(why.contains("Report.Preview"), "{why}");
+    assert!(why.contains("not pinned"), "{why}");
+    assert!(!why.contains("is not implemented"), "{why}");
 }

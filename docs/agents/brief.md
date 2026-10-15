@@ -51,6 +51,13 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
 - **Probes need real BC.** You have no BC container. Do not try to run one.
   Record what a probe must show in `docs/probes-needed.md` and refuse the
   behavior until the owner's probe result arrives.
+- **A probe that passed on real BC is enough to start.** When a probe sits on the
+  corpus branch `al-runtime-rs-staging` and the full corpus CI run on that commit is
+  green, implement against it and cite the staging file. The branch merges into
+  `main` only after the corpus bump that brings the probe in.
+- **A corpus bump shrinks `docs/probes-needed.md`.** Whoever bumps the corpus
+  deletes every row the new cases pin, and reports the table row count before
+  and after.
 
 ## When the owner is not available
 

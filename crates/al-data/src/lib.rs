@@ -38,8 +38,8 @@ impl TableDef {
 /// Who is asking, for which company (ADR-005). Permissions come later.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AccessContext {
-    pub company: String,
-    pub user: String,
+    pub company: std::sync::Arc<str>,
+    pub user: std::sync::Arc<str>,
 }
 
 pub type Row = Vec<Value>;

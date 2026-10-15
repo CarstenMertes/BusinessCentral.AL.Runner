@@ -61,6 +61,9 @@ fn run() -> Result<ExitCode, String> {
         al_test_cli::host::set_files_dir(dir.clone());
     }
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
+    if let Some(dir) = &args.coverage_map {
+        return coverage_map(&root, dir.as_deref());
+    }
     if let Some(dir) = &args.must_not_compile {
         return must_not_compile(&args, &root, dir.as_deref());
     }
@@ -112,6 +115,25 @@ fn run() -> Result<ExitCode, String> {
         print!("{}", drift_summary(&runs));
     }
     Ok(ExitCode::from(code))
+}
+
+/// `--coverage-map`: which builtin overloads the corpus calls (`coverage.rs`).
+fn coverage_map(root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
+    let commit = git_head(&root.join("corpus"))?;
+    let map = al_test_cli::coverage::corpus_coverage(root, &commit)?;
+    let dir = dir.map(Path::to_path_buf).unwrap_or_else(|| root.join("docs"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let write = |name: &str, text: String| {
+        std::fs::write(dir.join(name), text).map_err(|e| format!("{}: {e}", dir.join(name).display()))
+    };
+    write("corpus-coverage.md", al_test_cli::coverage::to_markdown(&map))?;
+    write("corpus-coverage.json", al_test_cli::coverage::to_json(&map))?;
+    let (pinned, all) = map.total();
+    println!(
+        "corpus coverage: pinned {pinned} of {all} builtin overloads; written to {}",
+        dir.display()
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `--must-not-compile`: the verdict on every case of the corpus folder (`mnc.rs`).

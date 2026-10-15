@@ -180,6 +180,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `args.rs` (305): Command-line parsing and the --help text. Entry: `parse` 79, `Args` 7, `HELP` 177.
 - `config.rs` (292): oracle/oracle.toml: versions, suites, corpus pin. Entry: `OracleFile` 7, `VersionEntry` 16, `SuiteEntry` 51.
 - `corpus.rs` (210): Corpus discovery: test codeunits, their area folder and file. Entry: `discover` 32, `CorpusIndex` 20, `TestCodeunit` 12.
+- `coverage.rs` (330): The corpus coverage map (`--coverage-map`, `docs/corpus-coverage.md` and `.json`): which builtin overloads of the catalog some corpus test calls, from the checker's `Res::Builtin` resolutions. Entry: `collect_calls`, `build`, `to_markdown`, `to_json`, `corpus_coverage`.
 - `drift.rs` (119): Comparing case sets across BC versions (ADR-015 3.6). Entry: `differences` 11, `common` 26, `restrict` 39, `table` 46.
 - `mnc.rs` (300): The must-not-compile corpus (`--must-not-compile [DIR]`): parse a case header, compile it alone, compare the ALnnnn codes, report match / mismatch / not checked / skipped. Entry: `parse_case`, `read_cases`, `run_case`, `render`.
 - `insight.rs` (388): --top-refusals (folded reason ranking) and --baseline-diff. Entry: `normalise_reason` 22, `top_refusals` 116, `baseline_diff` 194, `render_top` 145, `render_diff` 222.

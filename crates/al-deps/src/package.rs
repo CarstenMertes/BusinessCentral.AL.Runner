@@ -16,6 +16,9 @@ pub struct Manifest {
     pub application: Option<Version>,
     pub target: String,
     pub dependencies: Vec<DepDecl>,
+    /// `preprocessorSymbols` of the app's `app.json`, when the package is a source archive or
+    /// folder. A compiled package carries none: its publisher compiled it with its own.
+    pub preprocessor_symbols: Vec<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -87,6 +90,7 @@ pub fn parse_manifest(xml: &str) -> Result<Manifest, PackageError> {
                         application: version(&a, "Application")?,
                         target: get(&a, "Target").unwrap_or_default(),
                         dependencies: Vec::new(),
+                        preprocessor_symbols: Vec::new(),
                     });
                 }
                 b"Dependencies" => in_dependencies = true,
@@ -193,6 +197,17 @@ pub(crate) fn manifest_of_source_zip(app_json: &str, vars: &Vars) -> Result<Mani
         application: j.application,
         target,
         dependencies: j.dependencies,
+        preprocessor_symbols: serde_json::from_str::<serde_json::Value>(text)
+            .ok()
+            .map(|v| {
+                v["preprocessorSymbols"]
+                    .as_array()
+                    .into_iter()
+                    .flatten()
+                    .filter_map(|s| s.as_str().map(str::to_string))
+                    .collect()
+            })
+            .unwrap_or_default(),
     })
 }
 

@@ -246,6 +246,9 @@ pub struct DependencyApp {
     /// With `Request::lazy_sources`, a package read lazily: `app.files` holds the paths and empty
     /// texts, and this reads a file and hashes the package (ADR-022, "pure tests").
     pub lazy: Option<al_sema::LazySource>,
+    /// The `preprocessorSymbols` of the app's own `app.json` (none for a compiled package). The
+    /// app's sources are preprocessed with these and not with the project's.
+    pub preprocessor_symbols: Vec<String>,
 }
 
 #[derive(Debug, Default)]
@@ -486,6 +489,7 @@ pub fn read_planned(planned: Planned, req: &Request<'_>) -> Result<Loaded, Strin
             path,
             role,
             lazy: lazy.map(|l| l.source),
+            preprocessor_symbols: manifest.preprocessor_symbols.clone(),
         });
     }
     loaded.notes = notes;

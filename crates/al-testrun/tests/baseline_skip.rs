@@ -57,6 +57,7 @@ fn run(only: &[u32], cache: Option<&std::path::Path>) -> CorpusRuntime {
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        symbols: vec![],
     };
     CorpusRuntime::try_run_suites_with(
         vec![app("main", &["base"], MAIN), app("base", &[], BASE)],
@@ -198,6 +199,7 @@ fn run_lazy(only: &[u32], cache: &std::path::Path, base: &str) -> (CorpusRuntime
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        symbols: vec![],
     };
     let loader = std::sync::Arc::new(TextLoader {
         texts: vec![base.to_string()],

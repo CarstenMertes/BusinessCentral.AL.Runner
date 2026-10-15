@@ -5152,12 +5152,22 @@ pub fn lower_for_cache(
     symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
 ) -> crate::provided::DepSet {
+    lower_for_cache_with(apps, &[], symbols, target)
+}
+
+/// [`lower_for_cache`] where app `i` with `app_symbols[i]` set is preprocessed with those symbols.
+pub fn lower_for_cache_with(
+    apps: Vec<crate::workspace::AppSource>,
+    app_symbols: &[Option<std::collections::BTreeSet<String>>],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+) -> crate::provided::DepSet {
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
     };
     let kinds = vec![crate::workspace::AppKind::Dependency; apps.len()];
-    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let ws = Workspace::load_apps_symbols(apps, kinds, symbols, app_symbols, Vec::new());
     let members = crate::members::build(&ws);
     let roots = crate::check::Roots {
         eager: true,
@@ -5214,12 +5224,24 @@ pub fn lower_layer(
     target: Option<&al_version::Target>,
     below: &dyn crate::provided::DepSource,
 ) -> Result<crate::provided::DepLayer, String> {
+    lower_layer_with(apps, n_below_apps, &[], symbols, target, below)
+}
+
+/// [`lower_layer`] where app `i` with `app_symbols[i]` set is preprocessed with those symbols.
+pub fn lower_layer_with(
+    apps: Vec<crate::workspace::AppSource>,
+    n_below_apps: usize,
+    app_symbols: &[Option<std::collections::BTreeSet<String>>],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    below: &dyn crate::provided::DepSource,
+) -> Result<crate::provided::DepLayer, String> {
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
     };
     let kinds = vec![crate::workspace::AppKind::Dependency; apps.len()];
-    let ws = Workspace::load_apps(apps, kinds, symbols);
+    let ws = Workspace::load_apps_symbols(apps, kinds, symbols, app_symbols, Vec::new());
     let n_prov = below.len();
     if n_prov > ws.objects.len() {
         return Err(format!(

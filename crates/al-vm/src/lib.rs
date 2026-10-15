@@ -325,6 +325,8 @@ pub struct Session {
     pub(crate) global_language: i32,
     /// `CurrReport.Language` of the running report (`reports.rs`); `None` until a trigger sets it.
     pub(crate) curr_report_language: Option<i32>,
+    /// The report running was started by `Run` or `RunModal` (what `CurrReport.Preview` answers is pinned for those only).
+    pub(crate) report_started_by_run: bool,
     /// The call depth of the `OnInitReport` trigger being run, and whether it called
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,
@@ -382,6 +384,7 @@ impl Session {
         let mut session = Session {
             global_language: host.identity.global_language(),
             curr_report_language: None,
+            report_started_by_run: false,
             host,
             waited_ms: 0,
             encrypted: Default::default(),

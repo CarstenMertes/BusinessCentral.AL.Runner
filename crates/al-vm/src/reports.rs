@@ -130,6 +130,12 @@ impl Session {
             // `ObjectId(UseNames)`: `Report 69730`, or with names (the default) `Report <Caption>`, the object name
             // when the report has no Caption (handlers/PWRefusedBuiltins.al:78-107, BC 27.5; also through a Report
             // variable).
+            // `CurrReport.Preview` is false in a report started by `Run` or `RunModal`, with or without the
+            // request page (handlers/TestReportRequestPageUpdateObjectIdContracts.al:13, :129-140).
+            "Report.Preview#1" if self.report_started_by_run => Ok(Value::Boolean(false)),
+            "Report.Preview#1" => unsupported(
+                "CurrReport.Preview of a report not started by Run or RunModal (SaveAs, Execute, a request page) is not pinned",
+            ),
             "Report.ObjectId#1" => {
                 // `CurrReport.ObjectId` has no receiver value: it is the running report
                 // (handlers/PWRefusedBuiltins.al:ReportObjectId_CurrReportInCaptionedReport).
@@ -617,8 +623,10 @@ impl Session {
         // requestpage section opens its page as well (handlers/TestReportRuntimeContracts.al:416-440).
         let shows_page = entry == Entry::Run && window;
         let enters = self.report_enter_world(schema, shows_page)?;
-        self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None))
-            .map(|_| ())
+        let outer = std::mem::replace(&mut self.report_started_by_run, entry == Entry::Run);
+        let r = self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None));
+        self.report_started_by_run = outer;
+        r.map(|_| ())
     }
 
     /// Runs `body` as the platform runs a report: a run that enters no world still begins a

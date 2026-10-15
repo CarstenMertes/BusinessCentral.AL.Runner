@@ -59,6 +59,7 @@ page_methods! {
     "Page.Update#1" => "Page.Update",
     "Page.Editable#1" => "Page.Editable",
     "Page.Caption#1" => "Page.Caption",
+    "Page.ObjectId#1" => "Page.ObjectId",
     "Page.PromptMode#1" => "Page.PromptMode",
     "Page.EnqueueBackgroundTask#1" => "Page.EnqueueBackgroundTask",
     "Page.CancelBackgroundTask#1" => "Page.CancelBackgroundTask",

@@ -1413,3 +1413,15 @@ fn a_row_of_a_two_dimensional_array_is_refused() {
         other => panic!("{other:?}"),
     }
 }
+
+// A `for` loop over an Integer whose bounds are Option values (Microsoft's "Library - Manufacturing" loops
+// `for Day := FromDay to ToDay` with `FromDay: Option`): the bounds take the loop variable's type as an assignment
+// does, an Option becoming its ordinal (`ops::convert`). Documented assumption (docs/probes-needed.md). Issue 42.
+#[test]
+fn a_for_loop_over_an_integer_takes_option_bounds_by_ordinal() {
+    let r = text_of(
+        "O1: Option A,B,C,D; O2: Option A,B,C,D; I: Integer; s: Text;",
+        "O1 := O1::B; O2 := O2::D; for I := O1 to O2 do s += Format(I); for I := O2 downto O1 do s += Format(I); exit(s);",
+    );
+    assert_eq!(r.unwrap(), "123321");
+}

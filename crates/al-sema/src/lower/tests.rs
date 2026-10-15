@@ -1,3 +1,6 @@
+// The scans of production code (readable_messages, no_version_literals) stop at the first `#[cfg(test)]` of a file,
+// so a test module in a file of its own starts with one.
+#[cfg(test)]
 use super::*;
 use crate::workspace::AppSource;
 

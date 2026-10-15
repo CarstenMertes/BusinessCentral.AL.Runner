@@ -636,8 +636,18 @@ mod tests {
             Ok(Value::Duration(3_600_000))
         ));
         for (op, l, r, text) in [
-            (Arith::Sub, Value::Time(0), Value::Integer(1), "Adding to an undefined (0T) time."),
-            (Arith::Sub, Value::Time(0), noon.clone(), "Subtracting from an undefined (0T) time."),
+            (
+                Arith::Sub,
+                Value::Time(0),
+                Value::Integer(1),
+                "Adding to an undefined (0T) time.",
+            ),
+            (
+                Arith::Sub,
+                Value::Time(0),
+                noon.clone(),
+                "Subtracting from an undefined (0T) time.",
+            ),
         ] {
             let Err(Signal::Error(e)) = arith(op, &l, &r) else {
                 panic!("expected an error")

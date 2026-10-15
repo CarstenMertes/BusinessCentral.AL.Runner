@@ -145,19 +145,6 @@ registry! {
         tests: "Serv. Get Source Documents (local IntegrationEvent publishers), Serv. Suggest Worksheet Lines; about 2000 bucket tests.",
         probe: "A reportextension with an added data item, a global variable and local procedures that read both, run with Run and SaveAs.",
     },
-    FindDirectionSet => {
-        id: "find-direction-set",
-        assumed: "The characters of Find's Which argument are a set: '=<>' and '<>=' are the pinned '=><'.",
-        tests: "Tests-Job (Find('=<>')).",
-        probe: "Find('=<>'), Find('<>=') and Find('=><') on the same position, with a row only on one side.",
-    },
-    LoadFieldsReadsRow => {
-        id: "load-fields-reads-row",
-        assumed: "Record.LoadFields on a record that was never fetched reads the row of the buffer's primary key and answers true.",
-        tests: "Service Document Archive Mgmt. (ServiceMgtSetup.LoadFields(...) before Get()).",
-        probe: "Already probed: the probe of the next corpus bump says LoadFields does NOT read the row and Ok := LoadFields(..) is false.",
-        note: "CONTRADICTED by a probe (corpus bump 9): fix the implementation and delete this entry.",
-    },
     DatabaseSidNumbers => {
         id: "database-sid-numbers",
         assumed: "Database.SID answers S-1-5-21-a-b-c-rid with a fixed domain part and a stable hash of the name as the rid.",

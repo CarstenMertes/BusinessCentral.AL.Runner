@@ -106,6 +106,25 @@ fn trimmed(node: &SyntaxNode) -> String {
     node.text().to_string().trim().to_string()
 }
 
+/// The text of `node` without the preprocessor directives (`#pragma`, ...), comments and disabled
+/// text inside it, trimmed. A property value such as a `CalcFormula` can span lines that carry them.
+fn trimmed_code(node: &SyntaxNode) -> String {
+    let text = node.text().to_string();
+    if !text.contains(['#', '/']) {
+        return text.trim().to_string();
+    }
+    let mut out = String::with_capacity(text.len());
+    for t in node.descendants_with_tokens().filter_map(|e| e.into_token()) {
+        if !matches!(
+            t.kind(),
+            SyntaxKind::Directive | SyntaxKind::LineComment | SyntaxKind::BlockComment | SyntaxKind::DisabledText
+        ) {
+            out.push_str(t.text());
+        }
+    }
+    out.trim().to_string()
+}
+
 /// Joins `A . B . "C"` style token runs into `A.B.C`.
 fn qualified(tokens: &[SyntaxToken]) -> String {
     tokens
@@ -377,7 +396,7 @@ impl Property {
         self.0
             .children()
             .find(|n| n.kind() == SyntaxKind::PropertyValue)
-            .map(|v| trimmed(&v))
+            .map(|v| trimmed_code(&v))
             .unwrap_or_default()
     }
 }
@@ -831,6 +850,26 @@ tableextension 50100 Ext extends "Sales Header" { fields { field(50100; F; Integ
             objs[0].implements_parts(),
             vec![vec!["IOne".to_string()], vec!["I Two".to_string()]]
         );
+    }
+
+    #[test]
+    fn a_property_value_drops_directives_and_comments_inside_it() {
+        // Base Application's Item Journal Line "Reserved Qty. (Base)" has `#pragma warning disable`
+        // lines inside its CalcFormula; a directive or comment is not part of the value.
+        let o = file(
+            "table 1 T { fields { field(1; F; Decimal) { CalcFormula = sum(L.Q where(A = field(B),\n#pragma warning disable AL0603\n C = field(D), // note\n#pragma warning restore\n E = const(0))); } } }",
+        )
+        .objects()
+        .next()
+        .unwrap();
+        let f = o
+            .sections()
+            .flat_map(|s| s.sections().collect::<Vec<_>>())
+            .next()
+            .expect("field");
+        let v = f.properties().next().expect("CalcFormula").value_text();
+        assert!(!v.contains('#') && !v.contains("note"), "{v:?}");
+        assert!(v.contains("C = field(D)") && v.contains("E = const(0)"), "{v:?}");
     }
 
     #[test]

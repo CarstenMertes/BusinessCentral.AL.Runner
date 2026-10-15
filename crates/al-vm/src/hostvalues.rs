@@ -115,6 +115,11 @@ impl Session {
                     other = other.describe()
                 )),
             },
+            // corpus types/PSCaptionClass.al:5-8, :58-81 (CaptionClassTranslate_Expressions).
+            "System.CaptionClassTranslate#1" => match args.first().and_then(al_builtins::native::text_of) {
+                Some(t) => self.caption_class_translate(&t).map(Value::Text),
+                None => unsupported("CaptionClassTranslate of something that is not text"),
+            },
             "Session.CurrentClientType#1" => Ok(client_type(self.host.identity.current_client_type())),
             "Session.DefaultClientType#1" => Ok(client_type(self.host.identity.default_client_type())),
             _ => return None,

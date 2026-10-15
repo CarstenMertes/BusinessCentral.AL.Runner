@@ -1745,7 +1745,7 @@ impl Session {
     /// TestPageField_Caption_UnresolvedCaptionClass_ReturnsExpressionUnchanged;
     /// autoformat/TestCaptionClassResolverFailure.al: an error the subscriber raises reaches the
     /// open, and a subscriber that claims nothing changes nothing). The language handed to the
-    /// event is assumed to be 1033 (docs/probes-needed.md).
+    /// event is the session language (types/PSCaptionClass.al).
     fn caption_class_text(&mut self, st: &St, text: &str) -> Result<String, Signal> {
         if let Some(rest) = text.strip_prefix("3,") {
             return Ok(rest.to_string());
@@ -1754,6 +1754,26 @@ impl Session {
         if text.contains(',') && area.trim().parse::<u32>().is_ok() {
             return unsupported(format!("CaptionClass `{text}` is resolved by the platform"));
         }
+        let _ = st;
+        self.raise_resolve_caption_class(area, expr, text)
+    }
+
+    /// `CaptionClassTranslate(Text)`: area 3 gives the text after the first comma without an event ('3,One,Two' is
+    /// `One,Two`, '3,' is empty); a text with no comma and the empty text come back unchanged without an event; any other
+    /// area raises OnResolveCaptionClass of the Caption Class codeunit with the area, the rest after the first comma and the
+    /// session language, and comes back unchanged when no subscriber resolves it (corpus types/PSCaptionClass.al:5-8,
+    /// CaptionClassTranslate_Expressions).
+    pub(crate) fn caption_class_translate(&mut self, text: &str) -> Result<String, Signal> {
+        let Some((area, expr)) = text.split_once(',') else {
+            return Ok(text.to_string());
+        };
+        if area == "3" {
+            return Ok(expr.to_string());
+        }
+        self.raise_resolve_caption_class(area, expr, text)
+    }
+
+    fn raise_resolve_caption_class(&mut self, area: &str, expr: &str, text: &str) -> Result<String, Signal> {
         if !self
             .engine
             .events
@@ -1761,7 +1781,6 @@ impl Session {
         {
             return Ok(text.to_string());
         }
-        let _ = st;
         let names: Vec<String> = ["CaptionArea", "CaptionExpr", "Language", "Caption", "Resolved"]
             .iter()
             .map(|n| n.to_string())
@@ -1769,7 +1788,7 @@ impl Session {
         let mut args = vec![
             Value::Text(area.to_string()),
             Value::Text(expr.to_string()),
-            Value::Integer(1033),
+            Value::Integer(self.global_language),
             Value::Text(String::new()),
             Value::Boolean(false),
         ];

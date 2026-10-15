@@ -62,6 +62,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "System.WindowsLanguage#1",
     "System.TemporaryPath#1",
     "System.GlobalLanguage#1",
+    "System.CaptionClassTranslate#1",
     "Session.CurrentClientType#1",
     "Session.DefaultClientType#1",
     "Database.LastUsedRowVersion#1",

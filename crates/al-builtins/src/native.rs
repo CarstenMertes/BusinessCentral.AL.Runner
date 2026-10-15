@@ -504,9 +504,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Media.ImportStream#2" => {
             "Media.ImportStream with a file name: what the file name is stored as (the Tenant Media row) is not pinned; only the form with a description and a MIME type is (media/TestMediaPngImport.al)"
         }
-        "System.CaptionClassTranslate#1" => {
-            "CaptionClassTranslate is in no corpus test, so how it resolves a caption class expression (the area, the language, the Caption Class codeunit event) is not pinned"
-        }
         "TestRequestPage.Editable#1" => {
             "TestRequestPage.Editable is in no corpus test (only the control form is, handlers/TestReqPageBoundVisibility.al), so whether the request page itself is editable is not pinned"
         }

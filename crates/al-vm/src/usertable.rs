@@ -326,7 +326,9 @@ impl Session {
         let sid = rec.borrow().fields[pos(t, F_SID)].clone();
         let cx = self.cx.clone();
         if let Some(up) = self.table_def(USER_PROPERTY) {
-            if let Ok(WriteOutcome::Done | WriteOutcome::NotFound) = self.store.delete(&cx, &up, &[sid.clone()]) {}
+            if let Ok(WriteOutcome::Done | WriteOutcome::NotFound) =
+                self.store.delete(&cx, &up, std::slice::from_ref(&sid))
+            {}
         }
         if let Some(ac) = self.table_def(ACCESS_CONTROL) {
             let mine: Vec<Row> = self

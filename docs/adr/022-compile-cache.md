@@ -717,6 +717,57 @@ ADR-026): its own layer is most of the old cost.
 `.alci` source index is not used for the layer build); the blocks of the layers below are decoded though only their
 facts are read. A partner app that Microsoft's apps depend on (never seen) makes the order fall back to the caller's.
 
+## Owner request 2026-10-15 (second): a base layer shared by projects (branch `shared-base-layer`)
+
+The Microsoft layer was keyed by every Microsoft app in a run's closure, so two projects shared it only when their
+Microsoft app sets were identical. Test apps differ often (Library Assert only, or Library Assert + Any +
+Tests-TestLibraries, or one more Microsoft app such as Shopify Connector), and each different set rebuilt Base
+Application (8 to 11 s). This amends "Owner decision 2026-10-15: layered entries", points 1 and 2.
+
+1. **The base layer** is the Microsoft apps `System`, `System Application`, `Business Foundation` and `Base Application`
+   that are in the run's set, and every app of the set they depend on (by the `dependencies` of each app). Any two
+   projects on one BC build have the same base layer. Without any of those four (a small fixture) the base layer is the
+   leading Microsoft apps, as before.
+2. **Every other app is a layer of its own, above the base layer, in a canonical order** that does not depend on the
+   order the apps came in: a topological order that, among the apps whose dependencies are placed, takes the other
+   Microsoft apps before the rest and then goes by app name (case-insensitive) and id
+   (`compile_cache::dependency_order`). Two projects therefore share the base layer, and share further layers when their
+   apps agree up to that point. A cycle or a repeated app id keeps the caller's order.
+3. **The target in the key is the runtime only.** A compile of the dependency apps reads the target only through the
+   builtins catalog, which depends on the runtime version (`Catalog::for_target`). The BC version and build were in the
+   key too, so a project whose app.json says `application: 27.0` and one on `27.5` of the same build got different
+   layers (the first attempt at sharing missed for that reason). The apps' own versions and source hashes, which are in
+   the key, carry the build.
+4. **The preprocessor symbols stay in the key, because they do change a dependency compile.** `symbols` are the
+   `preprocessorSymbols` of the project's app.json files, and today they are applied to the dependency sources as well.
+   Microsoft's sources use them: `#if not CLEAN25` (1 837 times in Base Application 27.5), `CLEAN26`, `CLEAN27`,
+   `CLEANSCHEMA27` and more. A project that defines `CLEAN25` gets a Base Application without that code, in the uncached
+   run as well as the cached one. So two projects with different symbols do not share a layer, and that is correct for
+   the code as it is. It is also wrong against Business Central: Microsoft's apps are published already compiled without
+   the project's symbols. **Proposal for the owner (not done, it changes the uncached outcome): compile dependency apps
+   of publisher Microsoft with no project symbols and keep `symbols` out of their layers' keys.** That needs a symbol set
+   per app in `Workspace::load_apps_lazy` (the symbols are one set for all apps today), and one more rule for a partner
+   dependency that has its own `preprocessorSymbols`, which the loader does not read for dependencies.
+5. **The fixed cost of a layer** went from 0.8 to 2 s to 0.3 s. A layer build used to decode the blocks of all layers
+   below it only to hand them to `lower_core`, which put them in a program nobody reads; they are now placeholders
+   (`DepBlock::placeholder`, `ir::Object` derives `Default`), and the stack/complete equality tests still pass. The
+   remaining 0.1 to 0.3 s is the scan of the apps below.
+
+**Measured (2026-10-15, release build, load 20 to 24).** A fresh cache, project A (4 Microsoft apps + a 1-file partner
+library, BC 27.5.46862.48827) built first, then project B (Tests-ERM's closure: 11 Microsoft apps), cold:
+
+| Project B | One Microsoft layer (before) | Base layer shared (after) |
+|---|---:|---:|
+| Cache build, wall | 9.06 s (load 23) | 2.90 s (load 21): base hit, seven test-library layers built in 0.2 to 1.1 s each |
+| Whole run, compile | 11.2 s | 5.4 s |
+| Peak memory | 3139 MB | 1502 MB |
+
+A one-file change in a partner library layer: 0.27 to 0.43 s (load 25), against 0.75 to 2.3 s with the first layers.
+The cold build of one project alone is slower with many layers: project B on an empty cache took 15.8 and 12.5 s as one
+layer (load 17 and 22) and 17.0 and 15.4 s as eight (load 21), about 3 s more, because each layer has its own fixed
+cost and the test libraries are compiled one at a time. Every project after the first on the same BC build saves the
+base layer.
+
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an

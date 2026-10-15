@@ -139,19 +139,18 @@ pub fn source_hash(app: &AppSource) -> [u8; 32] {
     h.finalize().into()
 }
 
-/// The target as the key holds it: every field, written out.
+/// The target as the key holds it. Compiling the dependency apps reads the target only through the
+/// builtins catalog, which depends on the runtime version (`Catalog::for_target`); the BC version and
+/// build do not change a compile (the build is in the apps' own versions and source hashes). Keeping
+/// them out lets projects on one BC build whose app.json names another BC minor share a layer.
 fn target_text(t: &al_version::Target) -> String {
-    // Destructured without `..`: a field added to the target must be written here to compile.
-    let al_version::Target { bc, runtime } = t;
-    let al_version::BcVersion { major, minor, build } = bc;
+    // Destructured without `..`: a field added to the target must be decided here to compile.
+    let al_version::Target { bc: _, runtime } = t;
     let al_version::Runtime {
         major: rt_major,
         minor: rt_minor,
     } = runtime;
-    format!(
-        "bc {major}.{minor} build {} runtime {rt_major}.{rt_minor}",
-        build.as_deref().unwrap_or("-")
-    )
+    format!("runtime {rt_major}.{rt_minor}")
 }
 
 /// The key of the entry for the dependency `apps` (program order), their manifests, the
@@ -217,20 +216,69 @@ pub fn key_layer(
 /// The publisher whose apps make the first layer (the platform and Microsoft's apps).
 pub const MICROSOFT: &str = "Microsoft";
 
-/// The order the dependency apps are compiled in: a topological order (every app after the apps
-/// it depends on) that takes Microsoft's apps first, as early as their own dependencies allow, and
-/// otherwise keeps the order the apps came in. A Microsoft app does not depend on another
-/// publisher's app, so all of them come before the others. With a cycle or a repeated app id the
-/// order stays as it came. `apps` and `manifests` are the dependency apps only. Returns the new
-/// order as indexes of the old.
+/// The Microsoft apps every Business Central app stands on. They and what they need in the set
+/// are the base layer, which projects on one BC build share whatever test libraries or other
+/// Microsoft apps they add.
+const CORE: [&str; 4] = [
+    "System",
+    "System Application",
+    "Business Foundation",
+    "Base Application",
+];
+
+/// The indexes of the apps in the base layer: the [`CORE`] apps of Microsoft in the set and, by
+/// their `dependencies` (app ids), every app of the set they need. Empty when the set has none
+/// of the core apps (a small fixture, or a project that does not stand on Business Central).
+fn core_set(apps: &[&AppSource], manifests: &[crate::runtime::Manifest]) -> Vec<bool> {
+    let by_id: std::collections::HashMap<&str, usize> =
+        apps.iter().enumerate().map(|(i, a)| (a.id.as_str(), i)).collect();
+    let mut core = vec![false; apps.len()];
+    let mut queue: Vec<usize> = (0..apps.len())
+        .filter(|&i| {
+            manifests.get(i).is_some_and(|m| m.publisher == MICROSOFT)
+                && CORE.iter().any(|c| c.eq_ignore_ascii_case(&apps[i].name))
+        })
+        .collect();
+    for &i in &queue {
+        core[i] = true;
+    }
+    while let Some(i) = queue.pop() {
+        for d in &apps[i].dependencies {
+            if let Some(&j) = by_id.get(d.as_str()) {
+                if !core[j] {
+                    core[j] = true;
+                    queue.push(j);
+                }
+            }
+        }
+    }
+    core
+}
+
+/// The order the dependency apps are compiled in, the same for any order they came in: a
+/// topological order (every app after the apps it depends on) that takes the base layer's apps
+/// first, then the other Microsoft apps, then the rest, each group by app name and id as soon as
+/// its dependencies are placed. Two projects on one BC build therefore start with the same base
+/// layer, and apps they have in common come in the same relative order. With a cycle or a repeated
+/// app id the order stays as it came. `apps` and `manifests` are the dependency apps only.
+/// Returns the new order as indexes of the old.
 pub fn dependency_order(apps: &[&AppSource], manifests: &[crate::runtime::Manifest]) -> Vec<usize> {
-    let microsoft = |i: usize| manifests.get(i).is_some_and(|m| m.publisher == MICROSOFT);
     let mut by_id: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
     for (i, a) in apps.iter().enumerate() {
         if by_id.insert(a.id.as_str(), i).is_some() {
             return (0..apps.len()).collect();
         }
     }
+    let core = core_set(apps, manifests);
+    let class = |i: usize| -> u8 {
+        if core[i] {
+            0
+        } else if manifests.get(i).is_some_and(|m| m.publisher == MICROSOFT) {
+            1
+        } else {
+            2
+        }
+    };
     let needs: Vec<Vec<usize>> = apps
         .iter()
         .enumerate()
@@ -245,10 +293,9 @@ pub fn dependency_order(apps: &[&AppSource], manifests: &[crate::runtime::Manife
     let mut placed = vec![false; apps.len()];
     let mut order = Vec::with_capacity(apps.len());
     while order.len() < apps.len() {
-        let ready = |i: usize| !placed[i] && needs[i].iter().all(|&d| placed[d]);
         let next = (0..apps.len())
-            .find(|&i| microsoft(i) && ready(i))
-            .or_else(|| (0..apps.len()).find(|&i| ready(i)));
+            .filter(|&i| !placed[i] && needs[i].iter().all(|&d| placed[d]))
+            .min_by_key(|&i| (class(i), apps[i].name.to_lowercase(), apps[i].id.as_str()));
         let Some(i) = next else {
             return (0..apps.len()).collect();
         };
@@ -258,18 +305,23 @@ pub fn dependency_order(apps: &[&AppSource], manifests: &[crate::runtime::Manife
     order
 }
 
-/// The layers of the dependency `apps` (in [`dependency_order`]): the leading Microsoft apps are
-/// the first layer, every other app is a layer of its own (a change in it rebuilds it and the
-/// layers above, never the layers below). As ranges of `apps`.
-pub fn layer_ranges(manifests: &[crate::runtime::Manifest], n: usize) -> Vec<std::ops::Range<usize>> {
-    let microsoft = (0..n)
-        .take_while(|&i| manifests.get(i).is_some_and(|m| m.publisher == MICROSOFT))
-        .count();
+/// The layers of the dependency `apps` (in [`dependency_order`]): the leading base apps are the
+/// first layer (without any, the leading Microsoft apps), every other app is a layer of its own
+/// (a change in it rebuilds it and the layers above, never the layers below). As ranges of `apps`.
+pub fn layer_ranges(apps: &[&AppSource], manifests: &[crate::runtime::Manifest]) -> Vec<std::ops::Range<usize>> {
+    let core = core_set(apps, manifests);
+    let base = if core.iter().any(|c| *c) {
+        core.iter().take_while(|c| **c).count()
+    } else {
+        (0..apps.len())
+            .take_while(|&i| manifests.get(i).is_some_and(|m| m.publisher == MICROSOFT))
+            .count()
+    };
     let mut out = Vec::new();
-    if microsoft > 0 {
-        out.push(0..microsoft);
+    if base > 0 {
+        out.push(0..base);
     }
-    out.extend((microsoft..n).map(|i| i..i + 1));
+    out.extend((base..apps.len()).map(|i| i..i + 1));
     out
 }
 
@@ -283,7 +335,7 @@ pub fn layer_keys(
     identities: &[Option<[u8; 32]>],
 ) -> Vec<(std::ops::Range<usize>, Key)> {
     let mut below = [0u8; 32];
-    layer_ranges(manifests, apps.len())
+    layer_ranges(apps, manifests)
         .into_iter()
         .map(|r| {
             let ids: Vec<Option<[u8; 32]>> = r.clone().map(|i| identities.get(i).copied().flatten()).collect();

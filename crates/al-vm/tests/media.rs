@@ -185,15 +185,7 @@ fn what_the_corpus_does_not_pin_is_refused() {
             "{body}: {r:?}"
         );
     };
-    // Importing into a field that already holds a value, in both types.
-    refused(
-        format!(
-            "Rec.Code := 'R1'; Rec.Insert(); {} Rec.Picture.ImportStream(ins, 'a'); {} Rec.Picture.ImportStream(ins, 'b'); exit('');",
-            feed("Rec", "x"),
-            feed("Rec", "y")
-        ),
-        "already has a value",
-    );
+    // A MediaSet that already has members.
     refused(
         format!(
             "Rec.Code := 'R2'; Rec.Insert(); {} Rec.Images.ImportStream(ins, 'a'); {} Rec.Images.ImportStream(ins, 'b'); exit('');",
@@ -211,4 +203,16 @@ fn what_the_corpus_does_not_pin_is_refused() {
         "Rec.Code := 'R4'; Rec.Insert(); Rec.Picture.ExportStream(outs); exit('');".into(),
         "empty field",
     );
+}
+
+// media/PXMediaFileName.al: importing into a Media field that already holds a value replaces it.
+#[test]
+fn importing_into_a_media_that_holds_a_value_replaces_it() {
+    let body = format!(
+        "Rec.Code := 'R1'; Rec.Insert(); {} Rec.Picture.ImportStream(ins, 'a'); {} Rec.Picture.ImportStream(ins, 'b');
+         Rec2.Src.CreateOutStream(outs); Rec.Picture.ExportStream(outs); Rec2.Src.CreateInStream(ins); ins.ReadText(a); exit(a);",
+        feed("Rec", "x"),
+        feed("Rec", "y")
+    );
+    assert_eq!(text("", &body).unwrap(), "y");
 }

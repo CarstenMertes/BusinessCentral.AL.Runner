@@ -20,11 +20,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, release]
   pull_request:
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+  # release.yml runs the same checks before it builds a numbered alpha.
+  workflow_call:
 
 env:
   # The built sidecar, for the sidecar tests and the corpus run. A missing .NET fails, not skips.
@@ -54,6 +56,22 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       # Without the cli-e2e feature: `corpus_harness` and `dev_tooling` run in the release-tests job.
       - run: cargo test --workspace --no-default-features
+
+  # The release builds macOS and Windows binaries. A compile error that only those targets show
+  # (a Unix-only call, a missing OS function) must fail the push, not the release. Check only: no
+  # link, no tests. Test code of the workspace is not checked on Windows.
+  portable:
+    name: portable check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --workspace
 
   corpus:
     runs-on: ubuntu-latest

@@ -479,6 +479,7 @@ impl Walk<'_> {
                 args.iter().try_for_each(|a| self.arg(a))
             }
             Expr::ThisInstance => Ok(()),
+            Expr::Refused(_) => Err("refuses when it runs".into()),
             Expr::BaseInstance => Err("uses the base page or report".into()),
             Expr::EnumImpl { .. } => Err("creates the codeunit an enum value implements".into()),
             Expr::Control { .. } => Err("reads a control of a test page".into()),

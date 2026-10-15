@@ -1,0 +1,76 @@
+# ADR-028: `alrunner serve`: a warm in-process server speaking the v2 wire
+
+- Status: Proposed (the owner decided on 2026-10-15 for a warm server instead of a child process per request; awaiting formal acceptance)
+- Date: 2026-10-15
+
+## Context
+
+ADR-016 puts server mode in scope: v3 replaces v2, and ALchemist and LethAL start `al-runner --server` and
+speak JSON lines on stdin and stdout (`docs/integrations/alchemist-lethal.md`, sections 1.1, 3.2). An editor loop
+(`docs/ideas.md`, live testing as you type) needs the second request to be much cheaper than a fresh
+`alrunner test`. A first draft of this ADR ran a child process per request: simple and isolated, but nothing warm.
+The owner chose the warm design.
+
+## Decision
+
+1. **The wire is protocol-v2**, unchanged: first stdout line `{"ready":true}`; one JSON object per line; stdout
+   carries the protocol only; command names are case insensitive; `runTests` ends with one
+   `{"type":"summary",... "protocolVersion":2}`; `shutdown` answers `{"status":"shutting down"}` and exits 0, EOF
+   exits too; a bad request answers `{"error":"..."}` and the server goes on; `[server] request <n> done` on stderr.
+2. **The run is in-process.** `alrunner serve` calls the same `run::test_with` as `alrunner test`, with a warm
+   slot (`al_testrun::runtime::Warm`). `try_run_suites_with` is split into `compile_suites` (produces `Compiled`)
+   and `run_compiled`. The server keeps the last `Compiled`: the compiled dependency apps, the lowered workspace,
+   the loaded test-data tables and the post-install database snapshot source.
+3. **Reuse rule.** A key hashes the workspace sources, the dependency identities and the symbols. Same key:
+   the compiled workspace is reused (`cached:true` in the summary). Changed source: the workspace and the
+   dependencies are compiled again (see Limits). A request that selects tests outside the compiled selection
+   recompiles for the union of both selections, so later requests of either kind hit.
+4. **No state leaks.** Every run starts from a fresh database built from the same post-install snapshot, and the
+   opened backup is kept read-only between requests. Test: a test that writes runs in three requests with the
+   same result.
+5. **Crash containment.** Each test runs under `catch_unwind`. A panic marks that test as an error, the rest of
+   its codeunit as not run ("an earlier test of this codeunit panicked (a runtime bug)"), and the server goes on.
+   A panic outside a test clears the warm state and answers an `{"error":...}` line. A hang is stopped by the
+   per-test CPU limit (`--test-timeout`).
+6. **Streaming.** `al-testrun` has an event hook (`events::Hooks`): one `TestEvent` per test as it finishes.
+   The server writes one `test` line per event, then the summary.
+7. **`cancel`** is answered at once from a reader thread (`{"type":"ack","command":"cancel","noop":bool}`).
+   During a run it sets a flag; the run stops after the current test, and the summary has `cancelled:true`,
+   `exitCode` 130, with the tests that ran already streamed. A request that arrives during a run is queued.
+8. **Daemon options** and **request fields** are as in the first draft: daemon options are the request-independent
+   `alrunner test` options; request fields are `sourcePaths` (required), `packagePaths`, `coverage`,
+   `perTestCoverage`, `test`, `excludeTests`, `testIsolation`. Deferred fields (`affectedOnly`, `includeFailing`,
+   `strictEnvironment`, `tdd`) answer an error; fields of other v2 commands (`code`, `captureValues`,
+   `iterationTracking`) earn a `warnings` entry; others answer `unknown field`.
+9. **Not in this step:** `execute` (step 4), value capture, incremental compile.
+
+## Measurements (release, 4 threads, 2026-10-15)
+
+| Input | one-shot `alrunner test` (compile cache hot) | serve, first request | serve, repeat (unchanged) |
+|---|---|---|---|
+| corpus app, 2 tests (Pageworks-sized app) | 1.3 s, peak 0.9 GB | 7.6 s (no compile cache) | 0.17 s; changed source 0.67 s |
+| Tests-ERM, codeunit 134000, 32 tests | 4.9 s, peak 1.3 GB (17.7 s without cache) | 18.8 s | 2.1 s (first test line after 0.3 s) |
+
+The first request pays the full compile and holds about 3 GB afterwards (the compiled dependency apps stay in
+memory). Fifty requests with a changed source each grow resident memory by less than 60 MB (tested).
+
+## Limits (honest)
+
+- The first request does not use the on-disk compile cache; it is slower than a hot one-shot run.
+- A changed source recompiles the workspace but the dependency apps are still reloaded (about 0.5 s on ERM);
+  the baseline reruns per request (0.4 to 0.8 s); `Engine` is rebuilt per request.
+- Incremental workspace compile is the next step (ADR-026 advised against per-file incremental compile; the
+  warm slot is the base for it).
+
+## Consequences
+
+- Editor loops get sub-second repeats; ALchemist sees `cached:true` and per-test streaming as in v2.
+- The server holds memory (about 3 GB with Microsoft's apps) while idle.
+- A runtime bug in one test cannot kill the server, but a bug that corrupts shared state would; the isolation
+  test and the 50-request test guard against it.
+
+## Conformance
+
+`crates/alrunner-cli/tests/serve.rs`: streaming and shutdown, bad requests, cancel after the current test, a
+writing test with the same answer in three requests, reuse and recompile rules, a panic contained
+(`ALRUNNER_DEBUG_PANIC_IN`), 50 requests with bounded memory, queued requests.

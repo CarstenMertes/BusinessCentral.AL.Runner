@@ -165,7 +165,7 @@ fn a_bad_invocation_exits_2_and_says_why() {
         (vec!["test", ".", "--nope"], "unknown option"),
         (vec!["test", ".", "--test-data", "--no-test-data"], "cannot be combined"),
         (vec!["test", ".", "--test-data", "/no/such/Demo.bak"], "Demo.bak"),
-        (vec!["serve"], "not implemented yet"),
+        (vec!["debug"], "not implemented yet"),
     ] {
         let o = alrunner(&args);
         assert_eq!(code(&o), 2, "{args:?}");

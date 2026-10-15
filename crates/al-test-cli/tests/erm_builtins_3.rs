@@ -59,28 +59,23 @@ fn unwrap_returns_the_text_a_secret_carries() {
     }
 }
 
-// xml/TestXmlRuntimeContracts.al:99 pins the form without options keeping white space; the default
-// XmlReadOptions is not pinned, so a document without ignorable white space reads as before and one
-// with it is refused.
+// misc/W4XmlJsonHttp.al (W4 Xml Options Tests.ReadFrom_*): the default XmlReadOptions and PreserveWhitespace true or
+// false read white space between tags and around the root as the form without options does.
 #[test]
-fn read_from_text_with_default_options_reads_a_document_without_ignorable_white_space() {
+fn read_from_text_with_xml_read_options_reads_white_space_as_the_form_without_options_does() {
     let o = outcomes(
         "[Test] procedure Compact() var D: XmlDocument; O: XmlReadOptions; R: Text; begin
              if not XmlDocument.ReadFrom('<root><a>x y</a></root>', O, D) then Error('read'); D.WriteTo(R);
              if not R.Contains('<a>x y</a>') then Error('got %1', R); end;
-         [Test] procedure Indented() var D: XmlDocument; O: XmlReadOptions; begin
-             XmlDocument.ReadFrom('<root>  <a/></root>', O, D); end;
+         [Test] procedure Indented() var D: XmlDocument; O: XmlReadOptions; R: Text; begin
+             O.PreserveWhitespace(false);
+             if not XmlDocument.ReadFrom('<root>  <a/></root>', O, D) then Error('read'); D.WriteTo(R);
+             if not R.Contains('<root>  <a />') then Error('got %1', R); end;
          [Test] procedure Outside() var D: XmlDocument; O: XmlReadOptions; begin
-             XmlDocument.ReadFrom(' <root/>', O, D); end;",
+             if not XmlDocument.ReadFrom(' <root/>', O, D) then Error('read'); end;",
     );
-    assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
-    for x in &o[1..] {
-        let why = not_run(x);
-        assert!(
-            why.contains("XmlReadOptions") && why.contains("not pinned"),
-            "{}: {why}",
-            x.0
-        );
+    for (n, r) in &o {
+        assert_eq!(r, &Outcome::Pass, "{n}");
     }
 }
 

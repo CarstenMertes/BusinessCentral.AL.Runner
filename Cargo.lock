@@ -165,6 +165,7 @@ dependencies = [
  "al-syntax",
  "al-version",
  "al-vm",
+ "libc",
  "rayon",
  "serde_json",
  "sha2",

@@ -16,6 +16,15 @@ The real AL suites are 5 to 6 times slower than BC (Pageworks: 88 s in BC's test
 Nobody has profiled them yet, so the split between arithmetic, calls, builtins and record operations is not known.
 A JIT is out of scope (review section 3.2: little gain on AL code, a second backend to keep equal, no WASM).
 
+## Profile (step `profile-suites`, 2026-10-15)
+
+Full numbers in `docs/reviews/2026-10-pageworks-profile.md`. Pageworks: dispatch 45 % (eval 23 %, exec_block 10 %),
+value and Decimal handling 9 %, allocation 12 %, text 4.5 %, builtin lookup 3.7 %, record store 0.2 %. Tests-ERM:
+dispatch 7 %, allocation about 65 % (libc included), record operations 77 % inclusive, of which 40 % is copying and
+freeing whole table schemas (`validate_relation`, `records.rs`). The first profile of Pageworks found the install
+codeunits re-run for every test codeunit (fixed). Reading: record handling comes first (point 1 below, ADR-035 and
+the schema-clone fix); for computation-heavy AL, dispatch dominates, which favors the bytecode form (D4).
+
 ## Decision
 
 1. **Profile first.** Before any executable-form code: profile Pageworks (the owner's repository, read only, a

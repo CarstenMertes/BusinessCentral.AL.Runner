@@ -1,5 +1,5 @@
-//! Performance budget: cold compile of the pinned corpus (issue #1, docs/architecture.md
-//! budget of at most 1 s).
+//! Performance budget: cold compile of the pinned corpus (issue #1, docs/architecture.md). The budget is in instructions
+//! per object (see below); the wall time is printed for information.
 //!
 //! "Compile" is everything between the app folders on disk and the lowered
 //! program: reading the `.al` files, lex, preprocess, parse, workspace load,
@@ -12,41 +12,13 @@
 //! cargo test --release -p al-test-cli --test perf_budget -- --ignored
 //! ```
 
+#[path = "support/meter.rs"]
+mod meter;
+
 use al_test_cli::runtime;
+use meter::Meter;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
-
-/// The compile budget (docs/architecture.md): at most one second.
-///
-/// The asserted limit is the budget itself, not a looser number. What is steadier is the measurement.
-/// On GitHub's shared runners the best of three compiles ranged from 424 to 952 ms between 24 runs of
-/// nearly the same code (issue 16): a runner that is slow for a few seconds slows all three. The
-/// estimator is the minimum, which a real regression raises and a busy neighbour does not: one
-/// uncounted warm-up compile (file cache, allocator), then compiles until one is within the budget,
-/// at most `MAX_RUNS`. A code change that makes the compile slower makes every sample slower, so the
-/// minimum stays over the budget and the test fails after `MAX_RUNS` samples; a runner that was slow
-/// for a few seconds stops being a failure. All samples are printed, with the CPU time of the process
-/// next to the wall time, so a slow run can be told from a busy runner.
-const BUDGET_SECS: f64 = 1.0;
-const MIN_RUNS: usize = 3;
-const MAX_RUNS: usize = 15;
-
-/// CPU seconds (user and system, all threads) this process has used; 0 where it cannot be read.
-#[cfg(target_os = "linux")]
-fn process_cpu_secs() -> f64 {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: `ts` is a valid timespec for the call to fill in.
-    let rc = unsafe { libc::clock_gettime(libc::CLOCK_PROCESS_CPUTIME_ID, &mut ts) };
-    if rc != 0 {
-        return 0.0;
-    }
-    ts.tv_sec as f64 + ts.tv_nsec as f64 * 1e-9
-}
-
-#[cfg(not(target_os = "linux"))]
-fn process_cpu_secs() -> f64 {
-    0.0
-}
 
 fn root() -> PathBuf {
     Path::new(env!("CARGO_MANIFEST_DIR"))
@@ -66,9 +38,18 @@ fn compile_corpus() -> usize {
     lowered.program.objects.len()
 }
 
+/// The cold compile is budgeted in instructions per compiled object, not in seconds. On a shared CI runner the same code
+/// measured 828 and then 955 ms (and 2.4 and then 3.0 s of CPU) between two runs a day apart; the instruction count of
+/// every commit is the same to within 1 % on every machine, and per object it does not break when the corpus grows.
+/// The limit is the value of the day plus 5 %. Where the kernel refuses the counter the test falls back to the CPU time of
+/// the process per object, with a limit three times as wide, and says so. The wall time is printed for information only.
+const LIMIT_INSTRUCTIONS_PER_OBJECT: u64 = 1_990_000;
+const LIMIT_CPU_NS_PER_OBJECT: u64 = 2_000_000;
+const RUNS: usize = 3;
+
 #[test]
 #[ignore = "perf budget: run with `cargo test --release -p al-test-cli --test perf_budget -- --ignored`"]
-fn cold_compile_of_the_pinned_corpus_stays_within_one_second() {
+fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
     if cfg!(debug_assertions) {
         panic!("perf budgets are only meaningful in --release; this is a debug build");
     }
@@ -76,29 +57,30 @@ fn cold_compile_of_the_pinned_corpus_stays_within_one_second() {
         root().join("corpus/tests/al-language/app.json").exists(),
         "corpus submodule not checked out: run `git submodule update --init`"
     );
-    // The warm-up is not counted.
+    // The warm-up (file cache, allocator, the thread pools) is not counted.
     let mut objects = compile_corpus();
-    let mut best = f64::MAX;
+    // Open before the compile starts its threads: they inherit the counter, so the whole compile is counted.
+    let meter = Meter::new(true);
+    let counting = matches!(meter, Meter::Instructions(_));
+    let mut best = u64::MAX;
     let mut samples = Vec::new();
-    for n in 1..=MAX_RUNS {
-        let (cpu, t) = (process_cpu_secs(), Instant::now());
-        objects = compile_corpus();
-        let wall = t.elapsed().as_secs_f64();
-        samples.push(format!(
-            "{:.0} ms (cpu {:.0} ms)",
-            wall * 1e3,
-            (process_cpu_secs() - cpu) * 1e3
-        ));
-        best = best.min(wall);
-        if n >= MIN_RUNS && best <= BUDGET_SECS {
-            break;
-        }
+    for _ in 0..RUNS {
+        let t = Instant::now();
+        let (n, cost) = meter.measure(compile_corpus);
+        objects = n;
+        samples.push(format!("{} ({:.0} ms)", cost, t.elapsed().as_secs_f64() * 1e3));
+        best = best.min(cost);
     }
+    let per_object = best / objects as u64;
+    let limit = if counting {
+        LIMIT_INSTRUCTIONS_PER_OBJECT
+    } else {
+        LIMIT_CPU_NS_PER_OBJECT
+    };
     eprintln!(
-        "cold compile: {objects} objects, best of {} = {:.0} ms, budget {:.0} ms; samples: {}",
-        samples.len(),
-        best * 1e3,
-        BUDGET_SECS * 1e3,
+        "cold compile: {objects} objects, {} ({}), least of {RUNS} = {best}, {per_object} per object, limit {limit}; samples: {}",
+        meter.name(),
+        if counting { "all threads" } else { "process" },
         samples.join(", ")
     );
     assert!(
@@ -106,8 +88,9 @@ fn cold_compile_of_the_pinned_corpus_stays_within_one_second() {
         "compiled only {objects} objects: the corpus was not loaded"
     );
     assert!(
-        best <= BUDGET_SECS,
-        "cold compile took {best:.2} s at best of {MAX_RUNS}, over the {BUDGET_SECS} s budget"
+        limit == 0 || per_object <= limit,
+        "the cold compile used {per_object} {} per object, over the limit of {limit}",
+        meter.name()
     );
 }
 

@@ -78,3 +78,34 @@ JIT-load warnings (9, 10), and the controlled world (8). They need little new ma
 AL developer hits these questions weekly, and none of them is possible with the stock tools.
 Mutation testing (5) is the strongest "only we can do this" feature once the runtime is broad
 enough that most app tests run.
+
+## Owner feedback (2026-10-15)
+
+Wanted, high value:
+- **Database diff per test** (2) and **database cost profile** (9, with 10): very good ideas.
+- **Seed** (part of 8): v2 prints the random seed of every run, so a failure seen once in a
+  pipeline can be reproduced locally with `--seed`. v3 needs the same (ADR-016 gate P also lists
+  `--seed`). The rest of "controlled world" (date, user) is optional.
+- **Exact coverage per test** (7): important, mainly to rerun only the tests that exercise what
+  changed since the last run ("rerun relevant tests", which v2 has as a performance mode).
+- **Upgrade code testing** (14): a good one.
+
+New ideas from the owner:
+- **Value tracing.** Point at a field (or variable) and get, out of the box, the trace of where
+  its value came from and where it went through the code, without writing a test for it.
+  The interpreter sees every assignment, so a data-flow trace per run is possible.
+- **Interactive debugging with changing variables in memory**, which other languages have and
+  AL does not. The interpreter owns all state, so a debugger can stop, inspect and set values.
+- **Country matrix.** More than versions, partners must run their tests across many
+  localizations (around 5 versions times 50 countries). The runtime could run one compiled test
+  app against each country's Base Application and demo data, and report the outcome matrix
+  (only the cells that differ).
+- **Tests independent of CRONUS data.** Record which rows a test actually read from the demo
+  data (the "givens" it needs) and generate AL setup code that creates exactly those rows, so the
+  test runs without a CRONUS database and stops depending on its structure. The runtime already
+  loads rows on first touch, so it knows each test's data footprint.
+
+Lower priority or unclear:
+- Random order and isolation checks (6): backlog, not urgent.
+- Cross-version runs (13): the country matrix matters more.
+- REPL (16), snapshot tests (17), setup reuse (18): explained to the owner, not yet rated.

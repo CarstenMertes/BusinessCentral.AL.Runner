@@ -501,9 +501,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "System.GetLastErrorText#2" => {
             "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
         }
-        "Media.ImportStream#2" => {
-            "Media.ImportStream with a file name: what the file name is stored as (the Tenant Media row) is not pinned; only the form with a description and a MIME type is (media/TestMediaPngImport.al)"
-        }
         "System.CaptionClassTranslate#1" => {
             "CaptionClassTranslate is in no corpus test, so how it resolves a caption class expression (the area, the language, the Caption Class codeunit event) is not pinned"
         }

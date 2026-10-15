@@ -85,7 +85,9 @@ fn read_from_text_with_default_options_reads_a_document_without_ignorable_white_
 }
 
 #[test]
-fn media_import_stream_with_a_file_name_is_refused_with_its_reason() {
+fn media_import_stream_with_a_file_name_is_lowered() {
+    // Base Application's Document Attachment calls it (ImportStream(Stream, '', '', FileName)); what the file
+    // name changes is visible only in the Tenant Media row, which is not read from the media store (ADR-017).
     let (l, oi) = compile(
         "procedure Import(var IS: InStream) var R: Record \"B3 Row\"; begin R.Pic.ImportStream(IS, 'd', 'image/png', 'f.png'); end;",
     );
@@ -94,10 +96,5 @@ fn media_import_stream_with_a_file_name_is_refused_with_its_reason() {
         .iter()
         .position(|r| r.name == "Import")
         .unwrap();
-    let why = l.unsupported[oi][ri].first().cloned().unwrap_or_default();
-    assert!(
-        why.contains("Media.ImportStream") && why.contains("not pinned"),
-        "{why}"
-    );
-    assert!(!why.contains("is not implemented"), "{why}");
+    assert!(l.unsupported[oi][ri].is_empty(), "{:?}", l.unsupported[oi][ri]);
 }

@@ -20,6 +20,10 @@ pub struct MediaObject {
     pub bytes: Vec<u8>,
     pub mime: String,
     pub description: String,
+    /// The file name of the four argument import (`ImportStream(Stream, Description, MimeType, FileName)`).
+    /// Kept, not used: it only shows in the Tenant Media row, which is not read from this store
+    /// (ADR-017), so what it changes there is not pinned.
+    pub file_name: String,
 }
 
 /// The session's media: objects by id and the members of each set by set id.
@@ -68,7 +72,7 @@ fn drain(v: &Value) -> Result<Vec<u8>, Signal> {
 }
 
 fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
-    // ImportStream(Stream, Description[, MimeType]).
+    // ImportStream(Stream, Description[, MimeType[, FileName]]).
     let bytes = drain(
         a.first()
             .ok_or_else(|| Signal::Unsupported("ImportStream without a stream".into()))?,
@@ -78,6 +82,10 @@ fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
         None | Some(Value::Null) => String::new(),
         Some(_) => text_arg(a, 2)?,
     };
+    let file_name = match a.get(3) {
+        None | Some(Value::Null) => String::new(),
+        Some(_) => text_arg(a, 3)?,
+    };
     let id = c.new_guid();
     store(c)?.objects.insert(
         id,
@@ -85,6 +93,7 @@ fn import_object(c: &mut dyn Ctx, a: &[Value]) -> Result<Id, Signal> {
             bytes,
             mime,
             description,
+            file_name,
         },
     );
     Ok(id)
@@ -188,6 +197,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("Media.HasValue#1", has_value),
     ("Media.MediaId#1", media_id),
     ("Media.ImportStream#1", media_import),
+    ("Media.ImportStream#2", media_import),
     ("Media.ExportStream#1", media_export),
     ("MediaSet.MediaId#1", media_id),
     ("MediaSet.Count#1", set_count),

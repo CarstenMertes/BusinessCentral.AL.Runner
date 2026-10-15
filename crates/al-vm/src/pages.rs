@@ -3724,8 +3724,20 @@ impl Session {
             self.call(object, routine, inst, vec![Value::Text(shown)])
                 .and_then(|(v, finals)| match (v, finals.first()) {
                     (Value::Boolean(true), Some(Value::Text(t))) => {
-                        // Written back as the client would type it.
-                        self.control_set_value(st, idx, &mut [Value::Text(t.clone())])
+                        // Written back as the client would type it. The OnLookup of a page extension's modify block
+                        // leaves a Code field in the case it wrote (`Text := 'FromExt'` reads back FromExt), the page's
+                        // own trigger does not (FROMCTL) (lookups/W2Lookups.al:
+                        // ModifyBlockOnLookup_ReturnsTrue, BC 27.5 and 29.0).
+                        let r = self.control_set_value(st, idx, &mut [Value::Text(t.clone())]);
+                        let binding = page_of(&self.engine(), st).controls[idx].binding.clone();
+                        if let ir::Binding::Field(pos) = binding {
+                            let rec = self.page_rec(st);
+                            let is_code = matches!(rec.borrow().fields[pos], Value::Code(_));
+                            if is_code && owner.is_some() && r.is_ok() {
+                                rec.borrow_mut().fields[pos] = Value::Code(t.clone());
+                            }
+                        }
+                        r
                     }
                     (Value::Boolean(true), other) => {
                         unsupported(format!("an OnLookup trigger whose Text is {}", other.describe()))

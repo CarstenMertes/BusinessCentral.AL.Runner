@@ -397,3 +397,193 @@ fn reportextensions_round_trip_and_a_format_1_file_is_rejected_and_rebuilt() {
             .hit
     );
 }
+
+// ---- layers (owner decision 2026-10-15) ----------------------------------------------------
+
+const LIB: &str = r#"
+tableextension 50200 LibCustExt extends Cust { fields { field(50200; LibNote; Text[20]) { } } }
+codeunit 50201 LibGreet implements IGreet { procedure Hello(): Text begin exit('lib'); end; }
+codeunit 50202 Lib { procedure Note(var C: Record Cust): Text begin exit(C.LibNote); end; procedure Version(): Integer begin exit(1); end; }
+"#;
+
+const IMPL: &str = r#"
+tableextension 50300 ImplCustExt extends Cust { fields { field(50300; ImplNote; Text[20]) { } } }
+codeunit 50301 ImplGreet implements IGreet { procedure Hello(): Text begin exit('impl'); end; }
+codeunit 50302 Impl
+{
+    procedure Both(var C: Record Cust): Text begin exit(C.LibNote + C.ImplNote); end;
+    procedure Version(): Integer var L: Codeunit Lib; begin exit(L.Version() + 10); end;
+}
+"#;
+
+const LAYER_TESTS: &str = r#"
+codeunit 60200 LayerTests
+{
+    Subtype = Test;
+    [Test] procedure Fields_AcrossLayers() var C: Record Cust; I: Codeunit Impl; begin C.LibNote := 'a'; C.ImplNote := 'b'; if I.Both(C) <> 'ab' then Error('both'); end;
+    [Test] procedure Calls_AcrossLayers() var I: Codeunit Impl; begin if I.Version() <> 11 then Error('version'); end;
+    [Test] procedure Interfaces_AcrossLayers() var D: Codeunit Dep; L: Codeunit LibGreet; M: Codeunit ImplGreet; begin if D.Say(L) <> 'lib' then Error('lib'); if D.Say(M) <> 'impl' then Error('impl'); end;
+}
+"#;
+
+/// The caller's order is the workspace first, then the implementation app, the partner library and
+/// the Microsoft app: the layers must not depend on it.
+fn layered_run(lib: &str, imp: &str, cc: Option<CompileCache>) -> Result<CorpusRuntime, String> {
+    let man = |p: &str, v: &str| Manifest {
+        publisher: p.into(),
+        version: v.into(),
+        resources: vec![],
+    };
+    CorpusRuntime::try_run_suites_with(
+        vec![
+            app("main", &["impl"], LAYER_TESTS),
+            app("impl", &["lib", "base"], imp),
+            app("lib", &["base"], lib),
+            app("base", &[], BASE),
+        ],
+        vec![
+            al_sema::AppKind::Workspace,
+            al_sema::AppKind::Dependency,
+            al_sema::AppKind::Dependency,
+            al_sema::AppKind::Dependency,
+        ],
+        &[
+            man("Me", "1.0.0.0"),
+            man("Me", "1.0.0.0"),
+            man("Acme", "2.0.0.0"),
+            man("Microsoft", "27.5.0.0"),
+        ],
+        &Default::default(),
+        None,
+        Default::default(),
+        &[SuiteRun::everything()],
+        &RunOptions {
+            compile_cache: cc,
+            ..Default::default()
+        },
+    )
+}
+
+/// Which layers of the run were found: the Microsoft layer first.
+fn layer_hits(rt: &CorpusRuntime) -> Vec<bool> {
+    rt.phases.cache.as_ref().unwrap().layers.iter().map(|l| l.hit).collect()
+}
+
+#[test]
+fn the_dependency_set_is_cached_as_layers_microsoft_first_then_one_per_other_app() {
+    let dir = tempfile::tempdir().unwrap();
+    let want = outcomes(&layered_run(LIB, IMPL, None).unwrap());
+    assert!(want.iter().all(|l| l.contains("Pass")), "{want:?}");
+    let first = layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&first), vec![false, false, false]);
+    assert_eq!(files(dir.path()).len(), 3, "one file per layer");
+    assert_eq!(outcomes(&first), want);
+    let second = layered_run(LIB, IMPL, cache(dir.path(), true)).unwrap();
+    assert_eq!(layer_hits(&second), vec![true, true, true]);
+    assert!(second.phases.cache.as_ref().unwrap().hit);
+    assert_eq!(outcomes(&second), want);
+}
+
+#[test]
+fn a_change_in_the_implementation_app_rebuilds_only_its_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let before = files(dir.path());
+    let changed = IMPL.replace("L.Version() + 10", "L.Version() + 20");
+    // With the cache required, the changed layer is missing: an error naming it.
+    assert!(layered_run(LIB, &changed, cache(dir.path(), true)).is_err());
+    let rt = layered_run(LIB, &changed, cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&rt), vec![true, true, false]);
+    assert!(rt.phases.cache.as_ref().unwrap().built);
+    assert!(outcomes(&rt).iter().any(|l| l.contains("Calls_AcrossLayers") && l.contains("Fail")));
+    // The two lower files are the same files, untouched; the new layer file is beside the old.
+    let after = files(dir.path());
+    assert_eq!(after.len(), 4);
+    for f in before.iter().filter(|f| after.contains(f)) {
+        assert!(f.exists());
+    }
+    assert!(after.iter().filter(|f| before.contains(f)).count() >= 3);
+    assert_eq!(outcomes(&rt), outcomes(&layered_run(LIB, &changed, None).unwrap()));
+}
+
+#[test]
+fn a_change_in_a_library_app_rebuilds_its_layer_and_the_layers_above_but_not_the_microsoft_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let changed = LIB.replace("exit(1)", "exit(2)");
+    let rt = layered_run(&changed, IMPL, cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&rt), vec![true, false, false]);
+    assert_eq!(outcomes(&rt), outcomes(&layered_run(&changed, IMPL, None).unwrap()));
+    assert!(outcomes(&rt).iter().any(|l| l.contains("Calls_AcrossLayers") && l.contains("Fail")));
+}
+
+#[test]
+fn a_change_in_a_microsoft_app_rebuilds_every_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let rt = {
+        let man = |p: &str, v: &str| Manifest {
+            publisher: p.into(),
+            version: v.into(),
+            resources: vec![],
+        };
+        CorpusRuntime::try_run_suites_with(
+            vec![
+                app("main", &["impl"], LAYER_TESTS),
+                app("impl", &["lib", "base"], IMPL),
+                app("lib", &["base"], LIB),
+                app("base", &[], BASE),
+            ],
+            vec![
+                al_sema::AppKind::Workspace,
+                al_sema::AppKind::Dependency,
+                al_sema::AppKind::Dependency,
+                al_sema::AppKind::Dependency,
+            ],
+            &[
+                man("Me", "1.0.0.0"),
+                man("Me", "1.0.0.0"),
+                man("Acme", "2.0.0.0"),
+                man("Microsoft", "27.5.0.1"),
+            ],
+            &Default::default(),
+            None,
+            Default::default(),
+            &[SuiteRun::everything()],
+            &RunOptions {
+                compile_cache: cache(dir.path(), false),
+                ..Default::default()
+            },
+        )
+        .unwrap()
+    };
+    assert_eq!(layer_hits(&rt), vec![false, false, false]);
+}
+
+#[test]
+fn a_missing_lower_layer_file_is_rebuilt_and_the_layers_above_it_are_kept() {
+    let dir = tempfile::tempdir().unwrap();
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let report = layered_run(LIB, IMPL, cache(dir.path(), true)).unwrap();
+    let microsoft = report.phases.cache.as_ref().unwrap().layers[0].file.clone();
+    std::fs::remove_file(&microsoft).unwrap();
+    let rt = layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&rt), vec![false, true, true]);
+    assert_eq!(outcomes(&rt), outcomes(&layered_run(LIB, IMPL, None).unwrap()));
+}
+
+#[test]
+fn a_damaged_upper_layer_never_changes_an_outcome() {
+    let dir = tempfile::tempdir().unwrap();
+    let want = outcomes(&layered_run(LIB, IMPL, None).unwrap());
+    layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+    let report = layered_run(LIB, IMPL, cache(dir.path(), true)).unwrap();
+    let top = report.phases.cache.as_ref().unwrap().layers[2].file.clone();
+    let good = std::fs::read(&top).unwrap();
+    for bad in [good[..good.len() / 2].to_vec(), vec![1; 3000], Vec::new()] {
+        std::fs::write(&top, &bad).unwrap();
+        let rt = layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
+        assert_eq!(layer_hits(&rt), vec![true, true, false]);
+        assert_eq!(outcomes(&rt), want);
+    }
+}

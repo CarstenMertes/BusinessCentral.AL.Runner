@@ -12,6 +12,6 @@ mod format;
 mod index;
 mod key;
 
-pub use format::{CacheError, Entry, build};
+pub use format::{CacheError, Entry, build, build_layer};
 pub use index::{build_index, index_file_name, open_index};
 pub use key::{AppKey, FORMAT, Key};

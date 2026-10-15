@@ -769,8 +769,14 @@ impl Workspace {
 
     /// The files that were parsed after load and did not parse cleanly, as (path, message).
     pub fn lazy_parse_problems(&self) -> Vec<(String, String)> {
+        self.lazy_parse_problems_from(0)
+    }
+
+    /// [`lazy_parse_problems`](Self::lazy_parse_problems) for the files of the apps from index `first_app` on.
+    pub fn lazy_parse_problems_from(&self, first_app: usize) -> Vec<(String, String)> {
         self.files
             .iter()
+            .filter(|f| f.app >= first_app)
             .filter_map(|f| Some((f.path.clone(), f.problem.get()?.clone()?)))
             .collect()
     }

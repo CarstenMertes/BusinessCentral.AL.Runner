@@ -2,6 +2,7 @@
 //! lives, how it is read, built and written. The format is `al-cache`; this is the OS side.
 
 use al_cache::{AppKey, Entry, Key};
+use al_sema::provided::{DepLayer, DepSource, LayerSource, Stack};
 use al_sema::workspace::AppSource;
 use rayon::prelude::*;
 use sha2::{Digest, Sha256};
@@ -28,11 +29,13 @@ impl CompileCache {
 /// What the cache did for a run (`--timings`, the job summary).
 #[derive(Debug, Clone, Default)]
 pub struct CacheReport {
-    /// The entry file.
+    /// The entry file of the top layer.
     pub file: PathBuf,
-    /// The entry was found and used as it was.
+    /// Every layer of the dependency set, lowest (the Microsoft apps) first.
+    pub layers: Vec<LayerReport>,
+    /// Every layer was found and used as it was.
     pub hit: bool,
-    /// The entry was built by this run (a miss, or a file that was refused).
+    /// At least one layer was built by this run (a miss, or a file that was refused).
     pub built: bool,
     /// Making the key and reading and opening the file.
     pub open: Duration,
@@ -50,6 +53,50 @@ pub struct CacheReport {
     /// With lazily read dependency apps: where the scan of their sources came from, `read` (the index
     /// in the cache folder) or `built` (scanned now, index saved).
     pub source_index: Option<&'static str>,
+}
+
+/// What the cache did for one layer.
+#[derive(Debug, Clone, Default)]
+pub struct LayerReport {
+    pub file: PathBuf,
+    /// The names of the layer's apps.
+    pub apps: Vec<String>,
+    pub hit: bool,
+    pub built: bool,
+    pub bytes: usize,
+    /// Building and writing the layer (zero on a hit).
+    pub build: Duration,
+}
+
+/// The layers of a dependency set, opened, lowest first.
+pub struct Layers {
+    entries: Vec<Entry>,
+}
+
+impl Layers {
+    /// The layers as one source of lowered dependency objects. An error says they do not fit.
+    pub fn stack(&self) -> Result<Stack<'_>, String> {
+        Stack::new(self.entries.iter().map(|e| e as &dyn LayerSource).collect())
+    }
+
+    /// The number of dependency objects in all layers.
+    pub fn len(&self) -> usize {
+        self.stack().map_or(0, |s| s.len())
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.len() == 0
+    }
+
+    /// Reads every block of every layer (CI, `--build-compile-cache`).
+    pub fn verify(&self) -> Result<(), al_cache::CacheError> {
+        self.entries.iter().try_for_each(Entry::verify)
+    }
+
+    /// The dependency files that did not parse when the layers were built.
+    pub fn parse_problems(&self) -> Vec<(String, String)> {
+        self.entries.iter().flat_map(|e| e.parse_problems().iter().cloned()).collect()
+    }
 }
 
 /// A hash of the running executable: it changes with every change of the compiler or of the
@@ -125,6 +172,18 @@ pub fn key_with(
     target: Option<&al_version::Target>,
     identities: &[Option<[u8; 32]>],
 ) -> Key {
+    key_layer(apps, manifests, symbols, target, identities, [0; 32])
+}
+
+/// [`key_with`] for a layer above another: `below` is the digest of the key of the layer below.
+pub fn key_layer(
+    apps: &[&AppSource],
+    manifests: &[crate::runtime::Manifest],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    identities: &[Option<[u8; 32]>],
+    below: [u8; 32],
+) -> Key {
     let apps = apps
         .iter()
         .zip(manifests)
@@ -138,7 +197,7 @@ pub fn key_with(
             source: identities.get(i).copied().flatten().unwrap_or_else(|| source_hash(a)),
         })
         .collect();
-    Key::new(
+    Key::layered(
         runtime_build(),
         // `AL_UNPINNED_BASE_ACCESS` changes what the lowering produces (ADR-023), so it is an input.
         format!(
@@ -148,7 +207,88 @@ pub fn key_with(
         ),
         symbols.iter().cloned().collect(),
         apps,
+        below,
     )
+}
+
+/// The publisher whose apps make the first layer (the platform and Microsoft's apps).
+pub const MICROSOFT: &str = "Microsoft";
+
+/// The order the dependency apps are compiled in: a topological order (every app after the apps
+/// it depends on) that takes Microsoft's apps first, as early as their own dependencies allow, and
+/// otherwise keeps the order the apps came in. A Microsoft app does not depend on another
+/// publisher's app, so all of them come before the others. With a cycle or a repeated app id the
+/// order stays as it came. `apps` and `manifests` are the dependency apps only. Returns the new
+/// order as indexes of the old.
+pub fn dependency_order(apps: &[&AppSource], manifests: &[crate::runtime::Manifest]) -> Vec<usize> {
+    let microsoft = |i: usize| manifests.get(i).is_some_and(|m| m.publisher == MICROSOFT);
+    let mut by_id: std::collections::HashMap<&str, usize> = std::collections::HashMap::new();
+    for (i, a) in apps.iter().enumerate() {
+        if by_id.insert(a.id.as_str(), i).is_some() {
+            return (0..apps.len()).collect();
+        }
+    }
+    let needs: Vec<Vec<usize>> = apps
+        .iter()
+        .enumerate()
+        .map(|(i, a)| {
+            a.dependencies
+                .iter()
+                .filter_map(|d| by_id.get(d.as_str()).copied())
+                .filter(|&d| d != i)
+                .collect()
+        })
+        .collect();
+    let mut placed = vec![false; apps.len()];
+    let mut order = Vec::with_capacity(apps.len());
+    while order.len() < apps.len() {
+        let ready = |i: usize| !placed[i] && needs[i].iter().all(|&d| placed[d]);
+        let next = (0..apps.len())
+            .find(|&i| microsoft(i) && ready(i))
+            .or_else(|| (0..apps.len()).find(|&i| ready(i)));
+        let Some(i) = next else {
+            return (0..apps.len()).collect();
+        };
+        placed[i] = true;
+        order.push(i);
+    }
+    order
+}
+
+/// The layers of the dependency `apps` (in [`dependency_order`]): the leading Microsoft apps are
+/// the first layer, every other app is a layer of its own (a change in it rebuilds it and the
+/// layers above, never the layers below). As ranges of `apps`.
+pub fn layer_ranges(manifests: &[crate::runtime::Manifest], n: usize) -> Vec<std::ops::Range<usize>> {
+    let microsoft = (0..n)
+        .take_while(|&i| manifests.get(i).is_some_and(|m| m.publisher == MICROSOFT))
+        .count();
+    let mut out = Vec::new();
+    if microsoft > 0 {
+        out.push(0..microsoft);
+    }
+    out.extend((microsoft..n).map(|i| i..i + 1));
+    out
+}
+
+/// The key of each layer, lowest first: a layer's key holds its own apps and the key of the layer
+/// below, so a change in any app changes its layer and every layer above it.
+pub fn layer_keys(
+    apps: &[&AppSource],
+    manifests: &[crate::runtime::Manifest],
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    identities: &[Option<[u8; 32]>],
+) -> Vec<(std::ops::Range<usize>, Key)> {
+    let mut below = [0u8; 32];
+    layer_ranges(manifests, apps.len())
+        .into_iter()
+        .map(|r| {
+            let ids: Vec<Option<[u8; 32]>> = r.clone().map(|i| identities.get(i).copied().flatten()).collect();
+            let key = key_layer(&apps[r.clone()], &manifests[r.clone()], symbols, target, &ids, below);
+            below = key.digest();
+            (r, key)
+        })
+        .collect()
 }
 
 /// Reads the entry for `key` from `dir`. `Ok(None)`: there is no file. A file that cannot be used
@@ -214,7 +354,7 @@ pub fn touch(path: &Path) {
 
 /// Removes the entries in `dir`, except `keep`, that nothing used for `KEEP_DAYS` days: an app
 /// that changes with every run would otherwise leave 13 MB behind each time. Best effort.
-pub fn prune(dir: &Path, keep: &Path) -> Vec<PathBuf> {
+pub fn prune(dir: &Path, keep: &[PathBuf]) -> Vec<PathBuf> {
     let limit = std::time::Duration::from_secs(KEEP_DAYS * 24 * 3600);
     let mut removed = Vec::new();
     let indexes = std::fs::read_dir(dir)
@@ -224,7 +364,7 @@ pub fn prune(dir: &Path, keep: &Path) -> Vec<PathBuf> {
         .map(|e| e.path())
         .filter(|p| p.extension().is_some_and(|x| x == "alci"));
     for path in list(dir).into_iter().map(|(p, _)| p).chain(indexes) {
-        if path == keep {
+        if keep.contains(&path) {
             continue;
         }
         let old = std::fs::metadata(&path)
@@ -253,23 +393,29 @@ pub fn list(dir: &Path) -> Vec<(PathBuf, u64)> {
     out
 }
 
-/// The entry for the dependency `apps`: the file in the cache folder, or one built now and saved.
-/// A file that cannot be used is reported in the notes and replaced. With `cc.require` a missing
-/// or unusable file is an error.
+/// The layers for the dependency `apps` (in [`dependency_order`]): the files in the cache folder,
+/// or built now and saved. A file that cannot be used is reported in the notes and replaced. With
+/// `cc.require` a missing or unusable file is an error.
 pub fn open_or_build(
     cc: &CompileCache,
     apps: &[AppSource],
     manifests: &[crate::runtime::Manifest],
     symbols: &std::collections::BTreeSet<String>,
     target: Option<&al_version::Target>,
-) -> Result<(Entry, CacheReport), String> {
-    let mut apps = apps.to_vec();
-    open_or_build_with(cc, &mut apps, manifests, symbols, target, &[], &mut |_| {})
+) -> Result<(Layers, CacheReport), String> {
+    let refs: Vec<&AppSource> = apps.iter().collect();
+    let order = dependency_order(&refs, manifests);
+    let mut apps: Vec<AppSource> = order.iter().map(|&i| apps[i].clone()).collect();
+    let manifests: Vec<crate::runtime::Manifest> = order
+        .iter()
+        .map(|&i| manifests.get(i).cloned().unwrap_or_default())
+        .collect();
+    open_or_build_with(cc, &mut apps, &manifests, symbols, target, &[], &mut |_| {})
 }
 
-/// [`open_or_build`] with the identities of [`key_with`].
-/// `prepare` is called with the apps just before an entry is built, which needs their text: a caller
-/// that left it unread reads it then. A hit never calls it.
+/// [`open_or_build`] with the identities of [`key_with`], for apps that are already in
+/// [`dependency_order`]. `prepare` is called with the apps just before a layer is built, which
+/// needs their text: a caller that left it unread reads it then. A hit never calls it.
 pub fn open_or_build_with(
     cc: &CompileCache,
     apps: &mut [AppSource],
@@ -278,60 +424,133 @@ pub fn open_or_build_with(
     target: Option<&al_version::Target>,
     identities: &[Option<[u8; 32]>],
     prepare: &mut dyn FnMut(&mut [AppSource]),
-) -> Result<(Entry, CacheReport), String> {
+) -> Result<(Layers, CacheReport), String> {
     let opened = std::time::Instant::now();
-    let key = {
+    let planned = {
         let dep_refs: Vec<&AppSource> = apps.iter().collect();
-        key_with(&dep_refs, manifests, symbols, target, identities)
+        layer_keys(&dep_refs, manifests, symbols, target, identities)
     };
-    let mut report = CacheReport {
-        file: cc.dir.join(key.file_name()),
-        ..Default::default()
-    };
-    let entry = match read_entry(&cc.dir, &key) {
-        Ok(Some((e, _))) => {
-            report.hit = true;
-            Some(e)
-        }
-        Ok(None) => None,
-        Err(note) => {
-            eprintln!("compile cache: {note}");
-            report.notes.push(note);
-            None
-        }
-    };
+    let mut report = CacheReport::default();
+    let mut entries: Vec<Option<Entry>> = Vec::new();
+    for (range, key) in &planned {
+        let file = cc.dir.join(key.file_name());
+        let found = match read_entry(&cc.dir, key) {
+            Ok(Some((e, _))) => Some(e),
+            Ok(None) => None,
+            Err(note) => {
+                eprintln!("compile cache: {note}");
+                report.notes.push(note);
+                None
+            }
+        };
+        report.layers.push(LayerReport {
+            file,
+            apps: apps[range.clone()].iter().map(|a| a.name.clone()).collect(),
+            hit: found.is_some(),
+            bytes: found.as_ref().map_or(0, Entry::size),
+            ..Default::default()
+        });
+        entries.push(found);
+    }
     report.open = opened.elapsed();
-    if let Some(e) = entry {
-        report.bytes = e.size();
-        touch(&report.file);
-        return Ok((e, report));
+    report.hit = entries.iter().all(Option::is_some);
+    if !report.hit {
+        if cc.require {
+            let missing: Vec<String> = report
+                .layers
+                .iter()
+                .filter(|l| !l.hit)
+                .map(|l| l.file.display().to_string())
+                .collect();
+            return Err(format!(
+                "--require-compile-cache: there is no usable entry {}{}",
+                missing.join(", "),
+                report.notes.iter().map(|n| format!(" ({n})")).collect::<String>()
+            ));
+        }
+        eprintln!(
+            "compile cache: building {} of {} layers of the {} dependency apps once ({})",
+            report.layers.iter().filter(|l| !l.hit).count(),
+            report.layers.len(),
+            apps.len(),
+            report
+                .layers
+                .iter()
+                .filter(|l| !l.hit)
+                .map(|l| l.apps.join(" + "))
+                .collect::<Vec<_>>()
+                .join("; ")
+        );
+        prepare(apps);
+        for (li, (range, key)) in planned.iter().enumerate() {
+            if entries[li].is_some() {
+                continue;
+            }
+            let started = std::time::Instant::now();
+            let layer = {
+                let below: Vec<&dyn LayerSource> = entries[..li]
+                    .iter()
+                    .map(|e| e.as_ref().expect("the layers below are built") as &dyn LayerSource)
+                    .collect();
+                let stack = Stack::new(below).map_err(|e| format!("the layers below do not fit: {e}"))?;
+                lower_one_layer(apps, range, symbols, target, &stack)?
+            };
+            let bytes = al_cache::build_layer(&layer, key);
+            if let Err(e) = write_entry(&cc.dir, key, &bytes) {
+                let note = format!("the entry was not saved: {e}");
+                eprintln!("compile cache: {note}");
+                report.notes.push(note);
+            }
+            let l = &mut report.layers[li];
+            l.bytes = bytes.len();
+            l.built = true;
+            entries[li] = Some(
+                Entry::open(bytes, key).map_err(|e| format!("a fresh compile cache entry does not open: {e}"))?,
+            );
+            report.layers[li].build = started.elapsed();
+        }
+        report.built = true;
+        report.build = report.layers.iter().map(|l| l.build).sum();
     }
-    if cc.require {
-        return Err(format!(
-            "--require-compile-cache: there is no usable entry {}{}",
-            report.file.display(),
-            report.notes.iter().map(|n| format!(" ({n})")).collect::<String>()
-        ));
+    let keep: Vec<PathBuf> = report.layers.iter().map(|l| l.file.clone()).collect();
+    for f in &keep {
+        if report.layers.iter().any(|l| &l.file == f && l.hit) {
+            touch(f);
+        }
     }
-    eprintln!(
-        "compile cache: building the entry for {} dependency apps once ({})",
-        apps.len(),
-        report.file.display()
-    );
-    prepare(apps);
-    let started = std::time::Instant::now();
-    let bytes = build_entry(apps.to_vec(), symbols, target, &key);
-    report.bytes = bytes.len();
-    if let Err(e) = write_entry(&cc.dir, &key, &bytes) {
-        let note = format!("the entry was not saved: {e}");
-        eprintln!("compile cache: {note}");
-        report.notes.push(note);
+    if report.built {
+        prune(&cc.dir, &keep);
     }
-    report.built = true;
-    prune(&cc.dir, &report.file);
-    let entry = Entry::open(bytes, &key).map_err(|e| format!("a fresh compile cache entry does not open: {e}"))?;
-    report.build = started.elapsed();
-    Ok((entry, report))
+    report.bytes = report.layers.iter().map(|l| l.bytes).sum();
+    report.file = keep.last().cloned().unwrap_or_default();
+    let layers = Layers {
+        entries: entries.into_iter().map(|e| e.expect("every layer is open")).collect(),
+    };
+    if let Err(why) = layers.stack() {
+        // Layers made for each other by their keys always fit; this is a defect. Drop the files so
+        // that the next run builds them again.
+        for f in &keep {
+            let _ = std::fs::remove_file(f);
+        }
+        return Err(format!("the compile cache layers do not fit each other ({why}); the files are removed"));
+    }
+    Ok((layers, report))
+}
+
+/// Compiles the layer of `apps[range]` on top of `below` (the layers under it), whose apps are
+/// `apps[..range.start]`.
+fn lower_one_layer(
+    apps: &[AppSource],
+    range: &std::ops::Range<usize>,
+    symbols: &std::collections::BTreeSet<String>,
+    target: Option<&al_version::Target>,
+    below: &Stack<'_>,
+) -> Result<DepLayer, String> {
+    if range.start == 0 {
+        let set = al_sema::lower::lower_for_cache(apps[range.clone()].to_vec(), symbols, target);
+        return Ok(DepLayer::whole(set));
+    }
+    al_sema::lower::lower_layer(apps[..range.end].to_vec(), range.start, symbols, target, below)
 }
 
 /// The index entry of the dependency apps: what the scan of their sources found (`al_cache::index`).
@@ -383,6 +602,6 @@ pub fn write_index(dir: &Path, key: &Key, index: &[Vec<al_sema::FileIndex>]) {
     {
         let _ = std::fs::remove_file(&tmp);
     } else {
-        prune(dir, &path);
+        prune(dir, &[path]);
     }
 }

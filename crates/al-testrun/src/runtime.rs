@@ -480,8 +480,19 @@ impl CorpusRuntime {
             && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
         let n_apps = apps.len();
         let (apps, mut kinds, manifests, suites_in, only, order) = if use_cache {
-            let order: Vec<usize> = (0..n_apps)
+            // Dependency apps first, Microsoft's before the others (the layers of the compile
+            // cache follow this order), then the workspace's.
+            let deps: Vec<usize> = (0..n_apps)
                 .filter(|&i| kinds[i] == al_sema::AppKind::Dependency)
+                .collect();
+            let dep_apps: Vec<&al_sema::workspace::AppSource> = deps.iter().map(|&i| &apps[i]).collect();
+            let dep_manifests: Vec<Manifest> = deps
+                .iter()
+                .map(|&i| manifests.get(i).cloned().unwrap_or_default())
+                .collect();
+            let order: Vec<usize> = crate::compile_cache::dependency_order(&dep_apps, &dep_manifests)
+                .into_iter()
+                .map(|k| deps[k])
                 .chain((0..n_apps).filter(|&i| kinds[i] != al_sema::AppKind::Dependency))
                 .collect();
             let mut new_of = vec![0; n_apps];
@@ -1073,7 +1084,7 @@ fn compile_with_cache(
             }
         }
     };
-    let (entry, mut report) = cache::open_or_build_with(
+    let (layers, mut report) = cache::open_or_build_with(
         cc,
         &mut apps[..n_dep],
         &manifests[..n_dep],
@@ -1082,8 +1093,10 @@ fn compile_with_cache(
         &identities[..n_dep.min(identities.len())],
         &mut |a| fill(a),
     )?;
-    report.objects = DepSource::len(&entry);
-    report.parse_problems = entry.parse_problems().to_vec();
+    // `open_or_build_with` checked that the layers fit each other.
+    let stack = layers.stack().map_err(|why| format!("compile cache: {why}"))?;
+    report.objects = DepSource::len(&stack);
+    report.parse_problems = layers.parse_problems();
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
@@ -1109,7 +1122,7 @@ fn compile_with_cache(
         al_sema::Workspace::load_apps(apps, kinds, symbols)
     };
     let load = started.elapsed();
-    match al_sema::lower::compile_loaded_cached(ws, load, &catalog, roots.clone(), &entry) {
+    match al_sema::lower::compile_loaded_cached(ws, load, &catalog, roots.clone(), &stack) {
         Ok((ws, lowered)) => {
             report.relowered = (0..lowered.provided.len())
                 .filter(|&i| lowered.dependency[i] && !lowered.provided[i])
@@ -1122,7 +1135,9 @@ fn compile_with_cache(
             eprintln!("compile cache: {note}");
             report.notes.push(note);
             report.hit = false;
-            let _ = std::fs::remove_file(&report.file);
+            for l in &report.layers {
+                let _ = std::fs::remove_file(&l.file);
+            }
             if cc.require {
                 return Err(format!("--require-compile-cache: {}", report.notes.join("; ")));
             }

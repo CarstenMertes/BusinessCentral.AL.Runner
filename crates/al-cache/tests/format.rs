@@ -1,7 +1,7 @@
 //! The entry file: round trip, determinism, and what a damaged file does.
 
-use al_cache::{AppKey, CacheError, Entry, FORMAT, Key, build};
-use al_sema::provided::{DepSet, DepSource};
+use al_cache::{AppKey, CacheError, Entry, FORMAT, Key, build, build_layer};
+use al_sema::provided::{DepLayer, DepSet, DepSource, LayerSource, Stack};
 use al_sema::workspace::AppSource;
 
 const SRC: &str = r#"
@@ -232,4 +232,90 @@ fn a_format_1_entry_is_refused() {
         Entry::open(bytes, &key()).err(),
         Some(CacheError::Format { .. })
     ));
+}
+
+const UPPER: &str = r#"
+tableextension 60000 UT extends T { fields { field(20; UX; Integer) { } } }
+codeunit 60004 UUse { procedure W() var R: Record T; begin R.UX := 1; R.A := 2; end; }
+"#;
+
+fn upper_app() -> AppSource {
+    AppSource {
+        id: "u".into(),
+        name: "u".into(),
+        dependencies: vec!["d".into()],
+        files: vec![("u.al".into(), UPPER.into())],
+    }
+}
+
+fn upper_key(below: &Key) -> Key {
+    Key::layered(
+        [9; 32],
+        "BC 27.5".into(),
+        vec![],
+        vec![AppKey {
+            id: "u".into(),
+            name: "u".into(),
+            dependencies: vec!["d".into()],
+            publisher: "p".into(),
+            version: "1.0.0.0".into(),
+            source: [4; 32],
+        }],
+        below.digest(),
+    )
+}
+
+/// ADR-022, layers (2026-10-15): a layer file holds its own objects and the objects of the layers
+/// below that it changes; the files stacked give what one complete compile gives.
+#[test]
+fn layer_files_stacked_equal_the_complete_compile() {
+    let base_set = set();
+    let base_layer = DepLayer::whole(base_set.clone());
+    let mut all = apps();
+    all.push(upper_app());
+    let layer = al_sema::lower::lower_layer(
+        all.clone(),
+        1,
+        &Default::default(),
+        None,
+        &Stack::new(vec![&base_layer as &dyn LayerSource]).unwrap(),
+    )
+    .unwrap();
+    assert!(layer.objects.iter().any(|&o| (o as usize) < layer.base_len), "the table is overridden");
+    let (kb, ku) = (key(), upper_key(&key()));
+    let eb = Entry::open(build(&base_set, &kb), &kb).unwrap();
+    let eu = Entry::open(build_layer(&layer, &ku), &ku).unwrap();
+    eu.verify().unwrap();
+    assert_eq!(eu.base_len(), eb.len());
+    let stack = Stack::new(vec![&eb as &dyn LayerSource, &eu]).unwrap();
+    let complete = al_sema::lower::lower_for_cache(all, &Default::default(), None);
+    assert_eq!(stack.len(), complete.facts.len());
+    for i in 0..stack.len() {
+        assert_eq!(stack.facts(i), &complete.facts[i], "facts of object {i}");
+        assert!(stack.block(i).unwrap() == complete.blocks[i], "block {i}");
+    }
+}
+
+/// The layer's file is for the layer below it as it was built: another key below, another file.
+#[test]
+fn a_layer_file_is_refused_when_the_layer_below_changed() {
+    let base_layer = DepLayer::whole(set());
+    let mut all = apps();
+    all.push(upper_app());
+    let layer = al_sema::lower::lower_layer(
+        all,
+        1,
+        &Default::default(),
+        None,
+        &Stack::new(vec![&base_layer as &dyn LayerSource]).unwrap(),
+    )
+    .unwrap();
+    let ku = upper_key(&key());
+    let bytes = build_layer(&layer, &ku);
+    let mut other_below = key();
+    other_below.apps[0].source[0] ^= 1;
+    assert_eq!(
+        Entry::open(bytes, &upper_key(&other_below)).err(),
+        Some(CacheError::KeyMismatch)
+    );
 }

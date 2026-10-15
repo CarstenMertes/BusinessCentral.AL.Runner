@@ -129,7 +129,7 @@ fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
 }
 
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
-    filters.iter().all(|f| f.expr.matches(&row[f.field]))
+    al_builtins::filter::row_passes(row, filters)
 }
 
 impl MemStore {

@@ -320,6 +320,11 @@ pub struct ReportExtModify {
     /// `OnBeforeAfterGetRecord` and `OnAfterAfterGetRecord` as routine indices.
     pub before: Option<usize>,
     pub after: Option<usize>,
+    /// `OnBeforePreDataItem` and `OnAfterPreDataItem` around the base item's `OnPreDataItem`.
+    #[serde(default)]
+    pub before_pre: Option<usize>,
+    #[serde(default)]
+    pub after_pre: Option<usize>,
 }
 
 /// A data item added by `addlast`: under a base item, or (`item.parent`) under another added item.
@@ -366,6 +371,11 @@ pub struct ReportItem {
     pub view: Option<String>,
     /// `DataItemLink` pairs (own field position, parent item field position).
     pub link: Vec<(usize, usize)>,
+    /// `DataItemLinkReference`: the enclosing item (an index into `Report::items`) whose current row
+    /// the link fields read, when that is not the parent. The pairs then hold field positions of
+    /// that item's table.
+    #[serde(default)]
+    pub link_item: Option<usize>,
     /// `OnPreDataItem`, `OnAfterGetRecord` and `OnPostDataItem` as routine indices.
     pub on_pre: Option<usize>,
     pub on_after_get: Option<usize>,

@@ -547,34 +547,10 @@ impl Session {
             }
             rows
         };
-        // Groups with no OrderBy come back in an order no corpus test pins; a single group has none
-        // to get wrong (record/TestSalesQuoteVatRounding.al:67-79).
-        // Groups whose grouping columns start with the root item's primary key come in that key's
-        // order (query/TestQueryCrossJoinContracts.al:202-213: `1=12 2=12 3=12`, no OrderBy).
-        let root_key_grouped = def.items.first().is_some_and(|root| {
-            self.engine.tables[root.table].as_ref().is_some_and(|t| {
-                let grouping: Vec<_> = def
-                    .columns
-                    .iter()
-                    .filter(|c| c.method.is_none() && !c.filter_element)
-                    .collect();
-                t.keys[0].len() <= grouping.len()
-                    && t.keys[0]
-                        .iter()
-                        .zip(&grouping)
-                        .all(|(&f, c)| c.item == 0 && c.field == Some(f))
-            })
-        });
-        if aggregated
-            && def.order_by.is_empty()
-            && rows.len() > 1
-            && !root_key_grouped
-            && def.columns.iter().any(|c| c.method.is_none() && !c.filter_element)
-        {
-            return unsupported(
-                "an aggregated query with grouping columns and no OrderBy read several groups (the group order is not pinned)",
-            );
-        }
+        // Groups with no OrderBy come back sorted by their grouping columns in the order the query
+        // declares them (corpus query/PWQueryContracts.al:165-178: grouping by Grp2 then Grp1 gives
+        // `A 1`, `A 2`, `B 2`, `C 1`), which `group_rows` already does; grouping columns that start
+        // with the root key give that key's order (query/TestQueryCrossJoinContracts.al:202-213).
         rows.sort_by(|a, b| key_cmp(&a.key, &b.key, &dirs));
         if COLLATION_FAILED.with(|f| f.replace(false)) {
             return unsupported(

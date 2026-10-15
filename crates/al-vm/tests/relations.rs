@@ -34,6 +34,19 @@ table 50952 "Rel Child" {
     }
     keys { key(PK; Id) { } }
 }
+table 50955 "Rel Flow Parent" {
+    fields { field(1; Id; Integer) { } field(2; Grp; Code[20]) { } }
+    keys { key(PK; Id) { } }
+}
+table 50956 "Rel Flow Child" {
+    fields {
+        field(1; Id; Integer) { }
+        field(2; ParentId; Integer) { }
+        field(3; FlowGrp; Code[20]) { FieldClass = FlowField; CalcFormula = lookup("Rel Flow Parent".Grp where(Id = field(ParentId))); }
+        field(4; ByFlow; Code[20]) { TableRelation = "Rel Parent".Code where(Grp = field(FlowGrp)); }
+    }
+    keys { key(PK; Id) { } }
+}
 table 50953 "Rel Setup" {
     fields {
         field(1; Code; Code[20]) { }
@@ -260,4 +273,22 @@ fn a_where_const_naming_an_option_member_with_a_hyphen_is_enforced() {
         t.contains("cannot be found in the related table") && t.ends_with("|P"),
         "{t}"
     );
+}
+
+/// A relation filtered by `field(F)` where F is a FlowField of the same record: whether BC calculates F
+/// for the check is not pinned (probe in docs/probes-needed.md). Reading F as it stands (0 or blank, no
+/// CalcFields) made `Validate` fail with "cannot be found in the related table" for a value BC accepts
+/// (a Pageworks test); the run is refused, not wrong.
+#[test]
+fn a_relation_filtered_by_a_flowfield_of_the_record_is_refused_not_failed() {
+    let r = run(
+        "procedure F() var P: Record \"Rel Parent\"; C: Record \"Rel Flow Child\"; begin
+            P.Code := 'X'; P.Grp := 'G'; P.Insert(); Commit();
+            C.Id := 1; C.Validate(ByFlow, 'X');
+        end;",
+    );
+    match r {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("FlowField") && why.contains("not pinned"), "{why}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
 }

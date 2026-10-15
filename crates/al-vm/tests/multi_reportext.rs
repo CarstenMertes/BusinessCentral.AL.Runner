@@ -212,3 +212,74 @@ fn same_place_placements_are_accepted_and_cross_app_extensions_are_refused() {
     let r = reasons(&cross, 2);
     assert!(r.iter().any(|x| x.contains("different apps")), "{r:?}");
 }
+
+// extensionevents/TestExtensionDeclaredEvents.al:105-117 pins an event a reportextension declares and raises: a subscriber
+// bound to the base report fires with the argument. Base Application's "Serv. Get Source Documents" adds data items whose
+// triggers raise such `local` events and a local procedure that counts in a variable of the extension (nothing outside the extension can call a `local` procedure, so which instance it runs
+// on is the one that runs the trigger).
+#[test]
+fn a_reportextension_with_local_event_publishers_and_added_data_items_runs() {
+    let src = r#"
+report 69100 "MR Base"
+{
+    ProcessingOnly = true; UseRequestPage = false;
+    dataset { dataitem(Parent; "MR Parent") { trigger OnAfterGetRecord() var L: Codeunit "MR Log"; begin L.Add('Parent'); end; } }
+}
+reportextension 69105 "MR Ext" extends "MR Base"
+{
+    dataset
+    {
+        addlast(Parent)
+        {
+            dataitem(ExtItem; "MR Child")
+            {
+                DataItemLink = ParentId = field(Id);
+                trigger OnAfterGetRecord() begin OnExtItem(ExtItem.Id); Bump(); end;
+            }
+        }
+    }
+    [IntegrationEvent(false, false)]
+    local procedure OnExtItem(Value: Integer) begin end;
+    local procedure Bump() var L: Codeunit "MR Log"; begin Seen += 1; L.Add('bump' + Format(Seen)); end;
+    var Seen: Integer;
+}
+codeunit 69106 "MR Sub"
+{
+    [EventSubscriber(ObjectType::Report, Report::"MR Base", 'OnExtItem', '', false, false)]
+    local procedure Handle(Value: Integer) var L: Codeunit "MR Log"; begin L.Add('event' + Format(Value)); end;
+}"#;
+    let body = "procedure F(): Text var L: Codeunit \"MR Log\"; P: Record \"MR Parent\"; C: Record \"MR Child\"; begin
+        P.Id := 1; P.Insert(); C.Id := 7; C.ParentId := 1; C.Insert();
+        Report.Run(Report::\"MR Base\", false); exit(L.Take()); end;";
+    assert_eq!(text(run(src, body)), "Parent;event7;bump1;");
+}
+
+// A public procedure next to added data items stays refused: which instance a caller outside the extension reaches, and
+// whether the procedure sees the added records, is not pinned (docs/probes-needed.md).
+#[test]
+fn a_public_procedure_next_to_added_data_items_or_variables_is_refused() {
+    let src = r#"
+report 69100 "MR Base"
+{
+    ProcessingOnly = true; UseRequestPage = false;
+    dataset { dataitem(Parent; "MR Parent") { } }
+}
+reportextension 69105 "MR Ext" extends "MR Base"
+{
+    dataset { addlast(Parent) { dataitem(ExtItem; "MR Child") { DataItemLink = ParentId = field(Id); } } }
+    procedure Public() begin end;
+}"#;
+    let r = reasons(src, 1);
+    assert!(
+        r.iter().any(|x| x.contains("public procedures and adds data items")),
+        "{r:?}"
+    );
+    let globals = r#"
+report 69100 "MR Base" { ProcessingOnly = true; UseRequestPage = false; dataset { dataitem(Parent; "MR Parent") { } } }
+reportextension 69105 "MR Ext" extends "MR Base" { var Seen: Integer; procedure Public() begin end; }"#;
+    let r = reasons(globals, 1);
+    assert!(
+        r.iter().any(|x| x.contains("public procedures and global variables")),
+        "{r:?}"
+    );
+}

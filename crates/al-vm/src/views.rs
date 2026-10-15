@@ -365,6 +365,81 @@ fn ordinals(e: &FilterExpr) -> FilterExpr {
     }
 }
 
+/// A view written as an AL property (`DataItemTableView`, `SourceTableView`, `SubPageView`) in the
+/// text form `SetView` reads: a double-quoted name inside a condition's value is the AL quoting of an
+/// identifier, which the filter grammar writes with single quotes. Corpus
+/// record/TestCalcFormulaQuotedFilterTests.Codeunit.al:189-215 (the oracle passes a DataItemTableView
+/// `filter(<> "Initial Entry")` and `filter("Payment Discount (VAT Excl.)")`) and
+/// handlers/TestPageSourceTableView.al:169-190 (a SourceTableView `const("G/L")`). Field names keep their
+/// quotes (`field_by_name` takes either).
+pub(crate) fn property_view(raw: &str) -> String {
+    let mut parts = Vec::new();
+    let mut rest = raw.trim();
+    while !rest.is_empty() {
+        let (Some(open), Some((inner, after))) = (rest.find('('), rest.find('(').and_then(|o| balanced(&rest[o..])))
+        else {
+            // Not a view this rewrite understands: left for `set_view` to reject.
+            return raw.to_string();
+        };
+        let word = &rest[..open];
+        if word.trim().eq_ignore_ascii_case("where") {
+            let items: Vec<String> = split_top(inner, ',')
+                .into_iter()
+                .map(|item| match item.split_once('=') {
+                    Some((field, cond)) => match (cond.find('('), cond.find('(').and_then(|o| balanced(&cond[o..]))) {
+                        (Some(o), Some((value, tail))) => {
+                            format!("{field}={}({}){tail}", &cond[..o], rewrite_al_quotes(value))
+                        }
+                        _ => item.to_string(),
+                    },
+                    None => item.to_string(),
+                })
+                .collect();
+            parts.push(format!("{word}({})", items.join(",")));
+        } else {
+            parts.push(format!("{word}({inner})"));
+        }
+        rest = after.trim();
+    }
+    parts.join(" ")
+}
+
+/// AL's `"name"` as the filter literal `'name'`; a single-quoted literal is kept as it is.
+fn rewrite_al_quotes(raw: &str) -> String {
+    let mut out = String::new();
+    let mut chars = raw.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '"' => {
+                out.push('\'');
+                for n in chars.by_ref() {
+                    match n {
+                        '"' => break,
+                        '\'' => out.push_str("''"),
+                        n => out.push(n),
+                    }
+                }
+                out.push('\'');
+            }
+            '\'' => {
+                out.push('\'');
+                while let Some(n) = chars.next() {
+                    out.push(n);
+                    if n == '\'' {
+                        if chars.peek() == Some(&'\'') {
+                            out.push(chars.next().expect("peeked"));
+                        } else {
+                            break;
+                        }
+                    }
+                }
+            }
+            c => out.push(c),
+        }
+    }
+    out
+}
+
 /// `(a(b)c)rest` → (`a(b)c`, `rest`).
 fn balanced(s: &str) -> Option<(&str, &str)> {
     let mut depth = 0usize;
@@ -411,4 +486,28 @@ fn field_by_name(t: &TableDef, name: &str) -> Result<usize, Signal> {
         .and_then(|n| n.parse::<u32>().ok())
         .and_then(|id| t.fields.iter().position(|f| f.id == id))
         .map_or_else(|| unsupported(format!("view field `{name}`")), Ok)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::property_view;
+
+    #[test]
+    fn a_property_view_reads_al_quoted_names_in_values_as_filter_literals() {
+        // corpus record/TestCalcFormulaQuotedFilterNegatedView.Report.al:18 and
+        // TestCalcFormulaQuotedFilterParenView.Report.al:17 (the oracle passes
+        // record/TestCalcFormulaQuotedFilterTests.Codeunit.al:189-215).
+        assert_eq!(
+            property_view("sorting(\"Entry No.\") where(\"Entry Type\" = filter(<> \"Initial Entry\"))"),
+            "sorting(\"Entry No.\") where(\"Entry Type\" = filter(<> 'Initial Entry'))"
+        );
+        assert_eq!(
+            property_view("where(\"Document Type\" = const(\"Credit Memo\"), Kind = const(Item))"),
+            "where(\"Document Type\" = const('Credit Memo'), Kind = const(Item))"
+        );
+        assert_eq!(
+            property_view("sorting(\"No.\") order(descending)"),
+            "sorting(\"No.\") order(descending)"
+        );
+    }
 }

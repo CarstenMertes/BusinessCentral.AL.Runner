@@ -266,6 +266,12 @@ registry! {
         tests: "Library codeunits with `for Stepwise := false to true do` (about 410 Tests-ERM and Tests-SCM tests).",
         probe: "for B := false to true do counting the passes, the value of B inside and after the loop, and for B := true downto false.",
     },
+    TimeAddWholeDecimal => {
+        id: "time-add-whole-decimal",
+        assumed: "A Time plus or minus a whole-number Decimal moves like an Integer. (A Time with an Integer, a Duration and a fractional Decimal is pinned by types/PUTimeArithmetic.al.)",
+        tests: "Service Item Line CalculateResponseDateTime through Calendar Management: about 820 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
+        probe: "T + 1000.0 and T - 1000.0 for a Decimal variable holding a whole number, and 0.",
+    },
 }
 
 thread_local! {

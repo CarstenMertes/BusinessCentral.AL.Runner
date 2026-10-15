@@ -422,6 +422,21 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(|m| V::Time(m.rem_euclid(86_400_000) + 1))
                 .ok_or_else(|| Signal::Unsupported("Time moved by an amount that overflows (not pinned)".into()));
         }
+        // A whole-number Decimal moves a Time like an Integer (Calendar Management's `Time + Decimal`); a fraction raises
+        // below. Assumed, as for a Date (registry entry time-add-whole-decimal).
+        (V::Time(_), V::Decimal(d)) | (V::Decimal(d), V::Time(_))
+            if matches!(op, Arith::Add | Arith::Sub)
+                && d.fract().is_zero()
+                && (op == Arith::Add || matches!(l, V::Time(_)))
+                && i32::try_from(d.mantissa() / 10i128.pow(d.scale())).is_ok() =>
+        {
+            crate::assumptions::assume(crate::assumptions::Assumption::TimeAddWholeDecimal);
+            let n = V::Integer(i32::try_from(d.mantissa() / 10i128.pow(d.scale())).expect("checked"));
+            return match (l, r) {
+                (V::Time(_), _) => arith(op, l, &n),
+                _ => arith(op, &n, r),
+            };
+        }
         (V::Time(a), V::Decimal(d)) | (V::Decimal(d), V::Time(a))
             if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() =>
         {
@@ -777,6 +792,17 @@ mod tests {
             convert(Value::Duration(i64::MAX), &RtType::Integer),
             Err(Signal::Unsupported(_))
         ));
+    }
+
+    // Calendar Management: `Time + Decimal` with a whole Decimal (about 820 Microsoft tests through the service set-up).
+    #[test]
+    fn a_whole_decimal_moves_a_time_like_an_integer() {
+        let t = |ms: i64| Value::Time(ms + 1);
+        let dec = |n: i64| Value::Decimal(Decimal::from(n));
+        assert!(matches!(arith(Arith::Add, &t(5000), &dec(1000)), Ok(Value::Time(6001))));
+        assert!(matches!(arith(Arith::Add, &dec(1000), &t(5000)), Ok(Value::Time(6001))));
+        assert!(matches!(arith(Arith::Sub, &t(5000), &dec(1000)), Ok(Value::Time(4001))));
+        assert!(matches!(arith(Arith::Add, &t(5000), &dec(0)), Ok(Value::Time(5001))));
     }
 
     #[test]

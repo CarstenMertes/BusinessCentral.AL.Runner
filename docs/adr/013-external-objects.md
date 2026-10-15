@@ -1296,4 +1296,4 @@ Pageworks.Test/ Pageworks/`, load 16 to 21:
 | Test data | none | CRONUS 2 107 rows from 62 tables |
 | Tests | 1 013: 61 passed, 0 failed, 952 not run | 1 013: 82 passed, 9 failed, 922 not run |
 | Top refusal | 651 `codeunit <name> is outside the workspace` | 372 the same (the removed test libraries), 286 `[Native] ... no AL body` |
-| Time | 0.24 s | 2.8 s warm; 25 s on a cold compile cache (11 layers) |
+| Time | 0.24 s | 2.8 s warm; 25 to 35 s on a cold compile cache |

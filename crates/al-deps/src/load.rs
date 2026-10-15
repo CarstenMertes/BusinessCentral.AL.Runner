@@ -304,10 +304,7 @@ pub struct Request<'a> {
 /// with or without AL source counts: a project's `.alpackages` holds what its developer compiled
 /// against, which is the build the project really targets, whatever the floor in its app.json says.
 /// Returns the build and the package it was read from. Reads manifests only.
-pub fn microsoft_packages_build(
-    search: &[PathBuf],
-    hint: Option<&str>,
-) -> Option<(crate::build::BuildId, String)> {
+pub fn microsoft_packages_build(search: &[PathBuf], hint: Option<&str>) -> Option<(crate::build::BuildId, String)> {
     use crate::select::MICROSOFT_PLATFORM_APP_IDS;
     let mut best: Option<(crate::build::BuildId, String)> = None;
     for dir in search {
@@ -819,13 +816,19 @@ mod tests {
             lazy_sources: false,
         };
         let loaded = load_dependencies(&req(MissingPolicy::Skip)).unwrap();
-        assert!(loaded.apps.is_empty(), "a package without source is not loaded as a dependency");
+        assert!(
+            loaded.apps.is_empty(),
+            "a package without source is not loaded as a dependency"
+        );
         let text = loaded.skipped[0].to_string();
         assert!(
             text.contains("Sym") && text.contains("without AL source") && text.contains("sym.app"),
             "{text}"
         );
-        assert!(text.contains(&dir.path().display().to_string()), "names the place searched: {text}");
+        assert!(
+            text.contains(&dir.path().display().to_string()),
+            "names the place searched: {text}"
+        );
         // With the default policy it is an error, as a missing package is.
         assert!(load_dependencies(&req(MissingPolicy::Error)).is_err());
     }
@@ -869,12 +872,42 @@ mod tests {
             std::fs::write(dir.path().join(file), navx(&z)).unwrap();
         };
         // Symbol packages, as VS Code downloads them: no AL source.
-        put("ba.app", "437dbf0e-84ff-417a-965d-ed2bb9650972", "Base Application", "28.4.53241.53504", "Microsoft");
-        put("sa.app", "63ca2fa4-4f03-4f2b-a480-172fef340d3f", "System Application", "28.3.52162.52931", "Microsoft");
+        put(
+            "ba.app",
+            "437dbf0e-84ff-417a-965d-ed2bb9650972",
+            "Base Application",
+            "28.4.53241.53504",
+            "Microsoft",
+        );
+        put(
+            "sa.app",
+            "63ca2fa4-4f03-4f2b-a480-172fef340d3f",
+            "System Application",
+            "28.3.52162.52931",
+            "Microsoft",
+        );
         // System has the platform's own number; a test library and another publisher's app do not count.
-        put("sys.app", "8874ed3a-0643-4247-9ced-7a7002f7135d", "System", "28.0.53445.0", "Microsoft");
-        put("lib.app", "dd0be2ea-f733-4d65-bb34-a28f4624fb14", "Library Assert", "99.9.99999.99999", "Microsoft");
-        put("other.app", "437dbf0e-84ff-417a-965d-ed2bb9650973", "Mine", "99.9.99999.99999", "Me");
+        put(
+            "sys.app",
+            "8874ed3a-0643-4247-9ced-7a7002f7135d",
+            "System",
+            "28.0.53445.0",
+            "Microsoft",
+        );
+        put(
+            "lib.app",
+            "dd0be2ea-f733-4d65-bb34-a28f4624fb14",
+            "Library Assert",
+            "99.9.99999.99999",
+            "Microsoft",
+        );
+        put(
+            "other.app",
+            "437dbf0e-84ff-417a-965d-ed2bb9650973",
+            "Mine",
+            "99.9.99999.99999",
+            "Me",
+        );
         let (build, from) = microsoft_packages_build(&[dir.path().to_path_buf()], None).unwrap();
         assert_eq!(build.to_string(), "28.4.53241.53504");
         assert!(from.contains("Base Application") && from.contains("ba.app"), "{from}");

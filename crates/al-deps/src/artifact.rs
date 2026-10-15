@@ -758,10 +758,21 @@ mod tests {
             &project(),
         )
         .unwrap();
-        let sa: Vec<_> = p.loaded.apps.iter().filter(|a| a.app.name == "System Application").collect();
+        let sa: Vec<_> = p
+            .loaded
+            .apps
+            .iter()
+            .filter(|a| a.app.name == "System Application")
+            .collect();
         assert_eq!(sa.len(), 1, "{:?}", names(&p));
-        assert!(!sa[0].path.starts_with(&alpkg), "the source came from the feed, not the symbol package");
-        assert!(sa[0].app.files.iter().any(|(_, t)| t.contains("codeunit")), "it carries source");
+        assert!(
+            !sa[0].path.starts_with(&alpkg),
+            "the source came from the feed, not the symbol package"
+        );
+        assert!(
+            sa[0].app.files.iter().any(|(_, t)| t.contains("codeunit")),
+            "it carries source"
+        );
         assert!(p.loaded.skipped.is_empty(), "{:?}", p.loaded.skipped);
     }
 

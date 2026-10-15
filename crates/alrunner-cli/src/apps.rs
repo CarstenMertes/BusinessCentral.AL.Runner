@@ -245,7 +245,13 @@ mod build_choice_tests {
 
     #[test]
     fn the_packages_the_project_carries_name_the_build() {
-        let c = choose_build(None, None, Some((b("28.4.53241.53504"), "Base Application".into())), Some((28, 0)), 28);
+        let c = choose_build(
+            None,
+            None,
+            Some((b("28.4.53241.53504"), "Base Application".into())),
+            Some((28, 0)),
+            28,
+        );
         assert_eq!(c.preferred, Some(b("28.4.53241.53504")));
         assert_eq!(c.minor, Some(4));
         assert!(c.from_packages && c.rule.contains("Microsoft packages") && c.rule.contains("asks for 28.0"));

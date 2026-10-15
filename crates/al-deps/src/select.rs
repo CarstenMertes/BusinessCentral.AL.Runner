@@ -575,13 +575,21 @@ mod tests {
         };
         let plan = resolve(&project(vec![dep("a", "1.0")]), &pool, &opts).unwrap();
         assert!(plan.order.is_empty(), "neither it nor what only it needs is chosen");
-        let SelectError::Missing { dep: missing, symbol_only, .. } = &plan.skipped[0] else {
+        let SelectError::Missing {
+            dep: missing,
+            symbol_only,
+            ..
+        } = &plan.skipped[0]
+        else {
             panic!("{:?}", plan.skipped)
         };
         assert_eq!(missing.id, "a");
         assert_eq!(symbol_only, &["a_9.0.0.0.app"]);
         let text = plan.skipped[0].to_string();
-        assert!(text.contains("without AL source") && text.contains("a_9.0.0.0.app"), "{text}");
+        assert!(
+            text.contains("without AL source") && text.contains("a_9.0.0.0.app"),
+            "{text}"
+        );
         // As an error (the default policy) it is the same kind of error.
         assert!(matches!(
             resolve(&project(vec![dep("a", "1.0")]), &pool, &Options::default()),
@@ -605,7 +613,12 @@ mod tests {
         let mut aggregate = cand(APPLICATION_APP_ID, "28.0.0.0", vec![dep("b", "1.0")]);
         aggregate.has_source = false;
         let pool = vec![aggregate, cand("b", "1.0.0.0", vec![])];
-        let plan = resolve(&project(vec![dep(APPLICATION_APP_ID, "28.0")]), &pool, &Options::default()).unwrap();
+        let plan = resolve(
+            &project(vec![dep(APPLICATION_APP_ID, "28.0")]),
+            &pool,
+            &Options::default(),
+        )
+        .unwrap();
         assert_eq!(plan.order.len(), 2);
     }
 

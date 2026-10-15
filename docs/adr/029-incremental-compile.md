@@ -1,7 +1,7 @@
 # ADR-029: Incremental compile of the warm workspace (a change of code compiles only its objects)
 
-- Status: Proposed (the coordinator asked for it on 2026-10-15 for live testing, `docs/ideas.md`; it builds the part of
-  ADR-026 option 3 that holds in memory and needs no stored result)
+- Status: Accepted (owner direction for live testing as you type, `docs/ideas.md`, and ADR-026 option 3; accepted by the
+  coordinator on 2026-10-15)
 - Date: 2026-10-15
 - Related: ADR-026 (analysis; advised against, before the warm server existed), ADR-028 (warm server), ADR-022 (compile
   cache), ADR-013 (demand-driven compile)

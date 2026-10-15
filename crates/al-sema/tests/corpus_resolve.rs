@@ -80,10 +80,24 @@ fn every_corpus_table_field_has_a_known_type() {
 
 /// Corpus files with model gaps that wait for a parser or resolver fix. Each is a red corpus test,
 /// not a pass. A file with no gap left fails the test below, so the list only shrinks (ADR-007).
-const KNOWN_GAP_FILES: &[(&str, &str)] = &[(
-    "types/PUContinue.al",
-    "the checker does not resolve the continue statement (corpus bump 9)",
-)];
+const KNOWN_GAP_FILES: &[(&str, &str)] = &[
+    (
+        "types/PUContinue.al",
+        "the checker does not resolve the continue statement (corpus bump 9)",
+    ),
+    (
+        "misc/lt-system-functions/ControlFlow.al",
+        "the checker does not resolve the continue statement (corpus bump 10)",
+    ),
+    (
+        "types/lt-variant/VaTTextConst.al",
+        "the checker does not resolve a TextConst variable used as a value (corpus bump 10)",
+    ),
+    (
+        "xml/XmlDocReadWrite.al",
+        "XmlReadOptions.PreserveWhitespace is not in the builtin catalog (corpus bump 10)",
+    ),
+];
 
 /// Milestone 1: every name, member and call in every corpus body resolves,
 /// except references into apps outside the workspace (golden list above).

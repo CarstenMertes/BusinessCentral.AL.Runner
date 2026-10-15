@@ -776,7 +776,7 @@ pub enum LinkRhs {
 }
 
 /// Splits `text` at top-level `sep`, ignoring separators inside parentheses and quotes.
-pub fn split_top(text: &str, sep: char) -> Vec<String> {
+pub fn pages_split_top(text: &str, sep: char) -> Vec<String> {
     let mut out = Vec::new();
     let (mut depth, mut start) = (0i32, 0usize);
     let mut quote: Option<char> = None;
@@ -866,7 +866,7 @@ pub fn parse_run_object(text: &str) -> Result<(al_ir::RunKind, Vec<String>), Str
 /// `Err` names the part it does not understand.
 pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String> {
     let mut out = Vec::new();
-    for item in split_top(text, ',') {
+    for item in pages_split_top(text, ',') {
         let eq = {
             // The first `=` outside quotes separates the part's field from the rhs.
             let mut quote: Option<char> = None;

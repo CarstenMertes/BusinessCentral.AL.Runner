@@ -274,7 +274,7 @@ impl Builder<'_> {
             return;
         }
         let mut items = Vec::new();
-        for part in split_top(text, ',') {
+        for part in query_split_top(text, ',') {
             let Some((l, r)) = split_once_top(&part, '=') else {
                 self.reason(format!("DataItemLink `{part}` is not understood"));
                 continue;
@@ -534,7 +534,7 @@ impl Builder<'_> {
     /// `OrderBy = ascending(A), descending(B)`.
     fn order_by(&mut self, text: &str) -> Vec<(usize, bool)> {
         let mut out = Vec::new();
-        for part in split_top(text, ',') {
+        for part in query_split_top(text, ',') {
             let part = part.trim();
             let lower = part.to_ascii_lowercase();
             let (asc, rest) = if let Some(r) = lower.strip_prefix("ascending") {
@@ -552,7 +552,7 @@ impl Builder<'_> {
             };
             // `ascending(A, B)` names several columns in one direction (Base Application's "Item
             // Application Entries Inb."), as `ascending(A), ascending(B)`.
-            for col in split_top(inner, ',') {
+            for col in query_split_top(inner, ',') {
                 let col = crate::text::unquote_double(&col);
                 match self.columns.iter().position(|c| c.name.eq_ignore_ascii_case(&col)) {
                     Some(i) if !self.columns[i].filter_element => out.push((i, asc)),
@@ -605,7 +605,7 @@ impl Builder<'_> {
 }
 
 /// `text` split at top-level `sep` (outside quotes and parentheses).
-fn split_top(text: &str, sep: char) -> Vec<String> {
+fn query_split_top(text: &str, sep: char) -> Vec<String> {
     let mut out = Vec::new();
     let mut cur = String::new();
     let (mut depth, mut quote) = (0i32, None::<char>);
@@ -639,7 +639,7 @@ fn split_top(text: &str, sep: char) -> Vec<String> {
 }
 
 fn split_once_top(text: &str, sep: char) -> Option<(String, String)> {
-    let parts = split_top(text, sep);
+    let parts = query_split_top(text, sep);
     if parts.len() < 2 {
         return None;
     }
@@ -842,7 +842,7 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
     #[test]
     fn splitting_respects_quotes_and_parentheses() {
         assert_eq!(
-            split_top("\"A,B\" = X.\"C\", D = X.E", ','),
+            query_split_top("\"A,B\" = X.\"C\", D = X.E", ','),
             vec!["\"A,B\" = X.\"C\"".to_string(), " D = X.E".to_string()]
         );
         assert_eq!(

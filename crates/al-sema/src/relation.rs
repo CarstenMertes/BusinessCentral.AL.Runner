@@ -195,7 +195,7 @@ impl P {
                     return None;
                 }
                 condition_raw.push(text.trim().to_string());
-                conditions.push((field, unquote(&text)));
+                conditions.push((field, relation_unquote(&text)));
                 filter_conditions.push(filter);
             }
         }
@@ -224,11 +224,11 @@ impl P {
                         match kw.as_str() {
                             "const" | "filter" => Some(ParsedWhere::Value {
                                 related,
-                                text: unquote(&text),
+                                text: relation_unquote(&text),
                             }),
                             "field" => Some(ParsedWhere::Field {
                                 related,
-                                own: unquote(&text),
+                                own: relation_unquote(&text),
                             }),
                             _ => None,
                         }
@@ -269,7 +269,7 @@ fn split_commas(s: &str) -> Vec<&str> {
 }
 
 /// A group's text as a plain value: quotes around one name or string removed.
-fn unquote(s: &str) -> String {
+fn relation_unquote(s: &str) -> String {
     let s = s.trim();
     for q in ['"', '\''] {
         if let Some(inner) = s.strip_prefix(q).and_then(|x| x.strip_suffix(q)) {

@@ -44,7 +44,7 @@ pub struct Layout {
     pub run_reasons: Vec<String>,
 }
 
-fn unquote(s: &str) -> String {
+fn xmlport_unquote(s: &str) -> String {
     let t = s.trim();
     if let Some(inner) = t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')) {
         return inner.replace("''", "'");
@@ -130,9 +130,9 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "userequestpage" => {}
             // xmlport/TestXmlPortTextFormatsContracts.al: VariableText and FixedText pin these; an Xml port's encoding is not pinned.
             "textencoding" if value.trim().eq_ignore_ascii_case("utf8") => out.utf8 = true,
-            "fieldseparator" => out.field_separator = Some(unquote(&value)),
-            "fielddelimiter" => out.field_delimiter = Some(unquote(&value)),
-            "recordseparator" => out.record_separator = Some(unquote(&value)),
+            "fieldseparator" => out.field_separator = Some(xmlport_unquote(&value)),
+            "fielddelimiter" => out.field_delimiter = Some(xmlport_unquote(&value)),
+            "recordseparator" => out.record_separator = Some(xmlport_unquote(&value)),
             // xmlport/TestXmlPortFormatEvaluateContracts.al: Legacy is the display text, Xml the XML forms.
             "formatevaluate" => match value.trim().to_ascii_lowercase().as_str() {
                 "legacy" => {}
@@ -187,7 +187,7 @@ fn visit(section: &ast::Section, parent: Option<usize>, out: &mut Layout) {
                 out.run_reasons
                     .push(format!("property {pn} of {section_name} {name} is not supported yet"));
             } else if pn == "xmlname" {
-                xml_name = unquote(&p.value_text());
+                xml_name = xmlport_unquote(&p.value_text());
             }
         }
         for t in s.triggers() {
@@ -346,7 +346,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                         raw.name
                     ));
                 }
-                let link_table = layout.property(i, "LinkTable").map(|v| unquote(&v));
+                let link_table = layout.property(i, "LinkTable").map(|v| xmlport_unquote(&v));
                 let link_fields = layout.property(i, "LinkFields");
                 match (link_table, link_fields) {
                     (None, None) => {}
@@ -355,10 +355,10 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                             node.link_node = Some(ln);
                             for pair in crate::text::split_top_double(&f, ',') {
                                 let parts = crate::text::split_top_double(&pair, '=');
-                                let own = parts.first().map(|p| unquote(p));
+                                let own = parts.first().map(|p| xmlport_unquote(p));
                                 let other = parts.get(1).map(|p| p.trim()).and_then(|p| {
                                     let low = p.to_ascii_lowercase();
-                                    (low.starts_with("field(") && p.ends_with(')')).then(|| unquote(&p[6..p.len() - 1]))
+                                    (low.starts_with("field(") && p.ends_with(')')).then(|| xmlport_unquote(&p[6..p.len() - 1]))
                                 });
                                 let own_pos = own.as_ref().and_then(|n| {
                                     node.table.and_then(|t| {
@@ -394,8 +394,8 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
             ir::XmlNodeKind::Field | ir::XmlNodeKind::FieldAttr => {
                 let source = raw.args.get(1).cloned().unwrap_or_default();
                 let (table_name, field_name) = match source.split_once('.') {
-                    Some((t, f)) => (unquote(t), unquote(f)),
-                    None => (String::new(), unquote(&source)),
+                    Some((t, f)) => (xmlport_unquote(t), xmlport_unquote(f)),
+                    None => (String::new(), xmlport_unquote(&source)),
                 };
                 match layout.table_named(raw.parent, &table_name) {
                     Some(tn) => {

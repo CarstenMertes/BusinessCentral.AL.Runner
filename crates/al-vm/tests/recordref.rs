@@ -28,6 +28,17 @@ table 50900 "ALT T"
     }
     keys { key(PK; "No.") { } key(ByGrp; Grp, "No.") { } }
 }
+table 50910 "ALT Removed"
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+        field(2; Txt; Text[20]) { }
+        field(3; Gone; Integer) { ObsoleteState = Removed; ObsoleteReason = 'probe'; ObsoleteTag = '1.0'; }
+        field(4; Last; Text[20]) { }
+    }
+    keys { key(PK; Id) { } }
+}
 table 50902 "ALT Counter"
 {
     fields
@@ -728,4 +739,21 @@ fn systemrowversion_is_field_0_through_fieldno_number_and_field() {
         "F",
     );
     assert_eq!(text(r), "0|0|2000000000|timestamp|No|0");
+}
+
+// recordref/PWRecordMisc.al:109-150 (BC 27.5): a field with ObsoleteState = Removed is not counted, not listed and does
+// not exist; RecordRef.Field of it raises MetadataObsolete with the reason.
+#[test]
+fn a_removed_field_is_not_enumerated_and_its_field_call_raises_the_obsolete_error() {
+    let out = text(run(
+        "procedure F(): Text var R: RecordRef; F: FieldRef; S: Text; I: Integer; begin
+            R.Open(50910); S := Format(R.FieldCount()) + Format(R.FieldExist(3)) + Format(R.FieldExist(4)) + ',';
+            for I := 1 to R.FieldCount() do S += R.FieldIndex(I).Name + '(' + Format(R.FieldIndex(I).Number) + ') ';
+            asserterror F := R.Field(3); exit(S + '|' + GetLastErrorText() + '|' + GetLastErrorCode()); end;",
+        "F",
+    ));
+    assert_eq!(
+        out,
+        "3NoYes,Id(1) Txt(2) Last(4) |Field Gone (3) of table ALT Removed (50910) is obsoleted, reason: probe|MetadataObsolete"
+    );
 }

@@ -73,7 +73,9 @@ fn handle_of(v: &Value) -> Result<Handle, Signal> {
         let node = match name.to_ascii_lowercase().as_str() {
             "jsonobject" => JsonNode::Object(Vec::new()),
             "jsonarray" => JsonNode::Array(Vec::new()),
-            "jsonvalue" => JsonNode::Scalar(Scalar::Undefined),
+            // A cleared JsonValue is null, not undefined (types/ProbeTypeFormsAndFilters.al:
+            // Clear_JsonTypes_GiveFreshUnassigned, BC 27.5); a never-used one is the same state (assumed).
+            "jsonvalue" => JsonNode::Scalar(Scalar::Null),
             // An unassigned JsonToken acts as a JSON null (json/TestJsonTokenUnassignedEvaluateGuidContracts.al).
             "jsontoken" => JsonNode::Scalar(Scalar::Null),
             other => return unsupported(format!("use of an unassigned {other}")),
@@ -1088,7 +1090,21 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
     let h = recv(r)?;
     // ReadFrom(InStream) reads the rest of the stream and parses it like the text form.
     let text = if matches!(&a[0], Value::Library(_, h) if matches!(&*h.borrow(), LibraryValue::InStream(_))) {
-        crate::stream::read_serialised_text(&mut a[0])?
+        let text = crate::stream::read_serialised_text(&mut a[0])?;
+        // A stream whose first token is a string (what is left after a partial read of `{"a":2}`)
+        // is refused by the token reader (streams/ProbeJsonAndInStreamBytes.al:ReadFrom_InStream_AfterPartialRead_ReadsTheRest).
+        if text.trim_start().starts_with('"') {
+            if c.ret_used() {
+                return unsupported(
+                    "the result of ReadFrom(InStream) on a stream that starts with a string token (not pinned)",
+                );
+            }
+            return Err(error(
+                "JSON tokens of type 'String' are not supported by this implementation.",
+                "InvalidJsonType",
+            ));
+        }
+        text
     } else {
         match crate::native::text_of(&a[0]) {
             Some(t) => t,
@@ -1518,4 +1534,9 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         _ => return None,
     };
     Some(f)
+}
+
+/// The compact text of a JSON value, as `WriteTo(Text)` gives it (for `Format`).
+pub fn write_text(h: &Handle, out: &mut String) -> Result<(), Signal> {
+    write(h, out)
 }

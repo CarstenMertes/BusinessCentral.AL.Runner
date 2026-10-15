@@ -134,11 +134,22 @@ impl Session {
     /// back into `args`. Isolated events: see below.
     pub(crate) fn raise(&mut self, ev: &EventCall, args: &mut [Value]) -> Result<(), Signal> {
         let from_publisher = std::mem::take(&mut self.publish_frame);
-        if !from_publisher {
+        // A table event (OnAfterInsertEvent and the others the platform raises) puts no frame of its own
+        // between the subscriber and the code that raised it (session/TestSessionCallstackSourcesContracts.al:
+        // Callstack_FromTablePageReportAndExtensionCode, `table event`); page events and Global Triggers are
+        // not measured.
+        let unpinned = !from_publisher
+            && self
+                .engine
+                .program
+                .objects
+                .get(ev.object)
+                .is_none_or(|o| o.kind != "table");
+        if unpinned {
             self.unpinned_event_depth += 1;
         }
         let r = self.raise_to_subscribers(ev, args);
-        if !from_publisher {
+        if unpinned {
             self.unpinned_event_depth -= 1;
         }
         r

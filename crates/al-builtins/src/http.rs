@@ -33,36 +33,77 @@ fn text(a: &[Value], i: usize) -> Result<String, Signal> {
     }
 }
 
-/// `Method := 'GET'` sets and `Method` reads it back (network/TestHttpRequestMessage.al:19-25). The
-/// method of a request nobody gave one is not pinned: reading it is refused.
+/// `Method := 'GET'` sets and `Method` reads it back as written (network/TestHttpRequestMessage.al:19-25;
+/// types/TestHttpRequestFileUploadFieldErrorContracts.al:HttpRequestMessage_Defaults_AndSetRequestUri keeps
+/// `post` as `post`). A request nobody gave a method is `GET` (same test).
 fn method(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return match with_request(r, |s| s.method.clone())? {
-            Some(m) => Ok(Value::Text(m)),
-            None => unsupported(
-                "HttpRequestMessage.Method of a request nobody set a method on: the default is not pinned (docs/probes-needed.md)",
-            ),
-        };
+        return Ok(Value::Text(
+            with_request(r, |s| s.method.clone())?.unwrap_or_else(|| "GET".to_string()),
+        ));
     }
     let m = text(a, 0)?;
     with_request(r, |s| s.method = Some(m)).map(|()| Value::Null)
 }
 
-/// `SetRequestUri(uri)` stores it and `GetRequestUri()` returns it unchanged
-/// (network/TestHttpRequestMessage.al:46-55). Whether `SetRequestUri` validates the text, and what
-/// an unset uri reads as, are not pinned.
-fn set_request_uri(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let u = text(a, 0)?;
-    with_request(r, |s| s.uri = Some(u)).map(|()| Value::Boolean(true))
+/// Whether `SetRequestUri` takes `uri`: `Some(true)` for an absolute uri (`scheme://rest`, no white space),
+/// `Some(false)` for text that has white space and no `://` (`not a uri`), and `None` for any other text,
+/// which is not pinned (types/TestHttpRequestFileUploadFieldErrorContracts.al,
+/// network/TestHttpRequestMessage.al:46-55).
+fn uri_validity(uri: &str) -> Option<bool> {
+    let scheme_end = uri.find("://");
+    let absolute = scheme_end.is_some_and(|i| {
+        i > 0
+            && uri[..i].starts_with(|c: char| c.is_ascii_alphabetic())
+            && uri[..i].chars().all(|c| c.is_ascii_alphanumeric() || "+.-".contains(c))
+            && uri.len() > i + 3
+            && !uri.chars().any(char::is_whitespace)
+    });
+    if absolute {
+        Some(true)
+    } else if scheme_end.is_none() && uri.chars().any(char::is_whitespace) {
+        Some(false)
+    } else {
+        None
+    }
 }
 
-fn get_request_uri(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    match with_request(r, |s| s.uri.clone())? {
-        Some(u) => Ok(Value::Text(u)),
-        None => unsupported(
-            "HttpRequestMessage.GetRequestUri of a request nobody set a uri on: the default is not pinned (docs/probes-needed.md)",
-        ),
+/// `SetRequestUri(uri)` stores a valid uri and `GetRequestUri()` returns it unchanged; a text that is no uri
+/// answers false and keeps the uri that was there, or with the result unused raises `Failed to create the URL
+/// for the request. Please, make sure to set a valid URL.` / `CreateUrl:UriFormat`
+/// (handlers/PWRefusedBuiltins.al:HttpRequestMessage_SetRequestUri_ValidAndInvalid).
+fn set_request_uri(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let u = text(a, 0)?;
+    match uri_validity(&u) {
+        Some(true) => with_request(r, |s| s.uri = Some(u)).map(|()| Value::Boolean(true)),
+        Some(false) if c.ret_used() => Ok(Value::Boolean(false)),
+        Some(false) => Err(Signal::Error(crate::native::AlError {
+            message: "Failed to create the URL for the request. Please, make sure to set a valid URL.".into(),
+            code: "CreateUrl:UriFormat".into(),
+            call_stack: String::new(),
+        })),
+        None => unsupported(format!(
+            "SetRequestUri of `{u}`: whether it is a valid uri is not pinned (only an absolute uri and white space without a scheme are)"
+        )),
     }
+}
+
+/// An empty uri before one is set (types/TestHttpRequestFileUploadFieldErrorContracts.al:HttpRequestMessage_Defaults_AndSetRequestUri).
+fn get_request_uri(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    Ok(Value::Text(with_request(r, |s| s.uri.clone())?.unwrap_or_default()))
+}
+
+/// A `FileUpload` no client filled: `FileName()` is a null string (assigned to a Text it is empty) and
+/// `CreateInStream` opens an empty stream without an error
+/// (types/TestHttpRequestFileUploadFieldErrorContracts.al:FileUpload_NoClientFilled_OpensAnEmptyStream).
+/// A filled FileUpload cannot exist here: there is no client.
+fn file_upload_name(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Out {
+    Ok(Value::Null)
+}
+
+fn file_upload_create_in(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    crate::stream::create_empty_in_stream(a)?;
+    Ok(Value::Null)
 }
 
 fn with_content<R>(r: Option<&mut Value>, f: impl FnOnce(&mut HttpContentState) -> R) -> Result<R, Signal> {
@@ -186,6 +227,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("HttpHeaders", "Add") if sig.params.len() == 2 && sig.params[1].ty == "Text" => return Some(headers_add),
         ("HttpHeaders", "Remove") => return Some(headers_remove),
         ("HttpRequestMessage", "Content") => return Some(content),
+        ("FileUpload", "FileName") => return Some(file_upload_name),
+        ("FileUpload", "CreateInStream") => return Some(file_upload_create_in),
         _ => {}
     }
     if sig.receiver != "HttpRequestMessage" {

@@ -574,6 +574,22 @@ fn error_info_custom_dimensions_round_trip() {
     assert_eq!(r.unwrap(), "02onetwo");
 }
 
+// record/ProbePropertyAssignmentForms.al:302-373 (BC 27.5): the defaults of Create() are Error, CustomerContent,
+// collectible and Client; an assigned dictionary is held by reference, so an entry added later shows;
+// RecordId assigned reads back (the TableId stays 0) and is blank before.
+#[test]
+fn error_info_defaults_the_shared_dictionary_and_the_assigned_record_id() {
+    let r = error_info(
+        "e := ErrorInfo.Create();
+         a := Format(e.Verbosity()) + Format(e.DataClassification()) + Format(e.Collectible()) + Format(e.ErrorType());
+         d.Add('k', 'v'); e.CustomDimensions := d; a += Format(e.CustomDimensions().Count()); d.Add('k2', 'v2');
+         a += Format(e.CustomDimensions().Count()) + '|' + Format(e.RecordId()) + '|' + Format(e.TableId());
+         r1.Id := 2; r1.Insert(); e.RecordId := r1.RecordId();
+         exit(a + '|' + Format(e.RecordId() = r1.RecordId()) + '|' + Format(e.TableId()));",
+    );
+    assert_eq!(r.unwrap(), "ErrorCustomerContentYesClient12||0|Yes|0");
+}
+
 #[test]
 fn error_info_actions_do_not_disturb_the_state() {
     // errorinfo/TestErrorInfoType.al:523-557.
@@ -1318,4 +1334,56 @@ fn product_name_answers_the_three_forms() {
 fn current_execution_mode_is_standard() {
     let src = "codeunit 50100 C { procedure F(): Text begin exit(Format(Session.CurrentExecutionMode())); end; }";
     assert!(matches!(run(src, "F"), Ok(Value::Text(t)) if t == "Standard"));
+}
+
+// handlers/PWRefusedBuiltins.al:113-168 (BC 27.5): FieldError(Field, ErrorInfo) raises `<field> <message> in <table> <key>.`
+// with the code NCLCSRTS:TableErrorStr and leaves the ErrorInfo's message alone; FieldRef.FieldError(ErrorInfo) the same.
+#[test]
+fn field_error_with_an_error_info_raises_the_formatted_text() {
+    let r = error_info(
+        "r1.Id := 5; e := ErrorInfo.Create('my message');
+         asserterror r1.FieldError(Payload, e);
+         a := GetLastErrorText() + '|' + GetLastErrorCode() + '|' + e.Message();
+         exit(a);",
+    );
+    assert_eq!(
+        r.unwrap(),
+        "Payload my message in EI Row Id='5'.|NCLCSRTS:TableErrorStr|my message"
+    );
+}
+
+// types/ProbeTypeFormsAndFilters.al:Clear_JsonTypes_GiveFreshUnassigned (BC 27.5): a JsonObject cleared or never filled formats
+// as `{}`, a cleared JsonValue is null, and a cleared JsonToken is a null value.
+#[test]
+fn format_of_an_empty_json_object_and_of_a_cleared_json_token() {
+    let src = "codeunit 50100 C { procedure F(): Text var Obj: JsonObject; Arr: JsonArray; Val: JsonValue; Tok: JsonToken; S: Text; begin
+        S := Format(Obj); Obj.Add('a', 1); Arr.Add(1); Val.SetValue(5); Tok := Obj.AsToken();
+        Clear(Obj); Clear(Arr); Clear(Val); Clear(Tok);
+        exit(S + Format(Obj) + '|' + Format(Arr.Count()) + '|' + Format(Val.IsNull()) + '|' + Format(Val.IsUndefined()) + '|' + Format(Tok.IsValue()) + '|' + Format(Tok)); end; }";
+    let r = run(src, "F");
+    assert!(
+        matches!(&r, Ok(Value::Text(t)) if t == "{}{}|0|Yes|No|Yes|null"),
+        "{r:?}"
+    );
+}
+
+// types/ProbeTypeFormsAndFilters.al:361-395 (BC 27.5): CopyFilter from a Code field to a Text field raises the
+// compatibility error and keeps the target's filter; the filter copied is the one of the source's current filter group, into
+// the target's current group; a source with no filter clears the target's.
+#[test]
+fn copy_filter_between_filter_groups_and_from_code_to_text() {
+    let src = "table 50310 T { fields { field(1; Id; Integer) { } field(2; CodeF; Code[10]) { } field(3; TextF; Text[20]) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var Src: Record T; Dst: Record T; S: Text; begin
+            Src.SetFilter(CodeF, 'A*|B1'); Src.FilterGroup(2); Src.SetFilter(CodeF, '<>Z'); Src.FilterGroup(0);
+            Dst.SetFilter(TextF, 'old'); asserterror Src.CopyFilter(CodeF, Dst.TextF);
+            S := GetLastErrorCode() + '|' + Dst.GetFilter(TextF) + '|' + GetLastErrorText();
+            Src.FilterGroup(2); Dst.Reset(); Src.CopyFilter(CodeF, Dst.CodeF); S += '|' + Dst.GetFilter(CodeF);
+            Src.FilterGroup(0); Src.Reset(); Dst.SetFilter(CodeF, 'X'); Src.CopyFilter(CodeF, Dst.CodeF); S += '|[' + Dst.GetFilter(CodeF) + ']'; exit(S); end; }";
+    let Ok(Value::Text(got)) = run(src, "F") else {
+        panic!("not a text")
+    };
+    assert_eq!(
+        got,
+        "NCLCSRTS:TableEqualValue|old|The type of the constant must be compatible with that of the TextF field, and the length of the constant must not exceed the length of the field.\r\\\r\\Type: Text <-- Code\r\\Field: TextF <-- CodeF\r\\Table: T|<>Z|[]"
+    );
 }

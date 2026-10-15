@@ -67,17 +67,31 @@ impl Session {
 }
 
 /// The text of one frame; `None` where the format is not known.
+///
+/// Measured (session/TestSessionCallstackSourcesContracts.al:Callstack_FromTablePageReportAndExtensionCode,
+/// BC 27.5): the object type is `CodeUnit`, `Table`, `Page`, `PageExtension`, `Report` or `ReportExtension`; a
+/// trigger of an action or of a report data item is named `"<action or item> - <trigger>"` with `(Trigger)`
+/// after it; a procedure with a name that is not a plain identifier is quoted
+/// (handlers/PWRefusedBuiltins.al:Callstack_QuotedProcedureName). A trigger inside any other control, query,
+/// xmlport and the other object types have not been measured.
 fn frame_line(program: &ir::Program, object: usize, frame: CallFrame) -> Option<String> {
     let obj = &program.objects[object];
     let routine = obj.routines.get(frame.routine)?;
-    // Only the object types the format was measured for (v2: CodeUnit, Table).
     let kind = match obj.kind.as_str() {
         "codeunit" => "CodeUnit",
         "table" => "Table",
+        "page" => "Page",
+        "pageextension" => "PageExtension",
+        "report" => "Report",
+        "reportextension" => "ReportExtension",
         _ => return None,
     };
-    // A routine with an unusual name is not measured.
-    if !routine.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') {
+    // A name with a character other than a letter, digit, underscore, blank or parenthesis is not measured.
+    if !routine
+        .name
+        .chars()
+        .all(|c| c.is_ascii_alphanumeric() || matches!(c, '_' | ' ' | '(' | ')'))
+    {
         return None;
     }
     // The event frame of a publisher stands at its `end` (corpus
@@ -85,13 +99,21 @@ fn frame_line(program: &ir::Program, object: usize, frame: CallFrame) -> Option<
     let stmt = program.pos(if frame.event { routine.end_pos } else { frame.pos })?;
     let signature = program.pos(routine.pos)?;
     let line = stmt.line.checked_sub(signature.line)?;
-    let name = match routine.field {
+    let name = match (routine.field, &routine.container) {
         // "<field> - OnValidate" is one quoted name (same file:186).
-        Some(f) => {
+        (Some(f), _) => {
             let field = obj.table.as_ref()?.fields.get(f)?;
             format!("\"{} - {}\"", field.name, routine.name)
         }
-        None => routine.name.clone(),
+        (None, Some((section, owner))) if routine.is_trigger => {
+            if matches!(section.as_str(), "action" | "dataitem") && !owner.is_empty() && !owner.contains('"') {
+                format!("\"{owner} - {}\"", routine.name)
+            } else {
+                return None;
+            }
+        }
+        (None, _) if routine.name.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') => routine.name.clone(),
+        (None, _) => format!("\"{}\"", routine.name),
     };
     let mut out = format!(
         "\"{}\"({kind} {}).{name}{} line {line}",

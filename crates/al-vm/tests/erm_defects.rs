@@ -77,16 +77,12 @@ fn two_elements_of_an_array_of_records_do_not_share_their_buffer() {
     assert_eq!(text(r), "1|2|Yes|No");
 }
 
-/// Base Application's `Company Information.IsDigit` does `Letter: Code[1]; Letter[1] := LetterChar`. The
-/// runtime refused it as "indexing a non-array"; assigning a character into a Code is not pinned (whether
-/// the character is upper-cased), so it is refused and says that.
+/// Base Application's `Company Information.IsDigit` does `Letter: Code[1]; Letter[1] := LetterChar`. A Code
+/// upper-cases the character (types/TestCharIndexAssignContracts.al:CharacterAssignedIntoAPosition).
 #[test]
-fn assigning_a_character_into_a_code_is_refused_for_what_it_is() {
+fn assigning_a_character_into_a_code_upper_cases_it() {
     let r = run("procedure F(): Boolean var L: Code[1]; begin L[1] := 'a'; exit(L = 'A'); end;");
-    assert!(
-        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("Code") && m.contains("not pinned") && !m.contains("non-array")),
-        "{r:?}"
-    );
+    assert!(matches!(&r, Ok(Value::Boolean(true))), "{r:?}");
 }
 
 /// Tests-ERM "ERM Copy Name To Ledg. Entries".AddBlankEntry opens a table that has no row in the demo

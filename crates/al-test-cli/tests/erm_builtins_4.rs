@@ -34,7 +34,8 @@ fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
 }
 
 // record/TestRecordRuntimeTextsAndViews.al:374 (Record_FilterGroup_ReturnsTheGroupJustSet_AndReadsOnlyTheCurrentGroup),
-// the same through a RecordRef: the RecordRef shares the record's filter groups.
+// the same through a RecordRef: the RecordRef shares the record's filter groups. -1 is the OR group
+// (record/PWFilterGroupOr.al); other negative groups stay refused.
 #[test]
 fn record_ref_filter_group_returns_the_group_just_set_and_reads_only_the_current_group() {
     let o = outcomes(
@@ -48,11 +49,11 @@ fn record_ref_filter_group_returns_the_group_just_set_and_reads_only_the_current
              if RR.FilterGroup(2) <> 2 then Error('set 2 again');
              if RR.GetFilters() <> 'Code: X' then Error('group 2 shows %1', RR.GetFilters());
          end;
-         [Test] procedure OrGroup() var R: Record \"B4 Row\"; RR: RecordRef; begin RR.GetTable(R); RR.FilterGroup(-1); end;",
+         [Test] procedure OrGroup() var R: Record \"B4 Row\"; RR: RecordRef; begin RR.GetTable(R); RR.FilterGroup(-2); end;",
     );
     assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
     assert!(
-        matches!(&o[1].1, Outcome::NotRun(why) if why.contains("FilterGroup(-1)") && why.contains("not pinned")),
+        matches!(&o[1].1, Outcome::NotRun(why) if why.contains("FilterGroup(-2)") && why.contains("only -1")),
         "{:?}",
         o[1]
     );

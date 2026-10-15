@@ -29,7 +29,9 @@ before you open a source file.
    the probe lands it wins; fix the code if it disagrees. Error texts still come
    only from the corpus. Every such code path marks its assumption when it runs,
    and a test that passes through one is reported as a flagged pass ("passed,
-   relies on an unprobed assumption"), counted apart from clean passes.
+   relies on an unprobed assumption"), counted apart from clean passes. The
+   assumptions are registered in the runtime code itself (one registry, ids
+   checked by the compiler and a test), not only in a document.
 4. **Unsupported is refused explicitly, never run silently.** Refuse
    statically wherever possible: a lowering reason, or a diagnostic in
    `al-sema`, so the runner reports the test as not run before it starts.

@@ -799,14 +799,6 @@ pub fn split_top(text: &str, sep: char) -> Vec<String> {
     out
 }
 
-fn unquote_name(s: &str) -> String {
-    let t = s.trim();
-    t.strip_prefix('"')
-        .and_then(|x| x.strip_suffix('"'))
-        .unwrap_or(t)
-        .to_string()
-}
-
 /// `'H1'|'H3'` → `H1|H3`: the AL string literals of a `filter(...)` or `const(...)` value
 /// without their quotes (`''` is a quote inside a literal); text outside quotes is kept.
 fn unquote_literals(inner: &str) -> String {
@@ -895,7 +887,7 @@ pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String>
         let Some(eq) = eq else {
             return Err(format!("SubPageLink entry `{item}`"));
         };
-        let left = unquote_name(&item[..eq]);
+        let left = crate::text::unquote_double(&item[..eq]);
         let rhs = item[eq + 1..].trim();
         let open = rhs.find('(').ok_or_else(|| format!("SubPageLink entry `{item}`"))?;
         if !rhs.ends_with(')') {
@@ -904,13 +896,13 @@ pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String>
         let kind = rhs[..open].trim().to_ascii_lowercase();
         let inner = rhs[open + 1..rhs.len() - 1].trim();
         let parsed = match kind.as_str() {
-            "field" => LinkRhs::Field(unquote_name(inner)),
+            "field" => LinkRhs::Field(crate::text::unquote_double(inner)),
             "const" | "filter" => {
                 if let Some(t) = inner
                     .strip_prefix("Database::")
                     .or_else(|| inner.strip_prefix("database::"))
                 {
-                    LinkRhs::TableId(unquote_name(t))
+                    LinkRhs::TableId(crate::text::unquote_double(t))
                 } else {
                     LinkRhs::Filter(unquote_literals(inner))
                 }

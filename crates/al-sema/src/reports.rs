@@ -125,7 +125,7 @@ fn default_layout(obj: &ast::Object) -> ir::ReportLayout {
             .map(|p| p.value_text().trim().to_string())
     };
     if let Some(name) = prop("DefaultRenderingLayout") {
-        let name = unquote(&name);
+        let name = crate::text::unquote_double(&name);
         let layout = obj
             .sections()
             .filter(|s| s.name().eq_ignore_ascii_case("rendering"))
@@ -186,14 +186,6 @@ fn bool_prop(value: &str) -> Option<bool> {
         "false" | "no" => Some(false),
         _ => None,
     }
-}
-
-fn unquote(s: &str) -> String {
-    let t = s.trim();
-    if let Some(inner) = t.strip_prefix('"').and_then(|x| x.strip_suffix('"')) {
-        return inner.to_string();
-    }
-    t.to_string()
 }
 
 /// Walks the `dataset` section of report `obj` and checks the object's own properties.
@@ -631,25 +623,6 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
     out
 }
 
-fn split_top(text: &str, sep: char) -> Vec<String> {
-    let (mut out, mut cur, mut quoted, mut depth) = (Vec::new(), String::new(), false, 0);
-    for c in text.chars() {
-        match c {
-            '"' => quoted = !quoted,
-            '(' if !quoted => depth += 1,
-            ')' if !quoted => depth -= 1,
-            c if c == sep && !quoted && depth == 0 => {
-                out.push(std::mem::take(&mut cur));
-                continue;
-            }
-            _ => {}
-        }
-        cur.push(c);
-    }
-    out.push(cur);
-    out
-}
-
 /// Everything `build` needs to know about the report being lowered.
 pub struct Context<'a> {
     pub ws: &'a Workspace,
@@ -773,7 +746,7 @@ impl<'a> Owner<'a> {
                 // A source that is one field of the item's table: its properties decide how a
                 // Decimal is formatted.
                 let field = table.and_then(|t| {
-                    let source = unquote(args.get(1)?);
+                    let source = crate::text::unquote_double(args.get(1)?);
                     self.members[t]
                         .fields
                         .iter()
@@ -831,7 +804,7 @@ fn item_ir(
     let mut link_item = None;
     let mut parent_table = parent_table;
     if let Some(name) = prop("DataItemLinkReference") {
-        let name = unquote(name.trim());
+        let name = crate::text::unquote_double(name.trim());
         match enclosing(&name) {
             Some((idx, table)) => {
                 link_item = Some(idx);
@@ -851,12 +824,13 @@ fn item_ir(
                 raw.name
             )),
             Some((parent_table, own_table)) => {
-                for pair in split_top(&text, ',') {
-                    let parts = split_top(&pair, '=');
-                    let own = parts.first().map(|p| unquote(p));
+                for pair in crate::text::split_top_double(&text, ',') {
+                    let parts = crate::text::split_top_double(&pair, '=');
+                    let own = parts.first().map(|p| crate::text::unquote_double(p));
                     let other = parts.get(1).map(|p| p.trim()).and_then(|p| {
                         let low = p.to_ascii_lowercase();
-                        (low.starts_with("field(") && p.ends_with(')')).then(|| unquote(&p[6..p.len() - 1]))
+                        (low.starts_with("field(") && p.ends_with(')'))
+                            .then(|| crate::text::unquote_double(&p[6..p.len() - 1]))
                     });
                     let own_pos = own.as_ref().and_then(|n| {
                         o.members[own_table]

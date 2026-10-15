@@ -1286,7 +1286,7 @@ impl Session {
                 let at = i as usize - 1;
                 match self.with_borrowed_text(text, f, |t| {
                     if t.is_ascii() {
-                        Some(t.as_bytes().get(at).map(|b| u16::from(*b)).unwrap_or(0)).filter(|_| at <= t.len())
+                        (at <= t.len()).then(|| t.as_bytes().get(at).map_or(0, |b| u16::from(*b)))
                     } else {
                         let units: Vec<u16> = t.encode_utf16().collect();
                         match units.get(at) {

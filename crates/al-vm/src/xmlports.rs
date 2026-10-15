@@ -12,6 +12,7 @@ use crate::{AlError, Session, Signal};
 use al_builtins::builtin_id::ids;
 use al_builtins::describe::Describe;
 use al_builtins::ops;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::{Instance, LibraryValue, RtType, Value};
 use al_builtins::xmlport::{Elem, Node, ReadFailure};
 use al_data::{Store, position};
@@ -861,7 +862,7 @@ impl Session {
                 let imported = rec.borrow().fields.clone();
                 let key_args: Vec<Value> = pk.clone();
                 self.ret_used = true;
-                self.record_op("Get", &rec, &mut key_args.clone())?;
+                self.record_op(RecordOp::Get, &rec, &mut key_args.clone())?;
                 {
                     let mut r = rec.borrow_mut();
                     for &p in assigned {
@@ -880,7 +881,7 @@ impl Session {
             }
             // A duplicate key raises the table's own error, as an AL Insert does.
             self.ret_used = false;
-            let method = if modify { "Modify" } else { "Insert" };
+            let method = if modify { RecordOp::Modify } else { RecordOp::Insert };
             self.record_op(method, &rec, &mut [Value::Boolean(true)])?;
         }
         self.xp_run_trigger(inst, schema, node, after)
@@ -1229,7 +1230,7 @@ impl Session {
             for &(own, other) in &n.link_fields {
                 let v = parent.borrow().fields[other].clone();
                 self.ret_used = false;
-                self.record_op("SetRange", &rec, &mut [Value::Integer(own as i32), v])?;
+                self.record_op(RecordOp::SetRange, &rec, &mut [Value::Integer(own as i32), v])?;
             }
         }
         let (key, asc) = {

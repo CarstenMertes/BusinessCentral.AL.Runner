@@ -9,6 +9,7 @@ use al_builtins::describe::Describe;
 use al_builtins::filter::{FieldFilter, FilterExpr, key_cmp};
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::{Instance, RecordState, RtType, Value};
 use al_data::{InsertOutcome, RenameOutcome, Scan, Store, TableDef, WriteOutcome, memory::MemStore, position};
 use std::cell::RefCell;
@@ -984,18 +985,28 @@ impl Session {
         ))
     }
 
-    pub(crate) fn record_op(&mut self, method: &str, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
+    pub(crate) fn record_op(&mut self, method: RecordOp, rec: &Rec, args: &mut [Value]) -> Result<Value, Signal> {
         self.connection_check(rec)?;
         let t = self.table(rec)?;
         if matches!(
             method,
-            "Find" | "FindFirst" | "FindLast" | "FindSet" | "Next" | "Count" | "IsEmpty" | "CalcSums"
+            RecordOp::Find
+                | RecordOp::FindFirst
+                | RecordOp::FindLast
+                | RecordOp::FindSet
+                | RecordOp::Next
+                | RecordOp::Count
+                | RecordOp::IsEmpty
+                | RecordOp::CalcSums
         ) {
             let temporary = rec.borrow().temporary;
-            self.unseeded_read(&t, temporary, method)?;
+            self.unseeded_read(&t, temporary, method.name())?;
             self.coverage_read(&t, temporary)?;
         }
-        if matches!(method, "Get" | "GetBySystemId" | "CalcFields" | "LoadFields") {
+        if matches!(
+            method,
+            RecordOp::Get | RecordOp::GetBySystemId | RecordOp::CalcFields | RecordOp::LoadFields
+        ) {
             let temporary = rec.borrow().temporary;
             self.coverage_read(&t, temporary)?;
         }
@@ -1003,24 +1014,24 @@ impl Session {
         // The next access of the table raises a deferred duplicate-key Insert.
         if matches!(
             method,
-            "Insert"
-                | "Modify"
-                | "Delete"
-                | "DeleteAll"
-                | "ModifyAll"
-                | "Rename"
-                | "Truncate"
-                | "Get"
-                | "LoadFields"
-                | "Find"
-                | "FindFirst"
-                | "FindLast"
-                | "FindSet"
-                | "Next"
-                | "Count"
-                | "IsEmpty"
-                | "CalcFields"
-                | "CalcSums"
+            RecordOp::Insert
+                | RecordOp::Modify
+                | RecordOp::Delete
+                | RecordOp::DeleteAll
+                | RecordOp::ModifyAll
+                | RecordOp::Rename
+                | RecordOp::Truncate
+                | RecordOp::Get
+                | RecordOp::LoadFields
+                | RecordOp::Find
+                | RecordOp::FindFirst
+                | RecordOp::FindLast
+                | RecordOp::FindSet
+                | RecordOp::Next
+                | RecordOp::Count
+                | RecordOp::IsEmpty
+                | RecordOp::CalcFields
+                | RecordOp::CalcSums
         ) && !rec.borrow().temporary
             && self
                 .deferred_insert
@@ -1048,7 +1059,7 @@ impl Session {
                     .enumerate()
                     .filter(|(_, f)| f.init_text.is_some() && f.init.is_none())
                     .all(|(pos, _)| self.engine.unevaluable_init.contains_key(&(t.object, pos)));
-                if method == "Init" && only_unevaluable && messages.len() == 1 {
+                if method == RecordOp::Init && only_unevaluable && messages.len() == 1 {
                     if !rec.borrow().touched {
                         return Ok(Value::Null);
                     }
@@ -1074,23 +1085,23 @@ impl Session {
             && !rec.borrow().temporary
             && matches!(
                 method,
-                "Insert"
-                    | "Modify"
-                    | "Delete"
-                    | "DeleteAll"
-                    | "ModifyAll"
-                    | "Rename"
-                    | "Truncate"
-                    | "Get"
-                    | "Find"
-                    | "FindFirst"
-                    | "FindLast"
-                    | "FindSet"
-                    | "Next"
-                    | "Count"
-                    | "IsEmpty"
-                    | "CalcFields"
-                    | "CalcSums"
+                RecordOp::Insert
+                    | RecordOp::Modify
+                    | RecordOp::Delete
+                    | RecordOp::DeleteAll
+                    | RecordOp::ModifyAll
+                    | RecordOp::Rename
+                    | RecordOp::Truncate
+                    | RecordOp::Get
+                    | RecordOp::Find
+                    | RecordOp::FindFirst
+                    | RecordOp::FindLast
+                    | RecordOp::FindSet
+                    | RecordOp::Next
+                    | RecordOp::Count
+                    | RecordOp::IsEmpty
+                    | RecordOp::CalcFields
+                    | RecordOp::CalcSums
             )
         {
             return unsupported(format!(
@@ -1100,10 +1111,16 @@ impl Session {
         }
         if matches!(
             method,
-            "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate"
+            RecordOp::Insert
+                | RecordOp::Modify
+                | RecordOp::Delete
+                | RecordOp::DeleteAll
+                | RecordOp::ModifyAll
+                | RecordOp::Rename
+                | RecordOp::Truncate
         ) && !rec.borrow().temporary
         {
-            self.bg_refuse_write(t.object as usize, method)?;
+            self.bg_refuse_write(t.object as usize, method.name())?;
             self.gate_write(method)?;
             self.user_bulk_refusal(&t, rec.borrow().temporary, method)?;
             // A write call starts the transaction, also a DeleteAll that finds no row
@@ -1114,24 +1131,24 @@ impl Session {
             && !rec.borrow().temporary
             && matches!(
                 method,
-                "Get"
-                    | "GetBySystemId"
-                    | "Find"
-                    | "FindFirst"
-                    | "FindLast"
-                    | "FindSet"
-                    | "Next"
-                    | "Count"
-                    | "IsEmpty"
-                    | "CalcFields"
-                    | "CalcSums"
+                RecordOp::Get
+                    | RecordOp::GetBySystemId
+                    | RecordOp::Find
+                    | RecordOp::FindFirst
+                    | RecordOp::FindLast
+                    | RecordOp::FindSet
+                    | RecordOp::Next
+                    | RecordOp::Count
+                    | RecordOp::IsEmpty
+                    | RecordOp::CalcFields
+                    | RecordOp::CalcSums
             )
         {
             // A read call starts it too (session/ProbeSystemEnumMembers.al:94-112).
             self.tx_phase = crate::transactions::TX_READ;
         }
         match method {
-            "Init" => {
+            RecordOp::Init => {
                 let fresh = self.initial_fields(t.object as usize);
                 let mut r = rec.borrow_mut();
                 for (i, v) in fresh.into_iter().enumerate() {
@@ -1142,7 +1159,7 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
-            "Clear" => {
+            RecordOp::Clear => {
                 // Clear resets the buffer, the filters and the keys but does not empty the table of a
                 // temporary record: its rows stay and it stays temporary
                 // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount, BC 27.5).
@@ -1177,7 +1194,7 @@ impl Session {
                 r.load.partial = partial;
                 Ok(Value::Null)
             }
-            "Insert" => {
+            RecordOp::Insert => {
                 // A temporary record has no sequence: the key stays as it is (corpus
                 // record/TestTempTableContracts.al:52).
                 let auto = if rec.borrow().temporary {
@@ -1336,7 +1353,7 @@ impl Session {
                     }
                 }
             }
-            "Modify" => {
+            RecordOp::Modify => {
                 let run = arg_bool(args, 0)?;
                 let pk = t.primary_key(&rec.borrow().fields);
                 let stored = self
@@ -1450,11 +1467,11 @@ impl Session {
                     }
                 }
             }
-            "Delete" => {
+            RecordOp::Delete => {
                 let run = arg_bool(args, 0)?;
                 self.delete_row(&t, rec, run)
             }
-            "DeleteAll" => {
+            RecordOp::DeleteAll => {
                 let run = arg_bool(args, 0)?;
                 // The platform takes no delete on Tenant License State (record/
                 // TestPlatformTablesWritableContracts.al:96-101; the single-record Delete is not pinned).
@@ -1529,7 +1546,7 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                 Ok(Value::Null)
             }
-            "Get" => {
+            RecordOp::Get => {
                 // `Get(RecordId)`: the row the RecordId names, as RecordRef.Get(RecordId) does (corpus
                 // recordref/TestRecordRefKeys.al:48). The Record form is pinned for a row that exists
                 // (record/TestSetAutoCalcFieldsOnGet.Codeunit.al:68-79; Base Application's Item
@@ -1598,16 +1615,16 @@ impl Session {
                     }
                 }
             }
-            "FindFirst" | "FindSet" | "FindLast" | "Find" => {
+            RecordOp::FindFirst | RecordOp::FindSet | RecordOp::FindLast | RecordOp::Find => {
                 let asc = {
                     let r = rec.borrow();
                     r.ascending
                 };
                 let which = match (method, args.first()) {
-                    ("FindLast", _) => "+".to_string(),
-                    ("Find", Some(v)) => al_builtins::native::text_of(v).unwrap_or_default().to_string(),
+                    (RecordOp::FindLast, _) => "+".to_string(),
+                    (RecordOp::Find, Some(v)) => al_builtins::native::text_of(v).unwrap_or_default().to_string(),
                     // Doc (Record.Find): Which defaults to '='.
-                    ("Find", None) => "=".to_string(),
+                    (RecordOp::Find, None) => "=".to_string(),
                     _ => "-".to_string(),
                 };
                 let found = match which.as_str() {
@@ -1686,7 +1703,9 @@ impl Session {
                     // with a filter): the text lists the filters; without one it is not pinned.
                     None => {
                         let filters = self.get_filters(rec, &t)?;
-                        if filters.is_empty() || !matches!(method, "FindFirst" | "FindLast" | "FindSet") {
+                        if filters.is_empty()
+                            || !matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
+                        {
                             return unsupported(format!(
                                 "{method} on an empty set of table '{}' without using the result and without a filter: BC's error text is not pinned (docs/probes-needed.md)",
                                 t.name
@@ -1703,7 +1722,7 @@ impl Session {
                     }
                 }
             }
-            "Next" => {
+            RecordOp::Next => {
                 let steps = match args.first() {
                     Some(Value::Integer(n)) => *n,
                     // A whole-number Decimal (`Calendar.Next(12 / CountFrequency)`); a fraction would round or
@@ -1733,7 +1752,7 @@ impl Session {
                 }
                 Ok(Value::Integer(if steps < 0 { -moved } else { moved }))
             }
-            "Count" | "IsEmpty" => {
+            RecordOp::Count | RecordOp::IsEmpty => {
                 let (filters, flow_field_filters) = self.split_filters(rec);
                 let n = if flow_field_filters.is_empty() && !rec.borrow().marked_only {
                     self.store_for(rec)
@@ -1745,20 +1764,20 @@ impl Session {
                     let mut after = None;
                     while let Some(row) = self.scan(rec, &t, true, after)? {
                         n += 1;
-                        if method == "IsEmpty" {
+                        if method == RecordOp::IsEmpty {
                             break;
                         }
                         after = Some(position(&t, rec.borrow().key, &row));
                     }
                     n
                 };
-                Ok(if method == "Count" {
+                Ok(if method == RecordOp::Count {
                     Value::Integer(n as i32)
                 } else {
                     Value::Boolean(n == 0)
                 })
             }
-            "SetRange" => {
+            RecordOp::SetRange => {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let mut r = rec.borrow_mut();
@@ -1778,7 +1797,7 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
-            "SetFilter" => {
+            RecordOp::SetFilter => {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
@@ -1824,7 +1843,7 @@ impl Session {
                 });
                 Ok(Value::Null)
             }
-            "Reset" => {
+            RecordOp::Reset => {
                 // Reset also sets the table's globals back to their initial values (ADR-021
                 // decision 4; corpus probe TableGlobals_Reset_WhatHappensToTheGlobals).
                 self.reset_table_globals(rec);
@@ -1838,7 +1857,7 @@ impl Session {
                 r.field_descending = false;
                 Ok(Value::Null)
             }
-            "SetCurrentKey" => {
+            RecordOp::SetCurrentKey => {
                 let wanted: Vec<usize> = (0..args.len()).map(|i| arg_pos(args, i)).collect::<Result<_, _>>()?;
                 // Only the table's own keys: `t` may end with this record's earlier ad hoc key, and a
                 // prefix of it is a new ad hoc key, not that one.
@@ -1907,7 +1926,7 @@ impl Session {
                     }
                 }
             }
-            "Validate" => {
+            RecordOp::Validate => {
                 let pos = arg_pos(args, 0)?;
                 let engine = self.engine.clone();
                 let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
@@ -1947,7 +1966,7 @@ impl Session {
                 r?;
                 Ok(Value::Null)
             }
-            "Rename" => {
+            RecordOp::Rename => {
                 // Fields that relate to this table follow the rename; a temporary record has none.
                 let refs = if rec.borrow().temporary {
                     Vec::new()
@@ -2050,12 +2069,13 @@ impl Session {
                     }
                 }
             }
-            "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
-            "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
-            "LoadFields" => self.load_fields_row(rec, &t, args),
-            "SetLoadFields" | "AddLoadFields" | "AreFieldsLoaded" | "SetBaseLoadFields" => {
-                self.load_fields_op(method, rec, &t, args)
-            }
+            RecordOp::Truncate => self.truncate(&t, rec, arg_bool(args, 0)?),
+            RecordOp::CalcFields | RecordOp::CalcSums | RecordOp::SetAutoCalcFields => self.flow_op(method, rec, args),
+            RecordOp::LoadFields => self.load_fields_row(rec, &t, args),
+            RecordOp::SetLoadFields
+            | RecordOp::AddLoadFields
+            | RecordOp::AreFieldsLoaded
+            | RecordOp::SetBaseLoadFields => self.load_fields_op(method, rec, &t, args),
             other => self.record_meta_op(other, rec, &t, args),
         }
     }

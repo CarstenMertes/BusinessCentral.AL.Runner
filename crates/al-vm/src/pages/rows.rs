@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::record_op::RecordOp;
 
 impl Session {
     /// The caption a CaptionClass text stands for. Area 3 is the literal text. Other numeric areas
@@ -247,7 +248,7 @@ impl Session {
             }
         } else {
             self.ret_used = true;
-            self.record_op("Get", &rec, &mut start.clone())?;
+            self.record_op(RecordOp::Get, &rec, &mut start.clone())?;
         }
         // The row buffer the page keeps for the row it stands on is what OnAfterGetRecord left.
         if let Some(row) = keys.first() {
@@ -320,7 +321,7 @@ impl Session {
             }
         } else {
             self.ret_used = true;
-            self.record_op("Get", &rec, &mut start.clone())?;
+            self.record_op(RecordOp::Get, &rec, &mut start.clone())?;
         }
         Ok((new_rows == Self::WINDOW, last_key))
     }
@@ -449,10 +450,10 @@ impl Session {
         rec.borrow_mut().fields = anchor;
         self.ret_used = true;
         let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
-        let found = matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true));
+        let found = matches!(self.record_op(RecordOp::Get, &rec, &mut pk)?, Value::Boolean(true));
         let moved = found && {
             self.ret_used = true;
-            matches!(self.record_op("Next", &rec, &mut [Value::Integer(1)])?, Value::Integer(n) if n != 0)
+            matches!(self.record_op(RecordOp::Next, &rec, &mut [Value::Integer(1)])?, Value::Integer(n) if n != 0)
         };
         let table = self.table(&rec)?;
         let same = moved && Self::same_values(&table.primary_key(&rec.borrow().fields), &table.primary_key(&saved));

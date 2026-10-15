@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::record_op::RecordOp;
 
 impl Session {
     /// An action with no `OnAction` trigger (its own or a page extension's) and no `RunObject` is not
@@ -495,7 +496,7 @@ impl Session {
         if !st.borrow().dirty {
             self.ret_used = true;
             let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
-            self.record_op("Get", &rec, &mut pk)?;
+            self.record_op(RecordOp::Get, &rec, &mut pk)?;
         }
         let r = (|| {
             self.populate_current(st)?;
@@ -543,10 +544,10 @@ impl Session {
         }
         self.ret_used = true;
         let moved = matches!(
-            self.record_op("Next", &rec, &mut [Value::Integer(1)])?,
+            self.record_op(RecordOp::Next, &rec, &mut [Value::Integer(1)])?,
             Value::Integer(1)
         ) || matches!(
-            self.record_op("Next", &rec, &mut [Value::Integer(-1)])?,
+            self.record_op(RecordOp::Next, &rec, &mut [Value::Integer(-1)])?,
             Value::Integer(-1)
         );
         if moved {
@@ -612,7 +613,10 @@ impl Session {
         // The client knows no other row: nothing may be left in the view for that to be true.
         let probe = Rc::new(RefCell::new(rec.borrow().clone()));
         self.ret_used = true;
-        if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
+        if matches!(
+            self.record_op(RecordOp::FindFirst, &probe, &mut [])?,
+            Value::Boolean(true)
+        ) {
             return unsupported(
                 "a list whose only populated row an action deleted, with more rows in its view (not pinned)",
             );
@@ -658,7 +662,10 @@ impl Session {
             });
         }
         self.ret_used = true;
-        if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
+        if matches!(
+            self.record_op(RecordOp::FindFirst, &probe, &mut [])?,
+            Value::Boolean(true)
+        ) {
             let fields = probe.borrow().fields.clone();
             // The probe replaced the view's filters on key fields with the key; the row must still
             // pass the filters the page has (a Get of a row the view hides shows nothing:

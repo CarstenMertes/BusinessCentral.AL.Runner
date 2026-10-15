@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::record_op::RecordOp;
 
 impl Session {
     /// `TestPage.New()` (corpus handlers/TestPageInsertAllowed_Tests.al:70 New_OnInsertAllowedFalsePage_IsDenied,
@@ -121,7 +122,7 @@ impl Session {
         probe.borrow_mut().filters.clear();
         let mut pk = table.primary_key(&rec.borrow().fields);
         self.ret_used = true;
-        Ok(match self.record_op("Get", &probe, &mut pk)? {
+        Ok(match self.record_op(RecordOp::Get, &probe, &mut pk)? {
             Value::Boolean(true) => Some(probe.borrow().fields.clone()),
             _ => None,
         })
@@ -219,7 +220,7 @@ impl Session {
         // record/PWTableGlobals.al:408-431: OnModify reads Counter 0 though the action set 7).
         self.reset_table_globals(&rec);
         self.page_xrec = Some(self.page_xrec_fields(st));
-        let modified = self.record_op("Modify", &rec, &mut [Value::Boolean(true)]);
+        let modified = self.record_op(RecordOp::Modify, &rec, &mut [Value::Boolean(true)]);
         self.page_xrec = None;
         modified?;
         st.borrow_mut().dirty = false;
@@ -244,7 +245,7 @@ impl Session {
         self.auto_split_key(st)?;
         self.ret_used = false;
         self.immediate_errors = true;
-        let inserted = self.record_op("Insert", &rec, &mut [Value::Boolean(true)]);
+        let inserted = self.record_op(RecordOp::Insert, &rec, &mut [Value::Boolean(true)]);
         self.immediate_errors = false;
         inserted?;
         {

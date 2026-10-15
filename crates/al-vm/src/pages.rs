@@ -3538,6 +3538,14 @@ impl Session {
             }
             r?;
             self.settle_after_action(st)?;
+            // The client reads the current row again after every action, so OnAfterGetCurrRecord of
+            // the page and of its extensions runs again (corpus
+            // handlers/TestPageExtensionBaseMembersContracts.al:195-218: "ext AfterGetCurrRecord"
+            // after the extension's action and after the base's). A page that serves its rows from
+            // OnFindRecord is left as `CurrPage.Update` alone re-reads it (re-anchoring not pinned).
+            if !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+                st.borrow_mut().refresh = true;
+            }
             self.run_refresh(st)?;
         }
         Ok(Value::Null)

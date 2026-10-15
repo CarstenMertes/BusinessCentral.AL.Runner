@@ -159,6 +159,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 v.describe()
             ));
         }
+        // A Guid assigns into a Text or Code as its text form `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`, as
+        // Format gives it (`Dimensions.Add('PackageCode', Rec.SystemId)` into a Dictionary of [Text, Text] in Base
+        // Application's Config. Package Management). No corpus test assigns a Guid to a Text
+        // (docs/probes-needed.md).
+        (Value::Guid(g), T::Text(max)) => Value::Text(fit(crate::format::format_guid(&g), *max)?),
+        (Value::Guid(g), T::Code(max)) => Value::Code(fit(crate::format::format_guid(&g), *max)?),
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }

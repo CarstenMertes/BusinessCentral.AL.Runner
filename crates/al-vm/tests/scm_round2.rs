@@ -316,3 +316,26 @@ codeunit 69362 C
 "#;
     assert_eq!(text(run(src, "F")), "4");
 }
+
+// A Guid assigns into a Text as its text form, also through a Dictionary of [Text, Text] (Config. Package Management
+// sends `Dimensions.Add('PackageCode', Rec.SystemId)`); assumed, docs/probes-needed.md.
+#[test]
+fn a_guid_assigns_into_a_text_as_its_text_form() {
+    let src = r#"
+codeunit 69370 C
+{
+    procedure F(): Text
+    var G: Guid; D: Dictionary of [Text, Text]; T: Text[40];
+    begin
+        Evaluate(G, '63ca2fa4-4f03-4f2b-a480-172fef340d3f');
+        T := G;
+        D.Add('k', G);
+        exit(T + '|' + D.Get('k'));
+    end;
+}
+"#;
+    assert_eq!(
+        text(run(src, "F")),
+        "{63CA2FA4-4F03-4F2B-A480-172FEF340D3F}|{63CA2FA4-4F03-4F2B-A480-172FEF340D3F}"
+    );
+}

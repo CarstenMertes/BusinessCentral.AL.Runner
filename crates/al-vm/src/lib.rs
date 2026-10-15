@@ -1240,6 +1240,36 @@ impl Session {
                 self.query_column(q, *column)
             }
             E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
+            E::CharAt(text, index) if self.with_borrowed_text(text, f, |_| ()).is_some() => {
+                let i = int(&self.eval(index, f)?)?;
+                // Same answers as the general path below, on the text where it is held.
+                if i < 1 {
+                    return al_builtins::native::raise(
+                        format!(
+                            "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
+                        ),
+                        "OutsidePermittedRange",
+                    );
+                }
+                let at = i as usize - 1;
+                match self.with_borrowed_text(text, f, |t| {
+                    if t.is_ascii() {
+                        Some(t.as_bytes().get(at).map(|b| u16::from(*b)).unwrap_or(0)).filter(|_| at <= t.len())
+                    } else {
+                        let units: Vec<u16> = t.encode_utf16().collect();
+                        match units.get(at) {
+                            Some(u) => Some(*u),
+                            None if at == units.len() => Some(0),
+                            None => None,
+                        }
+                    }
+                }) {
+                    Some(Some(u)) => Ok(Value::Char(u)),
+                    _ => Err(Signal::Unsupported(
+                        "a text read more than one position past its length (not pinned)".into(),
+                    )),
+                }
+            }
             E::CharAt(text, index) => {
                 let t = self.eval(text, f)?;
                 let Some(t) = al_builtins::native::text_of(&t) else {
@@ -1291,6 +1321,38 @@ impl Session {
                 args,
                 ret_used,
             } => {
+                // `CopyStr(Var, p [, n])` and `StrLen(Var)` on a text variable read it where it is held.
+                if let (None, Some(ir::Arg::Value(first))) = (receiver.as_deref(), args.first()) {
+                    if matches!(id.as_str(), "Text.CopyStr#1" | "Text.StrLen#1")
+                        && self.with_borrowed_text(first, f, |_| ()).is_some()
+                    {
+                        let mut rest = Vec::with_capacity(args.len() - 1);
+                        for a in &args[1..] {
+                            let ir::Arg::Value(e) = a else {
+                                return Err(Signal::Unsupported(format!("{id} with this argument")));
+                            };
+                            rest.push(self.eval(e, f)?);
+                        }
+                        let num = |v: Option<&Value>| match v {
+                            Some(Value::Integer(n)) => Some(i64::from(*n)),
+                            Some(Value::BigInteger(n)) => Some(*n),
+                            Some(Value::Byte(n)) => Some(i64::from(*n)),
+                            Some(Value::Char(n)) => Some(i64::from(*n)),
+                            _ => None,
+                        };
+                        let r = if id == "Text.StrLen#1" {
+                            self.with_borrowed_text(first, f, |t| Value::Integer(Value::text_len(t) as i32))
+                                .map(Ok)
+                        } else {
+                            let pos = num(rest.first()).unwrap_or(1);
+                            let len = num(rest.get(1));
+                            self.with_borrowed_text(first, f, |t| al_builtins::native::copystr_of(t, pos, len))
+                        };
+                        if let Some(r) = r {
+                            return r;
+                        }
+                    }
+                }
                 // Event subscriptions are session state: the VM runs them (dispatch.rs).
                 if let "Session.BindSubscription#1" | "Session.UnbindSubscription#1" = id.as_str() {
                     let Some(ir::Arg::Value(e)) = args.first() else {
@@ -1578,6 +1640,28 @@ impl Session {
                     .map_or(RtType::Variant, |td| td.fields[*pos].ty.clone()),
                 _ => RtType::Variant,
             },
+        }
+    }
+
+    /// Runs `g` on the text a plain variable read (`E::Load` of a local or a global) holds, without copying it.
+    /// `None` when `e` is anything else, holds no text, or holds one with the call-stack marker (the general path
+    /// handles those). A loop of `CopyStr(Big, i, 1)` over a long text would otherwise copy it on every round.
+    fn with_borrowed_text<R>(&self, e: &ir::Expr, f: &Frame, g: impl FnOnce(&str) -> R) -> Option<R> {
+        fn plain(v: &Value) -> Option<&str> {
+            match v {
+                // The call-stack marker U+E000 (byte 0xEE) is in call-stack texts, which are short: a long text is
+                // not scanned for it on every read.
+                Value::Text(s) | Value::Code(s) if s.len() > 65536 || !s.as_bytes().contains(&0xEE) => Some(s),
+                _ => None,
+            }
+        }
+        match e {
+            ir::Expr::Load(ir::Place::Local(i)) => plain(f.locals.get(*i)?).map(g),
+            ir::Expr::Load(ir::Place::Global(i)) => {
+                let inst = f.instance.borrow();
+                plain(inst.globals.get(*i)?).map(g)
+            }
+            _ => None,
         }
     }
 

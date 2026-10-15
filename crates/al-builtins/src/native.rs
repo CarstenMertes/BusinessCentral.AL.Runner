@@ -956,6 +956,11 @@ fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Re
 
 fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let whole = text_arg(args, 0)?;
+    copystr_of(&whole, int_arg(args, 1).unwrap_or(1), int_arg(args, 2))
+}
+
+/// `CopyStr` of a text the caller holds by reference (the VM's fast path reads a variable without copying it).
+pub fn copystr_of(whole: &str, pos: i64, len: Option<i64>) -> Result<Value, Signal> {
     // A text of ASCII only is indexed by byte, with no copy: a loop of CopyStr over a long text stays linear in
     // the loop (Pageworks' asset parsing).
     let ascii = whole.is_ascii();
@@ -965,7 +970,6 @@ fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         whole.encode_utf16().collect()
     };
     let total = if ascii { whole.len() } else { s.len() };
-    let pos = int_arg(args, 1).unwrap_or(1);
     // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.
     if pos < 1 {
         return raise(
@@ -976,7 +980,7 @@ fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         );
     }
     let start = (pos as usize - 1).min(total);
-    let end = match int_arg(args, 2) {
+    let end = match len {
         Some(len) if len < 0 => {
             return raise(
                 format!(

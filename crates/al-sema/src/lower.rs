@@ -5034,6 +5034,15 @@ impl Lowerer<'_> {
                 let Ty::Array(dims, _) = self.ty_of(arg) else {
                     return Err("ArrayLen of something that is not an array variable".into());
                 };
+                // A one-dimensional array is measured when the call runs: a parameter holds the caller's array.
+                if dims.len() == 1 && args.len() == 1 {
+                    return Ok(ir::Expr::Builtin {
+                        id,
+                        receiver: None,
+                        args: vec![ir::Arg::Ref(self.place(arg)?)],
+                        ret_used: true,
+                    });
+                }
                 let dim = match args.get(1) {
                     Some(d) => match self.expr(d)? {
                         ir::Expr::Const(ir::Const::Integer(k)) => Some(k),

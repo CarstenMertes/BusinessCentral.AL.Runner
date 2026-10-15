@@ -326,6 +326,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Database.Commit#1", |c, _, _| c.commit().map(|_| Value::Null)),
     ("Database.SID#1", database_sid),
     ("System.Clear#1", clear),
+    ("System.ArrayLen#1", array_len),
     // A progress dialog is a headless no-op in a test (handlers/TestHandlersDialogProgressNoOp.al:24-110).
     ("Dialog.Open#1", |_, _, _| Ok(Value::Null)),
     ("Dialog.Update#1", |_, _, _| Ok(Value::Null)),
@@ -1011,6 +1012,16 @@ fn uppercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
 
 fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     Ok(Value::Text(text_arg(args, 0)?.to_lowercase()))
+}
+
+/// `ArrayLen(Array)` of a one-dimensional array: the length of the array the variable holds. A `var` or value
+/// parameter takes the caller's array whatever size it was declared with (types/W7VarArray.al: a parameter declared
+/// `array[3]` called with `array[2]` and `array[5]` sees 2 and 5, BC 27.5 and 29.0).
+fn array_len(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    match args.first() {
+        Some(Value::Array(a)) => Ok(Value::Integer(a.borrow().len() as i32)),
+        other => Err(Signal::Unsupported(format!("ArrayLen of {}", other.describe()))),
+    }
 }
 
 /// `Clear(var X)`: the default of the value's own kind. Records go to the VM.

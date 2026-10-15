@@ -68,6 +68,8 @@ pub struct TestArgs {
     /// Not a command line option: `alrunner serve`'s `execute` runs the `OnRun` trigger of one codeunit per app
     /// instead of the tests.
     pub execute: bool,
+    /// Not a command line option: `captureValues` and `iterationTracking` of a server request.
+    pub capture: al_vm::CaptureConfig,
     pub verbose: bool,
     pub quiet: bool,
     pub timings: bool,

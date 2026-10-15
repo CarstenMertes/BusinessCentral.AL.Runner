@@ -2,6 +2,7 @@
 
 mod apps;
 mod args;
+mod capture;
 mod coverage;
 mod output;
 mod run;

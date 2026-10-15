@@ -422,8 +422,11 @@ impl Session {
 
     pub(crate) fn ui_message(&mut self, text: String) -> Result<(), Signal> {
         if self.ui.is_none() {
-            if let Some(log) = self.scratch_messages.as_mut() {
-                log.push(text);
+            if self.scratch_messages.is_some() {
+                self.cap_message(&text);
+                if let Some(log) = self.scratch_messages.as_mut() {
+                    log.push(text);
+                }
                 return Ok(());
             }
         }

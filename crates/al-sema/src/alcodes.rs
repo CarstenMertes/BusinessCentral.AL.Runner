@@ -15,8 +15,8 @@
 //!   runtime, the keys of its app.json). The caller supplies them; a compile without them skips
 //!   these checks.
 //!
-//! The codes the checker itself reports (`check.rs`, where types are known) are AL0118, AL0132
-//! and AL0161; they are listed in [`IMPLEMENTED`] too.
+//! The codes the checker itself reports (`check.rs`, where types are known) are AL0118, AL0122,
+//! AL0132 and AL0161; they are listed in [`IMPLEMENTED`] too.
 
 use crate::workspace::{AppKind, Diagnostic, ObjKind, Workspace};
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
@@ -26,6 +26,10 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     (
         "AL0118",
         "a bare call of a name that is not a procedure or system function, in a codeunit",
+    ),
+    (
+        "AL0122",
+        "an enum assigned to an enum of another type whose target does not state AssignmentCompatibility = true",
     ),
     ("AL0124", "app.json key `assemblyProbingPaths` at runtime 16.0"),
     ("AL0132", "ExecutionMode::Install, Uninstall, Upgrade, Report"),
@@ -463,6 +467,47 @@ mod tests {
         }
         let ok = "codeunit 50000 C { procedure M(): ExecutionMode begin exit(ExecutionMode::Standard); end; }";
         assert!(codes(&[ok]).is_empty());
+    }
+
+    fn enum_pair(src_compat: bool, dst_compat: bool) -> String {
+        format!(
+            "enum 50000 \"MNC Src\" {{ Extensible = true; AssignmentCompatibility = {src_compat}; value(0; None) {{ }} value(1; One) {{ }} value(7; Seven) {{ }} }}
+             enum 50001 \"MNC Dst\" {{ Extensible = true; AssignmentCompatibility = {dst_compat}; value(0; None) {{ }} value(1; One) {{ }} value(2; Two) {{ }} }}
+             codeunit 50002 \"MNC Assign\" {{ procedure Do(): Integer var S: Enum \"MNC Src\"; D: Enum \"MNC Dst\"; begin D := S; exit(D.AsInteger()); end; }}"
+        )
+    }
+
+    /// The AL diagnostics of a compile of `src`, as `code message`.
+    fn messages(src: &str) -> Vec<String> {
+        let ws = load(&[src]);
+        let m = crate::members::build(&ws);
+        crate::check::check(&ws, &m, &Catalog::load())
+            .diagnostics
+            .iter()
+            .filter(|d| d.code.starts_with("AL"))
+            .map(|d| format!("{} {}", d.code, d.message))
+            .collect()
+    }
+
+    // must-not-compile 0074 (only the source states AssignmentCompatibility) and 0075 (neither does), corpus
+    // branch al-runtime-rs-staging: AL0122. A target that states it compiles whatever the source says
+    // (types/PXEnumRecordRef.al:7-10, :74-108); so does an Integer into any enum (:11-12, :137-196).
+    #[test]
+    fn al0122_an_enum_of_another_type_into_a_target_without_assignment_compatibility() {
+        let want = vec!["AL0122 Cannot implicitly convert type 'Enum \"MNC Src\"' to 'Enum \"MNC Dst\"'".to_string()];
+        assert_eq!(messages(&enum_pair(true, false)), want, "0074");
+        assert_eq!(messages(&enum_pair(false, false)), want, "0075");
+        assert!(messages(&enum_pair(false, true)).is_empty());
+        assert!(messages(&enum_pair(true, true)).is_empty());
+        // The property left out (false by default), into a table field.
+        let field = "enum 50000 \"MNC Src\" { value(0; None) { } value(1; One) { } }
+             enum 50001 \"MNC Dst\" { value(0; None) { } value(1; One) { } }
+             table 50003 \"MNC Row\" { fields { field(1; Id; Integer) { } field(2; Kind; Enum \"MNC Dst\") { } } }
+             codeunit 50002 \"MNC Assign\" { procedure Do() var S: Enum \"MNC Src\"; R: Record \"MNC Row\"; begin R.Kind := S; end; }";
+        assert_eq!(messages(field), want, "field");
+        let same = "enum 50001 \"MNC Dst\" { value(0; None) { } value(1; One) { } }
+             codeunit 50002 \"MNC Assign\" { procedure Do() var D: Enum \"MNC Dst\"; E: Enum \"MNC Dst\"; I: Integer; begin D := E; I := 1; D := I; end; }";
+        assert!(messages(same).is_empty());
     }
 
     #[test]

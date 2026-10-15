@@ -81,6 +81,8 @@ Our own diagnostics keep their `AR` codes; the AL ones are `alcodes.rs` and `che
 | 27, 28, 29 | 16 | 15 | 0 | 1 |
 
 Match: AL0161 (2 cases), AL0440, AL0162, AL0118, AL0296 (2), AL0124, AL0365, AL0132 (4), AL0385, AL0197.
+AL0122 for an enum assigned to an enum of another type (cases 0074 and 0075 of the corpus branch
+`al-runtime-rs-staging`, not in the submodule yet) matches too; the other AL0122 cases (0069, 0070: Integer and Text) are mismatches there.
 Not checked: 0008 (AL0175, `=` between two DotNet class objects): an enum is comparable and a class is not, and the
 front end has no assembly metadata. Message text is compared as a note only (the corpus README: the text is a
 reference). A case whose code the front end does not implement is "not checked" with that reason, never a pass.

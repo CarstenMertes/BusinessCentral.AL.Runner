@@ -1050,9 +1050,52 @@ impl<'a> Checker<'a> {
             self.ty(sc, node);
             return;
         }
+        if node.kind() == SyntaxKind::AssignStmt {
+            let mut tys = Vec::new();
+            for child in node.children() {
+                if is_expr(child.kind()) {
+                    tys.push((self.ty(sc, &child), child));
+                } else {
+                    self.walk(sc, &child);
+                }
+            }
+            if let [(target, _), (source, rhs)] = tys.as_slice() {
+                let plain = node.children_with_tokens().any(|t| t.kind() == SyntaxKind::Assign);
+                if plain {
+                    self.al_enum_assignment(sc, rhs, target, source);
+                }
+            }
+            return;
+        }
         for child in node.children() {
             self.walk(sc, &child);
         }
+    }
+
+    /// AL0122 for an enum assigned to an enum of another type whose TARGET does not state
+    /// `AssignmentCompatibility = true` (the source's property does not help): corpus must-not-compile
+    /// 0074 and 0075 (branch al-runtime-rs-staging), and types/PXEnumRecordRef.al:7-10 for the target that
+    /// states it. An enum the front end cannot resolve is not judged. Reported for the workspace only.
+    fn al_enum_assignment(&mut self, sc: &Scope, rhs: &SyntaxNode, target: &Ty, source: &Ty) {
+        let (Ty::Enum(t), Ty::Enum(s)) = (target, source) else {
+            return;
+        };
+        if self.ws.is_dependency(sc.oi) {
+            return;
+        }
+        let (Some(ti), Some(si)) = (self.resolve(sc, ObjKind::Enum, t), self.resolve(sc, ObjKind::Enum, s)) else {
+            return;
+        };
+        if ti == si || self.members[ti].assignment_compatible {
+            return;
+        }
+        let (tn, sn) = (self.ws.objects[ti].name.clone(), self.ws.objects[si].name.clone());
+        self.diag(
+            sc,
+            rhs,
+            "AL0122",
+            format!("Cannot implicitly convert type 'Enum \"{sn}\"' to 'Enum \"{tn}\"'"),
+        );
     }
 
     /// Infers `node` as a value, calling a parameterless callable.

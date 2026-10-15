@@ -775,6 +775,16 @@ impl Session {
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
+        if !r.is_trigger
+            && engine.program.objects[object]
+                .report_ext
+                .as_ref()
+                .is_some_and(|e| !e.added.is_empty())
+        {
+            // A procedure of a reportextension that adds data items: it runs on the instance that runs the
+            // extension's triggers (only local procedures are reachable otherwise; reportext-procs).
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportExtLocalProcedure);
+        }
         let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len());
         for s in &r.locals {
             locals.push(self.default_value(&s.ty));
@@ -941,6 +951,10 @@ impl Session {
     fn exec(&mut self, s: &ir::Stmt, f: &mut Frame) -> Result<(), Signal> {
         use ir::Stmt as S;
         match s {
+            S::Assume(a) => {
+                al_builtins::assumptions::assume(*a);
+                Ok(())
+            }
             S::Assign(p, e) => {
                 let v = self.eval(e, f)?;
                 self.write(p, v, f)
@@ -999,8 +1013,8 @@ impl Session {
                     ));
                 }
                 // Option bounds of an Integer loop take its type as an assignment does: the ordinal (Microsoft's
-                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; documented
-                // assumption, docs/probes-needed.md).
+                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; pinned by the
+                // corpus Option_InCaseAndLoopBounds, types/ for_to_option).
                 let bound = |v: Value| match v {
                     Value::Option(o, _) => Value::Integer(o),
                     v => v,
@@ -1275,6 +1289,7 @@ impl Session {
                 self.page_control(p, *control)
             }
             E::FieldOf(base, pos) => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldOfProcedureResult);
                 let record = self.eval(base, f)?;
                 self.read_record_field(record, *pos)
             }

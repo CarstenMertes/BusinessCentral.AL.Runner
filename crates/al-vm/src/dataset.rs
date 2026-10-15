@@ -448,6 +448,7 @@ impl Dataset {
             // A report with no row at all still writes the element (handlers/PWReportSaveAsColumns.al:
             // Labels_NoRowAtAll keeps every line that starts with `<DataItems` and sees one). Only that
             // prefix is pinned; the XmlWriter's short form is assumed (docs/probes-needed.md).
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DataItemsEmptyElement);
             out.push_str("  <DataItems />\n");
         }
         out.push_str("</ReportDataSet>");

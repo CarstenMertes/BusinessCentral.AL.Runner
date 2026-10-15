@@ -74,6 +74,9 @@ impl Session {
                     continue;
                 }
                 let ok = if c.filter {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TableRelationFilterCondition,
+                    );
                     // `Field = filter(x)`: the arm applies when the field's value passes the filter, which reads
                     // like a SetFilter text (`filter('')` the blank value, `filter(<> '')` any other). Only the
                     // `const` form is pinned by the corpus; this one is an assumption (docs/probes-needed.md).
@@ -99,6 +102,9 @@ impl Session {
                 }
             }
             if holds {
+                for a in &arm.assumes {
+                    al_builtins::assumptions::assume(*a);
+                }
                 return Ok(Some(arm.clone()));
             }
         }

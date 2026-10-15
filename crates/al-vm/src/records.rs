@@ -1256,6 +1256,13 @@ impl Session {
                     // does) is not stale: Microsoft's SMB Service Item TestItem_Reserve modifies such a buffer
                     // and passes in BC (assumed from that test; docs/probes-needed.md).
                     if !rec.borrow().temporary
+                        && version(&mine) > version(&theirs)
+                        && version(&theirs) <= self.committed_row_version
+                    {
+                        // Under the rule "a different version is stale" this write would have been refused.
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::StaleBufferNewerThanRow);
+                    }
+                    if !rec.borrow().temporary
                         && version(&mine) != 0
                         && version(&mine) < version(&theirs)
                         && version(&theirs) <= self.committed_row_version
@@ -1427,7 +1434,8 @@ impl Session {
             }
             "Get" => {
                 // `Get(RecordId)`: the row the RecordId names, as RecordRef.Get(RecordId) does (corpus
-                // recordref/TestRecordRefKeys.al:48). The Record form has no corpus test (Base Application's Item
+                // recordref/TestRecordRefKeys.al:48). The Record form is pinned for a row that exists
+                // (record/TestSetAutoCalcFieldsOnGet.Codeunit.al:68-79; Base Application's Item
                 // Category Management does `ItemCategory.Get(RecId)`); the RecordId of another table is refused.
                 let from_id: Option<Vec<Value>> = match args {
                     [Value::Library(_, l)] => match &*l.borrow() {
@@ -1441,6 +1449,7 @@ impl Session {
                     },
                     _ => None,
                 };
+                let by_record_id = from_id.is_some();
                 let args = from_id.as_deref().unwrap_or(args);
                 let mut pk = Vec::new();
                 for (n, &field) in t.keys[0].iter().enumerate() {
@@ -1460,6 +1469,11 @@ impl Session {
                         Ok(Value::Boolean(true))
                     }
                     None => {
+                        // A row that is there is pinned (record/TestSetAutoCalcFieldsOnGet.Codeunit.al:68-79);
+                        // the not-found outcome of the RecordId form is not.
+                        if by_record_id {
+                            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordGetRecordId);
+                        }
                         let mut ident = rec.borrow().fields.clone();
                         for (n, &field) in t.keys[0].iter().enumerate() {
                             ident[field] = match (args.get(n), &t.fields[field].ty) {
@@ -1505,7 +1519,14 @@ impl Session {
                     let mut c: Vec<char> = which.chars().collect();
                     c.sort_unstable();
                     c.dedup();
-                    if c == ['<', '=', '>'] { "=><".to_string() } else { which }
+                    if c == ['<', '=', '>'] {
+                        if which != "=><" {
+                            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FindDirectionSet);
+                        }
+                        "=><".to_string()
+                    } else {
+                        which
+                    }
                 };
                 let found = match which.as_str() {
                     "-" => self.scan(rec, &t, asc, None)?,
@@ -1614,6 +1635,7 @@ impl Session {
                     // A whole-number Decimal (`Calendar.Next(12 / CountFrequency)`); a fraction would round or
                     // truncate, which is not pinned.
                     Some(Value::Decimal(d)) if d.fract().is_zero() && i32::try_from(d.trunc()).is_ok() => {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::NextWholeDecimal);
                         i32::try_from(d.trunc()).unwrap_or(0)
                     }
                     None => 1,
@@ -1692,6 +1714,7 @@ impl Session {
                 // `Item.SetFilter("No.", ItemFilter)` with an empty `ItemFilter`. The Record form is an assumption
                 // (docs/probes-needed.md).
                 if text.trim().is_empty() {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordSetFilterEmpty);
                     let mut r = rec.borrow_mut();
                     let group = r.filter_group;
                     r.filters.retain(|f| !(f.field == pos && f.group == group));
@@ -1791,6 +1814,11 @@ impl Session {
                                 "SetCurrentKey on {}, which cannot order rows (not pinned)",
                                 t.fields[bad].name
                             ));
+                        }
+                        if wanted.iter().any(|&p| !t.fields[p].stored) {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::SetCurrentKeyFlowField,
+                            );
                         }
                         // `t` already holds this record's earlier ad hoc key, if any.
                         let index = self.engine.tables[t.object as usize]

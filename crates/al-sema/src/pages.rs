@@ -286,6 +286,8 @@ pub struct Layout {
     pub reasons: Vec<String>,
     /// The `area(...)` sections of `actions`, in source order, with the top-level controls each holds.
     pub action_areas: Vec<al_ir::ActionArea>,
+    /// The unprobed assumptions this layout rests on (an extension adding into an implicit category group).
+    pub assumes: Vec<al_builtins::assumptions::Assumption>,
 }
 
 /// A control in the tree the extensions are merged into.
@@ -695,12 +697,19 @@ impl Tree {
         let Tree { nodes, areas, reasons } = self;
         let mut slots: Vec<Option<Node>> = nodes.into_iter().map(Some).collect();
         let mut controls = Vec::new();
-        fn emit(slots: &mut [Option<Node>], idx: usize, parent: Option<usize>, out: &mut Vec<RawControl>) {
+        fn emit(
+            slots: &mut [Option<Node>],
+            idx: usize,
+            parent: Option<usize>,
+            out: &mut Vec<RawControl>,
+            anchored: &mut bool,
+        ) {
             let Some(n) = slots[idx].take() else { return };
             // An anchor is no control; what was added into it is (`addlast(Category_Category4)`).
             if n.anchor_only {
+                *anchored |= !n.children.is_empty();
                 for c in n.children {
-                    emit(slots, c, parent, out);
+                    emit(slots, c, parent, out, anchored);
                 }
                 return;
             }
@@ -714,15 +723,16 @@ impl Tree {
                 modifies: n.modifies,
             });
             for c in n.children {
-                emit(slots, c, Some(here), out);
+                emit(slots, c, Some(here), out, anchored);
             }
         }
+        let mut anchored = false;
         let mut action_areas = Vec::new();
         for a in areas {
             let mut roots = Vec::new();
             for c in a.children {
                 let first = controls.len();
-                emit(&mut slots, c, None, &mut controls);
+                emit(&mut slots, c, None, &mut controls, &mut anchored);
                 // An anchor emits nothing, so it is no root.
                 if controls.len() > first {
                     roots.push(first);
@@ -736,6 +746,11 @@ impl Tree {
             controls,
             reasons,
             action_areas,
+            assumes: if anchored {
+                vec![al_builtins::assumptions::Assumption::ImplicitCategoryGroup]
+            } else {
+                Vec::new()
+            },
         }
     }
 }

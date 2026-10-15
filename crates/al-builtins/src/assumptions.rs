@@ -1,0 +1,396 @@
+//! The registry of behaviors the runtime implements on an unprobed assumption.
+//!
+//! Owner rule (CLAUDE.md hard rule 3, exception of 2026-10-15): behavior a Microsoft test needs may be
+//! implemented before its corpus probe exists, but every test that passes through such behavior is a
+//! FLAGGED pass: it relies on something no real-BC measurement has confirmed. Each such code path calls
+//! [`assume`] with its entry of [`Assumption`] when it runs; the runner collects the entries a test hit and
+//! reports the pass as flagged (console summary, JUnit property, JSON, `--explain`, `--top-assumptions`).
+//!
+//! One entry per assumption: its stable id, the behavior assumed, the Microsoft test(s) that need it and the
+//! probe wanted. `docs/probes-needed.md` holds a table generated from this registry (a test checks it; run
+//! the test with `UPDATE_ASSUMPTIONS_DOC=1` to rewrite it). When a probe pins an assumption, delete its entry:
+//! the compiler then names every place that still marks it.
+//!
+//! A test (`every_entry_is_marked_somewhere`) checks that each entry is used by at least one code path; an
+//! unregistered marker does not compile.
+
+use std::cell::Cell;
+
+macro_rules! registry {
+    ($( $(#[$m:meta])* $variant:ident => {
+        id: $id:expr,
+        assumed: $assumed:expr,
+        tests: $tests:expr,
+        probe: $probe:expr,
+        $(note: $note:expr,)?
+    } ),* $(,)?) => {
+        /// A behavior implemented on an assumption no probe has confirmed.
+        #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+        #[repr(u8)]
+        pub enum Assumption { $( $(#[$m])* $variant ),* }
+
+        impl Assumption {
+            /// Every entry, in registry order.
+            pub const ALL: &'static [Assumption] = &[ $( Assumption::$variant ),* ];
+
+            /// The entry's text.
+            pub fn info(self) -> Info {
+                match self {
+                    $( Assumption::$variant => Info {
+                        id: $id,
+                        assumed: $assumed,
+                        tests: $tests,
+                        probe: $probe,
+                        note: registry!(@note $($note)?),
+                    } ),*
+                }
+            }
+        }
+    };
+    (@note) => { None };
+    (@note $n:expr) => { Some($n) };
+}
+
+/// What the registry says about one assumption.
+#[derive(Debug, Clone, Copy)]
+pub struct Info {
+    /// The stable id: lower case words with hyphens.
+    pub id: &'static str,
+    /// The behavior assumed, in one line.
+    pub assumed: &'static str,
+    /// The Microsoft test(s) that need it.
+    pub tests: &'static str,
+    /// The probe wanted.
+    pub probe: &'static str,
+    /// An open point about the entry (a probe that contradicts it, say).
+    pub note: Option<&'static str>,
+}
+
+registry! {
+    TransferFieldsEnumOption => {
+        id: "transfer-fields-enum-option",
+        assumed: "TransferFields moves the ordinal between an Enum field and an Option field of the same field number; an Option ordinal the Enum lacks is refused.",
+        tests: "Sales Order Entity Buffer next to Sales Header (Shipping Advice); 149 Tests-SCM tests.",
+        probe: "Dst.TransferFields(Src) for an Enum source and an Option target and back, with an ordinal the Enum lacks.",
+    },
+    FieldOfProcedureResult => {
+        id: "field-of-procedure-result",
+        assumed: "A field read off what a procedure returns (GetLocation(Code).\"Bin Mandatory\") is the field of the returned copy.",
+        tests: "Warehouse Receipt Header.BinCodeMandatory; 50 Tests-SCM tests.",
+        probe: "A procedure p(): Record T and p().\"Field\" as an rvalue.",
+    },
+    RecordGetRecordId => {
+        id: "record-get-record-id",
+        assumed: "Record.Get(RecordId) of a row that does not exist fails like Get(key) with the same error text; a RecordId of another table is refused. (A row that exists is pinned by record/TestSetAutoCalcFieldsOnGet.Codeunit.al.)",
+        tests: "Item Category Management (ItemCategory.Get(RecId)); 29 Tests-SCM tests.",
+        probe: "Get(RecordId) on a missing row (result used and unused) and with a RecordId of another table.",
+    },
+    RecordSetFilterEmpty => {
+        id: "record-setfilter-empty",
+        assumed: "Record.SetFilter(Field, '') removes the field's filter in the current filter group, as a Query column does.",
+        tests: "BOM Structure (Item.SetFilter(\"No.\", ItemFilter) with an empty filter); 49 Tests-SCM tests.",
+        probe: "SetFilter(F, '') after SetRange(F, 1) and after SetFilter(F, '>1'), then GetFilters, in filter group 0 and 2.",
+    },
+    DateAddWholeDecimal => {
+        id: "date-add-whole-decimal",
+        assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",
+        tests: "Phys. Invt. Count.-Management.CalcPeriod (StartDate + Days with Days: Decimal); 15 Tests-SCM tests.",
+        probe: "D + 2.5, D - 2.5.",
+    },
+    NextWholeDecimal => {
+        id: "next-whole-decimal",
+        assumed: "Record.Next(Decimal) with a whole number steps like the Integer; a fraction is refused.",
+        tests: "Phys. Invt. Count.-Management.CalcPeriod (Calendar.Next(12 / CountFrequency)).",
+        probe: "R.Next(1.5) and R.Next(-1.5).",
+    },
+    OptionAsIntegerArgument => {
+        id: "option-as-integer-argument",
+        assumed: "A text builtin that takes an Integer accepts an Option and uses its ordinal, as an assignment to an Integer does.",
+        tests: "Calculate Standard Cost.PrepareAssemblyCalculation (SelectStr(Target, Text)); 14 Tests-SCM tests.",
+        probe: "SelectStr, CopyStr, PadStr and StrPos with an Option value.",
+    },
+    TableRelationFilterCondition => {
+        id: "table-relation-filter-condition",
+        assumed: "A TableRelation arm with a Field = filter(x) condition applies when the field's value passes the filter text (filter('') the blank value, filter(<> '') any other); the first arm that holds wins.",
+        tests: "Bin Content / Warehouse Journal Line \"Bin Code\", Item \"Put-away Unit of Measure Code\"; 307 Tests-SCM tests.",
+        probe: "TableRelation = if (Zone = filter('')) Bin.Code where(...) else if (Zone = filter(<> '')) Bin.Code where(...): Validate of a bin of each zone and FieldRef.Relation.",
+    },
+    TableRelationQuotes => {
+        id: "table-relation-quotes",
+        assumed: "A filter(...) text of a TableRelation where() clause quotes an identifier with \" and is read like a SetFilter text after the quotes are rewritten to '.",
+        tests: "Item where(Type = filter(Inventory | \"Non-Inventory\")) (Sales Line No.); tests in Tests-ERM.",
+        probe: "TableRelation ... where(F = filter(A | \"B C\")) and Validate with a value of each kind.",
+    },
+    StaleBufferNewerThanRow => {
+        id: "stale-buffer-newer-than-row",
+        assumed: "A buffer whose row version is newer than the stored row (the transaction was rolled back to the last Commit after the buffer's own Modify) is saved without DB:RecordChanged; only a stored row newer than the buffer is stale.",
+        tests: "SMB Service Item TestItem_Reserve (and four siblings).",
+        probe: "Modify, Commit, Modify, asserterror, Modify through the same buffer.",
+    },
+    GuidToText => {
+        id: "guid-to-text",
+        assumed: "A Guid assigned to a Text or Code is its text form {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} in capitals, as Format gives it.",
+        tests: "Config. Package Management.SendTelemetryOnDeleteConfigPackage (Dimensions.Add('PackageCode', Rec.SystemId)); 15 Rapid Start tests.",
+        probe: "T := G with Text[40], Text[10], Code[40]; Dict.Add('k', G); Evaluate(T, G).",
+    },
+    RecordRefFilterGroup => {
+        id: "recordref-filter-group",
+        assumed: "RecordRef.FilterGroup as a getter, and as a setter for a group other than -1, behaves as Record.FilterGroup. (The setter with -1 is pinned by record/PWFilterGroupOr.al:OrGroup_RecordRef.)",
+        tests: "Find Record Management.FindRecordByDescriptionAndView; 12 Tests-SCM tests.",
+        probe: "The Record.FilterGroup test through RecordRef.Open, FieldRef.SetRange and RecordRef.GetFilters.",
+    },
+    ReportExtLocalProcedure => {
+        id: "reportext-local-procedure",
+        assumed: "A local procedure of a reportextension runs on the instance that runs the calling trigger, which holds the extension's variables and added data items.",
+        tests: "Serv. Get Source Documents (local IntegrationEvent publishers), Serv. Suggest Worksheet Lines; about 2000 bucket tests.",
+        probe: "A reportextension with an added data item, a global variable and local procedures that read both, run with Run and SaveAs.",
+    },
+    FindDirectionSet => {
+        id: "find-direction-set",
+        assumed: "The characters of Find's Which argument are a set: '=<>' and '<>=' are the pinned '=><'.",
+        tests: "Tests-Job (Find('=<>')).",
+        probe: "Find('=<>'), Find('<>=') and Find('=><') on the same position, with a row only on one side.",
+    },
+    LoadFieldsReadsRow => {
+        id: "load-fields-reads-row",
+        assumed: "Record.LoadFields on a record that was never fetched reads the row of the buffer's primary key and answers true.",
+        tests: "Service Document Archive Mgmt. (ServiceMgtSetup.LoadFields(...) before Get()).",
+        probe: "Already probed: the probe of the next corpus bump says LoadFields does NOT read the row and Ok := LoadFields(..) is false.",
+        note: "CONTRADICTED by a probe (corpus bump 9): fix the implementation and delete this entry.",
+    },
+    TestFieldErrorInfoPasses => {
+        id: "testfield-errorinfo-pass",
+        assumed: "TestField(Field [, Value], ErrorInfo) whose check holds raises nothing and is the check of the overload without the ErrorInfo; a failing check is refused.",
+        tests: "Gen. Jnl.-Check Line (176 calls); 478 Tests-SCM-Manufacturing tests.",
+        probe: "TestField(F, ErrorInfo.Create()) on a blank and a filled field, with and without ErrorBehavior::Collect (the owner's probe is pending).",
+    },
+    DatabaseSidNumbers => {
+        id: "database-sid-numbers",
+        assumed: "Database.SID answers S-1-5-21-a-b-c-rid with a fixed domain part and a stable hash of the name as the rid.",
+        tests: "Library - Document Approvals.GetUser; 214 Tests-Dimension tests.",
+        probe: "Nothing in AL can compare the numbers with BC's; the shape is pinned (PXDatabaseSid.al).",
+    },
+    MixedDataItemLink => {
+        id: "mixed-dataitem-link",
+        assumed: "A query DataItemLink whose parts name different enclosing data items joins each part to its item.",
+        tests: "Item Analysis View Source / Analysis View Source queries; hundreds of Tests-SCM tests.",
+        probe: "A three-level query where the leaf links to the grandparent and the parent in one DataItemLink.",
+    },
+    SaveValuesWithExtensions => {
+        id: "savevalues-with-extensions",
+        assumed: "A page extension that adds only controls bound to Rec fields, labels, parts or actions changes nothing about what a SaveValues page stores.",
+        tests: "Pages with SaveValues and page extensions in the buckets.",
+        probe: "A SaveValues page extended by a control bound to a variable and by one bound to a field.",
+    },
+    ImplicitCategoryGroup => {
+        id: "implicit-category-group",
+        assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",
+        tests: "Email Address Lookup extension; 54 Tests-Misc tests.",
+        probe: "An extension adding to Category_Category4 of a page whose action says Promoted = true; PromotedCategory = Category4.",
+    },
+    ChainedArrayIndex => {
+        id: "chained-array-index",
+        assumed: "A[x][y] on a multi-dimensional array is A[x, y].",
+        tests: "Backup Storage test library (array[20, 1000] of RecordRef); 43 Tests-Misc tests.",
+        probe: "The chained form on a two-dimensional array, read and write.",
+    },
+    DataItemsEmptyElement => {
+        id: "dataitems-empty-element",
+        assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",
+        tests: "Report SaveAs datasets of reports with no rows in Tests-ERM.",
+        probe: "Confirmed by a corpus bump 9 probe (empty DataItems); delete when the bump is merged.",
+        note: "Probably pinned by corpus bump 9 (\"Empty DataItems <DataItems /> confirmed\"): check and delete.",
+    },
+    SetCurrentKeyFlowField => {
+        id: "setcurrentkey-flowfield",
+        assumed: "A walk over a key that holds a FlowField orders by the primary key. (That SetCurrentKey accepts a FlowField is pinned by record/ProbeClearAllSetKeyHyperlink.al:SetCurrentKey_OnFlowFieldFlowFilterBlob_Outcome, which does not read the order.)",
+        tests: "Library code that sets a key containing a FlowField in the buckets.",
+        probe: "SetCurrentKey(FlowField) then FindSet over rows whose primary key order differs from their flowed values.",
+    },
+}
+
+thread_local! {
+    static HITS: Cell<u128> = const { Cell::new(0) };
+}
+
+/// Notes that the code path of `a` ran. Cheap: one thread-local read and write. The runner collects the
+/// marks of each test with [`take_hits`].
+#[inline]
+pub fn assume(a: Assumption) {
+    HITS.with(|h| h.set(h.get() | (1u128 << (a as u32))));
+}
+
+/// [`assume`] that answers true, for a match guard that decides to take the assumed path.
+#[inline]
+pub fn hit(a: Assumption) -> bool {
+    assume(a);
+    true
+}
+
+/// Forgets the marks of this thread (a test is about to start).
+pub fn clear_hits() {
+    HITS.with(|h| h.set(0));
+}
+
+/// The marks of this thread since the last [`clear_hits`] or `take_hits`, in registry order; clears them.
+pub fn take_hits() -> Vec<Assumption> {
+    let bits = HITS.with(|h| h.replace(0));
+    Assumption::ALL
+        .iter()
+        .copied()
+        .filter(|a| bits & (1u128 << (*a as u32)) != 0)
+        .collect()
+}
+
+/// The entry with this id.
+pub fn by_id(id: &str) -> Option<Assumption> {
+    Assumption::ALL.iter().copied().find(|a| a.info().id == id)
+}
+
+/// The registry as the table `docs/probes-needed.md` holds between its markers.
+pub fn markdown_table() -> String {
+    let mut s = String::from("| Id | Assumed | Microsoft tests that need it | Probe wanted |\n|---|---|---|---|\n");
+    for a in Assumption::ALL {
+        let i = a.info();
+        let cell = |t: &str| t.replace('|', "\\|");
+        let note = i.note.map(|n| format!(" **{}**", cell(n))).unwrap_or_default();
+        s.push_str(&format!(
+            "| `{}` | {}{} | {} | {} |\n",
+            i.id,
+            cell(i.assumed),
+            note,
+            cell(i.tests),
+            cell(i.probe)
+        ));
+    }
+    s
+}
+
+/// The registry for `--list-assumptions`; `counts` gives, per id, (flagged passes, other tests that hit it)
+/// of the last run.
+pub fn listing(counts: &dyn Fn(&str) -> Option<(usize, usize)>) -> String {
+    let mut s = String::new();
+    for a in Assumption::ALL {
+        let i = a.info();
+        let hits = match counts(i.id) {
+            Some((flagged, other)) => format!("{flagged} flagged passes, {other} other tests"),
+            None => "not hit in the last run".to_string(),
+        };
+        s.push_str(&format!(
+            "{}  ({hits})\n    assumed: {}\n    needed by: {}\n    probe wanted: {}\n",
+            i.id, i.assumed, i.tests, i.probe
+        ));
+        if let Some(n) = i.note {
+            s.push_str(&format!("    NOTE: {n}\n"));
+        }
+    }
+    s
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn marks_are_collected_per_thread_and_cleared() {
+        clear_hits();
+        assume(Assumption::GuidToText);
+        assume(Assumption::GuidToText);
+        assume(Assumption::TransferFieldsEnumOption);
+        assert_eq!(
+            take_hits(),
+            vec![Assumption::TransferFieldsEnumOption, Assumption::GuidToText]
+        );
+        assert!(take_hits().is_empty());
+        assume(Assumption::GuidToText);
+        std::thread::spawn(|| assert!(take_hits().is_empty())).join().unwrap();
+        clear_hits();
+    }
+
+    #[test]
+    fn ids_are_unique_stable_words() {
+        let mut ids: Vec<&str> = Assumption::ALL.iter().map(|a| a.info().id).collect();
+        for id in &ids {
+            assert!(
+                !id.is_empty() && id.chars().all(|c| c.is_ascii_lowercase() || c == '-'),
+                "{id}"
+            );
+        }
+        ids.sort();
+        ids.dedup();
+        assert_eq!(ids.len(), Assumption::ALL.len());
+        assert!(Assumption::ALL.len() <= 128, "the marks are a u128");
+        for a in Assumption::ALL {
+            assert_eq!(by_id(a.info().id), Some(*a));
+        }
+    }
+
+    /// Every `*.rs` file under `crates/*/src`.
+    fn sources() -> Vec<(std::path::PathBuf, String)> {
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+        let mut out = Vec::new();
+        let mut stack = vec![root];
+        while let Some(d) = stack.pop() {
+            let Ok(rd) = std::fs::read_dir(&d) else { continue };
+            for e in rd.flatten() {
+                let p = e.path();
+                let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if p.is_dir() {
+                    if matches!(name, "target" | "tests" | ".git" | "corpus") {
+                        continue;
+                    }
+                    stack.push(p);
+                } else if name.ends_with(".rs") && p.to_string_lossy().contains("/src/") {
+                    if let Ok(t) = std::fs::read_to_string(&p) {
+                        out.push((p, t));
+                    }
+                }
+            }
+        }
+        out
+    }
+
+    #[test]
+    fn every_entry_is_marked_somewhere() {
+        let files = sources();
+        let mut unused = Vec::new();
+        for a in Assumption::ALL {
+            let needle = format!("Assumption::{a:?}");
+            let used = files
+                .iter()
+                .filter(|(p, _)| !p.ends_with("assumptions.rs"))
+                .any(|(_, t)| t.contains(&needle));
+            if !used {
+                unused.push(a.info().id);
+            }
+        }
+        assert!(
+            unused.is_empty(),
+            "registered but never marked by a code path (delete the entry or add the marker): {unused:?}"
+        );
+    }
+
+    const BEGIN: &str = "<!-- assumptions:begin (generated from crates/al-builtins/src/assumptions.rs; UPDATE_ASSUMPTIONS_DOC=1 cargo test -p al-builtins assumptions rewrites it) -->";
+    const END: &str = "<!-- assumptions:end -->";
+
+    #[test]
+    fn the_table_in_probes_needed_is_generated_from_the_registry() {
+        let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("../../docs/probes-needed.md");
+        let text = std::fs::read_to_string(&path).expect("docs/probes-needed.md");
+        let want = format!("{BEGIN}\n{}{END}", markdown_table());
+        let (Some(a), Some(b)) = (text.find("<!-- assumptions:begin"), text.find(END)) else {
+            panic!("docs/probes-needed.md has no assumptions block: add the two marker lines");
+        };
+        let have = &text[a..b + END.len()];
+        if have != want {
+            if std::env::var_os("UPDATE_ASSUMPTIONS_DOC").is_some() {
+                let new = format!("{}{want}{}", &text[..a], &text[b + END.len()..]);
+                std::fs::write(&path, new).expect("write docs/probes-needed.md");
+            } else {
+                panic!(
+                    "the assumptions table of docs/probes-needed.md is out of date: run UPDATE_ASSUMPTIONS_DOC=1 cargo test -p al-builtins assumptions"
+                );
+            }
+        }
+    }
+}

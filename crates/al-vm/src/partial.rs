@@ -262,6 +262,7 @@ impl Session {
                 );
             }
         }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::LoadFieldsReadsRow);
         let pk = t.primary_key(&rec.borrow().fields);
         let row = self
             .store_for(rec)

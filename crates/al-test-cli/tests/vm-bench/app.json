@@ -1,0 +1,9 @@
+{
+  "id": "7b3d2f0e-5c1a-4e0b-9a52-0f3c8d6a1b70",
+  "name": "VM Bench",
+  "publisher": "AL Runtime",
+  "version": "1.0.0.0",
+  "idRanges": [{ "from": 70000, "to": 70099 }],
+  "runtime": "16.0",
+  "dependencies": []
+}

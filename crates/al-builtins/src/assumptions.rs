@@ -218,12 +218,6 @@ registry! {
         tests: "Gen. Jnl.-Post Line PostVend (ERM Gen. Lines for Vendor, over 1,000 Tests-ERM and Tests-General Journal tests).",
         probe: "Error('%1', Rec.RecordId), StrSubstNo and TestField on a RecordId field, with a text key that needs quotes.",
     },
-    TimeSubtraction => {
-        id: "time-subtraction",
-        assumed: "Time - Time is a Duration in milliseconds, Time - Integer is a Time that many milliseconds earlier; a result outside the day and the undefined Time are refused. (Time + Integer is pinned by json/TestProbeJsonContracts.al:ValueTypes_DurationTimeDateTime; the probe types/PUTimeArithmetic.al for the subtractions is on the corpus staging branch.)",
-        tests: "Time arithmetic in Library - ERM and Library - Manufacturing: about 700 Time - Time and 530 Time - Integer refusals in the Tests-ERM, Tests-SCM and Tests-Job buckets.",
-        probe: "Merge types/PUTimeArithmetic.al from the staging branch (Time_MinusTime_IsDuration, Time_PlusMinusInteger_Values, _PastMidnight).",
-    },
     DateTimeDateTimeMethods => {
         id: "datetime-date-time-methods",
         assumed: "The instance methods DateTime.Date() and DateTime.Time() give what DT2Date and DT2Time give, the undefined DateTime included. (DT2Date and DT2Time are pinned by text/TestProbeTextDateFormatContracts.al:Dates_DateTime_DT2DateTime.)",

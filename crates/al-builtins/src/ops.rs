@@ -426,21 +426,6 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             }
             return Ok(V::Duration(a - b));
         }
-        // Time - Time is a Duration in milliseconds and Time - Integer moves back by that many milliseconds; both measured
-        // by the probe types/PUTimeArithmetic.al on the corpus staging branch, not in the pinned corpus yet. A result outside
-        // the day and the undefined Time are refused.
-        (V::Time(a), V::Time(b)) if op == Arith::Sub && *a > 0 && *b > 0 => {
-            crate::assumptions::assume(crate::assumptions::Assumption::TimeSubtraction);
-            return Ok(V::Duration(a - b));
-        }
-        (V::Time(a), n) if op == Arith::Sub && *a > 0 && int_of(n).is_some() => {
-            crate::assumptions::assume(crate::assumptions::Assumption::TimeSubtraction);
-            return int_of(n)
-                .and_then(|n| a.checked_sub(n))
-                .filter(|t| (1..=86_400_000).contains(t))
-                .map(V::Time)
-                .ok_or_else(|| Signal::Unsupported("Time moved outside the day (not pinned)".into()));
-        }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
@@ -747,33 +732,6 @@ mod tests {
         ));
         assert!(matches!(
             convert(Value::BigInteger(i64::MAX), &members()),
-            Err(Signal::Unsupported(_))
-        ));
-    }
-
-    // Microsoft's tests subtract Times (Time - Time in 700 tests, Time - Integer in 530); the probe
-    // types/PUTimeArithmetic.al on the corpus staging branch asks for the pinned form.
-    #[test]
-    fn time_minus_time_is_a_duration_and_time_minus_integer_a_time() {
-        let t = |ms: i64| Value::Time(ms + 1);
-        assert!(matches!(
-            arith(Arith::Sub, &t(13 * 3_600_000), &t(12 * 3_600_000)),
-            Ok(Value::Duration(3_600_000))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(12 * 3_600_000), &t(13 * 3_600_000)),
-            Ok(Value::Duration(-3_600_000))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(5000), &Value::Integer(1000)),
-            Ok(Value::Time(4001))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(500), &Value::Integer(1000)),
-            Err(Signal::Unsupported(_))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &Value::Time(0), &t(5)),
             Err(Signal::Unsupported(_))
         ));
     }

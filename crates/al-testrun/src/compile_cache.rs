@@ -495,7 +495,12 @@ pub fn open_or_build_with(
                 let stack = Stack::new(below).map_err(|e| format!("the layers below do not fit: {e}"))?;
                 lower_one_layer(apps, range, symbols, target, &stack)?
             };
-            let bytes = al_cache::build_layer(&layer, key);
+            // The layers above the first compress with its dictionary: training one takes most of
+            // the time of a small layer, and the blocks are the same kind of data.
+            let bytes = match entries.first().and_then(Option::as_ref).filter(|_| li > 0) {
+                Some(first) => al_cache::build_layer_with_dictionary(&layer, key, first.dictionary()),
+                None => al_cache::build_layer(&layer, key),
+            };
             if let Err(e) = write_entry(&cc.dir, key, &bytes) {
                 let note = format!("the entry was not saved: {e}");
                 eprintln!("compile cache: {note}");

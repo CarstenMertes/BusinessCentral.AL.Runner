@@ -83,15 +83,22 @@ fn zstd_err(e: std::io::Error) -> CacheError {
 /// The bytes of the entry file for `set`, the first layer. The same set and key give the same bytes.
 pub fn build(set: &DepSet, key: &Key) -> Vec<u8> {
     let objects: Vec<u32> = (0..set.facts.len() as u32).collect();
-    build_parts(0, &objects, set, key)
+    build_parts(0, &objects, set, key, None)
 }
 
 /// The bytes of the entry file for a layer (`build` is the first layer).
 pub fn build_layer(layer: &DepLayer, key: &Key) -> Vec<u8> {
-    build_parts(layer.base_len, &layer.objects, &layer.set, key)
+    build_parts(layer.base_len, &layer.objects, &layer.set, key, None)
 }
 
-fn build_parts(base_len: usize, objects: &[u32], set: &DepSet, key: &Key) -> Vec<u8> {
+/// [`build_layer`] with the dictionary of another entry (the first layer's) instead of one trained
+/// on this layer: training takes most of the time of compressing a small layer. The result is a
+/// function of the layer, the key and that dictionary.
+pub fn build_layer_with_dictionary(layer: &DepLayer, key: &Key, dictionary: &[u8]) -> Vec<u8> {
+    build_parts(layer.base_len, &layer.objects, &layer.set, key, Some(dictionary))
+}
+
+fn build_parts(base_len: usize, objects: &[u32], set: &DepSet, key: &Key, shared_dict: Option<&[u8]>) -> Vec<u8> {
     assert_eq!(set.facts.len(), set.blocks.len(), "one block per object");
     assert_eq!(set.facts.len(), objects.len(), "one object index per block");
     let raw: Vec<Vec<u8>> = set
@@ -103,7 +110,9 @@ fn build_parts(base_len: usize, objects: &[u32], set: &DepSet, key: &Key) -> Vec
     let total: usize = raw.iter().map(Vec::len).sum();
     let stride = (total / SAMPLE_BYTES).max(1);
     let samples: Vec<&[u8]> = raw.iter().step_by(stride).map(Vec::as_slice).collect();
-    let dict = if samples.len() >= 8 {
+    let dict = if let Some(d) = shared_dict {
+        d.to_vec()
+    } else if samples.len() >= 8 {
         zstd::dict::from_samples(&samples, DICT_SIZE).unwrap_or_default()
     } else {
         Vec::new()
@@ -287,6 +296,12 @@ impl Entry {
     /// How many objects the layers below this one hold (0 for the first layer).
     pub fn base_len(&self) -> usize {
         self.index.base_len as usize
+    }
+
+    /// The zstd dictionary the blocks of this entry share.
+    pub fn dictionary(&self) -> &[u8] {
+        let from = self.index.dict_offset as usize;
+        &self.bytes[from..from + self.index.dict_len as usize]
     }
 
     /// The dependency files that did not parse when the layer was built.

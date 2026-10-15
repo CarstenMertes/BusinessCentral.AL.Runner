@@ -3104,6 +3104,9 @@ impl Session {
             let engine = self.engine();
             let object = st.borrow().object as usize;
             let name = page_of(&engine, st).controls[idx].name.clone();
+            // The element is the control's name or the name of the field it shows.
+            let field_name = self.control_field(st, idx).map(|f| f.name.clone());
+            let names: Vec<&str> = std::iter::once(name.as_str()).chain(field_name.as_deref()).collect();
             for ev in ["onbeforevalidateevent", "onaftervalidateevent"] {
                 let compiled = engine
                     .events
@@ -3111,9 +3114,13 @@ impl Session {
                     .get(&(object, ev.to_string()))
                     .is_some_and(|v| {
                         v.iter()
-                            .any(|s| s.element.is_empty() || s.element.eq_ignore_ascii_case(&name))
+                            .any(|s| s.element.is_empty() || names.iter().any(|n| s.element.eq_ignore_ascii_case(n)))
                     });
-                if compiled || engine.events.missing_for(object, ev, Some(&name)).is_some() {
+                if compiled
+                    || names
+                        .iter()
+                        .any(|n| engine.events.missing_for(object, ev, Some(n)).is_some())
+                {
                     return unsupported(format!(
                         "page event {ev} of control {name}: a subscriber listens, and the test client does not raise it yet"
                     ));

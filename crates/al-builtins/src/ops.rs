@@ -47,6 +47,17 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             };
             Value::Library(n, Rc::new(RefCell::new(copy)))
         }
+        // An HttpContent is a value: assignment and a by-value parameter copy its body and headers
+        // (misc/W4XmlJsonHttp.al:RequestContent_IsCopyOrReference).
+        (Value::Library(n, cell), T::Library(_))
+            if n == "HttpContent" && matches!(&*cell.borrow(), LibraryValue::HttpContent(_)) =>
+        {
+            let copy = match &*cell.borrow() {
+                LibraryValue::HttpContent(c) => LibraryValue::HttpContent(c.deep_copy()),
+                _ => LibraryValue::Empty,
+            };
+            Value::Library(n, Rc::new(RefCell::new(copy)))
+        }
         (v @ Value::Codeunit(_), T::Codeunit(_) | T::Interface(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
         // A query handed on keeps its state: the callee works on the caller's query.

@@ -29,6 +29,7 @@ mod filterpage;
 mod flowfields;
 mod globaltriggers;
 mod hostvalues;
+mod http;
 mod interfaces;
 mod pages;
 mod partial;
@@ -288,6 +289,8 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The `TestHttpRequestPolicy` of the running test codeunit (`None`: the property is absent).
+    pub(crate) http_policy: Option<&'static str>,
     /// A scratch run (`alrunner serve`'s `execute`): the text of every `Message` raised outside a test
     /// method, in order. `None`: such a call is refused, as BC's behaviour then is not pinned.
     pub(crate) scratch_messages: Option<Vec<String>>,
@@ -467,6 +470,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            http_policy: None,
             scratch_messages: None,
             capture: None,
             stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
@@ -2119,6 +2123,12 @@ impl al_builtins::format::FormatCtx for Session {
 }
 
 impl al_builtins::native::Ctx for Session {
+    fn http_send(
+        &mut self,
+        request: al_builtins::native::HttpOutgoing,
+    ) -> Result<al_builtins::value::TestHttpResponseState, Signal> {
+        self.http_send_impl(request)
+    }
     fn today_day(&self) -> Option<i32> {
         Some(self.today_day_number())
     }

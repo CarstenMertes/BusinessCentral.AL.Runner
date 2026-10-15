@@ -1563,7 +1563,7 @@ impl CorpusRuntime {
                 loop {
                     let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(u) = units.get(k) else { return done };
-                    done.push(run_unit(&engine, lowered, baseline, u, None, limit));
+                    done.push((k, run_unit(&engine, lowered, baseline, u, None, limit)));
                 }
             };
             std::thread::scope(|scope| {
@@ -1588,7 +1588,9 @@ impl CorpusRuntime {
                 for h in handles {
                     done.extend(h.join().expect("a test worker panicked"));
                 }
-                done
+                // Results in the order of the units, whichever worker finished first.
+                done.sort_by_key(|(k, _)| *k);
+                done.into_iter().map(|(_, r)| r).collect()
             })
         };
         let mut suite_work: Vec<(usize, std::time::Duration)> = Vec::new();
@@ -2712,6 +2714,9 @@ fn bind_handlers(
     handlers: &[(UiKind, usize)],
 ) -> Result<(), String> {
     let object = instance.borrow().object as usize;
+    // TestHttpRequestPolicy is a property of the test codeunit; absent, outbound requests are allowed.
+    let policy = session.object_property(object, "TestHttpRequestPolicy");
+    session.set_http_policy(policy.as_deref());
     let mut bound = Vec::new();
     for (kind, routine) in handlers {
         bound.push(session.ui_handler(*kind, object, *routine, instance.clone())?);

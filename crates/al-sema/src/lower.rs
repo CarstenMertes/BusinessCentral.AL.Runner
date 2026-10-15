@@ -2325,6 +2325,8 @@ pub(crate) fn is_stmt(k: SyntaxKind) -> bool {
 ///   codeunit/TestWriteTxTestBoundary.al:272 (`UseRequestPage(false)`).
 /// - `System.WorkDate`: session/TestSessionFunctions.al:63-65 (`WorkDate(20240101D)`).
 /// - `HttpRequestMessage.Method`: network/TestHttpRequestMessage.al:23; `.Content`: :39.
+/// - `TestHttpResponseMessage.HttpStatusCode`, `.ReasonPhrase`, `.IsBlockedByEnvironment`, `.IsSuccessfulRequest` and
+///   `HttpClient.Timeout`: the HTTP probes (PZHttpHandler.al; network/lt-http/HttpClient.al, TestHttpMessages.al).
 /// - `File.TextMode`, `File.WriteMode`: Base Application's "Export Consolidation" report.
 fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
@@ -2355,6 +2357,11 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             | ("Report", "UseRequestPage" | "Language" | "FormatRegion")
             | ("System", "WorkDate")
             | ("HttpRequestMessage", "Method" | "Content")
+            | (
+                "TestHttpResponseMessage",
+                "HttpStatusCode" | "ReasonPhrase" | "IsBlockedByEnvironment" | "IsSuccessfulRequest"
+            )
+            | ("HttpClient", "Timeout")
             | ("File", "TextMode" | "WriteMode")
     )
 }

@@ -7,6 +7,9 @@
 //! there); CI runs it in the release step:
 //! `cargo test --release -p al-test-cli --test corpus_resolve_deps -- --ignored`.
 
+/// Same files as KNOWN_UNPARSED in al-syntax/tests/corpus_parse.rs.
+const KNOWN_UNPARSED: &[&str] = &["types/lt-variant/VaTTextConst.al"];
+
 use al_test_cli::{deps, runtime};
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
@@ -57,6 +60,8 @@ fn unresolved_references_are_exactly_what_no_dependency_supplies() {
         .iter()
         .chain(&checked.diagnostics)
         .filter(|d| own.contains(d.file.as_str()) && !d.code.starts_with("AR1"))
+        // Files the parser does not read yet; listed in al-syntax/tests/corpus_parse.rs KNOWN_UNPARSED.
+        .filter(|d| !KNOWN_UNPARSED.contains(&d.file.as_str()))
     {
         if d.code == "AR0002" {
             *unresolved.entry(d.message.clone()).or_default() += 1;

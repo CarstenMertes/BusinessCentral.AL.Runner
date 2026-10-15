@@ -7,16 +7,6 @@ use std::collections::{BTreeMap, BTreeSet};
 
 pub use al_testrun::Outcome;
 
-/// Milestone groups from the original brief (docs/history/spike-brief.md), by area folder.
-pub const MILESTONES: &[(&str, &[&str])] = &[
-    (
-        "M2 pure semantics",
-        &["types", "text", "collections", "codeunit", "error-handling"],
-    ),
-    ("M3 record engine", &["record", "recordref", "fieldref"]),
-    ("M4 stretch", &["json", "xml", "streams", "session"]),
-];
-
 #[derive(Debug, Default, Clone, PartialEq, Eq, Serialize)]
 pub struct Counts {
     pub total: usize,
@@ -39,7 +29,6 @@ impl Counts {
 pub struct Report {
     pub overall: Counts,
     pub areas: BTreeMap<String, Counts>,
-    pub milestones: BTreeMap<String, Counts>,
     /// Cases real BC itself did not pass; excluded from every count.
     pub excluded_bc_failed: usize,
     /// Oracle cases whose codeunit is not in the corpus: the oracle and the
@@ -244,10 +233,6 @@ pub fn build(
     let mut r = Report {
         overall: Counts::default(),
         areas: BTreeMap::new(),
-        milestones: MILESTONES
-            .iter()
-            .map(|(m, _)| (m.to_string(), Counts::default()))
-            .collect(),
         excluded_bc_failed: 0,
         unmapped: Vec::new(),
         dependencies: Vec::new(),
@@ -265,13 +250,9 @@ pub fn build(
             continue;
         };
         let o = outcome(&case.id);
-        let milestone = MILESTONES.iter().find(|(_, areas)| areas.contains(&area.as_str()));
         let mut targets = vec![&mut r.overall];
         let area_counts = r.areas.entry(area.clone()).or_default();
         targets.push(area_counts);
-        if let Some((m, _)) = milestone {
-            targets.push(r.milestones.get_mut(*m).expect("milestone pre-seeded"));
-        }
         for c in targets {
             c.total += 1;
             match o {
@@ -469,30 +450,6 @@ mod tests {
     fn cases_bc_failed_are_excluded_not_counted() {
         let r = build(&oracle(), &areas, &outcome);
         assert_eq!(r.excluded_bc_failed, 1);
-    }
-
-    #[test]
-    fn milestones_sum_their_areas() {
-        let r = build(&oracle(), &areas, &outcome);
-        assert_eq!(
-            r.milestones["M2 pure semantics"],
-            Counts {
-                total: 2,
-                pass: 1,
-                fail: 1,
-                not_run: 0
-            }
-        );
-        assert_eq!(
-            r.milestones["M3 record engine"],
-            Counts {
-                total: 1,
-                pass: 1,
-                fail: 0,
-                not_run: 0
-            }
-        );
-        assert_eq!(r.milestones["M4 stretch"], Counts::default());
     }
 
     #[test]

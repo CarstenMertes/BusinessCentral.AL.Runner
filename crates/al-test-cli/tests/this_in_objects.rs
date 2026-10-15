@@ -48,3 +48,45 @@ codeunit 63402 T
     let o = run_codeunit(&engine, &l, oi);
     assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
 }
+
+// A query column named like a query method: `Q.Open()` is the method (Base Application's "Summarized Stock By
+// Item Trkg." has a filter column `Open` and its caller opens it). Real BC compiles that code.
+#[test]
+fn a_query_method_call_is_not_taken_for_a_column_of_the_same_name() {
+    let src = r#"
+table 63410 "QC Row" { fields { field(1; Id; Integer) { } field(2; Open; Boolean) { } } keys { key(PK; Id) { } } }
+query 63411 "QC Query" { elements { dataitem(R; "QC Row") { column(Id; Id) { } filter(Open; Open) { } } } }
+codeunit 63412 T
+{
+    Subtype = Test;
+    [Test] procedure OpenIsTheMethod() var Q: Query "QC Query"; Row: Record "QC Row"; N: Integer;
+    begin
+        Row.Id := 1; Row.Open := true; Row.Insert(); Row.Id := 2; Row.Open := false; Row.Insert();
+        Q.SetRange(Open, true);
+        Q.Open();
+        while Q.Read() do N += 1;
+        Q.Close();
+        if N <> 1 then Error('rows %1', N);
+    end;
+}
+"#;
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
+    let o = run_codeunit(&engine, &l, oi);
+    assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
+}

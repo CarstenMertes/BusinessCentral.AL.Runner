@@ -1444,6 +1444,20 @@ impl<'a> Checker<'a> {
                 let r = kids[0].text_range();
                 self.types
                     .insert((sc.file, r.start().into(), r.end().into()), base_ty.clone());
+                // `Q.Open()` is the query's method even when the query has a column named Open (Base
+                // Application's "Summarized Stock By Item Trkg." has one): a column is not called.
+                // Compiles in real BC; no corpus test names a column like a method (docs/probes-needed.md).
+                if matches!(base_ty, Ty::Object(ObjKind::Query, _))
+                    && node.parent().is_some_and(|p| p.kind() == CallExpr)
+                    && node.prev_sibling().is_none()
+                {
+                    if let Some(recv) = receiver_of(&base_ty) {
+                        let c = self.catalog_cands(&recv, &mname, true, &base_ty);
+                        if !c.is_empty() {
+                            return E::Callable(c);
+                        }
+                    }
+                }
                 if let Some(r) = self.field_res(sc, &base_ty, &mname) {
                     self.record(sc, node, r);
                 }

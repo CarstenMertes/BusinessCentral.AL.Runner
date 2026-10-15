@@ -145,7 +145,13 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0122, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `al_enum_assignment`, `ABSENT_ENUM_MEMBERS`).
 - `base_access.rs` (78): Page and report extension code that names the base object's members (ADR-023): which probes are pinned (`PINNED`), the `AL_UNPINNED_BASE_ACCESS` switch, the base's visible variables and procedures, and the slot of a base variable from syntax. Entry: `PINNED`, `pinned`, `scope_enabled`, `visible_vars`, `visible_procs`, `slot_of`.
 - `calcformula.rs` (513): The `CalcFormula` property of a FlowField, as syntax. Entry: `Formula` 18, `Cond` 28, `CondValue` 35, `parse` 48.
-- `check.rs` (2492): Resolves every name, member access and call in routine bodies, inferring types. Entry: `check_with` 122, `Checker` 323, `check_object` 647, `check_routine_in` 672, `CheckResult` 43, `Res` 67, `Roots` 103.
+- `check/mod.rs` (755): Resolves every name, member access and call in routine bodies, inferring types. Holds `CheckResult`, `Res`, `Roots`, the checker state and the entry points. Entry: `check_with` 175, `Checker` 506, `CheckResult` 29, `Res` 82, `Roots` 124.
+- `check/posmap.rs` (123): The position-keyed maps the checker fills: FxHash and the sharded `PosMap`. Entry: `PosMap` 42, `union` 88.
+- `check/object.rs` (549): The checker's object context, name resolution, and the walk over an object's routines. Entry: `object_ctx` 126, `check_object` 353, `check_routine_in` 423, `walk` 522.
+- `check/infer.rs` (800): Type inference for expressions and the diagnostics that hang off it. Entry: `infer` 235, `al_unresolved_name` 92, `name` 723.
+- `check/calls.rs` (375): Overload picking and the lookup of callables. Entry: `pick` 8, `lookup_callable` 74, `lookup_name` 228.
+- `check/member.rs` (291): Members of a type: page controls, record fields, sections. Entry: `member` 40, `field_of` 217.
+- `check/fit.rs` (178): Candidates and whether an argument type fits a parameter type. Entry: `fits` 22, `sig_cand` 110, `proc_cand` 4.
 - `check/demand.rs` (1417): Demand-driven checking of dependency apps (ADR-013 decision 6): what a test reaches is compiled, the rest is not. Entry: `Demand` 44, `run_demand` 765, `reach` 247, `reach_baseline` 261, `activate` 351, `activate_table` 398, `activate_ops` 451, `activate_global` 498.
 - `lib.rs` (16): Crate root of the semantic model.
 - `lower/mod.rs` (352): Lowers resolved syntax to the typed IR (ADR-011). Anything inexpressible becomes a refusal reason on the routine. Holds `Lowered`, the `Lowerer` state and the module list. Entry: `Lowered` 26, `Lowerer` 127.

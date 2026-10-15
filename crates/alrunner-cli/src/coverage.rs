@@ -202,8 +202,8 @@ mod tests {
             codeunit_name: "T".into(),
             test: test.into(),
             outcome: Outcome::Pass,
+            call_stack: String::new(),
             assumptions: Vec::new(),
-            time: std::time::Duration::ZERO,
             time: std::time::Duration::ZERO,
             coverage,
         }

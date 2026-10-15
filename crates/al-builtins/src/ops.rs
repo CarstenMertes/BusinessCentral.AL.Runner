@@ -131,7 +131,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.
-            let s = crate::native::text_of(&v).expect("text").trim().to_uppercase();
+            let s = upper_code(crate::native::text_of(&v).expect("text").trim());
             Value::Code(fit(s, *max)?)
         }
         (Value::Text(s) | Value::Code(s), T::Char) => {
@@ -190,12 +190,27 @@ pub fn parse_guid(text: &str) -> Option<[u8; 16]> {
     Some(out)
 }
 
+/// The upper case of a Code: a character whose upper case is several characters keeps its own (`ß` stays `ß`,
+/// types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `umlaut_sharp_s`).
+pub fn upper_code(s: &str) -> String {
+    s.chars()
+        .flat_map(|c| {
+            let mut u = c.to_uppercase();
+            if u.len() == 1 { vec![u.next().unwrap()] } else { vec![c] }
+        })
+        .collect()
+}
+
 fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
     match max {
-        Some(m) if Value::text_len(&s) > m as usize => unsupported(format!(
-            "text of length {} into a slot of length {m} (error text not pinned yet)",
-            Value::text_len(&s)
-        )),
+        // types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `too_long_11` (a Code[10] given 11 characters).
+        Some(m) if Value::text_len(&s) > m as usize => crate::native::raise(
+            &format!(
+                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {s}",
+                Value::text_len(&s)
+            ),
+            "StringLengthExceeded",
+        ),
         _ => Ok(s),
     }
 }

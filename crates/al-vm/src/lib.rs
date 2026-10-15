@@ -1177,13 +1177,24 @@ impl Session {
                     return Err(Signal::Unsupported(format!("indexing {} as a text", t.describe())));
                 };
                 let i = int(&self.eval(index, f)?)?;
-                usize::try_from(i - 1)
-                    .ok()
-                    .and_then(|i| t.encode_utf16().nth(i))
-                    .map(Value::Char)
-                    .ok_or_else(|| {
-                        Signal::Unsupported("a text indexed outside its length (error text not pinned)".into())
-                    })
+                // types/TestProbeScalarContracts.al:TextChar_AssignByIndex: position 0 and below raise, the position after
+                // the last character reads as the character 0; further positions are not pinned.
+                if i < 1 {
+                    return al_builtins::native::raise(
+                        &format!(
+                            "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
+                        ),
+                        "OutsidePermittedRange",
+                    );
+                }
+                let units: Vec<u16> = t.encode_utf16().collect();
+                match units.get(i as usize - 1) {
+                    Some(u) => Ok(Value::Char(*u)),
+                    None if i as usize == units.len() + 1 => Ok(Value::Char(0)),
+                    None => Err(Signal::Unsupported(
+                        "a text read more than one position past its length (not pinned)".into(),
+                    )),
+                }
             }
             E::DotNetCoerce(t, e) => {
                 self.dotnet.clear_null_string();
@@ -1649,23 +1660,44 @@ impl Session {
             ));
         };
         let mut units: Vec<u16> = s.encode_utf16().collect();
-        let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
-        let (Some(unit), true) = (unit, in_range) else {
+        let Some(unit) = unit else {
             return Err(Signal::Unsupported(format!(
-                "assigning {v} to character {i} of a text (only the next position within the length is pinned)",
+                "assigning {v} to a character of a text (only a UTF-16 character is pinned)",
                 v = v.describe()
             )));
         };
+        // A position outside 1 to the length plus one raises (types/TestProbeScalarContracts.al:TextChar_AssignByIndex:
+        // 5, 0 and -1 on 'abc'); the position after the last one appends, and past the declared length it raises the
+        // length error of an assignment.
+        if i < 1 || (i as usize) > units.len() + 1 {
+            return al_builtins::native::raise(
+                &format!(
+                    "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to {}.",
+                    units.len()
+                ),
+                "OutsidePermittedRange",
+            );
+        }
         let i = i as usize - 1;
         if i == units.len() {
             units.push(unit);
         } else {
             units[i] = unit;
         }
+        if let Some(m) = max.filter(|m| units.len() > *m as usize) {
+            return al_builtins::native::raise(
+                &format!(
+                    "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                    units.len(),
+                    String::from_utf16_lossy(&units)
+                ),
+                "StringLengthExceeded",
+            );
+        }
         let text = String::from_utf16(&units)
             .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
         if is_code {
-            return self.write(base, Value::Code(text.to_uppercase()), f);
+            return self.write(base, Value::Code(ops::upper_code(&text)), f);
         }
         self.write(base, Value::Text(text), f)
     }

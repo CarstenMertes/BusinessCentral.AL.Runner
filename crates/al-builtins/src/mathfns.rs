@@ -28,7 +28,8 @@ fn dec(v: &Value) -> Option<Decimal> {
 /// `'='` is the default direction (TestArithmeticContracts.al:108-115), `'>'` rounds away from zero and
 /// `'<'` towards it, on negative numbers too (TestArithmeticContracts.al:82-97,
 /// types/TestDateRoundFormatStringContracts.al:Round_DefaultPrecision_Directions_AndPrecisions). The
-/// default precision is 0.01 (same test). A precision that is not positive is refused.
+/// default precision is 0.01 (same test). A precision of 0 or -1 raises (types/TestProbeScalarContracts.al:477-528),
+/// a smaller one is refused.
 fn round(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let Some(number) = dec(&a[0]) else {
         return unsupported(format!("Round of {}", a[0].describe()));
@@ -40,8 +41,22 @@ fn round(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             None => return unsupported(format!("Round with a Precision of {}", p.describe())),
         },
     };
+    // types/TestProbeScalarContracts.al:Round_PrecisionAndPower, `round_prec_neg` (-1) and `round_prec_zero` (0):
+    // the shown "current value" of -1 is 1; other non-positive precisions are not measured.
     if precision <= Decimal::ZERO {
-        return unsupported("Round with a Precision that is not positive (not pinned)");
+        let shown = if precision.is_zero() {
+            "0"
+        } else if precision == Decimal::NEGATIVE_ONE {
+            "1"
+        } else {
+            return unsupported("Round with a Precision below -1 (not pinned)");
+        };
+        return crate::native::raise(
+            &format!(
+                "The value of ROUND parameter 2 is outside of the permitted range. The current value is: {shown}. The permitted range is: from 1 to 2,147,483,647."
+            ),
+            "OutsidePermittedRange",
+        );
     }
     let direction = match a.get(2) {
         None => "=".to_string(),
@@ -78,6 +93,12 @@ impl NormalizeTo for Decimal {
     }
 }
 
+/// A result that no Decimal holds: a too large result, zero to a negative power, a negative base to a fractional power
+/// (types/TestProbeScalarContracts.al:Round_PrecisionAndPower, `power_2_100`, `power_0_neg1`, `power_neg2_0_5`, `power_2_1000`).
+fn overflow() -> Out {
+    crate::native::raise("Value was either too large or too small for a Decimal.", "AL:Overflow")
+}
+
 /// `Power(Number, Power)` with a whole exponent: `Power(2, 3)`, `(5, 0)`, `(1, 100)`, `(0, 0) = 1`,
 /// `(2, -1) = 0.5`, `(2, 10)` (session/TestSystemComplete.al:124-144,
 /// types/TestArithmeticContracts.al:46-73, types/TestDateRoundFormatStringContracts.al:Power_NonWholeAndNegativeExponents:
@@ -91,16 +112,16 @@ fn power(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     if exp.fract() != Decimal::ZERO || exp.abs() > Decimal::from(10_000) {
         use rust_decimal::prelude::ToPrimitive;
         let (Some(b), Some(e)) = (base.to_f64(), exp.to_f64()) else {
-            return unsupported("Power outside the double range");
+            return overflow();
         };
         let r = b.powf(e);
         if !r.is_finite() {
-            return unsupported("Power with a result that is not a finite number (error not pinned)");
+            return overflow();
         }
         let Some(d) = Decimal::from_f64_retain(r)
             .and_then(|d| d.round_sf_with_strategy(15, RoundingStrategy::MidpointNearestEven))
         else {
-            return unsupported("Power outside the Decimal range");
+            return overflow();
         };
         return Ok(Value::Decimal(d.normalize()));
     }
@@ -110,13 +131,13 @@ fn power(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     for _ in 0..n.unsigned_abs() {
         result = match result.checked_mul(base) {
             Some(r) => r,
-            None => return unsupported("Power outside the Decimal range"),
+            None => return overflow(),
         };
     }
     if n < 0 {
         result = match Decimal::ONE.checked_div(result) {
             Some(r) => r,
-            None => return unsupported("Power with a zero base and a negative exponent (error not pinned)"),
+            None => return overflow(),
         };
     }
     Ok(Value::Decimal(result.normalize()))

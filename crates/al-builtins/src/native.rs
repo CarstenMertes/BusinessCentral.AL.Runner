@@ -882,31 +882,35 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
 /// `StrCheckSum(String [, WeightString] [, Modulus])`: `(M - (sum of digit * weight) mod M) mod M`, the
 /// formula of the documentation (methods-auto/text/text-strchecksum-method.md, its example gives 0
 /// for '4378' with weights '1234' and modulus 7). The corpus pins only that the result is not
-/// negative, is below the modulus and is not 0 for '12345' (session/TestSystemExtended.al:218-256).
-/// The documentation says a non-digit or a too long weight string raises, without a text: refused.
+/// negative, is below the modulus and is not 0 for '12345' (session/TestSystemExtended.al:218-256);
+/// values and the four errors: types/TestProbeScalarContracts.al:25-123.
 fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let digits = |s: &str| -> Option<Vec<i64>> { s.chars().map(|c| c.to_digit(10).map(i64::from)).collect() };
     let source = text_arg(args, 0)?;
     let Some(source) = digits(&source) else {
-        return unsupported("StrCheckSum of a string with a character that is not 0-9 (error text not pinned)");
+        return raise("The value string must be numeric.", "ALSystemString");
     };
     let mut weights = match args.get(1) {
         Some(_) => {
             let Some(w) = digits(&text_arg(args, 1)?) else {
-                return unsupported("StrCheckSum with a weight character that is not 0-9 (error text not pinned)");
+                return raise("The weight string must be numeric.", "ALSystemString");
             };
             w
         }
         None => Vec::new(),
     };
+    // An empty source is 0 whatever the weights (types/TestProbeScalarContracts.al:StrCheckSum_Values, `empty_w1`).
+    if source.is_empty() {
+        return Ok(Value::Integer(0));
+    }
     if weights.len() > source.len() {
-        return unsupported("StrCheckSum with a weight string longer than the source (error text not pinned)");
+        return raise("The weight parameter cannot be longer than the value string.", "ALSystemString");
     }
     // A short weight string is padded with 1 up to the length of the source.
     weights.resize(source.len(), 1);
     let modulus = int_arg(args, 2).unwrap_or(10);
     if modulus < 1 {
-        return unsupported("StrCheckSum with a modulus below 1 (not pinned)");
+        return raise("The modulus parameter cannot be less than 1.", "ALSystemString");
     }
     if source.is_empty() {
         return Ok(Value::Integer(0));

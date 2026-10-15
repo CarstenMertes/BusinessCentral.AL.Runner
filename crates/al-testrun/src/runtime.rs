@@ -1586,37 +1586,13 @@ const WALL_BACKSTOP: u32 = 10;
 /// How often the watchdog reads the CPU clock.
 const WATCHDOG_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
-/// The CPU time the calling thread has used so far, and a handle to read it from another thread.
-#[cfg(unix)]
-fn thread_cpu_clock() -> Option<libc::clockid_t> {
-    let mut id: libc::clockid_t = 0;
-    // SAFETY: `id` is a valid out pointer; the thread is the calling one.
-    let rc = unsafe { libc::pthread_getcpuclockid(libc::pthread_self(), &mut id) };
-    (rc == 0).then_some(id)
-}
-
-#[cfg(not(unix))]
-fn thread_cpu_clock() -> Option<()> {
-    None
-}
-
-#[cfg(unix)]
-fn cpu_time(id: libc::clockid_t) -> Option<std::time::Duration> {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: `ts` is a valid out pointer.
-    let rc = unsafe { libc::clock_gettime(id, &mut ts) };
-    (rc == 0).then(|| std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
-}
-
 impl Watchdog {
     /// Watches the calling thread.
     fn start(flag: Arc<std::sync::atomic::AtomicBool>, limit: std::time::Duration) -> Watchdog {
-        #[cfg(unix)]
-        let clock = thread_cpu_clock();
+        let clock = crate::cpuclock::ThreadClock::current();
         // The thread's CPU clock counts from the thread's birth, and a worker thread runs many tests:
         // the limit is measured from the reading at the start of this test.
-        #[cfg(unix)]
-        let base = clock.and_then(cpu_time).unwrap_or_default();
+        let base = clock.as_ref().and_then(|c| c.read()).unwrap_or_default();
         let (done, rx) = std::sync::mpsc::channel::<()>();
         let thread = std::thread::spawn(move || {
             let started = std::time::Instant::now();
@@ -1629,10 +1605,10 @@ impl Watchdog {
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     _ => return false,
                 }
-                #[cfg(unix)]
-                let used = clock.and_then(cpu_time).map(|cpu| cpu.saturating_sub(base));
-                #[cfg(not(unix))]
-                let used: Option<std::time::Duration> = None;
+                let used = clock
+                    .as_ref()
+                    .and_then(|c| c.read())
+                    .map(|cpu| cpu.saturating_sub(base));
                 match used {
                     Some(cpu) => {
                         if cpu >= limit || started.elapsed() >= limit * WALL_BACKSTOP {
@@ -3529,17 +3505,17 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
 
     /// The limit is per test: the CPU time a thread used before the test started does not count.
     /// Three tests on one thread, each using 60 % of the limit, all stay under it.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn the_cpu_limit_is_measured_from_the_start_of_each_test() {
         let limit = std::time::Duration::from_millis(500);
         for n in 0..3 {
             let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let w = Watchdog::start(flag.clone(), limit);
-            let clock = thread_cpu_clock().expect("a CPU clock");
-            let from = cpu_time(clock).expect("a reading");
+            let clock = crate::cpuclock::ThreadClock::current().expect("a CPU clock");
+            let from = clock.read().expect("a reading");
             let mut x = 0u64;
-            while cpu_time(clock).expect("a reading") - from < limit * 6 / 10 {
+            while clock.read().expect("a reading") - from < limit * 6 / 10 {
                 x = x.wrapping_add(std::hint::black_box(1));
             }
             // Let the watchdog poll once more after the work.

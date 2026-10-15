@@ -40,16 +40,12 @@ fn refusal(object: &str, routine: &str) -> String {
     l.unsupported[oi][ri].first().cloned().unwrap_or_default()
 }
 
+// handlers/TestReportRequestPageUpdateObjectIdContracts.al: `RequestOptionsPage.Update(false)` and
+// `CurrReport.Preview` are pinned for a report started by Run or RunModal, so they are not refused statically.
 #[test]
-fn request_page_update_and_report_preview_are_refused_with_their_reasons() {
-    for (object, routine, name) in [
-        ("ALT RQ", "OnPreReport", "RequestPage.Update"),
-        ("ALT RQ", "IsPreview", "Report.Preview"),
-    ] {
-        let why = refusal(object, routine);
-        assert!(why.contains(name), "{name}: {why}");
-        assert!(why.contains("not pinned"), "{name}: {why}");
-        assert!(!why.contains("is not implemented"), "{name}: {why}");
+fn request_page_update_and_report_preview_are_no_longer_refused_statically() {
+    for (object, routine) in [("ALT RQ", "OnPreReport"), ("ALT RQ", "IsPreview")] {
+        assert_eq!(refusal(object, routine), "");
     }
 }
 

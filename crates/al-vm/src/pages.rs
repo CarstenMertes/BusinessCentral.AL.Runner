@@ -1140,7 +1140,9 @@ impl Session {
         let result = (|| {
             // A `Page` variable whose procedure ran before this open was constructed then, and its
             // OnInit has run (handlers/TestPageOnInit_Tests.al:188).
-            if !std::mem::take(&mut st.borrow_mut().inited) {
+            // A second run of the same variable does not run OnInit again (controls/W2PageVariableInit.al:
+            // PageVariable_RunModalTwice, BC 27.5 and 29.0); a reopened TestPage is a fresh page (`page_open`).
+            if !std::mem::replace(&mut st.borrow_mut().inited, true) {
                 self.page_trigger(st, "oninit", vec![])?;
             }
             // `Editable(false)` on the variable before it runs applies after OnInit: OnInit still

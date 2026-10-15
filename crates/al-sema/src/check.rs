@@ -1365,10 +1365,15 @@ impl<'a> Checker<'a> {
                 }
             }
             MemberExpr => {
-                // `this.Member` in a codeunit: the codeunit's own procedure or global variable. It
+                // `this.Member` in a codeunit, report, page, xmlport or query: the object's own procedure or global
+                // variable (Microsoft Learn "this keyword": a self-reference in every object type; no corpus test
+                // outside a codeunit, docs/probes-needed.md). It
                 // resolves like the bare name does, without the implicit record's members.
                 if is_this_keyword(&kids[0])
-                    && self.ws.objects[sc.oi].kind == ObjKind::Codeunit
+                    && matches!(
+                        self.ws.objects[sc.oi].kind,
+                        ObjKind::Codeunit | ObjKind::Report | ObjKind::Page | ObjKind::XmlPort | ObjKind::Query
+                    )
                     && !sc_has_var(sc, "this")
                 {
                     if let Some(e) = kids.get(1).and_then(|m| self.this_member(sc, node, m)) {
@@ -1439,6 +1444,21 @@ impl<'a> Checker<'a> {
                 let r = kids[0].text_range();
                 self.types
                     .insert((sc.file, r.start().into(), r.end().into()), base_ty.clone());
+                // `Q.Open()` is the query's method even when the query has a column named Open (Base
+                // Application's "Summarized Stock By Item Trkg." has one): a column is not called.
+                // Compiles in real BC; no corpus test names a column like a method (docs/probes-needed.md).
+                if matches!(base_ty, Ty::Object(ObjKind::Query, _))
+                    && node.parent().is_some_and(|p| p.kind() == CallExpr)
+                    && node.prev_sibling().is_none()
+                    && self.field_res(sc, &base_ty, &mname).is_some()
+                {
+                    if let Some(recv) = receiver_of(&base_ty) {
+                        let c = self.catalog_cands(&recv, &mname, true, &base_ty);
+                        if !c.is_empty() {
+                            return E::Callable(c);
+                        }
+                    }
+                }
                 if let Some(r) = self.field_res(sc, &base_ty, &mname) {
                     self.record(sc, node, r);
                 }

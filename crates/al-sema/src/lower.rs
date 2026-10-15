@@ -4428,6 +4428,20 @@ impl Lowerer<'_> {
                         column,
                     })
                 }
+                // A bare column name in the query's own code reads the running query's current row
+                // (Base Application's "Summarized Stock By Item Trkg." does `X := Serial_No_;`; no corpus test
+                // does, docs/probes-needed.md).
+                Some(Res::QueryColumn { query, column }) if n.kind() == NameRef && query == self.oi => {
+                    let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
+                    if layout.query.columns[column].filter_element {
+                        return Err("reading a filter element of a query (not pinned)".into());
+                    }
+                    let slot = *self.globals.get("currquery").ok_or("the running query")?;
+                    Ok(ir::Expr::QueryColumn {
+                        query: Box::new(ir::Expr::Load(ir::Place::Global(slot))),
+                        column,
+                    })
+                }
                 // `Database::A.B."Name"`: a namespace-qualified object id.
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),
                 Some(Res::Local(name)) if self.local_labels.contains_key(&name) => {

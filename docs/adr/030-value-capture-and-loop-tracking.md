@@ -17,8 +17,7 @@ that just ran, next to the code that was just typed.
 
 1. **Opt in, per request.** `captureValues` and `iterationTracking` are fields of `execute` and `runTests`. Off, a run
    pays nothing: `Session::capture` is `None`, a block runs in the loop it always had, and the loop statements make one
-   test of that option per pass. (The step-5 branch measured the same time with and without the code: 1.5 million loop
-   passes ran in a median of 2.2 s on both, the noise of the machine being larger than any difference.)
+   test of that option per pass. (Measured: a nested loop of 1.5 million statement executions, five runs each, alternating the build before this step and this build: medians 455 ms and 425 ms, then 321 ms and 333 ms. The difference is the noise of a shared machine.)
 2. **What a statement is.** The lowering marks each statement with a `Stmt::Pos(id)`. With capture on, `exec_block` runs a
    block through `exec_block_captured`, which treats a marker and the statement after it as one statement. `id` is the
    position id that `coverage` uses (`coverage[].statements[].id`), so a `statementId` finds its place there.
@@ -50,7 +49,7 @@ that just ran, next to the code that was just typed.
 8. **Bounded.** A capture keeps at most 200,000 value records and 200,000 messages per test (`MAX_RECORDS`); past that it
    drops them and the test has `capturedValuesTruncated: true`. The run itself goes on.
 9. **Cost when on.** Each statement renders every local of its routine: a loop of 1.5 million passes with two locals takes
-   5.7 s instead of 2.2 s, and stops recording at the bound. Scratch code and tests are small; the bound keeps a mistake
+   5.7 s instead of 0.4 s, and stops recording at the bound. Scratch code and tests are small; the bound keeps a mistake
    from filling the memory.
 
 ## Consequences

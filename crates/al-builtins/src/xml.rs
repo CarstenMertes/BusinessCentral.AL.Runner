@@ -1244,6 +1244,8 @@ enum Pred {
     AttrExists(String),
     /// `local-name()='x'`
     LocalName(String),
+    /// Predicates joined by `and`: the node must satisfy all of them.
+    And(Vec<Pred>),
 }
 
 #[derive(Debug, Clone, Copy, PartialEq)]
@@ -1276,12 +1278,73 @@ fn qname_parts(n: &str) -> (Option<String>, String) {
     }
 }
 
-/// A literal in single or double quotes.
+/// A literal in single or double quotes. A quote of the same kind inside ends the literal (XPath 1.0 has no
+/// escape), so `"a" and @b="c"` is not one literal.
 fn quoted_literal(v: &str) -> Option<&str> {
     let v = v.trim();
     v.strip_prefix('\'')
         .and_then(|s| s.strip_suffix('\''))
-        .or_else(|| v.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
+        .filter(|s| !s.contains('\''))
+        .or_else(|| {
+            v.strip_prefix('"')
+                .and_then(|s| s.strip_suffix('"'))
+                .filter(|s| !s.contains('"'))
+        })
+}
+
+/// `a and b and c` outside quotes, as its parts; one part when there is no `and`.
+fn split_and(inner: &str) -> Vec<String> {
+    let chars: Vec<char> = inner.chars().collect();
+    let (mut parts, mut cur, mut quote, mut i) = (Vec::new(), String::new(), None::<char>, 0);
+    while i < chars.len() {
+        let c = chars[i];
+        match quote {
+            Some(q) => {
+                if c == q {
+                    quote = None;
+                }
+                cur.push(c);
+            }
+            None if c == '"' || c == '\'' => {
+                quote = Some(c);
+                cur.push(c);
+            }
+            None if c.is_whitespace()
+                && chars[i + 1..].iter().collect::<String>().starts_with("and")
+                && chars.get(i + 4).is_some_and(|n| n.is_whitespace()) =>
+            {
+                parts.push(std::mem::take(&mut cur));
+                i += 4;
+            }
+            None => cur.push(c),
+        }
+        i += 1;
+    }
+    parts.push(cur);
+    parts
+}
+
+/// One predicate of a step: a position, `last()`, `local-name()='x'`, `@a='v'` or `@a`.
+fn parse_pred(inner: &str) -> Option<Pred> {
+    let inner = inner.trim();
+    if let Ok(n) = inner.parse::<usize>() {
+        Some(Pred::Index(n))
+    } else if inner == "last()" {
+        Some(Pred::Last)
+    } else if let Some(rest) = inner.strip_prefix("local-name()") {
+        let l = rest.trim_start().strip_prefix('=').and_then(quoted_literal)?;
+        Some(Pred::LocalName(l.to_string()))
+    } else if let Some(rest) = inner.strip_prefix('@') {
+        match rest.split_once('=') {
+            Some((n, v)) => {
+                let l = quoted_literal(v)?;
+                is_ncname(n.trim()).then(|| Pred::AttrEq(n.trim().into(), l.into()))
+            }
+            None => is_ncname(rest).then(|| Pred::AttrExists(rest.into())),
+        }
+    } else {
+        None
+    }
 }
 
 /// Returns (absolute, steps).
@@ -1382,27 +1445,15 @@ fn parse_xpath(p: &str, prefixes: Prefixes) -> Result<(bool, Vec<Step>), Signal>
                 .ok_or_else(|| Signal::Unsupported(format!("XPath `{p}`: unclosed [")))?;
             let inner: String = b[i + 1..close].iter().collect();
             i = close + 1;
-            let inner = inner.trim();
-            if let Ok(n) = inner.parse::<usize>() {
-                preds.push(Pred::Index(n));
-            } else if inner == "last()" {
-                preds.push(Pred::Last);
-            } else if let Some(rest) = inner.strip_prefix("local-name()") {
-                match rest.trim_start().strip_prefix('=').and_then(quoted_literal) {
-                    Some(l) => preds.push(Pred::LocalName(l.to_string())),
-                    None => return xpath_unsupported(p, "predicate form"),
+            let parts = split_and(&inner);
+            let parsed: Option<Vec<Pred>> = parts.iter().map(|p| parse_pred(p)).collect();
+            match parsed {
+                Some(mut one) if one.len() == 1 => preds.push(one.remove(0)),
+                // `and` joins tests of the node itself; a position inside a conjunction is not one of them.
+                Some(many) if many.iter().all(|p| !matches!(p, Pred::Index(_) | Pred::Last)) => {
+                    preds.push(Pred::And(many))
                 }
-            } else if let Some(rest) = inner.strip_prefix('@') {
-                match rest.split_once('=') {
-                    Some((n, v)) => match quoted_literal(v) {
-                        Some(l) if is_ncname(n.trim()) => preds.push(Pred::AttrEq(n.trim().into(), l.into())),
-                        _ => return xpath_unsupported(p, "predicate form"),
-                    },
-                    None if is_ncname(rest) => preds.push(Pred::AttrExists(rest.into())),
-                    None => return xpath_unsupported(p, "predicate form"),
-                }
-            } else {
-                return xpath_unsupported(p, "predicate form");
+                _ => return xpath_unsupported(p, "predicate form"),
             }
         }
         steps.push(Step { axis, test, preds });
@@ -1470,6 +1521,20 @@ fn descendants_or_self(h: &Handle, out: &mut Vec<Handle>) {
     }
 }
 
+/// Whether a node satisfies a non-positional predicate.
+fn pred_holds(h: &Handle, p: &Pred) -> bool {
+    match p {
+        Pred::AttrEq(n, v) => attr_value(h, n).as_deref() == Some(v.as_str()),
+        Pred::AttrExists(n) => attr_value(h, n).is_some(),
+        Pred::LocalName(l) => with(
+            h,
+            |d| matches!(d, XData::Element { local, .. } | XData::Attribute { local, .. } if local == l),
+        ),
+        Pred::And(all) => all.iter().all(|q| pred_holds(h, q)),
+        Pred::Index(_) | Pred::Last => false,
+    }
+}
+
 fn eval_step(ctx: &Handle, step: &Step, prefixes: Prefixes) -> Result<Vec<Handle>, Signal> {
     let mut found: Vec<Handle> = Vec::new();
     match step.axis {
@@ -1500,15 +1565,7 @@ fn eval_step(ctx: &Handle, step: &Step, prefixes: Prefixes) -> Result<Vec<Handle
                 .filter(|h| attr_value(h, n).as_deref() == Some(v.as_str()))
                 .collect(),
             Pred::AttrExists(n) => found.into_iter().filter(|h| attr_value(h, n).is_some()).collect(),
-            Pred::LocalName(l) => found
-                .into_iter()
-                .filter(|h| {
-                    with(
-                        h,
-                        |d| matches!(d, XData::Element { local, .. } | XData::Attribute { local, .. } if local == l),
-                    )
-                })
-                .collect(),
+            Pred::LocalName(_) | Pred::And(_) => found.into_iter().filter(|h| pred_holds(h, p)).collect(),
         };
     }
     Ok(found)

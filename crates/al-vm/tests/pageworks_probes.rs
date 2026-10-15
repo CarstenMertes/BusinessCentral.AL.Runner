@@ -266,3 +266,41 @@ fn a_native_that_has_no_implementation_stays_refused() {
         other => panic!("{other:?}"),
     }
 }
+
+// ---- XPath predicates joined by `and` (a Pageworks column lookup) --------------------------------
+// `.//*[local-name()="Column" and @name="Col"]` was read as local-name() = 'Column" and @name="Col' (the
+// quotes around the whole rest taken as one literal) and found nothing, so every column lookup of the
+// project came back empty. XPath 1.0 `and` of the pinned predicate forms (corpus xml/TestXmlRuntimeContracts.al:283
+// local-name(), @name='v'); the conjunction itself is the W3C operator, recorded as an assumption in
+// docs/probes-needed.md.
+#[test]
+fn xpath_predicates_joined_by_and_select_what_both_say() {
+    let r = text(run(
+        &cu("procedure F(): Text var Doc: XmlDocument; Root: XmlElement; N: XmlNode; L: XmlNodeList; Seen: Text; begin
+            XmlDocument.ReadFrom('<d><Column name=\"A\">1</Column><Column name=\"B\">2</Column><Other name=\"A\">3</Other></d>', Doc);
+            Doc.GetRoot(Root);
+            Root.AsXmlNode().SelectSingleNode('.//*[local-name()=\"Column\" and @name=\"B\"]', N); Seen += N.AsXmlElement().InnerText();
+            Root.SelectNodes('.//*[local-name()=\"Column\" and @name=\"A\"]', L); Seen += '/' + Format(L.Count());
+            Root.SelectNodes('.//*[@name=\"A\" and local-name()=\"Other\"]', L); Seen += '/' + Format(L.Count());
+            Root.SelectNodes('.//*[local-name()=\"Column\" and @name=\"Z\"]', L); Seen += '/' + Format(L.Count());
+            exit(Seen); end;"),
+        "F",
+    ));
+    assert_eq!(r, "2/1/1/0");
+}
+
+/// A literal with a quote of its own kind inside is not a literal: refused, not matched against nothing.
+#[test]
+fn an_xpath_literal_with_an_inner_quote_is_refused() {
+    match run(
+        &cu(
+            "procedure F() var Doc: XmlDocument; Root: XmlElement; L: XmlNodeList; begin
+            XmlDocument.ReadFrom('<d/>', Doc); Doc.GetRoot(Root);
+            Root.SelectNodes('.//*[local-name()=\"a\" b\"]', L); end;",
+        ),
+        "F",
+    ) {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("XPath") && why.contains("predicate form"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}

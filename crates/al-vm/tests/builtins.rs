@@ -1387,3 +1387,29 @@ fn copy_filter_between_filter_groups_and_from_code_to_text() {
         "NCLCSRTS:TableEqualValue|old|The type of the constant must be compatible with that of the TextF field, and the length of the constant must not exceed the length of the field.\r\\\r\\Type: Text <-- Code\r\\Field: TextF <-- CodeF\r\\Table: T|<>Z|[]"
     );
 }
+
+// A multi-dimensional array indexed one dimension at a time (`A[x] [y]`, Base Application's test library
+// "Backup Storage" does it on `array[20, 1000] of RecordRef`) is the element `A[x, y]` (assumed: no corpus test
+// writes the chained form, docs/probes-needed.md). Issue 40.
+#[test]
+fn a_chained_index_of_a_two_dimensional_array_is_the_element() {
+    let r = text_of(
+        "A: array[2, 3] of Integer;",
+        "A[2] [3] := 7; A[1, 2] := 5; exit(Format(A[2, 3]) + Format(A[1] [2]) + Format(A[1, 3]));",
+    );
+    assert_eq!(r.unwrap(), "750");
+}
+
+// `A[x]` alone on a two-dimensional array is a row, not a cell: it used to read the cell at flat position x.
+// What a row is (Clear of it, assignment, passing it) is not pinned, so it is refused.
+#[test]
+fn a_row_of_a_two_dimensional_array_is_refused() {
+    let r = text_of(
+        "A: array[2, 3] of Integer;",
+        "A[2, 1] := 4; Clear(A[2]); exit(Format(A[2, 1]));",
+    );
+    match r {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("row") && why.contains("not pinned"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}

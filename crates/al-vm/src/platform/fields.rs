@@ -224,6 +224,10 @@ fn field_row(
         match (f.relation_arms.as_slice(), f.relation_meta.as_slice()) {
             ([], []) if f.relation => return Err(format!("{}: the TableRelation is not understood", what())),
             ([], []) => None,
+            // A relation whose only arm has an `if` condition is conditional too: 0 and 0
+            // (handlers/ProbeObjectMetadataTables.al:FieldTable_RelationTableNo_OfConditionalRelations,
+            // EnumConditionRef; a `where(...)` clause does not make a relation conditional, :FilterConditionRef).
+            ([arm], _) if !arm.conditions.is_empty() => return Ok(()),
             ([arm], _) => Some((arm.table, arm.field, arm.table_name.clone())),
             ([], [m]) => Some((Some(m.table), m.field, c.objects[m.table].name.clone())),
             // A conditional relation (if ... else if ...) reads 0 and 0 (record/

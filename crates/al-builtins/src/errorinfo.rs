@@ -72,7 +72,7 @@ fn fresh(message: String, collectible: bool) -> ErrorInfoState {
         record_id: None,
         field_no: 0,
         page_no: 0,
-        custom_dimensions: Vec::new(),
+        custom_dimensions: None,
     }
 }
 
@@ -180,48 +180,38 @@ fn collectible(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     with_state(r, |s| s.collectible = b).map(|()| Value::Null)
 }
 
-/// Both members round-trip (errorinfo/TestErrorInfoErrorType.al:25-45); the default is not pinned.
+/// Both members round-trip (errorinfo/TestErrorInfoErrorType.al:25-45); the default is Client
+/// (record/ProbePropertyAssignmentForms.al:302-329, BC 27.5).
 fn error_type(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_state(r, |s| s.error_type)?
-            .map(|o| option("ErrorType", o))
-            .ok_or_else(|| {
-                Signal::Unsupported("ErrorInfo.ErrorType before one was set (the default is not pinned)".into())
-            });
+        return with_state(r, |s| option("ErrorType", s.error_type.unwrap_or(0)));
     }
     let o = option_arg(a, 0)?;
     with_state(r, |s| s.error_type = Some(o)).map(|()| Value::Null)
 }
 
+/// `Err.RecordId := Rid` reads back and leaves the TableId as it was (record/ProbePropertyAssignmentForms.al:352-373).
 fn record_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    if !a.is_empty() {
-        return unsupported("setting ErrorInfo.RecordId (not pinned)");
+    if let Some(id) = a.first() {
+        let id = id.clone();
+        return with_state(r, |s| s.record_id = Some(id)).map(|()| Value::Null);
     }
     Ok(with_state(r, |s| s.record_id.clone())?.unwrap_or_else(|| Value::Library("RecordId".into(), Rc::default())))
 }
 
-/// A fresh ErrorInfo carries no custom dimensions; an assigned dictionary comes back entry for entry
-/// (errorinfo/TestErrorInfoType.al:313-345). Both directions copy.
+/// A fresh ErrorInfo carries no custom dimensions (errorinfo/TestErrorInfoType.al:423-442). An assigned
+/// dictionary is held, not copied: an entry added to it later shows through `CustomDimensions()`
+/// (record/ProbePropertyAssignmentForms.al:332-349, BC 27.5).
 fn custom_dimensions(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        let entries = with_state(r, |s| s.custom_dimensions.clone())?;
-        let pairs = entries
-            .into_iter()
-            .map(|(k, v)| (Value::Text(k), Value::Text(v)))
-            .collect();
-        return Ok(Value::Dictionary(Rc::new(RefCell::new(pairs))));
+        let held = with_state(r, |s| s.custom_dimensions.clone())?;
+        return Ok(held.unwrap_or_else(|| Value::Dictionary(Rc::new(RefCell::new(Vec::new())))));
     }
-    let Some(Value::Dictionary(d)) = a.first() else {
+    let Some(d @ Value::Dictionary(_)) = a.first() else {
         return unsupported(format!("CustomDimensions with {}", a.first().describe()));
     };
-    let mut entries = Vec::new();
-    for (k, v) in d.borrow().iter() {
-        let (Some(k), Some(v)) = (crate::native::text_of(k), crate::native::text_of(v)) else {
-            return unsupported("CustomDimensions with a key or value that is not text");
-        };
-        entries.push((k, v));
-    }
-    with_state(r, |s| s.custom_dimensions = entries).map(|()| Value::Null)
+    let held = d.clone();
+    with_state(r, |s| s.custom_dimensions = Some(held)).map(|()| Value::Null)
 }
 
 /// Actions are stored for the client; there is none in a test, so they only have to bind and not
@@ -272,6 +262,18 @@ pub fn copy_of(v: &Value) -> Option<Value> {
             Rc::new(RefCell::new(LibraryValue::ErrorInfo(s.clone()))),
         )),
         _ => None,
+    }
+}
+
+/// Sets the message of an `ErrorInfo` value and answers whether it is collectible.
+pub fn set_message_of(v: &Value, message: &str) -> bool {
+    let Value::Library(_, cell) = v else { return false };
+    match &mut *cell.borrow_mut() {
+        LibraryValue::ErrorInfo(s) => {
+            s.message = message.to_string();
+            s.collectible
+        }
+        _ => false,
     }
 }
 

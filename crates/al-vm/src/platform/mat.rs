@@ -113,6 +113,15 @@ impl Mat {
         Mat { rows, poison, known }
     }
 
+    /// The same listing with every row changed by `f` (the key columns must stay as they are).
+    pub(crate) fn mapped(&self, f: impl Fn(&Row) -> Row) -> Mat {
+        Mat {
+            rows: self.rows.iter().map(f).collect(),
+            poison: self.poison.clone(),
+            known: self.known.clone(),
+        }
+    }
+
     pub(crate) fn get(&self, t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
         Ok(match self.rows.binary_search_by(|r| key_cmp(&t.primary_key(r), pk)) {
             Ok(i) => match &self.poison[i] {

@@ -409,6 +409,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.RunRequestPage#2", vm_only),
     ("Report.SetTableView#1", vm_only),
     ("Report.UseRequestPage#1", vm_only),
+    ("Report.ObjectId#1", vm_only),
     ("Report.Language#1", vm_only),
     ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file
@@ -486,9 +487,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
 /// `docs/probes-needed.md`, "Builtins refused until a probe pins them").
 pub fn refusal(id: &str) -> Option<&'static str> {
     Some(match id {
-        "Report.ObjectId#1" => {
-            "the text of Report.ObjectId (the id or the name, with or without the object type) is not pinned"
-        }
         "RequestPage.Update#1" => {
             "RequestPage.Update (RequestOptionsPage.Update(SaveRecord)) is in no corpus test, so what it re-evaluates on the request page and whether it saves the record is not pinned"
         }
@@ -497,9 +495,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         }
         "FileUpload.CreateInStream#1" | "FileUpload.CreateInStream#2" => {
             "FileUpload.CreateInStream is in no corpus test, so what a FileUpload holds without a client and the stream it opens is not pinned"
-        }
-        "Record.FieldError#3" | "FieldRef.FieldError#3" => {
-            "FieldError with an ErrorInfo: the error it raises (its text, whether it is collected) is not pinned"
         }
         "BigText.Read#1" => {
             "BigText.Read is in no corpus test, so the encoding it reads with and whether it replaces or appends to the text are not pinned"
@@ -822,11 +817,16 @@ fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Resul
     Ok(Value::Null)
 }
 
-/// `Hyperlink(Url)` asks the client to open a page. What a test run does with that is not pinned
-/// (docs/probes-needed.md), so the call is refused when it runs; a routine that only contains it
-/// still lowers and runs.
-fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    unsupported("Hyperlink opens the client's browser; what a test run does with it is not pinned")
+/// `Hyperlink(Url)` asks the client to open a page. A test has no handler for it, so the platform raises
+/// `Unhandled UI: Hyperlink <url>` (record/ProbeClearAllSetKeyHyperlink.al:322-338, BC 27.5); a routine
+/// that only mentions the call still runs.
+fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let url = text_arg(args, 0)?;
+    Err(Signal::Error(AlError {
+        message: format!("Unhandled UI: Hyperlink {url}"),
+        code: "MissingUIHandler".into(),
+        call_stack: String::new(),
+    }))
 }
 
 /// `Variant2Date(Variant)`: the Date a Variant holds (session/TestFinalCoverage.al:79-88). Another

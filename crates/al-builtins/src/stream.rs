@@ -435,36 +435,45 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     if a.len() > 1 {
         return unsupported("InStream.Read with a length (not pinned)");
     }
-    // A Text or Code: the inverse of `Write(Text)` (:OutStream_Write_BinaryFormsOfEachType pins that
-    // one: the characters and a zero byte). Only what that wrote is read back: ASCII characters up
-    // to a terminator; a stream with no terminator, or the count of bytes taken, are not pinned.
+    // A Text or Code: the inverse of `Write(Text)` (:OutStream_Write_BinaryFormsOfEachType pins the
+    // characters and a zero byte). It takes the characters up to the zero byte, or to the end of the
+    // stream when there is none (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_OnWriteTextContent_NoTerminator,
+    // no error). The result is the number of bytes taken, the zero byte included
+    // (:InStreamRead_Text_AfterWriteTextAndAfterWriteText_NonAscii returns 6 for 'hello' and for 'wörld',
+    // :InStreamRead_Text_ReturnValueIsLength returns 7 for 'abcdef'). A Code variable is filled by
+    // the caller's assignment, which truncates to its length (:InStreamRead_Text_ReturnValueIsLength).
     if matches!(a[0], Value::Text(_) | Value::Code(_)) {
-        if c.ret_used() {
-            return unsupported("the result of InStream.Read into a Text (not pinned)");
-        }
-        let taken = with_in(r, |s| {
+        let used = c.ret_used();
+        let (taken, count) = with_in(r, |s| {
             let unit = s.enc.unit();
             let rest = s.rest();
-            let end = rest
-                .chunks_exact(unit)
-                .position(|u| u.iter().all(|b| *b == 0))
-                .ok_or_else(|| {
-                    Signal::Unsupported(
-                        "InStream.Read into a Text with no zero terminator in the stream (not pinned)".into(),
-                    )
-                })?;
-            let body = &rest[..end * unit];
-            if !s.enc.decode(body).is_ascii() {
-                return unsupported("InStream.Read into a Text of non-ASCII characters (not pinned)");
+            if rest.is_empty() {
+                return unsupported("InStream.Read into a Text at the end of the stream (not pinned)");
             }
-            s.pos += (end + 1) * unit;
-            Ok(s.enc.decode(body))
+            let end = rest.chunks_exact(unit).position(|u| u.iter().all(|b| *b == 0));
+            if used && (end.is_none() || unit != 1) {
+                return unsupported(
+                    "the result of InStream.Read into a Text without a zero terminator or on a UTF-16 stream (not pinned)",
+                );
+            }
+            let (body_len, consumed) = match end {
+                Some(e) => (e * unit, (e + 1) * unit),
+                None => (rest.len(), rest.len()),
+            };
+            let body = &rest[..body_len];
+            if !s.enc.decode(body).is_ascii() && s.enc != Encoding::Windows {
+                return unsupported(
+                    "InStream.Read into a Text of non-ASCII characters on a stream that is not Windows-encoded (not pinned)",
+                );
+            }
+            s.pos += consumed;
+            Ok((s.enc.decode(body), consumed))
         })?;
         a[0] = match a[0] {
             Value::Code(_) => Value::Code(taken),
             _ => Value::Text(taken),
         };
-        return Ok(Value::Integer(0));
+        return Ok(Value::Integer(count as i32));
     }
     let width = match a[0] {
         Value::Integer(_) => 4,
@@ -505,18 +514,12 @@ fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
 }
 
 /// Writes serialised JSON (or other text a builtin produces) to an `OutStream` argument at its
-/// write position. What real BC does with the stream's encoding for JSON is not pinned
-/// (docs/probes-needed.md, fixes-7), so the call is accepted only where every hypothesis gives
-/// the same bytes: ASCII text on a UTF-8, Windows or MS-DOS stream, and any text on a UTF-8 stream.
-/// UTF-16 streams and non-ASCII text on a code-page stream are refused.
+/// write position. The bytes are UTF-8 whatever the encoding of the stream: UTF-8, UTF-16, Windows and
+/// MS-DOS streams all receive the same bytes, and non-ASCII characters take their UTF-8 form
+/// (streams/ProbeJsonAndInStreamBytes.al:WriteTo_OutStream_Utf16_AsciiAndNonAscii, :WriteTo_OutStream_Windows_AsciiAndNonAscii,
+/// :WriteTo_OutStream_MsDos_AsciiAndNonAscii).
 pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<(), Signal> {
-    let (b, enc) = out_buf(Some(stream))?;
-    match enc {
-        Encoding::Utf8 => {}
-        Encoding::Windows | Encoding::MsDos if text.is_ascii() => {}
-        Encoding::Utf16 => return unsupported("serialising to a UTF-16 OutStream (the bytes are not pinned)"),
-        _ => return unsupported("serialising non-ASCII text to a code-page OutStream (the bytes are not pinned)"),
-    }
+    let (b, _) = out_buf(Some(stream))?;
     write_bytes(&b, text.as_bytes());
     Ok(())
 }
@@ -529,25 +532,17 @@ pub(crate) fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Si
 }
 
 /// Takes what remains of an `InStream` argument as text, for a parser that reads bytes (JSON
-/// `ReadFrom`). What real BC assumes about the bytes is not pinned (docs/probes-needed.md,
-/// fixes-7), so the read is accepted only where every reading gives the same text: UTF-8 bytes on
-/// a UTF-8 stream, or ASCII bytes on a Windows or MS-DOS stream. The stream moves to its end.
+/// `ReadFrom`). The bytes are read as UTF-8 whatever the encoding of the stream, and a UTF-8 byte
+/// order mark is skipped (streams/ProbeJsonAndInStreamBytes.al:ReadFrom_InStream_WithBomAndWithout, on a
+/// default, Windows-encoded stream). That is the inverse of [`write_serialised_text`]; bytes that are not
+/// UTF-8 are refused. The stream moves to its end.
 pub(crate) fn read_serialised_text(stream: &mut Value) -> Result<String, Signal> {
     with_in(Some(stream), |st| {
-        let enc = st.enc;
         let bytes = st.rest();
-        let text = match enc {
-            Encoding::Utf8 => String::from_utf8(bytes).map_err(|_| {
-                Signal::Unsupported("reading bytes that are not UTF-8 from a UTF-8 InStream as text".into())
-            })?,
-            Encoding::Windows | Encoding::MsDos if bytes.is_ascii() => String::from_utf8(bytes).expect("ASCII"),
-            Encoding::Utf16 => {
-                return unsupported("reading text from a UTF-16 InStream as serialised data (not pinned)");
-            }
-            _ => return unsupported("reading non-ASCII bytes of a code-page InStream as serialised data (not pinned)"),
-        };
+        let text = String::from_utf8(bytes)
+            .map_err(|_| Signal::Unsupported("reading bytes that are not UTF-8 from an InStream as text".into()))?;
         st.drain();
-        Ok(text)
+        Ok(text.strip_prefix('\u{FEFF}').map(str::to_owned).unwrap_or(text))
     })
 }
 
@@ -652,7 +647,12 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
             .to_vec(),
         Value::Date(d, closing) => date_bytes(*d, *closing)?,
         Value::Decimal(d) => decimal_bytes(d)?,
-        Value::Text(t) | Value::Code(t) if t.is_ascii() => {
+        // Non-ASCII characters are pinned only for a Windows stream, as one cp1252 byte each
+        // (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_AfterWriteTextAndAfterWriteText_NonAscii:
+        // 'wörld' is 77 F6 72 6C 64 00).
+        Value::Text(t) | Value::Code(t)
+            if t.is_ascii() || (enc == Encoding::Windows && enc.decode(&enc.encode(t)) == *t) =>
+        {
             let mut v = enc.encode(t);
             v.extend(std::iter::repeat_n(0, enc.unit()));
             v

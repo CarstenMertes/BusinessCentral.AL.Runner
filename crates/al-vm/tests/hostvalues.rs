@@ -512,18 +512,21 @@ fn after_a_write_a_set_is_ignored_or_refused() {
 }
 
 #[test]
-fn hyperlink_lowers_and_is_refused_only_when_it_runs() {
-    // Nothing pins what a test run does with a URL the client would open (docs/probes-needed.md), so
-    // a call is refused at run time; a routine that only mentions it still lowers and runs, which
-    // is how pages of Base Application with a `Hyperlink` call in an unused routine stay usable.
+fn hyperlink_raises_unhandled_ui_when_it_runs() {
+    // record/ProbeClearAllSetKeyHyperlink.al:322-338 (BC 27.5): there is no handler for a Hyperlink, so a
+    // call raises `Unhandled UI: Hyperlink <url>` with the code MissingUIHandler; a routine that only
+    // mentions it runs.
     assert_eq!(
         text("", "if false then Hyperlink('https://example.com'); exit('ran');"),
         "ran"
     );
-    match run("procedure F(): Text begin Hyperlink('https://example.com'); exit('ran'); end;") {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("Hyperlink"), "{why}"),
-        other => panic!("{other:?}"),
-    }
+    assert_eq!(
+        text(
+            "",
+            "asserterror Hyperlink('https://example.com/probe'); exit(GetLastErrorText() + '|' + GetLastErrorCode());"
+        ),
+        "Unhandled UI: Hyperlink https://example.com/probe|MissingUIHandler"
+    );
 }
 
 // ---------------------------------------------------------------- randomness

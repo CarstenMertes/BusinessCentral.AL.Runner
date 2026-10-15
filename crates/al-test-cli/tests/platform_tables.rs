@@ -769,3 +769,20 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Copy");
 }
+
+/// A filter on "Number of Calls" or "Active Manual Instances" is answered from the session's counts
+/// (session/PWPlatformTables.al:EventSubscription_FilterOnNumberOfCalls, BC 27.5 observes it).
+#[test]
+fn event_subscriptions_can_be_filtered_on_the_session_counts() {
+    let o = outcomes(
+        r#"codeunit 50001 "Pub" { [IntegrationEvent(false, false)] procedure OnThing() begin end; procedure Raise() begin OnThing(); end; }
+codeunit 50002 "Sub" { [EventSubscriber(ObjectType::Codeunit, Codeunit::"Pub", 'OnThing', '', false, false)] local procedure H1() begin end; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure Counts() var E: Record "Event Subscription"; P: Codeunit "Pub"; begin
+    E.SetFilter("Number of Calls", '>0'); if E.Count() <> 0 then Error('before %1', E.Count());
+    P.Raise(); E.Reset(); E.SetFilter("Number of Calls", '>0'); E.SetRange("Subscriber Codeunit ID", 50002);
+    if E.Count() <> 1 then Error('after %1', E.Count()); E.FindFirst(); if E."Number of Calls" <> 1 then Error('calls');
+    E.Reset(); E.SetRange("Subscriber Codeunit ID", 50002); E.SetRange("Active Manual Instances", 0); if E.Count() <> 1 then Error('manual'); end; }"#,
+    );
+    passes(&o, "Counts");
+}

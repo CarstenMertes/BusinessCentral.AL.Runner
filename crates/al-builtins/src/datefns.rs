@@ -106,8 +106,10 @@ fn create_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> O
 /// `RoundDateTime(DateTime [, Precision [, Direction]])` (types/TestRoundDateTimeContracts.al): the
 /// precision is in milliseconds (default 1000; a BigInteger, Integer or Duration), the direction `=`
 /// (nearest, a tie rounds up; the default), `<` (down) or `>` (up). A precision of 0 or less and an
-/// unknown direction raise Argument errors; the undefined DateTime stays undefined. The origin of the
-/// count is not derivable from the probe, so a precision that does not divide a day is refused.
+/// unknown direction raise Argument errors; the undefined DateTime stays undefined. A precision that does not
+/// divide a day counts from 1899-12-30 00:00 (types/TestRoundDateTimeContracts.al:61-72, BC 27.5: 12:00:31 on
+/// 2024-03-05 rounds to 12:00:00 and 12:11:40 for a precision of 700000). 2000-01-01 fits the same three
+/// results; the origin is an assumption (docs/probes-needed.md).
 fn round_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let invalid = |what: String, n: u32| {
         raise(
@@ -140,13 +142,10 @@ fn round_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Ou
     if t == 0 {
         return Ok(Value::DateTime(0));
     }
-    if MS_PER_DAY % precision != 0 {
-        return unsupported(
-            "RoundDateTime with a precision that does not divide a day: the origin of the count is not pinned",
-        );
-    }
+    // The days from 0001-01-01 to 1899-12-30; a whole number of days leaves a precision that divides a day alone.
+    let origin = 693_593 * MS_PER_DAY;
     let ms = t - 1;
-    let below = ms - ms.rem_euclid(precision);
+    let below = ms - (ms - origin).rem_euclid(precision);
     let rounded = if below == ms {
         ms
     } else {
@@ -618,6 +617,29 @@ mod tests {
     }
     fn calc(formula: &str, from: Value) -> Result<Value, Signal> {
         call("System.CalcDate#2", vec![t(formula), from])
+    }
+
+    // types/TestRoundDateTimeContracts.al:61-72: a precision of 700000 ms does not divide a day.
+    #[test]
+    fn round_date_time_counts_a_precision_that_does_not_divide_a_day_from_1899_12_30() {
+        let at = |h: u32, m: u32, s: u32| {
+            let Value::Date(d, _) = date(2024, 3, 5) else {
+                unreachable!()
+            };
+            Value::DateTime((i64::from(d) - 1) * 86_400_000 + i64::from(h * 3600 + m * 60 + s) * 1000 + 1)
+        };
+        let round = |dir: &str| {
+            call(
+                "System.RoundDateTime#1",
+                vec![at(12, 0, 31), Value::Integer(700_000), t(dir)],
+            )
+        };
+        for (dir, want) in [("=", at(12, 0, 0)), ("<", at(12, 0, 0)), (">", at(12, 11, 40))] {
+            let (Ok(Value::DateTime(got)), Value::DateTime(want)) = (round(dir), want) else {
+                panic!("{dir}")
+            };
+            assert_eq!(got, want, "{dir}");
+        }
     }
 
     #[test]

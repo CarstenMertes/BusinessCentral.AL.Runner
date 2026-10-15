@@ -750,7 +750,7 @@ pub struct ErrorInfoState {
     /// Indexes into the `Verbosity` and `DataClassification` members.
     pub verbosity: i32,
     pub data_classification: i32,
-    /// `None` until a test sets one: the default is not pinned.
+    /// `None` until a test sets one: reads as Client.
     pub error_type: Option<i32>,
     pub collectible: bool,
     pub table_id: i32,
@@ -758,7 +758,8 @@ pub struct ErrorInfoState {
     pub record_id: Option<Value>,
     pub field_no: i32,
     pub page_no: i32,
-    pub custom_dimensions: Vec<(String, String)>,
+    /// The dictionary the test assigned, held by reference.
+    pub custom_dimensions: Option<Value>,
 }
 
 /// What a `ModuleInfo` reports: an app's manifest (corpus session/TestNavAppExtended.al,

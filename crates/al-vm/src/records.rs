@@ -1662,14 +1662,29 @@ impl Session {
                             .table
                             .as_ref()
                             .expect("table");
+                        // A FlowFilter field and a Blob cannot order rows: `Sorting cannot be done based on the
+                        // <field> field(s) in the <table> table.` (code DB:Ok; record/ProbeClearAllSetKeyHyperlink.al:
+                        // 276-318, BC 27.5; the error is raised here, whether BC raises it here or at the
+                        // read is not observable in the probe). A FlowField is accepted and orders by the
+                        // primary key: the order it gives BC is not pinned (docs/probes-needed.md).
                         if let Some(&bad) = wanted.iter().find(|&&p| {
-                            !t.fields[p].stored || {
-                                matches!(t.fields[p].ty, RtType::Library(_) | RtType::Variant)
-                                    || schema.fields[p].flow_filter
-                            }
+                            matches!(t.fields[p].ty, RtType::Library(_) | RtType::Variant)
+                                || schema.fields[p].flow_filter
                         }) {
+                            return Err(crate::transactions::al_error_code(
+                                &format!(
+                                    "Sorting cannot be done based on the {} field(s) in the {} table.",
+                                    t.fields[bad].name, t.name
+                                ),
+                                "DB:Ok",
+                            ));
+                        }
+                        if let Some(&bad) = wanted
+                            .iter()
+                            .find(|&&p| !t.fields[p].stored && !schema.fields[p].calc.is_some())
+                        {
                             return unsupported(format!(
-                                "SetCurrentKey on {}, which is not a stored field that can order rows (not pinned)",
+                                "SetCurrentKey on {}, which cannot order rows (not pinned)",
                                 t.fields[bad].name
                             ));
                         }

@@ -218,8 +218,6 @@ pub struct Session {
     guid_seed: i32,
     /// Ids of the notifications a `[SendNotificationHandler]` took in this session.
     pub(crate) sent_notifications: Vec<[u8; 16]>,
-    /// Ids of the notifications `Recall` has taken back.
-    pub(crate) recalled_notifications: Vec<[u8; 16]>,
     /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
     pub(crate) rng: al_host::random::NetRandom,
     /// How many `Randomize()` calls without a seed the session has seen.
@@ -400,7 +398,6 @@ impl Session {
             next_guid: 0,
             guid_seed: random_seed,
             sent_notifications: Vec::new(),
-            recalled_notifications: Vec::new(),
             rng: al_host::random::NetRandom::new(random_seed),
             unseeded_randomizes: 0,
             next_row_version: 0,
@@ -1324,11 +1321,36 @@ impl Session {
                 }
                 for (a, v) in args.iter().zip(values) {
                     if let ir::Arg::Ref(p) = a {
+                        let v = if id.starts_with("InStream.Read") {
+                            self.fit_stream_read(p, v, f)?
+                        } else {
+                            v
+                        };
                         self.write(p, v, f)?;
                     }
                 }
                 Ok(ret)
             }
+        }
+    }
+
+    /// What `InStream.Read` stores in a Text or Code variable: a Code takes the characters
+    /// upper-cased and cut to its length without an error (streams/ProbeJsonAndInStreamBytes.al:
+    /// InStreamRead_Text_ReturnValueIsLength reads `toolongvalueforcode` into a Code[10] and gets
+    /// `TOOLONGVAL`). A Text that is too short for the characters is not pinned.
+    fn fit_stream_read(&mut self, p: &ir::Place, v: Value, f: &mut Frame) -> Result<Value, Signal> {
+        match (&v, self.place_type(p, f)) {
+            (Value::Code(t), RtType::Code(max)) => {
+                let up = t.to_uppercase();
+                Ok(Value::Code(match max {
+                    Some(m) => up.chars().take(m as usize).collect(),
+                    None => up,
+                }))
+            }
+            (Value::Text(t), RtType::Text(Some(m))) if t.chars().count() > m as usize => Err(Signal::Unsupported(
+                "InStream.Read of more characters than the Text variable holds (not pinned)".into(),
+            )),
+            _ => Ok(v),
         }
     }
 

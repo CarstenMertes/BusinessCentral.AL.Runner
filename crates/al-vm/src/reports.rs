@@ -97,23 +97,26 @@ impl Session {
             }
             // `CurrReport.Language := n` and `CurrReport.Language` read it back at once
             // (handlers/TestReportCurrReportLanguage.al:58-84). Language 0 is rejected by BC with an error
-            // that names the language (:87-103); its text is in no corpus line, so it is refused. A
-            // language nobody set is not pinned. The runtime's culture is fixed (en-US): the language is
-            // kept and changes no formatting.
+            // that names the language: `Invalid language ID supplied: 0.` / Argument, and the language stays as it
+            // was (record/ProbeClearAllSetKeyHyperlink.al:341-353, BC 27.5); another language that is not
+            // positive is not pinned. A language nobody set reads as the session's, 1033. The runtime's culture
+            // is fixed (en-US): the language is kept and changes no formatting (dates and decimals read
+            // the same after 1031, ibid.).
             "Report.Language#1" => match args.first() {
                 Some(Value::Integer(n)) if *n > 0 => {
                     self.curr_report_language = Some(*n);
                     Ok(Value::Null)
                 }
-                Some(Value::Integer(n)) => unsupported(format!(
-                    "CurrReport.Language set to {n}: BC rejects it with an error naming the language, whose text is not pinned (docs/probes-needed.md)"
+                Some(Value::Integer(0)) => Err(crate::transactions::al_error_code(
+                    "Invalid language ID supplied: 0.",
+                    "Argument",
                 )),
-                None => match self.curr_report_language {
-                    Some(n) => Ok(Value::Integer(n)),
-                    None => unsupported(
-                        "CurrReport.Language of a report that has not set one: the default is not pinned (docs/probes-needed.md)",
-                    ),
-                },
+                Some(Value::Integer(n)) => unsupported(format!(
+                    "CurrReport.Language set to {n}: only 0 is pinned as invalid (docs/probes-needed.md)"
+                )),
+                None => Ok(Value::Integer(
+                    self.curr_report_language.unwrap_or(self.global_language),
+                )),
                 Some(other) => unsupported(format!("CurrReport.Language with {}", other.describe())),
             },
             // `FormatRegion` only takes effect when a Word or Excel layout renders; a run that writes the
@@ -124,6 +127,30 @@ impl Session {
                 None => Ok(Value::Text(String::new())),
                 Some(other) => unsupported(format!("CurrReport.FormatRegion with {}", other.describe())),
             },
+            // `ObjectId(UseNames)`: `Report 69730`, or with names (the default) `Report <Caption>`, the object name
+            // when the report has no Caption (handlers/PWRefusedBuiltins.al:78-107, BC 27.5; also through a Report
+            // variable).
+            "Report.ObjectId#1" => {
+                let inst = self.report_instance(receiver, false)?.0;
+                let schema = self.report_schema(&inst)?;
+                let o = &schema.engine.program.objects[schema.object];
+                let names = match args.first() {
+                    None => true,
+                    Some(Value::Boolean(b)) => *b,
+                    Some(other) => return unsupported(format!("Report.ObjectId with {}", other.describe())),
+                };
+                if !names {
+                    return Ok(Value::Text(format!("Report {}", o.id.unwrap_or(0))));
+                }
+                let caption = match o.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("Caption")) {
+                    Some((_, v)) => match crate::recmeta::string_literal(v) {
+                        Some(c) => c,
+                        None => return unsupported("Report.ObjectId of a report whose Caption is not a literal"),
+                    },
+                    None => o.name.clone(),
+                };
+                Ok(Value::Text(format!("Report {caption}")))
+            }
             "Report.UseRequestPage#1" => {
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
@@ -1197,6 +1224,10 @@ impl Session {
                 let extended = !schema.report().extensions.is_empty();
                 match (layout, extended) {
                     (ir::ReportLayout::None, _) => Err(Signal::Error(e)),
+                    // An error of a trigger reaches a SaveAs whose result is not used, also with a layout
+                    // (handlers/TestReportCurrReportLanguage.al:TestReport_SettingCurrReportLanguageToZero_IsRejectedAsInvalid:
+                    // `asserterror Probe.SaveAs(..)` on a report with an RDLC layout).
+                    (ir::ReportLayout::Rdlc, false) if !result_used => Err(Signal::Error(e)),
                     (ir::ReportLayout::Rdlc, false) => {
                         self.last_error = e;
                         Ok(Value::Boolean(false))

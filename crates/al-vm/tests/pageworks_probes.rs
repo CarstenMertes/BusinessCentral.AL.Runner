@@ -304,3 +304,22 @@ fn an_xpath_literal_with_an_inner_quote_is_refused() {
         other => panic!("{other:?}"),
     }
 }
+
+// ---- overloads that differ in the element type of a `var List` (NPR Json Parser.GetValues) -------
+// `GetValues(var List of [JsonValue])` and `GetValues(var List of [JsonObject])`: a var parameter takes
+// exactly its own type, so the argument's element type picks the overload. The first one declared was
+// always taken, and its `AsValue()` failed on an object ("Unable to convert from NavJsonToken to NavJsonValue").
+#[test]
+fn a_var_list_argument_picks_the_overload_with_its_own_element_type() {
+    let r = text(run(
+        "codeunit 50100 C {
+            procedure Pick(var L: List of [Text]): Text begin exit('text'); end;
+            procedure Pick(var L: List of [Integer]): Text begin exit('integer'); end;
+            procedure Pick(var L: List of [JsonObject]): Text begin exit('object'); end;
+            procedure F(): Text var A: List of [Text]; B: List of [Integer]; C: List of [JsonObject]; begin
+                exit(Pick(A) + '|' + Pick(B) + '|' + Pick(C)); end;
+        }",
+        "F",
+    ));
+    assert_eq!(r, "text|integer|object");
+}

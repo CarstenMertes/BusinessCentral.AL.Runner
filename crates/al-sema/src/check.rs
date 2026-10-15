@@ -2775,9 +2775,31 @@ fn fits(arg: &Ty, param: &str) -> bool {
             if param.contains('"') {
                 return arg == param.to_ascii_lowercase();
             }
+            // A `var` list or dictionary takes exactly its own element types: overloads that differ in
+            // them (`GetValues(var List of [JsonValue])` and `(var List of [JsonObject])`) are told
+            // apart by the argument's. Text and Code are one kind and their length does not count.
+            if matches!(other, Ty::List(_) | Ty::Dictionary(..)) && param.contains('[') {
+                return generic_shape(&arg) == generic_shape(param);
+            }
             arg.starts_with(p)
         }
     }
+}
+
+/// A `List of [..]` or `Dictionary of [..]` spelled for comparing element types: lower case, no
+/// lengths, Code as Text.
+fn generic_shape(t: &str) -> String {
+    let mut out = String::new();
+    let mut depth_len = false;
+    for c in t.to_ascii_lowercase().chars() {
+        match c {
+            '[' if out.ends_with("text") || out.ends_with("code") => depth_len = true,
+            ']' if depth_len => depth_len = false,
+            _ if depth_len => {}
+            _ => out.push(c),
+        }
+    }
+    out.replace("code", "text")
 }
 
 fn is_field_param(name: &str) -> bool {

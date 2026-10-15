@@ -3,7 +3,7 @@
 
 use al_syntax::ast;
 use rayon::prelude::*;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -274,6 +274,9 @@ pub struct Workspace {
     flakes: std::sync::Mutex<Vec<String>>,
     /// Once set, the dependency objects that take part in the compile (see `restrict_to`).
     compiled: OnceLock<Vec<bool>>,
+    /// Once set (`Roots::reach_only`): the (object, routine offset) of the workspace procedures that
+    /// no selected test names; they are not checked and compile to stubs that refuse.
+    unreached: OnceLock<HashSet<(usize, usize)>>,
     /// Per app: how to read a file of a dependency app whose `files` hold no text (`load_apps_lazy`).
     loaders: Vec<Option<std::sync::Arc<dyn SourceLoader>>>,
     /// Per file: the text a loader gave, kept so a file is read once.
@@ -335,6 +338,7 @@ impl Workspace {
             usable_cache: Vec::new(),
             flakes: Default::default(),
             compiled: OnceLock::new(),
+            unreached: OnceLock::new(),
             loaders,
             lazy_text: Vec::new(),
         };
@@ -712,6 +716,16 @@ impl Workspace {
     /// half there. Set once; a second call changes nothing.
     pub fn restrict_to(&self, compiled: Vec<bool>) {
         let _ = self.compiled.set(compiled);
+    }
+
+    /// Records the procedures a reach-only compile leaves out. Set once.
+    pub fn set_unreached(&self, unreached: HashSet<(usize, usize)>) {
+        let _ = self.unreached.set(unreached);
+    }
+
+    /// Whether the routine at `offset` of object `oi` was left out as unreached.
+    pub fn routine_unreached(&self, oi: usize, offset: usize) -> bool {
+        self.unreached.get().is_some_and(|u| u.contains(&(oi, offset)))
     }
 
     /// Whether object `i` takes part in the compile: not a dependency's, or not left out by `restrict_to`.

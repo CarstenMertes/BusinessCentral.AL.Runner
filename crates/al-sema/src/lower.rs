@@ -563,8 +563,26 @@ pub(crate) fn lower_core(
             }
         }
         page_temporary[oi] = prop("SourceTableTemporary").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"));
-        if prop("SaveValues").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")) && !exts.is_empty() {
-            page_reasons[oi].push("SaveValues on a page that page extensions extend is not supported yet".into());
+        // The values a SaveValues page stores are those of its variable-bound controls (corpus
+        // handlers/TestPageSaveValues.al). An extension control bound to `Rec.Field` adds none, so
+        // the stored set is the page's own. One bound to a variable is a control whose stored value
+        // no corpus test pins (docs/probes-needed.md, "SaveValues with page extensions").
+        if prop("SaveValues").is_some_and(|v| v.trim().eq_ignore_ascii_case("true"))
+            && layouts[oi].iter().flat_map(|l| l.controls.iter()).any(|c| {
+                c.owner.is_some()
+                    && c.kind == ir::ControlKind::Field
+                    && !c.section.name().eq_ignore_ascii_case("label")
+                    && c.section.args().get(1).is_some_and(|src| {
+                        !matches!(
+                            crate::pages::classify_source(src, &std::collections::BTreeSet::new()),
+                            crate::pages::Source::RecField(_)
+                        ) && crate::pages::plain_name(src).is_some()
+                    })
+            })
+        {
+            page_reasons[oi].push(
+                "SaveValues on a page that a page extension extends with a control bound to a variable: whether BC stores that variable is not pinned (docs/probes-needed.md)".into(),
+            );
         }
     }
     // A page extension shares the page's `Rec`.
@@ -1578,6 +1596,7 @@ fn lower_object<'a>(
         }
         // A dependency routine nothing reached was never checked: a stub that refuses.
         let reached = !checked.is_skipped(oi)
+            && !ws.routine_unreached(oi, routine_offsets[oi][ri])
             && demand.is_none_or(|d| !ws.is_dependency(oi) || d.reached(oi, routine_offsets[oi][ri]));
         // A routine whose check panicked has no types and resolutions to lower from: it refuses.
         let routine = if let Some(why) = checked.panic_of(oi, routine_offsets[oi][ri]) {
@@ -2240,6 +2259,12 @@ impl Lowerer<'_> {
                                     Ok(ir::Const::Decimal(id)) => id,
                                     _ => return None,
                                 }
+                            } else if text.contains('"') {
+                                // `filter(Inventory | "Non-Inventory")`: AL quotes an identifier with `"`,
+                                // the filter grammar with `'` (corpus
+                                // record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9 pins it for a
+                                // CalcFormula filter; docs/probes-needed.md for the TableRelation).
+                                rewrite_quotes(text)
                             } else {
                                 text.clone()
                             };
@@ -5024,6 +5049,19 @@ impl Lowerer<'_> {
             None if self.runtime_refusal(node).is_some() => Err(self.runtime_refusal(node).unwrap_or_default()),
             // `Window.Open(..)` in a report extension, where `Window` is a variable of the base report.
             None if self.base_member(callee).is_some() => Err(self.base_member(callee).unwrap_or_default()),
+            // `CurrPage.<AddIn>.Method()`: refused when it runs, so code that never reaches it still runs
+            // (Base Application's "Item Tracking Lines" calls its barcode add-in only after the client said it
+            // is supported). Control add-ins are not modelled; no corpus test calls one.
+            None if callee.kind() == SyntaxKind::MemberExpr
+                && callee.children().next().and_then(|b| self.control_add_in(&b)).is_some() =>
+            {
+                let why = callee
+                    .children()
+                    .next()
+                    .and_then(|b| self.control_add_in(&b))
+                    .unwrap_or_default();
+                Ok(ir::Expr::Refused(format!("call `{}`: {why}", node.text())))
+            }
             None => Err(format!("call `{}` has no callee the checker resolved", node.text())),
             Some(r) => Err(format!(
                 "call `{}` to {} is not lowered yet",
@@ -5512,6 +5550,65 @@ codeunit 50103 \"Listening Test\"
             reasons(Some(vec![(0, 50100)])),
             (0, 1, 0, 0),
             "only the codeunit that is not selected, not a helper and not a listener, is left out"
+        );
+    }
+
+    /// With `Roots::reach_only` a normal codeunit's procedure that no selected test (and no root that
+    /// runs by itself: a trigger, a subscriber, a codeunit with a Subtype) names is a stub that
+    /// refuses, so a pure test is not compiled together with the data-touching code beside it.
+    #[test]
+    fn reach_only_compiles_the_procedures_the_selected_tests_name() {
+        const SRC: &str = "codeunit 50100 \"Helper\" {
+            procedure Used(): Integer begin exit(Deeper()); end;
+            local procedure Deeper(): Integer begin exit(1); end;
+            procedure Unused() begin Message('x'); end;
+            local procedure AlsoUnused() begin Message('y'); end;
+            trigger OnRun() begin Message('z'); end;
+            [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Other\", 'OnX', '', false, false)]
+            local procedure Listen() begin Message('w'); end;
+        }
+        codeunit 50101 \"Other\" { [IntegrationEvent(false, false)] procedure OnX() begin end; }
+        codeunit 50102 \"T\" { Subtype = Test; var H: Codeunit \"Helper\";
+            [Test] procedure P() begin if H.Used() <> 1 then Error('x'); end; }
+        codeunit 50103 \"Other Test\" { Subtype = Test; var H: Codeunit \"Helper\";
+            [Test] procedure Q() begin H.Unused(); end; }";
+        let compile = |reach_only: bool| {
+            let (ws, l) = compile_apps_with(
+                vec![AppSource {
+                    id: "a".into(),
+                    name: "a".into(),
+                    dependencies: vec![],
+                    files: vec![("f.al".to_string(), SRC.to_string())],
+                }],
+                vec![crate::workspace::AppKind::Workspace],
+                &Default::default(),
+                None,
+                crate::check::Roots {
+                    baseline: false,
+                    only_tests: Some(vec![(0, 50102)]),
+                    reach_only,
+                    ..Default::default()
+                },
+            );
+            let oi = ws.objects.iter().position(|o| o.id == Some(50100)).expect("helper");
+            let refused: Vec<String> = l.program.objects[oi]
+                .routines
+                .iter()
+                .zip(&l.unsupported[oi])
+                .filter(|(_, why)| !why.is_empty())
+                .map(|(r, _)| r.name.clone())
+                .collect();
+            refused
+        };
+        assert_eq!(
+            compile(false),
+            Vec::<String>::new(),
+            "without reach_only the whole codeunit compiles"
+        );
+        assert_eq!(
+            compile(true),
+            vec!["Unused".to_string(), "AlsoUnused".to_string()],
+            "Used and Deeper are named from the test, the trigger and the subscriber run by themselves"
         );
     }
 
@@ -6361,6 +6458,26 @@ table 50912 \"ALT Head\"
     }
 
     #[test]
+    fn table_relation_where_filter_rewrites_double_quoted_names() {
+        // Base Application's `TableRelation = Item where(Type = filter(Inventory | "Non-Inventory"))`
+        // (Prod. Order Component): the filter grammar quotes with `'`, so the AL quoting is rewritten
+        // the way a CalcFormula filter's is (corpus record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9).
+        let (_, l) = lower_src(
+            "enum 50920 \"ALT Kind\" { value(0; Inventory) { } value(1; \"Non-Inventory\") { } }
+             table 50921 \"ALT Item\" { fields { field(1; \"No.\"; Code[20]) { } field(2; Type; Enum \"ALT Kind\") { } } }
+             table 50922 \"ALT Comp\" { fields {
+                field(1; \"No.\"; Code[20]) { }
+                field(2; Item; Code[20]) { TableRelation = \"ALT Item\" where(Type = filter(Inventory | \"Non-Inventory\")); }
+             } }",
+        );
+        let f = flow(&l, "ALT Comp", "Item");
+        match &f.relation_arms[0].wheres.as_ref().expect("wheres understood")[0] {
+            ir::RelationWhere::Value { text, .. } => assert_eq!(text, "Inventory | 'Non-Inventory'"),
+            other => panic!("{other:?}"),
+        }
+    }
+
+    #[test]
     fn calc_formula_filters_rewrite_double_quotes_and_flow_references_resolve() {
         let (_, l) = lower_src(FLOW_TABLES);
         let q = flow(&l, "ALT Head", "Quoted").calc.expect("lowered");
@@ -6763,6 +6880,61 @@ codeunit 50002 "C" { procedure P() var TP: TestPage "P"; begin end; }
         assert!(o.rec_slot.is_some() && o.xrec_slot.is_some());
         assert_eq!(o.globals[pg.curr_page_slot].name, "CurrPage");
         assert!(pg.unsupported.is_empty(), "{:?}", pg.unsupported);
+    }
+
+    const SAVE_VALUES_PAGE: &str = r#"
+table 50010 "SV T" { fields { field(1; "No."; Code[20]) { } field(2; Qty; Decimal) { } } }
+page 50011 "SV P" {
+    SourceTable = "SV T"; SaveValues = true; PageType = StandardDialog;
+    layout { area(Content) { field(Glob; GlobN) { } } }
+    var GlobN: Text[30];
+}
+"#;
+
+    // Handlers/TestPageSaveValues.al pins SaveValues for a page without extensions. An extension
+    // that adds only controls bound to `Rec` fields adds no variable-bound control, so what the page
+    // stores is the same set (docs/probes-needed.md, SaveValues with page extensions).
+    #[test]
+    fn save_values_with_an_extension_that_adds_only_record_fields_is_lowered() {
+        let src = format!(
+            "{SAVE_VALUES_PAGE} pageextension 50012 \"SV X\" extends \"SV P\" {{ layout {{ addlast(Content) {{ field(Q; Rec.Qty) {{ }} }} }} }}"
+        );
+        let (_, l) = lower_src(&src);
+        let pg = l
+            .program
+            .objects
+            .iter()
+            .find(|o| o.name == "SV P")
+            .unwrap()
+            .page
+            .clone()
+            .unwrap();
+        assert!(pg.unsupported.is_empty(), "{:?}", pg.unsupported);
+    }
+
+    // What BC stores for a control an extension binds to its own variable is not pinned: refused.
+    #[test]
+    fn save_values_with_an_extension_variable_control_is_refused() {
+        let src = format!(
+            "{SAVE_VALUES_PAGE} pageextension 50012 \"SV X\" extends \"SV P\" {{ layout {{ addlast(Content) {{ field(V; ExtVar) {{ }} }} }} var ExtVar: Integer; }}"
+        );
+        let (_, l) = lower_src(&src);
+        let pg = l
+            .program
+            .objects
+            .iter()
+            .find(|o| o.name == "SV P")
+            .unwrap()
+            .page
+            .clone()
+            .unwrap();
+        assert!(
+            pg.unsupported
+                .iter()
+                .any(|w| w.contains("SaveValues") && w.contains("variable")),
+            "{:?}",
+            pg.unsupported
+        );
     }
 
     #[test]

@@ -6,7 +6,7 @@
 mod choose;
 mod gates;
 pub use choose::{AppVersions, Chosen, TargetError, choose_target};
-pub use gates::{Evidence, Gate, feature_key_rows_known, has as gate_on, platform_table_scopes_known};
+pub use gates::{Evidence, FeatureKeyRows, Gate, feature_key_rows, has as gate_on, platform_table_scopes_known};
 
 use std::collections::BTreeSet;
 use std::fmt;

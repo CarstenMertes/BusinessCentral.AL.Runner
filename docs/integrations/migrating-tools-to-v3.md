@@ -24,7 +24,7 @@ built on the language, not on BC's internals".
 | 2 | Cobertura coverage (`--coverage`, `--coverage-out`), per-test statements (`--coverage-json`) | done (sections 3 and 4a) |
 | 3 | `alrunner serve` (`runTests`, `cancel`, `shutdown`) | done (section 4b; ADR-028, Proposed) |
 | 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | done (section 4b; ADR-028) |
-| 5 | `captureValues`, `iterationTracking` | not yet |
+| 5 | `captureValues`, `iterationTracking` | done (section 4b; ADR-030, Proposed) |
 | 6 | `alrunner debug --stdio` (DAP) | not yet |
 
 ## 1. The command
@@ -159,8 +159,8 @@ error at start-up (exit 2).
 
 | Command | v3 |
 |---|---|
-| `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test`, `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `code`, `captureValues`, `iterationTracking`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
-| `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` are accepted and earn a `warnings` entry (step 5): `capturedValues` and `loops` are not sent. Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. Details in ADR-028, item 9. |
+| `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test`, `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `captureValues`, `iterationTracking`: `capturedValues` and `loops` on each `test` line (ADR-030; v2 has them for `execute` only). `code`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
+| `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` give `capturedValues` and `loops` on each test and, with `iterationTracking`, the tagged `messages` on the response (ADR-030; `runTests` takes both too: they are on the `test` lines). Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. Details in ADR-028, item 9. |
 | `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. |
 | `shutdown` | `{"status":"shutting down"}`, then exit 0. EOF on stdin exits too. |
 
@@ -263,8 +263,8 @@ ALchemist needs `alrunner serve` (step 3, done), `execute` (step 4), value captu
 
 1. Binary lookup (`alRunnerManager.ts:47-51, 129-139`): also `which alrunner`; spawn `alrunner serve` instead of
    `al-runner --server` (`serverProcess.ts:125-141`). The version check only warns and accepts `3.0.0` (A3).
-2. `runtests` (lowercase) is accepted. ALchemist sends `captureValues` and `iterationTracking` on `runTests`: they earn
-   a `warnings` entry and are otherwise ignored, as in v2. It never sends `cobertura` or `testFilter`; both would be
+2. `runtests` (lowercase) is accepted. ALchemist sends `captureValues` and `iterationTracking` on `runTests`: v3 puts
+   `capturedValues` and `loops` on the `test` lines (v2 ignored them there). It never sends `cobertura` or `testFilter`; both would be
    refused as unknown fields. Section 4b lists the other differences (warm state, streaming, queued requests).
 3. `coverage` arrives in the summary in the v2 shape (section 4a). ALchemist reads `hitStatements` and `totalStatements`,
    which neither v2 nor v3 sends (a tool-side issue noted in `alchemist-lethal.md`, section 6).

@@ -21,6 +21,8 @@ const RUN_TESTS_FIELDS: &[&str] = &[
     "test",
     "excludeTests",
     "testIsolation",
+    "captureValues",
+    "iterationTracking",
 ];
 /// The request fields of `execute`.
 const EXECUTE_FIELDS: &[&str] = &[
@@ -37,7 +39,7 @@ const EXECUTE_FIELDS: &[&str] = &[
 /// Fields v2 knows and v3 defers (ADR-016).
 const DEFERRED: &[&str] = &["affectedOnly", "includeFailing", "strictEnvironment", "tdd"];
 /// Fields v2 reads for another command only: accepted, with a warning.
-const OTHER_COMMAND: &[&str] = &["code", "captureValues", "iterationTracking"];
+const OTHER_COMMAND: &[&str] = &["code"];
 
 fn out(v: &Value) {
     let mut o = std::io::stdout().lock();
@@ -104,10 +106,19 @@ pub fn serve(daemon: &[String]) -> Result<(), String> {
     let rx = reader(flags.clone());
     let mut ctx = WarmCtx {
         cancel: Some(flags.cancel.clone()),
-        on_test: Some(Arc::new(|e: al_testrun::events::TestEvent| {
+        on_test: Some(Arc::new(|e: al_testrun::events::TestEvent, captured: Option<Value>| {
             let mut row =
                 crate::output::json_row(e.codeunit, &e.codeunit_name, &e.test, &e.outcome, &e.call_stack, e.time);
-            out(&Value::Object(test_line(&mut row)));
+            let mut line = test_line(&mut row);
+            // What the test's code did (`captureValues`, `iterationTracking`): the values and loops are part of the line.
+            if let Some(Value::Object(c)) = captured {
+                for key in ["capturedValues", "loops", "capturedValuesTruncated"] {
+                    if let Some(v) = c.get(key) {
+                        line.insert(key.into(), v.clone());
+                    }
+                }
+            }
+            out(&Value::Object(line));
         })),
         ..WarmCtx::default()
     };
@@ -217,6 +228,10 @@ fn request_args(base: &TestArgs, fields: &Map<String, Value>) -> Result<(TestArg
         });
     }
     a.coverage = flag(fields, "coverage")? || flag(fields, "perTestCoverage")?;
+    a.capture = al_vm::CaptureConfig {
+        values: flag(fields, "captureValues")?,
+        loops: flag(fields, "iterationTracking")?,
+    };
     a.quiet = true;
     Ok((a, warnings))
 }
@@ -380,13 +395,6 @@ fn execute(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, flag
             }
         }
     }
-    for key in ["captureValues", "iterationTracking"] {
-        if flag(fields, key).unwrap_or(false) {
-            warnings.push(format!(
-                "`{key}` is not implemented yet (ADR-028, step 5): the run happens, `capturedValues` and `loops` stay empty"
-            ));
-        }
-    }
     let code = match fields.get("code") {
         None | Some(Value::Null) => None,
         Some(Value::String(c)) => Some(c.clone()),
@@ -429,6 +437,10 @@ fn execute(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, flag
         (Err(e), _) | (_, Err(e)) => return error(e),
     };
     a.coverage = want_coverage;
+    a.capture = al_vm::CaptureConfig {
+        values: flag(fields, "captureValues").unwrap_or(false),
+        loops: flag(fields, "iterationTracking").unwrap_or(false),
+    };
     a.quiet = true;
     a.execute = true;
     flags.cancel.store(false, Ordering::SeqCst);
@@ -457,6 +469,7 @@ fn execute(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, flag
                 return error("the run produced no report");
             };
             let mut tests = Vec::new();
+            let mut tagged_messages: Vec<Value> = Vec::new();
             for (i, row) in report.doc["tests"].as_array().into_iter().flatten().enumerate() {
                 let mut row = row.as_object().cloned().unwrap_or_default();
                 let mut line = test_line(&mut row);
@@ -470,6 +483,17 @@ fn execute(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, flag
                 if let Some(m) = report.messages.get(i).filter(|m| !m.is_empty()) {
                     line.insert("messages".into(), json!(m));
                 }
+                // What the code did. The tagged messages are the response's, not the test's.
+                if let Some(Some(Value::Object(c))) = report.captured.get(i) {
+                    for key in ["capturedValues", "loops", "capturedValuesTruncated"] {
+                        if let Some(v) = c.get(key) {
+                            line.insert(key.into(), v.clone());
+                        }
+                    }
+                    if let Some(Value::Array(m)) = c.get("messages") {
+                        tagged_messages.extend(m.iter().cloned());
+                    }
+                }
                 tests.push(Value::Object(line));
             }
             if tests.is_empty() {
@@ -478,6 +502,9 @@ fn execute(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, flag
             let mut response = json!({ "exitCode": code_, "tests": tests });
             if cancelled {
                 response["cancelled"] = json!(true);
+            }
+            if a.capture.loops {
+                response["messages"] = json!(tagged_messages);
             }
             if !warnings.is_empty() {
                 response["warnings"] = json!(warnings);
@@ -580,8 +607,10 @@ mod tests {
         );
         assert!(run(json!({"sourcePaths": ["/a"], "testIsolation": "x"})).is_err());
         assert!(run(json!({"sourcePaths": "/a"})).is_err());
-        let (_, w) = run(json!({"sourcePaths": ["/a"], "captureValues": true})).unwrap();
+        let (_, w) = run(json!({"sourcePaths": ["/a"], "code": "x"})).unwrap();
         assert_eq!(w.len(), 1);
+        let (a, w) = run(json!({"sourcePaths": ["/a"], "captureValues": true, "iterationTracking": true})).unwrap();
+        assert!(w.is_empty() && a.capture.values && a.capture.loops);
     }
 
     #[test]

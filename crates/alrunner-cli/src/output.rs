@@ -324,6 +324,7 @@ mod tests {
             time: std::time::Duration::ZERO,
             coverage: Vec::new(),
             messages: Vec::new(),
+            captured: None,
         }
     }
 

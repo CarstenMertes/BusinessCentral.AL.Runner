@@ -46,8 +46,7 @@ The owner chose the warm design.
    and answers with one line without a `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace",
    "stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. Fields: `sourcePaths` or `code` (not both),
    `packagePaths`, `coverage`, `perTestCoverage`, `testIsolation` (checked, no effect), `captureValues` and
-   `iterationTracking` (accepted; a `warnings` entry says they are not implemented, so ALchemist's scratch runs work and show no
-   values). Which codeunit: of the codeunits with an `OnRun` trigger the lowest object id, one that declares no test
+   `iterationTracking` (ADR-030: `capturedValues` and `loops` on each test, tagged `messages` on the response). Which codeunit: of the codeunits with an `OnRun` trigger the lowest object id, one that declares no test
    first. `code` that starts (after comments) with an object keyword is a whole object; anything else is a statement list
    in the `OnRun` of codeunit "AL Runner Inline Execute". The name of a result is `Codeunit<ID>.OnRun` for `sourcePaths` and
    `<object name>.OnRun` for `code`. An app without an `OnRun` gives no test, `exitCode` 6 and a warning. The text of every
@@ -57,7 +56,7 @@ The owner chose the warm design.
    `packagePaths`. No `test` line is streamed. `cancel` stops an `execute` while it runs (the one routine is stopped, the answer has
    `cancelled: true` and the test is `error` with the message `NotRun: out-of-scope: cancelled`); a test run lets the running test
    finish.
-10. **Not in this step:** value capture (`capturedValues`, `loops`; step 5). Incremental compile: ADR-029.
+10. Value capture and loop tracking: ADR-030. Incremental compile: ADR-029.
 
 ## Measurements (release, 4 threads, 2026-10-15)
 

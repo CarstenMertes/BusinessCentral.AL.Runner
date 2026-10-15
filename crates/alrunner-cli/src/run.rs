@@ -2,6 +2,7 @@
 
 use crate::apps::{self, AppInput};
 use crate::args::{DEFAULT_TOP, TestArgs};
+use crate::capture;
 use crate::coverage;
 use crate::output::{self, Counts};
 use crate::testdata;
@@ -301,12 +302,16 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
     test_with(a, None)
 }
 
+/// What the server hears for each test as it finishes: the event, and its capture as JSON.
+pub type OnTest = Arc<dyn Fn(al_testrun::events::TestEvent, Option<serde_json::Value>) + Send + Sync>;
+
 /// What `alrunner serve` keeps between requests, and how it hears about a request's run (ADR-028).
 #[derive(Default)]
 pub struct WarmCtx {
     pub runtime: al_testrun::runtime::Warm,
     /// Called for each selected test as it finishes.
-    pub on_test: Option<Arc<dyn Fn(al_testrun::events::TestEvent) + Send + Sync>>,
+    /// With a capture asked for, the second argument is its JSON for that test (`capture::json`).
+    pub on_test: Option<OnTest>,
     /// Set from outside: the run stops after the current test.
     pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// What the last run came to.
@@ -325,6 +330,8 @@ pub struct Report {
     pub messages: Vec<Vec<String>>,
     /// Per test of `doc["tests"]`: the name of its codeunit.
     pub object_names: Vec<String>,
+    /// Per test of `doc["tests"]`: its capture as JSON (`capture::json`), when one was asked for.
+    pub captured: Vec<Option<serde_json::Value>>,
 }
 
 /// Everything the compile depends on but the selection and the text of the workspace files: the workspace file names, the dependency apps, the symbols, the target.
@@ -725,11 +732,23 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         Some(w) => {
             let pick = selection.clone();
             let forward = w.on_test.clone();
+            let cfg = a.capture;
+            let paths: Vec<PathBuf> = inputs.iter().map(|i| i.path.clone()).collect();
+            let cwd = std::env::current_dir().unwrap_or_default();
+            // Loop ids are not repeated within a request, whatever test they come from.
+            let next_loop = Arc::new(std::sync::atomic::AtomicU32::new(0));
             al_testrun::events::Hooks {
                 on_test: forward.map(|f| {
                     Arc::new(move |e: al_testrun::events::TestEvent| {
                         if pick.picks(e.codeunit, &e.test) {
-                            f(e)
+                            let json = e.captured.as_ref().map(|c| {
+                                let base = next_loop
+                                    .fetch_add(c.captured.loops.len() as u32, std::sync::atomic::Ordering::SeqCst);
+                                capture::json(c, cfg, base, &|app: usize, file: &str| {
+                                    coverage::label(&paths[app], file, &cwd)
+                                })
+                            });
+                            f(e, json)
                         }
                     }) as Arc<dyn Fn(al_testrun::events::TestEvent) + Send + Sync>
                 }),
@@ -751,6 +770,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         isolation: a.isolation,
         coverage: a.coverage,
         execute: a.execute,
+        capture: a.capture,
         hooks,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
@@ -1159,6 +1179,22 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             coverage: coverage_doc.as_deref().and_then(|d| serde_json::from_str(d).ok()),
             messages: results.iter().map(|r| r.messages.clone()).collect(),
             object_names: results.iter().map(|r| r.codeunit_name.clone()).collect(),
+            captured: {
+                let cwd = std::env::current_dir().unwrap_or_default();
+                let mut base = 0u32;
+                results
+                    .iter()
+                    .map(|r| {
+                        r.captured.as_ref().map(|c| {
+                            let json = capture::json(c, a.capture, base, &|app: usize, file: &str| {
+                                coverage::label(&inputs[app].path, file, &cwd)
+                            });
+                            base += c.captured.loops.len() as u32;
+                            json
+                        })
+                    })
+                    .collect()
+            },
         });
     }
     if let Some(target) = &a.output_json {

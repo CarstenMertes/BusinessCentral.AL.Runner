@@ -109,3 +109,20 @@ Lower priority or unclear:
 - Random order and isolation checks (6): backlog, not urgent.
 - Cross-version runs (13): the country matrix matters more.
 - REPL (16), snapshot tests (17), setup reuse (18): explained to the owner, not yet rated.
+
+## Live testing as you type (owner discussion 2026-10-15)
+
+- **What:** while a developer types in VS Code (ALchemist or any editor), the affected tests run
+  after each short pause (about 300 ms) and the results appear inline: pass or fail per test, the
+  failing assert, and with value capture the values per line.
+- **How:** `alrunner serve` keeps the compiled Microsoft and dependency apps in memory; the editor
+  sends the unsaved file; v3 recompiles only what changed and runs only the tests whose coverage
+  reaches the change.
+- **Speed today:** one filtered test 0.1 to 0.2 s total, the Pageworks suite about 1 s warm, NP
+  Retail (2,300 files) compiles in 2.3 s. Small and mid-size apps are live already; large apps need
+  the incremental compile of ADR-026 (recompile only changed objects), which this use case now
+  justifies.
+- **Needs, in order:** serve with warm state (tool-integration lane), per-test coverage (idea 7),
+  incremental compile of the workspace (ADR-026 option 3), value capture (ALchemist).
+- **Agents:** the same warm loop serves AI agents: edit a file, get the affected test results in a
+  fraction of a second instead of a cold run.

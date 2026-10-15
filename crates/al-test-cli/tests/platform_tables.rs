@@ -156,11 +156,11 @@ fn not_run(o: &[(String, Outcome)], test: &str) -> String {
 fn a_platform_table_with_no_provider_is_refused_where_code_uses_it_and_names_table_and_id() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure UsesATableWithNoProvider() var P: Record "MCP Configuration"; begin if P.IsEmpty() then; end; }"#,
+  [Test] procedure UsesATableWithNoProvider() var P: Record "License Information"; begin if P.IsEmpty() then; end; }"#,
     );
     let why = not_run(&o, "UsesATableWithNoProvider");
     assert!(
-        why.contains("platform table 'MCP Configuration' (2000000292) has no provider"),
+        why.contains("platform table 'License Information' (2000000040) has no provider"),
         "{why}"
     );
 }
@@ -372,8 +372,8 @@ codeunit 50000 "T" { Subtype = Test;
 fn the_id_of_a_platform_table_with_no_provider_can_be_named() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
-  [Test] procedure NamesTheId() var Id: Integer; begin Id := Database::"MCP Configuration"; if Id <> 2000000292 then Error('id %1', Id); end;
-  [Test] procedure ReadingTheRowsIsStillRefused() var P: Record "MCP Configuration"; begin if P.IsEmpty() then; end; }"#,
+  [Test] procedure NamesTheId() var Id: Integer; begin Id := Database::"License Information"; if Id <> 2000000040 then Error('id %1', Id); end;
+  [Test] procedure ReadingTheRowsIsStillRefused() var P: Record "License Information"; begin if P.IsEmpty() then; end; }"#,
     );
     passes(&o, "NamesTheId");
     let why = not_run(&o, "ReadingTheRowsIsStillRefused");
@@ -684,13 +684,13 @@ codeunit 50000 "T" { Subtype = Test;
 #[test]
 fn a_platform_table_without_provider_works_as_a_temporary_record_and_is_refused_otherwise() {
     let o = outcomes(
-        r#"codeunit 50001 "Holder" { var L: Record "License Information" temporary; G: Record "MCP Configuration";
+        r#"codeunit 50001 "Holder" { var L: Record "License Information" temporary; G: Record "License Information";
   procedure Log(N: Integer; T: Text) begin L."Line No." := N; L.Text := CopyStr(T, 1, 250); L.Insert(); end;
   procedure Count(): Integer begin exit(L.Count()); end; }
 codeunit 50000 "T" { Subtype = Test;
   [Test] procedure TemporaryRoundTrips() var H: Codeunit Holder; begin H.Log(1, 'a'); H.Log(2, 'b'); if H.Count() <> 2 then Error('count %1', H.Count()); end;
-  [Test] procedure DeclaredAndNeverRead() var G: Record "MCP Configuration"; begin end;
-  [Test] procedure PersistentReadIsRefused() var G: Record "MCP Configuration"; begin if G.Get('X') then; end;
+  [Test] procedure DeclaredAndNeverRead() var G: Record "License Information"; begin end;
+  [Test] procedure PersistentReadIsRefused() var G: Record "License Information"; begin if G.Get(1) then; end;
   [Test] procedure PersistentWriteIsRefused() var L: Record "License Information"; begin L."Line No." := 1; L.Insert(); end; }"#,
     );
     passes(&o, "TemporaryRoundTrips");
@@ -700,7 +700,10 @@ codeunit 50000 "T" { Subtype = Test;
         assert!(why.contains("has no provider"), "{t}: {why}");
     }
     let why = not_run(&o, "PersistentReadIsRefused");
-    assert!(why.contains("platform table 'MCP Configuration' (2000000292)"), "{why}");
+    assert!(
+        why.contains("platform table 'License Information' (2000000040)"),
+        "{why}"
+    );
 }
 
 /// Columns that the declaration describes, filled from it: the caption, card page and editability of

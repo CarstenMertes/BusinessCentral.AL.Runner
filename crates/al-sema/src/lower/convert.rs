@@ -185,6 +185,12 @@ impl Lowerer<'_> {
     /// is refused.
     pub(crate) fn convert_to(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
         let slot = self.rt(target)?;
+        // An identity conversion is not emitted (ADR-031 item 2.2): the value already has the slot's type. Only the
+        // types whose conversion is the identity qualify; a Text or Code keeps its conversion (it checks the length of
+        // what a concatenation made), as does everything that copies, wraps or normalizes.
+        if is_identity_scalar(&slot) && self.rt(src).is_ok_and(|from| from == slot) {
+            return Ok(value);
+        }
         // A DotNet result has no static type: it must fit the target exactly (ADR-014).
         if matches!(src, Ty::DotNet(a) if a.is_empty()) && !matches!(slot, RtType::DotNet(_)) {
             return Ok(ir::Expr::DotNetCoerce(slot, Box::new(value)));
@@ -356,4 +362,20 @@ impl Lowerer<'_> {
             args: out,
         })
     }
+}
+
+/// Whether converting a value of this type to a slot of the same type changes nothing.
+fn is_identity_scalar(t: &RtType) -> bool {
+    matches!(
+        t,
+        RtType::Boolean
+            | RtType::Integer
+            | RtType::BigInteger
+            | RtType::Decimal
+            | RtType::Date
+            | RtType::Time
+            | RtType::DateTime
+            | RtType::Duration
+            | RtType::Guid
+    )
 }

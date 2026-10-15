@@ -225,6 +225,7 @@
 60058 Record_SetAutoCalcFields_MultipleFields_AllAutoCalculated
 60058 Record_SetLoadFields_LimitsLoadedFields
 60059 Record_AddLink_LinkCountIncreases
+60059 Record_CopyLinksTable_CopiesLinks
 60059 Record_CurrentCompany_ReturnsCompanyName
 60059 Record_DeleteLink_RemovesLink
 60059 Record_DeleteLinks_RemovesAll
@@ -5123,6 +5124,7 @@
 69306 PendingPartEdit_IsSavedBeforeTheHostMoves
 69306 SubPageView_AndLink_OnTheSameField
 69336 TestField_ErrorInfo_Passing
+69337 Time_PlusMinusInteger_Values
 69338 Continue_InForToDownto
 69338 Continue_InForeach_AndNestedLoops
 69338 Continue_InRecordLoop_AndWithCase

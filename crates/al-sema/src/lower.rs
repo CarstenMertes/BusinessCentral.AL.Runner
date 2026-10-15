@@ -4853,6 +4853,19 @@ impl Lowerer<'_> {
                     {
                         None
                     }
+                    // `RequestOptionsPage` is the request page of the report whose code is running; it has
+                    // no variable to take as a receiver.
+                    Some(r)
+                        if sig.instance
+                            && sig.receiver == "RequestPage"
+                            && matches!(
+                                self.ws.objects[self.oi].kind,
+                                ObjKind::Report | ObjKind::ReportExtension
+                            )
+                            && r.text().to_string().trim().eq_ignore_ascii_case("RequestOptionsPage") =>
+                    {
+                        None
+                    }
                     // Enum metadata calls (`"Name".Names()`, `Var.Ordinals()`, `"Name".FromInteger(n)`)
                     // receive the enum itself: its object index, as an enum constant.
                     Some(r) if sig.receiver == "Enum" && sig.name != "AsInteger" => {

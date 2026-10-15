@@ -325,7 +325,7 @@ impl Session {
                 r[super::pos(t, 1)] = Value::Integer(i as i32 + 1);
                 r[super::pos(t, 2)] = Value::Integer(o.id? as i32);
                 r[super::pos(t, 3)] = Self::method_id(ri);
-                r[super::pos(t, 4)] = Value::Text(o.routines[ri].name.clone());
+                r[super::pos(t, 4)] = Value::Text(o.routines[ri].name.clone().into());
                 if let Some(m) = self.module_of_app(o.app as usize) {
                     r[super::pos(t, 5)] = Value::Guid(m.id);
                 }

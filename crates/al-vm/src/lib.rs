@@ -943,6 +943,16 @@ impl Session {
                 Ok(())
             }
             S::Assign(p, e) => {
+                // `S += x` and `S := S + x` on a text variable append in place when nothing else holds the text.
+                if let (ir::Place::Local(_) | ir::Place::Global(_), ir::Expr::Convert(RtType::Text(max), inner)) =
+                    (p, e)
+                {
+                    if let ir::Expr::Binary(ir::BinOp::Add, l, r) = &**inner {
+                        if matches!(&**l, ir::Expr::Load(lp) if lp == p) {
+                            return self.append_text(p, *max, r, f);
+                        }
+                    }
+                }
                 let v = self.eval(e, f)?;
                 self.write(p, v, f)
             }
@@ -1295,36 +1305,6 @@ impl Session {
                 self.query_column(q, *column)
             }
             E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
-            E::CharAt(text, index) if self.with_borrowed_text(text, f, |_| ()).is_some() => {
-                let i = int(&self.eval(index, f)?)?;
-                // Same answers as the general path below, on the text where it is held.
-                if i < 1 {
-                    return al_builtins::native::raise(
-                        format!(
-                            "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
-                        ),
-                        "OutsidePermittedRange",
-                    );
-                }
-                let at = i as usize - 1;
-                match self.with_borrowed_text(text, f, |t| {
-                    if t.is_ascii() {
-                        (at <= t.len()).then(|| t.as_bytes().get(at).map_or(0, |b| u16::from(*b)))
-                    } else {
-                        let units: Vec<u16> = t.encode_utf16().collect();
-                        match units.get(at) {
-                            Some(u) => Some(*u),
-                            None if at == units.len() => Some(0),
-                            None => None,
-                        }
-                    }
-                }) {
-                    Some(Some(u)) => Ok(Value::Char(u)),
-                    _ => Err(Signal::Unsupported(
-                        "a text read more than one position past its length (not pinned)".into(),
-                    )),
-                }
-            }
             E::CharAt(text, index) => {
                 let t = self.eval(text, f)?;
                 let Some(t) = al_builtins::native::text_of(&t) else {
@@ -1376,38 +1356,6 @@ impl Session {
                 args,
                 ret_used,
             } => {
-                // `CopyStr(Var, p [, n])` and `StrLen(Var)` on a text variable read it where it is held.
-                if let (None, Some(ir::Arg::Value(first))) = (receiver.as_deref(), args.first()) {
-                    if matches!(id.as_str(), "Text.CopyStr#1" | "Text.StrLen#1")
-                        && self.with_borrowed_text(first, f, |_| ()).is_some()
-                    {
-                        let mut rest = Vec::with_capacity(args.len() - 1);
-                        for a in &args[1..] {
-                            let ir::Arg::Value(e) = a else {
-                                return Err(Signal::Unsupported(format!("{id} with this argument")));
-                            };
-                            rest.push(self.eval(e, f)?);
-                        }
-                        let num = |v: Option<&Value>| match v {
-                            Some(Value::Integer(n)) => Some(i64::from(*n)),
-                            Some(Value::BigInteger(n)) => Some(*n),
-                            Some(Value::Byte(n)) => Some(i64::from(*n)),
-                            Some(Value::Char(n)) => Some(i64::from(*n)),
-                            _ => None,
-                        };
-                        let r = if id == "Text.StrLen#1" {
-                            self.with_borrowed_text(first, f, |t| Value::Integer(Value::text_len(t) as i32))
-                                .map(Ok)
-                        } else {
-                            let pos = num(rest.first()).unwrap_or(1);
-                            let len = num(rest.get(1));
-                            self.with_borrowed_text(first, f, |t| al_builtins::native::copystr_of(t, pos, len))
-                        };
-                        if let Some(r) = r {
-                            return r;
-                        }
-                    }
-                }
                 // Event subscriptions are session state: the VM runs them (dispatch.rs).
                 if let "Session.BindSubscription#1" | "Session.UnbindSubscription#1" = id.as_str() {
                     let Some(ir::Arg::Value(e)) = args.first() else {
@@ -1477,10 +1425,10 @@ impl Session {
                     // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
                     // (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
                     return match args.first() {
-                        None => Ok(Value::Text(self.application_areas.clone())),
+                        None => Ok(Value::Text(self.application_areas.clone().into())),
                         Some(ir::Arg::Value(e)) => match self.eval(e, f)? {
                             Value::Text(t) | Value::Code(t) => {
-                                self.application_areas = t;
+                                self.application_areas = t.to_string();
                                 Ok(Value::Null)
                             }
                             other => Err(Signal::Unsupported(format!("ApplicationArea({})", other.describe()))),
@@ -1569,7 +1517,7 @@ impl Session {
                 let up = t.to_uppercase();
                 Ok(Value::Code(match max {
                     Some(m) => up.chars().take(m as usize).collect(),
-                    None => up,
+                    None => up.into(),
                 }))
             }
             (Value::Text(t), RtType::Text(Some(m))) if t.chars().count() > m as usize => Err(Signal::Unsupported(
@@ -1698,26 +1646,31 @@ impl Session {
         }
     }
 
-    /// Runs `g` on the text a plain variable read (`E::Load` of a local or a global) holds, without copying it.
-    /// `None` when `e` is anything else, holds no text, or holds one with the call-stack marker (the general path
-    /// handles those). A loop of `CopyStr(Big, i, 1)` over a long text would otherwise copy it on every round.
-    fn with_borrowed_text<R>(&self, e: &ir::Expr, f: &Frame, g: impl FnOnce(&str) -> R) -> Option<R> {
-        fn plain(v: &Value) -> Option<&str> {
-            match v {
-                // The call-stack marker U+E000 (byte 0xEE) is in call-stack texts, which are short: a long text is
-                // not scanned for it on every read.
-                Value::Text(s) | Value::Code(s) if s.len() > 65536 || !s.as_bytes().contains(&0xEE) => Some(s),
-                _ => None,
+    /// `P := P + R` for a Text variable `P`: the text is taken out of the variable, `R` is appended to it (in
+    /// place when no other value shares it, so a loop of `S += x` is linear), and it is put back. The left
+    /// operand is the value before `R` is evaluated, as in the general path; the length limit and the
+    /// call-stack marker rule are the general path's (`ops::convert`, `ops::arith`).
+    fn append_text(&mut self, p: &ir::Place, max: Option<u32>, r: &ir::Expr, f: &mut Frame) -> Result<(), Signal> {
+        let old = self.read(p, f)?;
+        let rv = self.eval(r, f)?;
+        let v = match (old, &rv) {
+            (Value::Text(mut t), Value::Text(x) | Value::Code(x))
+                if !t.has_marker()
+                    && !x.has_marker()
+                    && max.is_none_or(|m| t.utf16_len() + x.utf16_len() <= m as usize) =>
+            {
+                // Let go of the variable's hold so the append can happen in place.
+                match p {
+                    ir::Place::Local(i) => f.locals[*i] = Value::Null,
+                    ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = Value::Null,
+                    _ => unreachable!("a local or a global"),
+                }
+                t.push_str(x);
+                ops::convert(Value::Text(t), &RtType::Text(max))?
             }
-        }
-        match e {
-            ir::Expr::Load(ir::Place::Local(i)) => plain(f.locals.get(*i)?).map(g),
-            ir::Expr::Load(ir::Place::Global(i)) => {
-                let inst = f.instance.borrow();
-                plain(inst.globals.get(*i)?).map(g)
-            }
-            _ => None,
-        }
+            (old, rv) => ops::convert(ops::arith(ops::Arith::Add, &old, rv)?, &RtType::Text(max))?,
+        };
+        self.write(p, v, f)
     }
 
     fn read(&mut self, p: &ir::Place, f: &mut Frame) -> Result<Value, Signal> {
@@ -1945,9 +1898,9 @@ impl Session {
         let text = String::from_utf16(&units)
             .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
         if is_code {
-            return self.write(base, Value::Code(ops::upper_code(&text)), f);
+            return self.write(base, Value::Code(ops::upper_code(&text).into()), f);
         }
-        self.write(base, Value::Text(text), f)
+        self.write(base, Value::Text(text.into()), f)
     }
 
     /// The array behind `base` and the flat position of `idx` (1-based, row-major).
@@ -2036,7 +1989,7 @@ fn constant(c: &ir::Const) -> Value {
         ir::Const::Integer(i) => Value::Integer(*i),
         ir::Const::BigInteger(i) => Value::BigInteger(*i),
         ir::Const::Decimal(s) => Value::Decimal(s.parse().expect("decimal literal from the lowerer")),
-        ir::Const::Text(s) => Value::Text(s.clone()),
+        ir::Const::Text(s) => Value::Text(s.clone().into()),
         ir::Const::Date(d) => Value::Date(*d, false),
         ir::Const::Time(t) => Value::Time(*t),
         ir::Const::DateTime(t) => Value::DateTime(*t),

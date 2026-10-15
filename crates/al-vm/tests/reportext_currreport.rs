@@ -144,7 +144,7 @@ codeunit 69214 C
         let mut s = Session::new(Engine::new(l.program, blocked));
         let inst = s.instance(oi);
         match s.call(oi, ri, inst, vec![]).map(|(v, _)| v) {
-            Ok(Value::Text(t)) => t,
+            Ok(Value::Text(t)) => t.to_string(),
             other => panic!("{other:?}"),
         }
     }

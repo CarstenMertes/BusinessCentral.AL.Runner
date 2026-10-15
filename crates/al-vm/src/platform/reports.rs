@@ -134,11 +134,11 @@ pub(super) fn report_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             continue;
         };
         let mut r = key.clone();
-        r[pos(t, 2)] = Value::Text(o.name.clone());
+        r[pos(t, 2)] = Value::Text(o.name.clone().into());
         // UseRequestPage defaults to true, ProcessingOnly to false (TestReportMetadataColumns.al:30-60).
         r[pos(t, 4)] = Value::Boolean(prop(o, "UseRequestPage").is_none_or(truthy));
         r[pos(t, 9)] = Value::Boolean(prop(o, "ProcessingOnly").is_some_and(truthy));
-        r[pos(t, 17)] = Value::Text(prop(o, "WordMergeDataItem").map(ident).unwrap_or_default());
+        r[pos(t, 17)] = Value::Text(prop(o, "WordMergeDataItem").map(ident).unwrap_or_default().into());
         let first = rep
             .items
             .iter()
@@ -278,7 +278,7 @@ fn data_item_row(
         .table
         .as_ref()
         .ok_or_else(|| format!("{}: its table was not compiled", what()))?;
-    r[pos(t, 3)] = Value::Text(item.name.clone());
+    r[pos(t, 3)] = Value::Text(item.name.clone().into());
     r[pos(t, 5)] = Value::Integer(table_obj.id.unwrap_or(0) as i32);
     let mut depth = 0;
     let mut at = item.parent;
@@ -292,7 +292,7 @@ fn data_item_row(
         None => String::new(),
         Some(list) => join(&field_numbers(table, list).map_err(|e| format!("{}: RequestFilterFields {e}", what()))?),
     };
-    r[pos(t, 4)] = Value::Text(filter_fields);
+    r[pos(t, 4)] = Value::Text(filter_fields.into());
     // The sorting key's field numbers in the key's own order ('5,2'), and the view BC formats from the
     // view: SORTING(FieldN,..) then ORDER(1) when descending, then WHERE for a single `field = const(v)`.
     let mut sorting = String::new();
@@ -323,8 +323,8 @@ fn data_item_row(
             view.push(where_const(table, c.objects, &w).map_err(|e| format!("{}: where({w}): {e}", what()))?);
         }
     }
-    r[pos(t, 7)] = Value::Text(sorting);
-    r[pos(t, 8)] = Value::Text(view.join(" "));
+    r[pos(t, 7)] = Value::Text(sorting.into());
+    r[pos(t, 8)] = Value::Text(view.join(" ").into());
     Ok(())
 }
 

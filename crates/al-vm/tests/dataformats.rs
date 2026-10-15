@@ -47,7 +47,7 @@ fn cu(body: &str) -> String {
 fn text_of(vars: &str, body: &str) -> String {
     let src = cu(&format!("procedure F(): Text var {vars} begin {body} end;"));
     match run(&src, "F") {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

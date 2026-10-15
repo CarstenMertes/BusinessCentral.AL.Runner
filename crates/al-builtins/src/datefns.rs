@@ -138,7 +138,8 @@ fn round_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Ou
         Some(v) => match crate::native::text_of(v) {
             Some(t) => t,
             None => return unsupported("RoundDateTime with a direction that is not text"),
-        },
+        }
+        .to_string(),
     };
     if !matches!(direction.as_str(), "=" | "<" | ">") {
         return invalid(direction, 3);

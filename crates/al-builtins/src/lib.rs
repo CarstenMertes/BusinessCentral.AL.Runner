@@ -3,6 +3,7 @@
 
 pub mod signature;
 pub mod stream;
+pub mod text;
 pub mod textfns;
 pub mod value;
 pub mod version;

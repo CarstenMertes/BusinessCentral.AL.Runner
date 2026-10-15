@@ -76,8 +76,8 @@ pub enum Value {
     Decimal(Decimal),
     Byte(u8),
     Char(u16),
-    Text(String),
-    Code(String),
+    Text(crate::text::Txt),
+    Code(crate::text::Txt),
     /// Day number (0 = undefined `0D`), closing-date flag.
     Date(i32, bool),
     /// Milliseconds since midnight plus one (0 = undefined `0T`).
@@ -919,8 +919,8 @@ impl Value {
             RtType::Decimal => Value::Decimal(Decimal::ZERO),
             RtType::Byte => Value::Byte(0),
             RtType::Char => Value::Char(0),
-            RtType::Text(_) => Value::Text(String::new()),
-            RtType::Code(_) => Value::Code(String::new()),
+            RtType::Text(_) => Value::Text(String::new().into()),
+            RtType::Code(_) => Value::Code(String::new().into()),
             RtType::Date => Value::Date(0, false),
             RtType::Time => Value::Time(0),
             RtType::DateTime => Value::DateTime(0),

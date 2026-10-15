@@ -1508,7 +1508,7 @@ impl Session {
                 };
                 let which = match (method, args.first()) {
                     ("FindLast", _) => "+".to_string(),
-                    ("Find", Some(v)) => al_builtins::native::text_of(v).unwrap_or_default(),
+                    ("Find", Some(v)) => al_builtins::native::text_of(v).unwrap_or_default().to_string(),
                     // Doc (Record.Find): Which defaults to '='.
                     ("Find", None) => "=".to_string(),
                     _ => "-".to_string(),

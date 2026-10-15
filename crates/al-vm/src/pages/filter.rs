@@ -28,8 +28,8 @@ impl Session {
                 let pos = field_arg(args, 0)?;
                 let first = rec.borrow().filters.iter().find(|f| f.field == pos).cloned();
                 match first {
-                    Some(f) => Ok(Value::Text(self.filter_text(&f.expr)?)),
-                    None => Ok(Value::Text(String::new())),
+                    Some(f) => Ok(Value::Text(self.filter_text(&f.expr)?.into())),
+                    None => Ok(Value::Text(String::new().into())),
                 }
             }
             "SetFilter" => {
@@ -63,7 +63,7 @@ impl Session {
             "CurrentKey" => {
                 let key = rec.borrow().key;
                 let names: Vec<&str> = table.keys[key].iter().map(|&p| table.fields[p].name.as_str()).collect();
-                Ok(Value::Text(names.join(",")))
+                Ok(Value::Text(names.join(",").into()))
             }
             "SetCurrentKey" => {
                 let mut wanted = Vec::new();

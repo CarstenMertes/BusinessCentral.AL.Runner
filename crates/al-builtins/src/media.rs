@@ -72,7 +72,7 @@ fn store(c: &mut dyn Ctx) -> Result<&mut MediaStore, Signal> {
 
 fn text_arg(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
-        Some(t) => Ok(t),
+        Some(t) => Ok(t.to_string()),
         None => unsupported(format!("a text argument, got {}", a.get(i).describe())),
     }
 }

@@ -310,8 +310,8 @@ impl Session {
                 let pos = field_arg(0)?;
                 let first = rec.borrow().filters.iter().find(|f| f.field == pos).cloned();
                 match first {
-                    Some(f) => Ok(Value::Text(self.filter_text(&f.expr)?)),
-                    None => Ok(Value::Text(String::new())),
+                    Some(f) => Ok(Value::Text(self.filter_text(&f.expr)?.into())),
+                    None => Ok(Value::Text(String::new().into())),
                 }
             }
             other => unsupported(format!("{other} on a data item of a request page (not pinned)")),
@@ -461,8 +461,8 @@ impl Session {
             let owner = owner_inst(inst, exts, who);
             let current = owner.borrow().globals[slot].clone();
             let value = match &current {
-                Value::Text(_) => Value::Text(text),
-                Value::Code(_) => Value::Code(text),
+                Value::Text(_) => Value::Text(text.into()),
+                Value::Code(_) => Value::Code(text.into()),
                 Value::Boolean(_) if text == "true" || text == "false" => Value::Boolean(text == "true"),
                 Value::Integer(_) | Value::Decimal(_) | Value::Option(..) | Value::Enum(..) => {
                     let ty = match &current {
@@ -473,7 +473,7 @@ impl Session {
                         _ => unreachable!(),
                     };
                     let number = match &current {
-                        Value::Decimal(_) => ops::convert(Value::Text(text.clone()), &RtType::Decimal),
+                        Value::Decimal(_) => ops::convert(Value::Text(text.clone().into()), &RtType::Decimal),
                         _ => text
                             .parse::<i32>()
                             .map(Value::Integer)

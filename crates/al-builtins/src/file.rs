@@ -78,7 +78,7 @@ fn with_file<R>(r: Option<&mut Value>, f: impl FnOnce(&mut FileState) -> Result<
 
 fn path(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
-        Some(t) => Ok(t),
+        Some(t) => Ok(t.to_string()),
         None => unsupported(format!("a file name, got {}", a.get(i).describe())),
     }
 }
@@ -208,7 +208,7 @@ fn len(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
 }
 
 fn name(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    with_file(r, |s| Ok(Value::Text(s.name.clone())))
+    with_file(r, |s| Ok(Value::Text(s.name.clone().into())))
 }
 
 fn create_out_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {

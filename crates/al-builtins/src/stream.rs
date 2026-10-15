@@ -504,7 +504,7 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     })?;
     // The count is the bytes of the text in the stream's encoding, without the terminators (a UTF-16 `ab` is 4).
     let n = (Value::text_len(&text) * enc_used.unit()) as i32;
-    a[0] = Value::Text(text);
+    a[0] = Value::Text(text.into());
     Ok(Value::Integer(n))
 }
 
@@ -541,7 +541,7 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             s.pos += taken.len();
             Ok(taken.iter().map(|b| char::from(*b)).collect::<String>())
         })?;
-        a[0] = Value::Text(text);
+        a[0] = Value::Text(text.into());
         return Ok(Value::Null);
     }
     if a.len() > 1 {
@@ -582,8 +582,8 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             Ok((s.enc.decode(body), consumed))
         })?;
         a[0] = match a[0] {
-            Value::Code(_) => Value::Code(taken),
-            _ => Value::Text(taken),
+            Value::Code(_) => Value::Code(taken.into()),
+            _ => Value::Text(taken.into()),
         };
         return Ok(Value::Integer(count as i32));
     }
@@ -705,7 +705,8 @@ fn out_write_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
         Some(v) => match crate::native::text_of(v) {
             Some(t) => t,
             None => return unsupported("OutStream.WriteText of a value that is not text"),
-        },
+        }
+        .to_string(),
     };
     let (b, enc) = out_buf(r)?;
     let bytes = enc.encode(&text);
@@ -895,8 +896,8 @@ fn compress_array(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NR
     }
     while kept.len() < arr.len() {
         kept.push(match &arr[kept.len()] {
-            Value::Code(_) => Value::Code(String::new()),
-            _ => Value::Text(String::new()),
+            Value::Code(_) => Value::Code(String::new().into()),
+            _ => Value::Text(String::new().into()),
         });
     }
     *arr = kept;

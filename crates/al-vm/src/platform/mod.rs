@@ -328,11 +328,11 @@ impl Providers {
                         "a Tenant Media row of a media imported with a file name: its File Name, Description and Mime Type are not pinned".into(),
                     );
                 }
-                row[pos(t, 2)] = Value::Text(o.description.clone());
+                row[pos(t, 2)] = Value::Text(o.description.clone().into());
                 let blob = al_builtins::stream::new_blob();
                 al_builtins::stream::write_bytes(&blob, &o.bytes);
                 row[pos(t, 3)] = Value::Blob(blob);
-                row[pos(t, 4)] = Value::Text(o.mime.clone());
+                row[pos(t, 4)] = Value::Text(o.mime.clone().into());
                 row[pos(t, 5)] = Value::Integer(o.height);
                 row[pos(t, 6)] = Value::Integer(o.width);
                 mat::Entry::ok(row)

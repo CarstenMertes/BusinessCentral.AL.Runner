@@ -968,7 +968,10 @@ fn record_ref_get_by_system_id_with_the_result_unused_raises_on_a_miss() {
     assert_eq!(parts[0], "A");
     assert_eq!(
         parts[1],
-        format!("The The Table does not exist. Identification fields and values: {}", parts[3])
+        format!(
+            "The The Table does not exist. Identification fields and values: {}",
+            parts[3]
+        )
     );
     assert_eq!(parts[2], "DB:RecordNotFound");
 }

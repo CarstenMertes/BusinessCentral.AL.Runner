@@ -616,9 +616,9 @@ fn database_sid(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
         return unsupported("Database.SID without a user name (whose SID it answers is not pinned)");
     };
     // FNV-1a over the name's UTF-8 bytes: the same on every platform and run.
-    let hash = name
-        .bytes()
-        .fold(0xcbf2_9ce4_8422_2325_u64, |h, b| (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3));
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
     let rid = 1000 + hash % (i32::MAX as u64 - 1000);
     Ok(Value::Text(format!("S-1-5-21-1004336348-1177238915-682003330-{rid}")))
 }

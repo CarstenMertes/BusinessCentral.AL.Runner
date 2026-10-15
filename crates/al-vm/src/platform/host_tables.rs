@@ -23,7 +23,7 @@ pub(super) fn time_zone_rows(t: &TableDef, i: &Ident) -> Vec<Entry> {
 }
 
 /// The Feature Key table of the BC 27.5 platform: 16 rows, `Data Update Required` set for three of them
-/// (record/TestFieldLenAndFeatureKeyContracts.al:83-125, corpus branch al-runtime-rs d0f5d52). The rows
+/// (record/TestFieldLenAndFeatureKeyContracts.al:83-125). The rows
 /// of other majors were not measured: one poisoned entry stands for all of them, so a read is refused.
 pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>) -> Vec<Entry> {
     const ROWS: &[(&str, bool)] = &[

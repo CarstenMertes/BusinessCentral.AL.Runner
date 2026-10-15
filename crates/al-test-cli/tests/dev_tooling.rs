@@ -204,10 +204,10 @@ fn selection_flags_repeat_and_make_a_union() {
         .count() as u64;
     assert_eq!(total_of(&["--test", &name.to_uppercase()]), by_name);
     // --area and --codeunit together: the area, plus the codeunit when it is outside it.
-    assert_eq!(total_of(&["--area", "json"]), 129);
+    assert_eq!(total_of(&["--area", "json"]), 135);
     assert_eq!(
         total_of(&["--area", "json", "--codeunit", &SMALL_CU.to_string()]),
-        129 + in_cu(SMALL_CU)
+        135 + in_cu(SMALL_CU)
     );
 }
 

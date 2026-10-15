@@ -588,7 +588,7 @@ fn create_sequential_guid_has_the_same_form() {
 
 #[test]
 fn the_system_id_of_an_inserted_row_is_random_looking_but_not_version_4() {
-    // types/TestGuidFormContracts.al:SystemId_OfNewRows_IsNotVersion4 (corpus branch al-runtime-rs d0f5d52):
+    // types/TestGuidFormContracts.al:SystemId_OfNewRows_IsNotVersion4:
     // the version and variant positions vary, and the first 20 characters never repeat.
     let r = text(
         "I: Integer; T: Record \"ALT T\"; Seen: List of [Text]; Bad: Integer; Dup: Integer; G: Text;",
@@ -650,7 +650,7 @@ fn format_of_a_value_without_a_text_form_names_its_type_not_its_contents() {
 
 #[test]
 fn format_of_a_record_joins_the_formats_of_its_fields_by_tab() {
-    // record/TestFormatRecordContracts.al:111-145 (corpus branch al-runtime-rs, d0f5d52).
+    // record/TestFormatRecordContracts.al:111-145.
     let t = text(
         "R: Record \"ALT T\"; Ref: RecordRef;",
         "R.\"No.\" := 5; R.Amount := 2; R.Note := 'x'; Ref.GetTable(R); \

@@ -39,6 +39,11 @@ pub enum Gate {
     /// ` tableId="<table id>" systemId="<guid>"` after its name. Before BC 28 it carries neither
     /// (27.5 absent, 28.5 and 29.0 present; BC 28.0 to 28.4 were not measured).
     ReportSaveAsDataItemIdentity,
+    /// The platform table "Feature Key" has another list of columns and rows from BC 28: the corpus asserts
+    /// the 27.x list (16 rows, the columns up to "Description In English") only below BC 28
+    /// (`#if not BC28PLUS`); above, only that the table has rows. Not consumed yet: the runtime has no
+    /// provider for the table's other columns.
+    FeatureKeyListChangedFrom28,
 }
 
 impl Gate {
@@ -49,6 +54,7 @@ impl Gate {
         Gate::NotSaaSInfrastructure,
         Gate::ReportSaveAsXmlHeaderHasCompanyBlock,
         Gate::ReportSaveAsDataItemIdentity,
+        Gate::FeatureKeyListChangedFrom28,
     ];
 
     /// The first BC major with the new behaviour.
@@ -59,7 +65,7 @@ impl Gate {
             | Gate::SuperPermissionSetIgnoresAppId
             | Gate::NotSaaSInfrastructure
             | Gate::ReportSaveAsXmlHeaderHasCompanyBlock => 29,
-            Gate::ReportSaveAsDataItemIdentity => 28,
+            Gate::ReportSaveAsDataItemIdentity | Gate::FeatureKeyListChangedFrom28 => 28,
         }
     }
 
@@ -86,6 +92,16 @@ impl Gate {
                 file: "handlers/TestReportSaveAsDatasetContracts.al",
                 lines: "243",
             }],
+            Gate::FeatureKeyListChangedFrom28 => &[
+                Evidence {
+                    file: "record/TestFeatureKeyEnabledContracts.al",
+                    lines: "33",
+                },
+                Evidence {
+                    file: "record/TestFieldLenAndFeatureKeyContracts.al",
+                    lines: "97",
+                },
+            ],
             Gate::ReportSaveAsDataItemIdentity => &[Evidence {
                 file: "handlers/TestReportSaveAsDatasetContracts.al",
                 lines: "299",

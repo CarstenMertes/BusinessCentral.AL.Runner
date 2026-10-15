@@ -291,6 +291,8 @@ reviewed it.
   XmlPort Metadata Encoding default (UTF16), ClearAll in a codeunit with TableNo, a table and a page, the SaveAs DataItem identity from
   BC 28, and the actions of a TestPage (an action with no behaviour is not on it). Decided without owner review: the DataItem GUID is
   the row's SystemId, and an Encoding property names a member of the Encoding column. See `docs/probes-needed.md`.
+- 2026-10-15, corpus bump 6 (345627d): the pin check of a test app that has its own oracle (the isolation probe, recorded for cf6e546) looks only at that app's folder,
+  so a change to another app (the OnPrem app.json) no longer stales it. The must-not-compile folder is in the submodule; its harness test runs (15 of 16 cases match on 27, 28, 29).
 - 2026-10-14, ADR-007: corpus cases the runtime fails or refuses never turn CI red. Only a baseline case that stops
   passing does. The 70 failing and 120 refused new probe cases (BC 27 and 28) are the work list for the fix rounds.
 - 2026-10-14, ADR-018, background worker: a failing guarded `Codeunit.Run` in a worker does not undo the caller's pending rows; a direct `Commit` and an unguarded `Codeunit.Run` there stay refused.

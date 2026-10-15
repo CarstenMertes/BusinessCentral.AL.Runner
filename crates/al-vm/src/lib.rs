@@ -1924,7 +1924,7 @@ pub(crate) fn guid_for(seed: i32, n: u64) -> [u8; 16] {
 
 /// The bytes of [`guid_for`] before the version and variant bits are set: the form of the SystemId the
 /// platform gives a new row, which is not RFC 4122 version 4 (types/TestGuidFormContracts.al:
-/// SystemId_OfNewRows_IsNotVersion4, corpus branch al-runtime-rs d0f5d52).
+/// SystemId_OfNewRows_IsNotVersion4).
 pub(crate) fn raw_guid_for(seed: i32, n: u64) -> [u8; 16] {
     let mut state = ((seed as u32 as u64) << 32) ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
     let mut next = || {

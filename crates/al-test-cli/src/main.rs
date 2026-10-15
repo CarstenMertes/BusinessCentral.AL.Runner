@@ -188,13 +188,19 @@ fn run_version(
     // The other test apps: each against its own oracle, pinned like the main one (ADR-007).
     let mut suite_data = Vec::new();
     for suite in &version.suites {
-        pin::check(
+        // The suite's oracle is described by its own app: changes elsewhere in the corpus do not matter.
+        let scope = match suite.app.strip_prefix(cfg.corpus_repo.as_str()) {
+            Some(rest) if rest.starts_with('/') => format!("{}/", rest.trim_start_matches('/').trim_end_matches('/')),
+            _ => "tests/".to_string(),
+        };
+        pin::check_in(
             &root.join(&cfg.corpus_repo),
             suite
                 .corpus_commit
                 .as_deref()
                 .unwrap_or_else(|| version.oracle_commit(&cfg.corpus_commit)),
             &cfg.corpus_commit,
+            &scope,
         )
         .map_err(|e| format!("BC {} {}: {e}", version.bc_version, suite.name))?;
         let path = oracle_path.parent().unwrap_or(Path::new(".")).join(&suite.oracle);

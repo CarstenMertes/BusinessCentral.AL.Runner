@@ -656,7 +656,13 @@ impl Session {
                             st.borrow_mut().editable_preset = Some(on);
                             Ok(Value::Null)
                         }
-                        None => Ok(Value::Boolean(st.borrow().editable_preset.unwrap_or(true))),
+                        // What it was set to, else the page's own `Editable` property (corpus
+                        // handlers/PWPageVariableEditable.al:187-205: a page with `Editable = false`
+                        // reads No before it runs).
+                        None => {
+                            let own = self.page_editable(st);
+                            Ok(Value::Boolean(st.borrow().editable_preset.unwrap_or(own)))
+                        }
                     };
                 }
                 match args.first() {
@@ -1013,7 +1019,7 @@ impl Session {
             s.refused = false;
             s.pending = None;
             s.result = None;
-            s.editable_off = s.editable_preset == Some(false);
+            s.editable_off = false;
             s.caption = None;
             s.opening = true;
             s.parts = Vec::new();
@@ -1070,6 +1076,12 @@ impl Session {
             // OnInit has run (handlers/TestPageOnInit_Tests.al:188).
             if !std::mem::take(&mut st.borrow_mut().inited) {
                 self.page_trigger(st, "oninit", vec![])?;
+            }
+            // `Editable(false)` on the variable before it runs applies after OnInit: OnInit still
+            // reads Yes (corpus handlers/PWPageVariableEditable.al:221-240).
+            {
+                let mut s = st.borrow_mut();
+                s.editable_off = s.editable_preset == Some(false);
             }
             // The parts' OnInit runs between the host's OnInit and its OnOpenPage (corpus
             // testpart/TestPartTriggerOrderAndRefresh.al:236-247).

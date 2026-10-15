@@ -2551,11 +2551,26 @@ impl Lowerer<'_> {
                         .position(|m| m.eq_ignore_ascii_case(word))
                         .map(|i| i.to_string())
                 };
-                values.push(if is_filter {
+                values.push(if is_filter && members.is_some() {
+                    // Members by ordinal, with the alternatives `|` and ranges `..` kept: `A .. B` is `0..1`
+                    // (metadata/W6TableRelations.al:Relations_ConditionOnTheSourceField, BC 27.5 and 29.0).
                     text.split('|')
-                        .map(ordinal)
+                        .map(|alt| {
+                            alt.split("..")
+                                .map(&ordinal)
+                                .collect::<Option<Vec<_>>>()
+                                .map(|v| v.join(".."))
+                        })
                         .collect::<Option<Vec<_>>>()
                         .map(|v| v.join("|"))
+                } else if is_filter {
+                    // A filter on a field that is no option shows its text as written, without the quotes of a
+                    // quoted literal: `filter('X|Y')` is `X|Y`, `filter('<>X')` is `<>X`.
+                    let t = text.trim();
+                    Some(match t.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
+                        Some(inner) => inner.replace("''", "'"),
+                        None => t.to_string(),
+                    })
                 } else {
                     ordinal(text)
                 });
@@ -5209,6 +5224,15 @@ impl Lowerer<'_> {
                 let Ty::Array(dims, _) = self.ty_of(arg) else {
                     return Err("ArrayLen of something that is not an array variable".into());
                 };
+                // A one-dimensional array is measured when the call runs: a parameter holds the caller's array.
+                if dims.len() == 1 && args.len() == 1 {
+                    return Ok(ir::Expr::Builtin {
+                        id,
+                        receiver: None,
+                        args: vec![ir::Arg::Ref(self.place(arg)?)],
+                        ret_used: true,
+                    });
+                }
                 let dim = match args.get(1) {
                     Some(d) => match self.expr(d)? {
                         ir::Expr::Const(ir::Const::Integer(k)) => Some(k),

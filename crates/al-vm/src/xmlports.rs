@@ -1233,7 +1233,7 @@ impl Session {
         }
         let (key, asc) = {
             let r = rec.borrow();
-            (r.key, r.ascending && !r.field_descending)
+            (r.key, r.ascending)
         };
         let mut after = None;
         while let Some(row) = self.scan(&rec, &t, asc, after.take())? {

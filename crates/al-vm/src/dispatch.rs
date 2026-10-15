@@ -88,6 +88,16 @@ impl Session {
             let o = &engine.program.objects[object];
             match (o.kind.as_str(), o.rec_slot) {
                 ("codeunit", _) => Some(Value::Codeunit(instance)),
+                // The sender of a page's event is the page (a `Page` variable), not its Rec: Item Tracking Lines
+                // publishes with IncludeSender and Asm. Item Tracking Mgt. takes `var sender: Page "Item Tracking
+                // Lines"`. Not pinned by the corpus (assumption page-event-sender).
+                ("page", _) => match o.globals.iter().position(|g| g.name == "CurrPage") {
+                    Some(slot) => {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageEventSender);
+                        Some(instance.borrow().globals[slot].clone())
+                    }
+                    None => return unsupported(format!("{}: IncludeSender on a page without CurrPage", r.name)),
+                },
                 (_, Some(slot)) => Some(instance.borrow().globals[slot].clone()),
                 _ => return unsupported(format!("{}: IncludeSender on a {}", r.name, o.kind)),
             }

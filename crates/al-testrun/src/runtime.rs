@@ -112,6 +112,8 @@ pub struct CorpusRuntime {
     /// Keyed by (suite, test codeunit id, lower-cased procedure). A suite is one test runner run
     /// over some of the apps; the same codeunit can be in two (the isolation probe).
     outcomes: std::collections::HashMap<(usize, u32, String), Outcome>,
+    /// How long each test that ran took, keyed like `outcomes`.
+    times: std::collections::HashMap<(usize, u32, String), std::time::Duration>,
     suites: Vec<String>,
     pub panics: usize,
     /// How long the compile, the install baseline and the tests took.
@@ -136,6 +138,8 @@ pub struct TestResult {
     /// For a failure with an AL error: the call stack of the error, innermost frame first, one per
     /// line (`GetLastErrorCallStack` form). Empty otherwise.
     pub call_stack: String,
+    /// The wall time the test took; zero for a test that was not started.
+    pub time: std::time::Duration,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -218,8 +222,13 @@ struct Unit {
     without_baseline: bool,
 }
 
-/// What a test codeunit left: each test's outcome, and the call stack of each AL error that failed one.
-type UnitOutcomes = (Vec<(String, Outcome)>, Vec<(String, String)>);
+/// What a test codeunit left: each test's outcome, the call stack of each AL error that failed one, and
+/// how long each test that ran took (wall time).
+type UnitOutcomes = (
+    Vec<(String, Outcome)>,
+    Vec<(String, String)>,
+    Vec<(String, std::time::Duration)>,
+);
 
 struct UnitResult {
     si: usize,
@@ -252,6 +261,7 @@ fn run_unit(
     let baseline = baseline.filter(|_| !u.without_baseline);
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut stacks = Vec::new();
+        let mut times = Vec::new();
         let done = run_codeunit_full(
             engine,
             lowered,
@@ -260,9 +270,10 @@ fn run_unit(
             u.isolation,
             observe,
             &mut stacks,
+            &mut times,
             limit,
         );
-        (done, stacks)
+        (done, stacks, times)
     }))
     .map_err(|p| {
         p.downcast_ref::<String>()
@@ -819,6 +830,8 @@ impl CorpusRuntime {
         let baseline = baseline_run.map(|b| b.baseline);
         let tests_started = std::time::Instant::now();
         let mut outcomes = std::collections::HashMap::new();
+        let mut times_by_case: std::collections::HashMap<(usize, u32, String), std::time::Duration> =
+            Default::default();
         let mut details = std::collections::HashMap::new();
         let mut panics = 0;
         let mut codeunit_times: Vec<CodeunitTime> = Vec::new();
@@ -852,6 +865,7 @@ impl CorpusRuntime {
                                 test: r.name.clone(),
                                 outcome: Outcome::NotRun(why.clone()),
                                 call_stack: String::new(),
+                                time: std::time::Duration::ZERO,
                             });
                         }
                     }
@@ -950,7 +964,11 @@ impl CorpusRuntime {
                 sidecar_start: r.sidecar_start,
             });
             let o = &lowered.program.objects[r.oi];
-            let push = |list: &mut Vec<TestResult>, test: &str, outcome: &Outcome, call_stack: String| {
+            let push = |list: &mut Vec<TestResult>,
+                        test: &str,
+                        outcome: &Outcome,
+                        call_stack: String,
+                        time: std::time::Duration| {
                 list.push(TestResult {
                     suite: r.si,
                     app: order[o.app as usize],
@@ -959,13 +977,19 @@ impl CorpusRuntime {
                     test: test.to_string(),
                     outcome: outcome.clone(),
                     call_stack,
+                    time,
                 })
             };
             match r.result {
-                Ok((done, stacks)) => {
+                Ok((done, stacks, times)) => {
                     for (name, outcome) in done {
                         let stack = stacks.iter().find(|(n, _)| *n == name).map(|(_, s)| s.clone());
-                        push(&mut list, &name, &outcome, stack.unwrap_or_default());
+                        let time = times
+                            .iter()
+                            .find(|(n, _)| *n == name)
+                            .map_or(std::time::Duration::ZERO, |(_, d)| *d);
+                        push(&mut list, &name, &outcome, stack.unwrap_or_default(), time);
+                        times_by_case.insert((r.si, r.id, name.to_lowercase()), time);
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
                     }
                 }
@@ -973,7 +997,7 @@ impl CorpusRuntime {
                     panics += 1;
                     for t in test_routines(&lowered.program.objects[r.oi]) {
                         let outcome = Outcome::NotRun(format!("runtime panic (bug): {msg}"));
-                        push(&mut list, &t.name, &outcome, String::new());
+                        push(&mut list, &t.name, &outcome, String::new(), std::time::Duration::ZERO);
                         outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
                     }
                 }
@@ -1000,6 +1024,7 @@ impl CorpusRuntime {
         retire((ws, lowered));
         Ok(CorpusRuntime {
             outcomes,
+            times: times_by_case,
             suites,
             panics,
             phases: Phases {
@@ -1035,6 +1060,24 @@ impl CorpusRuntime {
     }
 
     /// The outcome of `case` in the run named `suite` (the first run has the empty name).
+    /// How long `case` took in the first run.
+    pub fn first_time(&self, case: &CaseId) -> std::time::Duration {
+        self.times
+            .get(&(0, case.codeunit, case.name.to_lowercase()))
+            .copied()
+            .unwrap_or_default()
+    }
+
+    /// How long `case` took in suite `suite` (zero for a test that was not started).
+    pub fn time_in(&self, suite: &str, case: &CaseId) -> std::time::Duration {
+        self.suites
+            .iter()
+            .position(|s| s == suite)
+            .and_then(|si| self.times.get(&(si, case.codeunit, case.name.to_lowercase())))
+            .copied()
+            .unwrap_or_default()
+    }
+
     pub fn outcome_in(&self, suite: &str, case: &CaseId) -> Outcome {
         self.suites
             .iter()
@@ -1328,6 +1371,7 @@ pub fn run_codeunit_observed(
         isolation,
         observe,
         &mut Vec::new(),
+        &mut Vec::new(),
         None,
     )
 }
@@ -1348,6 +1392,7 @@ pub fn run_codeunit_limited(
         baseline,
         isolation,
         None,
+        &mut Vec::new(),
         &mut Vec::new(),
         limit,
     )
@@ -1395,6 +1440,7 @@ pub fn run_codeunit_full(
     isolation: TestIsolation,
     mut observe: Option<&mut Observer>,
     stacks: &mut Vec<(String, String)>,
+    times: &mut Vec<(String, std::time::Duration)>,
     limit: Option<std::time::Duration>,
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
@@ -1474,6 +1520,7 @@ pub fn run_codeunit_full(
     // the codeunit's AL state (globals, single-instance codeunits) is not what BC would have left.
     let mut refused_mid_run: Option<String> = None;
     for r in tests {
+        let test_started = std::time::Instant::now();
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
         let mut committed = false;
@@ -1604,6 +1651,7 @@ pub fn run_codeunit_full(
                 stacks.push((routine.name.clone(), e.call_stack.clone()));
             }
         }
+        times.push((routine.name.clone(), test_started.elapsed()));
         out.push((routine.name.clone(), outcome));
     }
     out

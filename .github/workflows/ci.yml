@@ -280,6 +280,7 @@ jobs:
             -p al-test-cli --test perf_budget \
             -p al-test-cli --test corpus_resolve_deps \
             -p al-test-cli --test platform_tables \
+            -p al-data --lib \
             -- --ignored --nocapture
 
       # The tests that run `al-test-cli` over the whole pinned corpus and its oracle (`--no-deps`),

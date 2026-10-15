@@ -157,18 +157,20 @@ pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> St
         let group = &results[i..j];
         let gc = Counts::of(group.iter().copied());
         s.push_str(&format!(
-            "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" errors=\"0\" skipped=\"{}\">\n    <properties><property name=\"codeunit\" value=\"{}\" /></properties>\n",
+            "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" errors=\"0\" skipped=\"{}\" time=\"{:.3}\">\n    <properties><property name=\"codeunit\" value=\"{}\" /></properties>\n",
             esc(&first.codeunit_name),
             gc.total,
             gc.fail,
             gc.not_run,
+            group.iter().map(|r| r.time.as_secs_f64()).sum::<f64>(),
             first.codeunit
         ));
         for r in group {
             let head = format!(
-                "    <testcase classname=\"{}\" name=\"{}\"",
+                "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\"",
                 esc(&r.codeunit_name),
-                esc(&r.test)
+                esc(&r.test),
+                r.time.as_secs_f64()
             );
             match &r.outcome {
                 Outcome::Pass => s.push_str(&format!("{head} />\n")),
@@ -203,6 +205,7 @@ mod tests {
             test: test.into(),
             outcome,
             call_stack: String::new(),
+            time: std::time::Duration::ZERO,
         }
     }
 
@@ -288,6 +291,28 @@ mod tests {
         assert!(x.contains("<skipped message=\"no &amp; way\" />"), "{x}");
         assert!(x.contains("name=\"bc_build\" value=\"27.5.1.2\""), "{x}");
         assert_eq!(x.matches("<testsuite ").count(), 2);
+    }
+
+    #[test]
+    fn junit_carries_the_time_of_each_test_and_the_sum_for_its_codeunit() {
+        let mut a = r(1, "A", "T1", Outcome::Pass);
+        a.time = std::time::Duration::from_millis(1250);
+        let mut b = r(1, "A", "T2", Outcome::Fail("x".into()));
+        b.time = std::time::Duration::from_millis(500);
+        let mut c = r(1, "A", "T3", Outcome::NotRun("y".into()));
+        c.time = std::time::Duration::ZERO;
+        let refs = [&a, &b, &c];
+        let x = junit(&refs, None, 2.0);
+        assert!(
+            x.contains("<testcase classname=\"A\" name=\"T1\" time=\"1.250\" />"),
+            "{x}"
+        );
+        assert!(x.contains("name=\"T2\" time=\"0.500\">"), "{x}");
+        assert!(x.contains("name=\"T3\" time=\"0.000\">"), "{x}");
+        assert!(
+            x.contains("<testsuite name=\"A\" tests=\"3\" failures=\"1\" errors=\"0\" skipped=\"1\" time=\"1.750\">"),
+            "{x}"
+        );
     }
 
     #[test]

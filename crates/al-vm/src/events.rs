@@ -7,6 +7,7 @@
 //! to nothing: the publisher cannot run here, so it cannot fire.
 
 use al_ir as ir;
+use al_ir::ObjKind;
 use std::collections::HashMap;
 
 /// One `[EventSubscriber(...)]` routine bound to a publisher in the workspace.
@@ -133,23 +134,24 @@ impl Registry {
                 }
             }
         }
-        let mut by_name: HashMap<(&str, String), usize> = HashMap::new();
+        let mut by_name: HashMap<(ObjKind, String), usize> = HashMap::new();
         // Objects that share a kind and a name (they sit in different namespaces).
-        let mut same_name: HashMap<(&str, String), Vec<usize>> = HashMap::new();
-        let mut by_id: HashMap<(&str, u32), usize> = HashMap::new();
+        let mut same_name: HashMap<(ObjKind, String), Vec<usize>> = HashMap::new();
+        let mut by_id: HashMap<(ObjKind, u32), usize> = HashMap::new();
         for (oi, o) in program.objects.iter().enumerate() {
-            by_name.entry((o.kind.as_str(), o.name.to_lowercase())).or_insert(oi);
-            same_name
-                .entry((o.kind.as_str(), o.name.to_lowercase()))
-                .or_default()
-                .push(oi);
+            // A shell (an uncompiled object) is never found by kind and name.
+            if o.uncompiled {
+                continue;
+            }
+            by_name.entry((o.kind, o.name.to_lowercase())).or_insert(oi);
+            same_name.entry((o.kind, o.name.to_lowercase())).or_default().push(oi);
             if let Some(id) = o.id {
-                by_id.entry((o.kind.as_str(), id)).or_insert(oi);
+                by_id.entry((o.kind, id)).or_insert(oi);
             }
         }
         if let Some(&gt) = by_name
-            .get(&("codeunit", "global triggers".to_string()))
-            .or_else(|| by_id.get(&("codeunit", 2_000_000_002)))
+            .get(&(ObjKind::Codeunit, "global triggers".to_string()))
+            .or_else(|| by_id.get(&(ObjKind::Codeunit, 2_000_000_002)))
         {
             reg.global_key = gt;
         }
@@ -182,12 +184,12 @@ impl Registry {
                                 .to_lowercase()
                                 .as_str()
                             {
-                                "codeunit" => "codeunit",
-                                "table" => "table",
-                                "page" => "page",
-                                "report" => "report",
-                                "query" => "query",
-                                "xmlport" => "xmlport",
+                                "codeunit" => ObjKind::Codeunit,
+                                "table" => ObjKind::Table,
+                                "page" => ObjKind::Page,
+                                "report" => ObjKind::Report,
+                                "query" => ObjKind::Query,
+                                "xmlport" => ObjKind::XmlPort,
                                 _ => continue,
                             };
                             // `Codeunit::Microsoft.Foundation.Company."Company-Initialize"` writes the
@@ -217,7 +219,7 @@ impl Registry {
                             });
                             // The page client raises the caption class event under a key of its own,
                             // whether or not the codeunit is compiled.
-                            if kind == "codeunit"
+                            if kind == ObjKind::Codeunit
                                 && (target.eq_ignore_ascii_case("Caption Class") || target == "42")
                                 && event == "onresolvecaptionclass"
                             {
@@ -233,7 +235,7 @@ impl Registry {
                             }
                             match found {
                                 Some(t) => {
-                                    if kind == "codeunit" && is_global_triggers(&target) {
+                                    if kind == ObjKind::Codeunit && is_global_triggers(&target) {
                                         reg.has_global_triggers = true;
                                     }
                                     reg.subscribers.entry((t, event)).or_default().push(Subscriber {
@@ -243,7 +245,7 @@ impl Registry {
                                         element: args.get(3).map(|e| unquote(e)).unwrap_or_default(),
                                     })
                                 }
-                                None if kind == "codeunit" && is_global_triggers(&target) => {
+                                None if kind == ObjKind::Codeunit && is_global_triggers(&target) => {
                                     reg.has_global_triggers = true;
                                     reg.subscribers
                                         .entry((reg.global_key, event))

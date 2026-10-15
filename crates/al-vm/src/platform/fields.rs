@@ -7,7 +7,7 @@
 //! might touch them is refused (`mat.rs`).
 
 use super::mat::Entry;
-use super::objects::{Catalog, base_kind, ident, prop, string_lit, truthy};
+use super::objects::{Catalog, ident, prop, string_lit, truthy};
 use super::{Blank, Providers, blank, pos};
 use al_builtins::value::{RtType, Value};
 use al_data::TableDef;
@@ -108,7 +108,7 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let blank = Blank::new(t);
     let mut out = Vec::new();
     for (i, o) in c.objects.iter().enumerate() {
-        let (Some(tid), "table") = (o.id, base_kind(o)) else {
+        let (Some(tid), al_ir::ObjKind::Table) = (o.id, o.kind) else {
             continue;
         };
         let Some((_, schema)) = table_of(&c, i) else {
@@ -278,7 +278,7 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let blank = Blank::new(t);
     let mut out = Vec::new();
     for (i, o) in c.objects.iter().enumerate() {
-        let (Some(tid), "table") = (o.id, base_kind(o)) else {
+        let (Some(tid), al_ir::ObjKind::Table) = (o.id, o.kind) else {
             continue;
         };
         let Some((_, schema)) = table_of(&c, i) else {

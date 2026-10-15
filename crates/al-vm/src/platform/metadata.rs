@@ -6,7 +6,7 @@
 //! pinned by the corpus and are recorded in docs/probes-needed.md.
 
 use super::mat::Entry;
-use super::objects::{Catalog, base_kind, caption, entries, ident, member, prop, string_lit, truncate, truthy};
+use super::objects::{Catalog, caption, entries, ident, member, prop, string_lit, truncate, truthy};
 use super::{Providers, blank, option, pos};
 use al_builtins::value::Value;
 use al_data::TableDef;
@@ -43,8 +43,8 @@ pub(super) fn xmlport_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     entries(
         &c,
         t,
-        |o| match (o.id, base_kind(o)) {
-            (Some(id), "xmlport") => Some(vec![(1, Value::Integer(id as i32))]),
+        |o| match (o.id, o.kind) {
+            (Some(id), al_ir::ObjKind::XmlPort) => Some(vec![(1, Value::Integer(id as i32))]),
             _ => None,
         },
         |o, r| {
@@ -88,8 +88,8 @@ pub(super) fn query_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     entries(
         &c,
         t,
-        |o| match (o.id, base_kind(o)) {
-            (Some(id), "query") => Some(vec![(1, Value::Integer(id as i32))]),
+        |o| match (o.id, o.kind) {
+            (Some(id), al_ir::ObjKind::Query) => Some(vec![(1, Value::Integer(id as i32))]),
             _ => None,
         },
         |o, r| {
@@ -136,7 +136,7 @@ pub(super) fn event_subscription_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
     let mut out = Vec::new();
     for o in c.objects {
         let Some(id) = o.id else { continue };
-        if o.kind == "uncompiled codeunit" {
+        if o.is_shell_of(al_ir::ObjKind::Codeunit) {
             let mut k = blank(t);
             k[pos(t, 1)] = Value::Integer(id as i32);
             out.push(Entry::poisoned_prefix(
@@ -149,7 +149,7 @@ pub(super) fn event_subscription_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             ));
             continue;
         }
-        if o.kind != "codeunit" {
+        if !o.is_kind(al_ir::ObjKind::Codeunit) {
             continue;
         }
         for r in &o.routines {
@@ -193,21 +193,19 @@ fn subscription_row(
     if args.len() < 3 {
         return Err(format!("{}: the attribute has fewer than three arguments", what()));
     }
-    let kind = crate::events::unquote(args[0].rsplit("::").next().unwrap_or("")).to_ascii_lowercase();
-    let Some(object_type) = super::objects::object_type(&kind) else {
-        return Err(format!("{}: publisher kind `{kind}` is not listed", what()));
+    let kind_text = crate::events::unquote(args[0].rsplit("::").next().unwrap_or("")).to_ascii_lowercase();
+    let kind: al_ir::ObjKind = kind_text.parse().unwrap_or_default();
+    let Some(object_type) = super::objects::object_type(kind) else {
+        return Err(format!("{}: publisher kind `{kind_text}` is not listed", what()));
     };
     let (target, _) = crate::events::publisher_name(args[1].rsplit("::").next().unwrap_or(""));
     let publisher_id = c
-        .id_of(&kind, &target)
+        .id_of(kind, &target)
         .map_err(|e| format!("{}: publisher {e}", what()))?;
     let event = crate::events::unquote(&args[2]);
     // The publisher's own routine says which kind of event it is; a table's database triggers are
     // the platform's (event names `On{Before,After}{Insert,Modify,Delete,Rename,Validate}Event`).
-    let publisher = c
-        .objects
-        .iter()
-        .find(|x| x.id == Some(publisher_id) && base_kind(x) == kind);
+    let publisher = c.objects.iter().find(|x| x.id == Some(publisher_id) && x.kind == kind);
     let declared = publisher.and_then(|p| {
         p.routines.iter().find_map(|pr| {
             if !pr.name.eq_ignore_ascii_case(&event) {
@@ -229,14 +227,14 @@ fn subscription_row(
     let element = args.get(3).map(|e| crate::events::unquote(e)).unwrap_or_default();
     let (published, event_type) = match declared {
         Some(d) => d,
-        None if kind == "table" && is_trigger_event(&event) && element.is_empty() => (event.clone(), 0),
-        None if kind == "table"
+        None if kind == al_ir::ObjKind::Table && is_trigger_event(&event) && element.is_empty() => (event.clone(), 0),
+        None if kind == al_ir::ObjKind::Table
             && is_trigger_event(&event)
             && event.to_ascii_lowercase().ends_with("validateevent") =>
         {
             (format!("{event} - {element}"), 0)
         }
-        None if kind == "table" && is_trigger_event(&event) => {
+        None if kind == al_ir::ObjKind::Table && is_trigger_event(&event) => {
             return Err(format!(
                 "{}: the Published Function of `{event}` with the element `{element}` is not pinned",
                 what()
@@ -280,7 +278,7 @@ pub(super) fn page_action_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for o in c.objects {
-        let (Some(id), "page") = (o.id, base_kind(o)) else {
+        let (Some(id), al_ir::ObjKind::Page) = (o.id, o.kind) else {
             continue;
         };
         let mut key = blank(t);
@@ -396,7 +394,7 @@ pub(super) fn table_relations_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
     for o in c.objects {
-        let (Some(id), "table") = (o.id, base_kind(o)) else {
+        let (Some(id), al_ir::ObjKind::Table) = (o.id, o.kind) else {
             continue;
         };
         let mut key = blank(t);

@@ -77,13 +77,15 @@ impl Session {
 fn frame_line(program: &ir::Program, object: usize, frame: CallFrame) -> Option<String> {
     let obj = &program.objects[object];
     let routine = obj.routines.get(frame.routine)?;
-    let kind = match obj.kind.as_str() {
-        "codeunit" => "CodeUnit",
-        "table" => "Table",
-        "page" => "Page",
-        "pageextension" => "PageExtension",
-        "report" => "Report",
-        "reportextension" => "ReportExtension",
+    use ir::ObjKind;
+    let kind = match obj.kind {
+        _ if obj.uncompiled => return None,
+        ObjKind::Codeunit => "CodeUnit",
+        ObjKind::Table => "Table",
+        ObjKind::Page => "Page",
+        ObjKind::PageExtension => "PageExtension",
+        ObjKind::Report => "Report",
+        ObjKind::ReportExtension => "ReportExtension",
         _ => return None,
     };
     // A name with a character other than a letter, digit, underscore, blank or parenthesis is not measured.

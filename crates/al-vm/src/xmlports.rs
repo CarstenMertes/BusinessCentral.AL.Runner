@@ -135,7 +135,7 @@ impl Session {
                     .program
                     .objects
                     .iter()
-                    .position(|o| o.kind == "xmlport" && o.id == u32::try_from(*n).ok())
+                    .position(|o| o.is_kind(al_ir::ObjKind::XmlPort) && o.id == u32::try_from(*n).ok())
                 else {
                     return unsupported(format!(
                         "{id} of id {n}, which no xmlport declares (error text not pinned)"

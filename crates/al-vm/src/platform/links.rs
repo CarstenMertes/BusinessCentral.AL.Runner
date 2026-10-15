@@ -74,7 +74,7 @@ impl Session {
             .program
             .objects
             .iter()
-            .position(|o| o.kind == "table" && o.id == Some(id) && o.table.is_some())
+            .position(|o| o.is_kind(al_ir::ObjKind::Table) && o.id == Some(id) && o.table.is_some())
     }
 
     pub(crate) fn record_links(

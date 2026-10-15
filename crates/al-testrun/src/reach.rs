@@ -154,7 +154,7 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
         if lowered.dependency[o] {
             continue;
         }
-        let is_test_cu = obj.kind == "codeunit"
+        let is_test_cu = obj.is_kind(al_ir::ObjKind::Codeunit)
             && obj
                 .properties
                 .iter()
@@ -242,7 +242,7 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
     );
     let mut install = Vec::new();
     for (o, obj) in objects.iter().enumerate() {
-        if !lowered.dependency[o] || obj.kind != "codeunit" {
+        if !lowered.dependency[o] || !obj.is_kind(al_ir::ObjKind::Codeunit) {
             continue;
         }
         let install_cu = obj
@@ -338,7 +338,7 @@ pub fn report(ws: &Workspace, lowered: &Lowered) -> String {
     }
     let mut per_kind: BTreeMap<String, (usize, usize, u64)> = BTreeMap::new();
     for (&o, &(c, wt)) in &per_obj {
-        let e = per_kind.entry(objects[o].kind.clone()).or_default();
+        let e = per_kind.entry(objects[o].kind_text()).or_default();
         e.0 += 1;
         e.1 += c;
         e.2 += wt;

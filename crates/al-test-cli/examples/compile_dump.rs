@@ -64,13 +64,30 @@ fn main() {
     }
     writeln!(f, "unsupported {:?}", lowered.unsupported).unwrap();
     writeln!(f, "calls {:?}", lowered.calls).unwrap();
-    writeln!(f, "program {}", serde_json::to_string(&*lowered.program).unwrap()).unwrap();
+    writeln!(
+        f,
+        "program {}",
+        legacy_json(serde_json::to_string(&*lowered.program).unwrap())
+    )
+    .unwrap();
+}
+
+/// The JSON as it was before the object kind became typed (ADR-032 step 1): `"kind":"uncompiled table"`
+/// and no `uncompiled` field. A dump from before and after the change is comparable byte for byte.
+fn legacy_json(mut json: String) -> String {
+    for k in al_ir::ObjKind::ALL {
+        json = json.replace(
+            &format!("{{\"kind\":\"{k}\",\"uncompiled\":true,"),
+            &format!("{{\"kind\":\"uncompiled {k}\","),
+        );
+    }
+    json.replace("\"uncompiled\":false,", "")
 }
 
 fn hash_of<T: serde::Serialize + ?Sized>(v: &T) -> u64 {
     use std::hash::{Hash, Hasher};
     let mut h = std::collections::hash_map::DefaultHasher::new();
-    serde_json::to_string(v).unwrap().hash(&mut h);
+    legacy_json(serde_json::to_string(v).unwrap()).hash(&mut h);
     h.finish()
 }
 

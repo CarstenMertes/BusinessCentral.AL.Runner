@@ -200,7 +200,7 @@ impl Providers {
             .objects
             .iter()
             .map(|o| {
-                if o.kind != "table" {
+                if !o.is_kind(al_ir::ObjKind::Table) {
                     return None;
                 }
                 let id = o.id?;
@@ -249,7 +249,9 @@ impl Providers {
             let engine = self.engine();
             let mut m = HashMap::new();
             for (oi, o) in engine.program.objects.iter().enumerate() {
-                let (Some(id), "codeunit") = (o.id, o.kind.as_str()) else {
+                let (Some(id), al_ir::ObjKind::Codeunit) =
+                    (o.id, if o.uncompiled { al_ir::ObjKind::Other } else { o.kind })
+                else {
                     continue;
                 };
                 for (ri, r) in o.routines.iter().enumerate() {

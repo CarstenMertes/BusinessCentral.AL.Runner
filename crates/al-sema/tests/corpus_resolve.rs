@@ -97,6 +97,14 @@ const KNOWN_GAP_FILES: &[(&str, &str)] = &[
         "xml/XmlDocReadWrite.al",
         "XmlReadOptions.PreserveWhitespace is not in the builtin catalog (corpus bump 10)",
     ),
+    (
+        "misc/lt-inferred-behaviors/P69PartPageControl.al",
+        "the checker does not resolve a member of a part page's control (corpus bump 11)",
+    ),
+    (
+        "misc/lt-probes-needed-6/PnF18ThisInTable.al",
+        "the checker does not resolve `this` inside a table (corpus bump 11)",
+    ),
 ];
 
 /// Milestone 1: every name, member and call in every corpus body resolves,

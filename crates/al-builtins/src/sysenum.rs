@@ -83,6 +83,12 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         "reportlayouttype" => Some(&["RDLC", "Word", "Excel", "Custom"]),
         "reportformat" => Some(&["Pdf", "Word", "Excel", "Html", "Xml"]),
         "errortype" => Some(&["Client", "Internal"]),
+        // The members in the documentation's order (HttpRequestType option type). A handler formats the value
+        // (`Get`, `Head`: session/PZHttpHandler.al on the staging branch); the ordinals are not pinned and nothing may
+        // print them.
+        "httprequesttype" => Some(&[
+            "Unknown", "Get", "Delete", "Post", "Put", "Patch", "Options", "Head", "Connect", "Trace",
+        ]),
         // The platform's ordinals, probed on BC 27.5 and 29.0 (types/PWMisc.al:ClientType_OrdinalsAndNames, evaluated from
         // 0 to 30; nothing above 15): Current 0, Default 1, Windows 2, Web 3, SOAP 4, OData 5, NAS 6, Background 7,
         // Management 8, Tablet 9, Phone 10, Desktop 11, Teams 12, ODataV4 13, Api 14, ChildSession 15.

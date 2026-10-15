@@ -260,7 +260,7 @@ fn blob_of(r: Option<&mut Value>) -> Result<BlobRef, Signal> {
     }
 }
 
-fn set_stream(slot: &Value, content: LibraryValue) -> Result<(), Signal> {
+pub(crate) fn set_stream(slot: &Value, content: LibraryValue) -> Result<(), Signal> {
     match slot {
         Value::Library(_, h) => {
             *h.borrow_mut() = content;

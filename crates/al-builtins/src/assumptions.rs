@@ -236,6 +236,36 @@ registry! {
         tests: "Mfg. Dimension Management OnCheckDimValuePostingOnAfterCreateDimTableIDs: SetTable(PurchaseLine) of the temporary Purchase Line of a posting check; about 1,450 Tests-ERM and Tests-SCM tests.",
         probe: "Tmp.Insert; RR.GetTable(Tmp); RR.SetTable(Perm); Perm.IsTemporary, Perm.Get, Perm.Insert and Perm.Count afterwards; the same for a permanent RecordRef into a temporary variable.",
     },
+    HttpRelativeRequestPath => {
+        id: "http-relative-request-path",
+        assumed: "HttpClient.Get/Post/Put/Delete/Patch with a path that is not an absolute uri joins it to the client's base address like new Uri(base, path): a rooted path replaces the base path, any other joins the base path's directory.",
+        tests: "Microsoft and NP Retail code that sets SetBaseAddress and then Get('/orders').",
+        probe: "SetBaseAddress('https://example.invalid/api/v1/') then Get('orders'), Get('/orders'), Get('../x'), Get('?q=1') with a handler printing Request.Path.",
+    },
+    HttpContentTypeOfStream => {
+        id: "http-content-type-of-stream",
+        assumed: "HttpContent.WriteFrom(InStream) gives the content the Content-Type application/octet-stream, and a content nobody wrote to has text/plain; charset=utf-8. (WriteFrom(Text) gives text/plain; charset=utf-8: misc/W4XmlJsonHttp.al:WriteFromText_HeadersAndRoundTrip; a fresh content has a Content-Type: network/lt-http/HttpContent.al:ContentTypeHeaderAfterWrite.)",
+        tests: "Code that posts a stream and then reads the content headers.",
+        probe: "Content.WriteFrom(InS); Content.GetHeaders(H); H.GetValues('Content-Type', V) on a fresh content and after WriteFrom(InStream).",
+    },
+    HttpContentWriteResetsHeaders => {
+        id: "http-content-write-resets-headers",
+        assumed: "HttpContent.WriteFrom and Clear give the content a new header collection that holds only the Content-Type: headers added before are gone, and an HttpHeaders handed out before no longer shows the content's headers. (network/lt-http/HttpContent.al:ClearContent pins Clear; the re-fetch of the headers after WriteFrom in ContentTypeHeaderAfterWrite suggests the same.)",
+        tests: "Code that calls GetHeaders and adds headers before WriteFrom.",
+        probe: "Content.GetHeaders(H); H.Add('X-A','1'); Content.WriteFrom('x'); then H.Contains('X-A') and a new GetHeaders(H2).Contains('X-A').",
+    },
+    HttpHeaderRules => {
+        id: "http-header-rules",
+        assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and Accept, Authorization, Date and Content-Type values are checked; every other header .NET types (Cache-Control, Range, Via, ...) is accepted as written, and the content headers other than Content-Type and Content-Length follow the same rule as those two.",
+        tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
+        probe: "network/lt-http/HttpHeaders.al covers the measured part; wanted: Cache-Control, Range, If-Match, Content-Disposition, Content-Encoding and Expires on request and content headers.",
+    },
+    HttpHandlerEveryVersion => {
+        id: "http-handler-every-version",
+        assumed: "An [HttpClientHandler] answers HttpClient calls on every BC version and environment. (The probe PZHttpHandler.al measured it on BC 29; on 27 and 28 a request was not given to the handler, and NP Retail notes that handlers intercept only on an on-prem tier. ADR-027 owner decision 1: handler-served on all.) The response a handler leaves keeps 200 OK for what it does not set, a handler that answers false or nothing intercepts, a call answers true whatever the status, and a handler that answers true is refused (it would send).",
+        tests: "NP Retail tests with [HttpClientHandler] mocks (Entria, Adyen, EFT, Azure Key Vault, Ticket Module): about 2,000 tests; 319 in the Microsoft buckets (CrossIntercompany Connector.Send).",
+        probe: "PZHttpHandler.al on BC 27 and 28 as an on-prem service tier; a handler that sets only the status 404 (reason phrase?); a handler error.",
+    },
 }
 
 thread_local! {

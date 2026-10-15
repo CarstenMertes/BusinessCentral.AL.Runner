@@ -733,6 +733,80 @@ mod tests {
         p.loaded.apps.iter().map(|a| a.app.name.as_str()).collect()
     }
 
+    /// Owner decision 2026-10-15: a symbol package in `.alpackages` (what VS Code downloads) does not
+    /// count as found. The search goes on to the feed, for the same app.
+    #[test]
+    fn a_symbol_package_in_alpackages_does_not_stop_the_search_the_feed_supplies_the_source() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = dir.path().join(".alpackages");
+        std::fs::create_dir_all(&alpkg).unwrap();
+        let manifest = format!(
+            r#"<Package><App Id="{SA}" Name="System Application" Publisher="Microsoft" Version="27.5.46862.48827" /><Dependencies/></Package>"#
+        );
+        // What VS Code downloads: the manifest and the symbols, no AL source.
+        let zip = Builder::new()
+            .add("NavxManifest.xml", manifest.as_bytes(), true)
+            .add("SymbolReference.json", b"{}", true)
+            .finish();
+        std::fs::write(alpkg.join("System Application.app"), navx(&zip)).unwrap();
+        let p = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Skip,
+            &project(),
+        )
+        .unwrap();
+        let sa: Vec<_> = p
+            .loaded
+            .apps
+            .iter()
+            .filter(|a| a.app.name == "System Application")
+            .collect();
+        assert_eq!(sa.len(), 1, "{:?}", names(&p));
+        assert!(
+            !sa[0].path.starts_with(&alpkg),
+            "the source came from the feed, not the symbol package"
+        );
+        assert!(
+            sa[0].app.files.iter().any(|(_, t)| t.contains("codeunit")),
+            "it carries source"
+        );
+        assert!(p.loaded.skipped.is_empty(), "{:?}", p.loaded.skipped);
+    }
+
+    /// Offline, the symbol package alone leaves the dependency missing, with the reason.
+    #[test]
+    fn without_the_feed_a_symbol_package_leaves_the_dependency_missing_and_says_so() {
+        let dir = tempfile::tempdir().unwrap();
+        let alpkg = dir.path().join(".alpackages");
+        std::fs::create_dir_all(&alpkg).unwrap();
+        let manifest = format!(
+            r#"<Package><App Id="{SA}" Name="System Application" Publisher="Microsoft" Version="27.5.46862.48827" /><Dependencies/></Package>"#
+        );
+        let zip = Builder::new()
+            .add("NavxManifest.xml", manifest.as_bytes(), true)
+            .add("SymbolReference.json", b"{}", true)
+            .finish();
+        std::fs::write(alpkg.join("System Application.app"), navx(&zip)).unwrap();
+        let p = run(
+            &alpkg,
+            &fetch(&dir.path().join("cache"), false, Some("27.5")),
+            &NoNetwork,
+            MissingPolicy::Skip,
+            &project(),
+        )
+        .unwrap();
+        assert!(!names(&p).contains(&"System Application"));
+        let text: Vec<String> = p.loaded.skipped.iter().map(|e| e.to_string()).collect();
+        assert!(
+            text.iter()
+                .any(|t| t.contains("System Application") && t.contains("without AL source")),
+            "{text:?}"
+        );
+    }
+
     #[test]
     fn missing_test_libraries_are_fetched_by_range_cached_and_resolved_with_their_dependency() {
         let dir = tempfile::tempdir().unwrap();

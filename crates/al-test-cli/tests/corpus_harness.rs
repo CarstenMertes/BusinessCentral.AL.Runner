@@ -346,13 +346,14 @@ fn markdown_summary_is_written() {
     let shared = all_versions();
     assert_eq!(shared.code, 0, "{}", shared.err);
     let md = std::fs::read_to_string(shared.file("pass-rate", "29", "md")).unwrap();
-    assert!(md.contains("| **overall** | 5593 |"), "{md}");
+    assert!(md.starts_with("- BC 29.0: ") && md.contains(" of 5593 ("), "{md}");
+    assert_eq!(md.lines().count(), 1, "one line per version: {md}");
     // ... and `--markdown` of a single-version run writes the file it is given.
     let dir = tempfile::tempdir().unwrap();
     let one = dir.path().join("s.md");
     let (code, _, err) = cli(&["--markdown", one.to_str().unwrap(), "--codeunit", SMALL_CU]);
     assert_eq!(code, 0, "{err}");
-    assert!(std::fs::read_to_string(one).unwrap().contains("| **overall** |"));
+    assert!(std::fs::read_to_string(one).unwrap().contains(" passed, "));
 }
 
 #[test]

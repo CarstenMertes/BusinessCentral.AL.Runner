@@ -9,7 +9,8 @@ rust-version.workspace = true
 # On by default. The tests that run the built `al-test-cli` over the whole pinned corpus
 # (`corpus_harness`, `dev_tooling`) need this feature. CI's debug test job builds with
 # `--no-default-features` and the release job runs them against the release binary, about ten
-# times faster than the unoptimised one; the CI workflow explains the split. Never turn it off
+# times faster than the unoptimised one; the CI workflow explains the split, and check.sh splits
+# the tests the same way. Never turn it off
 # to skip a failing test.
 default = ["cli-e2e"]
 cli-e2e = []

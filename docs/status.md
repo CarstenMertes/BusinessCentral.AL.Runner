@@ -4,7 +4,8 @@ As of `main` on 2026-10-14. Oracles: BC 27.5, 28.5 and 29.0 (corpus CI runs 3853
 38536067343 and 38537727198), corpus `6219bf4`.
 Regenerate the numbers with
 `./target/release/al-test-cli --root . --markdown pass-rate.md`; CI uploads
-the same report as a `pass-rate-<date>` artifact.
+the same report as a `pass-rate-<date>` artifact. The markdown is one line per BC
+version (counts, rate, total time). Per-area counts and phase times are in `--json`.
 
 ## BC versions (ADR-015)
 

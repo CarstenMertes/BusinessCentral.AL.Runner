@@ -476,6 +476,15 @@ impl Tree {
         }
     }
 
+    /// Whether an action of the page is promoted to category `cat` the legacy way (`PromotedCategory = cat`).
+    fn promotes_to(&self, cat: &str) -> bool {
+        self.nodes.iter().any(|n| {
+            n.section.properties().any(|p| {
+                p.name().eq_ignore_ascii_case("PromotedCategory") && p.value_text().trim().eq_ignore_ascii_case(cat)
+            })
+        })
+    }
+
     fn find_node(&self, name: &str) -> Option<usize> {
         self.nodes.iter().position(|n| n.name.eq_ignore_ascii_case(name))
     }
@@ -617,11 +626,19 @@ impl Tree {
         for op in &pending {
             let kind = op.section.name().to_ascii_lowercase();
             let target = op.section.args().first().cloned().unwrap_or_default();
+            // A legacy promoted action (`PromotedCategory = Category4`) is in the implicit group
+            // `Category_Category4`; an extension may add to it (Base Application's "Email Address Lookup"
+            // extension; real BC compiles it). Nothing pins the group beyond being an anchor.
+            let legacy = target
+                .strip_prefix("Category_")
+                .or_else(|| target.strip_prefix("category_"))
+                .is_some_and(|cat| self.promotes_to(cat));
             if op.in_actions
-                && ["addafter", "addbefore"].contains(&kind.as_str())
-                && IMPLICIT_PROMOTED_CATEGORIES
-                    .iter()
-                    .any(|c| c.eq_ignore_ascii_case(&target))
+                && (["addafter", "addbefore"].contains(&kind.as_str())
+                    && IMPLICIT_PROMOTED_CATEGORIES
+                        .iter()
+                        .any(|c| c.eq_ignore_ascii_case(&target))
+                    || legacy)
                 && self.find_node(&target).is_none()
             {
                 let idx = self.nodes.len();
@@ -680,7 +697,11 @@ impl Tree {
         let mut controls = Vec::new();
         fn emit(slots: &mut [Option<Node>], idx: usize, parent: Option<usize>, out: &mut Vec<RawControl>) {
             let Some(n) = slots[idx].take() else { return };
+            // An anchor is no control; what was added into it is (`addlast(Category_Category4)`).
             if n.anchor_only {
+                for c in n.children {
+                    emit(slots, c, parent, out);
+                }
                 return;
             }
             let here = out.len();
@@ -1083,6 +1104,22 @@ mod tests {
         let l = merged(base, &[ext]);
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
         assert_eq!(names(&l), ["A", "Act", "Act_Promoted"]);
+    }
+
+    // A legacy promoted action (`Promoted = true; PromotedCategory = Category4`) puts the action in the implicit
+    // group `Category_Category4`; Base Application's "Email Address Lookup" extension adds actionrefs to it with
+    // `addlast(Category_Category4)`. Real BC compiles it (issue 40). The group is an anchor; the actionrefs are controls.
+    #[test]
+    fn an_extension_adds_to_the_implicit_group_of_a_legacy_promoted_category() {
+        let base = "page 50100 P { layout { area(Content) { field(A; Rec.A) { } } } actions { area(Processing) { action(Act) { Promoted = true; PromotedCategory = Category4; } } } }";
+        let ext = "pageextension 50101 E extends P { actions { addlast(Category_Category4) { actionref(Act_Promoted; Act) { } } } }";
+        let l = merged(base, &[ext]);
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        assert_eq!(names(&l), ["A", "Act", "Act_Promoted"]);
+        // A category no action of the page is promoted to stays refused.
+        let ext = "pageextension 50101 E extends P { actions { addlast(Category_Category7) { actionref(Act_Promoted; Act) { } } } }";
+        let l = merged(base, &[ext]);
+        assert!(l.reasons.join(";").contains("Category_Category7"), "{:?}", l.reasons);
     }
 
     // An area name nothing pins is still refused.

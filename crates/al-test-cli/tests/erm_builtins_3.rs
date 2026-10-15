@@ -85,7 +85,9 @@ fn read_from_text_with_default_options_reads_a_document_without_ignorable_white_
 }
 
 #[test]
-fn media_import_stream_with_a_file_name_is_refused_with_its_reason() {
+fn media_import_stream_with_a_file_name_is_lowered() {
+    // Base Application's Document Attachment calls it (ImportStream(Stream, '', '', FileName)); what the file
+    // name changes is visible only in the Tenant Media row, which is not read from the media store (ADR-017).
     let (l, oi) = compile(
         "procedure Import(var IS: InStream) var R: Record \"B3 Row\"; begin R.Pic.ImportStream(IS, 'd', 'image/png', 'f.png'); end;",
     );
@@ -94,10 +96,43 @@ fn media_import_stream_with_a_file_name_is_refused_with_its_reason() {
         .iter()
         .position(|r| r.name == "Import")
         .unwrap();
-    let why = l.unsupported[oi][ri].first().cloned().unwrap_or_default();
-    assert!(
-        why.contains("Media.ImportStream") && why.contains("not pinned"),
-        "{why}"
-    );
-    assert!(!why.contains("is not implemented"), "{why}");
+    assert!(l.unsupported[oi][ri].is_empty(), "{:?}", l.unsupported[oi][ri]);
+}
+
+fn refusal_of(routine_body: &str) -> String {
+    let (l, oi) = compile(routine_body);
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "F")
+        .unwrap();
+    l.unsupported[oi][ri].first().cloned().expect("F is refused")
+}
+
+// No corpus test calls MediaSet.ImportFile, Media.ImportFile or RecordRef.Copy, or names ClientType::Teams: each is
+// refused with a reason that says so (hard rules 3 and 4; docs/probes-needed.md).
+#[test]
+fn builtins_and_members_no_corpus_test_pins_say_so_when_refused() {
+    for (body, needle) in [
+        (
+            "procedure F() var R: Record \"B3 Row\"; begin R.Pic.ImportFile('x.png', 'd'); end;",
+            "Media.ImportFile",
+        ),
+        (
+            "procedure F() var R: Record \"B3 Row\"; RR: RecordRef; begin RR.GetTable(R); RR.Copy(RR); end;",
+            "RecordRef.Copy",
+        ),
+        (
+            "procedure F(): Boolean begin exit(Session.CurrentClientType() = ClientType::Teams); end;",
+            "ClientType::Teams",
+        ),
+    ] {
+        let why = refusal_of(body);
+        assert!(why.contains(needle), "{needle}: {why}");
+        assert!(why.contains("not pinned"), "{needle}: {why}");
+        assert!(
+            !why.contains("is not implemented") && !why.contains("is not lowered yet"),
+            "{needle}: {why}"
+        );
+    }
 }

@@ -5,7 +5,9 @@
 set -euo pipefail
 bin="$1"
 here="$(cd "$(dirname "$0")" && pwd)"
-"$bin" --version | tee /dev/stderr | grep -Eq '^alrunner [0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)? \(([0-9a-f]+|unknown)\)$'
+version="$("$bin" --version | tr -d '\r')"
+echo "$version" >&2
+echo "$version" | grep -Eq '^alrunner [0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.]+)? \(([0-9a-f]+|unknown)\)$'
 out="$("$bin" test "$here/smoke/App" "$here/smoke/Test" --no-download --no-test-data --verbose 2>&1)" || { echo "$out"; echo "smoke test failed" >&2; exit 1; }
 echo "$out"
 echo "$out" | grep -q 'AddAddsTwoNumbers'

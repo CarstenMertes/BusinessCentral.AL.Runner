@@ -319,6 +319,15 @@ impl Providers {
                 let o = &objects[&id];
                 let mut row = blank(t);
                 row[pos(t, 1)] = Value::Guid(id);
+                // The four argument import: what the file name changes in this row (its File Name, and
+                // the Description and Mime Type the platform derives from it when they are empty) is not
+                // pinned (docs/probes-needed.md, `Media.ImportStream(.., FileName)`).
+                if !o.file_name.is_empty() {
+                    return mat::Entry::poisoned(
+                        row,
+                        "a Tenant Media row of a media imported with a file name: its File Name, Description and Mime Type are not pinned".into(),
+                    );
+                }
                 row[pos(t, 2)] = Value::Text(o.description.clone());
                 let blob = al_builtins::stream::new_blob();
                 al_builtins::stream::write_bytes(&blob, &o.bytes);

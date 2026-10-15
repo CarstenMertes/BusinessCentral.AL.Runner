@@ -991,3 +991,20 @@ fn record_ref_get_by_system_id_ignores_the_filters_and_a_never_opened_ref_answer
     );
     assert_eq!(text(r), "Yes|Descr: other|No0");
 }
+
+// `Find('=<>')` names the same three directions as the pinned `Find('=><')` (pageupdate/TestPageUpdateGoneRow.al:423):
+// the characters of Which are a set, so their order does not matter (Microsoft's tests write `'=<>'`; documented
+// assumption, docs/probes-needed.md). Issue 43.
+#[test]
+fn find_with_the_directions_in_another_order_is_the_same_find() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; s: Text; begin
+            R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'C'; R.Insert();
+            R.\"No.\" := 'A'; s := Format(R.Find('=<>')) + R.\"No.\";
+            R.\"No.\" := 'C'; s += Format(R.Find('<>=')) + R.\"No.\";
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesAYesC");
+}

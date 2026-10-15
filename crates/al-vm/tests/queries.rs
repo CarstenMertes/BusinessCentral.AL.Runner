@@ -1522,11 +1522,11 @@ fn on_before_open_sees_the_filters_and_the_variables_live_with_the_query() {
     );
 }
 
-// Base App's query 1302 groups with no OrderBy; query/TestQueryAggregation.al always orders its
-// groups, so the order of several groups is not pinned. One group (or none) has no order to get
-// wrong (record/TestSalesQuoteVatRounding.al:67-79 reads a single VAT % group).
+// Base App's query 1302 groups with no OrderBy. Several groups come sorted by their grouping columns
+// (corpus query/PWQueryContracts.al:165-178); one group (or none) has no order to get wrong
+// (record/TestSalesQuoteVatRounding.al:67-79 reads a single VAT % group).
 #[test]
-fn groups_without_an_order_by_are_refused_only_when_there_are_several() {
+fn groups_without_an_order_by_come_sorted_by_their_grouping_columns() {
     let r = run(&with(
         "",
         "procedure F(): Text
@@ -1550,7 +1550,7 @@ fn groups_without_an_order_by_are_refused_only_when_there_are_several() {
             exit(Format(Q.Read()));
         end;",
     ));
-    assert!(unsupported(r).contains("group order"));
+    assert_eq!(text(r), "Yes");
 }
 
 // query/TestQueryCrossJoinContracts.al:162-226: SqlJoinType = CrossJoin without a DataItemLink gives the

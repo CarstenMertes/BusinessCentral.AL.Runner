@@ -1,7 +1,7 @@
 {
   "corpus_commit": "2c09ecd4c10a4a7146db05441bf6e5adffb65261",
-  "overloads": 1728,
-  "pinned": 906,
+  "overloads": 1729,
+  "pinned": 907,
   "types": [
     {
       "methods": [
@@ -10759,6 +10759,19 @@
       "overloads": 20,
       "pinned": 2,
       "type": "XmlProcessingInstruction"
+    },
+    {
+      "methods": [
+        {
+          "id": "XmlReadOptions.PreserveWhitespace#1",
+          "pinned": true,
+          "signature": "XmlReadOptions.PreserveWhitespace inst (Value: Boolean)",
+          "site": "misc/W4XmlJsonHttp.al:18"
+        }
+      ],
+      "overloads": 1,
+      "pinned": 1,
+      "type": "XmlReadOptions"
     },
     {
       "methods": [

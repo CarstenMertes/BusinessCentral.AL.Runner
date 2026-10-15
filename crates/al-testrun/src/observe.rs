@@ -480,6 +480,7 @@ impl Walk<'_> {
             }
             Expr::ThisInstance => Ok(()),
             Expr::Refused(_) => Err("refuses when it runs".into()),
+            Expr::Fail { .. } => Ok(()),
             Expr::BaseInstance => Err("uses the base page or report".into()),
             Expr::EnumImpl { .. } => Err("creates the codeunit an enum value implements".into()),
             Expr::Control { .. } => Err("reads a control of a test page".into()),

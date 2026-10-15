@@ -11,6 +11,24 @@ It is a Rust rewrite of the ideas behind
 That C# runner executes Microsoft's compiled code; this runtime compiles and
 runs AL source itself. The original spike brief and report are in `docs/history/`.
 
+## Why it is built on the language, not on BC's internals
+
+AL Runner v3 reproduces what AL code can observe: values, errors, data, and the order of
+triggers and events. That surface is the public contract of the language. Microsoft cannot
+change it without a breaking change for every partner, so it changes slowly and visibly,
+behind versions and obsolete markers.
+
+AL Runner v2 ran Microsoft's compiled code on top of BC's internals: the C# runtime, its
+metadata and session classes, and patches into them. Microsoft can change those in any
+hotfix or release without notice, so a v2 fix can stop working with the next update, and
+v2 needed one engine per BC minor version. v3 is one binary for all supported versions.
+
+Where the observable behavior does differ between BC versions (an error text, a system
+table column), the corpus measures it on every major and pins it per version, so a change
+in a new BC release shows up as a failing corpus case, not as a mystery. The one part that
+still loads Microsoft's internals is the optional .NET helper for `DotNet` code, and it is
+kept small on purpose.
+
 ## What "correct" means here
 
 Correctness is defined by real Business Central, not by documentation. The

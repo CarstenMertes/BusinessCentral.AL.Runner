@@ -25,3 +25,7 @@
 # XmlWriteOptions has no scraped methods. Probe: xml/TestXmlDocumentWriteToOutStreamContracts.al
 # `Options.PreserveWhitespace(true);` compiles on BC 27.5 and changes what WriteTo writes.
 + XmlWriteOptions.PreserveWhitespace inst (Value: Boolean)
+
+# XmlReadOptions has no scraped methods either. Probe: misc/W4XmlJsonHttp.al (W4 Xml Options Tests.Read)
+# `Options.PreserveWhitespace(Preserve);` compiles on BC 27.5 and 29.0.
++ XmlReadOptions.PreserveWhitespace inst (Value: Boolean)

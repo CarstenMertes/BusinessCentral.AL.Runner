@@ -69,15 +69,24 @@ fn test_field_with_an_error_info_that_holds_does_nothing() {
 }
 
 #[test]
-fn test_field_with_an_error_info_that_fails_is_refused() {
-    // What BC raises from the ErrorInfo (its message, code, collectible) is not pinned.
-    for body in [
-        "Rec.TestField(Name, ErrorInfo.Create()); exit('ran');",
-        "Rec.TestField(Name, 'y', ErrorInfo.Create()); exit('ran');",
+fn test_field_with_an_error_info_that_fails_raises_the_plain_test_field_error() {
+    // types/PUTestFieldErrorInfo.al (BC 27.5 and 29.0): the same text and code as the form without an ErrorInfo,
+    // whatever Message the ErrorInfo carries.
+    for (body, text_start) in [
+        (
+            "Rec.TestField(Name, ErrorInfo.Create('custom')); exit('ran');",
+            "Name must have a value in",
+        ),
+        (
+            "Rec.TestField(Name, 'y', ErrorInfo.Create()); exit('ran');",
+            "Name must be equal to 'y'",
+        ),
     ] {
-        let r = text(body);
-        match r {
-            Err(Signal::Unsupported(why)) => assert!(why.contains("ErrorInfo"), "{why}"),
+        match text(body) {
+            Err(Signal::Error(e)) => {
+                assert!(e.message.starts_with(text_start), "{}", e.message);
+                assert_eq!(e.code, "TestField");
+            }
             other => panic!("{body}: {other:?}"),
         }
     }

@@ -326,6 +326,20 @@ impl Session {
         }
     }
 
+    /// The instance of reportextension `ext` that belongs to report variable `base`: made at first use and kept
+    /// with the variable, so the extension's globals and added data items keep their state across calls, `SaveAs`
+    /// and `Execute`; a `Run` and a `Clear` drop it (reportext/W3RpExtProcedures.al:ExtensionProcedure_*).
+    /// The first use of the variable runs `OnInitReport`, as a call of any of its procedures does.
+    pub(crate) fn report_extension_instance(&mut self, base: &Inst, ext: usize) -> Result<Inst, Signal> {
+        let (base, _) = self.report_instance(Some(Value::Codeunit(base.clone())), false)?;
+        if let Some((_, i)) = base.borrow().exts.iter().find(|(e, _)| *e as usize == ext) {
+            return Ok(i.clone());
+        }
+        let i = self.extension_instance(ext, &base);
+        base.borrow_mut().exts.push((ext as u32, i.clone()));
+        Ok(i)
+    }
+
     /// The schema of `inst`'s object; refuses a report the runtime cannot run.
     fn report_schema(&self, inst: &Inst) -> Result<Schema, Signal> {
         let object = inst.borrow().object as usize;
@@ -591,6 +605,7 @@ impl Session {
         let globals = std::mem::take(&mut fresh.borrow_mut().globals);
         inst.borrow_mut().globals = globals;
         inst.borrow_mut().rerun = true;
+        inst.borrow_mut().exts.clear();
     }
 
     // ------------------------------------------------------------------ table views
@@ -811,7 +826,7 @@ impl Session {
         // names for the base items point at the report's own records.
         let mut exts = Vec::new();
         for &e in &report.extensions {
-            let ext_inst = self.extension_instance(e, inst);
+            let ext_inst = self.report_extension_instance(inst, e)?;
             let eir = self.engine.program.objects[e]
                 .report_ext
                 .as_ref()
@@ -1098,8 +1113,22 @@ impl Session {
             self.ret_used = true;
             more = !matches!(self.record_op("Next", &rec, &mut [])?, Value::Integer(0));
         }
+        // `OnPostDataItem` of the base, with the extensions' OnBefore/OnAfterPostDataItem around it
+        // (reportext/W3RpExtProcedures.al:SaveAs_AddedItem_RunsAfterTheParentsNestedItems_Order, BC 27.5 and 29.0).
+        for &(k, m) in &modifies {
+            if let Some(t) = m.before_post {
+                let (ext_inst, e) = &run.exts[k];
+                self.call(*e, t, ext_inst.clone(), Vec::new())?;
+            }
+        }
         if let Some(t) = item.on_post {
             self.call(object, t, owner.clone(), Vec::new())?;
+        }
+        for &(k, m) in &modifies {
+            if let Some(t) = m.after_post {
+                let (ext_inst, e) = &run.exts[k];
+                self.call(*e, t, ext_inst.clone(), Vec::new())?;
+            }
         }
         Ok(false)
     }

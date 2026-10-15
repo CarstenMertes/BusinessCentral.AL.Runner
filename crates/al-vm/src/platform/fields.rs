@@ -122,8 +122,8 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             if f.id == 2_000_000_005 {
                 continue;
             }
-            // A field a table extension moved to another app (`ObsoleteState = Moved`, Business Foundation's "Source
-            // Code" extension fields) has no row (probe agent's measurement, corpus staging branch).
+            // A field with ObsoleteState = Moved has no row (Pending and Removed have one): the lookup finds nothing
+            // (types/PWMisc.al:FieldTable_MovedAndPendingField, BC 27.5 and 29.0).
             if f.properties
                 .iter()
                 .any(|(k, v)| k.eq_ignore_ascii_case("ObsoleteState") && ident(v.trim()).eq_ignore_ascii_case("Moved"))

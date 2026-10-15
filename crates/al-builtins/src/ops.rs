@@ -396,29 +396,51 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::DateTime)
                 .ok_or_else(|| Signal::Unsupported("DateTime out of range (error text not pinned yet)".into()));
         }
-        // Time + an Integer adds milliseconds (json/TestProbeJsonContracts.al:ValueTypes_DurationTimeDateTime
-        // `100000T + 123`; text/TestProbeTextDateFormatContracts.al:387 `120000T + 7`). Past midnight is not pinned.
-        (V::Time(a), n) | (n, V::Time(a)) if op == Arith::Add && *a > 0 && int_of(n).is_some() => {
-            return int_of(n)
-                .and_then(|n| a.checked_add(n))
-                .filter(|t| (1..=86_400_000).contains(t))
-                .map(V::Time)
-                .ok_or_else(|| Signal::Unsupported("Time moved outside the day (not pinned)".into()));
+        // Time +/- an Integer or a Duration moves by that many milliseconds and wraps around midnight; Time - Time is
+        // a Duration; the undefined time (0T) cannot be moved ("Adding to an undefined (0T) time." for both
+        // directions of a Time and a number, "Subtracting from an undefined (0T) time." for 0T - Time, code
+        // InvalidTime); a Decimal with a fraction raises the conversion error (types/PUTimeArithmetic.al, BC 27.5
+        // and 29.0; json/TestProbeJsonContracts.al:ValueTypes_DurationTimeDateTime `100000T + 123`).
+        (V::Time(a), n) | (n, V::Time(a))
+            if matches!(op, Arith::Add | Arith::Sub)
+                && (op == Arith::Add || matches!(l, V::Time(_)))
+                && (int_of(n).is_some() || matches!(n, V::Duration(_))) =>
+        {
+            if *a == 0 {
+                return raise("Adding to an undefined (0T) time.", "InvalidTime");
+            }
+            let ms = match n {
+                V::Duration(d) => *d,
+                other => int_of(other).expect("an integer"),
+            };
+            let moved = if op == Arith::Add {
+                (a - 1).checked_add(ms)
+            } else {
+                (a - 1).checked_sub(ms)
+            };
+            return moved
+                .map(|m| V::Time(m.rem_euclid(86_400_000) + 1))
+                .ok_or_else(|| Signal::Unsupported("Time moved by an amount that overflows (not pinned)".into()));
         }
-        // Time - Time is a Duration in milliseconds and Time - Integer moves back by that many milliseconds; both measured
-        // by the probe types/PUTimeArithmetic.al on the corpus staging branch, not in the pinned corpus yet. A result outside
-        // the day and the undefined Time are refused.
-        (V::Time(a), V::Time(b)) if op == Arith::Sub && *a > 0 && *b > 0 => {
-            crate::assumptions::assume(crate::assumptions::Assumption::TimeSubtraction);
+        (V::Time(a), V::Decimal(d)) | (V::Decimal(d), V::Time(a))
+            if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() =>
+        {
+            return raise(
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.Int32.",
+                    d.normalize()
+                ),
+                "ConversionCast",
+            );
+        }
+        (V::Time(a), V::Time(b)) if op == Arith::Sub => {
+            if *a == 0 {
+                return raise("Subtracting from an undefined (0T) time.", "InvalidTime");
+            }
+            if *b == 0 {
+                return unsupported("subtraction of an undefined Time from a Time (not pinned)".to_string());
+            }
             return Ok(V::Duration(a - b));
-        }
-        (V::Time(a), n) if op == Arith::Sub && *a > 0 && int_of(n).is_some() => {
-            crate::assumptions::assume(crate::assumptions::Assumption::TimeSubtraction);
-            return int_of(n)
-                .and_then(|n| a.checked_sub(n))
-                .filter(|t| (1..=86_400_000).contains(t))
-                .map(V::Time)
-                .ok_or_else(|| Signal::Unsupported("Time moved outside the day (not pinned)".into()));
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
@@ -627,6 +649,52 @@ mod tests {
         Value::Decimal(Decimal::from_str(s).unwrap())
     }
 
+    // types/PUTimeArithmetic.al: a Time moves by milliseconds and wraps around midnight; 0T cannot be moved.
+    #[test]
+    fn time_arithmetic_wraps_and_refuses_the_undefined_time() {
+        let noon = Value::Time(43_200_001);
+        assert!(matches!(
+            arith(Arith::Sub, &noon, &Value::Integer(1000)),
+            Ok(Value::Time(43_199_001))
+        ));
+        // 23:59:59.999 + 1 ms is 00:00:00.
+        assert!(matches!(
+            arith(Arith::Add, &Value::Time(86_400_000), &Value::Integer(1)),
+            Ok(Value::Time(1))
+        ));
+        assert!(matches!(
+            arith(Arith::Sub, &noon, &Value::Duration(3_600_000)),
+            Ok(Value::Time(39_600_001))
+        ));
+        assert!(matches!(
+            arith(Arith::Sub, &Value::Time(46_800_001), &noon),
+            Ok(Value::Duration(3_600_000))
+        ));
+        for (op, l, r, text) in [
+            (
+                Arith::Sub,
+                Value::Time(0),
+                Value::Integer(1),
+                "Adding to an undefined (0T) time.",
+            ),
+            (
+                Arith::Sub,
+                Value::Time(0),
+                noon.clone(),
+                "Subtracting from an undefined (0T) time.",
+            ),
+        ] {
+            let Err(Signal::Error(e)) = arith(op, &l, &r) else {
+                panic!("expected an error")
+            };
+            assert_eq!((e.message.as_str(), e.code.as_str()), (text, "InvalidTime"));
+        }
+        let Err(Signal::Error(e)) = arith(Arith::Add, &noon, &d("1500.5")) else {
+            panic!("expected an error")
+        };
+        assert_eq!(e.code, "ConversionCast");
+    }
+
     // corpus types/PXEnumRecordRef.al:74-108, :137-196: an Enum of another
     // type and an Integer become the target enum's value of that ordinal, a lacking ordinal kept.
     #[test]
@@ -686,33 +754,6 @@ mod tests {
         ));
         assert!(matches!(
             convert(Value::BigInteger(i64::MAX), &members()),
-            Err(Signal::Unsupported(_))
-        ));
-    }
-
-    // Microsoft's tests subtract Times (Time - Time in 700 tests, Time - Integer in 530); the probe
-    // types/PUTimeArithmetic.al on the corpus staging branch asks for the pinned form.
-    #[test]
-    fn time_minus_time_is_a_duration_and_time_minus_integer_a_time() {
-        let t = |ms: i64| Value::Time(ms + 1);
-        assert!(matches!(
-            arith(Arith::Sub, &t(13 * 3_600_000), &t(12 * 3_600_000)),
-            Ok(Value::Duration(3_600_000))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(12 * 3_600_000), &t(13 * 3_600_000)),
-            Ok(Value::Duration(-3_600_000))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(5000), &Value::Integer(1000)),
-            Ok(Value::Time(4001))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(500), &Value::Integer(1000)),
-            Err(Signal::Unsupported(_))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &Value::Time(0), &t(5)),
             Err(Signal::Unsupported(_))
         ));
     }

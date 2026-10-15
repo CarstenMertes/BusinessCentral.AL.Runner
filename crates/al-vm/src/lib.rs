@@ -1396,9 +1396,19 @@ impl Session {
                 ir::Arg::Ref(p) => self.read(p, f)?,
             });
         }
+        // A value passed to a `var` parameter: the lowering does that only for `CurrFieldNo`, which is no
+        // place. Writing it back is not pinned (docs/probes-needed.md), so a callee that changes it refuses.
+        let by_var = &self.engine.program.objects[object].routines[routine].by_var;
+        let passed: Vec<(usize, Value)> = args
+            .iter()
+            .enumerate()
+            .filter(|(i, a)| matches!(a, ir::Arg::Value(_)) && by_var.get(*i).copied().unwrap_or(false))
+            .map(|(i, _)| (i, values[i].clone()))
+            .collect();
         let result = self.call(object, routine, inst, values);
         if let Err(Signal::Error(_)) = &result {
             if let Some(finals) = self.error_finals.take() {
+                changed_value_arg(&passed, &finals)?;
                 for (a, v) in args.iter().zip(finals) {
                     if let ir::Arg::Ref(p) = a {
                         self.write(p, v, f)?;
@@ -1415,6 +1425,7 @@ impl Session {
             (Ok((_, finals)), true) => (Value::Boolean(true), finals),
             (r, _) => r?,
         };
+        changed_value_arg(&passed, &finals)?;
         for (a, v) in args.iter().zip(finals) {
             if let ir::Arg::Ref(p) = a {
                 self.write(p, v, f)?;
@@ -2023,6 +2034,23 @@ impl Session {
         self.next_guid += 1;
         raw_guid_for(self.guid_seed, self.next_guid)
     }
+}
+
+/// Refuses when the callee changed a value that was passed to one of its `var` parameters (`passed`: the
+/// position and the value before the call); `finals` are the parameters' values when it returned.
+fn changed_value_arg(passed: &[(usize, Value)], finals: &[Value]) -> Result<(), Signal> {
+    for (i, before) in passed {
+        let same = finals
+            .get(*i)
+            .is_some_and(|after| ops::compare(before, after).ok() == Some(std::cmp::Ordering::Equal));
+        if !same {
+            return Err(Signal::Unsupported(
+                "CurrFieldNo passed to a var parameter was changed by the callee: whether that writes CurrFieldNo is not pinned (docs/probes-needed.md)"
+                    .into(),
+            ));
+        }
+    }
+    Ok(())
 }
 
 fn base_slot_missing(slot: usize) -> Signal {

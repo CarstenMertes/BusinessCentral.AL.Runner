@@ -19,6 +19,15 @@ table 50900 "ALT Head"
         end;
         exit(Picked);
     end;
+    procedure Search(): Integer
+    begin
+        OnBeforeSearch(CurrFieldNo);
+        exit(CurrFieldNo);
+    end;
+    [IntegrationEvent(false, false)]
+    local procedure OnBeforeSearch(var CallingFieldNo: Integer)
+    begin
+    end;
 }
 table 50901 "ALT Line"
 {
@@ -88,6 +97,11 @@ fn a_field_of_a_record_a_procedure_returns_is_read() {
 
 /// Why `routine` of object `object` in `src` cannot be lowered ("" when it lowers).
 fn refusal(src: &str, object: &str, routine: &str) -> String {
+    lowered(src, object, routine).0
+}
+
+/// The lowering refusal of `routine` ("" when it lowers) and its lowered body, as debug text.
+fn lowered(src: &str, object: &str, routine: &str) -> (String, String) {
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
             id: "a".into(),
@@ -104,7 +118,10 @@ fn refusal(src: &str, object: &str, routine: &str) -> String {
         .iter()
         .position(|r| r.name.eq_ignore_ascii_case(routine))
         .unwrap();
-    l.unsupported[oi][ri].first().cloned().unwrap_or_default()
+    (
+        l.unsupported[oi][ri].first().cloned().unwrap_or_default(),
+        format!("{:?}", l.program.objects[oi].routines[ri].body),
+    )
 }
 
 /// Base Application's "Purchase Invoice" calls `CurrPage.PurchLines.Page.ForceTotalsCalculation()`, and
@@ -155,6 +172,57 @@ fn assigning_curr_field_no_refuses_only_when_it_runs() {
             exit(H.Lookup(true));
         end;"#);
     match reached {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("CurrFieldNo") && why.contains("not pinned"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+/// Base Application's "Account Schedule" report sets `RequestOptionsPage.Caption := ..` when a
+/// financial report is named (86 Tests-ERM tests reach it). The corpus pins the Caption setter of a page
+/// (handlers/TestPageCaption_Page.al:44), not of a request page: the assignment lowers and refuses when it
+/// runs, so code that does not reach it runs.
+#[test]
+fn a_request_page_caption_assignment_refuses_only_when_it_runs() {
+    let src = r#"
+report 50300 "ALT RQ"
+{
+    ProcessingOnly = true;
+    requestpage { layout { area(Content) { field(OptF; Opt) { ApplicationArea = All; } } } }
+    var Opt: Integer;
+    local procedure Named(Name: Text) begin if Name <> '' then RequestOptionsPage.Caption := Name; end;
+}
+"#;
+    let (why, body) = lowered(src, "ALT RQ", "Named");
+    assert_eq!(why, "");
+    assert!(body.contains("Refused(") && body.contains("not pinned"), "{body}");
+}
+
+/// Base Application's "Sales Header".ShouldSearchForCustomerByName passes `CurrFieldNo` to the `var
+/// CallingFieldNo` parameter of its OnBeforeShouldSearchForCustomerByName publisher (174 Tests-ERM tests
+/// reach it). When nothing changes the parameter, the call is the same as with any variable; a subscriber
+/// that writes it would write CurrFieldNo, which no corpus test pins (docs/probes-needed.md): that refuses
+/// when it happens.
+#[test]
+fn curr_field_no_passed_to_a_var_parameter_runs_until_a_subscriber_changes_it() {
+    let unchanged = run(r#"
+        procedure F(): Integer
+        var H: Record "ALT Head";
+        begin
+            exit(H.Search());
+        end;"#);
+    assert!(matches!(unchanged, Ok(Value::Integer(0))), "{unchanged:?}");
+    let changed = run(r#"
+        procedure F(): Integer
+        var H: Record "ALT Head";
+        begin
+            exit(H.Search());
+        end;
+        [EventSubscriber(ObjectType::Table, Database::"ALT Head", 'OnBeforeSearch', '', false, false)]
+        local procedure Sub(var CallingFieldNo: Integer)
+        begin
+            CallingFieldNo := 5;
+        end;"#);
+    match changed {
         Err(Signal::Unsupported(why)) => assert!(why.contains("CurrFieldNo") && why.contains("not pinned"), "{why}"),
         other => panic!("{other:?}"),
     }

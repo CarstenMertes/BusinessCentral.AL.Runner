@@ -2129,7 +2129,8 @@ fn is_stmt(k: SyntaxKind) -> bool {
 /// - `FieldRef.Value`: corpus recordref/TestRecordRefCRUD.al:20-23.
 /// - `Page.Editable`, `Page.PromptMode`: handlers/TestPageModalNewRowLine_Objects.al:69;
 ///   `Page.Caption`: handlers/TestPageCaption_Page.al:44; `Page.LookupMode`: the property of the
-///   same name on a page.
+///   same name on a page. `RequestPage.Caption` is the same property of a request page (Base
+///   Application's "Account Schedule"); what it sets is not pinned, so it refuses when it runs.
 /// - `Notification.Id`, `.Message`, `.Scope`: handlers/TestNotificationHandler.al:21 and :55.
 /// - `Record.ReadIsolation`, `RecordRef.ReadIsolation` and `.SecurityFiltering`: Base
 ///   Application (`Item.ReadIsolation := IsolationLevel::ReadUncommitted`).
@@ -2153,6 +2154,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
         (receiver, name),
         ("FieldRef" | "TestField", "Value")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
+            | ("RequestPage", "Caption")
             | ("Notification", "Id" | "Message" | "Scope")
             | (
                 "ErrorInfo",
@@ -3808,9 +3810,7 @@ impl Lowerer<'_> {
         // BuyfromContactLookup, after the user picked a contact). The corpus only reads CurrFieldNo
         // (handlers/TestPageCurrFieldNo_Tests.al), so what the OnValidate that follows reads is not pinned:
         // refused when it runs, so code that does not reach it still runs, as a control add-in call is.
-        if kids[0].kind() == SyntaxKind::NameRef
-            && matches!(self.res(&kids[0]), Some(Res::Global(g)) if g == "currfieldno" && !self.globals.contains_key(g))
-        {
+        if self.is_implicit_curr_field_no(&kids[0]) {
             return Ok(ir::Stmt::Expr(ir::Expr::Refused(
                 "assigning CurrFieldNo: whether the OnValidate a later Validate runs reads the assigned number is not pinned (docs/probes-needed.md)"
                     .into(),
@@ -3852,6 +3852,16 @@ impl Lowerer<'_> {
                     .as_ref()
                     .is_some_and(|s| !s.instance || (s.receiver == "Record" && self.rec_slot.is_some()));
             if let Some(sig) = sig.filter(|_| member || implicit) {
+                // `RequestOptionsPage.Caption := ..` (Base Application's "Account Schedule", when a financial
+                // report is named): the corpus pins the Caption setter of a page (handlers/
+                // TestPageCaption_Page.al:44), not of a request page. Refused when it runs, so code that does
+                // not reach it runs.
+                if id == "RequestPage.Caption#1" {
+                    return Ok(ir::Stmt::Expr(ir::Expr::Refused(
+                        "RequestPage.Caption := ..: setting the caption of a request page is in no corpus test, so what TestRequestPage.Caption and the request page show afterwards is not pinned (docs/probes-needed.md)"
+                            .into(),
+                    )));
+                }
                 // A test page control's setter form is run by the test client, not a native builtin.
                 if al_builtins::native::lookup(&id).is_none() && !id.starts_with("TestField.") {
                     return Err(match al_builtins::native::refusal(&id) {
@@ -4572,6 +4582,12 @@ impl Lowerer<'_> {
         }
     }
 
+    /// `CurrFieldNo` written bare in code with an implicit Rec: a property of that record, not a variable.
+    fn is_implicit_curr_field_no(&self, n: &SyntaxNode) -> bool {
+        n.kind() == SyntaxKind::NameRef
+            && matches!(self.res(n), Some(Res::Global(g)) if g == "currfieldno" && !self.globals.contains_key(g))
+    }
+
     /// `TP.Ctl`: a member access on a test page or part that names a control.
     fn is_control_access(&self, n: &SyntaxNode) -> bool {
         let Some(recv) = n.children().next() else { return false };
@@ -4820,7 +4836,13 @@ impl Lowerer<'_> {
                 let mut out = Vec::new();
                 for (i, a) in args.iter().enumerate() {
                     let p = sig.params.get(i).ok_or("too many arguments")?;
-                    if p.by_var {
+                    if p.by_var && self.is_implicit_curr_field_no(a) {
+                        // `OnBefore..(.., CurrFieldNo, ..)` into a `var` parameter (Base Application's
+                        // "Sales Header".ShouldSearchForCustomerByName). CurrFieldNo is no place: its value
+                        // is passed, and the VM refuses the call if the callee changes it (writing
+                        // CurrFieldNo is not pinned, docs/probes-needed.md).
+                        out.push(ir::Arg::Value(self.expr(a)?));
+                    } else if p.by_var {
                         out.push(ir::Arg::Ref(self.place(a)?));
                     } else {
                         let value = self.expr(a)?;

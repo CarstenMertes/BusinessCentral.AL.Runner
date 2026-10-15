@@ -548,4 +548,18 @@ mod tests {
         assert!(e.contains("$(app_currentVersion)"), "{e}");
         assert!(Vars::for_build("27.5").is_none(), "a build has four parts");
     }
+
+    #[test]
+    fn a_source_archive_reports_the_preprocessor_symbols_of_its_own_app_json() {
+        let with = r#"{"id":"zz","name":"Zed","publisher":"P","version":"2.0.0.0","dependencies":[],"preprocessorSymbols":["BC27","MINE"]}"#;
+        let m = manifest_of_source_zip(with, &Vars::default()).unwrap();
+        assert_eq!(m.preprocessor_symbols, vec!["BC27".to_string(), "MINE".to_string()]);
+        let without = r#"{"id":"zz","name":"Zed","publisher":"P","version":"2.0.0.0","dependencies":[]}"#;
+        assert!(
+            manifest_of_source_zip(without, &Vars::default())
+                .unwrap()
+                .preprocessor_symbols
+                .is_empty()
+        );
+    }
 }

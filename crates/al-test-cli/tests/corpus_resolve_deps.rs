@@ -76,3 +76,39 @@ fn unresolved_references_are_exactly_what_no_dependency_supplies() {
         "unresolved references changed; review and rerun with UPDATE_GOLDEN=1"
     );
 }
+
+/// `docs/corpus-coverage.md` and `.json` are what `al-test-cli --coverage-map` writes for the pinned
+/// corpus (which builtin overloads some corpus test calls). They are committed, so a corpus bump or a
+/// catalog change that moves the map shows in the diff. Regenerate with
+/// `al-test-cli --root . --coverage-map` (or `UPDATE_GOLDEN=1` on this test).
+#[test]
+#[ignore = "slow unoptimised: cargo test --release -p al-test-cli --test corpus_resolve_deps -- --ignored"]
+fn corpus_coverage_map_is_current() {
+    let commit = String::from_utf8(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(root().join("corpus"))
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    let map = al_test_cli::coverage::corpus_coverage(&root(), &commit).unwrap();
+    for (name, text) in [
+        ("docs/corpus-coverage.md", al_test_cli::coverage::to_markdown(&map)),
+        ("docs/corpus-coverage.json", al_test_cli::coverage::to_json(&map)),
+    ] {
+        let path = root().join(name);
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &text).unwrap();
+        }
+        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            committed == text,
+            "{name} is stale; run `al-test-cli --root . --coverage-map` and commit it"
+        );
+    }
+}

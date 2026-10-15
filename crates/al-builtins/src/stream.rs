@@ -319,6 +319,38 @@ fn with_in<T>(r: Option<&mut Value>, f: impl FnOnce(&mut InState) -> Result<T, S
     }
 }
 
+/// `BigText.Read(InStream)`: the rest of the stream as text, in the stream's encoding, and the stream
+/// is drained (corpus types/PEOptionEnumBigText.al:336-512, probed on BC 27.5). A UTF-8 stream drops a
+/// byte order mark (EF BB BF), a UTF-16 stream is little endian and drops FF FE, a Windows stream, and
+/// a stream created without an encoding, read the bytes as Windows-1252 and keep a mark as characters.
+/// MS-DOS, a stream read part way, invalid UTF-8 and an odd UTF-16 length are not pinned.
+pub(crate) fn read_all_text(stream: &mut Value) -> Result<String, Signal> {
+    with_in(Some(stream), |s| {
+        let (enc, pos, len) = (s.enc, s.pos, s.len());
+        if enc == Encoding::MsDos {
+            return unsupported("BigText.Read of an MS-DOS stream (not pinned)");
+        }
+        if pos != 0 && pos < len {
+            return unsupported("BigText.Read of a stream that was read part way (not pinned)");
+        }
+        let bytes = s.drain();
+        let body: &[u8] = match enc {
+            Encoding::Utf8 if bytes.starts_with(&[0xEF, 0xBB, 0xBF]) => &bytes[3..],
+            Encoding::Utf16 if bytes.starts_with(&[0xFF, 0xFE]) => &bytes[2..],
+            _ => &bytes[..],
+        };
+        match enc {
+            Encoding::Utf8 if std::str::from_utf8(body).is_err() => {
+                unsupported("BigText.Read of bytes that are not valid UTF-8 (not pinned)")
+            }
+            Encoding::Utf16 if body.len() % 2 != 0 => {
+                unsupported("BigText.Read of a UTF-16 stream with an odd number of bytes (not pinned)")
+            }
+            _ => Ok(enc.decode(body)),
+        }
+    })
+}
+
 fn in_eos(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     with_in(r, |s| Ok(Value::Boolean(s.pos >= s.len())))
 }
@@ -643,6 +675,9 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     }
     let (b, enc) = out_buf(r)?;
     let bytes: Vec<u8> = match &a[0] {
+        // One byte: the probe's blob writer builds the streams BigText.Read decodes from `Write(Byte)` alone
+        // (corpus types/PEOptionEnumBigText.al:313-333, whose results fix the bytes on BC 27.5).
+        Value::Byte(b) => vec![*b],
         Value::Integer(n) => n.to_le_bytes().to_vec(),
         Value::Boolean(v) => i32::from(*v).to_le_bytes().to_vec(),
         Value::BigInteger(n) => n.to_le_bytes().to_vec(),

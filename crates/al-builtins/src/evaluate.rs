@@ -256,7 +256,25 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
                     .filter(|_| text.bytes().all(|b| b.is_ascii_digit()))
                     .and_then(|n| members.iter().find(|(o, _)| *o == n).map(|(o, _)| *o))
             } else {
-                members.iter().find(|(_, n)| *n == text).map(|(o, _)| *o)
+                // Format 0 reads a member name, or the ordinal of a member (`Evaluate(K, '1')` gives the member
+                // with ordinal 1: corpus types/PEOptionEnumBigText.al:155-157, probed on BC 27.5). An ordinal
+                // the enum lacks is not pinned.
+                let ordinal = text
+                    .parse::<i32>()
+                    .ok()
+                    .filter(|_| !text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()));
+                match members.iter().find(|(_, n)| *n == text) {
+                    Some((o, _)) => Some(*o),
+                    None => match ordinal {
+                        Some(n) if members.iter().any(|(o, _)| *o == n) => Some(n),
+                        Some(_) => {
+                            return unsupported(format!(
+                                "Evaluate of the number `{text}` into an Enum that has no member with that ordinal (not pinned)"
+                            ));
+                        }
+                        None => None,
+                    },
+                }
             };
             match found {
                 Some(o) => Parsed::Value(Value::Enum(*id, o)),

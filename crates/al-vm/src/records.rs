@@ -1402,7 +1402,13 @@ impl Session {
                     None => {
                         let mut ident = rec.borrow().fields.clone();
                         for (n, &field) in t.keys[0].iter().enumerate() {
-                            ident[field] = pk[n].clone();
+                            ident[field] = match (args.get(n), &t.fields[field].ty) {
+                                // The message names the key as the caller gave it: an Option for an Enum key
+                                // reads 'Three', not the ordinal the enum lacks
+                                // (corpus types/PEOptionEnumBigText.al:225-259, probed on BC 27.5).
+                                (Some(o @ Value::Option(..)), RtType::Enum(_)) => o.clone(),
+                                _ => pk[n].clone(),
+                            };
                         }
                         self.fail(&t, &ident, false)
                     }

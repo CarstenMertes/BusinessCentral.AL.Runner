@@ -90,3 +90,43 @@ codeunit 63412 T
     let o = run_codeunit(&engine, &l, oi);
     assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
 }
+
+// A bare column name in a query's own procedure reads the current row (Base Application's "Summarized Stock By
+// Item Trkg." `GetItemTrackingSetup`); documented assumption, no corpus test (docs/probes-needed.md).
+#[test]
+fn a_bare_column_name_in_a_query_procedure_reads_the_current_row() {
+    let src = r#"
+table 63420 "QB Row" { fields { field(1; Id; Integer) { } field(2; Txt; Text[20]) { } } keys { key(PK; Id) { } } }
+query 63421 "QB Query" { elements { dataitem(R; "QB Row") { column(Id; Id) { } column(Txt; Txt) { } } }
+    procedure Describe(): Text begin exit(Txt + '/' + Format(Id)); end; }
+codeunit 63422 T
+{
+    Subtype = Test;
+    [Test] procedure BareColumn() var Q: Query "QB Query"; Row: Record "QB Row"; Got: Text;
+    begin
+        Row.Id := 5; Row.Txt := 'five'; Row.Insert();
+        Q.Open(); if not Q.Read() then Error('no row'); Got := Q.Describe(); Q.Close();
+        if Got <> 'five/5' then Error('got %1', Got);
+    end;
+}
+"#;
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
+    let o = run_codeunit(&engine, &l, oi);
+    assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
+}

@@ -3,6 +3,7 @@
 
 use crate::describe::Describe;
 use crate::native::Signal;
+use crate::native::raise;
 use crate::value::{LibraryValue, RtType, Value};
 use rust_decimal::Decimal;
 use rust_decimal::prelude::ToPrimitive;
@@ -96,22 +97,35 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             if as_decimal(&v).is_some() && !matches!(v, Value::Text(_) | Value::Code(_)) =>
         {
             let d = as_decimal(&v).expect("numeric");
+            // A Decimal with a fraction, or beyond the range, does not convert into an Integer or a BigInteger: no
+            // rounding (types/PRDecimalToInteger.al: ConversionCast, `value 1.5`, `value 3000000000.0`).
+            let cast_error = |to: &str| {
+                raise::<Value>(
+                    format!("Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.{to}."),
+                    "ConversionCast",
+                )
+            };
             match t {
                 T::Decimal => Value::Decimal(d),
+                T::Integer | T::BigInteger if matches!(v, Value::Decimal(_)) && d.fract() != Decimal::ZERO => {
+                    return cast_error(if matches!(t, T::Integer) { "Int32" } else { "Int64" });
+                }
                 _ if d.fract() != Decimal::ZERO => {
                     return unsupported(format!(
                         "rounding {d} into {} (not pinned by the corpus yet)",
                         t.describe()
                     ));
                 }
-                T::Integer => Value::Integer(
-                    i32::try_from(d.mantissa() / 10i128.pow(d.scale()))
-                        .or_else(|_| unsupported(format!("{d} overflows Integer")))?,
-                ),
-                T::BigInteger => Value::BigInteger(
-                    i64::try_from(d.mantissa() / 10i128.pow(d.scale()))
-                        .or_else(|_| unsupported(format!("{d} overflows BigInteger")))?,
-                ),
+                T::Integer => match i32::try_from(d.mantissa() / 10i128.pow(d.scale())) {
+                    Ok(n) => Value::Integer(n),
+                    Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int32"),
+                    Err(_) => return unsupported(format!("{d} overflows Integer")),
+                },
+                T::BigInteger => match i64::try_from(d.mantissa() / 10i128.pow(d.scale())) {
+                    Ok(n) => Value::BigInteger(n),
+                    Err(_) if matches!(v, Value::Decimal(_)) => return cast_error("Int64"),
+                    Err(_) => return unsupported(format!("{d} overflows BigInteger")),
+                },
                 T::Byte => Value::Byte(
                     u8::try_from(d.mantissa() / 10i128.pow(d.scale()))
                         .or_else(|_| unsupported(format!("{d} overflows Byte")))?,

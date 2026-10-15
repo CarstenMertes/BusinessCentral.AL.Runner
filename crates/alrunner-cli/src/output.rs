@@ -135,6 +135,79 @@ pub fn stack_lines(stack: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `--output-json` document, shaped like AL Runner v2's (`Reporter.SerializeJsonOutput`), pretty printed so that the
+/// document starts with a `{` in column 0.
+///
+/// - `tests[].name` is `Codeunit<ID>.<Method>`; `status` is `pass`, `fail` or `error`; `durationMs`, `message` and
+///   `stackTrace` (the AL call stack, one frame per line) are left out when empty.
+/// - v2 told an assertion failure (`fail`) from an unexpected exception (`error`). v3 has no such difference to
+///   draw: every failing test is `fail`.
+/// - A test that did not run is `error` with the message `NotRun: out-of-scope: <reason>`, and `notRun: true`; one that
+///   the time limit stopped is `error` with `Test exceeded <N>s timeout.` (the sentence v2 used). So `errors` counts the
+///   tests not run, and `skipped` is 0.
+/// - `codeunit`, `codeunitName` and `method` are v3's additions.
+pub fn json(results: &[&TestResult], exit_code: u8, wall_s: f64) -> String {
+    use serde_json::{Map, Value, json};
+    let c = Counts::of(results.iter().copied());
+    let tests: Vec<Value> = results
+        .iter()
+        .map(|r| {
+            let mut t = Map::new();
+            t.insert("name".into(), json!(format!("Codeunit{}.{}", r.codeunit, r.test)));
+            t.insert("codeunit".into(), json!(r.codeunit));
+            t.insert("codeunitName".into(), json!(r.codeunit_name));
+            t.insert("method".into(), json!(r.test));
+            let (status, message) = match &r.outcome {
+                Outcome::Pass => ("pass", None),
+                Outcome::Fail(m) => ("fail", Some(m.clone())),
+                Outcome::NotRun(why) => {
+                    t.insert("notRun".into(), json!(true));
+                    ("error", Some(not_run_message(why)))
+                }
+            };
+            t.insert("status".into(), json!(status));
+            if !r.time.is_zero() {
+                t.insert("durationMs".into(), json!(r.time.as_millis() as u64));
+            }
+            if let Some(m) = message {
+                t.insert("message".into(), json!(m));
+            }
+            if !r.call_stack.is_empty() {
+                t.insert("stackTrace".into(), json!(stack_lines(&r.call_stack).join("\n")));
+            }
+            Value::Object(t)
+        })
+        .collect();
+    let doc = json!({
+        "tests": tests,
+        "passed": c.pass,
+        "failed": c.fail,
+        "errors": c.not_run,
+        "skipped": 0,
+        "notRun": c.not_run,
+        "total": c.total,
+        "exitCode": exit_code,
+        "wallSeconds": (wall_s * 1000.0).round() / 1000.0,
+    });
+    serde_json::to_string_pretty(&doc).expect("a JSON value serializes")
+}
+
+/// The message of a not-run test in the JSON document: v2's timeout sentence for a test the time limit stopped, else the
+/// refusal reason in the form LethAL recognizes as "the runner refused" (`<Type>: out-of-scope: ...`).
+fn not_run_message(why: &str) -> String {
+    const LIMIT: &str = "the test used more than the time limit of ";
+    if let Some(rest) = why.strip_prefix(LIMIT) {
+        if let Some(n) = rest
+            .split_whitespace()
+            .next()
+            .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return format!("Test exceeded {n}s timeout.");
+        }
+    }
+    format!("NotRun: out-of-scope: {}", why.lines().next().unwrap_or(""))
+}
+
 pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> String {
     let c = Counts::of(results.iter().copied());
     let mut s = format!(
@@ -206,7 +279,63 @@ mod tests {
             outcome,
             call_stack: String::new(),
             time: std::time::Duration::ZERO,
+            coverage: Vec::new(),
         }
+    }
+
+    #[test]
+    fn json_has_the_shape_of_v2_and_rows_for_the_tests_not_run() {
+        let mut slow = r(
+            1,
+            "A",
+            "Slow",
+            Outcome::NotRun(
+                "the test used more than the time limit of 5 s of CPU time and was stopped (--test-timeout-secs); x"
+                    .into(),
+            ),
+        );
+        slow.time = std::time::Duration::from_millis(5000);
+        let mut f = r(1, "A", "Bad", Outcome::Fail("boom".into()));
+        f.call_stack = "\"A\"(CodeUnit 1).Bad line 1".into();
+        f.time = std::time::Duration::from_millis(12);
+        let rs = [
+            r(1, "A", "Good", Outcome::Pass),
+            f,
+            r(2, "B", "Refused", Outcome::NotRun("no provider\nsecond line".into())),
+            slow,
+        ];
+        let refs: Vec<&TestResult> = rs.iter().collect();
+        let text = json(&refs, 1, 1.23456);
+        assert!(text.starts_with("{\n"), "{text}");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            (v["passed"].as_u64(), v["failed"].as_u64(), v["errors"].as_u64()),
+            (Some(1), Some(1), Some(2))
+        );
+        assert_eq!(
+            (v["total"].as_u64(), v["skipped"].as_u64(), v["exitCode"].as_u64()),
+            (Some(4), Some(0), Some(1))
+        );
+        assert_eq!(v["wallSeconds"].as_f64(), Some(1.235));
+        let t = &v["tests"];
+        assert_eq!(t[0]["name"], "Codeunit1.Good");
+        assert_eq!(t[0]["status"], "pass");
+        assert!(t[0].get("message").is_none() && t[0].get("durationMs").is_none());
+        assert_eq!(
+            (
+                t[1]["status"].as_str(),
+                t[1]["message"].as_str(),
+                t[1]["durationMs"].as_u64()
+            ),
+            (Some("fail"), Some("boom"), Some(12))
+        );
+        assert_eq!(t[1]["stackTrace"], "\"A\"(CodeUnit 1).Bad line 1");
+        assert_eq!(t[2]["name"], "Codeunit2.Refused");
+        assert_eq!(
+            (t[2]["status"].as_str(), t[2]["message"].as_str()),
+            (Some("error"), Some("NotRun: out-of-scope: no provider"))
+        );
+        assert_eq!(t[3]["message"], "Test exceeded 5s timeout.");
     }
 
     #[test]

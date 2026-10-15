@@ -212,7 +212,7 @@ Each step is useful alone. Order is smallest first.
 
 | Step | What | Unblocks | Size | Needs owner |
 |---|---|---|---|---|
-| 1 | `alrunner test` accepts `--output-json` (v2 shape, section 1.2), `--isolation test|codeunit|disabled`, `--exclude-test`, qualified-name `--test`, `--define`, `--auto-provision` (ignored), and reads `AL_RUNNER_TEST_TIMEOUT_SEC`. Not-run tests become rows. Timeouts use v2's sentence. | LethAL one-shot (section 3.3) | 3 to 5 | #3 (version), #4 (exit 7), and #2 only for spelling. Flags that v3 already plans (`--output-json`, `--isolation`, `--exclude-test`) do not conflict. |
+| 1 (done, branch tools-step-1; see migrating-tools-to-v3.md) | `alrunner test` accepts `--output-json` (v2 shape, section 1.2), `--isolation test|codeunit|disabled`, `--exclude-test`, qualified-name `--test`, `--define`, `--auto-provision` (ignored), and reads `AL_RUNNER_TEST_TIMEOUT_SEC`. Not-run tests become rows. Timeouts use v2's sentence. | LethAL one-shot (section 3.3) | 3 to 5 | #3 (version), #4 (exit 7), and #2 only for spelling. Flags that v3 already plans (`--output-json`, `--isolation`, `--exclude-test`) do not conflict. |
 | 2 | `--coverage --coverage-out` (Cobertura) in the positions the compiled input has. Per-test file is one run per test already. | LethAL coverage (L19), gate R item 5 | 4 to 6 | none (needs IR positions, which exist) |
 | 3 | `alrunner serve`: ready line, `runTests` stream, `summary` with `protocolVersion:2`, `shutdown`, `{"error"}`, field warnings and refusals, `--package-cache`, `--define`, `--test-timeout` start flags, stderr request marker. No warm state: compile per request. | LethAL server mode (S1 to S10). ALchemist Test Explorer without inline values. | 5 to 7, plus a short ADR for the wire protocol | #1, #2 |
 | 4 | `serve` adds `execute` (inline `code` or one `OnRun` codeunit), `cancel` side channel (flag checked between tests), `coverage` and `perTestCoverage` tables on both commands. | ALchemist scratch runs (A11), cancel (A13), coverage (A10); LethAL `perTestCoverage` (S6) | 5 to 8 | none beyond #1 |
@@ -243,3 +243,23 @@ text should say "run with small edits".
 | ALchemist sends `captureValues` and `iterationTracking` on `runTests`. v2 reads them only on `execute`, so each run returns a `warnings` entry. | `serverExecutionEngine.ts:28-30` |
 | ALchemist sends `testFilter` and `cobertura` if a caller sets them. v2 refuses unknown fields. No caller sets them today. | `serverExecutionEngine.ts:32-33` |
 | LethAL source comments say v2 has no per-test selection on `--server`. v2 added `test` and `excludeTests` after 2.11.0. | `al-runner-server.ts:10-14` |
+
+## Later step: mutants applied inside v3 (owner discussion 2026-10-15)
+
+LethAL already compiles all mutants into one program behind switches (mutant schemata) and
+runs them through AL Runner. That keeps working with v3 unchanged: the switched code is plain AL.
+
+The step beyond is to let v3 apply the mutation to its compiled program instead of LethAL
+rewriting source:
+
+1. LethAL keeps its mutation catalog and reports. It sends v3 a list of mutants as source
+   positions plus a change, for example `{id, file, line, column, kind: "relational", from: "<",
+   to: "<="}`, or `{kind: "remove-statement", file, line}`.
+2. v3 compiles the app once. It maps each position to the node in its compiled program (it keeps
+   source positions) and patches that node in memory per mutant. No source rewrite, no recompile.
+3. v3 runs only the tests whose coverage reaches the mutated node, and answers per mutant:
+   killed (which test), survived, not covered, or unknown (a covering test does not run on v3).
+4. A mutation v3 cannot express in its compiled program falls back to LethAL's switched source.
+
+Protocol: a `runMutants` request on `alrunner serve`, after the serve basics. Gain to measure with
+a prototype: no per-mutant compile, and only covering tests run.

@@ -31,6 +31,8 @@ pub const TEST_EXECUTION: &str = "Microsoft.Dynamics.Nav.Runtime.NavTestExecutio
 /// `Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper`.
 /// Azure AD Graph's query object (System Application "Azure AD Graph Impl.").
 pub const GRAPH_QUERY: &str = "Microsoft.Dynamics.Nav.AzureADGraphClient.GraphQuery";
+/// `Microsoft.Dynamics.Nav.LicensingService.Model.TenantInfo` (the answer of `GraphQuery.GetTenantDetail`).
+pub const TENANT_INFO: &str = "Microsoft.Dynamics.Nav.LicensingService.Model.TenantInfo";
 pub const USER_ACCOUNT_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper";
 
 /// `System.IO.Compression.GZipStream`, behind System Application's "Data Compression".
@@ -47,6 +49,11 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (GRAPH_QUERY, "GetGroupInfo", Ret::Object),
     (GRAPH_QUERY, "FindFirstGroupInfoForDisplayName", Ret::Object),
     (GRAPH_QUERY, "GetUser", Ret::Object),
+    (GRAPH_QUERY, "GetCurrentUser", Ret::Object),
+    (GRAPH_QUERY, "GetTenantDetail", Ret::Object),
+    (TENANT_INFO, "InitialDomain", Ret::Text),
+    (TENANT_INFO, "CountryLetterCode", Ret::Text),
+    (TENANT_INFO, "PreferredLanguage", Ret::Text),
     (AL_CONFIG_SETTINGS, "Instance", Ret::Object),
     (
         AL_CONFIG_SETTINGS,

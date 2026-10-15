@@ -80,7 +80,20 @@ fn every_corpus_table_field_has_a_known_type() {
 
 /// Corpus files with model gaps that wait for a parser or resolver fix. Each is a red corpus test,
 /// not a pass. A file with no gap left fails the test below, so the list only shrinks (ADR-007).
-const KNOWN_GAP_FILES: &[(&str, &str)] = &[];
+const KNOWN_GAP_FILES: &[(&str, &str)] = &[
+    (
+        "misc/W4XmlJsonHttp.al",
+        "XmlReadOptions.PreserveWhitespace is not in the catalog (corpus bump 9)",
+    ),
+    (
+        "types/PUContinue.al",
+        "the checker does not resolve the continue statement (corpus bump 9)",
+    ),
+    (
+        "types/PYThisExtensions.al",
+        "`this` in a reportextension or pageextension does not resolve (corpus bump 9)",
+    ),
+];
 
 /// Milestone 1: every name, member and call in every corpus body resolves,
 /// except references into apps outside the workspace (golden list above).

@@ -128,6 +128,8 @@ const DOTNET: &str = "dotnet { assembly(\"netstandard\") {
     type(\"Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper\"; \"PermissionTestHelper\") { }
     type(\"Microsoft.Dynamics.Nav.Runtime.NavTestExecution\"; \"NavTestExecution\") { }
     type(\"Microsoft.Dynamics.Nav.AzureADGraphClient.GraphQuery\"; \"GraphQuery\") { }
+    type(\"Microsoft.Dynamics.Nav.LicensingService.Model.UserInfo\"; \"UserInfo\") { }
+    type(\"Microsoft.Dynamics.Nav.LicensingService.Model.TenantInfo\"; \"TenantInfo\") { }
   }
   assembly(\"Microsoft.Exchange.WebServices\") { type(\"Microsoft.Exchange.WebServices.Data.ExchangeService\"; \"ExchangeService\") { } }
 }\n";
@@ -1340,6 +1342,8 @@ fn the_declared_result_types_match_the_registry() {
             "SetTestTenantEnvironmentType" => vec![Value::Boolean(false)],
             // These raise by design on a tier without a directory; graph_query_without_a_directory_answers_as_probed runs them.
             "GetGroupPage" | "GetGroupInfo" | "FindFirstGroupInfoForDisplayName" | "GetUser" => continue,
+            // Answers a null reference by design; graph_get_current_user_returns_null_without_an_error runs it.
+            "GetCurrentUser" | "GetTenantDetail" => continue,
             _ => vec![],
         };
         let mut s = Session::new(Engine::new(al_ir::Program::default(), vec![]));
@@ -1398,5 +1402,39 @@ fn graph_query_without_a_directory_answers_as_probed() {
             m("GetUser")
         )
     );
+    assert_eq!(host.log(), vec![]);
+}
+
+// GetCurrentUser on a tier without Entra ID returns without an error and leaves the UserInfo null (probe agent,
+// BC 29.0.54011.55816, OnPrem codeunit 61296, tests/al-language-onprem/session/PZAzureAdUser.al): Microsoft's path
+// (`Azure AD Graph User`.InitializeGraphUser) then asks for the user's authentication object id. The runtime
+// answers it itself; nothing goes to .NET.
+#[test]
+fn graph_get_current_user_returns_null_without_an_error() {
+    let host = no_host();
+    let r = run(
+        &host,
+        "G: DotNet GraphQuery; U: DotNet UserInfo; s: Text;",
+        "G := G.GraphQuery(); U := G.GetCurrentUser(); exit(Format(IsNull(U)));",
+        ": Text",
+    );
+    assert_eq!(text(r), "Yes");
+    assert_eq!(host.log(), vec![]);
+}
+
+// GetTenantDetail answers a TenantInfo, not null, whose InitialDomain, CountryLetterCode and PreferredLanguage are
+// empty: Microsoft's Azure AD Tenant Impl. raises "Failed to retrieve ..." for a null TenantInfo, and the corpus
+// test expects '' from all three (session/TestEnvironmentUserTenantContracts.al:213-232).
+#[test]
+fn graph_get_tenant_detail_answers_an_empty_tenant_info() {
+    let host = no_host();
+    let r = run(
+        &host,
+        "G: DotNet GraphQuery; T: DotNet TenantInfo;",
+        "G := G.GraphQuery(); T := G.GetTenantDetail(); if IsNull(T) then exit('null'); \
+         exit('[' + T.InitialDomain() + '|' + T.CountryLetterCode() + '|' + T.PreferredLanguage() + ']');",
+        ": Text",
+    );
+    assert_eq!(text(r), "[||]");
     assert_eq!(host.log(), vec![]);
 }

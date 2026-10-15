@@ -36,6 +36,9 @@ pub enum UiKind {
     /// `[RecallNotificationHandler]`: runs on `Notification.Recall` of a sent notification (corpus
     /// handlers/TestNotificationSendRecallContracts.al:95-109).
     RecallNotification,
+    /// `[HttpClientHandler]`: answers an `HttpClient` call (ADR-027 section 5; the probe
+    /// session/PZHttpHandler.al on the corpus staging branch).
+    HttpClient,
 }
 
 impl UiKind {
@@ -51,6 +54,7 @@ impl UiKind {
             "sessionsettingshandler" => Some(UiKind::SessionSettings),
             "sendnotificationhandler" => Some(UiKind::SendNotification),
             "recallnotificationhandler" => Some(UiKind::RecallNotification),
+            "httpclienthandler" => Some(UiKind::HttpClient),
             _ => None,
         }
     }
@@ -66,6 +70,7 @@ impl UiKind {
             UiKind::SessionSettings => "SessionSettings",
             UiKind::SendNotification => "SendNotification",
             UiKind::RecallNotification => "RecallNotification",
+            UiKind::HttpClient => "HttpClient",
         }
     }
 }
@@ -137,6 +142,14 @@ impl Session {
             // (handlers/TestNotificationHandler.al:74-85).
             UiKind::SendNotification | UiKind::RecallNotification => {
                 r.params == 1 && r.by_var == [true] && matches!(ty(0), Some(RtType::Library(n)) if n == "Notification")
+            }
+            // HttpClientHandler(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
+            // (session/PZHttpHandler.al).
+            UiKind::HttpClient => {
+                r.params == 2
+                    && r.by_var == [false, true]
+                    && matches!(ty(0), Some(RtType::Library(n)) if n == "TestHttpRequestMessage")
+                    && matches!(ty(1), Some(RtType::Library(n)) if n == "TestHttpResponseMessage")
             }
         };
         let page = match ty(0) {
@@ -221,11 +234,11 @@ impl Session {
         let Some(h) = scope.handlers.iter_mut().find(|h| h.kind == kind) else {
             // Text and code: corpus handlers/TestUnhandledUiAndDialogDefaults.al:68-107 (ONE space
             // after the kind; Confirm quotes the question, StrMenu the options only).
-            return Err(Signal::Error(AlError {
+            return Err(Signal::Error(Box::new(AlError {
                 message: format!("Unhandled UI: {} {shown}", kind.label()),
                 code: "MissingUIHandler".into(),
                 call_stack: String::new(),
-            }));
+            })));
         };
         h.fired = true;
         let (object, routine, instance) = (h.object, h.routine, h.instance.clone());
@@ -247,6 +260,32 @@ impl Session {
             }
             other => other,
         }
+    }
+
+    /// Whether an `[HttpClientHandler]` is bound to the running test.
+    pub(crate) fn has_http_handler(&self) -> bool {
+        self.ui
+            .as_ref()
+            .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::HttpClient))
+    }
+
+    /// Runs the bound `[HttpClientHandler]` with the request and a fresh response; `None` when the test has none.
+    /// Returns the handler's answer and the response as it left it.
+    pub(crate) fn dispatch_http_handler(
+        &mut self,
+        request: Value,
+        response: Value,
+    ) -> Result<Option<(Value, Value)>, Signal> {
+        let bound = self
+            .ui
+            .as_ref()
+            .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::HttpClient));
+        if !bound {
+            return Ok(None);
+        }
+        let (answer, mut finals) = self.dispatch_ui_returning(UiKind::HttpClient, "", vec![request, response])?;
+        let response = finals.pop().unwrap_or(Value::Null);
+        Ok(Some((answer, response)))
     }
 
     /// `SessionSettings.RequestSessionUpdate(false)`: the bound `[SessionSettingsHandler]` gets the
@@ -350,11 +389,11 @@ impl Session {
         else {
             // handlers/TestUnhandledUiAndDialogDefaults.al:97-104 ("ModalPage 68124", "Page 68124");
             // RequestPage names the report's request page id (handlers/TestReportRuntimeContracts.al:425).
-            return Err(Signal::Error(AlError {
+            return Err(Signal::Error(Box::new(AlError {
                 message: format!("Unhandled UI: {} {}", kind.label(), shown_id),
                 code: "MissingUIHandler".into(),
                 call_stack: String::new(),
-            }));
+            })));
         };
         h.fired = true;
         Ok((h.object, h.routine, h.instance.clone()))
@@ -376,11 +415,11 @@ impl Session {
     /// The refusal for a page of `kind` that the test bound no handler for. Code and text:
     /// handlers/TestUnhandledUiAndDialogDefaults.al:97-104, handlers/TestReportRuntimeContracts.al:425-426.
     pub(crate) fn unhandled_page(&self, kind: UiKind, object: u32) -> Signal {
-        Signal::Error(AlError {
+        Signal::Error(Box::new(AlError {
             message: format!("Unhandled UI: {} {}", kind.label(), self.object_id_of(object)),
             code: "MissingUIHandler".into(),
             call_stack: String::new(),
-        })
+        }))
     }
 
     pub(crate) fn has_page_handler(&self, kind: UiKind, page: u32) -> bool {

@@ -260,7 +260,7 @@ fn blob_of(r: Option<&mut Value>) -> Result<BlobRef, Signal> {
     }
 }
 
-fn set_stream(slot: &Value, content: LibraryValue) -> Result<(), Signal> {
+pub(crate) fn set_stream(slot: &Value, content: LibraryValue) -> Result<(), Signal> {
     match slot {
         Value::Library(_, h) => {
             *h.borrow_mut() = content;
@@ -608,11 +608,11 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
         let got = s
             .with_data(|d| d.get(pos..pos + width).map(<[u8]>::to_vec))
             .ok_or_else(|| {
-                Signal::Error(crate::native::AlError {
+                Signal::Error(Box::new(crate::native::AlError {
                     message: "Invalid data encountered in stream, unable to read text.".into(),
                     code: "InvalidStreamData".into(),
                     call_stack: String::new(),
-                })
+                }))
             })?;
         s.pos += width;
         Ok(got)

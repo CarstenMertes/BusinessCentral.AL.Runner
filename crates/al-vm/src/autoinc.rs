@@ -99,19 +99,19 @@ impl Session {
     /// corpus pins raise their message; the rest of the guards BC runs are refused.
     pub(crate) fn truncate(&mut self, t: &TableDef, rec: &crate::records::Rec, reset: bool) -> Result<Value, Signal> {
         let error = |message: &str| -> Result<Value, Signal> {
-            Err(Signal::Error(AlError {
+            Err(Signal::Error(Box::new(AlError {
                 message: message.into(),
                 code: String::new(),
                 call_stack: String::new(),
-            }))
+            })))
         };
         // Texts and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_Refusals_Texts.
         if rec.borrow().temporary {
-            return Err(Signal::Error(AlError {
+            return Err(Signal::Error(Box::new(AlError {
                 message: "Temporary tables does not support truncation.".into(),
                 code: "DB:Ok".into(),
                 call_stack: String::new(),
-            }));
+            })));
         }
         let has_media = self.engine.program.objects[t.object as usize].table.as_ref().is_some_and(|s| {
             s.fields
@@ -176,7 +176,7 @@ impl Session {
             // Layout and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:
             // AutoIncrement_Rename_FullTextAndCode (the key shown is the new one).
             let br = crate::records::BR;
-            return Err(Signal::Error(AlError {
+            return Err(Signal::Error(Box::new(AlError {
                 message: format!(
                     "You cannot change the value of an AutoIncrement field.{br}{br}Field: {}{br}Table: {}{br}{br}Identification fields and values:{br}{}",
                     t.fields[field].name,
@@ -185,7 +185,7 @@ impl Session {
                 ),
                 code: "DB:ModifyOnIdentityField".into(),
                 call_stack: String::new(),
-            }));
+            })));
         }
         Ok(())
     }

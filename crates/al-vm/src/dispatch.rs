@@ -53,11 +53,11 @@ pub(crate) struct Binding {
 
 /// The error of a failed `BindSubscription` statement, code `EventBinding`.
 fn binding_error(id: u32, why: &str) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message: format!("The binding of codeunit {id} was unsuccessful. {why}"),
         code: "EventBinding".into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
@@ -220,7 +220,7 @@ impl Session {
                     self.store = before.expect("snapshot taken when isolating");
                     // The subscriber's own transaction is gone with its writes.
                     self.tx_phase = phase;
-                    self.last_error = e;
+                    self.last_error = *e;
                     continue;
                 }
                 r => r?,

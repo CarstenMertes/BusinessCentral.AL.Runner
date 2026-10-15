@@ -98,11 +98,11 @@ impl Session {
         let first = al_builtins::errorinfo::message_of(&held[0]).unwrap_or_default();
         let message = if held.len() == 1 { first } else { summary(&first) };
         // session/TestProbeSessionMiscContracts.al:ErrorCollection_ScopeExitText, ErrorCollection_SingleError: code Dialog.
-        Err(Signal::Error(AlError {
+        Err(Signal::Error(Box::new(AlError {
             message,
             code: "Dialog".into(),
             call_stack: String::new(),
-        }))
+        })))
     }
 
     /// The error-collection builtins; `None` when `id` is not one of them.

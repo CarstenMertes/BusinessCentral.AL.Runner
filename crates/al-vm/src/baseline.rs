@@ -18,6 +18,10 @@ pub struct Baseline {
     isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
     sequences: std::collections::HashMap<(String, String), crate::sessionops::Sequence>,
     last_stamp: i64,
+    /// The workspace app's own install codeunits ran once, before this capture (the runner does it once per run, as
+    /// publishing an app does, not once per test codeunit): the tables of those that could not run, and why.
+    /// `None`: they did not run here and each test codeunit's session runs them.
+    pub workspace_installs: Option<Vec<(std::collections::BTreeSet<u32>, String)>>,
 }
 
 impl Baseline {
@@ -53,6 +57,7 @@ impl Session {
             isolated_storage: self.isolated_storage.clone(),
             sequences: self.sequences.clone(),
             last_stamp: self.last_stamp,
+            workspace_installs: None,
         }
     }
 

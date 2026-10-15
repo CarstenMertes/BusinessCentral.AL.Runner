@@ -1563,7 +1563,7 @@ impl CorpusRuntime {
                 loop {
                     let k = next.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                     let Some(u) = units.get(k) else { return done };
-                    done.push(run_unit(&engine, lowered, baseline, u, None, limit));
+                    done.push((k, run_unit(&engine, lowered, baseline, u, None, limit)));
                 }
             };
             std::thread::scope(|scope| {
@@ -1588,7 +1588,9 @@ impl CorpusRuntime {
                 for h in handles {
                     done.extend(h.join().expect("a test worker panicked"));
                 }
-                done
+                // Results in the order of the units, whichever worker finished first.
+                done.sort_by_key(|(k, _)| *k);
+                done.into_iter().map(|(_, r)| r).collect()
             })
         };
         let mut suite_work: Vec<(usize, std::time::Duration)> = Vec::new();
@@ -2260,9 +2262,16 @@ fn run_codeunit_core(
         }
     }
     // What publishing the app does first: run its install codeunits, then commit.
-    session.set_install_scope(true);
-    let skipped_installs = run_install_codeunits(lowered, &mut session);
-    session.set_install_scope(false);
+    let skipped_installs = match baseline.and_then(|b| b.workspace_installs.clone()) {
+        // Already run once for the whole run, with the baseline.
+        Some(skipped) => skipped,
+        None => {
+            session.set_install_scope(true);
+            let skipped = run_install_codeunits(lowered, &mut session);
+            session.set_install_scope(false);
+            skipped
+        }
+    };
     session.in_test_codeunit = true;
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
@@ -2419,7 +2428,7 @@ fn run_codeunit_core(
                         Err(Signal::Error(e)) => {
                             session.rollback_transaction();
                             let message = e.message.clone();
-                            failure = Some(e);
+                            failure = Some(*e);
                             Outcome::Fail(message)
                         }
                         // A refused test did not run: what it wrote before the refusal must not
@@ -2705,6 +2714,9 @@ fn bind_handlers(
     handlers: &[(UiKind, usize)],
 ) -> Result<(), String> {
     let object = instance.borrow().object as usize;
+    // TestHttpRequestPolicy is a property of the test codeunit; absent, outbound requests are allowed.
+    let policy = session.object_property(object, "TestHttpRequestPolicy");
+    session.set_http_policy(policy.as_deref());
     let mut bound = Vec::new();
     for (kind, routine) in handlers {
         bound.push(session.ui_handler(*kind, object, *routine, instance.clone())?);
@@ -2717,7 +2729,7 @@ fn bind_handlers(
 /// OnInstallAppPerDatabase with no company chosen (the order measured on BC 27.5), and commits
 /// after each. An installer that cannot run is skipped; returned are the tables it touches and
 /// why, so tests that touch them can be reported not run.
-fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
+pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
     let mut skipped = Vec::new();
     let installers: Vec<usize> = lowered
         .program

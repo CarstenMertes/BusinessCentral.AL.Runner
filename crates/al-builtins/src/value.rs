@@ -723,25 +723,139 @@ pub struct SessionSettingsState {
     pub company: String,
 }
 
-/// What an `HttpRequestMessage` holds (corpus network/TestHttpRequestMessage.al). Nothing is sent.
-#[derive(Debug, Clone, Default)]
+/// Which collection of headers a bag is: they differ in the headers they accept (a request, response or default
+/// header collection refuses the content headers; the content's own accepts them).
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum HeaderKind {
+    #[default]
+    Request,
+    Content,
+    Response,
+    /// `HttpClient.DefaultRequestHeaders`.
+    Default,
+}
+
+/// The headers of a request, response, content or client: names with the casing they were first added with,
+/// each with its values in order. Secret values (added as `SecretText`) are kept apart.
+#[derive(Debug, Default)]
+pub struct HeaderBag {
+    pub kind: HeaderKind,
+    pub items: Vec<(String, Vec<String>)>,
+    pub secret: Vec<(String, Vec<String>)>,
+}
+
+/// The headers of an `HttpContent`, request, response or client, shared with every `HttpHeaders` handed out.
+pub type HttpHeaderList = Rc<RefCell<HeaderBag>>;
+
+/// A header bag of `kind`.
+pub fn new_header_list(kind: HeaderKind) -> HttpHeaderList {
+    Rc::new(RefCell::new(HeaderBag {
+        kind,
+        ..HeaderBag::default()
+    }))
+}
+
+/// What an `HttpRequestMessage` holds (corpus network/TestHttpRequestMessage.al,
+/// network/lt-http/HttpRequest.al). Nothing is sent but through a test handler.
+#[derive(Debug, Clone)]
 pub struct HttpRequestState {
     pub method: Option<String>,
     pub uri: Option<String>,
     /// The `Content` set on the request: the `HttpContent` handle itself, so the request and the
     /// variable it was set from share it (nothing pins a copy; no corpus test tells them apart).
     pub content: Option<Value>,
+    pub headers: HttpHeaderList,
 }
 
-/// The headers of an `HttpContent`, shared with every `HttpHeaders` that `GetHeaders` handed out.
-pub type HttpHeaderList = Rc<RefCell<Vec<(String, Vec<String>)>>>;
+impl Default for HttpRequestState {
+    fn default() -> Self {
+        HttpRequestState {
+            method: None,
+            uri: None,
+            content: None,
+            headers: new_header_list(HeaderKind::Request),
+        }
+    }
+}
 
-/// What an `HttpContent` holds (corpus network/TestHttpRequestMessage.al:34-43).
-#[derive(Debug, Clone, Default)]
+/// What an `HttpContent` holds (corpus network/TestHttpRequestMessage.al:34-43, network/lt-http/HttpContent.al).
+#[derive(Debug, Clone)]
 pub struct HttpContentState {
-    pub body: Option<String>,
-    /// Bytes written from an `InStream`: how `ReadAs(Text)` decodes them is not pinned.
-    pub bytes: Option<Vec<u8>>,
+    /// The body as bytes (text is written as UTF-8).
+    pub data: Vec<u8>,
+    pub headers: HttpHeaderList,
+    /// The content a request has when nobody set one: `ReadAs` answers false, `GetHeaders` raises.
+    pub uninitialized: bool,
+    /// The bytes were handed out as an `InStream`: a second `ReadAs(InStream)` gets an empty stream.
+    pub stream_taken: bool,
+}
+
+impl Default for HttpContentState {
+    fn default() -> Self {
+        let headers = new_header_list(HeaderKind::Content);
+        headers
+            .borrow_mut()
+            .items
+            .push(("Content-Type".into(), vec!["text/plain; charset=utf-8".into()]));
+        HttpContentState {
+            data: Vec::new(),
+            headers,
+            uninitialized: false,
+            stream_taken: false,
+        }
+    }
+}
+
+/// What an `HttpResponseMessage` holds (network/lt-http/HttpResponse.al). A response nobody filled is
+/// 200 OK with an empty body.
+#[derive(Debug, Clone)]
+pub struct HttpResponseState {
+    pub status: i32,
+    pub reason: String,
+    /// The `HttpContent` handle, shared with `Content`.
+    pub content: Value,
+    pub headers: HttpHeaderList,
+    pub blocked: bool,
+}
+
+/// What an `HttpClient` holds (network/lt-http/HttpClient.al).
+#[derive(Debug, Clone)]
+pub struct HttpClientState {
+    pub base_address: String,
+    pub timeout_ms: i64,
+    pub default_headers: HttpHeaderList,
+}
+
+impl Default for HttpClientState {
+    fn default() -> Self {
+        HttpClientState {
+            base_address: String::new(),
+            timeout_ms: 100_000,
+            default_headers: new_header_list(HeaderKind::Default),
+        }
+    }
+}
+
+/// What a `TestHttpRequestMessage` holds: what a `[HttpClientHandler]` sees of the request.
+#[derive(Debug, Clone)]
+pub struct TestHttpRequestState {
+    /// Scheme, host and path without the query string.
+    pub path: String,
+    /// The `Dictionary of [Text, Text]` of the decoded query, shared with `QueryParameters`.
+    pub query: Value,
+    pub has_secret_uri: bool,
+    /// The `HttpRequestType` enum value (`Null` for a request no client call made).
+    pub request_type: Value,
+}
+
+/// What a `TestHttpResponseMessage` holds: what a `[HttpClientHandler]` answers.
+#[derive(Debug, Clone)]
+pub struct TestHttpResponseState {
+    pub status: i32,
+    pub reason: String,
+    pub success: bool,
+    pub blocked: bool,
+    pub content: Value,
     pub headers: HttpHeaderList,
 }
 
@@ -857,8 +971,16 @@ pub enum LibraryValue {
     HttpRequest(HttpRequestState),
     /// An `HttpContent` that was written to or asked for its headers (an untouched one is `Empty`).
     HttpContent(HttpContentState),
-    /// An `HttpHeaders` handed out by `HttpContent.GetHeaders`: the content's own list.
+    /// An `HttpHeaders` handed out by `GetHeaders`, `Headers` or `DefaultRequestHeaders`: the owner's own list.
     HttpHeaders(HttpHeaderList),
+    /// An `HttpResponseMessage` (an untouched one is `Empty`, which reads as 200 OK).
+    HttpResponse(HttpResponseState),
+    /// An `HttpClient` that was configured (an untouched one is `Empty`).
+    HttpClient(HttpClientState),
+    /// A `TestHttpRequestMessage` a handler was given (an untouched one is `Empty`).
+    TestHttpRequest(TestHttpRequestState),
+    /// A `TestHttpResponseMessage` (an untouched one is `Empty`).
+    TestHttpResponse(TestHttpResponseState),
     /// A `Version`: major, minor, build, revision.
     Version([i32; 4]),
     /// An `ErrorInfo` (the zero-argument `Create` and `Create(Message, ...)` build one).

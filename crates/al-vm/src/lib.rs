@@ -29,10 +29,12 @@ mod filterpage;
 mod flowfields;
 mod globaltriggers;
 mod hostvalues;
+mod http;
 mod interfaces;
 mod pages;
 mod partial;
 mod platform;
+mod profile;
 mod queries;
 mod recmeta;
 mod records;
@@ -343,6 +345,8 @@ pub struct Session {
     pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
+    /// The `TestHttpRequestPolicy` of the running test codeunit (`None`: the property is absent).
+    pub(crate) http_policy: Option<&'static str>,
     /// A scratch run (`alrunner serve`'s `execute`): the text of every `Message` raised outside a test
     /// method, in order. `None`: such a call is refused, as BC's behaviour then is not pinned.
     pub(crate) scratch_messages: Option<Vec<String>>,
@@ -445,6 +449,7 @@ impl Session {
 
     /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
+        profile::init();
         // The session of a run with test data works in the restored company.
         let host = match &engine.test_data {
             Some(td) => host.in_company(td.provider.company()),
@@ -527,6 +532,7 @@ impl Session {
             tx_world: 0,
             commit_behavior: Default::default(),
             in_test_codeunit: false,
+            http_policy: None,
             scratch_messages: None,
             capture: None,
             capturing: false,
@@ -819,11 +825,11 @@ impl Session {
             return Err(Signal::Unsupported(reason.clone()));
         }
         if self.depth >= MAX_CALL_DEPTH {
-            return Err(Signal::Error(al_builtins::native::AlError {
+            return Err(Signal::Error(Box::new(al_builtins::native::AlError {
                 message: "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator.".into(),
                 code: "StackOverflow".into(),
                 call_stack: String::new(),
-            }));
+            })));
         }
         self.depth += 1;
         // The builtin being run (a record write that runs triggers and events) keeps its own
@@ -1254,6 +1260,9 @@ impl Session {
                 if let Some(top) = self.call_stack.last_mut() {
                     top.pos = *p;
                 }
+                if profile::ON.load(std::sync::atomic::Ordering::Relaxed) {
+                    self.profile_sample();
+                }
                 if self.code_coverage {
                     self.coverage_hit(*p);
                 }
@@ -1282,15 +1291,15 @@ impl Session {
                         self.rollback_transaction();
                         // The routine that catches it is the last frame of its call stack.
                         self.add_top_frame(&mut e);
-                        self.last_error = e;
+                        self.last_error = *e;
                         Ok(())
                     }
                     // Text and code: types/TestFormatEvaluateTextContracts.al:Asserterror_NothingRaised_ReportsAssertError.
-                    Ok(()) => Err(Signal::Error(AlError {
+                    Ok(()) => Err(Signal::Error(Box::new(AlError {
                         message: "An error was expected inside an ASSERTERROR statement.".into(),
                         code: "AssertError".into(),
                         call_stack: String::new(),
-                    })),
+                    }))),
                     Err(other) => Err(other),
                 }
             }
@@ -1439,11 +1448,11 @@ impl Session {
             E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
             E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
             E::Refused(why) => Err(Signal::Unsupported(why.clone())),
-            E::Fail { message, code } => Err(Signal::Error(al_builtins::native::AlError {
+            E::Fail { message, code } => Err(Signal::Error(Box::new(al_builtins::native::AlError {
                 message: message.clone(),
                 code: code.clone(),
                 call_stack: String::new(),
-            })),
+            }))),
             E::InterfaceCall {
                 receiver,
                 targets,
@@ -1742,7 +1751,7 @@ impl Session {
         let (ret, finals) = match (result, try_call) {
             (Err(Signal::Error(mut e)), true) => {
                 self.add_top_frame(&mut e);
-                self.last_error = e;
+                self.last_error = *e;
                 return Ok(Value::Boolean(false));
             }
             (Ok((_, finals)), true) => (Value::Boolean(true), finals),
@@ -1791,7 +1800,26 @@ impl Session {
             })
     }
 
+    /// The declared type of a local, a global, or an element of an array of those, by reference.
+    fn place_ty<'a>(&'a self, p: &ir::Place, f: &Frame) -> Option<&'a RtType> {
+        match p {
+            ir::Place::Local(i) => Some(&self.engine.program.objects[f.object].routines[f.routine].locals[*i].ty),
+            ir::Place::Global(i) => {
+                let o = f.instance.borrow().object as usize;
+                Some(&self.engine.program.objects[o].globals[*i].ty)
+            }
+            ir::Place::Index(base, _) => match self.place_ty(base, f)? {
+                RtType::Array(_, el) => Some(el),
+                _ => None,
+            },
+            _ => None,
+        }
+    }
+
     fn place_type(&self, p: &ir::Place, f: &Frame) -> RtType {
+        if let Some(t) = self.place_ty(p, f) {
+            return t.clone();
+        }
         let r = &self.engine.program.objects[f.object].routines[f.routine];
         match p {
             ir::Place::Local(i) => r.locals[*i].ty.clone(),
@@ -1880,11 +1908,11 @@ impl Session {
                     // evaluates the InitValues (record/TestDateTimeInitValue.Codeunit.al:
                     // DateTimeInitValue_Table_UntouchedRecordRaisesOnReadNotOnInit).
                     if let Some(message) = self.engine.unevaluable_init.get(&(r.table, *pos)) {
-                        return Err(Signal::Error(AlError {
+                        return Err(Signal::Error(Box::new(AlError {
                             message: message.clone(),
                             code: String::new(),
                             call_stack: String::new(),
-                        }));
+                        })));
                     }
                 }
                 if !self.engine.unevaluable_init.is_empty() && r.touched {
@@ -2078,8 +2106,35 @@ impl Session {
 
     /// The array behind `base` and the flat position of `idx` (1-based, row-major).
     fn element(&mut self, base: &ir::Place, idx: &[ir::Expr], f: &mut Frame) -> Result<(Cells, usize), Signal> {
-        let RtType::Array(dims, _) = self.place_type(base, f) else {
-            return Err(Signal::Unsupported("indexing a non-array".into()));
+        // The dimensions of an array variable (a local or a global, the usual case) are read where they are
+        // declared; `place_type` would clone the type, and its dimension list, on every element access.
+        let mut small = [0u32; 4];
+        let mut n = usize::MAX;
+        {
+            let declared = match base {
+                ir::Place::Local(i) => Some(&self.engine.program.objects[f.object].routines[f.routine].locals[*i].ty),
+                ir::Place::Global(i) => {
+                    let o = f.instance.borrow().object as usize;
+                    Some(&self.engine.program.objects[o].globals[*i].ty)
+                }
+                _ => None,
+            };
+            if let Some(RtType::Array(d, _)) = declared {
+                if d.len() <= small.len() {
+                    small[..d.len()].copy_from_slice(d);
+                    n = d.len();
+                }
+            }
+        }
+        let big: Vec<u32>;
+        let dims: &[u32] = if n != usize::MAX {
+            &small[..n]
+        } else {
+            let RtType::Array(d, _) = self.place_type(base, f) else {
+                return Err(Signal::Unsupported("indexing a non-array".into()));
+            };
+            big = d;
+            &big
         };
         // `A[x]` of a two-dimensional array is a row; what BC does with one (Clear, assignment, an argument) is
         // not pinned (docs/probes-needed.md). It used to be read as the cell at flat position x.
@@ -2238,6 +2293,12 @@ impl al_builtins::format::FormatCtx for Session {
 }
 
 impl al_builtins::native::Ctx for Session {
+    fn http_send(
+        &mut self,
+        request: al_builtins::native::HttpOutgoing,
+    ) -> Result<al_builtins::value::TestHttpResponseState, Signal> {
+        self.http_send_impl(request)
+    }
     fn today_day(&self) -> Option<i32> {
         Some(self.today_day_number())
     }

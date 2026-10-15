@@ -18,6 +18,16 @@ fn unsupported<T>(what: String) -> Result<T, Signal> {
 /// Converts `v` for storing in a slot of type `t`.
 pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
+    // The conversions between the plain numbers that cannot fail, without the Decimal detour.
+    match (&v, t) {
+        (Value::Integer(_), T::Integer) | (Value::BigInteger(_), T::BigInteger) | (Value::Decimal(_), T::Decimal) => {
+            return Ok(v);
+        }
+        (Value::Integer(n), T::BigInteger) => return Ok(Value::BigInteger(i64::from(*n))),
+        (Value::Integer(n), T::Decimal) => return Ok(Value::Decimal(Decimal::from(*n))),
+        (Value::BigInteger(n), T::Decimal) => return Ok(Value::Decimal(Decimal::from(*n))),
+        _ => {}
+    }
     Ok(match (v, t) {
         (v, T::Variant) => v,
         // A number into its own type is the number (what the general arm below gives, without the round trip through a
@@ -38,6 +48,17 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Library(n, cell), T::Library(_)) if n == "SessionSettings" => {
             let copy = match &*cell.borrow() {
                 LibraryValue::SessionSettings(s) => LibraryValue::SessionSettings(s.clone()),
+                _ => LibraryValue::Empty,
+            };
+            Value::Library(n, Rc::new(RefCell::new(copy)))
+        }
+        // An HttpContent is a value: assignment and a by-value parameter copy its body and headers
+        // (misc/W4XmlJsonHttp.al:RequestContent_IsCopyOrReference).
+        (Value::Library(n, cell), T::Library(_))
+            if n == "HttpContent" && matches!(&*cell.borrow(), LibraryValue::HttpContent(_)) =>
+        {
+            let copy = match &*cell.borrow() {
+                LibraryValue::HttpContent(c) => LibraryValue::HttpContent(c.deep_copy()),
                 _ => LibraryValue::Empty,
             };
             Value::Library(n, Rc::new(RefCell::new(copy)))
@@ -177,7 +198,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             }
         }
         // The untracked call stack marker moves between Text slots unread (see `native::text_of`).
-        (Value::Text(s), T::Text(_)) if s.contains(crate::native::UNTRACKED_CALL_STACK) => Value::Text(s),
+        (Value::Text(s), T::Text(_)) if s.has_marker() => Value::Text(s),
         // Text-like.
         (v, T::Text(max)) if crate::native::text_of(&v).is_some() => {
             Value::Text(fit_txt(crate::native::text_of(&v).expect("text"), *max)?)
@@ -610,9 +631,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Integer(a), V::BigInteger(b)) => return Ok(i64::from(*a).cmp(b)),
         (V::BigInteger(a), V::Integer(b)) => return Ok(a.cmp(&i64::from(*b))),
         (V::Decimal(a), V::Decimal(b)) => return Ok(a.cmp(b)),
-        (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b))
-            if !a.contains(crate::native::UNTRACKED_CALL_STACK) && !b.contains(crate::native::UNTRACKED_CALL_STACK) =>
-        {
+        (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if !a.has_marker() && !b.has_marker() => {
             return Ok(a.cmp(b));
         }
         _ => {}

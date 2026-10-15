@@ -122,11 +122,11 @@ fn text(v: &Value) -> String {
 
 /// The error the server raises from the table trigger. Its code is not pinned.
 fn error(message: String) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message,
         code: "Dialog".into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// The profile objects that get an All Profile row, as (object index, id of the page named as the

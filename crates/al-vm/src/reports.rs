@@ -1370,7 +1370,7 @@ impl Session {
             // ProcessingOnlyReport_StatementFormRaises, handlers/PWReportSaveAsColumns.al:
             // ProcessingOnly_AnswerDropped_AsserterrorForm); with the answer used it is returned as false.
             if !result_used {
-                return Err(Signal::Error(error));
+                return Err(Signal::Error(Box::new(error)));
             }
             self.last_error = error;
             return Ok(Value::Boolean(false));
@@ -1437,7 +1437,7 @@ impl Session {
                     // `asserterror Probe.SaveAs(..)` on a report with an RDLC layout).
                     (ir::ReportLayout::Rdlc, false) if !result_used => Err(Signal::Error(e)),
                     (ir::ReportLayout::Rdlc, false) => {
-                        self.last_error = e;
+                        self.last_error = *e;
                         Ok(Value::Boolean(false))
                     }
                     _ => unsupported(format!(

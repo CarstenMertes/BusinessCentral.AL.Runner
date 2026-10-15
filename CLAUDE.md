@@ -22,6 +22,16 @@ before you open a source file.
    merged there, then bump the submodule and oracle and implement. Until then,
    record a documentation-only assumption in `docs/probes-needed.md`, or
    refuse. Error texts come from the corpus and are never invented.
+   Exception (owner, 2026-10-15): a behavior that Microsoft's own tests require
+   to pass on real BC (the test passes in Microsoft's CI and needs exactly this
+   behavior) may be implemented before a probe exists. Cite that test in the
+   code comment, add a `docs/probes-needed.md` row, and queue the probe. When
+   the probe lands it wins; fix the code if it disagrees. Error texts still come
+   only from the corpus. Every such code path marks its assumption when it runs,
+   and a test that passes through one is reported as a flagged pass ("passed,
+   relies on an unprobed assumption"), counted apart from clean passes. The
+   assumptions are registered in the runtime code itself (one registry, ids
+   checked by the compiler and a test), not only in a document.
 4. **Unsupported is refused explicitly, never run silently.** Refuse
    statically wherever possible: a lowering reason, or a diagnostic in
    `al-sema`, so the runner reports the test as not run before it starts.
@@ -70,7 +80,7 @@ before you open a source file.
   corpus ratchet. It fails on the first error.
 - Perf budgets (cold compile of the corpus ≤ 1 s, parser ≥ 50 MB/s) are
   `#[ignore]`d tests that need release:
-  `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget -- --ignored --nocapture`.
+  `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget -p al-data --lib -- --ignored --nocapture`.
   CI runs them. `cargo run --release -p al-test-cli --example phases` prints
   timings per phase. `--example compile_dump` dumps every compile output, to
   diff before and after a performance change.

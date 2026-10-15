@@ -115,10 +115,11 @@ impl RegistryType {
     /// The member for an access. A property read (`Get`) also finds a `Call` member, because AL
     /// lets a method be called without parentheses.
     pub fn member(&self, name: &str, kind: MemberKind) -> Option<&RegistryMember> {
+        // A constructor is the type's only one, whatever name the caller's declaration gives it.
         let by = |k: MemberKind| {
             self.members
                 .iter()
-                .find(|m| m.kind == k && m.name.eq_ignore_ascii_case(name))
+                .find(|m| m.kind == k && (k == MemberKind::Construct || m.name.eq_ignore_ascii_case(name)))
         };
         by(kind).or_else(|| {
             if kind == MemberKind::Get {

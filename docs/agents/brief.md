@@ -26,6 +26,13 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   behavior in a code comment. If nothing pins it, refuse explicitly and add the
   assumption to `docs/probes-needed.md`, with the probe you would want. Do not
   implement the guess. Error texts come from the corpus and are never invented.
+  One exception (owner, 2026-10-15): a behavior that a Microsoft test needs in
+  order to pass on real BC may be implemented before its probe. Cite that
+  Microsoft test (app, codeunit, test name) in the code comment, add the
+  `docs/probes-needed.md` row, and say so in your report. The probe wins when it
+  lands. This is evidence, not a guess: a behavior no test requires is still refused.
+  The code path must mark the assumption when it runs (its probes-needed row id),
+  so a test that passes through it is reported as a flagged pass, never as a clean one.
 - **Unsupported is refused explicitly.** Use a lowering reason, a diagnostic in
   `al-sema`, or `Signal::Unsupported`. Never run a guessed or partial behavior
   silently.
@@ -164,7 +171,7 @@ Run these in order. Do not skip any.
    as in CI.
 3. Run the release-only tests. `check.sh` skips these `#[ignore]`d tests and CI
    runs them:
-   `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget --test corpus_resolve_deps -- --ignored`
+   `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget --test corpus_resolve_deps -p al-data --lib -- --ignored`
    If the golden list of unresolved items changes, review the change and
    justify it in your report before you regenerate it with `UPDATE_GOLDEN=1`.
 4. Run the demand/eager differential if you touched dependency loading,

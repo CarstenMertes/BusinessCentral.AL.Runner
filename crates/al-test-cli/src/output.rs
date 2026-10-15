@@ -52,7 +52,12 @@ pub fn timings_table(ts: &[Timings]) -> String {
 
 /// `bc_build` is the Microsoft build the dependency apps came from; it is recorded as a JUnit
 /// property so that a build change that flips a case shows its cause next to the result.
-pub fn junit(oracle: &[OracleCase], outcome: &dyn Fn(&CaseId) -> Outcome, bc_build: Option<&str>) -> String {
+pub fn junit(
+    oracle: &[OracleCase],
+    outcome: &dyn Fn(&CaseId) -> Outcome,
+    time: &dyn Fn(&CaseId) -> f64,
+    bc_build: Option<&str>,
+) -> String {
     let mut by_cu: std::collections::BTreeMap<u32, Vec<(&CaseId, Outcome)>> = Default::default();
     for c in oracle.iter().filter(|c| !c.bc_failed) {
         by_cu.entry(c.id.codeunit).or_default().push((&c.id, outcome(&c.id)));
@@ -72,11 +77,16 @@ pub fn junit(oracle: &[OracleCase], outcome: &dyn Fn(&CaseId) -> Outcome, bc_bui
     }
     for (cu, cases) in &by_cu {
         s.push_str(&format!(
-            "  <testsuite name=\"Codeunit {cu}\" tests=\"{}\">\n",
-            cases.len()
+            "  <testsuite name=\"Codeunit {cu}\" tests=\"{}\" time=\"{:.3}\">\n",
+            cases.len(),
+            cases.iter().map(|(id, _)| time(id)).sum::<f64>()
         ));
         for (id, o) in cases {
-            let head = format!("    <testcase classname=\"Codeunit {cu}\" name=\"{}\"", esc(&id.name));
+            let head = format!(
+                "    <testcase classname=\"Codeunit {cu}\" name=\"{}\" time=\"{:.3}\"",
+                esc(&id.name),
+                time(id)
+            );
             match o {
                 Outcome::Pass => s.push_str(&format!("{head} />\n")),
                 Outcome::Fail(m) => s.push_str(&format!("{head}><failure message=\"{}\" /></testcase>\n", esc(m))),
@@ -184,7 +194,7 @@ mod tests {
 
     #[test]
     fn junit_round_trips_through_the_oracle_parser() {
-        let xml = junit(&oracle(), &outcome, None);
+        let xml = junit(&oracle(), &outcome, &|_| 0.0, None);
         let back = crate::oracle::parse_junit(&xml).unwrap();
         let ids: Vec<_> = back.iter().map(|c| (c.id.clone(), c.bc_failed)).collect();
         assert_eq!(
@@ -195,13 +205,13 @@ mod tests {
 
     #[test]
     fn the_microsoft_build_is_a_junit_property_and_the_oracle_parser_still_reads_the_file() {
-        let xml = junit(&oracle(), &outcome, Some("27.5.46862.56249"));
+        let xml = junit(&oracle(), &outcome, &|_| 0.0, Some("27.5.46862.56249"));
         assert!(
             xml.contains(r#"<property name="bc_build" value="27.5.46862.56249" />"#),
             "{xml}"
         );
         assert_eq!(crate::oracle::parse_junit(&xml).unwrap().len(), 3);
-        assert!(!junit(&oracle(), &outcome, None).contains("bc_build"));
+        assert!(!junit(&oracle(), &outcome, &|_| 0.0, None).contains("bc_build"));
     }
 
     fn timings() -> crate::report::Timings {
@@ -225,6 +235,11 @@ mod tests {
             ],
             dotnet: None,
             compile_cache: None,
+            slowest_tests: vec![crate::report::SlowTest {
+                codeunit: 60002,
+                name: "A_Works".into(),
+                seconds: 1.5,
+            }],
         }
     }
 
@@ -277,8 +292,26 @@ mod tests {
     }
 
     #[test]
+    fn junit_carries_the_time_of_each_test_and_the_sum_for_its_codeunit() {
+        let xml = junit(&oracle(), &outcome, &|c| if c.name == "a" { 1.25 } else { 0.5 }, None);
+        assert!(xml.contains("name=\"a\" time=\"1.250\""), "{xml}");
+        // the oracle parser still reads the file
+        assert_eq!(crate::oracle::parse_junit(&xml).unwrap().len(), 3);
+        assert!(xml.contains("time=\"0.500\""), "{xml}");
+    }
+
+    #[test]
+    fn the_json_report_names_the_slowest_tests() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        r.timings = Some(timings());
+        let v: serde_json::Value = serde_json::from_str(&serde_json::to_string(&r).unwrap()).unwrap();
+        assert_eq!(v["timings"]["slowest_tests"][0]["name"], "A_Works");
+        assert_eq!(v["timings"]["slowest_tests"][0]["seconds"], 1.5);
+    }
+
+    #[test]
     fn junit_marks_not_run_as_skipped_and_fail_as_failure() {
-        let xml = junit(&oracle(), &outcome, None);
+        let xml = junit(&oracle(), &outcome, &|_| 0.0, None);
         assert!(
             xml.contains("<skipped message=\"unsupported builtin `Format`\""),
             "{xml}"

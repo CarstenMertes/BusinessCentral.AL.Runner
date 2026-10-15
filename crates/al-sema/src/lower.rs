@@ -2173,6 +2173,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             )
             | ("Record" | "RecordRef", "ReadIsolation" | "SecurityFiltering")
             | ("Record", "FilterGroup" | "Ascending" | "Mark" | "MarkedOnly")
+            | ("RecordRef", "FilterGroup")
             | ("Report", "UseRequestPage" | "Language" | "FormatRegion")
             | ("System", "WorkDate")
             | ("HttpRequestMessage", "Method" | "Content")
@@ -2193,7 +2194,7 @@ impl Lowerer<'_> {
     }
 
     /// The arms of a field's `TableRelation`, with names resolved from the declaring file's scope.
-    fn relation_arms(&self, oi: usize, f: &crate::members::FieldInfo) -> Vec<ir::RelationArm> {
+    fn relation_arms(&self, oi: usize, f: &crate::members::FieldInfo, with_filters: bool) -> Vec<ir::RelationArm> {
         let Some(text) = f
             .properties
             .iter()
@@ -2202,7 +2203,11 @@ impl Lowerer<'_> {
         else {
             return Vec::new();
         };
-        let Some(parsed) = crate::relation::parse(text) else {
+        let Some(parsed) = (if with_filters {
+            crate::relation::parse_lenient(text)
+        } else {
+            crate::relation::parse(text)
+        }) else {
             return Vec::new();
         };
         let file = f
@@ -2214,14 +2219,29 @@ impl Lowerer<'_> {
         let mut arms = Vec::new();
         for a in parsed {
             let mut conditions = Vec::new();
-            for (name, value) in &a.conditions {
+            for (k, (name, value)) in a.conditions.iter().enumerate() {
                 let Some(pos) = field_pos(own, name) else {
                     return Vec::new();
                 };
+                if a.filter_conditions.get(k).copied().unwrap_or(false) {
+                    // The filter text as written; AL quotes an identifier with `"`, the filter grammar with `'`.
+                    let raw = a.condition_raw.get(k).cloned().unwrap_or_default();
+                    let raw = if raw.contains('"') { rewrite_quotes(&raw) } else { raw };
+                    conditions.push(ir::RelationCond {
+                        field: pos,
+                        value: ir::Const::Text(raw),
+                        filter: true,
+                    });
+                    continue;
+                }
                 let Some(value) = self.condition_const(file, value, &own.fields[pos].ty) else {
                     return Vec::new();
                 };
-                conditions.push(ir::RelationCond { field: pos, value });
+                conditions.push(ir::RelationCond {
+                    field: pos,
+                    value,
+                    filter: false,
+                });
             }
             // The whole path names a table, or all but the last part do and the last is a field.
             let resolve = |parts: &[String]| match self.ws.resolve_relation_target(file, ObjKind::Table, parts) {
@@ -2455,7 +2475,12 @@ impl Lowerer<'_> {
                     }
                     _ => (None, None),
                 };
-                let arms = self.relation_arms(oi, f);
+                let arms = self.relation_arms(oi, f, false);
+                let runtime_arms = if arms.is_empty() && f.table_relation {
+                    self.relation_arms(oi, f, true)
+                } else {
+                    Vec::new()
+                };
                 ir::Field {
                     id: f.id,
                     name: f.name.clone(),
@@ -2479,6 +2504,7 @@ impl Lowerer<'_> {
                     relation_tables: f.relation_tables.clone(),
                     properties: f.properties.clone(),
                     relation_arms: arms.clone(),
+                    relation_runtime: runtime_arms,
                     relation_meta: if arms.is_empty() && f.table_relation {
                         self.relation_meta(oi, f)
                     } else {
@@ -4559,6 +4585,15 @@ impl Lowerer<'_> {
                         args: Vec::new(),
                         ret_used: true,
                     })
+                }
+                // `GetLocation(Code)."Bin Mandatory"`: a field of what a procedure returns. A call result is not a
+                // place, so the base is evaluated and the field read off the record it gives. No corpus test
+                // reads a field of a returned record (docs/probes-needed.md).
+                Some(Res::Field { table, id })
+                    if n.kind() == MemberExpr && kids.first().is_some_and(|b| b.kind() == SyntaxKind::CallExpr) =>
+                {
+                    let pos = self.readable_field_pos(table, id)?;
+                    Ok(ir::Expr::FieldOf(Box::new(self.expr(&kids[0])?), pos))
                 }
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },

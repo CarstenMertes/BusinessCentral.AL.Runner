@@ -1221,6 +1221,10 @@ impl Session {
                 let p = self.eval(page, f)?;
                 self.page_control(p, *control)
             }
+            E::FieldOf(base, pos) => {
+                let record = self.eval(base, f)?;
+                self.read_record_field(record, *pos)
+            }
             E::QueryColumn { query, column } => {
                 let q = self.eval(query, f)?;
                 self.query_column(q, *column)
@@ -1554,42 +1558,52 @@ impl Session {
                 let v = arr.borrow()[flat].clone();
                 Ok(v)
             }
-            ir::Place::Field(base, pos) => match self.read(base, f)? {
-                Value::Record(rc) => {
-                    self.connection_check(&rc)?;
-                    let r = rc.borrow();
-                    if !self.engine.unevaluable_init.is_empty() && !r.touched {
-                        // The buffer of a record nothing has written is built by this read, which
-                        // evaluates the InitValues (record/TestDateTimeInitValue.Codeunit.al:
-                        // DateTimeInitValue_Table_UntouchedRecordRaisesOnReadNotOnInit).
-                        if let Some(message) = self.engine.unevaluable_init.get(&(r.table, *pos)) {
-                            return Err(Signal::Error(AlError {
-                                message: message.clone(),
-                                code: String::new(),
-                                call_stack: String::new(),
-                            }));
-                        }
+            ir::Place::Field(base, pos) => {
+                let record = self.read(base, f)?;
+                self.read_record_field(record, *pos)
+            }
+        }
+    }
+
+    /// The value of field `pos` of the record `record` holds (the read of `Rec.Field`, also of a field of a procedure's
+    /// result).
+    fn read_record_field(&mut self, record: Value, pos: usize) -> Result<Value, Signal> {
+        let pos = &pos;
+        match record {
+            Value::Record(rc) => {
+                self.connection_check(&rc)?;
+                let r = rc.borrow();
+                if !self.engine.unevaluable_init.is_empty() && !r.touched {
+                    // The buffer of a record nothing has written is built by this read, which
+                    // evaluates the InitValues (record/TestDateTimeInitValue.Codeunit.al:
+                    // DateTimeInitValue_Table_UntouchedRecordRaisesOnReadNotOnInit).
+                    if let Some(message) = self.engine.unevaluable_init.get(&(r.table, *pos)) {
+                        return Err(Signal::Error(AlError {
+                            message: message.clone(),
+                            code: String::new(),
+                            call_stack: String::new(),
+                        }));
                     }
-                    if !self.engine.unevaluable_init.is_empty() && r.touched {
-                        let engine = self.engine.clone();
-                        if let Some(message) = engine.unevaluable_init.get(&(r.table, *pos)) {
-                            let pristine = self.initial_fields(r.table as usize);
-                            if ops::compare(&r.fields[*pos], &pristine[*pos]).ok() == Some(std::cmp::Ordering::Equal) {
-                                return Err(Signal::Unsupported(format!(
-                                    "a read of the field whose InitValue BC cannot evaluate (`{message}`), in a record where another field was written (not pinned)"
-                                )));
-                            }
-                        }
-                    }
-                    let v = r.fields[*pos].clone();
-                    if r.load.partial {
-                        drop(r);
-                        rc.borrow_mut().load.touch(*pos);
-                    }
-                    Ok(v)
                 }
-                other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
-            },
+                if !self.engine.unevaluable_init.is_empty() && r.touched {
+                    let engine = self.engine.clone();
+                    if let Some(message) = engine.unevaluable_init.get(&(r.table, *pos)) {
+                        let pristine = self.initial_fields(r.table as usize);
+                        if ops::compare(&r.fields[*pos], &pristine[*pos]).ok() == Some(std::cmp::Ordering::Equal) {
+                            return Err(Signal::Unsupported(format!(
+                                "a read of the field whose InitValue BC cannot evaluate (`{message}`), in a record where another field was written (not pinned)"
+                            )));
+                        }
+                    }
+                }
+                let v = r.fields[*pos].clone();
+                if r.load.partial {
+                    drop(r);
+                    rc.borrow_mut().load.touch(*pos);
+                }
+                Ok(v)
+            }
+            other => Err(Signal::Unsupported(format!("field of {}", other.describe()))),
         }
     }
 

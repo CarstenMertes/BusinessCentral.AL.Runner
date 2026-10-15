@@ -27,10 +27,19 @@ pub const TENANT_SETTINGS_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.
 /// `Microsoft.Dynamics.Nav.Runtime.NavTestExecution`.
 pub const TEST_EXECUTION: &str = "Microsoft.Dynamics.Nav.Runtime.NavTestExecution";
 /// `Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper`.
+/// Azure AD Graph's query object (System Application "Azure AD Graph Impl.").
+pub const GRAPH_QUERY: &str = "Microsoft.Dynamics.Nav.AzureADGraphClient.GraphQuery";
 pub const USER_ACCOUNT_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper";
 
 /// (CLR type, member, result). One row per registry member that returns a value.
 pub const SIGS: &[(&str, &str, Ret)] = &[
+    (GRAPH_QUERY, "GraphQuery", Ret::Object),
+    (GRAPH_QUERY, "IsM365CollaborationEnabled", Ret::Boolean),
+    (GRAPH_QUERY, "GetEnvironmentDirectoryGroup", Ret::Text),
+    (GRAPH_QUERY, "GetGroupPage", Ret::Object),
+    (GRAPH_QUERY, "GetGroupInfo", Ret::Object),
+    (GRAPH_QUERY, "FindFirstGroupInfoForDisplayName", Ret::Object),
+    (GRAPH_QUERY, "GetUser", Ret::Object),
     (AL_CONFIG_SETTINGS, "Instance", Ret::Object),
     (
         AL_CONFIG_SETTINGS,

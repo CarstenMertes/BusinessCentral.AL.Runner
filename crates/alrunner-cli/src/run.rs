@@ -222,6 +222,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             al_testrun::compile_cache::runtime_build();
         });
     }
+    if let Some(env) = a.environment {
+        al_testrun::host::set_environment(env);
+    }
     if let Some(dir) = &a.files_dir {
         al_testrun::host::set_files_dir(dir.clone());
     }

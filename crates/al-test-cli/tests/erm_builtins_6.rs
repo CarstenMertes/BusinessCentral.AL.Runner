@@ -1,7 +1,8 @@
-//! Tests-ERM refusals of issue 26: an Integer stored into an Enum, `RecordRef.Get(RecordId)` on a
-//! RecordRef that is not open, and `RecordRef.GetBySystemId`. No corpus test pins any of the three
-//! (`grep` of corpus/tests/al-language finds `Get(RecordId)` only on an open RecordRef and
-//! `GetBySystemId` only on a Record), so each is refused with a reason that names the open question.
+//! Tests-ERM refusals of issue 26: an Integer stored into an Enum and `RecordRef.Get(RecordId)` on a
+//! RecordRef that is not open. No corpus test pins either (`grep` of corpus/tests/al-language finds
+//! `Get(RecordId)` only on an open RecordRef), so each is refused with a reason that names the open
+//! question. `RecordRef.GetBySystemId`, refused here before, is probed now (al-vm
+//! tests/record_builtins.rs).
 
 use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
@@ -71,19 +72,12 @@ fn get_by_record_id_on_a_closed_record_ref_is_refused_with_its_reason() {
     );
 }
 
+/// `Database.SID()` without a user name: the probe (corpus branch al-runtime-rs-staging, ae3fe88,
+/// tests/al-language-onprem/session/PXDatabaseSid.al) passes a name every time, so whose SID the
+/// call without one answers is not pinned. Refused when it runs, with its reason.
 #[test]
-fn record_ref_get_by_system_id_is_refused_with_its_reason() {
-    let (l, oi) =
-        compile("procedure ById(var RR: RecordRef; Id: Guid): Boolean begin exit(RR.GetBySystemId(Id)); end;");
-    let ri = l.program.objects[oi]
-        .routines
-        .iter()
-        .position(|r| r.name == "ById")
-        .unwrap();
-    let why = l.unsupported[oi][ri].first().cloned().unwrap_or_default();
-    assert!(
-        why.contains("RecordRef.GetBySystemId") && why.contains("not pinned"),
-        "{why}"
-    );
-    assert!(!why.contains("is not implemented"), "{why}");
+fn database_sid_without_a_user_name_is_refused_with_its_reason() {
+    let o = outcomes("[Test] procedure NoName() var T: Text; begin T := Database.SID(); end;");
+    let why = not_run(&o[0]);
+    assert!(why.contains("Database.SID") && why.contains("not pinned"), "{why}");
 }

@@ -207,6 +207,7 @@ impl Builder<'_> {
             parent,
             left_outer: parent.is_some(),
             link: Vec::new(),
+            link_items: Vec::new(),
             table_filter: Vec::new(),
         });
         let mut cross = false;
@@ -263,13 +264,16 @@ impl Builder<'_> {
         }
     }
 
-    /// `DataItemLink = "Child Field" = Parent."Parent Field", ...`.
+    /// `DataItemLink = "Child Field" = Parent."Parent Field", ...`. The field on the right may belong to an
+    /// item further out than the parent: the link then reads that item's current row (corpus branch
+    /// al-runtime-rs-staging, query/PXQueryOuterLink.al:6-11, probed on BC 27.5). Each part reads the item it
+    /// names; parts naming two different items are an assumption (docs/probes-needed.md).
     fn link(&mut self, idx: usize, parent: usize, text: &str) {
-        let (table, ptable) = (self.items[idx].table, self.items[parent].table);
-        let pname = self.items[parent].name.clone();
-        if table == usize::MAX || ptable == usize::MAX {
+        let table = self.items[idx].table;
+        if table == usize::MAX {
             return;
         }
+        let mut items = Vec::new();
         for part in split_top(text, ',') {
             let Some((l, r)) = split_once_top(&part, '=') else {
                 self.reason(format!("DataItemLink `{part}` is not understood"));
@@ -279,17 +283,36 @@ impl Builder<'_> {
                 self.reason(format!("DataItemLink `{part}` does not name a parent field"));
                 continue;
             };
-            if !unquote(&who).eq_ignore_ascii_case(&pname) {
+            // The enclosing items, nearest first.
+            let mut anc = Some(parent);
+            let mut found = None;
+            while let Some(a) = anc {
+                if unquote(&who).eq_ignore_ascii_case(&self.items[a].name) {
+                    found = Some(a);
+                    break;
+                }
+                anc = self.items[a].parent;
+            }
+            let Some(target) = found else {
                 self.reason(format!(
-                    "DataItemLink `{part}` links to {who}, which is not the enclosing dataitem {pname}: a link to an outer dataitem is not pinned (docs/probes-needed.md)"
+                    "DataItemLink `{part}` links to {who}, which is no enclosing dataitem of {}",
+                    self.items[idx].name
                 ));
                 continue;
+            };
+            let ttable = self.items[target].table;
+            if ttable == usize::MAX {
+                return;
             }
             let own = self.stored_field(table, &unquote(&l), "DataItemLink");
-            let theirs = self.stored_field(ptable, &unquote(&field), "DataItemLink");
+            let theirs = self.stored_field(ttable, &unquote(&field), "DataItemLink");
             if let (Some(o), Some(t)) = (own, theirs) {
                 self.items[idx].link.push((o, t));
+                items.push(target);
             }
+        }
+        if items.iter().any(|&t| t != parent) {
+            self.items[idx].link_items = items;
         }
     }
 

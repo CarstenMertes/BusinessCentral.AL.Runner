@@ -57,10 +57,16 @@ fn run() -> Result<ExitCode, String> {
         print!("{}", output::timings_table(&ts));
         return Ok(ExitCode::SUCCESS);
     }
+    if let Some(env) = args.environment {
+        al_test_cli::host::set_environment(env);
+    }
     if let Some(dir) = &args.files_dir {
         al_test_cli::host::set_files_dir(dir.clone());
     }
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
+    if let Some(dir) = &args.coverage_map {
+        return coverage_map(&root, dir.as_deref());
+    }
     if let Some(dir) = &args.must_not_compile {
         return must_not_compile(&args, &root, dir.as_deref());
     }
@@ -112,6 +118,25 @@ fn run() -> Result<ExitCode, String> {
         print!("{}", drift_summary(&runs));
     }
     Ok(ExitCode::from(code))
+}
+
+/// `--coverage-map`: which builtin overloads the corpus calls (`coverage.rs`).
+fn coverage_map(root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
+    let commit = git_head(&root.join("corpus"))?;
+    let map = al_test_cli::coverage::corpus_coverage(root, &commit)?;
+    let dir = dir.map(Path::to_path_buf).unwrap_or_else(|| root.join("docs"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let write = |name: &str, text: String| {
+        std::fs::write(dir.join(name), text).map_err(|e| format!("{}: {e}", dir.join(name).display()))
+    };
+    write("corpus-coverage.md", al_test_cli::coverage::to_markdown(&map))?;
+    write("corpus-coverage.json", al_test_cli::coverage::to_json(&map))?;
+    let (pinned, all) = map.total();
+    println!(
+        "corpus coverage: pinned {pinned} of {all} builtin overloads; written to {}",
+        dir.display()
+    );
+    Ok(ExitCode::SUCCESS)
 }
 
 /// `--must-not-compile`: the verdict on every case of the corpus folder (`mnc.rs`).
@@ -495,6 +520,19 @@ fn run_version(
                 tests_s: d.as_secs_f64(),
             })
             .collect(),
+        slowest_tests: {
+            let mut all: Vec<&al_testrun::runtime::TestResult> = rt.results().iter().collect();
+            all.sort_by_key(|r| std::cmp::Reverse(r.time));
+            all.into_iter()
+                .take(10)
+                .filter(|r| !r.time.is_zero())
+                .map(|r| report::SlowTest {
+                    codeunit: r.codeunit,
+                    name: r.test.clone(),
+                    seconds: r.time.as_secs_f64(),
+                })
+                .collect()
+        },
     };
     if args.timings {
         eprintln!(
@@ -598,7 +636,12 @@ fn run_version(
     if let Some(p) = &args.junit {
         write(
             &per_version(p, version.major, all),
-            &output::junit(&cases, &outcome, bc_build.as_deref()),
+            &output::junit(
+                &cases,
+                &outcome,
+                &|c| rt.first_time(c).as_secs_f64(),
+                bc_build.as_deref(),
+            ),
         )?;
     }
     if let Some(p) = &args.junit {
@@ -611,7 +654,12 @@ fn run_version(
             );
             write(
                 &per_version(&p.with_file_name(name), version.major, all),
-                &output::junit(cases, &|c| rt.outcome_in(&suite.name, c), bc_build.as_deref()),
+                &output::junit(
+                    cases,
+                    &|c| rt.outcome_in(&suite.name, c),
+                    &|c| rt.time_in(&suite.name, c).as_secs_f64(),
+                    bc_build.as_deref(),
+                ),
             )?;
         }
     }

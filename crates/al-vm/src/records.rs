@@ -1251,9 +1251,13 @@ impl Session {
                 if let (Some(row), Some(i)) = (&stored, t.fields.iter().position(|f| f.id == 2_000_000_005)) {
                     let (mine, theirs) = (rec.borrow().fields[i].clone(), row[i].clone());
                     let version = |v: &Value| if let Value::BigInteger(n) = v { *n } else { 0 };
+                    // Stale means the stored row is NEWER than the buffer. A buffer that is newer than the row (the
+                    // transaction was rolled back to the last Commit after the buffer's own Modify, as an asserterror
+                    // does) is not stale: Microsoft's SMB Service Item TestItem_Reserve modifies such a buffer
+                    // and passes in BC (assumed from that test; docs/probes-needed.md).
                     if !rec.borrow().temporary
                         && version(&mine) != 0
-                        && version(&mine) != version(&theirs)
+                        && version(&mine) < version(&theirs)
                         && version(&theirs) <= self.committed_row_version
                     {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
@@ -1422,6 +1426,22 @@ impl Session {
                 Ok(Value::Null)
             }
             "Get" => {
+                // `Get(RecordId)`: the row the RecordId names, as RecordRef.Get(RecordId) does (corpus
+                // recordref/TestRecordRefKeys.al:48). The Record form has no corpus test (Base Application's Item
+                // Category Management does `ItemCategory.Get(RecId)`); the RecordId of another table is refused.
+                let from_id: Option<Vec<Value>> = match args {
+                    [Value::Library(_, l)] => match &*l.borrow() {
+                        al_builtins::value::LibraryValue::RecordId { table, key, .. } if *table == t.object => {
+                            Some(key.clone())
+                        }
+                        al_builtins::value::LibraryValue::RecordId { .. } => {
+                            return unsupported("Get of a RecordId of another table (error text not pinned)");
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let args = from_id.as_deref().unwrap_or(args);
                 let mut pk = Vec::new();
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
@@ -1591,6 +1611,11 @@ impl Session {
             "Next" => {
                 let steps = match args.first() {
                     Some(Value::Integer(n)) => *n,
+                    // A whole-number Decimal (`Calendar.Next(12 / CountFrequency)`); a fraction would round or
+                    // truncate, which is not pinned.
+                    Some(Value::Decimal(d)) if d.fract().is_zero() && i32::try_from(d.trunc()).is_ok() => {
+                        i32::try_from(d.trunc()).unwrap_or(0)
+                    }
                     None => 1,
                     other => return unsupported(format!("Next({})", other.describe())),
                 };
@@ -1661,6 +1686,17 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
+                // An empty filter text removes the field's filter: a Query column does so
+                // (query/TestQueryRuntimeContracts.al:208-209, "an empty SetFilter clears the filter"), and the
+                // documentation says the same of a Record. Base Application's BOM Structure does
+                // `Item.SetFilter("No.", ItemFilter)` with an empty `ItemFilter`. The Record form is an assumption
+                // (docs/probes-needed.md).
+                if text.trim().is_empty() {
+                    let mut r = rec.borrow_mut();
+                    let group = r.filter_group;
+                    r.filters.retain(|f| !(f.field == pos && f.group == group));
+                    return Ok(Value::Null);
+                }
                 let engine = self.engine.clone();
                 let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
                 let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {

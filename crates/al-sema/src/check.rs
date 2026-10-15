@@ -1097,7 +1097,8 @@ impl<'a> Checker<'a> {
             let item_rec = r.syntax().ancestors().filter_map(ast::Section::cast).find_map(|s| {
                 let a = s.args();
                 match s.name().to_ascii_lowercase().as_str() {
-                    "dataitem" => a.get(1).cloned(),
+                    // The table as the object's variables name it, also when it is namespace-qualified.
+                    "dataitem" => crate::types::section_object_name(&s, 1),
                     "modify" | "add" => a.first().and_then(|n| base_items.get(&n.to_lowercase()).cloned()),
                     _ => None,
                 }
@@ -1426,7 +1427,20 @@ impl<'a> Checker<'a> {
                 .iter()
                 .filter(|c| c.hidden.is_some() == hidden && c.min <= argc && argc <= c.max)
             {
-                let score = args.iter().zip(&c.param_tys).filter(|(a, p)| fits(a, p)).count();
+                // How many arguments fit decides; among equals, the overload whose parameter types are the arguments'
+                // own types wins over one that only takes them as a Variant (Reservation Management has
+                // `SetReservSource(Variant)` and `SetReservSource(RecordRef)`; passing a RecordRef picks the latter).
+                let fit = args.iter().zip(&c.param_tys).filter(|(a, p)| fits(a, p)).count();
+                // Only among the procedures AL code declares: the catalog's overloads keep their order.
+                let exact = if matches!(c.target, Res::Proc { .. }) {
+                    args.iter()
+                        .zip(&c.param_tys)
+                        .filter(|(a, p)| !matches!(a, Ty::Unknown) && a.to_string().eq_ignore_ascii_case(p))
+                        .count()
+                } else {
+                    0
+                };
+                let score = fit * 1000 + exact;
                 if best.is_none_or(|(_, s)| score > s) {
                     best = Some((c, score));
                 }

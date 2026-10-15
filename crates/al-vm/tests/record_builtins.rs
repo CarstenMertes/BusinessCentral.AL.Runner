@@ -32,6 +32,8 @@ table 50902 "ALT Blank"
     }
     keys { key(PK; Id) { } }
 }
+table 50903 "ALT EO Enum" { fields { field(1; Id; Code[10]) { } field(2; Kind; Enum "ALT Blank Kind") { } } keys { key(PK; Id) { } } }
+table 50904 "ALT EO Option" { fields { field(1; Id; Code[10]) { } field(2; Kind; Option) { OptionMembers = " ",A,B; } } keys { key(PK; Id) { } } }
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -694,6 +696,48 @@ fn transfer_fields_copies_by_field_number_and_honours_the_key_flag() {
     assert_eq!(text(r), "SRC42hello|KEEP42|SRC");
 }
 
+// A field of what a procedure returns: Base Application's `exit(GetLocation("Location Code")."Bin Mandatory")` (Warehouse
+// Receipt Header.BinCodeMandatory, 50 Tests-SCM tests). The result is a copy of the record.
+#[test]
+fn a_field_of_a_procedure_result_is_read() {
+    let r = run(
+        "procedure Get(Code: Code[20]): Record \"ALT T\" var R: Record \"ALT T\"; begin R.\"No.\" := Code; R.Grp := 7; R.Descr := 'x'; exit(R); end;
+         procedure F(): Text begin exit(Get('K').\"No.\" + '|' + Format(Get('Z').Grp) + '|' + Get('Q').Descr); end;",
+        "F",
+    );
+    assert_eq!(text(r), "K|7|x");
+}
+
+// An Enum field and an Option field with the same field number transfer by ordinal (Base Application's Sales Order
+// Entity Buffer next to Sales Header: assumed, docs/probes-needed.md). An ordinal the enum lacks is refused.
+#[test]
+fn transfer_fields_moves_the_ordinal_between_an_enum_and_an_option_field() {
+    let r = run(
+        "procedure F(): Text var E: Record \"ALT EO Enum\"; O: Record \"ALT EO Option\"; res: Text; begin
+            E.Id := 'E'; E.Kind := E.Kind::Item;
+            O.TransferFields(E);
+            res := Format(O.Kind) + '|' + Format(O.Kind, 0, 2);
+            Clear(E);
+            O.Kind := O.Kind::A;
+            E.TransferFields(O);
+            exit(res + '|' + Format(E.Kind, 0, 2));
+        end;",
+        "F",
+    );
+    // The Option holds ordinal 1 (member `A`); moving it back to the Enum has the ordinal 1, `Item`.
+    assert_eq!(text(r), "A|1|1");
+    let r = run(
+        "procedure F() var E: Record \"ALT EO Enum\"; O: Record \"ALT EO Option\"; begin
+            O.Kind := O.Kind::B; E.TransferFields(O);
+        end;",
+        "F",
+    );
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("no such value")),
+        "{r:?}"
+    );
+}
+
 // record/TestRecordSort.al:184-203 (SetAscending(false) makes FindFirst return the largest) and :205-.
 #[test]
 fn set_ascending_on_a_single_field_key_reverses_the_order() {
@@ -925,6 +969,72 @@ fn setfilter_placeholder_text_with_an_unpinned_filter_character_is_refused() {
         "F",
     );
     assert_eq!(text_or_int(r), 1);
+}
+
+// RecordRef.GetBySystemId, as probed on BC 27.5: corpus branch al-runtime-rs-staging (ae3fe88),
+// tests/al-language/types/PXEnumRecordRef.al:199-246 (found loads every field, a missing or null
+// Guid answers false and leaves the buffer), :249-270 (the result unused: a miss raises
+// DB:RecordNotFound), :273-301 (found outside the filters, the filters stay; a RecordRef never
+// opened answers false and Number() 0).
+#[test]
+fn record_ref_get_by_system_id_loads_the_row_and_a_miss_keeps_the_buffer() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; RR: RecordRef; Id: Guid; s: Text; begin
+            R.\"No.\" := 'A'; R.Descr := 'first'; R.Amount := 1.5; R.Insert(); Id := R.SystemId;
+            R.\"No.\" := 'B'; R.Descr := 'second'; R.Amount := 2.5; R.Insert();
+            RR.Open(Database::\"ALT T\");
+            s := Format(RR.GetBySystemId(Id)) + Format(RR.Field(1).Value) + Format(RR.Field(4).Value) + Format(RR.Field(2).Value);
+            s += Format(Format(RR.Field(RR.SystemIdNo()).Value) = Format(Id)) + Format(RR.Count());
+            s += '|' + Format(RR.GetBySystemId(CreateGuid())) + Format(RR.Field(1).Value) + Format(RR.Field(4).Value);
+            s += '|' + Format(RR.GetBySystemId('00000000-0000-0000-0000-000000000000'));
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesAfirst1.5Yes2|NoAfirst|No");
+}
+
+#[test]
+fn record_ref_get_by_system_id_with_the_result_unused_raises_on_a_miss() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; RR: RecordRef; Id: Guid; G: Guid; s: Text; begin
+            R.\"No.\" := 'A'; R.Insert(); Id := R.SystemId;
+            RR.Open(Database::\"ALT T\");
+            RR.GetBySystemId(Id);
+            s := Format(RR.Field(1).Value);
+            G := CreateGuid();
+            asserterror RR.GetBySystemId(G);
+            exit(s + '|' + GetLastErrorText() + '|' + GetLastErrorCode() + '|' + Format(G));
+        end;",
+        "F",
+    );
+    let t = text(r);
+    let parts: Vec<&str> = t.split('|').collect();
+    assert_eq!(parts[0], "A");
+    assert_eq!(
+        parts[1],
+        format!(
+            "The The Table does not exist. Identification fields and values: {}",
+            parts[3]
+        )
+    );
+    assert_eq!(parts[2], "DB:RecordNotFound");
+}
+
+#[test]
+fn record_ref_get_by_system_id_ignores_the_filters_and_a_never_opened_ref_answers_false() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; RR: RecordRef; Closed: RecordRef; Id: Guid; s: Text; begin
+            R.\"No.\" := 'A'; R.Descr := 'x'; R.Insert(); Id := R.SystemId;
+            RR.Open(Database::\"ALT T\");
+            RR.Field(4).SetRange('other');
+            s := Format(RR.GetBySystemId(Id)) + '|' + RR.GetFilters();
+            s += '|' + Format(Closed.GetBySystemId(Id)) + Format(Closed.Number());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes|Descr: other|No0");
 }
 
 // `Find('=<>')` names the same three directions as the pinned `Find('=><')` (pageupdate/TestPageUpdateGoneRow.al:423):

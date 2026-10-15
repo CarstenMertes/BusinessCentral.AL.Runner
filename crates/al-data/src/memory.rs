@@ -85,6 +85,17 @@ pub trait Backing {
     }
 }
 
+/// A table's rows in the order of one key, to step through them without a pass over the table per step.
+#[derive(Clone)]
+struct OrderEntry {
+    shape: u64,
+    rows: usize,
+    order: std::rc::Rc<Vec<Key>>,
+}
+
+/// Tables with fewer rows than this are walked in a secondary key by looking at every row.
+const INDEX_MIN_ROWS: usize = 64;
+
 #[derive(Clone, Default)]
 pub struct MemStore {
     tables: Tables,
@@ -93,6 +104,13 @@ pub struct MemStore {
     /// rollback, so a table has the same stamp exactly when it has the same content history.
     versions: im::OrdMap<(String, u32), u64>,
     committed_versions: im::OrdMap<(String, u32), u64>,
+    /// The value of `counter` when the *shape* of each table last changed: a row was inserted, deleted or
+    /// renamed, or a Modify changed a field some key is made of. It follows `tables` like `versions`, so
+    /// equal stamps mean the same rows in the same places in every key.
+    shapes: im::OrdMap<(String, u32), u64>,
+    committed_shapes: im::OrdMap<(String, u32), u64>,
+    /// The primary keys of a big table in the order of one of its other keys, as of a shape stamp.
+    order_cache: std::cell::RefCell<std::collections::HashMap<(String, u32, usize), OrderEntry>>,
     /// Handed out by writes; never goes back, so a stamp is never reused.
     counter: u64,
     /// Tables that have no stored rows (ADR-019).
@@ -126,6 +144,36 @@ fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
         },
         t.object,
     )
+}
+
+/// Whether `new` differs from `old` in a field some key of `t` is made of (the primary key included).
+fn key_fields_differ(t: &TableDef, old: &[Value], new: &[Value]) -> bool {
+    t.keys
+        .iter()
+        .flatten()
+        .any(|&i| al_builtins::ops::compare(&old[i], &new[i]).map_or(true, |o| o != Ordering::Equal))
+}
+
+/// `key_cmp(position(t, key, row), other)` without building the position.
+fn cmp_row_to_position(t: &TableDef, key: usize, row: &[Value], other: &[Value]) -> Ordering {
+    for (&i, x) in t.keys[key].iter().chain(&t.keys[0]).zip(other) {
+        match al_builtins::ops::compare(&row[i], x).unwrap_or(Ordering::Equal) {
+            Ordering::Equal => continue,
+            o => return o,
+        }
+    }
+    (t.keys[key].len() + t.keys[0].len()).cmp(&other.len())
+}
+
+/// `key_cmp(position(t, key, a), position(t, key, b))` without building the positions.
+fn cmp_rows(t: &TableDef, key: usize, a: &[Value], b: &[Value]) -> Ordering {
+    for &i in t.keys[key].iter().chain(&t.keys[0]) {
+        match al_builtins::ops::compare(&a[i], &b[i]).unwrap_or(Ordering::Equal) {
+            Ordering::Equal => continue,
+            o => return o,
+        }
+    }
+    Ordering::Equal
 }
 
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
@@ -292,7 +340,8 @@ impl MemStore {
         for slot in doomed {
             self.tables.remove(&slot);
             self.counter += 1;
-            self.versions.insert(slot, self.counter);
+            self.versions.insert(slot.clone(), self.counter);
+            self.shapes.insert(slot, self.counter);
         }
     }
 
@@ -310,9 +359,11 @@ impl MemStore {
                 let target = (new.to_string(), slot.1);
                 self.tables.insert(target.clone(), table);
                 self.counter += 1;
-                self.versions.insert(slot, self.counter);
+                self.versions.insert(slot.clone(), self.counter);
+                self.shapes.insert(slot, self.counter);
                 self.counter += 1;
-                self.versions.insert(target, self.counter);
+                self.versions.insert(target.clone(), self.counter);
+                self.shapes.insert(target, self.counter);
             }
         }
     }
@@ -331,6 +382,12 @@ impl MemStore {
         self.versions.insert(slot(cx, t), self.counter);
     }
 
+    /// `touch` for a change of the table's shape (see `shapes`).
+    fn touch_shape(&mut self, cx: &AccessContext, t: &TableDef) {
+        self.touch(cx, t);
+        self.shapes.insert(slot(cx, t), self.counter);
+    }
+
     fn table(&self, cx: &AccessContext, t: &TableDef) -> Option<std::borrow::Cow<'_, Table>> {
         let slot = slot(cx, t);
         match self.tables.get(&slot) {
@@ -341,6 +398,29 @@ impl MemStore {
                 .rows(&slot.0, slot.1)
                 .map(|r| std::borrow::Cow::Owned(r.0)),
         }
+    }
+
+    /// The primary keys of `table` in the order of key `key`, kept while the shape of the table stays.
+    fn order_of(&self, slot: &(String, u32), key: usize, t: &TableDef, table: &Table) -> std::rc::Rc<Vec<Key>> {
+        let shape = self.shapes.get(slot).copied().unwrap_or(0);
+        let ck = (slot.0.clone(), slot.1, key);
+        if let Some(e) = self.order_cache.borrow().get(&ck) {
+            if e.shape == shape && e.rows == table.len() {
+                return e.order.clone();
+            }
+        }
+        let mut rows: Vec<(&Key, &Row)> = table.iter().collect();
+        rows.sort_by(|a, b| cmp_rows(t, key, a.1, b.1));
+        let order = std::rc::Rc::new(rows.into_iter().map(|(k, _)| k.clone()).collect::<Vec<_>>());
+        self.order_cache.borrow_mut().insert(
+            ck,
+            OrderEntry {
+                shape,
+                rows: table.len(),
+                order: order.clone(),
+            },
+        );
+        order
     }
 
     fn table_mut(&mut self, cx: &AccessContext, t: &TableDef) -> &mut Table {
@@ -368,7 +448,7 @@ impl Store for MemStore {
             return Ok(InsertOutcome::AlreadyExists);
         }
         table.insert(k, row);
-        self.touch(cx, t);
+        self.touch_shape(cx, t);
         Ok(InsertOutcome::Inserted)
     }
 
@@ -389,8 +469,14 @@ impl Store for MemStore {
         if !table.contains_key(&k) {
             return Ok(WriteOutcome::NotFound);
         }
+        // A key is made of fields; when a Modify changes one the row stands elsewhere in that key.
+        let moved = table.get(&k).is_some_and(|old| key_fields_differ(t, old, &row));
         table.insert(k, row);
-        self.touch(cx, t);
+        if moved {
+            self.touch_shape(cx, t);
+        } else {
+            self.touch(cx, t);
+        }
         Ok(WriteOutcome::Done)
     }
 
@@ -401,7 +487,7 @@ impl Store for MemStore {
         self.note_restored(cx, t, &Key(pk.to_vec()), "Delete", None);
         Ok(match self.table_mut(cx, t).remove(&Key(pk.to_vec())) {
             Some(_) => {
-                self.touch(cx, t);
+                self.touch_shape(cx, t);
                 WriteOutcome::Done
             }
             None => WriteOutcome::NotFound,
@@ -429,7 +515,7 @@ impl Store for MemStore {
         }
         table.remove(&Key(old.to_vec()));
         table.insert(new_k, row);
-        self.touch(cx, t);
+        self.touch_shape(cx, t);
         Ok(RenameOutcome::Renamed)
     }
 
@@ -440,11 +526,64 @@ impl Store for MemStore {
         let Some(table) = self.table(cx, t) else {
             return Ok(None);
         };
-        let mut best: Option<(Vec<Value>, &Row)> = None;
+        // In primary key order the table is already in the order of the scan: step to the first row past
+        // the position and look at the rows from there on until one passes the filters.
+        if scan.key == 0 {
+            use std::ops::Bound::{Excluded, Unbounded};
+            let k = t.keys[0].len();
+            let after = scan.after.map(|a| Key(a[..k.min(a.len())].to_vec()));
+            if scan.ascending {
+                let lower = after.map_or(Unbounded, Excluded);
+                return Ok(table
+                    .range((lower, Unbounded))
+                    .map(|(_, r)| r)
+                    .find(|r| passes(r, scan.filters))
+                    .cloned());
+            }
+            let upper = after.map_or(Unbounded, Excluded);
+            return Ok(table
+                .range((Unbounded, upper))
+                .rev()
+                .map(|(_, r)| r)
+                .find(|r| passes(r, scan.filters))
+                .cloned());
+        }
+        // A big table in another key: step through the table's rows in that key's order.
+        if table.len() >= INDEX_MIN_ROWS {
+            let slot = slot(cx, t);
+            let order = self.order_of(&slot, scan.key, t, &table);
+            let row_at = |k: &Key| table.get(k);
+            if order.len() == table.len() && order.iter().take(1).all(|k| row_at(k).is_some()) {
+                let found = if scan.ascending {
+                    let start = scan.after.map_or(0, |a| {
+                        order.partition_point(|k| {
+                            row_at(k).is_some_and(|r| cmp_row_to_position(t, scan.key, r, a) != Ordering::Greater)
+                        })
+                    });
+                    order[start..]
+                        .iter()
+                        .filter_map(row_at)
+                        .find(|r| passes(r, scan.filters))
+                } else {
+                    let end = scan.after.map_or(order.len(), |a| {
+                        order.partition_point(|k| {
+                            row_at(k).is_some_and(|r| cmp_row_to_position(t, scan.key, r, a) == Ordering::Less)
+                        })
+                    });
+                    order[..end]
+                        .iter()
+                        .rev()
+                        .filter_map(row_at)
+                        .find(|r| passes(r, scan.filters))
+                };
+                return Ok(found.cloned());
+            }
+        }
+        // A small table in another key: every row is looked at, without building its position (a copy of the key fields).
+        let mut best: Option<&Row> = None;
         for row in table.values().filter(|r| passes(r, scan.filters)) {
-            let pos = position(t, scan.key, row);
             let after_ok = scan.after.is_none_or(|a| {
-                let o = key_cmp(&pos, a);
+                let o = cmp_row_to_position(t, scan.key, row, a);
                 if scan.ascending {
                     o == Ordering::Greater
                 } else {
@@ -454,8 +593,8 @@ impl Store for MemStore {
             if !after_ok {
                 continue;
             }
-            let better = best.as_ref().is_none_or(|(b, _)| {
-                let o = key_cmp(&pos, b);
+            let better = best.is_none_or(|b| {
+                let o = cmp_rows(t, scan.key, row, b);
                 if scan.ascending {
                     o == Ordering::Less
                 } else {
@@ -463,10 +602,10 @@ impl Store for MemStore {
                 }
             });
             if better {
-                best = Some((pos, row));
+                best = Some(row);
             }
         }
-        Ok(best.map(|(_, r)| r.clone()))
+        Ok(best.cloned())
     }
 
     fn count(&self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
@@ -500,7 +639,7 @@ impl Store for MemStore {
             table.remove(k);
         }
         if !doomed.is_empty() {
-            self.touch(cx, t);
+            self.touch_shape(cx, t);
         }
         Ok(doomed.len())
     }
@@ -508,11 +647,13 @@ impl Store for MemStore {
     fn commit(&mut self) {
         self.committed = self.tables.clone();
         self.committed_versions = self.versions.clone();
+        self.committed_shapes = self.shapes.clone();
     }
 
     fn rollback(&mut self) {
         self.tables = self.committed.clone();
         self.versions = self.committed_versions.clone();
+        self.shapes = self.committed_shapes.clone();
     }
 }
 
@@ -786,6 +927,27 @@ mod tests {
         assert_eq!(s.count(&cx, &t, &[]).unwrap(), 0);
         s.record_restored_changes(false);
         assert!(s.restored_changes().is_empty());
+    }
+
+    /// Walking a table row by row costs a few comparisons a row, not a pass over the table: 30,000 rows in a
+    /// second, where a scan that looks at every row for each step needs minutes. Release only
+    /// (`cargo test --release -p al-data -- --ignored`).
+    #[test]
+    #[ignore]
+    fn walking_a_big_table_row_by_row_is_not_quadratic() {
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        let mut s = MemStore::default();
+        for i in 0..30_000 {
+            s.insert(&cx, &t, crate::contract::row(&format!("{i:08}"), i, i % 7))
+                .unwrap();
+        }
+        let started = std::time::Instant::now();
+        for key in [0, 1] {
+            let rows = crate::contract::scan_all(&s, &cx, &t, key, &[], true);
+            assert_eq!(rows.len(), 30_000);
+        }
+        let took = started.elapsed();
+        assert!(took < std::time::Duration::from_secs(5), "two walks took {took:?}");
     }
 
     #[test]

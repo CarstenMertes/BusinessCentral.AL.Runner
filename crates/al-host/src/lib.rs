@@ -68,8 +68,35 @@ impl ClientType {
     }
 }
 
+/// What kind of server the session runs on, as far as Environment Information can tell
+/// (`--environment`, ADR-014 amendment 2026-10-15).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Environment {
+    /// The probed oracle tier: a SaaS-like sandbox (`IsSaaS` and `IsSandbox` Yes, `IsProduction` No).
+    #[default]
+    Saas,
+    /// An on-prem server, which Microsoft's own test suites run on: `IsSaaS`, `IsSandbox` No until
+    /// a test library's `SetTestability*` changes it.
+    OnPrem,
+}
+
+impl std::str::FromStr for Environment {
+    type Err = String;
+    fn from_str(s: &str) -> Result<Environment, String> {
+        match s.to_ascii_lowercase().as_str() {
+            "saas" => Ok(Environment::Saas),
+            "onprem" => Ok(Environment::OnPrem),
+            other => Err(format!("`{other}` is not an environment (saas or onprem)")),
+        }
+    }
+}
+
 /// Who runs the code, and on what kind of server.
 pub trait Identity {
+    /// The kind of server (default: the probed SaaS-like sandbox).
+    fn environment(&self) -> Environment {
+        Environment::Saas
+    }
     /// `UserId()`.
     fn user_id(&self) -> String;
     /// `UserSecurityId()`, as the 16 bytes of the Guid in text order.
@@ -212,6 +239,69 @@ impl Identity for AlRunnerIdentity {
     }
 }
 
+/// An identity on another kind of server than the one it would name.
+struct InEnvironment {
+    inner: Box<dyn Identity>,
+    environment: Environment,
+}
+
+impl Identity for InEnvironment {
+    fn environment(&self) -> Environment {
+        self.environment
+    }
+    fn user_id(&self) -> String {
+        self.inner.user_id()
+    }
+    fn user_security_id(&self) -> [u8; 16] {
+        self.inner.user_security_id()
+    }
+    fn company_name(&self) -> String {
+        self.inner.company_name()
+    }
+    fn session_id(&self) -> i32 {
+        self.inner.session_id()
+    }
+    fn service_instance_id(&self) -> i32 {
+        self.inner.service_instance_id()
+    }
+    fn tenant_id(&self) -> String {
+        self.inner.tenant_id()
+    }
+    fn gui_allowed(&self) -> bool {
+        self.inner.gui_allowed()
+    }
+    fn is_service_tier(&self) -> bool {
+        self.inner.is_service_tier()
+    }
+    fn windows_language(&self) -> i32 {
+        self.inner.windows_language()
+    }
+    fn global_language(&self) -> i32 {
+        self.inner.global_language()
+    }
+    fn locale_id(&self) -> i32 {
+        self.inner.locale_id()
+    }
+    fn time_zone(&self) -> String {
+        self.inner.time_zone()
+    }
+    fn current_client_type(&self) -> ClientType {
+        self.inner.current_client_type()
+    }
+    fn default_client_type(&self) -> ClientType {
+        self.inner.default_client_type()
+    }
+    fn company_id(&self) -> [u8; 16] {
+        self.inner.company_id()
+    }
+    fn host_name(&self) -> String {
+        self.inner.host_name()
+    }
+    fn time_zones(&self) -> Vec<TimeZoneInfo> {
+        self.inner.time_zones()
+    }
+}
+
 /// An identity that runs in another company than the one it would name.
 struct InCompany {
     inner: Box<dyn Identity>,
@@ -219,6 +309,9 @@ struct InCompany {
 }
 
 impl Identity for InCompany {
+    fn environment(&self) -> Environment {
+        self.inner.environment()
+    }
     fn user_id(&self) -> String {
         self.inner.user_id()
     }
@@ -351,6 +444,15 @@ impl Host {
         self
     }
 
+    /// The same host on another kind of server (`--environment`).
+    pub fn in_environment(mut self, environment: Environment) -> Host {
+        self.identity = Box::new(InEnvironment {
+            inner: self.identity,
+            environment,
+        });
+        self
+    }
+
     /// The same host on another file system.
     pub fn with_files(mut self, files: impl FileSystem + 'static) -> Host {
         self.files = Box::new(files);
@@ -398,6 +500,19 @@ mod tests {
         assert!(i.gui_allowed() && i.is_service_tier());
         assert_eq!(i.windows_language(), 1033);
         assert_eq!((i.locale_id(), i.time_zone().as_str()), (1033, "UTC"));
+    }
+
+    /// Owner decision 2026-10-15 (`--environment`): the default environment is the one probed (a
+    /// SaaS-like sandbox); on-prem is chosen on purpose and survives wrapping in a company.
+    #[test]
+    fn the_environment_is_saas_unless_chosen() {
+        assert_eq!(Host::default().identity.environment(), Environment::Saas);
+        let h = Host::default().in_environment(Environment::OnPrem);
+        assert_eq!(h.identity.environment(), Environment::OnPrem);
+        assert_eq!(h.in_company("X").identity.environment(), Environment::OnPrem);
+        assert_eq!("onprem".parse::<Environment>(), Ok(Environment::OnPrem));
+        assert_eq!("SaaS".parse::<Environment>(), Ok(Environment::Saas));
+        assert!("cloud".parse::<Environment>().is_err());
     }
 
     #[test]

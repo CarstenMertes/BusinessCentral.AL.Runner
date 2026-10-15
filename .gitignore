@@ -1,3 +1,5 @@
 target/
 *.alcc
 __pycache__/
+# Never commit AL source extracted into the repo root (Microsoft code)
+/*.al

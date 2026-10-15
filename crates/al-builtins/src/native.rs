@@ -322,6 +322,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Text.UpperCase#1", uppercase),
     ("Text.LowerCase#1", lowercase),
     ("Database.Commit#1", |c, _, _| c.commit().map(|_| Value::Null)),
+    ("Database.SID#1", database_sid),
     ("System.Clear#1", clear),
     // A progress dialog is a headless no-op in a test (handlers/TestHandlersDialogProgressNoOp.al:24-110).
     ("Dialog.Open#1", |_, _, _| Ok(Value::Null)),
@@ -496,9 +497,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
-        "RecordRef.GetBySystemId#1" => {
-            "RecordRef.GetBySystemId is in no corpus test (only Record.GetBySystemId is), so whether it behaves as the Record form, loads the row into the RecordRef and how it answers a RecordRef that is not open are not pinned"
-        }
         "System.GetLastErrorText#2" => {
             "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
         }
@@ -608,6 +606,25 @@ pub fn unpinned_error() -> AlError {
 
 /// Text of a Text/Code/Char argument (Text parameters accept all three). Text that holds the
 /// untracked call stack marker is refused, so its content is never silently wrong.
+/// `Database.SID(UserName)`: a Windows-style security identifier as Text. Probed on BC 27.5 (corpus
+/// branch al-runtime-rs-staging, ae3fe88, tests/al-language-onprem/session/PXDatabaseSid.al:31-46):
+/// `S-1-5-21-<a>-<b>-<c>-<rid>`, eight dash-separated parts, all but the first numeric (each read by
+/// `Evaluate` into an Integer), the same for the same name, not the text of `UserSecurityId()`, and
+/// a SID of that shape for a name no user has. The numbers are the machine's and are not pinned:
+/// the domain part is fixed and the rid is a stable hash of the name (docs/probes-needed.md).
+/// Without a name, which user is meant is not pinned: refused.
+fn database_sid(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let Some(name) = args.first().and_then(text_of) else {
+        return unsupported("Database.SID without a user name (whose SID it answers is not pinned)");
+    };
+    // FNV-1a over the name's UTF-8 bytes: the same on every platform and run.
+    let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
+        (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
+    });
+    let rid = 1000 + hash % (i32::MAX as u64 - 1000);
+    Ok(Value::Text(format!("S-1-5-21-1004336348-1177238915-682003330-{rid}")))
+}
+
 pub fn text_of(v: &Value) -> Option<String> {
     match v {
         Value::Text(s) | Value::Code(s) if s.contains(UNTRACKED_CALL_STACK) => None,

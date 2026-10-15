@@ -225,10 +225,30 @@ fn what_the_corpus_does_not_pin_is_refused() {
         "U.Init(); U.\"User Security ID\" := CreateGuid(); U.\"User Name\" := 'N'; U.\"Authentication Email\" := 'a@b@c.d'; U.Insert(); exit('x');",
     );
     assert!(unsupported(r).contains("authentication email"));
+}
+
+/// Deleting a User deletes its Access Control rows, in every company, and no one else's. No corpus
+/// test pins it: Microsoft's codeunit 134614 "Test App Permissions" (Tests-SINGLESERVER) deletes all
+/// users in `InitializeData` and then creates new ones with the same roles, which passes on real BC only
+/// if the rows go with their users (owner decision 2026-10-15, hard rule 3 exception;
+/// docs/probes-needed.md "User delete cascade to Access Control").
+#[test]
+fn deleting_a_user_deletes_its_access_control_rows_and_only_those() {
+    let r = run("NewUser(U, ''); NewUser(V, ''); \
+         Ac.\"User Security ID\" := U.\"User Security ID\"; Ac.\"Role ID\" := 'R'; Ac.Insert(); \
+         Ac.\"Role ID\" := 'S'; Ac.Insert(); \
+         Ac.\"User Security ID\" := V.\"User Security ID\"; Ac.\"Role ID\" := 'R'; Ac.Insert(); \
+         U.Delete(); \
+         Ac.SetRange(\"User Security ID\", U.\"User Security ID\"); i := Ac.Count(); \
+         Ac.SetRange(\"User Security ID\", V.\"User Security ID\"); exit(Format(i) + '/' + Format(Ac.Count()));");
+    assert_eq!(text(r), "0/1");
+    // DeleteAll goes through the same cascade.
     let r = run(
-        "NewUser(U, ''); Ac.\"User Security ID\" := U.\"User Security ID\"; Ac.\"Role ID\" := 'R'; Ac.Insert(); U.Delete(); exit('x');",
+        "NewUser(U, ''); Ac.\"User Security ID\" := U.\"User Security ID\"; Ac.\"Role ID\" := 'R'; Ac.Insert(); \
+         V.SetRange(\"User Security ID\", U.\"User Security ID\"); V.DeleteAll(); \
+         Ac.SetRange(\"User Security ID\", U.\"User Security ID\"); exit(Format(Ac.Count()));",
     );
-    assert!(unsupported(r).contains("Access Control rows"));
+    assert_eq!(text(r), "0");
 }
 
 /// The first full corpus run of this change never finished: the scan of the User rows did not

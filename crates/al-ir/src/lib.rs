@@ -528,8 +528,12 @@ pub struct QueryItem {
     pub parent: Option<usize>,
     /// `SqlJoinType = LeftOuterJoin`, which is also the default of a nested dataitem.
     pub left_outer: bool,
-    /// `DataItemLink`: (field position in this table, field position in the parent's table).
+    /// `DataItemLink`: (field position in this table, field position in the linked item's table).
     pub link: Vec<(usize, usize)>,
+    /// For each `link` pair, the enclosing dataitem whose current row it reads, when any pair reads an item
+    /// further out than the parent (a link to the grandparent); empty when every pair reads the parent.
+    #[serde(default)]
+    pub link_items: Vec<usize>,
     /// `DataItemTableFilter`: conditions on fields of this table.
     pub table_filter: Vec<CalcCond>,
 }
@@ -817,6 +821,10 @@ pub struct Field {
     /// only. Empty when the relation is understood or not even that is clear.
     #[serde(default)]
     pub relation_meta: Vec<MetaRelationArm>,
+    /// For a relation with `Field = filter(x)` conditions (`relation_arms` empty): the arms the runtime applies
+    /// when a value is validated. Nothing but validation reads them.
+    #[serde(default)]
+    pub relation_runtime: Vec<RelationArm>,
     /// `FieldClass = FlowFilter`: holds the caller's filter, never a value.
     pub flow_filter: bool,
     /// A FlowField's `CalcFormula`, when lowered. A FlowField with neither
@@ -867,7 +875,11 @@ pub struct MetaRelationArm {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationCond {
     pub field: usize,
+    /// The constant of `Field = const(x)`; for a `filter` condition the filter text as written.
     pub value: Const,
+    /// `Field = filter(text)`: the arm applies when the field's value passes the filter `value` holds.
+    #[serde(default)]
+    pub filter: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
@@ -1172,6 +1184,9 @@ pub enum Expr {
         page: Box<Expr>,
         control: usize,
     },
+    /// Field `pos` of the record `base` evaluates to (`GetLocation(Code)."Bin Mandatory"`: a field of a
+    /// procedure's result, which is not a place).
+    FieldOf(Box<Expr>, usize),
     /// The current row's value of column `column` of a query variable (`Q.Amount`).
     QueryColumn {
         query: Box<Expr>,

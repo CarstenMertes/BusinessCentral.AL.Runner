@@ -175,6 +175,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 v.describe()
             ));
         }
+        // A Guid assigns into a Text or Code as its text form `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`, as
+        // Format gives it (`Dimensions.Add('PackageCode', Rec.SystemId)` into a Dictionary of [Text, Text] in Base
+        // Application's Config. Package Management). No corpus test assigns a Guid to a Text
+        // (docs/probes-needed.md).
+        (Value::Guid(g), T::Text(max)) => Value::Text(fit(crate::format::format_guid(&g), *max)?),
+        (Value::Guid(g), T::Code(max)) => Value::Code(fit(crate::format::format_guid(&g), *max)?),
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }
@@ -362,8 +368,11 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
-        (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && int_of(n).is_some() => {
-            let n = int_of(n).expect("int") as i32;
+        // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
+        // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
+        // would round or truncate: not pinned, so it stays refused below (docs/probes-needed.md).
+        (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && whole_days(n).is_some() => {
+            let n = whole_days(n).expect("whole") as i32;
             return Ok(V::Date(if op == Arith::Add { a + n } else { a - n }, *c));
         }
         _ => {}
@@ -425,6 +434,13 @@ fn text_like(v: &Value) -> Option<String> {
     }
 }
 
+fn whole_days(v: &Value) -> Option<i64> {
+    match v {
+        Value::Decimal(d) if d.fract().is_zero() => i64::try_from(d.trunc().mantissa() / 10i128.pow(d.scale())).ok(),
+        other => int_of(other),
+    }
+}
+
 fn int_of(v: &Value) -> Option<i64> {
     match v {
         Value::Integer(i) => Some(i64::from(*i)),
@@ -448,6 +464,21 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
 /// Text compares ordinally (case-sensitive): docs/probes-needed.md.
 pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     use Value as V;
+    // The cases a scan compares millions of times (keys of integers, decimals and text) answer without
+    // converting to a Decimal or copying a text; the result is the one of the general path below.
+    match (l, r) {
+        (V::Integer(a), V::Integer(b)) => return Ok(a.cmp(b)),
+        (V::BigInteger(a), V::BigInteger(b)) => return Ok(a.cmp(b)),
+        (V::Integer(a), V::BigInteger(b)) => return Ok(i64::from(*a).cmp(b)),
+        (V::BigInteger(a), V::Integer(b)) => return Ok(a.cmp(&i64::from(*b))),
+        (V::Decimal(a), V::Decimal(b)) => return Ok(a.cmp(b)),
+        (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b))
+            if !a.contains(crate::native::UNTRACKED_CALL_STACK) && !b.contains(crate::native::UNTRACKED_CALL_STACK) =>
+        {
+            return Ok(a.cmp(b));
+        }
+        _ => {}
+    }
     if let (Some(a), Some(b)) = (as_decimal(l), as_decimal(r)) {
         if !matches!(l, V::Char(_)) || !matches!(r, V::Text(_) | V::Code(_)) {
             return Ok(a.cmp(&b));
@@ -711,6 +742,22 @@ mod tests {
             arith(Arith::Add, &Value::Date(10, false), &Value::Integer(2)),
             Ok(Value::Date(12, false))
         ));
+        assert!(matches!(
+            arith(
+                Arith::Add,
+                &Value::Date(10, false),
+                &Value::Decimal(rust_decimal::Decimal::from(3))
+            ),
+            Ok(Value::Date(13, false))
+        ));
+        assert!(
+            arith(
+                Arith::Add,
+                &Value::Date(10, false),
+                &Value::Decimal(rust_decimal::Decimal::new(25, 1))
+            )
+            .is_err()
+        );
         assert!(matches!(
             arith(Arith::Sub, &Value::Date(10, false), &Value::Date(4, false)),
             Ok(Value::Integer(6))

@@ -153,6 +153,144 @@ pub fn scans_follow_key_order_and_direction<S: Store>(mut s: S) {
     assert_eq!(scan_all(&s, &c, &t, 1, &[], true), ["B", "C", "A", "D"]);
 }
 
+/// A scan that continues after a position keeps going when the row at that position is gone (the code
+/// deleted it, or changed the key it is positioned by), in both directions and in both keys, and rows with
+/// equal secondary keys come in primary key order.
+pub fn scans_continue_after_a_position_whose_row_is_gone<S: Store>(mut s: S) {
+    let (t, c) = (table(), cx("A"));
+    for (n, g) in [("A", 2), ("B", 1), ("C", 2), ("D", 1), ("E", 2)] {
+        s.insert(&c, &t, row(n, 0, g)).unwrap();
+    }
+    for (key, ascending) in [(0usize, true), (0, false), (1, true), (1, false)] {
+        let mut t_rows = Vec::new();
+        // Position on "B", delete it, then continue.
+        let b = s.get(&c, &t, &[Value::Code("B".into())]).unwrap();
+        if let Some(b) = b {
+            let at = position(&t, key, &b);
+            s.delete(&c, &t, &[Value::Code("B".into())]).unwrap();
+            let mut after = Some(at);
+            while let Some(r) = s
+                .next(
+                    &c,
+                    &t,
+                    &Scan {
+                        key,
+                        filters: &[],
+                        ascending,
+                        after: after.as_deref(),
+                    },
+                )
+                .unwrap()
+            {
+                after = Some(position(&t, key, &r));
+                t_rows.push(no(&r));
+            }
+            s.insert(&c, &t, row("B", 0, 1)).unwrap();
+        }
+        let want: Vec<&str> = match (key, ascending) {
+            (0, true) => vec!["C", "D", "E"],
+            (0, false) => vec!["A"],
+            (1, true) => vec!["D", "A", "C", "E"],
+            (1, false) => vec![],
+            _ => unreachable!(),
+        };
+        assert_eq!(t_rows, want, "key {key}, ascending {ascending}");
+    }
+    // Equal secondary keys: primary key order, and scanning from the middle of them.
+    assert_eq!(scan_all(&s, &c, &t, 1, &[], true), ["B", "D", "A", "C", "E"]);
+    assert_eq!(scan_all(&s, &c, &t, 1, &[], false), ["E", "C", "A", "D", "B"]);
+}
+
+/// Walks in the secondary key of a table big enough to be indexed keep their order while the table changes
+/// underneath them: rows inserted, deleted, moved to another place in the key by a Modify, and a rollback.
+pub fn secondary_key_walks_follow_the_table_as_it_changes<S: Store>(mut s: S) {
+    let (t, c) = (table(), cx("A"));
+    // The key is (Group, Amount, No.). Group = i % 5, Amount = i: it interleaves the primary key order.
+    for i in 0..200 {
+        s.insert(&c, &t, row(&format!("{i:03}"), i, i % 5)).unwrap();
+    }
+    s.commit();
+    let by_key = |s: &S, ascending: bool| scan_all(s, &c, &t, 1, &[], ascending);
+    // The model: (group, amount, id).
+    let expect = |rows: &[(i32, i32, i32)], ascending: bool| -> Vec<String> {
+        let mut v: Vec<(i32, i32, i32)> = rows.to_vec();
+        v.sort();
+        if !ascending {
+            v.reverse();
+        }
+        v.iter().map(|(_, _, i)| format!("{i:03}")).collect()
+    };
+    let original: Vec<(i32, i32, i32)> = (0..200).map(|i| (i % 5, i, i)).collect();
+    let mut model = original.clone();
+    assert_eq!(by_key(&s, true), expect(&model, true));
+    assert_eq!(by_key(&s, false), expect(&model, false));
+
+    // A Modify that leaves the key alone, then one that changes the Amount, then one that moves the row.
+    s.modify(&c, &t, row("010", 10, 0)).unwrap();
+    assert_eq!(by_key(&s, true), expect(&model, true));
+    s.modify(&c, &t, row("010", 999, 0)).unwrap();
+    model.retain(|&(_, _, i)| i != 10);
+    model.push((0, 999, 10));
+    assert_eq!(by_key(&s, true), expect(&model, true));
+    s.modify(&c, &t, row("010", 999, 4)).unwrap();
+    model.retain(|&(_, _, i)| i != 10);
+    model.push((4, 999, 10));
+    assert_eq!(by_key(&s, true), expect(&model, true));
+    // Insert, delete.
+    s.insert(&c, &t, row("500", 0, 2)).unwrap();
+    model.push((2, 0, 500));
+    s.delete(&c, &t, &[Value::Code("003".into())]).unwrap();
+    model.retain(|&(_, _, i)| i != 3);
+    assert_eq!(by_key(&s, true), expect(&model, true));
+    assert_eq!(by_key(&s, false), expect(&model, false));
+    // A walk during which the current row leaves its place.
+    let first = s
+        .next(
+            &c,
+            &t,
+            &Scan {
+                key: 1,
+                filters: &[],
+                ascending: true,
+                after: None,
+            },
+        )
+        .unwrap()
+        .unwrap();
+    let at = position(&t, 1, &first);
+    s.modify(&c, &t, row(&no(&first), 1_000, 4)).unwrap();
+    let following = s
+        .next(
+            &c,
+            &t,
+            &Scan {
+                key: 1,
+                filters: &[],
+                ascending: true,
+                after: Some(&at),
+            },
+        )
+        .unwrap()
+        .unwrap();
+    assert_eq!(
+        al_builtins::filter::key_cmp(&position(&t, 1, &following), &at),
+        std::cmp::Ordering::Greater,
+        "the walk goes on past the old position"
+    );
+    // Filters apply to the walk.
+    let f = [FieldFilter {
+        field: 2,
+        expr: FilterExpr::Eq(Value::Integer(2)),
+        group: 0,
+    }];
+    let seen = scan_all(&s, &c, &t, 1, &f, true);
+    assert!(!seen.is_empty() && seen.iter().all(|n| n == "500" || n.parse::<i32>().unwrap() % 5 == 2));
+    // A rollback puts the committed order back.
+    s.rollback();
+    assert_eq!(by_key(&s, true), expect(&original, true));
+    assert_eq!(by_key(&s, false), expect(&original, false));
+}
+
 pub fn filters_count_and_delete_all<S: Store>(mut s: S) {
     let (t, c) = (table(), cx("A"));
     for (n, a) in [("A", 5), ("B", 15), ("C", 25)] {
@@ -202,6 +340,8 @@ pub fn run_all<S: Store>(new: impl Fn() -> S) {
     modify_and_delete(new());
     rename(new());
     scans_follow_key_order_and_direction(new());
+    scans_continue_after_a_position_whose_row_is_gone(new());
+    secondary_key_walks_follow_the_table_as_it_changes(new());
     filters_count_and_delete_all(new());
     companies_are_separate(new());
     rollback_discards_uncommitted_changes(new());

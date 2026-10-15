@@ -345,7 +345,7 @@ impl Session {
                 self.set_position(rec, t, &text).map(|()| Value::Null)
             }
             "TransferFields" => self.transfer_fields(rec, t, args),
-            "GetBySystemId" => self.get_by_system_id(rec, t, args),
+            "GetBySystemId" => self.get_by_system_id(rec, t, args, false),
             "ModifyAll" => self.modify_all(rec, t, args),
             // Doc (Record.Ascending): with an argument sets the sort direction of the current key,
             // without one reads it (corpus record/TestRecordSort.al:111, TestCopyOntoTemporaryRecord.al).
@@ -746,11 +746,54 @@ impl Session {
             let Some(sp) = from.fields.iter().position(|f| f.id == df.id && f.stored) else {
                 continue;
             };
+            // An Enum field and an Option field with the same field number are the same kind of field to
+            // TransferFields: Base Application's "Sales Order Entity Buffer" holds `Shipping Advice` as an
+            // Option and `Sales Header` as an Enum, and its TransferFields from the header works in BC
+            // (assumed from Microsoft's passing tests; no corpus test, docs/probes-needed.md). The ordinal moves.
+            let enum_option = |a: &al_builtins::value::RtType, b: &al_builtins::value::RtType| {
+                use al_builtins::value::RtType as T;
+                matches!((a, b), (T::Enum(_), T::Option(_)) | (T::Option(_), T::Enum(_)))
+            };
+            if enum_option(&from.fields[sp].ty, &df.ty) {
+                let ordinal = match &src_fields[sp] {
+                    Value::Enum(_, o) | Value::Option(o, _) => *o,
+                    other => {
+                        return unsupported(format!(
+                            "TransferFields of {} between an Enum and an Option",
+                            other.describe()
+                        ));
+                    }
+                };
+                let moved = match &df.ty {
+                    al_builtins::value::RtType::Option(m) => Value::Option(ordinal, std::sync::Arc::from(m.as_slice())),
+                    al_builtins::value::RtType::Enum(id) => {
+                        if !self
+                            .engine
+                            .program
+                            .objects
+                            .get(*id as usize)
+                            .is_some_and(|o| o.enum_values.iter().any(|(v, _)| *v == ordinal))
+                        {
+                            return unsupported(format!(
+                                "TransferFields of the Option ordinal {ordinal} into the Enum field {}, which has no such value (not pinned)",
+                                df.name
+                            ));
+                        }
+                        Value::Enum(*id, ordinal)
+                    }
+                    _ => unreachable!("enum_option"),
+                };
+                updates.push((dp, moved));
+                continue;
+            }
             if !same_kind(&from.fields[sp].ty, &df.ty) {
                 if skip_mismatch {
                     continue;
                 }
-                return unsupported("TransferFields across fields of different types (error text not pinned)");
+                return unsupported(format!(
+                    "TransferFields across fields of different types (error text not pinned): field {} of {} and field {} of {}",
+                    from.fields[sp].name, from.name, df.name, t.name
+                ));
             }
             updates.push((dp, ops::convert(src_fields[sp].clone(), &df.ty)?));
         }
@@ -761,13 +804,29 @@ impl Session {
         Ok(Value::Null)
     }
 
-    /// `GetBySystemId(Guid)`: loads the row holding that SystemId; a miss is `false`. A miss with the
-    /// result unused raises an error whose text the corpus does not pin: refused.
-    fn get_by_system_id(&mut self, rec: &Rec, t: &TableDef, args: &[Value]) -> Result<Value, Signal> {
+    /// `GetBySystemId(Guid)`: loads the row holding that SystemId, whatever the filters; a miss is
+    /// `false` and leaves the buffer. A miss with the result unused raises; its text is pinned only
+    /// for the RecordRef form (`raise_on_miss`), the Record form is refused there.
+    /// RecordRef: corpus branch al-runtime-rs-staging (ae3fe88), tests/al-language/types/
+    /// PXEnumRecordRef.al:199-301.
+    pub(crate) fn get_by_system_id(
+        &mut self,
+        rec: &Rec,
+        t: &TableDef,
+        args: &[Value],
+        raise_on_miss: bool,
+    ) -> Result<Value, Signal> {
         let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_000) else {
             return unsupported("GetBySystemId on a table without SystemId");
         };
-        let Some(Value::Guid(g)) = args.first() else {
+        // A Text argument binds to the Guid parameter as a Text assigns to a Guid
+        // (PXEnumRecordRef.al:232 passes the null Guid as a text literal).
+        let parsed = match args.first() {
+            Some(Value::Guid(g)) => Some(*g),
+            Some(Value::Text(s) | Value::Code(s)) => ops::parse_guid(s),
+            _ => None,
+        };
+        let Some(g) = &parsed else {
             return unsupported(format!("GetBySystemId of {}", args.first().describe()));
         };
         let found = if *g == [0; 16] {
@@ -798,7 +857,29 @@ impl Session {
                 self.load(rec, row)?;
                 Ok(Value::Boolean(true))
             }
+            // As for Get (records.rs `fail`): a miss on a table whose seeded rows could not be
+            // created is not BC's answer (ADR-013 decision 5).
+            None if self.engine.unseeded.contains(&(t.object as usize)) && !rec.borrow().temporary => {
+                unsupported(format!(
+                    "{} row not found by GetBySystemId: the rows a dependency app's install and Company-Initialize create could not be created (ADR-013 decision 5)",
+                    t.name
+                ))
+            }
             None if self.ret_used => Ok(Value::Boolean(false)),
+            // "The PX Row does not exist. Identification fields and values: {x}" / DB:RecordNotFound
+            // (PXEnumRecordRef.al:264-267; the probe masks what stands between the braces, here
+            // the Guid as Format writes it: docs/probes-needed.md).
+            None if raise_on_miss => {
+                let id = al_builtins::format::try_format(&Value::Guid(*g), 0, 0, self).map_err(Signal::Unsupported)?;
+                Err(Signal::Error(AlError {
+                    message: format!(
+                        "The {} does not exist. Identification fields and values: {id}",
+                        self.caption(t)
+                    ),
+                    code: "DB:RecordNotFound".into(),
+                    call_stack: String::new(),
+                }))
+            }
             None => unsupported("GetBySystemId of a missing row without using the result (error text not pinned)"),
         }
     }

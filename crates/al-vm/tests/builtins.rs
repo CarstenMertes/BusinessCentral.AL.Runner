@@ -1354,6 +1354,28 @@ fn current_execution_mode_is_standard() {
     assert!(matches!(run(src, "F"), Ok(Value::Text(t)) if t == "Standard"));
 }
 
+#[test]
+fn database_sid_is_a_stable_windows_style_sid_per_user_name() {
+    // Database.SID, as probed on BC 27.5: corpus branch al-runtime-rs-staging (ae3fe88),
+    // tests/al-language-onprem/session/PXDatabaseSid.al:31-46 (eight dash-separated parts, all but
+    // the first numeric, prefix S-1-5-21-; the same for the same name; not the text of
+    // UserSecurityId(); an unknown name gets one of that shape too).
+    let r = text_of(
+        "a: Text; b: Text; c: Text;",
+        "a := Database.SID(UserId()); b := Database.SID(UserId()); c := Database.SID('NoSuchUser');
+         exit(a + '|' + Format(a = b) + Format(a = Format(UserSecurityId())) + '|' + c);",
+    )
+    .unwrap();
+    let parts: Vec<&str> = r.split('|').collect();
+    assert_eq!(parts[1], "YesNo");
+    for sid in [parts[0], parts[2]] {
+        let p: Vec<&str> = sid.split('-').collect();
+        assert_eq!(p.len(), 8, "{sid}");
+        assert!(sid.starts_with("S-1-5-21-"), "{sid}");
+        assert!(p[1..].iter().all(|n| n.parse::<i32>().is_ok()), "{sid}");
+    }
+}
+
 // handlers/PWRefusedBuiltins.al:113-168 (BC 27.5): FieldError(Field, ErrorInfo) raises `<field> <message> in <table> <key>.`
 // with the code NCLCSRTS:TableErrorStr and leaves the ErrorInfo's message alone; FieldRef.FieldError(ErrorInfo) the same.
 #[test]

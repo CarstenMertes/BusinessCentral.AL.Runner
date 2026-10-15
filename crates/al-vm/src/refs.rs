@@ -307,10 +307,23 @@ impl Session {
                 return Ok(Value::Null);
             }
 
-            "Number" => {
-                if let LibraryValue::SystemTable(n) = &*lib.borrow() {
-                    return Ok(Value::Integer(*n as i32));
-                }
+            "Number" => match &*lib.borrow() {
+                LibraryValue::SystemTable(n) => return Ok(Value::Integer(*n as i32)),
+                // A RecordRef never opened is table 0 (corpus branch al-runtime-rs-staging, ae3fe88,
+                // tests/al-language/types/PXEnumRecordRef.al:293-299).
+                LibraryValue::Empty => return Ok(Value::Integer(0)),
+                _ => {}
+            },
+            // A RecordRef never opened answers false (PXEnumRecordRef.al:293-298); with the result
+            // unused nothing pins what it raises.
+            "GetBySystemId" if matches!(&*lib.borrow(), LibraryValue::Empty) => {
+                return if self.ret_used {
+                    Ok(Value::Boolean(false))
+                } else {
+                    unsupported(
+                        "RecordRef.GetBySystemId on a RecordRef that is not open with the result unused: what BC raises is not pinned (docs/probes-needed.md)",
+                    )
+                };
             }
             _ => {}
         }
@@ -378,6 +391,9 @@ impl Session {
                 let mut a = key;
                 self.record_op("Get", &rec, &mut a)
             }
+            // As Record.GetBySystemId, and a miss with the result unused raises "The <table> does not
+            // exist" naming the Guid (PXEnumRecordRef.al:199-301).
+            "GetBySystemId" => self.get_by_system_id(&rec, &t, args, true),
             "AddLink" | "DeleteLink" | "DeleteLinks" | "HasLinks" | "CopyLinks" => {
                 self.record_links(method, &rec, &t, args)
             }

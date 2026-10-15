@@ -258,7 +258,7 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
     })
 }
 
-fn format_guid(g: &[u8; 16]) -> String {
+pub(crate) fn format_guid(g: &[u8; 16]) -> String {
     let h: String = g.iter().map(|b| format!("{b:02X}")).collect();
     format!(
         "{{{}-{}-{}-{}-{}}}",

@@ -4106,9 +4106,7 @@ impl Lowerer<'_> {
             mine.as_ref()
                 .is_none_or(|m| crate::alcodes::signature(m) == crate::alcodes::signature(b))
         };
-        if crate::base_access::visible_procs(&self.ws.object_ast(base), &name)
-            .any(|b| same_signature(&b))
-        {
+        if crate::base_access::visible_procs(&self.ws.object_ast(base), &name).any(|b| same_signature(&b)) {
             return Err(format!(
                 "AL0440: the {noun} extension declares a method `{name}` that the {noun} it extends already defines (BC does not compile it)"
             ));

@@ -695,7 +695,10 @@ impl Session {
                     return Ok(Value::Enum(*id, list.first().map_or(0, |m| m.0)));
                 }
                 let by_name = list.iter().find(|(_, n, _)| n.eq_ignore_ascii_case(t));
-                let by_ordinal = t.parse::<i32>().ok().and_then(|o| list.iter().find(|(v, _, _)| *v == o));
+                let by_ordinal = t
+                    .parse::<i32>()
+                    .ok()
+                    .and_then(|o| list.iter().find(|(v, _, _)| *v == o));
                 let by_caption = list.iter().find(|(_, _, c)| c.eq_ignore_ascii_case(t));
                 match by_name.or(by_ordinal).or(by_caption) {
                     Some((o, _, _)) => Ok(Value::Enum(*id, *o)),
@@ -1132,7 +1135,11 @@ impl Session {
             let t = self.table(&rec)?;
             if let Some((_, members)) = self.members_of_field(&t, pos)? {
                 if let Some((_, _, caption)) = members.get(*o as usize) {
-                    return Ok(if caption.is_empty() { " ".to_string() } else { caption.clone() });
+                    return Ok(if caption.is_empty() {
+                        " ".to_string()
+                    } else {
+                        caption.clone()
+                    });
                 }
             }
         }
@@ -1176,7 +1183,9 @@ impl Session {
             Value::Time(t) => {
                 let ms = t - 1;
                 if ms % 1000 != 0 {
-                    return unsupported("XmlPort export of a Time with milliseconds with FormatEvaluate = Xml (not pinned)");
+                    return unsupported(
+                        "XmlPort export of a Time with milliseconds with FormatEvaluate = Xml (not pinned)",
+                    );
                 }
                 let s = ms / 1000;
                 Ok(format!("{:02}:{:02}:{:02}", s / 3600, s / 60 % 60, s % 60))
@@ -1394,7 +1403,11 @@ fn iso_duration(ms: i64) -> String {
             out.push_str(&format!("{m}M"));
         }
         if rest != 0 {
-            out.push_str(&if milli == 0 { format!("{sec}S") } else { format!("{sec}.{milli:03}S") });
+            out.push_str(&if milli == 0 {
+                format!("{sec}S")
+            } else {
+                format!("{sec}.{milli:03}S")
+            });
         }
     }
     out

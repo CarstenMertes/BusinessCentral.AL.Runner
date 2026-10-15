@@ -202,7 +202,8 @@ fn same_place_placements_are_accepted_and_cross_app_extensions_are_refused() {
     );
     let r = reasons(&two_last, 1);
     assert!(
-        !r.iter().any(|x| x.contains("add data items last under the same data item")),
+        !r.iter()
+            .any(|x| x.contains("add data items last under the same data item")),
         "{r:?}"
     );
     let cross = format!(

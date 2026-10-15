@@ -153,7 +153,9 @@ EXIT CODES
     2  bad invocation or the run could not start
     6  the selection matched no test
     7  some tests were not run (a refusal); --allow-not-run makes this 0
-    Order when several apply: 2, 6, 1, 7.
+    8  some tests were not run because the .NET helper could not be used (not found, no .NET 8
+       runtime): a problem of the machine; --allow-not-run makes this 0
+    Order when several apply: 2, 6, 1, 8, 7.
 
 WARM
     alrunner warm [PATH.bak] [--bc-version BUILD] [--cache-dir DIR] [--no-download]

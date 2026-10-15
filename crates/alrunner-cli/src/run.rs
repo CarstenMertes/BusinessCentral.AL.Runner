@@ -546,6 +546,18 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         .collect();
     results.sort_by_key(|r| (r.app, r.codeunit));
     let counts = Counts::of(results.iter().copied());
+    // A missing .NET helper stops tests for a reason that is the machine's, not the tests': say so
+    // before the results and again with the summary.
+    let dotnet_warning = results
+        .iter()
+        .find_map(|r| match &r.outcome {
+            al_testrun::Outcome::NotRun(why) if why.starts_with(al_vm::dotnet::UNAVAILABLE) => Some(why.as_str()),
+            _ => None,
+        })
+        .and_then(|why| output::dotnet_warning(&counts, why));
+    if let Some(w) = &dotnet_warning {
+        eprintln!("{w}");
+    }
 
     // Debug aid: `AL_STACK_OF=TEXT` prints, for up to five not-run tests whose reason contains TEXT
     // (and, with `AL_STACK_NAME`, whose name contains it),
@@ -768,6 +780,9 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
         }
     }
     println!("{}", output::summary_line(&counts, test_data.is_some()));
+    if let Some(w) = &dotnet_warning {
+        println!("{w}");
+    }
     println!(
         "Time: load {}, compile {}, install baseline {}, run {} ({:.0} tests/s), total {}{}",
         secs(load_time),
@@ -786,6 +801,7 @@ pub fn test(a: &TestArgs) -> Result<u8, String> {
             1 => "FAILED",
             6 => "NOTHING SELECTED",
             7 => "TESTS NOT RUN",
+            8 => "DOTNET UNAVAILABLE",
             _ => "ERROR",
         }
     );

@@ -666,18 +666,31 @@ fn output_json_without_a_file_is_the_only_thing_on_stdout_and_has_a_row_per_test
     assert!(String::from_utf8_lossy(&o.stderr).contains("Result: FAILED (exit 1)"));
     let v = json_of(&o);
     assert_eq!(
-        (v["total"].as_u64(), v["passed"].as_u64(), v["failed"].as_u64(), v["errors"].as_u64()),
+        (
+            v["total"].as_u64(),
+            v["passed"].as_u64(),
+            v["failed"].as_u64(),
+            v["errors"].as_u64()
+        ),
         (Some(4), Some(2), Some(1), Some(1))
     );
     assert_eq!((v["skipped"].as_u64(), v["exitCode"].as_u64()), (Some(0), Some(1)));
     assert_eq!(row(&v, "Codeunit50100.Passes")["status"], "pass");
     let fails = row(&v, "Codeunit50100.Fails");
-    assert_eq!((fails["status"].as_str(), fails["message"].as_str()), (Some("fail"), Some("boom 5")));
-    assert!(fails["stackTrace"].as_str().is_some_and(|s| s.contains("Fails")), "{fails}");
+    assert_eq!(
+        (fails["status"].as_str(), fails["message"].as_str()),
+        (Some("fail"), Some("boom 5"))
+    );
+    assert!(
+        fails["stackTrace"].as_str().is_some_and(|s| s.contains("Fails")),
+        "{fails}"
+    );
     let refused = row(&v, "Codeunit50100.Refused");
     assert_eq!(refused["status"], "error");
     assert!(
-        refused["message"].as_str().is_some_and(|m| m.starts_with("NotRun: out-of-scope: ")),
+        refused["message"]
+            .as_str()
+            .is_some_and(|m| m.starts_with("NotRun: out-of-scope: ")),
         "{refused}"
     );
     assert_eq!(refused["notRun"], true);
@@ -688,7 +701,13 @@ fn output_json_with_a_file_keeps_the_report_on_stdout() {
     let d = tempfile::tempdir().unwrap();
     let app = mixed_app(d.path());
     let out = d.path().join("r/out.json");
-    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--output-json", out.to_str().unwrap()]);
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--output-json",
+        out.to_str().unwrap(),
+    ]);
     assert_eq!(code(&o), 1, "{}", text(&o));
     assert!(String::from_utf8_lossy(&o.stdout).contains("Result: FAILED (exit 1)"));
     let v: serde_json::Value = serde_json::from_str(&std::fs::read_to_string(&out).unwrap()).unwrap();
@@ -719,10 +738,23 @@ fn a_qualified_test_name_selects_one_test_and_exclude_test_removes_tests() {
     let v = json_of(&run(&["--test-exact", "Passes"]));
     assert_eq!(v["total"], 1);
     // --exclude-test leaves out whole qualified names and wins over the selection.
-    let o = run(&["--exclude-test", "Codeunit50100.Fails", "--exclude-test", "Codeunit50100.Refused"]);
+    let o = run(&[
+        "--exclude-test",
+        "Codeunit50100.Fails",
+        "--exclude-test",
+        "Codeunit50100.Refused",
+    ]);
     assert_eq!(code(&o), 0, "{}", text(&o));
     assert_eq!(json_of(&o)["total"], 2);
-    assert_eq!(code(&run(&["--test", "Codeunit50100.Passes", "--exclude-test", "Codeunit50100.Passes"])), 6);
+    assert_eq!(
+        code(&run(&[
+            "--test",
+            "Codeunit50100.Passes",
+            "--exclude-test",
+            "Codeunit50100.Passes"
+        ])),
+        6
+    );
 }
 
 const ISO: &str = r#"
@@ -755,7 +787,11 @@ codeunit 50300 "Iso Tests"
 fn isolation_decides_whether_the_database_is_rolled_back_between_the_tests_of_a_codeunit() {
     let d = tempfile::tempdir().unwrap();
     let app = d.path().join("iso");
-    write(&app, "app.json", &app_json("11111111-0000-0000-0000-000000000003", "Iso", &[]));
+    write(
+        &app,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000000003", "Iso", &[]),
+    );
     write(&app, "T.al", ISO);
     let a = app.to_str().unwrap();
     let run = |extra: &[&str]| {
@@ -784,7 +820,11 @@ fn isolation_decides_whether_the_database_is_rolled_back_between_the_tests_of_a_
 fn define_adds_a_preprocessor_symbol_and_the_v2_flags_are_accepted() {
     let d = tempfile::tempdir().unwrap();
     let app = d.path().join("defs");
-    write(&app, "app.json", &app_json("11111111-0000-0000-0000-000000000004", "Defs", &[]));
+    write(
+        &app,
+        "app.json",
+        &app_json("11111111-0000-0000-0000-000000000004", "Defs", &[]),
+    );
     write(
         &app,
         "T.al",
@@ -793,7 +833,15 @@ fn define_adds_a_preprocessor_symbol_and_the_v2_flags_are_accepted() {
     let a = app.to_str().unwrap();
     assert_eq!(code(&alrunner(&["test", a, "--no-download", "--no-test-data"])), 0);
     let o = alrunner(&[
-        "test", a, "--no-download", "--no-test-data", "--define", "LETHAL_MUTANT", "--auto-provision", "--test-timeout", "30",
+        "test",
+        a,
+        "--no-download",
+        "--no-test-data",
+        "--define",
+        "LETHAL_MUTANT",
+        "--auto-provision",
+        "--test-timeout",
+        "30",
     ]);
     assert_eq!(code(&o), 1, "{}", text(&o));
     assert!(text(&o).contains("mutant"), "{}", text(&o));

@@ -370,9 +370,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--test-exact" => a.exact.push(text()?),
             "--exclude-test" => a.excludes.push(text()?),
             "--define" => a.defines.push(text()?),
-            "--preprocessor-symbols" => a
-                .defines
-                .extend(text()?.split(',').map(str::trim).filter(|s| !s.is_empty()).map(String::from)),
+            "--preprocessor-symbols" => a.defines.extend(
+                text()?
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from),
+            ),
             "--auto-provision" => {}
             "--isolation" | "--test-isolation" => {
                 let v = text()?;
@@ -503,8 +507,15 @@ mod tests {
         assert_eq!(a.test_timeout_secs, Some(7));
         assert_eq!(a.filters, vec!["Codeunit1.Z"]);
         assert_eq!(test_args("test A --isolation codeunit").isolation, Some(I::Codeunit));
-        assert_eq!(test_args("test A --test-isolation disabled").isolation, Some(I::Disabled));
-        assert!(p("test A --isolation nope").unwrap_err().contains("codeunit, test or disabled"));
+        assert_eq!(
+            test_args("test A --test-isolation disabled").isolation,
+            Some(I::Disabled)
+        );
+        assert!(
+            p("test A --isolation nope")
+                .unwrap_err()
+                .contains("codeunit, test or disabled")
+        );
     }
 
     #[test]

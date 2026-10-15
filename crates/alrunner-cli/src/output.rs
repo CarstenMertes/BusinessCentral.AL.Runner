@@ -197,7 +197,11 @@ pub fn json(results: &[&TestResult], exit_code: u8, wall_s: f64) -> String {
 fn not_run_message(why: &str) -> String {
     const LIMIT: &str = "the test used more than the time limit of ";
     if let Some(rest) = why.strip_prefix(LIMIT) {
-        if let Some(n) = rest.split_whitespace().next().filter(|n| n.bytes().all(|b| b.is_ascii_digit())) {
+        if let Some(n) = rest
+            .split_whitespace()
+            .next()
+            .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        {
             return format!("Test exceeded {n}s timeout.");
         }
     }
@@ -280,7 +284,15 @@ mod tests {
 
     #[test]
     fn json_has_the_shape_of_v2_and_rows_for_the_tests_not_run() {
-        let mut slow = r(1, "A", "Slow", Outcome::NotRun("the test used more than the time limit of 5 s of CPU time and was stopped (--test-timeout-secs); x".into()));
+        let mut slow = r(
+            1,
+            "A",
+            "Slow",
+            Outcome::NotRun(
+                "the test used more than the time limit of 5 s of CPU time and was stopped (--test-timeout-secs); x"
+                    .into(),
+            ),
+        );
         slow.time = std::time::Duration::from_millis(5000);
         let mut f = r(1, "A", "Bad", Outcome::Fail("boom".into()));
         f.call_stack = "\"A\"(CodeUnit 1).Bad line 1".into();
@@ -295,17 +307,33 @@ mod tests {
         let text = json(&refs, 1, 1.23456);
         assert!(text.starts_with("{\n"), "{text}");
         let v: serde_json::Value = serde_json::from_str(&text).unwrap();
-        assert_eq!((v["passed"].as_u64(), v["failed"].as_u64(), v["errors"].as_u64()), (Some(1), Some(1), Some(2)));
-        assert_eq!((v["total"].as_u64(), v["skipped"].as_u64(), v["exitCode"].as_u64()), (Some(4), Some(0), Some(1)));
+        assert_eq!(
+            (v["passed"].as_u64(), v["failed"].as_u64(), v["errors"].as_u64()),
+            (Some(1), Some(1), Some(2))
+        );
+        assert_eq!(
+            (v["total"].as_u64(), v["skipped"].as_u64(), v["exitCode"].as_u64()),
+            (Some(4), Some(0), Some(1))
+        );
         assert_eq!(v["wallSeconds"].as_f64(), Some(1.235));
         let t = &v["tests"];
         assert_eq!(t[0]["name"], "Codeunit1.Good");
         assert_eq!(t[0]["status"], "pass");
         assert!(t[0].get("message").is_none() && t[0].get("durationMs").is_none());
-        assert_eq!((t[1]["status"].as_str(), t[1]["message"].as_str(), t[1]["durationMs"].as_u64()), (Some("fail"), Some("boom"), Some(12)));
+        assert_eq!(
+            (
+                t[1]["status"].as_str(),
+                t[1]["message"].as_str(),
+                t[1]["durationMs"].as_u64()
+            ),
+            (Some("fail"), Some("boom"), Some(12))
+        );
         assert_eq!(t[1]["stackTrace"], "\"A\"(CodeUnit 1).Bad line 1");
         assert_eq!(t[2]["name"], "Codeunit2.Refused");
-        assert_eq!((t[2]["status"].as_str(), t[2]["message"].as_str()), (Some("error"), Some("NotRun: out-of-scope: no provider")));
+        assert_eq!(
+            (t[2]["status"].as_str(), t[2]["message"].as_str()),
+            (Some("error"), Some("NotRun: out-of-scope: no provider"))
+        );
         assert_eq!(t[3]["message"], "Test exceeded 5s timeout.");
     }
 

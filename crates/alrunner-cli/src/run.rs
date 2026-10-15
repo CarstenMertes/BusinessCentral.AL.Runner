@@ -82,9 +82,10 @@ impl Selection {
         let included = self.includes_none()
             || self.codeunits.contains(&codeunit)
             || self.filters.iter().any(|f| Self::matches(f, codeunit, test))
-            || self.exact.iter().any(|e| {
-                e.eq_ignore_ascii_case(test) || e.eq_ignore_ascii_case(&qualified(codeunit, test))
-            });
+            || self
+                .exact
+                .iter()
+                .any(|e| e.eq_ignore_ascii_case(test) || e.eq_ignore_ascii_case(&qualified(codeunit, test)));
         included && !self.excludes.iter().any(|x| Self::matches(x, codeunit, test))
     }
 }

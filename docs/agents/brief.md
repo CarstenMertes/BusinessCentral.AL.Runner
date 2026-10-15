@@ -159,7 +159,9 @@ Run these in order. Do not skip any.
    baseline case regresses. Commit the `metrics/<major>/passing.txt` files with
    the code.
 2. `./check.sh` must be green. It runs fmt, clippy with `-D warnings`, all
-   tests and the corpus ratchet.
+   tests and the corpus ratchet. The two tests that run `al-test-cli` over the
+   whole corpus run against the release build, which step 1 has already made,
+   as in CI.
 3. Run the release-only tests. `check.sh` skips these `#[ignore]`d tests and CI
    runs them:
    `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget --test corpus_resolve_deps -- --ignored`

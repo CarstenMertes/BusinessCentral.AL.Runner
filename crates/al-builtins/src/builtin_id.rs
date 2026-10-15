@@ -26,6 +26,20 @@ pub enum Class {
     Other,
 }
 
+impl Class {
+    /// The variant name, for the generated table.
+    pub fn variant(self) -> &'static str {
+        match self {
+            Class::CodeunitRun => "CodeunitRun",
+            Class::Xmlport => "Xmlport",
+            Class::Report => "Report",
+            Class::FilterPageBuilder => "FilterPageBuilder",
+            Class::InStreamRead => "InStreamRead",
+            Class::Other => "Other",
+        }
+    }
+}
+
 /// The class of the id with this name.
 pub fn class_of(name: &str) -> Class {
     if name.starts_with("Codeunit.Run#") {
@@ -157,12 +171,12 @@ pub fn render_table(names: &[String]) -> String {
     );
     let _ = writeln!(out, "pub(crate) const NAMES: [&str; {}] = [", names.len());
     for n in names {
-        let _ = writeln!(out, "    {n:?},");
+        let _ = writeln!(out, "    \"{}\",", n.replace('\\', "\\\\").replace('"', "\\\""));
     }
     out.push_str("];\n\n");
     let _ = writeln!(out, "pub(crate) const CLASSES: [Class; {}] = [", names.len());
     for n in names {
-        let _ = writeln!(out, "    Class::{:?},", class_of(n));
+        let _ = writeln!(out, "    Class::{},", class_of(n).variant());
     }
     out.push_str("];\n\n");
     out.push_str(

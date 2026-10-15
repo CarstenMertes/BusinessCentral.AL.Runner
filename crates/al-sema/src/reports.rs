@@ -460,9 +460,7 @@ fn visit(
             let temporary_ok =
                 pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
             if pn == "dataitemlinkreference" {
-                reasons.push(format!(
-                    "dataitem {name}: DataItemLinkReference (a link to a data item that is not the enclosing one) is not pinned: no corpus test links to another data item (docs/probes-needed.md)"
-                ));
+                // Read by `item_ir` (corpus handlers/TestReportDataItemLinkReferenceContracts.al).
             } else if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
                 && !INERT_ITEM_PROPERTIES.contains(&pn.as_str())
                 && !temporary_ok
@@ -789,6 +787,8 @@ fn item_ir(
     slot: Option<usize>,
     parent: Option<usize>,
     parent_table: Option<usize>,
+    // The enclosing data item a `DataItemLinkReference` names: its index and its table.
+    enclosing: &dyn Fn(&str) -> Option<(usize, Option<usize>)>,
     reasons: &mut Vec<String>,
 ) -> ir::ReportItem {
     let sec = &raw.section;
@@ -811,11 +811,25 @@ fn item_ir(
             .map(|p| p.value_text())
     };
     let mut link = Vec::new();
-    // With a DataItemLinkReference the link fields name another data item than the enclosing one; the
-    // layout already refused it with its own reason, and reading them against the parent would only add
-    // a misleading "entry is not understood".
-    let referenced = prop("DataItemLinkReference").is_some();
-    if let Some(text) = prop("DataItemLink").filter(|_| !referenced) {
+    // `DataItemLinkReference = Name` links the fields to the named enclosing data item's row, not the
+    // parent's (corpus handlers/TestReportDataItemLinkReferenceContracts.al).
+    let mut link_item = None;
+    let mut parent_table = parent_table;
+    if let Some(name) = prop("DataItemLinkReference") {
+        let name = unquote(name.trim());
+        match enclosing(&name) {
+            Some((idx, table)) => {
+                link_item = Some(idx);
+                parent_table = table;
+            }
+            None => reasons.push(format!(
+                "dataitem {}: DataItemLinkReference `{name}` names no data item this one is nested under (an item a reportextension adds cannot name one yet)",
+                raw.name
+            )),
+        }
+    }
+    let referenced_unknown = prop("DataItemLinkReference").is_some() && link_item.is_none();
+    if let Some(text) = prop("DataItemLink").filter(|_| !referenced_unknown) {
         match parent_table.zip(table) {
             None => reasons.push(format!(
                 "dataitem {}: DataItemLink needs an enclosing data item",
@@ -861,6 +875,7 @@ fn item_ir(
         view: prop("DataItemTableView"),
         request_filter_fields: prop("RequestFilterFields"),
         link,
+        link_item,
         on_pre: trigger("OnPreDataItem"),
         on_after_get: trigger("OnAfterGetRecord"),
         on_post: trigger("OnPostDataItem"),
@@ -882,7 +897,17 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
     for raw in &layout.items {
         let slot = cx.slots.get(&raw.name.to_lowercase()).copied();
         let parent_table = raw.parent.and_then(|p| items.get(p).and_then(|i| i.table));
-        let item = item_ir(&o, raw, slot, raw.parent, parent_table, &mut reasons);
+        let enclosing = |name: &str| {
+            let mut at = raw.parent;
+            while let Some(i) = at {
+                if layout.items[i].name.eq_ignore_ascii_case(name) {
+                    return Some((i, items.get(i).and_then(|x| x.table)));
+                }
+                at = layout.items[i].parent;
+            }
+            None
+        };
+        let item = item_ir(&o, raw, slot, raw.parent, parent_table, &enclosing, &mut reasons);
         items.push(item);
     }
     reasons.extend(layout.reasons.iter().cloned());
@@ -1036,7 +1061,7 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
         } else {
             raw.parent.and_then(|p| added.get(p).and_then(|a| a.item.table))
         };
-        let item = item_ir(&o, raw, Some(n + j), parent, parent_table, &mut reasons);
+        let item = item_ir(&o, raw, Some(n + j), parent, parent_table, &|_| None, &mut reasons);
         added.push(ir::AddedItem {
             item,
             base_parent,
@@ -1118,21 +1143,6 @@ mod tests {
         let output = l.output.join("; ");
         assert!(output.contains("defaultlayout"), "{output}");
         assert!(output.contains("section rendering"), "{output}");
-    }
-
-    #[test]
-    fn a_data_item_link_reference_is_refused_with_its_own_reason_not_as_a_link_entry_that_is_not_understood() {
-        // Base Application links a data item to an ancestor that is not its parent (`DataItemLinkReference =
-        // AccScheduleName` under an Integer data item). The corpus pins only the link to the enclosing data
-        // item (handlers/TestReportNestedLinkImplicitParent.al), so the reference is refused and says so.
-        let l = layout_of(
-            "report 1 R { ProcessingOnly = true; dataset { dataitem(A; Cust) { dataitem(Loop; \"Integer\") { dataitem(B; Ledger) { DataItemLink = No = field(No); DataItemLinkReference = A; } } } } }",
-        );
-        let all = l.reasons.join("; ");
-        assert!(
-            all.contains("DataItemLinkReference") && all.contains("not pinned"),
-            "{all}"
-        );
     }
 
     #[test]

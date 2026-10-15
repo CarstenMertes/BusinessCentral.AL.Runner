@@ -807,7 +807,7 @@ impl Session {
             rec.borrow_mut().filters = filters;
         }
         for i in 0..report.items.len() {
-            if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None)? {
+            if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None, &[])? {
                 return Ok(false);
             }
         }
@@ -848,10 +848,25 @@ impl Session {
     /// nested items of that row, `Break` ends this item (its `OnPostDataItem` and the later items
     /// still run), `Quit` ends the whole report without `OnPostDataItem` and `OnPostReport`
     /// (handlers/TestReportRuntimeContracts.al:322-368).
-    fn report_item(&mut self, run: &Run, r: ItemRef, parent_rec: Option<Rec>) -> Result<bool, Signal> {
+    fn report_item(
+        &mut self,
+        run: &Run,
+        r: ItemRef,
+        parent_rec: Option<Rec>,
+        enclosing: &[(ItemRef, Rec)],
+    ) -> Result<bool, Signal> {
         let item = run.item(r);
         let (owner, object) = run.owner(r);
         let rec = self.report_item_record(run, r)?;
+        // A `DataItemLinkReference` names another enclosing item than the parent.
+        let parent_rec = match item.link_item {
+            Some(li) => enclosing
+                .iter()
+                .find(|(e, _)| matches!(e, ItemRef::Base(x) if *x == li))
+                .map(|(_, rec)| rec.clone())
+                .or(parent_rec),
+            None => parent_rec,
+        };
         if let Some(parent) = parent_rec {
             // The link filter is hidden from GetFilters (handlers/TestReportRuntimeContracts.al:62-90).
             let table = self.table(&rec)?;
@@ -927,8 +942,10 @@ impl Session {
                 if run.dataset {
                     self.dataset_begin(run, r, &rec)?;
                 }
+                let mut inside = enclosing.to_vec();
+                inside.push((r, rec.clone()));
                 for child in run.children(r) {
-                    if self.report_item(run, child, Some(rec.clone()))? {
+                    if self.report_item(run, child, Some(rec.clone()), &inside)? {
                         return Ok(true);
                     }
                 }

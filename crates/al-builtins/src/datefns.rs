@@ -18,6 +18,8 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.CreateDateTime#1", create_datetime),
     ("System.DT2Date#1", dt2date),
     ("System.DT2Time#1", dt2time),
+    ("DateTime.Date#1", datetime_date),
+    ("DateTime.Time#1", datetime_time),
     ("System.DaTi2Variant#1", create_datetime),
     ("System.Date2DMY#1", date2dmy),
     ("System.Date2DWY#1", date2dwy),
@@ -190,6 +192,24 @@ fn dt2date(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     }
     let ms = defined_datetime(&a[0], "DT2Date")?;
     Ok(Value::Date(ms.div_euclid(MS_PER_DAY) as i32 + 1, false))
+}
+
+/// `DateTime.Date()` is `DT2Date` of the receiver (assumed, docs/probes-needed.md).
+fn datetime_date(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    crate::assumptions::assume(crate::assumptions::Assumption::DateTimeDateTimeMethods);
+    let Some(v) = r else {
+        return unsupported("DateTime.Date without a receiver");
+    };
+    dt2date(c, None, &mut [v.clone()])
+}
+
+/// `DateTime.Time()` is `DT2Time` of the receiver (assumed, docs/probes-needed.md).
+fn datetime_time(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    crate::assumptions::assume(crate::assumptions::Assumption::DateTimeDateTimeMethods);
+    let Some(v) = r else {
+        return unsupported("DateTime.Time without a receiver");
+    };
+    dt2time(c, None, &mut [v.clone()])
 }
 
 /// handlers/TestPageTemporalSetValue_Tests.al:117.
@@ -824,6 +844,23 @@ mod tests {
             call("System.DT2Time#1", vec![Value::DateTime(0)]),
             Ok(Value::Time(0))
         ));
+    }
+
+    // The instance forms give the same as the functions (assumed, registry entry datetime-date-time-methods).
+    #[test]
+    fn the_datetime_instance_methods_split_like_dt2date_and_dt2time() {
+        let dt = call(
+            "System.CreateDateTime#1",
+            vec![date(2024, 3, 17), Value::Time(52_200_000 + 1)],
+        )
+        .unwrap();
+        is_date(on("DateTime.Date#1", dt.clone()), 2024, 3, 17);
+        assert!(matches!(on("DateTime.Time#1", dt), Ok(Value::Time(52_200_001))));
+        assert!(matches!(
+            on("DateTime.Date#1", Value::DateTime(0)),
+            Ok(Value::Date(0, false))
+        ));
+        assert!(matches!(on("DateTime.Time#1", Value::DateTime(0)), Ok(Value::Time(0))));
     }
 
     #[test]

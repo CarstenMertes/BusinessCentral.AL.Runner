@@ -211,30 +211,24 @@ fn a_column_nothing_pins_is_refused_where_code_reads_it() {
     );
 }
 
-// Issue 35: Business Foundation's table extensions on "Source Code" declare fields with
-// `ObsoleteState = Moved`; Base Application's Dimension Management scans the Field table for all
-// tables. No corpus test reads the Field table for a moved field, so a read that reaches one is
-// refused with a reason that names the state.
+// Business Foundation's table extensions on "Source Code" declare fields with `ObsoleteState = Moved`; Base
+// Application's Dimension Management scans the Field table for all tables. A moved field has no row in the Field
+// table, a pending one has (types/PWMisc.al:FieldTable_MovedAndPendingField, BC 27.5 and 29.0).
 #[test]
-fn a_moved_field_is_refused_where_the_field_table_is_scanned_and_not_where_a_filter_excludes_it() {
+fn a_moved_field_has_no_row_in_the_field_table_and_a_scan_of_all_fields_runs() {
     let o = outcomes(
         r#"table 50001 "Moved Host" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
-tableextension 50002 "Moved Ext" extends "Moved Host" { fields { field(50000; Gone; Boolean) { ObsoleteState = Moved; ObsoleteReason = 'x'; ObsoleteTag = '1'; MovedTo = '437dbf0e-84ff-417a-965d-ed2bb9650972'; } } }
+tableextension 50002 "Moved Ext" extends "Moved Host" { fields {
+  field(50000; Gone; Boolean) { ObsoleteState = Moved; ObsoleteReason = 'x'; ObsoleteTag = '1'; MovedTo = '437dbf0e-84ff-417a-965d-ed2bb9650972'; }
+  field(50001; Soon; Boolean) { ObsoleteState = Pending; ObsoleteReason = 'x'; ObsoleteTag = '1'; } } }
 codeunit 50000 "T" { Subtype = Test;
   [Test] procedure ScansAllFields() var F: Record Field; begin F.SetRange(Class, F.Class::Normal); if F.FindSet() then repeat until F.Next() = 0; end;
-  [Test] procedure ScansOtherTable() var F: Record Field; begin F.SetRange(TableNo, 50001); F.SetRange("No.", 1); if F.FindFirst() then; end; }"#,
+  [Test] procedure MovedHasNoRow() var F: Record Field; begin F.SetRange(TableNo, 50001); F.SetRange("No.", 50000); if F.FindFirst() then Error('moved field listed'); end;
+  [Test] procedure PendingHasARow() var F: Record Field; begin F.SetRange(TableNo, 50001); F.SetRange("No.", 50001); if not F.FindFirst() then Error('pending field missing'); end; }"#,
     );
-    let why = not_run(&o, "ScansAllFields");
-    assert!(
-        why.contains("ObsoleteState = Moved") && why.contains("not pinned"),
-        "{why}"
-    );
-    assert!(!why.contains("is not understood"), "{why}");
-    // A filter that excludes the field's row never reaches it.
-    assert!(
-        !matches!(o.iter().find(|(n, _)| n == "ScansOtherTable").map(|(_, o)| o), Some(Outcome::NotRun(w)) if w.contains("Moved")),
-        "{o:?}"
-    );
+    passes(&o, "ScansAllFields");
+    passes(&o, "MovedHasNoRow");
+    passes(&o, "PendingHasARow");
 }
 
 #[test]
@@ -281,6 +275,26 @@ codeunit 50000 "T" { Subtype = Test;
   end; }"#,
     );
     passes(&o, "AddHasDelete");
+}
+
+// Gen. Jnl.-Post Line PostBankAcc does `BankAccLedgEntry.CopyLinks(GenJnlLine)` for a journal line without links, in
+// about 330 Microsoft tests: the copy of nothing is nothing, not the "There is no Record Link within the filter" error
+// an unused FindSet would raise.
+#[test]
+fn copying_the_links_of_a_record_without_links_copies_nothing() {
+    let o = outcomes(
+        r#"table 50001 "Host" { fields { field(1; "No."; Integer) { } } keys { key(PK; "No.") { Clustered = true; } } }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure CopyNothing() var A: Record "Host"; B: Record "Host"; begin
+    A."No." := 1; A.Insert(); B."No." := 2; B.Insert();
+    B.CopyLinks(A);
+    if B.HasLinks() then Error('links appeared');
+    A.AddLink('https://example.com', 'D');
+    B.CopyLinks(A);
+    if not B.HasLinks() then Error('links not copied');
+  end; }"#,
+    );
+    passes(&o, "CopyNothing");
 }
 
 #[test]
@@ -673,6 +687,19 @@ codeunit 50000 "T" { Subtype = Test;
     );
     passes(&o, "Present");
     passes(&o, "TenantRow");
+}
+
+/// Base Application's `profile "ORDER PROCESSOR"` names its role center by page id (`RoleCenter = 9006;`): the row
+/// exists with that id (about 320 Microsoft tests start with `AllProfile.SetRange("Profile ID", 'ORDER PROCESSOR')`).
+#[test]
+fn a_profile_that_names_its_role_center_by_page_id_is_a_row() {
+    let o = outcomes(
+        r#"page 50001 "Center" { PageType = RoleCenter; }
+profile "BY ID" { RoleCenter = 50001; }
+codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure ById() var P: Record "All Profile"; begin P.SetRange("Profile ID", 'BY ID'); P.FindFirst(); if P."Role Center ID" <> 50001 then Error('role center %1', P."Role Center ID"); end; }"#,
+    );
+    passes(&o, "ById");
 }
 
 /// A platform table nothing provides rows for is still a table: a temporary record of it holds what

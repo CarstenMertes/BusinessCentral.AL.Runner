@@ -1513,21 +1513,6 @@ impl Session {
                     ("Find", None) => "=".to_string(),
                     _ => "-".to_string(),
                 };
-                // The characters of Which are a set: `'=<>'` is the pinned `'=><'` (documented assumption,
-                // docs/probes-needed.md; Microsoft's tests write `Find('=<>')`).
-                let which = {
-                    let mut c: Vec<char> = which.chars().collect();
-                    c.sort_unstable();
-                    c.dedup();
-                    if c == ['<', '=', '>'] {
-                        if which != "=><" {
-                            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FindDirectionSet);
-                        }
-                        "=><".to_string()
-                    } else {
-                        which
-                    }
-                };
                 let found = match which.as_str() {
                     "-" => self.scan(rec, &t, asc, None)?,
                     "+" => self.scan(rec, &t, !asc, None)?,
@@ -1555,48 +1540,40 @@ impl Session {
                         let pos = position(&t, key, &rec.borrow().fields);
                         self.scan(rec, &t, (which == ">") == asc, Some(pos))?
                     }
-                    // `>=`, `<=` and `=><` (also written `=>`, `=<`): the row itself, else its
-                    // neighbour. Pinned for a row that is gone from a table nothing filters, by the page
-                    // client asking an OnFindRecord trigger (corpus pageupdate/TestPageUpdateGoneRow.al:423
-                    // List_DeletedByAction_PassThroughFind_*) and, with filters, by the probe above for
-                    // `>=`; another current key is not pinned.
-                    w @ (">=" | "<=" | "=>" | "=<" | "=><") => {
-                        // Another current key looks for the neighbour by that key's fields
-                        // (events/TestProbeEventContracts.al:Find_NeighbourSearch_WithFilterAndOtherKey, key Name).
-                        let pk = t.primary_key(&rec.borrow().fields);
-                        let exact = if rec.borrow().key != 0 {
-                            None
-                        } else {
-                            self.store_for(rec)
-                                .get(&cx, &t, &pk)
-                                .map_err(|e| Signal::Unsupported(format!("{e}")))?
-                        };
-                        let exact = match exact {
-                            Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
-                            _ => None,
-                        };
-                        match exact {
-                            Some(row) => Some(row),
-                            None => {
-                                let key = rec.borrow().key;
-                                let pos = position(&t, key, &rec.borrow().fields);
-                                let up = matches!(w, ">=" | "=>" | "=><");
-                                let down = matches!(w, "<=" | "=<" | "=><");
-                                let next = if up {
-                                    self.scan(rec, &t, asc, Some(pos.clone()))?
-                                } else {
-                                    None
-                                };
-                                let prev = if down {
-                                    self.scan(rec, &t, !asc, Some(pos))?
-                                } else {
-                                    None
-                                };
-                                // `=><` takes the next row, else the previous one (events/TestProbeEventContracts.al:
-                                // Find_NeighbourSearch_PrimaryKey: 15 gives 20, 25 gives 30, 35 gives 30).
-                                next.or(prev)
+                    // Two or three direction characters are tried in the order written, and the first that finds a row
+                    // wins: `=` the row itself, `<` the row before it, `>` the row after it. So `<=` answers the
+                    // previous row even when the key exists, and `=<>` takes the previous row before the next one
+                    // (types/PYLoadFindThis.al:Find_DirectionCharacters_Orders, all eleven orders on BC 27.5 and 29.0;
+                    // the neighbour search of a row that is gone: pageupdate/TestPageUpdateGoneRow.al:423,
+                    // events/TestProbeEventContracts.al:Find_NeighbourSearch_*).
+                    w if w.len() >= 2 && w.chars().all(|c| matches!(c, '<' | '=' | '>')) => {
+                        let key = rec.borrow().key;
+                        let pos = position(&t, key, &rec.borrow().fields);
+                        let mut found = None;
+                        for c in w.chars() {
+                            found = match c {
+                                // Another current key looks for the neighbour by that key's fields
+                                // (events/TestProbeEventContracts.al:Find_NeighbourSearch_WithFilterAndOtherKey, key Name).
+                                '=' if key != 0 => None,
+                                '=' => {
+                                    let pk = t.primary_key(&rec.borrow().fields);
+                                    let exact = self
+                                        .store_for(rec)
+                                        .get(&cx, &t, &pk)
+                                        .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+                                    match exact {
+                                        Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
+                                        _ => None,
+                                    }
+                                }
+                                '<' => self.scan(rec, &t, !asc, Some(pos.clone()))?,
+                                _ => self.scan(rec, &t, asc, Some(pos.clone()))?,
+                            };
+                            if found.is_some() {
+                                break;
                             }
                         }
+                        found
                     }
                     other => return unsupported(format!("Find('{other}')")),
                 };
@@ -1790,13 +1767,13 @@ impl Session {
                             .as_ref()
                             .expect("table");
                         // A FlowFilter field and a Blob cannot order rows: `Sorting cannot be done based on the
-                        // <field> field(s) in the <table> table.` (code DB:Ok; record/ProbeClearAllSetKeyHyperlink.al:
-                        // 276-318, BC 27.5; the error is raised here, whether BC raises it here or at the
-                        // read is not observable in the probe). A FlowField is accepted and orders by the
-                        // primary key: the order it gives BC is not pinned (docs/probes-needed.md).
+                        // <field> field(s) in the <table> table.` (code DB:Ok; records/W4SortKeys.al:SetCurrentKey_NotStoredFields
+                        // and record/ProbeClearAllSetKeyHyperlink.al:276-318, BC 27.5 and 29.0). A FlowField and a Media
+                        // field are accepted and leave the current key the primary key (`CurrentKey()` answers `[Id]`).
+                        let is_blob =
+                            |p: usize| matches!(&t.fields[p].ty, RtType::Library(n) if n.eq_ignore_ascii_case("blob"));
                         if let Some(&bad) = wanted.iter().find(|&&p| {
-                            matches!(t.fields[p].ty, RtType::Library(_) | RtType::Variant)
-                                || schema.fields[p].flow_filter
+                            is_blob(p) || matches!(t.fields[p].ty, RtType::Variant) || schema.fields[p].flow_filter
                         }) {
                             return Err(crate::transactions::al_error_code(
                                 &format!(
@@ -1806,19 +1783,21 @@ impl Session {
                                 "DB:Ok",
                             ));
                         }
-                        if let Some(&bad) = wanted
-                            .iter()
-                            .find(|&&p| !t.fields[p].stored && !schema.fields[p].calc.is_some())
-                        {
+                        let unordered = |p: usize| {
+                            schema.fields[p].calc.is_some()
+                                || matches!(&t.fields[p].ty, RtType::Library(n) if n.eq_ignore_ascii_case("media") || n.eq_ignore_ascii_case("mediaset"))
+                        };
+                        if wanted.iter().all(|&p| unordered(p)) {
+                            let mut r = rec.borrow_mut();
+                            r.key = 0;
+                            r.adhoc = None;
+                            return Ok(Value::Boolean(true));
+                        }
+                        if let Some(&bad) = wanted.iter().find(|&&p| unordered(p) || !t.fields[p].stored) {
                             return unsupported(format!(
-                                "SetCurrentKey on {}, which cannot order rows (not pinned)",
+                                "SetCurrentKey on {} together with other fields: whether the key stays the primary key is not pinned",
                                 t.fields[bad].name
                             ));
-                        }
-                        if wanted.iter().any(|&p| !t.fields[p].stored) {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::SetCurrentKeyFlowField,
-                            );
                         }
                         // `t` already holds this record's earlier ad hoc key, if any.
                         let index = self.engine.tables[t.object as usize]
@@ -1975,7 +1954,7 @@ impl Session {
             }
             "Truncate" => self.truncate(&t, rec, arg_bool(args, 0)?),
             "CalcFields" | "CalcSums" | "SetAutoCalcFields" => self.flow_op(method, rec, args),
-            "LoadFields" => self.load_fields_row(rec, &t, &cx, args),
+            "LoadFields" => self.load_fields_row(rec, &t, args),
             "SetLoadFields" | "AddLoadFields" | "AreFieldsLoaded" | "SetBaseLoadFields" => {
                 self.load_fields_op(method, rec, &t, args)
             }

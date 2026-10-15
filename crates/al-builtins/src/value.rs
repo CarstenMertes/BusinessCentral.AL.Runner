@@ -809,6 +809,10 @@ pub struct Instance {
     /// extends (ADR-023). `Weak`, so the link adds no reference cycle. `None` for every other
     /// instance.
     pub base: Option<std::rc::Weak<RefCell<Instance>>>,
+    /// For the instance of a report variable: the instances of the reportextensions that change it, by object
+    /// index, made at the first call of an extension procedure or run of the variable and kept with the variable's
+    /// state (a `Run` and `Clear` drop them). Empty for every other instance.
+    pub exts: Vec<(u32, Rc<RefCell<Instance>>)>,
 }
 
 /// State behind a library-type handle; grows with the builtins that need it.

@@ -308,6 +308,16 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
                 }
             }
         }
+        // ClientType has no OptionCaption: a number below 16 or a member name evaluates, any other text answers false
+        // (types/PWMisc.al:ClientType_OrdinalsAndNames: 16 to 30 are rejected).
+        Value::Option(_, members) if crate::sysenum::is_client_type(members) => {
+            let t = text.trim();
+            let by_name = members.iter().position(|m| m.eq_ignore_ascii_case(t));
+            match (t.parse::<usize>().ok().filter(|n| *n < members.len()), by_name) {
+                (Some(n), _) | (None, Some(n)) => Parsed::Value(Value::Option(n as i32, members.clone())),
+                _ => Parsed::Rejected,
+            }
+        }
         // An Option reads an ordinal or a member name (types/PROptionInteger.al:Option_InCaseAndLoopBounds: `1` is B, `C` is C).
         Value::Option(_, members) => {
             let t = text.trim();

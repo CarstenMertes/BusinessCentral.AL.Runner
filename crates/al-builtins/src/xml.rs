@@ -2205,38 +2205,23 @@ fn read_from_text(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
     read_text_into(c, r, a, 1)
 }
 
-/// Whether `text` has white space that is not part of an element's text: before the first or after the
-/// last markup, or a run of white space alone between two tags. `XmlReadOptions.PreserveWhitespace`
-/// decides about those, and what the default options do is not pinned (issue 22).
-fn has_ignorable_white_space(text: &str) -> bool {
-    let t = text.trim_start_matches('\u{feff}');
-    if t.starts_with(char::is_whitespace) || t.ends_with(char::is_whitespace) {
-        return true;
-    }
-    let mut rest = t;
-    while let Some(i) = rest.find('>') {
-        let after = &rest[i + 1..];
-        let end = after.find('<').unwrap_or(after.len());
-        if end > 0 && after[..end].chars().all(char::is_whitespace) && end < after.len() {
-            return true;
-        }
-        rest = after;
-    }
-    false
+/// `XmlDocument.ReadFrom(Text, XmlReadOptions, var XmlDocument)`: the document reads as the form without options
+/// does, whether the options are the default or `PreserveWhitespace` is true or false, for white space inside the
+/// text, around the root and between tags (misc/W4XmlJsonHttp.al: W4 Xml Options Tests.ReadFrom_*, BC 27.5 and 29.0).
+fn read_from_text_options(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    read_text_into(c, r, a, 2)
 }
 
-/// `XmlDocument.ReadFrom(Text, XmlReadOptions, var XmlDocument)`: the text form, for a document whose
-/// white space the options cannot change. The form without options keeps white space
-/// (xml/TestXmlRuntimeContracts.al:99); the default options are not pinned, so a document with
-/// white space between tags or around the root is refused.
-fn read_from_text_options(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let text = arg_text(a, 0)?;
-    if has_ignorable_white_space(&text) {
-        return unsupported(
-            "XmlDocument.ReadFrom with XmlReadOptions of a document with white space between tags or around the root: what the default XmlReadOptions do with it is not pinned (docs/probes-needed.md)",
-        );
+/// `XmlReadOptions.PreserveWhitespace(Value)`: the probes see no difference in what is read, so the setting changes
+/// nothing here.
+fn read_options_preserve_whitespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    if !matches!(r, Some(Value::Library(..))) {
+        return unsupported("PreserveWhitespace on something that is not an XmlReadOptions");
     }
-    read_text_into(c, r, a, 2)
+    let Some(Value::Boolean(_)) = a.first() else {
+        return unsupported("PreserveWhitespace with something that is not a Boolean");
+    };
+    Ok(Value::Null)
 }
 
 fn read_text_into(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value], out: usize) -> NResult {
@@ -3541,6 +3526,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
             write_to_outstream
         }
         ("XmlWriteOptions", "PreserveWhitespace", ["Boolean"]) => write_options_preserve_whitespace,
+        ("XmlReadOptions", "PreserveWhitespace", ["Boolean"]) => read_options_preserve_whitespace,
         ("XmlElement", "SetAttribute", ["Text", "Text"]) => set_attribute,
         ("XmlElement", "RemoveAttribute", ["Text"] | ["XmlAttribute"]) => remove_attribute,
         ("XmlElement", "RemoveAllAttributes", []) => remove_all_attributes,

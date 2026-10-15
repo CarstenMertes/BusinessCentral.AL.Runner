@@ -307,6 +307,41 @@ impl Session {
                 return Ok(Value::Null);
             }
 
+            // RecordRef.Copy(FromRecordRef [, ShareTable]): the opened target takes the source's buffer, filters, key,
+            // direction and current row as Record.Copy does; a target that was never opened raises "The record is
+            // not open." (RecordNotOpened); ShareTable is accepted only for two temporary records, which then share
+            // the table (types/PWMisc.al:RecordRef_Copy_*, records/W4SortKeys.al:RecordRef_Ascending, BC 27.5 and
+            // 29.0). A Record as the source is not pinned.
+            "Copy" => {
+                let dst = match &*lib.borrow() {
+                    LibraryValue::RecordRef(r) => r.clone(),
+                    LibraryValue::Empty => {
+                        return Err(Signal::Error(AlError {
+                            message: "The record is not open.".into(),
+                            code: "RecordNotOpened".into(),
+                            call_stack: String::new(),
+                        }));
+                    }
+                    _ => return unsupported("RecordRef.Copy on a RecordRef opened on a system table"),
+                };
+                let src = match args.first() {
+                    Some(Value::Library(_, l)) => match &*l.borrow() {
+                        LibraryValue::RecordRef(r) => r.clone(),
+                        _ => return unsupported("RecordRef.Copy from a RecordRef that is not open (not pinned)"),
+                    },
+                    other => {
+                        return unsupported(format!("RecordRef.Copy from {} (not pinned)", other.describe()));
+                    }
+                };
+                if src.borrow().table != dst.borrow().table {
+                    return unsupported("RecordRef.Copy between two tables (not pinned)");
+                }
+                let t = self.table(&dst)?;
+                let mut forwarded = vec![Value::Record(src)];
+                forwarded.extend(args.get(1).cloned());
+                return self.record_meta_op("Copy", &dst, &t, &mut forwarded);
+            }
+
             "Number" => match &*lib.borrow() {
                 LibraryValue::SystemTable(n) => return Ok(Value::Integer(*n as i32)),
                 // A RecordRef never opened is table 0 (corpus branch al-runtime-rs-staging, ae3fe88,
@@ -341,11 +376,8 @@ impl Session {
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
             "FilterGroup" => {
-                // The setter with -1 (the OR group) is pinned (record/PWFilterGroupOr.al:OrGroup_RecordRef);
-                // the getter form and the other groups are not.
-                if !matches!(args, [Value::Integer(al_builtins::filter::OR_GROUP)]) {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefFilterGroup);
-                }
+                // The getter and the setter for any group are pinned (filters/W4Filters.al:RecordRef_FilterGroup_*,
+                // record/PWFilterGroupOr.al:OrGroup_RecordRef).
                 Self::filter_group(&rec, args)
             }
             "GetFilters" => self.get_filters(&rec, &t).map(|s| Value::Text(s.into())),
@@ -544,12 +576,30 @@ impl Session {
                 let Some(Value::Record(dst)) = args.first() else {
                     return unsupported(format!("RecordRef.SetTable of {}", args.first().describe()));
                 };
-                let (same_table, same_kind) = {
+                let (same_table, same_kind, temp_into_permanent) = {
                     let (s, d) = (rec.borrow(), dst.borrow());
-                    (s.table == d.table, s.temporary == d.temporary)
+                    (
+                        s.table == d.table,
+                        s.temporary == d.temporary,
+                        s.temporary && !d.temporary,
+                    )
                 };
-                if !same_table || !same_kind {
-                    return unsupported("RecordRef.SetTable into a record of another table or temporary-ness");
+                if !same_table || !(same_kind || temp_into_permanent) {
+                    return unsupported(
+                        "RecordRef.SetTable into a record of another table or into a temporary record from a permanent table",
+                    );
+                }
+                // A temporary RecordRef set into a record that is not declared temporary: the record then reads and
+                // writes the temporary rows (Mfg. Dimension Management, the temporary Purchase Line of a posting
+                // check). Not pinned by the corpus (assumption settable-temporary-into-permanent).
+                if temp_into_permanent && !Rc::ptr_eq(&rec, dst) {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::SetTableTemporaryIntoPermanent,
+                    );
+                    let s = rec.borrow();
+                    let mut d = dst.borrow_mut();
+                    d.temporary = true;
+                    d.temp_id = s.temp_id.clone();
                 }
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();

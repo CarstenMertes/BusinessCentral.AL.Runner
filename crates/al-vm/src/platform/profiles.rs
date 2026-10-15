@@ -145,9 +145,13 @@ pub(crate) fn profile_seeds(program: &al_ir::Program) -> Vec<(usize, i32)> {
         if kind(o) != "profile" {
             continue;
         }
-        let role_center = super::objects::prop(o, "RoleCenter").map(|v| {
-            let want = super::objects::ident(v).to_ascii_lowercase();
-            pages.get(&want).cloned().unwrap_or_default()
+        // `RoleCenter = 9006;` names the page by id (Base Application's profiles do), `RoleCenter = Name;` by name.
+        let role_center = super::objects::prop(o, "RoleCenter").map(|v| match v.trim().parse::<u32>() {
+            Ok(id) => vec![id],
+            Err(_) => {
+                let want = super::objects::ident(v).to_ascii_lowercase();
+                pages.get(&want).cloned().unwrap_or_default()
+            }
         });
         match role_center.as_deref() {
             None => out.push((oi, 0)),

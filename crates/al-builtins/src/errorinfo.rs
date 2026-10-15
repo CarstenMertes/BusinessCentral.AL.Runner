@@ -291,6 +291,20 @@ pub fn set_message_of(v: &Value, message: &str) -> bool {
     }
 }
 
+/// Sets the table and field an `ErrorInfo` value names (what `TestField` records on a collected error) and
+/// answers whether it is collectible.
+pub fn set_origin_of(v: &Value, table_id: i32, field_no: i32) -> bool {
+    let Value::Library(_, cell) = v else { return false };
+    match &mut *cell.borrow_mut() {
+        LibraryValue::ErrorInfo(s) => {
+            s.table_id = table_id;
+            s.field_no = field_no;
+            s.collectible
+        }
+        _ => false,
+    }
+}
+
 /// The message of an `ErrorInfo` value.
 pub fn message_of(v: &Value) -> Option<String> {
     let Value::Library(_, cell) = v else { return None };

@@ -83,13 +83,11 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         "reportlayouttype" => Some(&["RDLC", "Word", "Excel", "Custom"]),
         "reportformat" => Some(&["Pdf", "Word", "Excel", "Html", "Xml"]),
         "errortype" => Some(&["Client", "Internal"]),
-        // The ordinals are the platform's, with gaps, so the list is indexed by ordinal and a gap is a blank
-        // member (session/ProbeSystemEnumMembers.al:8-41, BC 27.5): Default 1, Windows 2, Web 3, SOAP 4,
-        // OData 5, Background 7, Management 8, Tablet 9, Phone 10, Desktop 11, ODataV4 13, Api 14,
-        // ChildSession 15. `NAS` is not probed; it is placed at 6, the free slot before Background (an
-        // assumption, docs/probes-needed.md). Ordinal 0 and 12 have no member.
+        // The platform's ordinals, probed on BC 27.5 and 29.0 (types/PWMisc.al:ClientType_OrdinalsAndNames, evaluated from
+        // 0 to 30; nothing above 15): Current 0, Default 1, Windows 2, Web 3, SOAP 4, OData 5, NAS 6, Background 7,
+        // Management 8, Tablet 9, Phone 10, Desktop 11, Teams 12, ODataV4 13, Api 14, ChildSession 15.
         "clienttype" => Some(&[
-            "",
+            "Current",
             "Default",
             "Windows",
             "Web",
@@ -101,7 +99,7 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "Tablet",
             "Phone",
             "Desktop",
-            "",
+            "Teams",
             "ODataV4",
             "Api",
             "ChildSession",
@@ -141,6 +139,12 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         ]),
         _ => None,
     }
+}
+
+/// Whether `members` is the `ClientType` option: an ordinal or a member name evaluates into it, any other text does not.
+pub fn is_client_type(members: &[String]) -> bool {
+    let known = members_static("clienttype");
+    members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
 }
 
 /// Whether `members` is the `FieldType` option. AL cannot read its ordinals, so `Format(x, 0, 2)`

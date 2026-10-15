@@ -405,7 +405,34 @@ fn resolve(cfg: &SidecarConfig) -> Result<Resolved, String> {
     Ok(Resolved { dotnet, sidecar })
 }
 
-/// FNV-1a over the sidecar's source files: a stable cache key.
+/// The sidecar's source files, built into this binary, so a copied or installed `alrunner` can
+/// find or build its helper without the repository (the cache is keyed by the same hash as the
+/// repository's own build). A test keeps the list equal to the folder.
+const EMBEDDED: &[(&str, &str)] = &[
+    (
+        "AlDotNetSidecar.csproj",
+        include_str!("../../../tools/dotnet-sidecar/AlDotNetSidecar.csproj"),
+    ),
+    ("Dispatch.cs", include_str!("../../../tools/dotnet-sidecar/Dispatch.cs")),
+    ("Marshal.cs", include_str!("../../../tools/dotnet-sidecar/Marshal.cs")),
+    ("Program.cs", include_str!("../../../tools/dotnet-sidecar/Program.cs")),
+    ("Resolver.cs", include_str!("../../../tools/dotnet-sidecar/Resolver.cs")),
+    ("global.json", include_str!("../../../tools/dotnet-sidecar/global.json")),
+];
+
+/// FNV-1a over file names and contents, in the order given: a stable cache key.
+fn hash_files<'a>(files: impl IntoIterator<Item = (&'a str, &'a [u8])>) -> u64 {
+    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    for (name, bytes) in files {
+        for b in name.bytes().chain(bytes.iter().copied()) {
+            h ^= u64::from(b);
+            h = h.wrapping_mul(0x0100_0000_01b3);
+        }
+    }
+    h
+}
+
+/// FNV-1a over the sidecar's source files in `dir`: a stable cache key.
 fn source_hash(dir: &Path) -> Option<u64> {
     let mut files: Vec<PathBuf> = std::fs::read_dir(dir)
         .ok()?
@@ -416,15 +443,16 @@ fn source_hash(dir: &Path) -> Option<u64> {
         })
         .collect();
     files.sort();
-    let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+    let mut read = Vec::new();
     for f in files {
-        let name = f.file_name()?.to_string_lossy().into_owned();
-        for b in name.bytes().chain(std::fs::read(&f).ok()?) {
-            h ^= u64::from(b);
-            h = h.wrapping_mul(0x0100_0000_01b3);
-        }
+        read.push((f.file_name()?.to_string_lossy().into_owned(), std::fs::read(&f).ok()?));
     }
-    Some(h)
+    Some(hash_files(read.iter().map(|(n, b)| (n.as_str(), b.as_slice()))))
+}
+
+/// The hash of the sources built into this binary.
+fn embedded_hash() -> u64 {
+    hash_files(EMBEDDED.iter().map(|(n, c)| (*n, c.as_bytes())))
 }
 
 fn default_cache_dir() -> Option<PathBuf> {
@@ -455,15 +483,18 @@ fn find_sidecar(cfg: &SidecarConfig, dotnet: &Path) -> Result<PathBuf, String> {
     {
         return Ok(p);
     }
-    let Some(src) = cfg
+    // The repository's sources when this binary was built inside one (they may be newer than the
+    // binary while developing); otherwise the copy built into the binary.
+    let src = cfg
         .source_root
         .as_ref()
         .map(|r| r.join("tools/dotnet-sidecar"))
-        .filter(|s| s.join("AlDotNetSidecar.csproj").is_file())
-    else {
-        return Err(NOT_BUILT.into());
+        .filter(|s| s.join("AlDotNetSidecar.csproj").is_file());
+    let hash = match &src {
+        Some(dir) => source_hash(dir),
+        None => Some(embedded_hash()),
     };
-    let (Some(hash), Some(cache)) = (source_hash(&src), cfg.cache_dir.clone().or_else(default_cache_dir)) else {
+    let (Some(hash), Some(cache)) = (hash, cfg.cache_dir.clone().or_else(default_cache_dir)) else {
         return Err(NOT_BUILT.into());
     };
     let dir = cache.join(format!("{hash:016x}"));
@@ -487,6 +518,22 @@ fn find_sidecar(cfg: &SidecarConfig, dotnet: &Path) -> Result<PathBuf, String> {
     }
     eprintln!("building the .NET sidecar into {} (once)", dir.display());
     let tmp = cache.join(format!(".build-{hash:016x}-{}", std::process::id()));
+    let src = match src {
+        Some(dir) => dir,
+        None => {
+            // Write the built-in sources next to the build, then build from them.
+            let dir = cache.join(format!(".src-{hash:016x}-{}", std::process::id()));
+            std::fs::create_dir_all(&dir).map_err(|e| format!("{NOT_BUILT} (cannot write {}: {e})", dir.display()))?;
+            for (name, content) in EMBEDDED {
+                std::fs::write(dir.join(name), content)
+                    .map_err(|e| format!("{NOT_BUILT} (cannot write {}: {e})", dir.join(name).display()))?;
+            }
+            dir
+        }
+    };
+    let built_from_embedded = src
+        .file_name()
+        .is_some_and(|n| n.to_string_lossy().starts_with(".src-"));
     let out = Command::new(dotnet)
         .arg("publish")
         .arg(&src)
@@ -498,7 +545,11 @@ fn find_sidecar(cfg: &SidecarConfig, dotnet: &Path) -> Result<PathBuf, String> {
         .env("DOTNET_NOLOGO", "1")
         .env("DOTNET_CLI_TELEMETRY_OPTOUT", "1")
         .output()
-        .map_err(|e| format!("{NOT_BUILT} (dotnet publish failed to start: {e})"))?;
+        .map_err(|e| format!("{NOT_BUILT} (dotnet publish failed to start: {e})"));
+    if built_from_embedded {
+        let _ = std::fs::remove_dir_all(&src);
+    }
+    let out = out?;
     if !out.status.success() || !tmp.join("AlDotNetSidecar.dll").is_file() {
         let _ = std::fs::remove_dir_all(&tmp);
         let tail: String = String::from_utf8_lossy(&out.stdout)
@@ -1052,6 +1103,48 @@ pub fn unbase64(text: &str) -> Vec<u8> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn sidecar_dir() -> PathBuf {
+        Path::new(env!("CARGO_MANIFEST_DIR")).join("../../tools/dotnet-sidecar")
+    }
+
+    #[test]
+    fn the_built_in_sidecar_sources_are_the_folders_sources() {
+        let mut on_disk: Vec<String> = std::fs::read_dir(sidecar_dir())
+            .unwrap()
+            .filter_map(|e| e.ok())
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.ends_with(".cs") || n.ends_with(".csproj") || n == "global.json")
+            .collect();
+        on_disk.sort();
+        let embedded: Vec<&str> = EMBEDDED.iter().map(|(n, _)| *n).collect();
+        assert_eq!(on_disk, embedded, "add the new file to EMBEDDED");
+        assert_eq!(
+            source_hash(&sidecar_dir()),
+            Some(embedded_hash()),
+            "the binary's copy hashes like the folder, so one cache entry serves both"
+        );
+    }
+
+    #[test]
+    fn a_binary_outside_the_repository_finds_the_helper_in_the_cache_by_its_built_in_hash() {
+        let cache = tempfile::tempdir().unwrap();
+        let dir = cache.path().join(format!("{:016x}", embedded_hash()));
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(dir.join("AlDotNetSidecar.dll"), b"x").unwrap();
+        let cfg = SidecarConfig {
+            source_root: None,
+            cache_dir: Some(cache.path().to_path_buf()),
+            ..Default::default()
+        };
+        // Without the repository and without a built sidecar next to the test binary.
+        if std::env::var_os("ALRT_DOTNET_SIDECAR").is_none() {
+            assert_eq!(
+                find_sidecar(&cfg, Path::new("/nonexistent/dotnet")).unwrap(),
+                dir.join("AlDotNetSidecar.dll")
+            );
+        }
+    }
 
     #[test]
     fn tagged_values_round_trip() {

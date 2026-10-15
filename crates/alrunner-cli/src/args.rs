@@ -49,7 +49,7 @@ pub struct TestArgs {
     pub dotnet_assembly_dirs: Vec<PathBuf>,
     pub dotnet_allow_roll_forward: bool,
     pub dotnet_timeout_secs: Option<u64>,
-    /// `--test-timeout-secs N`: a test running longer is stopped and not run (default 20; 0: no limit).
+    /// `--test-timeout-secs N`: a test that uses more CPU time is stopped and not run (default 20; 0: no limit).
     pub test_timeout_secs: Option<u64>,
     pub require_dotnet: bool,
     pub files_dir: Option<PathBuf>,
@@ -182,7 +182,9 @@ TEST DATA
 
 OTHER
     --files-dir DIR      Let the File data type read and write real files under DIR.
-    --test-timeout-secs N  A test that runs longer than N seconds (default 20) is stopped at its
+    --test-timeout-secs N  A test that uses more than N seconds of CPU time (default 20; the
+                         load of the machine does not count; a test that hangs without
+                         computing is stopped at 10 times N of wall time) is stopped at its
                          next loop iteration and reported as not run, with the limit as the
                          reason; the codeunit's later failures are then not trusted. 0: no limit.
     --dotnet-sidecar PATH, --dotnet-assembly-dir DIR, --dotnet-allow-roll-forward,

@@ -2551,11 +2551,26 @@ impl Lowerer<'_> {
                         .position(|m| m.eq_ignore_ascii_case(word))
                         .map(|i| i.to_string())
                 };
-                values.push(if is_filter {
+                values.push(if is_filter && members.is_some() {
+                    // Members by ordinal, with the alternatives `|` and ranges `..` kept: `A .. B` is `0..1`
+                    // (metadata/W6TableRelations.al:Relations_ConditionOnTheSourceField, BC 27.5 and 29.0).
                     text.split('|')
-                        .map(ordinal)
+                        .map(|alt| {
+                            alt.split("..")
+                                .map(&ordinal)
+                                .collect::<Option<Vec<_>>>()
+                                .map(|v| v.join(".."))
+                        })
                         .collect::<Option<Vec<_>>>()
                         .map(|v| v.join("|"))
+                } else if is_filter {
+                    // A filter on a field that is no option shows its text as written, without the quotes of a
+                    // quoted literal: `filter('X|Y')` is `X|Y`, `filter('<>X')` is `<>X`.
+                    let t = text.trim();
+                    Some(match t.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
+                        Some(inner) => inner.replace("''", "'"),
+                        None => t.to_string(),
+                    })
                 } else {
                     ordinal(text)
                 });

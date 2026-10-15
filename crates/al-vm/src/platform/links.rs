@@ -84,6 +84,21 @@ impl Session {
         t: &TableDef,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        // The Record Link reads below are the platform's own: they use their results, whether or not the statement
+        // `CopyLinks(..)` uses its (none) (Bank Account Ledger Entry.CopyLinks in every journal posting).
+        let used = std::mem::replace(&mut self.ret_used, true);
+        let r = self.record_links_inner(method, rec, t, args);
+        self.ret_used = used;
+        r
+    }
+
+    fn record_links_inner(
+        &mut self,
+        method: &str,
+        rec: &Rec,
+        t: &TableDef,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
         if rec.borrow().company.is_some() {
             return unsupported(format!("{method} on a record in another company (not pinned)"));
         }

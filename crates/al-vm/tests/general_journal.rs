@@ -215,3 +215,54 @@ fn get_range_max_sees_a_filter_of_another_group_and_still_fails_with_none() {
         other => panic!("{other:?}"),
     }
 }
+
+// ---- CopyLinks of a record without links (every posting of a journal line: Bank Account Ledger Entry.CopyLinks) --
+// `BankAccLedgEntry.CopyLinks(GenJnlLine)` is a statement; the source has no link. The internal FindSet on the Record
+// Link table must not raise "There is no Record Link within the filter" because the statement's result is unused
+// (Tests-General Journal, 80 tests; record/TestRecordLinkTable.al pins CopyLinks, not the empty source).
+const LINKS: &str = r#"
+table 2000000068 "Record Link" {
+    fields {
+        field(1; "Link ID"; Integer) { }
+        field(2; "Record ID"; RecordID) { }
+        field(3; URL1; Text[250]) { }
+        field(7; Type; Option) { OptionMembers = Link,Note; }
+        field(8; Description; Text[250]) { }
+        field(9; Note; Blob) { }
+        field(10; "User ID"; Code[132]) { }
+        field(11; Created; DateTime) { }
+        field(12; Company; Text[30]) { }
+        field(13; Notify; Boolean) { }
+        field(14; "To User ID"; Code[132]) { }
+    }
+    keys { key(PK; "Link ID") { } }
+}
+table 50105 "Linked" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+"#;
+
+#[test]
+fn copy_links_from_a_record_without_links_raises_nothing() {
+    let src = format!(
+        "{LINKS}\ncodeunit 50100 C {{ procedure F(): Text var A: Record Linked; B: Record Linked; begin A.Id := 1; A.Insert(); B.Id := 2; B.Insert(); B.CopyLinks(A); exit(Format(B.HasLinks())); end; }}"
+    );
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src)],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let engine = Engine::new(l.program, blocked);
+    let mut s = Session::new(engine);
+    let inst = s.instance(oi);
+    assert_eq!(text(s.call(oi, 0, inst, vec![]).map(|(v, _)| v)), "No");
+}

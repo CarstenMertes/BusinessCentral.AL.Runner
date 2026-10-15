@@ -792,6 +792,19 @@ impl Session {
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
+                // An array passed by value is a copy: the callee's writes and Clear do not reach the caller
+                // (misc/W5Clear.al:Clear_ArrayPassedByValue).
+                (Value::Array(a), false) => {
+                    let items: Vec<Value> = a
+                        .borrow()
+                        .iter()
+                        .map(|v| match v {
+                            Value::Record(rc) => self.record_by_value(rc),
+                            other => other.clone(),
+                        })
+                        .collect();
+                    Value::Array(Rc::new(RefCell::new(items)))
+                }
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }

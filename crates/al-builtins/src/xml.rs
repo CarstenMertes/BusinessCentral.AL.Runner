@@ -38,6 +38,9 @@ pub enum XData {
         ns: String,
         attrs: Vec<Handle>,
         children: Vec<Handle>,
+        /// Parsed from `<a></a>`: written with an end tag although empty (xml/TestProbeXmlContracts.al:
+        /// WriteTo_EmptyElementFromParsedText); `<a/>` and a created element are written `<a />`.
+        open: bool,
     },
     Attribute {
         prefix: String,
@@ -56,11 +59,22 @@ pub enum XData {
         version: String,
         encoding: String,
         standalone: String,
+        /// Made by `XmlDeclaration.Create`: the encoding and standalone attributes are written even when empty
+        /// (xml/TestProbeXmlContracts.al:WriteTo_DeclarationAndIndent).
+        explicit: bool,
     },
 }
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
+}
+
+/// `Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLArgumentException' was thrown.` (code `Argument`).
+fn nav_argument() -> Signal {
+    error(
+        "Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLArgumentException' was thrown.",
+        "Argument",
+    )
 }
 
 fn error(message: impl Into<String>, code: &str) -> Signal {
@@ -191,12 +205,14 @@ fn deep_clone(h: &Handle) -> Handle {
             ns,
             attrs,
             children,
+            open,
         } => XData::Element {
             prefix: prefix.clone(),
             local: local.clone(),
             ns: ns.clone(),
             attrs: attrs.iter().map(deep_clone).collect(),
             children: children.iter().map(deep_clone).collect(),
+            open: *open,
         },
         XData::Attribute {
             prefix,
@@ -220,10 +236,12 @@ fn deep_clone(h: &Handle) -> Handle {
             version,
             encoding,
             standalone,
+            explicit,
         } => XData::Declaration {
             version: version.clone(),
             encoding: encoding.clone(),
             standalone: standalone.clone(),
+            explicit: *explicit,
         },
     });
     new_node(data)
@@ -491,6 +509,7 @@ impl Parser<'_> {
             version,
             encoding,
             standalone,
+            explicit: false,
         }))
     }
 
@@ -677,12 +696,14 @@ impl Parser<'_> {
         self.scope.truncate(scope_mark);
         self.open.pop();
         self.depth -= 1;
+        let open = !self_closed && children.is_empty();
         Ok(new_node(XData::Element {
             prefix,
             local,
             ns,
             attrs,
             children,
+            open,
         }))
     }
 
@@ -865,6 +886,7 @@ impl Writer {
                 ns: String,
                 attrs: Vec<Handle>,
                 children: Vec<Handle>,
+                open: bool,
             },
             Text(String),
             CData(String),
@@ -878,12 +900,14 @@ impl Writer {
                 ns,
                 attrs,
                 children,
+                open,
             } => Plan::Element {
                 prefix: prefix.clone(),
                 local: local.clone(),
                 ns: ns.clone(),
                 attrs: attrs.clone(),
                 children: children.clone(),
+                open: *open,
             },
             XData::Text(t) => {
                 let mut s = String::new();
@@ -909,7 +933,8 @@ impl Writer {
                 ns,
                 attrs,
                 children,
-            } => self.element(&prefix, &local, &ns, &attrs, &children)?,
+                open,
+            } => self.element(&prefix, &local, &ns, &attrs, &children, open)?,
         }
         Ok(())
     }
@@ -921,6 +946,7 @@ impl Writer {
         ns: &str,
         attrs: &[Handle],
         children: &[Handle],
+        open: bool,
     ) -> Result<(), Signal> {
         let mark = self.scope.len();
         // Declarations written on this element: explicit ones first, in their order.
@@ -987,7 +1013,7 @@ impl Writer {
             escape_attr(av, &mut s);
             self.out.push_str(&format!(" {}=\"{s}\"", qname(&use_prefix, al)));
         }
-        if children.is_empty() {
+        if children.is_empty() && !open {
             self.out.push_str(" />");
             self.level -= 1;
         } else {
@@ -1033,12 +1059,13 @@ fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
                     version,
                     encoding,
                     standalone,
+                    explicit,
                 } => {
                     let mut t = format!("<?xml version=\"{version}\"");
-                    if !encoding.is_empty() {
+                    if *explicit || !encoding.is_empty() {
                         t.push_str(&format!(" encoding=\"{encoding}\""));
                     }
-                    if !standalone.is_empty() {
+                    if *explicit || !standalone.is_empty() {
                         t.push_str(&format!(" standalone=\"{standalone}\""));
                     }
                     t.push_str("?>");
@@ -1104,7 +1131,8 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
             }
         };
         if with(&h, |d| matches!(d, XData::Document { .. })) {
-            return unsupported("adding an XmlDocument as content");
+            // xml/TestProbeXmlContracts.al:Add_NodeIntoWrongContainer_Error, `document_into_element_via_add_node`.
+        return Err(nav_argument());
         }
         out.push(if parent_of(&h).is_some() { deep_clone(&h) } else { h });
     }
@@ -1141,7 +1169,11 @@ fn check_fits(container: &Handle, node: &Handle, removed: &[Handle]) -> Result<(
     if ok {
         Ok(())
     } else {
-        unsupported(format!("adding {n_kind} to {c_kind} (error text not pinned yet)"))
+        match (c_kind, n_kind) {
+            // xml/TestProbeXmlContracts.al:Add_NodeIntoWrongContainer_Error: a text or an attribute into a document.
+            ("XmlDocument", "XmlText" | "XmlCData" | "XmlAttribute") => Err(nav_argument()),
+            _ => unsupported(format!("adding {n_kind} to {c_kind} (error text not pinned yet)")),
+        }
     }
 }
 
@@ -1156,7 +1188,11 @@ fn insert(container: &Handle, at: Option<usize>, nodes: Vec<Handle>) -> Result<(
             "XmlAttribute" => {
                 let dup = attrs_of(container).iter().any(|a| same_attr_name(a, &n));
                 if dup {
-                    return unsupported("adding an attribute that already exists (error text not pinned yet)");
+                    // xml/TestProbeXmlContracts.al:Add_AttributeTwice_Error (the same name, and the same instance)
+                    return Err(error(
+                        "The requested operation cannot be performed in this context.",
+                        "InvalidOperation",
+                    ));
                 }
                 with(container, |d| {
                     if let XData::Element { attrs, .. } = d {
@@ -1223,7 +1259,46 @@ fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
     }
 }
 
-// ------------------------------------------------------------- XPath
+// ------------------------------------------------------------- XPath 1.0 (the part the corpus pins)
+
+/// Why an XPath did not produce a node set.
+enum XFail {
+    /// `Expression must evaluate to a node-set.` (xml/TestXmlRuntimeContracts.al:XmlDocument_SelectNodes_NotANodeSet_Throws).
+    NotNodeSet,
+    /// Not valid XPath, or a prefix nobody declared: a call whose result is used answers false
+    /// (xml/TestProbeXmlContracts.al:XPath_MalformedStatement, XPath_NamespaceManager); the statement form is refused.
+    Malformed(String),
+    Signal(Signal),
+}
+
+impl From<Signal> for XFail {
+    fn from(s: Signal) -> Self {
+        XFail::Signal(s)
+    }
+}
+
+type XRes<T> = Result<T, XFail>;
+
+fn malformed<T>(why: impl Into<String>) -> XRes<T> {
+    Err(XFail::Malformed(why.into()))
+}
+
+/// Prefix to namespace declarations of an `XmlNamespaceManager`.
+type Prefixes<'a> = Option<&'a [(String, String)]>;
+
+#[derive(Debug, Clone, Copy, PartialEq)]
+enum Axis {
+    Child,
+    Descendant,
+    DescendantOrSelf,
+    SelfAxis,
+    Parent,
+    Ancestor,
+    AncestorOrSelf,
+    FollowingSibling,
+    PrecedingSibling,
+    Attribute,
+}
 
 #[derive(Debug, Clone)]
 enum Test {
@@ -1234,301 +1309,741 @@ enum Test {
     Text,
     Node,
     Comment,
-}
-
-#[derive(Debug, Clone)]
-enum Pred {
-    Index(usize),
-    Last,
-    AttrEq(String, String),
-    AttrExists(String),
-    /// `local-name()='x'`
-    LocalName(String),
-}
-
-#[derive(Debug, Clone, Copy, PartialEq)]
-enum Axis {
-    Child,
-    DescendantOrSelf,
-    ThisNode,
-    Parent,
-    Attribute,
+    Pi,
 }
 
 #[derive(Debug, Clone)]
 struct Step {
     axis: Axis,
     test: Test,
-    preds: Vec<Pred>,
+    preds: Vec<Expr>,
 }
 
-/// Prefix to namespace declarations of an `XmlNamespaceManager`.
-type Prefixes<'a> = Option<&'a [(String, String)]>;
-
-fn xpath_unsupported<T>(p: &str, why: &str) -> Result<T, Signal> {
-    unsupported(format!("XPath `{p}`: {why} (only simple location paths are pinned)"))
+#[derive(Debug, Clone)]
+enum Expr {
+    Num(f64),
+    Str(String),
+    /// An absolute (`true`) or relative location path.
+    Path(bool, Vec<Step>),
+    /// `a | b`
+    Union(Vec<Expr>),
+    Call(String, Vec<Expr>),
+    Cmp(Box<Expr>, String, Box<Expr>),
+    And(Box<Expr>, Box<Expr>),
+    Or(Box<Expr>, Box<Expr>),
+    Neg(Box<Expr>),
+    Arith(Box<Expr>, char, Box<Expr>),
+    /// A filter on a function result or a parenthesised expression followed by steps.
+    Filter(Box<Expr>, Vec<Step>),
 }
 
-fn qname_parts(n: &str) -> (Option<String>, String) {
-    match n.split_once(':') {
-        Some((p, l)) => (Some(p.to_string()), l.to_string()),
-        None => (None, n.to_string()),
-    }
+struct XParser<'a> {
+    s: Vec<char>,
+    i: usize,
+    prefixes: Prefixes<'a>,
 }
 
-/// A literal in single or double quotes.
-fn quoted_literal(v: &str) -> Option<&str> {
-    let v = v.trim();
-    v.strip_prefix('\'')
-        .and_then(|s| s.strip_suffix('\''))
-        .or_else(|| v.strip_prefix('"').and_then(|s| s.strip_suffix('"')))
-}
-
-/// Returns (absolute, steps).
-fn parse_xpath(p: &str, prefixes: Prefixes) -> Result<(bool, Vec<Step>), Signal> {
-    let b: Vec<char> = p.chars().collect();
-    let mut i = 0;
-    let mut steps = Vec::new();
-    let absolute = b.first() == Some(&'/');
-    let mut first = true;
-    while i < b.len() {
-        if b[i] == '/' {
-            i += 1;
-            if b.get(i) == Some(&'/') {
-                i += 1;
-                steps.push(Step {
-                    axis: Axis::DescendantOrSelf,
-                    test: Test::Node,
-                    preds: vec![],
-                });
-            }
-        } else if !first {
-            return xpath_unsupported(p, "unexpected character");
+impl XParser<'_> {
+    fn ws(&mut self) {
+        while self.s.get(self.i).is_some_and(|c| c.is_whitespace()) {
+            self.i += 1;
         }
-        first = false;
-        if i >= b.len() {
-            if steps.is_empty() {
+    }
+    fn peek(&self) -> Option<char> {
+        self.s.get(self.i).copied()
+    }
+    fn starts(&self, t: &str) -> bool {
+        t.chars().enumerate().all(|(k, c)| self.s.get(self.i + k) == Some(&c))
+    }
+    fn eat(&mut self, t: &str) -> bool {
+        self.ws();
+        if self.starts(t) {
+            self.i += t.chars().count();
+            true
+        } else {
+            false
+        }
+    }
+    fn name(&mut self) -> Option<String> {
+        let start = self.i;
+        if !self.peek().is_some_and(is_name_start) {
+            return None;
+        }
+        while self.peek().is_some_and(is_name_char) {
+            self.i += 1;
+        }
+        Some(self.s[start..self.i].iter().collect())
+    }
+
+    fn expr(&mut self) -> XRes<Expr> {
+        self.or()
+    }
+    fn or(&mut self) -> XRes<Expr> {
+        let mut l = self.and()?;
+        while self.word("or") {
+            let r = self.and()?;
+            l = Expr::Or(Box::new(l), Box::new(r));
+        }
+        Ok(l)
+    }
+    fn and(&mut self) -> XRes<Expr> {
+        let mut l = self.cmp()?;
+        while self.word("and") {
+            let r = self.cmp()?;
+            l = Expr::And(Box::new(l), Box::new(r));
+        }
+        Ok(l)
+    }
+    fn word(&mut self, w: &str) -> bool {
+        self.ws();
+        let save = self.i;
+        if self.starts(w) && !self.s.get(self.i + w.len()).copied().is_some_and(is_name_char) {
+            self.i += w.len();
+            true
+        } else {
+            self.i = save;
+            false
+        }
+    }
+    fn cmp(&mut self) -> XRes<Expr> {
+        let mut l = self.additive()?;
+        loop {
+            self.ws();
+            let op = ["!=", "<=", ">=", "=", "<", ">"].into_iter().find(|o| self.starts(o));
+            let Some(op) = op else { return Ok(l) };
+            self.i += op.len();
+            let r = self.additive()?;
+            l = Expr::Cmp(Box::new(l), op.to_string(), Box::new(r));
+        }
+    }
+    fn additive(&mut self) -> XRes<Expr> {
+        let mut l = self.multiplicative()?;
+        loop {
+            self.ws();
+            let op = match self.peek() {
+                Some('+') => '+',
+                // `-` is an operator only when a name char does not follow directly (names may hold `-`).
+                Some('-') => '-',
+                _ => return Ok(l),
+            };
+            self.i += 1;
+            let r = self.multiplicative()?;
+            l = Expr::Arith(Box::new(l), op, Box::new(r));
+        }
+    }
+    fn multiplicative(&mut self) -> XRes<Expr> {
+        let mut l = self.unary()?;
+        loop {
+            self.ws();
+            if self.peek() == Some('*') {
+                self.i += 1;
+                let r = self.unary()?;
+                l = Expr::Arith(Box::new(l), '*', Box::new(r));
+            } else if self.word("div") {
+                let r = self.unary()?;
+                l = Expr::Arith(Box::new(l), '/', Box::new(r));
+            } else if self.word("mod") {
+                let r = self.unary()?;
+                l = Expr::Arith(Box::new(l), '%', Box::new(r));
+            } else {
+                return Ok(l);
+            }
+        }
+    }
+    fn unary(&mut self) -> XRes<Expr> {
+        self.ws();
+        if self.peek() == Some('-') {
+            self.i += 1;
+            return Ok(Expr::Neg(Box::new(self.unary()?)));
+        }
+        self.union()
+    }
+    fn union(&mut self) -> XRes<Expr> {
+        let mut parts = vec![self.path_expr()?];
+        while self.eat("|") {
+            parts.push(self.path_expr()?);
+        }
+        Ok(if parts.len() == 1 { parts.remove(0) } else { Expr::Union(parts) })
+    }
+
+    fn path_expr(&mut self) -> XRes<Expr> {
+        self.ws();
+        match self.peek() {
+            Some('/') => self.location(true),
+            Some('\'') | Some('"') => {
+                let q = self.peek().unwrap();
+                self.i += 1;
+                let start = self.i;
+                while self.peek().is_some_and(|c| c != q) {
+                    self.i += 1;
+                }
+                if self.peek().is_none() {
+                    return malformed("unterminated literal");
+                }
+                let t: String = self.s[start..self.i].iter().collect();
+                self.i += 1;
+                Ok(Expr::Str(t))
+            }
+            Some(c) if c.is_ascii_digit() || c == '.' && self.s.get(self.i + 1).is_some_and(|d| d.is_ascii_digit()) => {
+                let start = self.i;
+                while self.peek().is_some_and(|c| c.is_ascii_digit() || c == '.') {
+                    self.i += 1;
+                }
+                let t: String = self.s[start..self.i].iter().collect();
+                t.parse().map(Expr::Num).or_else(|_| malformed("number"))
+            }
+            Some('(') => {
+                self.i += 1;
+                let e = self.expr()?;
+                if !self.eat(")") {
+                    return malformed("unclosed (");
+                }
+                self.filter_tail(e)
+            }
+            Some('$') => malformed("variables are not supported"),
+            Some(c) if is_name_start(c) => {
+                // A function call is a name followed by `(`, unless it is a node test or an axis.
+                let save = self.i;
+                let name = self.name().unwrap();
+                self.ws();
+                let is_node_test = matches!(name.as_str(), "text" | "node" | "comment" | "processing-instruction");
+                if self.peek() == Some('(') && !is_node_test {
+                    self.i += 1;
+                    let mut args = Vec::new();
+                    if !self.eat(")") {
+                        loop {
+                            args.push(self.expr()?);
+                            if self.eat(",") {
+                                continue;
+                            }
+                            if self.eat(")") {
+                                break;
+                            }
+                            return malformed("unclosed function call");
+                        }
+                    }
+                    return self.filter_tail(Expr::Call(name, args));
+                }
+                self.i = save;
+                self.location(false)
+            }
+            Some(_) => self.location(false),
+            None => malformed("empty expression"),
+        }
+    }
+
+    /// Steps after a function call or a parenthesised expression: `(a)/b`, `f()[1]`.
+    fn filter_tail(&mut self, e: Expr) -> XRes<Expr> {
+        self.ws();
+        if self.peek() == Some('/') {
+            let mut steps = Vec::new();
+            while self.peek() == Some('/') {
+                self.i += 1;
+                if self.peek() == Some('/') {
+                    self.i += 1;
+                    steps.push(Step { axis: Axis::DescendantOrSelf, test: Test::Node, preds: vec![] });
+                }
+                steps.push(self.step()?);
+                self.ws();
+            }
+            return Ok(Expr::Filter(Box::new(e), steps));
+        }
+        Ok(e)
+    }
+
+    fn location(&mut self, absolute_allowed: bool) -> XRes<Expr> {
+        let mut steps = Vec::new();
+        let mut absolute = false;
+        self.ws();
+        if absolute_allowed && self.peek() == Some('/') {
+            absolute = true;
+            self.i += 1;
+            if self.peek() == Some('/') {
+                self.i += 1;
+                steps.push(Step { axis: Axis::DescendantOrSelf, test: Test::Node, preds: vec![] });
+                steps.push(self.step()?);
+            } else {
+                self.ws();
+                // `/` alone is the root.
+                if self.peek().is_none() || matches!(self.peek(), Some(')' | ']' | '|' | ',' | '=' | '!' | '<' | '>')) {
+                    return Ok(Expr::Path(true, steps));
+                }
+                steps.push(self.step()?);
+            }
+        } else {
+            steps.push(self.step()?);
+        }
+        loop {
+            self.ws();
+            if self.peek() == Some('/') {
+                self.i += 1;
+                if self.peek() == Some('/') {
+                    self.i += 1;
+                    steps.push(Step { axis: Axis::DescendantOrSelf, test: Test::Node, preds: vec![] });
+                }
+                steps.push(self.step()?);
+            } else {
                 break;
             }
-            return xpath_unsupported(p, "trailing /");
         }
+        Ok(Expr::Path(absolute, steps))
+    }
+
+    fn step(&mut self) -> XRes<Step> {
+        self.ws();
         let (axis, test);
-        if b[i] == '.' {
-            if b.get(i + 1) == Some(&'.') {
-                i += 2;
-                axis = Axis::Parent;
-            } else {
-                i += 1;
-                axis = Axis::ThisNode;
-            }
+        if self.starts("..") {
+            self.i += 2;
+            axis = Axis::Parent;
             test = Test::Node;
-        } else if b[i] == '@' {
-            i += 1;
-            let s = i;
-            while i < b.len() && (is_name_char(b[i]) || b[i] == '*' || b[i] == ':') {
-                i += 1;
-            }
-            let n: String = b[s..i].iter().collect();
-            if n.is_empty() {
-                if b.get(i) == Some(&'@') {
-                    // xml/TestXmlRuntimeContracts.al:XmlDocument_SelectNodes_NotANodeSet_Throws
-                    return Err(error("Expression must evaluate to a node-set.", "Xml:XPath"));
-                }
-                return xpath_unsupported(p, "empty attribute name");
-            }
-            axis = Axis::Attribute;
-            test = if n == "*" {
-                Test::Any
-            } else {
-                let (pre, local) = qname_parts(&n);
-                if pre.is_some() && prefixes.is_none() {
-                    return xpath_unsupported(p, "prefixed names need a namespace manager");
-                }
-                Test::Name(pre, local)
-            };
-        } else if b[i] == '*' {
-            i += 1;
-            axis = Axis::Child;
-            test = Test::Any;
-        } else if is_name_start(b[i]) {
-            let s = i;
-            while i < b.len() && (is_name_char(b[i]) || b[i] == ':' || b[i] == '(' || b[i] == ')') {
-                i += 1;
-            }
-            let n: String = b[s..i].iter().collect();
-            axis = Axis::Child;
-            test = match n.as_str() {
-                "text()" => Test::Text,
-                "node()" => Test::Node,
-                "comment()" => Test::Comment,
-                n if n.contains(['(', ')']) => return xpath_unsupported(p, "functions"),
-                n => {
-                    let (pre, local) = qname_parts(n);
-                    if pre.is_some() && prefixes.is_none() {
-                        return xpath_unsupported(p, "prefixed names need a namespace manager");
-                    }
-                    Test::Name(pre, local)
-                }
-            };
+        } else if self.peek() == Some('.') {
+            self.i += 1;
+            axis = Axis::SelfAxis;
+            test = Test::Node;
         } else {
-            return xpath_unsupported(p, "unsupported syntax");
+            let mut ax = Axis::Child;
+            if self.peek() == Some('@') {
+                self.i += 1;
+                ax = Axis::Attribute;
+            } else {
+                // `axis::`
+                let save = self.i;
+                if let Some(n) = self.name() {
+                    if self.starts("::") {
+                        self.i += 2;
+                        ax = match n.as_str() {
+                            "child" => Axis::Child,
+                            "descendant" => Axis::Descendant,
+                            "descendant-or-self" => Axis::DescendantOrSelf,
+                            "self" => Axis::SelfAxis,
+                            "parent" => Axis::Parent,
+                            "ancestor" => Axis::Ancestor,
+                            "ancestor-or-self" => Axis::AncestorOrSelf,
+                            "following-sibling" => Axis::FollowingSibling,
+                            "preceding-sibling" => Axis::PrecedingSibling,
+                            "attribute" => Axis::Attribute,
+                            other => return malformed(format!("axis {other}")),
+                        };
+                    } else {
+                        self.i = save;
+                    }
+                }
+            }
+            axis = ax;
+            self.ws();
+            if self.peek() == Some('*') {
+                self.i += 1;
+                test = Test::Any;
+            } else {
+                // A name may hold one `:`.
+                let Some(first) = self.name() else {
+                    return malformed("a step without a name");
+                };
+                let mut qn = first;
+                if self.peek() == Some(':') && self.s.get(self.i + 1) != Some(&':') {
+                    self.i += 1;
+                    if self.peek() == Some('*') {
+                        self.i += 1;
+                        qn.push_str(":*");
+                    } else {
+                        let Some(l) = self.name() else {
+                            return malformed("a prefix without a name");
+                        };
+                        qn = format!("{qn}:{l}");
+                    }
+                }
+                self.ws();
+                if self.peek() == Some('(') {
+                    self.i += 1;
+                    if !self.eat(")") {
+                        return malformed("node test with arguments");
+                    }
+                    test = match qn.as_str() {
+                        "text" => Test::Text,
+                        "node" => Test::Node,
+                        "comment" => Test::Comment,
+                        "processing-instruction" => Test::Pi,
+                        other => return malformed(format!("function {other}() as a step")),
+                    };
+                } else {
+                    let (pre, local) = match qn.split_once(':') {
+                        Some((p, l)) => (Some(p.to_string()), l.to_string()),
+                        None => (None, qn),
+                    };
+                    if pre.is_some() && self.prefixes.is_none() {
+                        return malformed("a prefixed name needs a namespace manager");
+                    }
+                    test = Test::Name(pre, local);
+                }
+            }
         }
         let mut preds = Vec::new();
-        while b.get(i) == Some(&'[') {
-            let close = b[i..]
-                .iter()
-                .position(|c| *c == ']')
-                .map(|c| c + i)
-                .ok_or_else(|| Signal::Unsupported(format!("XPath `{p}`: unclosed [")))?;
-            let inner: String = b[i + 1..close].iter().collect();
-            i = close + 1;
-            let inner = inner.trim();
-            if let Ok(n) = inner.parse::<usize>() {
-                preds.push(Pred::Index(n));
-            } else if inner == "last()" {
-                preds.push(Pred::Last);
-            } else if let Some(rest) = inner.strip_prefix("local-name()") {
-                match rest.trim_start().strip_prefix('=').and_then(quoted_literal) {
-                    Some(l) => preds.push(Pred::LocalName(l.to_string())),
-                    None => return xpath_unsupported(p, "predicate form"),
-                }
-            } else if let Some(rest) = inner.strip_prefix('@') {
-                match rest.split_once('=') {
-                    Some((n, v)) => match quoted_literal(v) {
-                        Some(l) if is_ncname(n.trim()) => preds.push(Pred::AttrEq(n.trim().into(), l.into())),
-                        _ => return xpath_unsupported(p, "predicate form"),
-                    },
-                    None if is_ncname(rest) => preds.push(Pred::AttrExists(rest.into())),
-                    None => return xpath_unsupported(p, "predicate form"),
-                }
-            } else {
-                return xpath_unsupported(p, "predicate form");
+        loop {
+            self.ws();
+            if self.peek() != Some('[') {
+                break;
+            }
+            self.i += 1;
+            preds.push(self.expr()?);
+            if !self.eat("]") {
+                return malformed("unclosed [");
             }
         }
-        steps.push(Step { axis, test, preds });
+        Ok(Step { axis, test, preds })
     }
-    if steps.is_empty() && !absolute {
-        return xpath_unsupported(p, "empty path");
-    }
-    Ok((absolute, steps))
 }
 
-fn node_matches(h: &Handle, test: &Test, principal_attr: bool, prefixes: Prefixes) -> Result<bool, Signal> {
-    // The namespace a prefixed name test stands for.
-    let wanted = |pre: &Option<String>| -> Result<String, Signal> {
+fn parse_xpath(p: &str, prefixes: Prefixes) -> XRes<Expr> {
+    // `/r/@@@`: more than one `@` in a row is the pinned "not a node set" (a path that cannot be evaluated).
+    if p.contains("@@") {
+        return Err(XFail::NotNodeSet);
+    }
+    let mut parser = XParser { s: p.chars().collect(), i: 0, prefixes };
+    let e = parser.expr()?;
+    parser.ws();
+    if parser.i != parser.s.len() {
+        return malformed("trailing characters");
+    }
+    Ok(e)
+}
+
+#[derive(Clone)]
+enum XVal {
+    Nodes(Vec<Handle>),
+    Num(f64),
+    Str(String),
+    Bool(bool),
+}
+
+struct XCtx<'a> {
+    prefixes: Prefixes<'a>,
+    /// Document order of every node of the tree the query started in.
+    order: std::collections::HashMap<*const RefCell<LibraryValue>, usize>,
+}
+
+fn doc_order(root: &Handle, out: &mut std::collections::HashMap<*const RefCell<LibraryValue>, usize>) {
+    let n = out.len();
+    out.insert(Rc::as_ptr(root), n);
+    for a in attrs_of(root) {
+        let n = out.len();
+        out.insert(Rc::as_ptr(&a), n);
+    }
+    for c in children_of(root) {
+        doc_order(&c, out);
+    }
+}
+
+fn string_value(h: &Handle) -> String {
+    with(h, |d| match d {
+        XData::Attribute { value, .. } => Some(value.clone()),
+        XData::Text(t) | XData::CData(t) | XData::Comment(t) => Some(t.clone()),
+        XData::Pi { data, .. } => Some(data.clone()),
+        _ => None,
+    })
+    .unwrap_or_else(|| {
+        let mut s = String::new();
+        inner_text(h, &mut s);
+        s
+    })
+}
+
+fn to_str(v: &XVal) -> String {
+    match v {
+        XVal::Str(s) => s.clone(),
+        XVal::Num(n) => {
+            if n.fract() == 0.0 && n.is_finite() {
+                format!("{}", *n as i64)
+            } else {
+                n.to_string()
+            }
+        }
+        XVal::Bool(b) => b.to_string(),
+        XVal::Nodes(n) => n.first().map(string_value).unwrap_or_default(),
+    }
+}
+
+fn to_num(v: &XVal) -> f64 {
+    match v {
+        XVal::Num(n) => *n,
+        XVal::Bool(b) => f64::from(u8::from(*b)),
+        other => to_str(other).trim().parse().unwrap_or(f64::NAN),
+    }
+}
+
+fn to_bool(v: &XVal) -> bool {
+    match v {
+        XVal::Bool(b) => *b,
+        XVal::Num(n) => *n != 0.0 && !n.is_nan(),
+        XVal::Str(s) => !s.is_empty(),
+        XVal::Nodes(n) => !n.is_empty(),
+    }
+}
+
+fn node_matches(h: &Handle, test: &Test, principal_attr: bool, ctx: &XCtx) -> XRes<bool> {
+    let wanted = |pre: &Option<String>| -> XRes<String> {
         match pre {
             None => Ok(String::new()),
-            Some(pre) => prefixes
+            Some(pre) => ctx
+                .prefixes
                 .and_then(|m| m.iter().rev().find(|(p, _)| p == pre))
                 .map(|(_, u)| u.clone())
-                .ok_or_else(|| {
-                    Signal::Unsupported(format!(
-                        "XPath prefix `{pre}` that the namespace manager does not know (error text not pinned)"
-                    ))
-                }),
+                .map_or_else(|| malformed(format!("prefix {pre} is not declared")), Ok),
         }
     };
-    Ok(match (test, principal_attr) {
-        (Test::Name(pre, n), false) if with(h, |d| matches!(d, XData::Element { .. })) => {
+    Ok(match test {
+        Test::Name(pre, n) => {
             let want = wanted(pre)?;
-            with(
-                h,
-                |d| matches!(d, XData::Element { local, ns, .. } if *ns == want && local == n),
-            )
+            with(h, |d| match d {
+                XData::Element { local, ns, .. } if !principal_attr => *ns == want && local == n,
+                XData::Attribute { local, ns, .. } if principal_attr => *ns == want && local == n,
+                _ => false,
+            })
         }
-        (Test::Name(pre, n), true) if with(h, |d| matches!(d, XData::Attribute { .. })) => {
-            let want = wanted(pre)?;
-            with(
-                h,
-                |d| matches!(d, XData::Attribute { local, ns, .. } if *ns == want && local == n),
-            )
-        }
-        _ => with(h, |d| match (d, test) {
-            (_, Test::Node) => true,
-            (XData::Element { .. }, Test::Any) => !principal_attr,
-            (XData::Attribute { ns, .. }, Test::Any) => principal_attr && ns != XMLNS_URI,
-            (XData::Text(_) | XData::CData(_), Test::Text) => true,
-            (XData::Comment(_), Test::Comment) => true,
+        Test::Any => with(h, |d| match d {
+            XData::Element { .. } => !principal_attr,
+            XData::Attribute { ns, .. } => principal_attr && ns != XMLNS_URI,
             _ => false,
         }),
+        Test::Node => true,
+        Test::Text => with(h, |d| matches!(d, XData::Text(_) | XData::CData(_))),
+        Test::Comment => with(h, |d| matches!(d, XData::Comment(_))),
+        Test::Pi => with(h, |d| matches!(d, XData::Pi { .. })),
     })
 }
 
-fn attr_value(h: &Handle, name: &str) -> Option<String> {
-    attrs_of(h).iter().find_map(|a| {
-        with(a, |d| match d {
-            XData::Attribute { local, ns, value, .. } if ns.is_empty() && local == name => Some(value.clone()),
-            _ => None,
-        })
-    })
-}
-
-fn descendants_or_self(h: &Handle, out: &mut Vec<Handle>) {
-    out.push(h.clone());
+fn descendants(h: &Handle, out: &mut Vec<Handle>) {
     for c in children_of(h) {
-        descendants_or_self(&c, out);
+        out.push(c.clone());
+        descendants(&c, out);
     }
 }
 
-fn eval_step(ctx: &Handle, step: &Step, prefixes: Prefixes) -> Result<Vec<Handle>, Signal> {
-    let mut found: Vec<Handle> = Vec::new();
+fn sort_dedup(mut v: Vec<Handle>, ctx: &XCtx) -> Vec<Handle> {
+    v.sort_by_key(|h| ctx.order.get(&Rc::as_ptr(h)).copied().unwrap_or(usize::MAX));
+    v.dedup_by(|a, b| Rc::ptr_eq(a, b));
+    v
+}
+
+/// The nodes of `step` from `node`, in axis order (reverse axes nearest first).
+fn axis_nodes(node: &Handle, step: &Step, ctx: &XCtx) -> XRes<Vec<Handle>> {
+    let mut cand: Vec<Handle> = Vec::new();
     match step.axis {
-        Axis::Child => {
-            for c in children_of(ctx) {
-                if node_matches(&c, &step.test, false, prefixes)? {
-                    found.push(c);
+        Axis::Child => cand = children_of(node),
+        Axis::Descendant => descendants(node, &mut cand),
+        Axis::DescendantOrSelf => {
+            cand.push(node.clone());
+            descendants(node, &mut cand);
+        }
+        Axis::SelfAxis => cand.push(node.clone()),
+        Axis::Parent => cand.extend(parent_of(node)),
+        Axis::Ancestor | Axis::AncestorOrSelf => {
+            if step.axis == Axis::AncestorOrSelf {
+                cand.push(node.clone());
+            }
+            let mut cur = parent_of(node);
+            while let Some(p) = cur {
+                cand.push(p.clone());
+                cur = parent_of(&p);
+            }
+        }
+        Axis::FollowingSibling | Axis::PrecedingSibling => {
+            if let Some(p) = parent_of(node) {
+                let sibs = children_of(&p);
+                if let Some(at) = sibs.iter().position(|c| Rc::ptr_eq(c, node)) {
+                    if step.axis == Axis::FollowingSibling {
+                        cand = sibs[at + 1..].to_vec();
+                    } else {
+                        cand = sibs[..at].iter().rev().cloned().collect();
+                    }
                 }
             }
         }
-        Axis::Attribute => {
-            for a in attrs_of(ctx) {
-                if node_matches(&a, &step.test, true, prefixes)? {
-                    found.push(a);
-                }
-            }
+        Axis::Attribute => cand = attrs_of(node),
+    }
+    let principal_attr = step.axis == Axis::Attribute;
+    let mut found = Vec::new();
+    for c in cand {
+        if node_matches(&c, &step.test, principal_attr, ctx)? {
+            found.push(c);
         }
-        Axis::ThisNode => found.push(ctx.clone()),
-        Axis::Parent => found.extend(parent_of(ctx)),
-        Axis::DescendantOrSelf => descendants_or_self(ctx, &mut found),
     }
     for p in &step.preds {
-        found = match p {
-            Pred::Index(n) => found.get(n.wrapping_sub(1)).cloned().into_iter().collect(),
-            Pred::Last => found.last().cloned().into_iter().collect(),
-            Pred::AttrEq(n, v) => found
-                .into_iter()
-                .filter(|h| attr_value(h, n).as_deref() == Some(v.as_str()))
-                .collect(),
-            Pred::AttrExists(n) => found.into_iter().filter(|h| attr_value(h, n).is_some()).collect(),
-            Pred::LocalName(l) => found
-                .into_iter()
-                .filter(|h| {
-                    with(
-                        h,
-                        |d| matches!(d, XData::Element { local, .. } | XData::Attribute { local, .. } if local == l),
-                    )
-                })
-                .collect(),
-        };
+        let last = found.len();
+        let mut keep = Vec::new();
+        for (i, n) in found.iter().enumerate() {
+            let v = eval(p, n, i + 1, last, ctx)?;
+            let pass = match v {
+                XVal::Num(x) => x == (i + 1) as f64,
+                other => to_bool(&other),
+            };
+            if pass {
+                keep.push(n.clone());
+            }
+        }
+        found = keep;
     }
     Ok(found)
 }
 
-fn xpath(ctx: &Handle, path: &str, prefixes: Prefixes) -> Result<Vec<Handle>, Signal> {
-    let (absolute, steps) = parse_xpath(path, prefixes)?;
-    let mut current = vec![if absolute { root_of(ctx) } else { ctx.clone() }];
-    for step in &steps {
+fn run_steps(start: Vec<Handle>, steps: &[Step], ctx: &XCtx) -> XRes<Vec<Handle>> {
+    let mut current = start;
+    for step in steps {
         let mut next: Vec<Handle> = Vec::new();
         for c in &current {
-            for n in eval_step(c, step, prefixes)? {
-                if !next.iter().any(|e| Rc::ptr_eq(e, &n)) {
-                    next.push(n);
-                }
-            }
+            next.extend(axis_nodes(c, step, ctx)?);
         }
-        current = next;
+        current = sort_dedup(next, ctx);
     }
     Ok(current)
+}
+
+fn eval(e: &Expr, node: &Handle, pos: usize, last: usize, ctx: &XCtx) -> XRes<XVal> {
+    Ok(match e {
+        Expr::Num(n) => XVal::Num(*n),
+        Expr::Str(s) => XVal::Str(s.clone()),
+        Expr::Path(absolute, steps) => {
+            let start = if *absolute { root_of(node) } else { node.clone() };
+            XVal::Nodes(run_steps(vec![start], steps, ctx)?)
+        }
+        Expr::Union(parts) => {
+            let mut all = Vec::new();
+            for p in parts {
+                match eval(p, node, pos, last, ctx)? {
+                    XVal::Nodes(n) => all.extend(n),
+                    _ => return Err(XFail::NotNodeSet),
+                }
+            }
+            XVal::Nodes(sort_dedup(all, ctx))
+        }
+        Expr::Filter(inner, steps) => match eval(inner, node, pos, last, ctx)? {
+            XVal::Nodes(n) => XVal::Nodes(run_steps(n, steps, ctx)?),
+            _ => return Err(XFail::NotNodeSet),
+        },
+        Expr::Neg(x) => XVal::Num(-to_num(&eval(x, node, pos, last, ctx)?)),
+        Expr::Arith(a, op, b) => {
+            let (x, y) = (to_num(&eval(a, node, pos, last, ctx)?), to_num(&eval(b, node, pos, last, ctx)?));
+            XVal::Num(match op {
+                '+' => x + y,
+                '-' => x - y,
+                '*' => x * y,
+                '/' => x / y,
+                _ => x % y,
+            })
+        }
+        Expr::And(a, b) => XVal::Bool(to_bool(&eval(a, node, pos, last, ctx)?) && to_bool(&eval(b, node, pos, last, ctx)?)),
+        Expr::Or(a, b) => XVal::Bool(to_bool(&eval(a, node, pos, last, ctx)?) || to_bool(&eval(b, node, pos, last, ctx)?)),
+        Expr::Cmp(a, op, b) => {
+            let (x, y) = (eval(a, node, pos, last, ctx)?, eval(b, node, pos, last, ctx)?);
+            XVal::Bool(compare(&x, op, &y))
+        }
+        Expr::Call(name, args) => {
+            let mut vals = Vec::new();
+            for a in args {
+                vals.push(eval(a, node, pos, last, ctx)?);
+            }
+            let first_node = |vals: &[XVal]| match vals.first() {
+                Some(XVal::Nodes(n)) => n.first().cloned(),
+                None => Some(node.clone()),
+                _ => None,
+            };
+            match (name.as_str(), vals.len()) {
+                ("last", 0) => XVal::Num(last as f64),
+                ("position", 0) => XVal::Num(pos as f64),
+                ("count", 1) => match &vals[0] {
+                    XVal::Nodes(n) => XVal::Num(n.len() as f64),
+                    _ => return Err(XFail::NotNodeSet),
+                },
+                ("local-name", _) => XVal::Str(
+                    first_node(&vals)
+                        .map(|n| {
+                            with(&n, |d| match d {
+                                XData::Element { local, .. } | XData::Attribute { local, .. } => local.clone(),
+                                XData::Pi { target, .. } => target.clone(),
+                                _ => String::new(),
+                            })
+                        })
+                        .unwrap_or_default(),
+                ),
+                ("name", _) => XVal::Str(
+                    first_node(&vals)
+                        .map(|n| {
+                            with(&n, |d| match d {
+                                XData::Element { prefix, local, .. } | XData::Attribute { prefix, local, .. } => {
+                                    qname(prefix, local)
+                                }
+                                _ => String::new(),
+                            })
+                        })
+                        .unwrap_or_default(),
+                ),
+                ("string", 0) => XVal::Str(string_value(node)),
+                ("string", 1) => XVal::Str(to_str(&vals[0])),
+                ("number", 1) => XVal::Num(to_num(&vals[0])),
+                ("not", 1) => XVal::Bool(!to_bool(&vals[0])),
+                ("true", 0) => XVal::Bool(true),
+                ("false", 0) => XVal::Bool(false),
+                ("boolean", 1) => XVal::Bool(to_bool(&vals[0])),
+                ("contains", 2) => XVal::Bool(to_str(&vals[0]).contains(&to_str(&vals[1]))),
+                ("starts-with", 2) => XVal::Bool(to_str(&vals[0]).starts_with(&to_str(&vals[1]))),
+                ("string-length", 1) => XVal::Num(to_str(&vals[0]).chars().count() as f64),
+                ("normalize-space", 1) => {
+                    XVal::Str(to_str(&vals[0]).split_whitespace().collect::<Vec<_>>().join(" "))
+                }
+                (other, n) => return malformed(format!("function {other} with {n} arguments")),
+            }
+        }
+    })
+}
+
+fn compare(a: &XVal, op: &str, b: &XVal) -> bool {
+    let cmp_num = |x: f64, y: f64| match op {
+        "=" => x == y,
+        "!=" => x != y,
+        "<" => x < y,
+        "<=" => x <= y,
+        ">" => x > y,
+        _ => x >= y,
+    };
+    let cmp_str = |x: &str, y: &str| match op {
+        "=" => x == y,
+        "!=" => x != y,
+        _ => cmp_num(x.trim().parse().unwrap_or(f64::NAN), y.trim().parse().unwrap_or(f64::NAN)),
+    };
+    match (a, b) {
+        (XVal::Nodes(n), XVal::Nodes(m)) => n.iter().any(|x| m.iter().any(|y| cmp_str(&string_value(x), &string_value(y)))),
+        (XVal::Nodes(n), XVal::Num(y)) | (XVal::Num(y), XVal::Nodes(n)) => {
+            let flip = matches!(a, XVal::Num(_));
+            n.iter().any(|x| {
+                let v: f64 = string_value(x).trim().parse().unwrap_or(f64::NAN);
+                if flip { cmp_num(*y, v) } else { cmp_num(v, *y) }
+            })
+        }
+        (XVal::Nodes(n), XVal::Str(s)) => n.iter().any(|x| cmp_str(&string_value(x), s)),
+        (XVal::Str(s), XVal::Nodes(n)) => n.iter().any(|x| cmp_str(s, &string_value(x))),
+        (XVal::Bool(_), _) | (_, XVal::Bool(_)) => {
+            let (x, y) = (to_bool(a), to_bool(b));
+            match op {
+                "=" => x == y,
+                "!=" => x != y,
+                _ => cmp_num(f64::from(u8::from(x)), f64::from(u8::from(y))),
+            }
+        }
+        (XVal::Num(_), _) | (_, XVal::Num(_)) => cmp_num(to_num(a), to_num(b)),
+        _ => cmp_str(&to_str(a), &to_str(b)),
+    }
+}
+
+/// The nodes `path` selects from `ctx`. A result that is not a node set (a number, a string) selects nothing.
+fn xpath(ctx: &Handle, path: &str, prefixes: Prefixes) -> XRes<Vec<Handle>> {
+    let expr = parse_xpath(path, prefixes)?;
+    let root = root_of(ctx);
+    let mut order = std::collections::HashMap::new();
+    doc_order(&root, &mut order);
+    let xc = XCtx { prefixes, order };
+    match eval(&expr, ctx, 1, 1, &xc)? {
+        XVal::Nodes(n) => Ok(n),
+        _ => Ok(Vec::new()),
+    }
 }
 
 // ------------------------------------------------------------- natives
@@ -1662,6 +2177,7 @@ fn element_create_name(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) 
         ns: String::new(),
         attrs: Vec::new(),
         children: Vec::new(),
+        open: false,
     });
     insert(&el, None, content_nodes(&a[1..])?)?;
     Ok(tagged("XmlElement", el))
@@ -1676,6 +2192,7 @@ fn element_create_ns(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) ->
         ns,
         attrs: Vec::new(),
         children: Vec::new(),
+        open: false,
     });
     insert(&el, None, content_nodes(&a[2..])?)?;
     Ok(tagged("XmlElement", el))
@@ -1764,6 +2281,7 @@ fn decl_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResu
             version: arg_text(a, 0)?,
             encoding: arg_text(a, 1)?,
             standalone: arg_text(a, 2)?,
+            explicit: true,
         }),
     ))
 }
@@ -1916,7 +2434,8 @@ fn get_namespace_of_prefix(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
         return Ok(Value::Boolean(false));
     }
     if prefix.is_empty() {
-        return unsupported("GetNamespaceOfPrefix for the empty prefix, result unused (error text not pinned yet)");
+        // xml/TestProbeXmlContracts.al:GetNamespaceOfPrefix_Empty_Statement
+        return Err(nav_argument());
     }
     match lookup_namespace(&h, &prefix) {
         Some(u) => {
@@ -1924,7 +2443,7 @@ fn get_namespace_of_prefix(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("GetNamespaceOfPrefix without a match, result unused (error text not pinned yet)"),
+        None => Err(nav_argument()),
     }
 }
 
@@ -1932,7 +2451,22 @@ fn get_namespace_of_prefix(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
 
 fn add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    insert(&h, None, content_nodes(a)?)?;
+    // A text given as a string joins the text node it follows; an XmlText node is its own node
+    // (xml/TestProbeXmlContracts.al:AdjacentTextNodes_NotMerged).
+    for arg in a.iter() {
+        if let Value::Text(t) | Value::Code(t) = arg {
+            let last = children_of(&h).last().cloned();
+            if let Some(last) = last.filter(|l| with(l, |d| matches!(d, XData::Text(_)))) {
+                with(&last, |d| {
+                    if let XData::Text(x) = d {
+                        x.push_str(t);
+                    }
+                });
+                continue;
+            }
+        }
+        insert(&h, None, content_nodes(std::slice::from_ref(arg))?)?;
+    }
     Ok(Value::Boolean(true))
 }
 
@@ -2075,7 +2609,8 @@ fn get_document(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     } else if c.ret_used() {
         Ok(Value::Boolean(false))
     } else {
-        unsupported("GetDocument of a node outside a document, result unused (error text not pinned yet)")
+        // xml/TestProbeXmlContracts.al:GetDocument_Detached_Statement
+        Err(error("The XML node is not set.", "XmlNodeNotFound"))
     }
 }
 
@@ -2087,7 +2622,8 @@ fn get_parent(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("GetParent without a parent element, result unused (error text not pinned yet)"),
+        // xml/TestProbeXmlContracts.al:GetParent_Root_Statement
+        None => Err(error("The XML node is not set.", "XmlNodeNotFound")),
     }
 }
 
@@ -2109,10 +2645,14 @@ macro_rules! node_kind {
             if kind(&h) == $kind {
                 Ok(tagged($kind, h))
             } else {
-                unsupported(format!(
-                    "{} requested from {} (error text not pinned yet)",
-                    $kind,
-                    kind(&h)
+                // xml/TestProbeXmlContracts.al:XPath_CountsForPaths (AsXmlElement on an attribute and on a text).
+                Err(error(
+                    format!(
+                        "Unable to convert from Microsoft.Dynamics.Nav.Runtime.Nav{} to Microsoft.Dynamics.Nav.Runtime.Nav{}.",
+                        kind(&h),
+                        $kind
+                    ),
+                    "Conversion",
                 ))
             }
         }
@@ -2137,9 +2677,12 @@ fn as_text(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     if kind(&h) == "XmlText" {
         Ok(tagged("XmlText", h))
     } else {
-        unsupported(format!(
-            "XmlText requested from {} (error text not pinned yet)",
-            kind(&h)
+        Err(error(
+            format!(
+                "Unable to convert from Microsoft.Dynamics.Nav.Runtime.Nav{} to Microsoft.Dynamics.Nav.Runtime.NavXmlText.",
+                kind(&h)
+            ),
+            "Conversion",
         ))
     }
 }
@@ -2241,12 +2784,29 @@ fn get_descendant_elements(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
     Ok(list_of(v))
 }
 
+/// Runs an XPath for a SelectNodes or SelectSingleNode call: `None` is a path that is no XPath (or names a prefix nobody
+/// declared) when the result is used, which answers false; the statement form raises the pinned "not a node set" error and
+/// refuses the other cases (xml/TestProbeXmlContracts.al:XPath_MalformedStatement, XPath_NamespaceManager).
+fn select(c: &mut dyn Ctx, h: &Handle, path: &str, prefixes: Prefixes) -> Result<Option<Vec<Handle>>, Signal> {
+    match xpath(h, path, prefixes) {
+        Ok(v) => Ok(Some(v)),
+        Err(XFail::Signal(s)) => Err(s),
+        Err(XFail::NotNodeSet) if !c.ret_used() => Err(error("Expression must evaluate to a node-set.", "Xml:XPath")),
+        Err(XFail::Malformed(why)) if !c.ret_used() => unsupported(format!("XPath `{path}`: {why} (statement form, error text not pinned)")),
+        Err(_) => Ok(None),
+    }
+}
+
 fn select_single_node(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    let found = xpath(&h, &arg_text(a, 0)?, None)?;
-    match found.into_iter().next() {
+    let found = select(c, &h, &arg_text(a, 0)?, None)?;
+    single_result(c, found, a, 1)
+}
+
+fn single_result(c: &mut dyn Ctx, found: Option<Vec<Handle>>, a: &mut [Value], slot: usize) -> NResult {
+    match found.and_then(|f| f.into_iter().next()) {
         Some(n) => {
-            a[1] = tagged("XmlNode", n);
+            a[slot] = tagged("XmlNode", n);
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
@@ -2254,10 +2814,11 @@ fn select_single_node(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
     }
 }
 
-fn select_nodes(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn select_nodes(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    a[1] = list_of(xpath(&h, &arg_text(a, 0)?, None)?);
-    Ok(Value::Boolean(true))
+    let found = select(c, &h, &arg_text(a, 0)?, None)?;
+    a[1] = list_of(found.clone().unwrap_or_default());
+    Ok(Value::Boolean(found.is_some()))
 }
 
 /// The prefixes of the `XmlNamespaceManager` in argument `i`.
@@ -2272,24 +2833,19 @@ fn manager_prefixes(a: &[Value], i: usize) -> Result<Vec<(String, String)>, Sign
     }
 }
 
-fn select_nodes_ns(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn select_nodes_ns(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let prefixes = manager_prefixes(a, 1)?;
-    a[2] = list_of(xpath(&h, &arg_text(a, 0)?, Some(&prefixes))?);
-    Ok(Value::Boolean(true))
+    let found = select(c, &h, &arg_text(a, 0)?, Some(&prefixes))?;
+    a[2] = list_of(found.clone().unwrap_or_default());
+    Ok(Value::Boolean(found.is_some()))
 }
 
 fn select_single_node_ns(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let prefixes = manager_prefixes(a, 1)?;
-    match xpath(&h, &arg_text(a, 0)?, Some(&prefixes))?.into_iter().next() {
-        Some(n) => {
-            a[2] = tagged("XmlNode", n);
-            Ok(Value::Boolean(true))
-        }
-        None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("SelectSingleNode without a match, result unused (error text not pinned yet)"),
-    }
+    let found = select(c, &h, &arg_text(a, 0)?, Some(&prefixes))?;
+    single_result(c, found, a, 2)
 }
 
 /// The receiver of an `XmlNamespaceManager` method, made on first use.

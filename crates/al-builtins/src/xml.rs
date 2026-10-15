@@ -1192,7 +1192,7 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
             // Text is accepted as content and becomes a text node
             // (xml/TestXmlRuntimeContracts.al:XmlElement_Add_Text_IsAccepted_AndAdjacentTextsMerge).
             Value::Text(t) | Value::Code(t) => {
-                out.push(new_node(XData::Text(t.clone())));
+                out.push(new_node(XData::Text(t.to_string())));
                 continue;
             }
             other => {
@@ -2197,6 +2197,7 @@ fn list_of(items: Vec<Handle>) -> Value {
 fn arg_text(a: &[Value], i: usize) -> Result<String, Signal> {
     a.get(i)
         .and_then(crate::native::text_of)
+        .map(String::from)
         .ok_or_else(|| Signal::Unsupported(format!("XML argument {i} is not text")))
 }
 
@@ -2296,7 +2297,7 @@ fn read_from_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> 
             )
         };
     };
-    let mut args = [Value::Text(text), a[1].clone()];
+    let mut args = [Value::Text(text.into()), a[1].clone()];
     let result = read_from_text(c, None, &mut args)?;
     a[1] = args[1].clone();
     Ok(result)
@@ -2446,15 +2447,18 @@ macro_rules! decl_prop {
                     .ok_or_else(|| Signal::Unsupported("non-text declaration value".into()))?;
                 with(&h, |d| {
                     if let XData::Declaration { $field, .. } = d {
-                        *$field = t;
+                        *$field = t.to_string();
                     }
                 });
                 return Ok(Value::Null);
             }
-            Ok(Value::Text(with(&h, |d| match d {
-                XData::Declaration { $field, .. } => $field.clone(),
-                _ => String::new(),
-            })))
+            Ok(Value::Text(
+                with(&h, |d| match d {
+                    XData::Declaration { $field, .. } => $field.clone(),
+                    _ => String::new(),
+                })
+                .into(),
+            ))
         }
     };
 }
@@ -2467,34 +2471,43 @@ fn value_prop(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
     if let Some(v) = a.first() {
         let t = crate::native::text_of(v).ok_or_else(|| Signal::Unsupported("non-text XML value".into()))?;
         with(&h, |d| match d {
-            XData::Attribute { value, .. } => *value = t,
-            XData::Text(s) | XData::CData(s) | XData::Comment(s) => *s = t,
+            XData::Attribute { value, .. } => *value = t.to_string(),
+            XData::Text(s) | XData::CData(s) | XData::Comment(s) => *s = t.to_string(),
             _ => {}
         });
         return Ok(Value::Null);
     }
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Attribute { value, .. } => value.clone(),
-        XData::Text(s) | XData::CData(s) | XData::Comment(s) => s.clone(),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Attribute { value, .. } => value.clone(),
+            XData::Text(s) | XData::CData(s) | XData::Comment(s) => s.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn pi_get_target(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    a[0] = Value::Text(with(&h, |d| match d {
-        XData::Pi { target, .. } => target.clone(),
-        _ => String::new(),
-    }));
+    a[0] = Value::Text(
+        with(&h, |d| match d {
+            XData::Pi { target, .. } => target.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    );
     Ok(Value::Boolean(true))
 }
 
 fn pi_get_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    a[0] = Value::Text(with(&h, |d| match d {
-        XData::Pi { data, .. } => data.clone(),
-        _ => String::new(),
-    }));
+    a[0] = Value::Text(
+        with(&h, |d| match d {
+            XData::Pi { data, .. } => data.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    );
     Ok(Value::Boolean(true))
 }
 
@@ -2502,34 +2515,46 @@ fn pi_get_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResu
 
 fn element_name(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Element { prefix, local, .. } | XData::Attribute { prefix, local, .. } => qname(prefix, local),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Element { prefix, local, .. } | XData::Attribute { prefix, local, .. } => qname(prefix, local),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn local_name(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Element { local, .. } | XData::Attribute { local, .. } => local.clone(),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Element { local, .. } | XData::Attribute { local, .. } => local.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn namespace_uri(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Element { ns, .. } | XData::Attribute { ns, .. } => ns.clone(),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Element { ns, .. } | XData::Attribute { ns, .. } => ns.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn namespace_prefix(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(with(&h, |d| match d {
-        XData::Attribute { prefix, .. } => prefix.clone(),
-        _ => String::new(),
-    })))
+    Ok(Value::Text(
+        with(&h, |d| match d {
+            XData::Attribute { prefix, .. } => prefix.clone(),
+            _ => String::new(),
+        })
+        .into(),
+    ))
 }
 
 fn is_namespace_declaration(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
@@ -2555,13 +2580,13 @@ fn get_prefix_of_namespace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
             });
             match hit {
                 Some(Some(p)) => {
-                    a[1] = Value::Text(p);
+                    a[1] = Value::Text(p.into());
                     return Ok(Value::Boolean(true));
                 }
                 // xml/TestXmlRuntimeContracts.al:XmlElement_NamespaceLookups: the default namespace
                 // has an empty prefix.
                 Some(None) => {
-                    a[1] = Value::Text(String::new());
+                    a[1] = Value::Text(String::new().into());
                     return Ok(Value::Boolean(true));
                 }
                 None => {}
@@ -2590,7 +2615,7 @@ fn get_namespace_of_prefix(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
     }
     match lookup_namespace(&h, &prefix) {
         Some(u) => {
-            a[1] = Value::Text(u);
+            a[1] = Value::Text(u.into());
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
@@ -2858,12 +2883,12 @@ fn is_empty(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult 
 fn inner_text_fn(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let mut s = String::new();
     inner_text(&recv(r)?, &mut s);
-    Ok(Value::Text(s))
+    Ok(Value::Text(s.into()))
 }
 
 fn inner_xml(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    Ok(Value::Text(serialize_inner(&h)?))
+    Ok(Value::Text(serialize_inner(&h)?.into()))
 }
 
 fn child_elements(h: &Handle, name: Option<(&str, Option<&str>)>) -> Vec<Handle> {
@@ -3049,7 +3074,7 @@ fn manager_lookup_namespace(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Val
     };
     match found {
         Some(u) => {
-            a[1] = Value::Text(u);
+            a[1] = Value::Text(u.into());
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
@@ -3068,7 +3093,7 @@ fn manager_has_namespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]
 
 fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    a[0] = Value::Text(serialize(&h)?);
+    a[0] = Value::Text(serialize(&h)?.into());
     Ok(Value::Boolean(true))
 }
 

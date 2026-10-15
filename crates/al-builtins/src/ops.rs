@@ -67,9 +67,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             v
         }
         // A Text (not a literal) assigns into a SecretText (types/TestSecretText.al).
-        (Value::Text(s) | Value::Code(s), T::Library(n)) if n.eq_ignore_ascii_case("SecretText") => {
-            Value::Library("SecretText".into(), Rc::new(RefCell::new(LibraryValue::Text(s))))
-        }
+        (Value::Text(s) | Value::Code(s), T::Library(n)) if n.eq_ignore_ascii_case("SecretText") => Value::Library(
+            "SecretText".into(),
+            Rc::new(RefCell::new(LibraryValue::Text(s.to_string()))),
+        ),
         (v @ Value::Enum(from, _), T::Enum(to)) if from == *to => v,
         // An enum of another type converts by its ordinal; an ordinal the target lacks is kept (Format shows
         // the number, AsInteger gives it). The same in a field, a Get key and a SetRange value (corpus
@@ -159,12 +160,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Text(s), T::Text(_)) if s.contains(crate::native::UNTRACKED_CALL_STACK) => Value::Text(s),
         // Text-like.
         (v, T::Text(max)) if crate::native::text_of(&v).is_some() => {
-            Value::Text(fit(crate::native::text_of(&v).expect("text"), *max)?)
+            Value::Text(fit_txt(crate::native::text_of(&v).expect("text"), *max)?)
         }
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.
             let s = upper_code(crate::native::text_of(&v).expect("text").trim());
-            Value::Code(fit(s, *max)?)
+            Value::Code(fit(s, *max)?.into())
         }
         (Value::Text(s) | Value::Code(s), T::Char) => {
             let u: Vec<u16> = s.encode_utf16().collect();
@@ -199,10 +200,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // Application's Config. Package Management). No corpus test assigns a Guid to a Text
         // (docs/probes-needed.md).
         (Value::Guid(g), T::Text(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
-            Value::Text(fit(crate::format::format_guid(&g), *max)?)
+            Value::Text(fit(crate::format::format_guid(&g), *max)?.into())
         }
         (Value::Guid(g), T::Code(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
-            Value::Code(fit(crate::format::format_guid(&g), *max)?)
+            Value::Code(fit(crate::format::format_guid(&g), *max)?.into())
         }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
@@ -243,6 +244,14 @@ pub fn upper_code(s: &str) -> String {
             if u.len() == 1 { vec![u.next().unwrap()] } else { vec![c] }
         })
         .collect()
+}
+
+/// [`fit`] for a shared text: no copy when it fits.
+fn fit_txt(s: crate::text::Txt, max: Option<u32>) -> Result<crate::text::Txt, Signal> {
+    match max {
+        Some(m) if s.utf16_len() > m as usize => fit(s.into_string(), max).map(Into::into),
+        _ => Ok(s),
+    }
 }
 
 fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
@@ -294,7 +303,14 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     // Text concatenation.
     if op == Arith::Add {
         if let (Some(a), Some(b)) = (text_like(l), text_like(r)) {
-            return Ok(V::Text(a + &b));
+            // An empty side leaves the other as it is (shared, no copy).
+            if b.is_empty() {
+                return Ok(V::Text(a.clone()));
+            }
+            let mut out = String::with_capacity(a.len() + b.len());
+            out.push_str(a);
+            out.push_str(b);
+            return Ok(V::Text(out.into()));
         }
         // A null string (a FileUpload's file name before a client filled it) joins as nothing (types/PRFileUpload.al:
         // Unfilled_AssignClearAndPass).
@@ -318,7 +334,7 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                     out.push_str(t);
                     out.push(ch);
                 }
-                return Ok(V::Text(out));
+                return Ok(V::Text(out.into()));
             }
             _ => {}
         }
@@ -426,21 +442,6 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             }
             return Ok(V::Duration(a - b));
         }
-        // Time - Time is a Duration in milliseconds and Time - Integer moves back by that many milliseconds; both measured
-        // by the probe types/PUTimeArithmetic.al on the corpus staging branch, not in the pinned corpus yet. A result outside
-        // the day and the undefined Time are refused.
-        (V::Time(a), V::Time(b)) if op == Arith::Sub && *a > 0 && *b > 0 => {
-            crate::assumptions::assume(crate::assumptions::Assumption::TimeSubtraction);
-            return Ok(V::Duration(a - b));
-        }
-        (V::Time(a), n) if op == Arith::Sub && *a > 0 && int_of(n).is_some() => {
-            crate::assumptions::assume(crate::assumptions::Assumption::TimeSubtraction);
-            return int_of(n)
-                .and_then(|n| a.checked_sub(n))
-                .filter(|t| (1..=86_400_000).contains(t))
-                .map(V::Time)
-                .ok_or_else(|| Signal::Unsupported("Time moved outside the day (not pinned)".into()));
-        }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
@@ -505,9 +506,9 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     Ok(V::Decimal(res))
 }
 
-fn text_like(v: &Value) -> Option<String> {
+fn text_like(v: &Value) -> Option<&crate::text::Txt> {
     match v {
-        Value::Text(s) | Value::Code(s) => Some(s.clone()),
+        Value::Text(s) | Value::Code(s) => Some(s),
         _ => None,
     }
 }
@@ -747,33 +748,6 @@ mod tests {
         ));
         assert!(matches!(
             convert(Value::BigInteger(i64::MAX), &members()),
-            Err(Signal::Unsupported(_))
-        ));
-    }
-
-    // Microsoft's tests subtract Times (Time - Time in 700 tests, Time - Integer in 530); the probe
-    // types/PUTimeArithmetic.al on the corpus staging branch asks for the pinned form.
-    #[test]
-    fn time_minus_time_is_a_duration_and_time_minus_integer_a_time() {
-        let t = |ms: i64| Value::Time(ms + 1);
-        assert!(matches!(
-            arith(Arith::Sub, &t(13 * 3_600_000), &t(12 * 3_600_000)),
-            Ok(Value::Duration(3_600_000))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(12 * 3_600_000), &t(13 * 3_600_000)),
-            Ok(Value::Duration(-3_600_000))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(5000), &Value::Integer(1000)),
-            Ok(Value::Time(4001))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &t(500), &Value::Integer(1000)),
-            Err(Signal::Unsupported(_))
-        ));
-        assert!(matches!(
-            arith(Arith::Sub, &Value::Time(0), &t(5)),
             Err(Signal::Unsupported(_))
         ));
     }

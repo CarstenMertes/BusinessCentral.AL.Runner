@@ -589,7 +589,7 @@ fn run_in(vars: &str, body: &str, extra: &str, seed: Option<&str>) -> Result<Val
 
 fn text(vars: &str, body: &str) -> String {
     match run(vars, body) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -1163,7 +1163,7 @@ fn a_statement_import_leaves_the_callers_write_uncommitted() {
 
 fn text_of(r: Result<Value, Signal>) -> String {
     match r {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

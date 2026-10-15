@@ -223,9 +223,9 @@ impl Session {
         let inst = st.borrow().instance.clone().expect("open page");
         let args = vec![
             Value::Integer(id),
-            Value::Text(e.code.clone()),
-            Value::Text(e.message.clone()),
-            Value::Text(e.call_stack.clone()),
+            Value::Text(e.code.clone().into()),
+            Value::Text(e.message.clone().into()),
+            Value::Text(e.call_stack.clone().into()),
             Value::Boolean(false),
         ];
         let (_, finals) = self.call(object, routine, inst, args)?;

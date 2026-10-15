@@ -52,8 +52,8 @@ impl FilterExpr {
 
 fn blank_if_spaces(v: &Value) -> Value {
     match v {
-        Value::Text(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Text(String::new()),
-        Value::Code(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Code(String::new()),
+        Value::Text(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Text(String::new().into()),
+        Value::Code(s) if !s.is_empty() && s.chars().all(|c| c == ' ') => Value::Code(String::new().into()),
         other => other.clone(),
     }
 }
@@ -287,8 +287,8 @@ impl Parser<'_> {
             Tok::Op(o) => return Err(format!("operator `{o}` where a value was expected")),
         };
         Ok(match self.ty {
-            T::Text(_) => Value::Text(text),
-            T::Code(_) => Value::Code(text.trim().to_uppercase()),
+            T::Text(_) => Value::Text(text.into()),
+            T::Code(_) => Value::Code(text.trim().to_uppercase().into()),
             T::Integer => Value::Integer(text.parse().map_err(|_| format!("`{text}` is not an Integer"))?),
             T::BigInteger => Value::BigInteger(text.parse().map_err(|_| format!("`{text}` is not a BigInteger"))?),
             T::Decimal => Value::Decimal(text.parse().map_err(|_| format!("`{text}` is not a Decimal"))?),
@@ -383,7 +383,7 @@ impl Parser<'_> {
                 let v = match self.value() {
                     Some(v) => self.typed(v)?,
                     None if matches!(self.ty, crate::value::RtType::Text(_) | crate::value::RtType::Code(_)) => {
-                        Value::Text(String::new())
+                        Value::Text(String::new().into())
                     }
                     None => return Err(format!("value expected after `{op}`")),
                 };
@@ -510,7 +510,9 @@ mod tests {
         vals.iter().map(|v| f.matches(&Value::Integer(*v))).collect()
     }
     fn texts(f: &FilterExpr, vals: &[&str]) -> Vec<bool> {
-        vals.iter().map(|v| f.matches(&Value::Code(v.to_string()))).collect()
+        vals.iter()
+            .map(|v| f.matches(&Value::Code(v.to_string().into())))
+            .collect()
     }
 
     fn opt(text: &str, members: &[&str]) -> Result<FilterExpr, String> {
@@ -590,9 +592,9 @@ mod tests {
     #[test]
     fn filter_empty_and_quoted_literals() {
         let f = pf("''", &[], RtType::Text(None));
-        assert!(f.matches(&Value::Text(String::new())) && !f.matches(&Value::Text("x".into())));
+        assert!(f.matches(&Value::Text(String::new().into())) && !f.matches(&Value::Text("x".into())));
         let f = pf("<>''", &[], RtType::Text(None));
-        assert!(!f.matches(&Value::Text(String::new())) && f.matches(&Value::Text("x".into())));
+        assert!(!f.matches(&Value::Text(String::new().into())) && f.matches(&Value::Text("x".into())));
         let f = pf("'Smith & Sons'", &[], RtType::Text(None));
         assert!(f.matches(&Value::Text("Smith & Sons".into())));
         let f = pf("'(Travel|Meals)'", &[], RtType::Text(None));

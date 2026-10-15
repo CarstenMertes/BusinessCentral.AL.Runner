@@ -124,7 +124,7 @@ fn run_in(body: &str) -> Result<Value, Signal> {
 
 fn text(body: &str) -> String {
     match run_in(&format!("procedure F(): Text var a: Text; begin {body} end;")) {
-        Ok(Value::Text(s)) => s,
+        Ok(Value::Text(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

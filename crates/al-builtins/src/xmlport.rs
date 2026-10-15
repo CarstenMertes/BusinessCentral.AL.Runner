@@ -142,7 +142,7 @@ pub fn utf16_bom_bytes(text: &str) -> Vec<u8> {
 pub fn field_text(v: &Value) -> Result<String, String> {
     match v {
         Value::Integer(i) => Ok(i.to_string()),
-        Value::Text(s) | Value::Code(s) => Ok(s.clone()),
+        Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
         // Two places and a comma between thousands: `1,234.50`, `-0.50`
         // (xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText).
         Value::Decimal(d) if d.normalize().scale() <= 2 => {
@@ -174,9 +174,8 @@ pub fn field_value(text: &str, ty: &RtType) -> Result<Value, FieldFailure> {
             .parse::<Decimal>()
             .map(Value::Decimal)
             .map_err(|_| FieldFailure::Invalid(format!("'{text}' is not a Decimal"))),
-        RtType::Text(_) | RtType::Code(_) => {
-            crate::ops::convert(Value::Text(text.to_string()), ty).map_err(|e| FieldFailure::Unsupported(e.describe()))
-        }
+        RtType::Text(_) | RtType::Code(_) => crate::ops::convert(Value::Text(text.to_string().into()), ty)
+            .map_err(|e| FieldFailure::Unsupported(e.describe())),
         other => Err(FieldFailure::Unsupported(format!(
             "a field of type {}",
             other.describe()

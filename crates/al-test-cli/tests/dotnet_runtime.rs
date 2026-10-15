@@ -223,7 +223,7 @@ impl Fixture {
 
 fn text(v: Result<Value, Signal>) -> String {
     match v {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

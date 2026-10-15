@@ -58,7 +58,7 @@ fn run_on(fs: MemFileSystem, vars: &str, body: &str) -> (Result<Value, Signal>, 
 
 fn text(vars: &str, body: &str) -> String {
     match run_on(MemFileSystem::default(), vars, body).0 {
-        Ok(Value::Text(t)) => t,
+        Ok(Value::Text(t)) => t.to_string(),
         other => panic!("{other:?}"),
     }
 }

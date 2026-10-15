@@ -10,6 +10,21 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-testrun/src/runtime.rs",
+        r#""the program differs (first object that differs: {:?}; positions equal: {}; counts {} and {})","#,
+        "the report of a defect of the incremental update (ALRUNNER_CHECK_INCREMENTAL, tests): for the developers of the compiler",
+    ),
+    (
+        "al-testrun/src/runtime.rs",
+        r#""the diagnostics differ: {:?} and {:?}","#,
+        "the report of a defect of the incremental update (ALRUNNER_CHECK_INCREMENTAL, tests): for the developers of the compiler",
+    ),
+    (
+        "al-testrun/src/runtime.rs",
+        r#""the baseline decision differs: {:?} {:?} and {:?} {:?}","#,
+        "the report of a defect of the incremental update (ALRUNNER_CHECK_INCREMENTAL, tests): for the developers of the compiler",
+    ),
+    (
         "alrunner-cli/src/run.rs",
         r#"let key = warm_key(&inputs, &dependencies, &symbols, &format!("{:?}", chosen.target));"#,
         "part of a hash key for the warm slot, never shown",

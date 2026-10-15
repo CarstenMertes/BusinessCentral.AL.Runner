@@ -34,7 +34,7 @@ fn whole_number(text: &str, ty: &str) -> Result<Parsed, Signal> {
             "Evaluate of `{text}` into {ty} (form not pinned by the corpus)"
         ));
     }
-    Ok(Parsed::Value(Value::Text(text.to_string())))
+    Ok(Parsed::Value(Value::Text(text.to_string().into())))
 }
 
 fn integer(text: &str) -> Result<Parsed, Signal> {

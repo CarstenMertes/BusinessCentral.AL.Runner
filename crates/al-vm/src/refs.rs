@@ -368,10 +368,10 @@ impl Session {
             "Number" => Ok(Value::Integer(
                 self.engine.program.objects[t.object as usize].id.unwrap_or(0) as i32,
             )),
-            "Name" => Ok(Value::Text(t.name.clone())),
-            "Caption" => Ok(Value::Text(self.caption(&t))),
+            "Name" => Ok(Value::Text(t.name.clone().into())),
+            "Caption" => Ok(Value::Text(self.caption(&t).into())),
             // corpus recordref/TestRecordRefGetSet.al:16-30 pins only that it is not empty.
-            "CurrentCompany" => Ok(Value::Text(self.current_company_of(&rec))),
+            "CurrentCompany" => Ok(Value::Text(self.current_company_of(&rec).into())),
             "ChangeCompany" => self.change_company(&rec, args),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
@@ -380,13 +380,13 @@ impl Session {
                 // record/PWFilterGroupOr.al:OrGroup_RecordRef).
                 Self::filter_group(&rec, args)
             }
-            "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),
+            "GetFilters" => self.get_filters(&rec, &t).map(|s| Value::Text(s.into())),
             "GetView" => {
                 let use_names = match args.first() {
                     Some(v) => ops::truthy(v)?,
                     None => true,
                 };
-                self.get_view(&rec, &t, use_names).map(Value::Text)
+                self.get_view(&rec, &t, use_names).map(|s| Value::Text(s.into()))
             }
             "SetView" => {
                 let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
@@ -690,8 +690,8 @@ impl Session {
             // TestRowVersionFieldNumberFieldActiveContracts.al:70-72, 82-84).
             "Name" if field.id == SYSTEM_FIELD_BASE => Ok(Value::Text("$systemId".into())),
             "Name" if field.id == SYSTEM_ROW_VERSION_ID => Ok(Value::Text("timestamp".into())),
-            "Name" => Ok(Value::Text(field.name.clone())),
-            "Caption" => self.field_caption_checked(&t, pos).map(Value::Text),
+            "Name" => Ok(Value::Text(field.name.clone().into())),
+            "Caption" => self.field_caption_checked(&t, pos).map(|s| Value::Text(s.into())),
             "Type" => self.field_type(&t, pos),
             "Class" => {
                 let class = self
@@ -709,7 +709,7 @@ impl Session {
                 Ok(Value::Option(ord, m.into()))
             }
             "Relation" => self.field_relation(&rec, &t, pos).map(Value::Integer),
-            "GetFilter" => self.field_filter_text(&rec, pos).map(Value::Text),
+            "GetFilter" => self.field_filter_text(&rec, pos).map(|s| Value::Text(s.into())),
             "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
             // fieldref/TestRelationTargetNamespaceScope.al:63-75. Record.CalcFields raises a pinned
             // error for a field that is not a FlowField (record/TestCalcFieldsFieldClass.Codeunit.al);
@@ -866,7 +866,7 @@ impl Session {
                 "EnumValueCount" => Ok(Value::Integer(0)),
                 // An empty text, not an error (corpus recordref/TestRecordRefRuntimeContracts.al:
                 // FieldRef_EnumMetadata_OnEnumOptionAndOtherFields).
-                "OptionCaption" | "OptionMembers" | "OptionString" => Ok(Value::Text(String::new())),
+                "OptionCaption" | "OptionMembers" | "OptionString" => Ok(Value::Text(String::new().into())),
                 other => unsupported(format!("FieldRef.{other} on a field that is neither Option nor Enum")),
             };
         };
@@ -885,17 +885,27 @@ impl Session {
             "IsEnum" => Ok(Value::Boolean(is_enum)),
             "EnumValueCount" => Ok(Value::Integer(members.len() as i32)),
             "GetEnumValueOrdinal" => Ok(Value::Integer(at(args)?.map_or(-1, |m| m.0))),
-            "GetEnumValueName" => Ok(Value::Text(at(args)?.map(|m| m.1.clone()).unwrap_or_default())),
-            "GetEnumValueCaption" => Ok(Value::Text(at(args)?.map(|m| m.2.clone()).unwrap_or_default())),
-            "GetEnumValueNameFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.1.clone())),
-            "GetEnumValueCaptionFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.2.clone())),
+            "GetEnumValueName" => Ok(Value::Text(at(args)?.map(|m| m.1.clone()).unwrap_or_default().into())),
+            "GetEnumValueCaption" => Ok(Value::Text(at(args)?.map(|m| m.2.clone()).unwrap_or_default().into())),
+            "GetEnumValueNameFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.1.clone().into())),
+            "GetEnumValueCaptionFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.2.clone().into())),
             // An Enum field answers the names and the captions of its members like an Option (record/
             // TestProbeRecordRefContracts.al:FieldRef_EnumAndOptionInfo).
             "OptionMembers" | "OptionString" => Ok(Value::Text(
-                members.iter().map(|m| m.1.as_str()).collect::<Vec<_>>().join(","),
+                members
+                    .iter()
+                    .map(|m| m.1.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    .into(),
             )),
             "OptionCaption" => Ok(Value::Text(
-                members.iter().map(|m| m.2.as_str()).collect::<Vec<_>>().join(","),
+                members
+                    .iter()
+                    .map(|m| m.2.as_str())
+                    .collect::<Vec<_>>()
+                    .join(",")
+                    .into(),
             )),
             other => unsupported(format!("FieldRef.{other}")),
         }

@@ -55,7 +55,7 @@ fn text(vars: &str, body: &str) -> Result<String, Signal> {
     let mut s = Session::new(engine);
     let inst = s.instance(oi);
     match s.call(oi, ri, inst, vec![])?.0 {
-        Value::Text(t) => Ok(t),
+        Value::Text(t) => Ok(t.to_string()),
         other => panic!("{other:?}"),
     }
 }

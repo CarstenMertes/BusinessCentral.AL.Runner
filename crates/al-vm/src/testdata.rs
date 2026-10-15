@@ -173,9 +173,9 @@ fn convert(cell: &Cell, kind: &Kind, default: &Value) -> Result<Value, String> {
         Kind::Text | Kind::Code => match cell {
             Cell::Text(s) => {
                 if matches!(kind, Kind::Code) {
-                    Value::Code(s.clone())
+                    Value::Code(s.clone().into())
                 } else {
-                    Value::Text(s.clone())
+                    Value::Text(s.clone().into())
                 }
             }
             _ => return bad("text"),
@@ -641,7 +641,7 @@ mod tests {
         assert_value!(conv(Cell::Null, &RtType::Integer).unwrap(), Value::Integer(0));
         assert_value!(
             conv(Cell::Null, &RtType::Code(Some(10))).unwrap(),
-            Value::Code(String::new())
+            Value::Code(String::new().into())
         );
         assert_value!(conv(Cell::Null, &RtType::Date).unwrap(), Value::Date(0, false));
     }

@@ -479,7 +479,7 @@ impl Session {
     /// (xmlport/TestXmlPortAdvanced.al:XmlPort_TextVariableTriggers_ImportMutatesAssignedValues).
     fn xp_assign_variable(&mut self, inst: &Inst, schema: &Schema, node: usize, text: String) -> Result<(), Signal> {
         let slot = schema.node(node).slot.expect("text nodes have a slot");
-        inst.borrow_mut().globals[slot] = Value::Text(text);
+        inst.borrow_mut().globals[slot] = Value::Text(text.into());
         self.xp_run_trigger(inst, schema, node, "onafterassignvariable")
     }
 
@@ -541,7 +541,7 @@ impl Session {
                         "StringLengthExceeded",
                     ));
                 }
-                Ok(ops::convert(Value::Text(text.to_string()), ty)?)
+                Ok(ops::convert(Value::Text(text.to_string().into()), ty)?)
             }
             RtType::Integer | RtType::BigInteger => {
                 if text.is_empty() {
@@ -592,7 +592,7 @@ impl Session {
                     RtType::DateTime => "DateTime",
                     _ => "Boolean",
                 };
-                let mut args = [self.default_value(ty), Value::Text(text.to_string())];
+                let mut args = [self.default_value(ty), Value::Text(text.to_string().into())];
                 self.ret_used = true;
                 let ok = al_builtins::evaluate::evaluate(self, None, &mut args)?;
                 if matches!(ok, Value::Boolean(true)) {
@@ -1110,7 +1110,7 @@ impl Session {
         self.xp_run_trigger(inst, schema, node, "onbeforepassvariable")?;
         let slot = schema.node(node).slot.expect("text nodes have a slot");
         match &inst.borrow().globals[slot] {
-            Value::Text(s) | Value::Code(s) => Ok(s.clone()),
+            Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
             other => unsupported(format!("XmlPort export of the variable {}", other.describe())),
         }
     }
@@ -1145,7 +1145,7 @@ impl Session {
         }
         match &v {
             Value::Integer(i) => Ok(i.to_string()),
-            Value::Text(s) | Value::Code(s) => Ok(s.clone()),
+            Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
             Value::Decimal(_) => al_builtins::xmlport::field_text(&v)
                 .or_else(|why| unsupported(format!("XmlPort export of {why} (the text form is not pinned)"))),
             Value::Boolean(_) | Value::Date(..) | Value::Time(_) | Value::DateTime(_) | Value::Duration(_) => {
@@ -1170,7 +1170,7 @@ impl Session {
     fn xp_field_text_xml(&mut self, v: &Value) -> Result<String, Signal> {
         match v {
             Value::Integer(i) => Ok(i.to_string()),
-            Value::Text(s) | Value::Code(s) => Ok(s.clone()),
+            Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
             Value::Decimal(_) => al_builtins::xmlport::field_text(v)
                 .map(|t| t.replace(',', ""))
                 .or_else(|why| unsupported(format!("XmlPort export of {why} (the text form is not pinned)"))),

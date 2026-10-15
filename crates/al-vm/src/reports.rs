@@ -124,7 +124,7 @@ impl Session {
             // (handlers/TestReportCurrReportLanguage.al:12-18, :76-83).
             "Report.FormatRegion#1" => match args.first() {
                 Some(Value::Text(_) | Value::Code(_)) => Ok(Value::Null),
-                None => Ok(Value::Text(String::new())),
+                None => Ok(Value::Text(String::new().into())),
                 Some(other) => unsupported(format!("CurrReport.FormatRegion with {}", other.describe())),
             },
             // `ObjectId(UseNames)`: `Report 69730`, or with names (the default) `Report <Caption>`, the object name
@@ -143,7 +143,7 @@ impl Session {
                     Some(other) => return unsupported(format!("Report.ObjectId with {}", other.describe())),
                 };
                 if !names {
-                    return Ok(Value::Text(format!("Report {}", o.id.unwrap_or(0))));
+                    return Ok(Value::Text(format!("Report {}", o.id.unwrap_or(0)).into()));
                 }
                 let caption = match o.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("Caption")) {
                     Some((_, v)) => match crate::recmeta::string_literal(v) {
@@ -152,7 +152,7 @@ impl Session {
                     },
                     None => o.name.clone(),
                 };
-                Ok(Value::Text(format!("Report {caption}")))
+                Ok(Value::Text(format!("Report {caption}").into()))
             }
             // `CurrReport.Preview()` is false in a report run by `Report.Run` (with and without the request
             // page) and `RunModal` (handlers/TestReportRequestPageUpdateObjectIdContracts.al:
@@ -289,7 +289,7 @@ impl Session {
                 // (record/TestTxModelReportExec.al:77-102, Test02 and Test03).
                 let enters = self.report_enter_world(&schema, true)?;
                 self.report_in_world(enters, |s| s.report_request_only(&inst, &schema, seed.as_deref()))
-                    .map(Value::Text)
+                    .map(|s| Value::Text(s.into()))
             }
             other => unsupported(format!("builtin {other}")),
         }
@@ -432,7 +432,7 @@ impl Session {
         Ok(Value::Text(format!(
             "<?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?><NavWordReportXmlPart xmlns=\"urn:microsoft-dynamics-nav/reports/{}/{number}/\"><Labels />{body}</NavWordReportXmlPart>",
             tag(schema.name())?
-        )))
+        ).into()))
     }
 
     fn report_by_number(&mut self, id: &str, arg: Option<&Value>) -> Result<(Inst, Schema), Signal> {

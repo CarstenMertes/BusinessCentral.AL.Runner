@@ -675,7 +675,7 @@ fn run_model(body: &str, model: TxModel) -> Result<Value, Signal> {
 
 fn text_model(vars_and_body: &str, model: TxModel) -> String {
     match run_model(&format!("procedure F(): Text {vars_and_body}"), model) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -685,7 +685,7 @@ fn text_after_setup(vars_and_body: &str, model: TxModel) -> String {
     let body =
         format!("procedure Setup() var H: Codeunit Helpers; begin H.Seed(); end; procedure F(): Text {vars_and_body}");
     match run_model(&body, model) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

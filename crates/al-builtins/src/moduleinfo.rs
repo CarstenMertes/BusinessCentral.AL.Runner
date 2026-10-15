@@ -245,8 +245,8 @@ pub fn native_for_dependency(sig: &Signature) -> Option<NativeFn> {
     }
     let f: NativeFn = match sig.name.as_str() {
         "Id" => |_, r, _| Ok(Value::Guid(dependency_id(r)?)),
-        "Name" => |c, r, _| Ok(Value::Text(dependency_app(c, r)?.name)),
-        "Publisher" => |c, r, _| Ok(Value::Text(dependency_app(c, r)?.publisher)),
+        "Name" => |c, r, _| Ok(Value::Text(dependency_app(c, r)?.name.into())),
+        "Publisher" => |c, r, _| Ok(Value::Text(dependency_app(c, r)?.publisher.into())),
         _ => return None,
     };
     Some(f)
@@ -261,8 +261,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     }
     let f: NativeFn = match sig.name.as_str() {
         "Id" => |_, r, _| Ok(Value::Guid(state(r)?.id)),
-        "Name" => |_, r, _| Ok(Value::Text(state(r)?.name)),
-        "Publisher" => |_, r, _| Ok(Value::Text(state(r)?.publisher)),
+        "Name" => |_, r, _| Ok(Value::Text(state(r)?.name.into())),
+        "Publisher" => |_, r, _| Ok(Value::Text(state(r)?.publisher.into())),
         "AppVersion" => app_version,
         "DataVersion" => data_version,
         "PackageId" => package_id,
@@ -293,7 +293,7 @@ fn resource(c: &dyn Ctx, name: &str) -> Result<Vec<u8>, Signal> {
 
 fn name_arg(a: &[Value]) -> Result<String, Signal> {
     match a.first().and_then(crate::native::text_of) {
-        Some(n) => Ok(n),
+        Some(n) => Ok(n.to_string()),
         None => unsupported(format!("a resource name that is not text: {}", a.first().describe())),
     }
 }
@@ -326,7 +326,7 @@ fn get_resource(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out 
 fn get_resource_as_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = name_arg(a)?;
     let enc = encoding_arg(a, 1)?;
-    Ok(Value::Text(enc.decode(&resource(c, &name)?)))
+    Ok(Value::Text(enc.decode(&resource(c, &name)?).into()))
 }
 
 fn get_resource_as_json(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
@@ -370,7 +370,7 @@ fn list_resources(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Ou
         .into_iter()
         .map(|(n, _)| n)
         .filter(|n| filter.as_deref().is_none_or(|f| glob(f, n)))
-        .map(Value::Text)
+        .map(|s| Value::Text(s.into()))
         .collect();
     Ok(Value::List(Rc::new(RefCell::new(items))))
 }

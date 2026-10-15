@@ -302,7 +302,7 @@ mod tests {
     }
     fn text(r: Result<Value, Signal>) -> String {
         match r {
-            Ok(Value::Text(s)) => s,
+            Ok(Value::Text(s)) => s.to_string(),
             other => panic!("{other:?}"),
         }
     }

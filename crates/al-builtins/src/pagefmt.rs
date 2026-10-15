@@ -219,7 +219,7 @@ pub fn control_text(v: &Value, f: &ControlFormat, enum_caption: &dyn Fn(u32, i32
                 decimal_text(d, f.decimal_places.unwrap_or((2, 2)))
             }
         }
-        Value::Text(t) | Value::Code(t) => t.clone(),
+        Value::Text(t) | Value::Code(t) => t.to_string(),
         Value::Option(o, members) => match &f.option_captions {
             Some(c) if (*o as usize) < c.len() => c[*o as usize].clone(),
             _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),
@@ -297,8 +297,8 @@ fn parse_typed(
 ) -> Option<Value> {
     use crate::value::RtType as T;
     Some(match ty {
-        T::Text(_) => Value::Text(text.to_string()),
-        T::Code(_) => Value::Code(text.to_string()),
+        T::Text(_) => Value::Text(text.to_string().into()),
+        T::Code(_) => Value::Code(text.to_string().into()),
         T::Integer => Value::Integer(if t.is_empty() { 0 } else { t.parse().ok()? }),
         T::BigInteger => Value::BigInteger(if t.is_empty() { 0 } else { t.parse().ok()? }),
         T::Decimal => Value::Decimal(if t.is_empty() {

@@ -27,7 +27,7 @@ fn from_u16(u: &[u16]) -> String {
     String::from_utf16_lossy(u)
 }
 
-fn text(a: &[Value], i: usize) -> Result<String, Signal> {
+fn text(a: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
     a.get(i)
         .and_then(text_of)
         .ok_or_else(|| Signal::Unsupported(format!("text argument {i} of type {}", a.get(i).describe())))
@@ -35,7 +35,7 @@ fn text(a: &[Value], i: usize) -> Result<String, Signal> {
 
 fn recv_text(r: &Option<&mut Value>) -> Result<String, Signal> {
     match r.as_deref().and_then(text_of) {
-        Some(s) => Ok(s),
+        Some(s) => Ok(s.to_string()),
         None => unsupported("Text method on something that is not text"),
     }
 }
@@ -71,19 +71,19 @@ fn find(hay: &[u16], needle: &[u16], from: usize) -> Option<usize> {
 fn contains(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, sub) = (recv_text(&r)?, text(a, 0)?);
     // An empty text is found (types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne).
-    Ok(Value::Boolean(s.contains(&sub)))
+    Ok(Value::Boolean(s.contains(sub.as_str())))
 }
 
 fn starts_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, sub) = (recv_text(&r)?, text(a, 0)?);
     // types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
-    Ok(Value::Boolean(s.starts_with(&sub)))
+    Ok(Value::Boolean(s.starts_with(sub.as_str())))
 }
 
 fn ends_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (s, sub) = (recv_text(&r)?, text(a, 0)?);
     // types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
-    Ok(Value::Boolean(s.ends_with(&sub)))
+    Ok(Value::Boolean(s.ends_with(sub.as_str())))
 }
 
 /// The .NET argument errors of the string methods (text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds,
@@ -197,11 +197,11 @@ fn index_of_any(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
 // ---------------------------------------------------- transforming
 
 fn to_upper(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    Ok(Value::Text(recv_text(&r)?.to_uppercase()))
+    Ok(Value::Text(recv_text(&r)?.to_uppercase().into()))
 }
 
 fn to_lower(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    Ok(Value::Text(recv_text(&r)?.to_lowercase()))
+    Ok(Value::Text(recv_text(&r)?.to_lowercase().into()))
 }
 
 /// Trim removes white space (the corpus only has spaces); with a character set, those characters.
@@ -229,7 +229,7 @@ fn trim_with(r: &Option<&mut Value>, a: &[Value], start: bool, end: bool) -> NRe
     if end {
         out = out.trim_end_matches(strip);
     }
-    Ok(Value::Text(out.to_string()))
+    Ok(Value::Text(out.to_string().into()))
 }
 
 fn trim(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -251,7 +251,7 @@ fn replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             "Argument",
         );
     }
-    Ok(Value::Text(s.replace(&old, &new)))
+    Ok(Value::Text(s.replace(old.as_str(), new.as_str()).into()))
 }
 
 /// 1-based `StartIndex`; `Count` defaults to the rest. Out-of-range arguments are not pinned.
@@ -277,7 +277,7 @@ fn substring(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         Some(c) => s.len().min(from + c as usize),
         None => s.len(),
     };
-    Ok(Value::Text(from_u16(&s[from..to])))
+    Ok(Value::Text(from_u16(&s[from..to]).into()))
 }
 
 fn pad(r: &Option<&mut Value>, a: &[Value], left: bool) -> NResult {
@@ -285,7 +285,7 @@ fn pad(r: &Option<&mut Value>, a: &[Value], left: bool) -> NResult {
     let width = int(a, 0)?;
     let fill = match a.get(1) {
         Some(v) => text_of(v).unwrap_or_default(),
-        None => " ".to_string(),
+        None => " ".to_string().into(),
     };
     let mut it = fill.chars();
     let (Some(f), None) = (it.next(), it.next()) else {
@@ -297,7 +297,7 @@ fn pad(r: &Option<&mut Value>, a: &[Value], left: bool) -> NResult {
     let have = Value::text_len(&s);
     let missing = (width as usize).saturating_sub(have);
     let fill: String = std::iter::repeat_n(f, missing).collect();
-    Ok(Value::Text(if left { fill + &s } else { s + &fill }))
+    Ok(Value::Text(if left { (fill + &s).into() } else { (s + &fill).into() }))
 }
 
 fn pad_left(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -348,14 +348,14 @@ fn split(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
         };
         match hit {
             Some(n) => {
-                parts.push(Value::Text(from_u16(&s[start..i])));
+                parts.push(Value::Text(from_u16(&s[start..i]).into()));
                 i += n;
                 start = i;
             }
             None => i += 1,
         }
     }
-    parts.push(Value::Text(from_u16(&s[start..])));
+    parts.push(Value::Text(from_u16(&s[start..]).into()));
     Ok(Value::List(Rc::new(RefCell::new(parts))))
 }
 
@@ -380,7 +380,7 @@ fn convert_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResu
         .into_iter()
         .map(|c| from.iter().position(|f| *f == c).map_or(c, |i| to[i]))
         .collect();
-    Ok(Value::Text(from_u16(&mapped)))
+    Ok(Value::Text(from_u16(&mapped).into()))
 }
 
 /// `DelChr(String [, Where [, Which]])`: `Where` is `<` (leading), `>` (trailing), `<>` (both) or
@@ -388,7 +388,7 @@ fn convert_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResu
 /// DelChr_TrimLeadingAndTrailingSpaces).
 fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let s = text(a, 0)?;
-    let wh = if a.len() > 1 { text(a, 1)? } else { "=".to_string() };
+    let wh = if a.len() > 1 { text(a, 1)? } else { "=".into() };
     let which: Vec<char> = if a.len() > 2 {
         text(a, 2)?.chars().collect()
     } else {
@@ -397,9 +397,9 @@ fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let strip = |c: char| which.contains(&c);
     Ok(Value::Text(match wh.as_str() {
         "=" => s.chars().filter(|c| !strip(*c)).collect(),
-        "<" => s.trim_start_matches(strip).to_string(),
-        ">" => s.trim_end_matches(strip).to_string(),
-        "<>" | "><" => s.trim_matches(strip).to_string(),
+        "<" => s.trim_start_matches(strip).to_string().into(),
+        ">" => s.trim_end_matches(strip).to_string().into(),
+        "<>" | "><" => s.trim_matches(strip).to_string().into(),
         other => return unsupported(format!("DelChr with Where `{other}` (not pinned)")),
     }))
 }
@@ -413,7 +413,7 @@ fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let s = text(a, 0)?;
     let chars: Vec<char> = s.chars().collect();
     let Some(last) = chars.iter().rposition(char::is_ascii_digit) else {
-        return Ok(Value::Text(String::new()));
+        return Ok(Value::Text(String::new().into()));
     };
     let first = chars[..=last]
         .iter()
@@ -434,13 +434,13 @@ fn inc_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let mut out: String = head.iter().collect();
     out.push_str(&format!("{sum:0width$}", width = num.len()));
     out.extend(tail.iter());
-    Ok(Value::Text(out))
+    Ok(Value::Text(out.into()))
 }
 
 fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let s = text(a, 0)?;
     let len = int(a, 1)?;
-    let fill = if a.len() > 2 { text(a, 2)? } else { " ".to_string() };
+    let fill = if a.len() > 2 { text(a, 2)? } else { " ".into() };
     let mut it = fill.chars();
     let (Some(f), None) = (it.next(), it.next()) else {
         return unsupported("PadStr with a fill that is not one character (not pinned)");
@@ -449,11 +449,11 @@ fn pad_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let u = u16s(&s);
     // Shorter than the text truncates (TestTextProcessingContracts.al PadStr_LengthLessThanStringLen_Truncates).
     if want <= u.len() {
-        return Ok(Value::Text(from_u16(&u[..want])));
+        return Ok(Value::Text(from_u16(&u[..want]).into()));
     }
-    let mut out = s;
+    let mut out = s.into_string();
     out.extend(std::iter::repeat_n(f, want - u.len()));
-    Ok(Value::Text(out))
+    Ok(Value::Text(out.into()))
 }
 
 fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -478,7 +478,7 @@ fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     }
     // A position past the end deletes nothing (types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments).
     if pos as usize > s.len() {
-        return Ok(Value::Text(from_u16(&s)));
+        return Ok(Value::Text(from_u16(&s).into()));
     }
     let from = pos as usize - 1;
     let to = if a.len() > 2 {
@@ -488,7 +488,7 @@ fn del_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     };
     let mut out = s[..from].to_vec();
     out.extend_from_slice(&s[to..]);
-    Ok(Value::Text(from_u16(&out)))
+    Ok(Value::Text(from_u16(&out).into()))
 }
 
 fn ins_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -503,7 +503,7 @@ fn ins_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let mut out = s[..at].to_vec();
     out.extend_from_slice(&sub);
     out.extend_from_slice(&s[at..]);
-    Ok(Value::Text(from_u16(&out)))
+    Ok(Value::Text(from_u16(&out).into()))
 }
 
 /// An index outside the list raises with the text and code of
@@ -513,7 +513,7 @@ fn select_str(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResul
     let list = text(a, 1)?;
     let parts: Vec<&str> = list.split(',').collect();
     match usize::try_from(n - 1).ok().and_then(|i| parts.get(i)) {
-        Some(p) => Ok(Value::Text((*p).to_string())),
+        Some(p) => Ok(Value::Text((*p).to_string().into())),
         None => raise(
             format!("The SELECTSTR comma-string {list} does not contain a value for index {n}."),
             "InvalidStringFormat",
@@ -542,7 +542,7 @@ fn secret_content(v: &Value) -> Result<String, Signal> {
 /// The text of a Text or SecretText argument (IsolatedStorage takes both).
 pub fn secret_or_text(v: &Value) -> Result<String, Signal> {
     match crate::native::text_of(v) {
-        Some(t) => Ok(t),
+        Some(t) => Ok(t.to_string()),
         None => secret_content(v),
     }
 }
@@ -559,7 +559,7 @@ fn secret_is_empty(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> N
 /// (types/TestSecretText.al:43); a never-assigned secret is empty.
 fn secret_unwrap(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     match r {
-        Some(v) => Ok(Value::Text(secret_content(v)?)),
+        Some(v) => Ok(Value::Text(secret_content(v)?.into())),
         None => unsupported("SecretText.Unwrap without a receiver"),
     }
 }
@@ -568,7 +568,7 @@ fn secret_str_subst_no(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) 
     let template = text(a, 0)?;
     let args: Vec<Value> = a[1..]
         .iter()
-        .map(|v| secret_content(v).map(Value::Text))
+        .map(|v| secret_content(v).map(|s| Value::Text(s.into())))
         .collect::<Result<_, _>>()?;
     Ok(secret(crate::native::substitute(&template, &args, c)?))
 }
@@ -607,7 +607,11 @@ fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
 /// The line terminator is a line feed only (types/TestFormatEvaluateTextContracts.al:TextBuilder_AppendLine_EndsWithLineFeedOnly).
 fn tb_append_line(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
-    let t = if a.is_empty() { String::new() } else { text(a, 0)? };
+    let t = if a.is_empty() {
+        String::new()
+    } else {
+        text(a, 0)?.to_string()
+    };
     with_string(&h, |s| {
         s.push_str(&t);
         s.push('\n');
@@ -619,7 +623,7 @@ fn tb_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
     let h = string_of(r)?;
     let s = with_string(&h, |s| s.clone());
     if a.is_empty() {
-        return Ok(Value::Text(s));
+        return Ok(Value::Text(s.into()));
     }
     let u = u16s(&s);
     let (start, count) = (int(a, 0)?, int(a, 1)?);
@@ -627,7 +631,7 @@ fn tb_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
         return unsupported("TextBuilder.ToText outside the text (error text not pinned)");
     }
     let from = start as usize - 1;
-    Ok(Value::Text(from_u16(&u[from..from + count as usize])))
+    Ok(Value::Text(from_u16(&u[from..from + count as usize]).into()))
 }
 
 fn tb_length(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -696,7 +700,7 @@ fn tb_replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
             "Argument",
         );
     }
-    with_string(&h, |s| *s = s.replace(&old, &new));
+    with_string(&h, |s| *s = s.replace(old.as_str(), new.as_str()));
     Ok(Value::Boolean(true))
 }
 
@@ -747,7 +751,7 @@ fn bt_get_sub_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
         return unsupported("BigText.GetSubText outside the text (error text not pinned)");
     }
     let from = pos as usize - 1;
-    a[0] = Value::Text(from_u16(&u[from..from + len as usize]));
+    a[0] = Value::Text(from_u16(&u[from..from + len as usize]).into());
     Ok(Value::Integer(len as i32))
 }
 

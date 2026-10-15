@@ -65,7 +65,7 @@ fn run(body: &str) -> Result<Value, Signal> {
 /// `procedure F(): Text var <vars> begin <body> end;`
 fn text(vars: &str, body: &str) -> String {
     match run(&format!("procedure F(): Text var {vars} begin {body} end;")) {
-        Ok(Value::Text(t)) => t,
+        Ok(Value::Text(t)) => t.to_string(),
         other => panic!("{other:?}"),
     }
 }
@@ -669,7 +669,7 @@ fn first_guids(seed: Option<i32>) -> String {
         host.random_seed = s;
     }
     match call(&mut Session::with_host(engine, host), oi, "F") {
-        Ok(Value::Text(t)) => t,
+        Ok(Value::Text(t)) => t.to_string(),
         other => panic!("{other:?}"),
     }
 }

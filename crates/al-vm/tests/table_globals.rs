@@ -368,7 +368,7 @@ const HELPERS: &str = r#"
 
 fn text(r: Result<Value, Signal>) -> String {
     match r {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

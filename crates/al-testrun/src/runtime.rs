@@ -731,6 +731,9 @@ impl CorpusRuntime {
             for n in &b.notes {
                 eprintln!("baseline: {n}");
             }
+            for l in b.restored_lines() {
+                eprintln!("baseline: {l}");
+            }
             eprintln!(
                 "baseline: {} of {} install roots ran to their end; {} tables hold rows, {} are unseeded, {:.2} s",
                 b.ran,
@@ -1360,9 +1363,6 @@ pub fn run_codeunit_full(
     }
     // What publishing the app does first: run its install codeunits, then commit.
     session.set_install_scope(true);
-    // These are the app under test's own install codeunits (a project's fixture): they may change
-    // the restored company's rows. Only the dependency apps' roots are guarded (ADR-020).
-    session.allow_restored_rows_to_change();
     let skipped_installs = run_install_codeunits(lowered, &mut session);
     session.set_install_scope(false);
     session.in_test_codeunit = true;

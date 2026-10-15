@@ -290,7 +290,7 @@ codeunit 50112 "Installer C" { Subtype = Install;
 "#;
 
 #[test]
-fn install_code_sees_the_restored_rows_and_cannot_overwrite_or_duplicate_them() {
+fn install_code_sees_the_restored_rows_may_change_them_and_cannot_duplicate_them() {
     let fake = Arc::new(Fake::new("CRONUS International Ltd.").table(
         "Setup",
         &["Primary Key", "Value"],
@@ -300,7 +300,9 @@ fn install_code_sees_the_restored_rows_and_cannot_overwrite_or_duplicate_them() 
         r#"codeunit 50001 "T" { Subtype = Test;
   [Test] procedure Restored() var S: Record "Setup"; begin
     S.Get('');
-    if S.Value <> 'restored' then Error('value %1', S.Value);
+    // Installer B rewrote the restored row (ADR-020 amendment: install code may change restored
+    // rows); Installer C's insert of the restored key failed with 'already exists' and left no row.
+    if S.Value <> 'overwritten' then Error('value %1', S.Value);
     if S.Count() <> 2 then Error('count %1', S.Count());
     S.Get('NEW');
     if S.Value <> 'new-from-install' then Error('new row %1', S.Value);

@@ -231,10 +231,18 @@ impl Session {
             );
         }
         let fresh = self.initial_fields(t.object as usize);
-        if format!("{:?}", fresh) != format!("{:?}", rec.borrow().fields) || !rec.borrow().auto_calc.is_empty() {
-            return unsupported(
-                "LoadFields on a record that was filled but never fetched: not pinned (docs/probes-needed.md)",
-            );
+        {
+            let r = rec.borrow();
+            if format!("{:?}", fresh) != format!("{:?}", r.fields) {
+                return unsupported(
+                    "LoadFields on a record that was filled but never fetched: not pinned (docs/probes-needed.md)",
+                );
+            }
+            if !r.auto_calc.is_empty() {
+                return unsupported(
+                    "LoadFields on a record with SetAutoCalcFields: not pinned (docs/probes-needed.md)",
+                );
+            }
         }
         let pk = t.primary_key(&rec.borrow().fields);
         let row = self

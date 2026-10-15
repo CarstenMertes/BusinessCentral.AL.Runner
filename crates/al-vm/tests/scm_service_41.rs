@@ -19,9 +19,8 @@ table 50800 "SV Row"
 "#;
 
 fn text(body: &str) -> Result<String, Signal> {
-    let src = format!(
-        "{TABLES}codeunit 50100 C {{ procedure F(): Text var Rec: Record \"SV Row\"; begin {body} end; }}"
-    );
+    let src =
+        format!("{TABLES}codeunit 50100 C {{ procedure F(): Text var Rec: Record \"SV Row\"; begin {body} end; }}");
     let (ws, l) = al_sema::lower::compile(
         vec![AppSource {
             id: "a".into(),

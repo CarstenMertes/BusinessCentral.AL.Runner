@@ -505,6 +505,9 @@ mod tests {
             property_view("where(\"Document Type\" = const(\"Credit Memo\"), Kind = const(Item))"),
             "where(\"Document Type\" = const('Credit Memo'), Kind = const(Item))"
         );
-        assert_eq!(property_view("sorting(\"No.\") order(descending)"), "sorting(\"No.\") order(descending)");
+        assert_eq!(
+            property_view("sorting(\"No.\") order(descending)"),
+            "sorting(\"No.\") order(descending)"
+        );
     }
 }

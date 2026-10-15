@@ -309,7 +309,9 @@ fn load_fields_as_a_statement_without_a_row_raises_nothing() {
     // nothing there. The record is left as it was (nothing fetched).
     let r = text(
         "",
-        &format!("{SEED} Rec.LoadFields(Rec.Name); a := Format(Rec.AreFieldsLoaded(Rec.Name)); Rec.FindLast(); exit(a + '/' + Rec.Name);"),
+        &format!(
+            "{SEED} Rec.LoadFields(Rec.Name); a := Format(Rec.AreFieldsLoaded(Rec.Name)); Rec.FindLast(); exit(a + '/' + Rec.Name);"
+        ),
     );
     assert_eq!(r.unwrap(), "No/beta");
 }
@@ -320,6 +322,9 @@ fn load_fields_without_a_row_or_after_a_fetch_is_refused() {
     // used, and whether a fetched buffer is read again (overwriting values assigned since).
     let missing = text("", "b := Rec.LoadFields(Rec.Name); exit('ran');");
     assert!(matches!(missing, Err(Signal::Unsupported(_))), "{missing:?}");
-    let fetched = text("", &format!("{SEED} Rec.Get(1); Rec.LoadFields(Rec.Name); exit('ran');"));
+    let fetched = text(
+        "",
+        &format!("{SEED} Rec.Get(1); Rec.LoadFields(Rec.Name); exit('ran');"),
+    );
     assert!(matches!(fetched, Err(Signal::Unsupported(_))), "{fetched:?}");
 }

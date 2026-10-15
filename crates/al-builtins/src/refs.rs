@@ -277,7 +277,10 @@ mod tests {
         for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {
             let has = cat.by_id(id).unwrap().params.iter().any(|p| p.ty == "ErrorInfo");
             if has {
-                assert!(id.contains("FieldError#3") || id.starts_with("Record.TestField#"), "{id}");
+                assert!(
+                    id.contains("FieldError#3") || id.starts_with("Record.TestField#"),
+                    "{id}"
+                );
             }
         }
     }

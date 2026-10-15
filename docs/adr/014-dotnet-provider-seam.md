@@ -635,3 +635,45 @@ What changed.
   with `Result: DOTNET UNAVAILABLE (exit 8)`, and exits 8 (before 7; `--allow-not-run` still makes it 0). Why: on
   2026-10-15 a binary copied out of the repository lost 20 Tests-ERM and 30 NP Retail passes and looked like a
   regression.
+
+
+## Amendment 2026-10-15 (owner decision, branch `environment-flag`): `--environment saas|onprem`
+
+**Decision (owner).** The runtime emulates one server, and Environment Information answers what the probe
+tier answered: a SaaS-like sandbox (`IsSaaS` Yes, `IsSandbox` Yes, `IsProduction` No, name `Sandbox`). Microsoft's
+own test suites run on an on-prem server. Codeunit 134614 "Test App Permissions" (Tests-SINGLESERVER) deletes
+every user in `InitializeData` and only afterwards calls `SetTestabilitySoftwareAsAService(true)`; on a SaaS
+server the User Permissions subscriber `CheckSuperPermissionsBeforeDeleteUser` raises "There should be at least
+one enabled 'SUPER' user." at the first delete (13 failures). So the server kind is a run setting:
+
+1. `alrunner test --environment saas|onprem` and `al-test-cli --environment saas|onprem`. **Default `saas`**, as
+   probed. The corpus runs, the ratchet and every baseline stay `saas`.
+2. `onprem` makes the `NavTenantSettingsHelper` registry type answer `IsSandbox` false and `IsProduction`
+   true (`IsProduction` is `!IsSandbox`); `ALConfigSettings.IsSaaS` (membership entitlement) is false in both.
+   System Application's own AL then derives `IsSaaS` false, `IsSandbox` false and `IsOnPrem` true, and honors
+   `SetTestabilitySandbox` / `SetTestabilitySoftwareAsAService` as its code says (nothing is faked on top).
+   `GetEnvironmentName` stays the helper's empty name, so AL answers `Production`.
+3. The host carries it: `al_host::Environment` on `Identity::environment()` (default `Saas`;
+   `Host::in_environment`); the registry reads `s.host.identity.environment()`.
+4. **The on-prem values are an unprobed assumption**, required by Microsoft's test (hard rule 3 exception,
+   owner 2026-10-15; codeunit 134614). The OnPrem-suite probe (tests/al-language-onprem, the "BC OnPrem 29.0" leg)
+   is requested; when it lands it wins. `docs/probes-needed.md` has the row; the code comments cite the test.
+   The assumption registry of rule 3 is not in the code yet; the id gets registered when it is.
+5. In scope with it (same exception): **deleting a User deletes its Access Control rows.** The corpus pins only the
+   User Property cascade (TestUserDeleteCascadeOrder.al:26-84); the same test 134614 needs the roles of the users it
+   deleted to be gone. It was refused before ("the platform deletes them too, which is not pinned"); it now runs
+   (`usertable.rs`, `user_after_delete`), and is a second unprobed assumption.
+
+**Measured** (BC 27.5.46862.48827, `alrunner test Tests-SINGLESERVER.Source.zip`, test data on):
+
+| | `--environment saas` | `--environment onprem` |
+|---|---:|---:|
+| Codeunit 134614 (15 tests) | 0 passed, 13 failed, 2 not run | 0 passed, 0 failed, 15 not run |
+| Whole bucket (922 tests) | 74 passed, 18 failed, 830 not run | 103 passed, 4 failed, 815 not run |
+
+Codeunit 134614 does not pass yet on either setting. On `onprem` it now gets past `User.DeleteAll()` and stops
+at the next gap: `DotNet new Microsoft.Dynamics.Nav.AzureADGraphClient.MockGraphQuery` (a test-library class
+that is neither registered nor classified pure). The four failures of the on-prem run
+(three `Document Approval - Comments` tests "The part with ID = ... was not found on the page", one ERM RS Package
+Dimensions test "The Dimension does not exist") were refused before at `GraphQuery.GetCurrentUser`; they are
+separate findings.

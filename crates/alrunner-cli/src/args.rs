@@ -53,6 +53,8 @@ pub struct TestArgs {
     pub test_timeout_secs: Option<u64>,
     pub require_dotnet: bool,
     pub files_dir: Option<PathBuf>,
+    /// `--environment saas|onprem`: what Environment Information answers (default saas, as probed).
+    pub environment: Option<al_host::Environment>,
     /// `--test-data [PATH]`: restore a CRONUS company from a BC backup (ADR-020).
     pub test_data: bool,
     /// `--no-test-data`: run without company data. Test data is on by default (ADR-020, owner
@@ -183,6 +185,11 @@ TEST DATA
     tables the reader failed on (with its text), and columns left out.
 
 OTHER
+    --environment ENV    The server Environment Information describes: `saas` (default; the probed
+                         sandbox: IsSaaS and IsSandbox Yes) or `onprem` (IsSaaS and IsSandbox No
+                         until a test library's SetTestability* calls change them; Microsoft's own
+                         test suites expect this, for example codeunit 134614). The on-prem values
+                         are an unprobed assumption (docs/probes-needed.md).
     --files-dir DIR      Let the File data type read and write real files under DIR.
     --test-timeout-secs N  A test that uses more than N seconds of CPU time (default 20; the
                          load of the machine does not count; a test that hangs without
@@ -324,6 +331,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--quiet" | "-q" => a.quiet = true,
             "--timings" => a.timings = true,
             "--files-dir" => a.files_dir = Some(text()?.into()),
+            "--environment" => a.environment = Some(text()?.parse().map_err(|e| format!("--environment: {e}"))?),
             "--dotnet-sidecar" => a.dotnet_sidecar = Some(text()?.into()),
             "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(text()?.into()),
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,

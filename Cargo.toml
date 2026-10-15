@@ -27,6 +27,20 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 toml = "0.8"
 
+# Debug builds (`cargo test`, `check.sh`, CI's test job). Issue #45 measured both settings on the
+# shared 12-core machine (load average 4 to 5, CARGO_BUILD_JOBS=4):
+# - Line tables are enough for a panic's location. Full debug info made the test binaries about
+#   160 MB each (15 GB for the workspace) and the build after a merge 62 s instead of 38 s.
+# - Dependencies at opt-level 1: the debug tests run in 24 s instead of 37 s. The dependencies
+#   are built once per target directory (about 40 s more on a cold build) and only again when
+#   Cargo.lock changes. The workspace crates stay at opt-level 0: at 1, the build after a merge
+#   took 107 s instead of 38 s, more than the 14 s it saved in the tests.
+[profile.dev]
+debug = "line-tables-only"
+
+[profile.dev.package."*"]
+opt-level = 1
+
 # The profile tools/bcdb-bench.sh builds the Rust side of the bcdb comparison with.
 [profile.bcdb-bench]
 inherits = "release"

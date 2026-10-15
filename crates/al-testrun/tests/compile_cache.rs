@@ -328,6 +328,14 @@ fn the_key_changes_with_a_byte_of_source_a_symbol_or_the_target() {
         base,
         compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest()
     );
+    // The BC version and build of the target do not change a compile of the dependency apps, only
+    // the runtime does (the catalog): 27.0 and 27.5 share a layer, 27 and 28 (runtime 16 and 17) do not.
+    let key_of = |bc: &str| {
+        let t = al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), Some(&t)).digest()
+    };
+    assert_eq!(key_of("27.0"), key_of("27.5.46862.48827"));
+    assert_ne!(key_of("27.0"), key_of("28.0"));
 }
 
 #[test]
@@ -597,5 +605,113 @@ fn a_damaged_upper_layer_never_changes_an_outcome() {
         let rt = layered_run(LIB, IMPL, cache(dir.path(), false)).unwrap();
         assert_eq!(layer_hits(&rt), vec![true, true, false]);
         assert_eq!(outcomes(&rt), want);
+    }
+}
+
+// ---- a base layer shared by projects with different Microsoft apps (2026-10-15) -------------
+
+fn named(id: &str, name: &str, deps: &[&str], src: &str) -> AppSource {
+    AppSource {
+        name: name.into(),
+        ..app(id, deps, src)
+    }
+}
+
+fn ms(version: &str) -> Manifest {
+    Manifest {
+        publisher: "Microsoft".into(),
+        version: version.into(),
+        resources: vec![],
+        ..Default::default()
+    }
+}
+
+const ASSERT_LIB: &str =
+    "codeunit 50400 \"Assert\" { procedure IsTrue(B: Boolean) begin if not B then Error('assert'); end; }";
+const ANY_LIB: &str = "codeunit 50410 \"Any\" { procedure Int(): Integer begin exit(7); end; }";
+const SHOPIFY: &str =
+    "codeunit 50420 \"Shopify Thing\" { procedure N(): Integer var C: Record Cust; begin exit(C.Count()); end; }";
+
+const BASE_TEST: &str = r#"
+codeunit 60300 SharedTests
+{
+    Subtype = Test;
+    [Test] procedure Uses_Base() var D: Codeunit Dep; A: Codeunit Assert; begin A.IsTrue(D.Count() = 0); end;
+}
+"#;
+
+/// The dependency apps of a project, in the order given: Microsoft's core and test libraries.
+/// `which` picks them from the five Microsoft apps below; the order of `which` is the caller's order.
+fn shared_run(which: &[&str], cc: Option<CompileCache>) -> Result<CorpusRuntime, String> {
+    let all = |n: &str| -> (AppSource, Manifest) {
+        match n {
+            "base" => (named("base", "Base Application", &[], BASE), ms("27.5.0.0")),
+            "assert" => (named("assert", "Library Assert", &["base"], ASSERT_LIB), ms("27.5.0.0")),
+            "any" => (named("any", "Any", &["base"], ANY_LIB), ms("27.5.0.0")),
+            "shopify" => (
+                named("shopify", "Shopify Connector", &["base"], SHOPIFY),
+                ms("27.5.0.0"),
+            ),
+            _ => unreachable!(),
+        }
+    };
+    let mut apps = vec![app("main", &["base", "assert"], BASE_TEST)];
+    let mut kinds = vec![al_sema::AppKind::Workspace];
+    let mut mans = vec![Manifest::default()];
+    for n in which {
+        let (a, m) = all(n);
+        apps.push(a);
+        kinds.push(al_sema::AppKind::Dependency);
+        mans.push(m);
+    }
+    CorpusRuntime::try_run_suites_with(
+        apps,
+        kinds,
+        &mans,
+        &Default::default(),
+        None,
+        Default::default(),
+        &[SuiteRun::everything()],
+        &RunOptions {
+            compile_cache: cc,
+            ..Default::default()
+        },
+    )
+}
+
+#[test]
+fn two_projects_with_different_microsoft_test_libraries_share_the_base_layer() {
+    let dir = tempfile::tempdir().unwrap();
+    let want = outcomes(&shared_run(&["assert", "base"], None).unwrap());
+    assert!(want.iter().all(|l| l.contains("Pass")), "{want:?}");
+    let first = shared_run(&["assert", "base"], cache(dir.path(), false)).unwrap();
+    assert_eq!(layer_hits(&first), vec![false, false]);
+    // Another project: more Microsoft apps, in another order. Only the Base Application layer is common.
+    let second = shared_run(&["shopify", "any", "assert", "base"], cache(dir.path(), false)).unwrap();
+    let layers = &second.phases.cache.as_ref().unwrap().layers;
+    assert_eq!(layers.len(), 4, "base, then Any, Library Assert, Shopify Connector");
+    assert_eq!(layers[0].apps, vec!["Base Application"]);
+    assert_eq!(
+        layers.iter().map(|l| l.hit).collect::<Vec<_>>(),
+        vec![true, false, false, false]
+    );
+    assert_eq!(outcomes(&second), want);
+    // A third project that drops Shopify: the layers it shares with the second are found.
+    let third = shared_run(&["base", "any", "assert"], cache(dir.path(), true)).unwrap();
+    assert_eq!(layer_hits(&third), vec![true, true, true]);
+    assert_eq!(outcomes(&third), want);
+}
+
+#[test]
+fn the_layers_do_not_depend_on_the_order_the_apps_come_in() {
+    let dir = tempfile::tempdir().unwrap();
+    shared_run(&["base", "assert", "any"], cache(dir.path(), false)).unwrap();
+    for order in [
+        ["any", "assert", "base"],
+        ["assert", "base", "any"],
+        ["any", "base", "assert"],
+    ] {
+        let rt = shared_run(&order, cache(dir.path(), true)).unwrap();
+        assert_eq!(layer_hits(&rt), vec![true, true, true], "{order:?}");
     }
 }

@@ -2,87 +2,28 @@
 //! JUnit in the same shape the corpus CI emits, so the two diff line for line.
 
 use crate::oracle::{CaseId, OracleCase};
-use crate::report::{Counts, Outcome, Report, Timings};
+use crate::report::{Outcome, Report, Timings};
 
+/// The CI step summary: one line for the run. The numbers per area, the phase times and the
+/// other test apps are in the JSON report and in `--timings`.
 pub fn markdown(r: &Report) -> String {
-    let mut s = String::from(
-        "## Corpus pass rate\n\n| scope | total | pass | fail | not run | rate |\n|---|---:|---:|---:|---:|---:|\n",
-    );
-    row(&mut s, "**overall**", &r.overall);
-    for (m, c) in &r.milestones {
-        row(&mut s, m, c);
-    }
-    s.push_str("\n### By area\n\n| area | total | pass | fail | not run | rate |\n|---|---:|---:|---:|---:|---:|\n");
-    for (a, c) in &r.areas {
-        row(&mut s, a, c);
-    }
-    if !r.suites.is_empty() {
-        s.push_str("\n### Other test apps\n\n| app | oracle | total | pass | fail | not run | rate |\n|---|---|---:|---:|---:|---:|---:|\n");
-        for x in &r.suites {
-            let c = &x.counts;
-            s.push_str(&format!(
-                "| {} | BC {} | {} | {} | {} | {} | {:.1}% |\n",
-                x.name,
-                x.oracle_leg,
-                c.total,
-                c.pass,
-                c.fail,
-                c.not_run,
-                c.rate() * 100.0
-            ));
-        }
-        for x in r.suites.iter().filter(|x| x.bc_failed > 0) {
-            s.push_str(&format!(
-                "\n{}: real BC fails {} case(s) on purpose (a control); the runtime fails {} of them too.\n",
-                x.name, x.bc_failed, x.bc_failed_reproduced
-            ));
-        }
-    }
-    if let Some(t) = &r.timings {
-        s.push_str("\n### How long it took\n\n");
-        s.push_str(&timings_table(std::slice::from_ref(t)));
-        s.push_str(
-            "\nLoad reads the apps and the dependency apps. Compile turns them into what the runtime runs. \
-             Install baseline runs the install code of the Microsoft apps once. Tests runs every test.\n",
-        );
-        let by_app: Vec<String> = t
-            .suites
-            .iter()
-            .map(|x| format!("{} {}", x.name, secs(x.tests_s)))
-            .collect();
-        s.push_str(&format!("\nTests by test app: {}.\n", by_app.join(", ")));
-        if let Some(d) = &t.dotnet {
-            s.push_str(&format!(
-                "\n{}. Time spent waiting for a sidecar is part of Tests but is not the runtime; the perf budget leaves it out.\n",
-                d.line()
-            ));
-        }
-        if t.eager {
-            s.push_str("\nThis run compiled every dependency routine, not only the ones the tests reach.\n");
-        }
-        if let Some(c) = &t.compile_cache {
-            s.push_str(&format!("\nCompile cache: {}.\n", c.line()));
-            if c.built {
-                s.push_str(&format!(
-                    "Building the entry took {} and is part of Compile above; a run that finds the entry does not pay it.\n",
-                    secs(c.build_s)
-                ));
-            }
-        }
-    }
-    if !r.dependencies.is_empty() {
-        s.push_str(&format!("\nDependency apps: {}.\n", r.dependencies.join(", ")));
-    }
-    if let Some(b) = &r.bc_build {
-        s.push_str(&format!("\nMicrosoft apps downloaded from BC build {b}.\n"));
-    }
-    if r.excluded_bc_failed > 0 {
-        s.push_str(&format!(
-            "\n{} case(s) real BC did not pass are excluded.\n",
-            r.excluded_bc_failed
-        ));
-    }
-    s
+    let c = &r.overall;
+    let version = r
+        .timings
+        .as_ref()
+        .map_or(String::new(), |t| format!("BC {}: ", t.bc_version));
+    let time = r
+        .timings
+        .as_ref()
+        .map_or(String::new(), |t| format!(", {}", secs(t.total_s)));
+    format!(
+        "- {version}{} passed, {} failed, {} not run of {} ({:.1}%){time}\n",
+        c.pass,
+        c.fail,
+        c.not_run,
+        c.total,
+        c.rate() * 100.0
+    )
 }
 
 fn secs(x: f64) -> String {
@@ -107,17 +48,6 @@ pub fn timings_table(ts: &[Timings]) -> String {
         ));
     }
     s
-}
-
-fn row(s: &mut String, name: &str, c: &Counts) {
-    s.push_str(&format!(
-        "| {name} | {} | {} | {} | {} | {:.1}% |\n",
-        c.total,
-        c.pass,
-        c.fail,
-        c.not_run,
-        c.rate() * 100.0
-    ));
 }
 
 /// `bc_build` is the Microsoft build the dependency apps came from; it is recorded as a JUnit
@@ -216,11 +146,40 @@ mod tests {
     }
 
     #[test]
-    fn markdown_has_overall_milestone_and_area_rows() {
-        let md = markdown(&build(&oracle(), &areas, &outcome));
-        assert!(md.contains("| **overall** | 3 | 1 | 1 | 1 | 33.3% |"), "{md}");
-        assert!(md.contains("| M2 pure semantics | 2 | 1 | 1 | 0 | 50.0% |"), "{md}");
-        assert!(md.contains("| record | 1 | 0 | 0 | 1 | 0.0% |"), "{md}");
+    fn markdown_is_one_line_with_the_overall_counts_and_the_total_time() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        assert_eq!(markdown(&r), "- 1 passed, 1 failed, 1 not run of 3 (33.3%)\n");
+        r.timings = Some(timings());
+        assert_eq!(
+            markdown(&r),
+            "- BC 29.0: 1 passed, 1 failed, 1 not run of 3 (33.3%), 18.75 s\n"
+        );
+    }
+
+    #[test]
+    fn markdown_leaves_out_areas_milestones_and_phase_tables() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        r.timings = Some(timings());
+        let md = markdown(&r);
+        for gone in ["By area", "M2", "milestone", "| record |", "How long it took", "Load"] {
+            assert!(!md.contains(gone), "{gone} in {md}");
+        }
+        assert_eq!(md.lines().count(), 1, "{md}");
+    }
+
+    #[test]
+    fn the_json_report_names_the_build_and_an_old_one_still_reads() {
+        let mut r = build(&oracle(), &areas, &outcome);
+        r.bc_build = Some("27.5.46862.56249".into());
+        assert!(
+            serde_json::to_string(&r)
+                .unwrap()
+                .contains(r#""bc_build":"27.5.46862.56249""#)
+        );
+        assert!(!serde_json::to_string(&r).unwrap().contains("milestones"));
+        // A report written before the sidecar field existed still reads.
+        let json = r#"{"timings":{"bc_version":"29.0","eager":false,"load_s":1.0,"compile_s":1.0,"baseline_s":1.0,"tests_s":1.0,"total_s":4.0,"suites":[]}}"#;
+        assert!(crate::report::Timings::from_report_json(json).unwrap().dotnet.is_none());
     }
 
     #[test]
@@ -245,19 +204,6 @@ mod tests {
         assert!(!junit(&oracle(), &outcome, None).contains("bc_build"));
     }
 
-    #[test]
-    fn the_report_names_the_build_the_dependency_apps_came_from() {
-        let mut r = build(&oracle(), &areas, &outcome);
-        assert!(!markdown(&r).contains("BC build"));
-        r.bc_build = Some("27.5.46862.56249".into());
-        assert!(markdown(&r).contains("BC build 27.5.46862.56249"), "{}", markdown(&r));
-        assert!(
-            serde_json::to_string(&r)
-                .unwrap()
-                .contains(r#""bc_build":"27.5.46862.56249""#)
-        );
-    }
-
     fn timings() -> crate::report::Timings {
         crate::report::Timings {
             bc_version: "29.0".into(),
@@ -280,90 +226,6 @@ mod tests {
             dotnet: None,
             compile_cache: None,
         }
-    }
-
-    #[test]
-    fn markdown_says_what_the_compile_cache_did_and_what_building_it_cost() {
-        let mut t = timings();
-        t.compile_cache = Some(crate::report::CacheTimes {
-            hit: false,
-            built: true,
-            open_s: 0.1,
-            build_s: 9.5,
-            mb: 13.0,
-            objects: 9683,
-            relowered: 29,
-        });
-        let mut r = build(&oracle(), &areas, &outcome);
-        r.timings = Some(t.clone());
-        let md = markdown(&r);
-        assert!(md.contains("Compile cache: miss, built in 9.50 s"), "{md}");
-        assert!(md.contains("Building the entry took 9.50 s"), "{md}");
-        t.compile_cache = Some(crate::report::CacheTimes {
-            hit: true,
-            built: false,
-            open_s: 0.05,
-            build_s: 0.0,
-            mb: 13.0,
-            objects: 9683,
-            relowered: 29,
-        });
-        r.timings = Some(t);
-        let md = markdown(&r);
-        assert!(md.contains("Compile cache: hit, opened in 0.05 s"), "{md}");
-        assert!(!md.contains("Building the entry took"), "{md}");
-    }
-
-    #[test]
-    fn markdown_has_a_timing_table_with_the_phases_and_the_total() {
-        let mut r = build(&oracle(), &areas, &outcome);
-        assert!(!markdown(&r).contains("How long it took"), "no timings, no section");
-        r.timings = Some(timings());
-        let md = markdown(&r);
-        assert!(md.contains("### How long it took"), "{md}");
-        assert!(
-            md.contains("| Version | Load | Compile | Install baseline | Tests | Total |"),
-            "{md}"
-        );
-        assert!(
-            md.contains("| BC 29.0 | 1.00 s | 2.50 s | 3.00 s | 12.25 s | 18.75 s |"),
-            "{md}"
-        );
-        assert!(md.contains("corpus 11.00 s"), "{md}");
-        assert!(md.contains("OnPrem 1.25 s"), "{md}");
-    }
-
-    #[test]
-    fn the_sidecar_start_is_reported_apart_from_the_phases() {
-        let mut r = build(&oracle(), &areas, &outcome);
-        let mut t = timings();
-        assert!(
-            !{
-                r.timings = Some(t.clone());
-                markdown(&r)
-            }
-            .contains("sidecar")
-        );
-        t.dotnet = Some(crate::report::DotNetTimes {
-            processes: 2,
-            start_s: 2.5,
-            start_max_s: 1.5,
-            find_s: 0.25,
-            waited_s: 0.5,
-            calls: 35,
-            calls_s: 0.25,
-        });
-        r.timings = Some(t);
-        let md = markdown(&r);
-        assert!(
-            md.contains(
-                "2 .NET sidecar process(es) started: starting 2.50 s in total, 1.50 s at most; finding dotnet 0.25 s; sessions waited 0.50 s for theirs; 35 request(s) 0.25 s"
-            ),
-            "{md}"
-        );
-        // A report written before the field existed still reads.
-        let json = r#"{"timings":{"bc_version":"29.0","eager":false,"load_s":1.0,"compile_s":1.0,"baseline_s":1.0,"tests_s":1.0,"total_s":4.0,"suites":[]}}"#;
-        assert!(crate::report::Timings::from_report_json(json).unwrap().dotnet.is_none());
     }
 
     #[test]

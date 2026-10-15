@@ -40,7 +40,7 @@ impl Session {
         let company = if own.is_some_and(|t| !t.per_company) {
             ""
         } else {
-            self.cx.company.as_str()
+            &*self.cx.company
         };
         self.store.backed_rows(company, object).is_some_and(|r| !r.is_empty())
     }
@@ -65,7 +65,7 @@ impl Session {
     /// `OnInstallAppPerDatabase`, where `CompanyName()` is empty and a per-company table cannot
     /// be accessed.
     pub fn set_company(&mut self, company: &str) -> String {
-        std::mem::replace(&mut self.cx.company, company.to_string())
+        std::mem::replace(&mut self.cx.company, company.into()).to_string()
     }
 
     /// Replaces the session's data with the baseline's (a new session starts here).

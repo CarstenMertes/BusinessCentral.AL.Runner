@@ -161,7 +161,9 @@ impl Session {
     /// a change, whatever the caller has pending (handlers/TestPageBgTaskTx_Tests.al:
     /// RunPageBackgroundTask_WorkerIsOutsideCallersWriteTransaction).
     pub(crate) fn in_write_transaction(&self) -> bool {
-        self.bg_worker.is_none() && self.store.has_uncommitted()
+        // A write call starts the transaction even when it changes nothing (record/TestProbeRecordRefContracts.al:
+        // WriteTransaction_State: a DeleteAll or ModifyAll of no row).
+        self.bg_worker.is_none() && (self.store.has_uncommitted() || self.tx_phase == TX_WRITE)
     }
 
     /// Whether the running test method has no transaction: `TransactionModel::None` outside

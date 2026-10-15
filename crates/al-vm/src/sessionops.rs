@@ -201,7 +201,9 @@ impl Session {
         match id {
             // The counter has handed out `next_row_version` so far; the database never reports
             // zero (session/TestSystemExtended.al:635-659, TestBCDatabaseContracts.al:100-117).
-            "Database.LastUsedRowVersion#1" => return Ok(Value::BigInteger(self.next_row_version.max(1))),
+            // What the database holds committed: a row inserted in the open transaction does not count yet
+            // (record/TestProbeRecordRefContracts.al:LastUsedRowVersion_StartsAndGrows, `grows_after_insert` No).
+            "Database.LastUsedRowVersion#1" => return Ok(Value::BigInteger(self.committed_row_version.max(1))),
             // Set when given a value, read otherwise; the default is the documented one
             // (docs/probes-needed.md). session/TestSystemExtended.al:608-630 only calls it.
             "Database.LockTimeout#1" => {

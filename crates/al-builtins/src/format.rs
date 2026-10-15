@@ -148,9 +148,18 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // the key values in it; the layout is docs/probes-needed.md).
         Value::Library(name, l) if name == "RecordId" => match &*l.borrow() {
             crate::value::LibraryValue::RecordId { name, key, .. } => {
+                // A text key that is empty or holds a comma is quoted (record/TestProbeRecordRefContracts.al:RecordId_FormatForms).
                 let key = key
                     .iter()
-                    .map(|k| format_value(k, 0, 0, ctx))
+                    .map(|k| {
+                        format_value(k, 0, 0, ctx).map(|t| {
+                            if matches!(k, Value::Text(_) | Value::Code(_)) && (t.is_empty() || t.contains(',')) {
+                                format!("\"{t}\"")
+                            } else {
+                                t
+                            }
+                        })
+                    })
                     .collect::<Result<Vec<_>, _>>()?;
                 format!("{name}: {}", key.join(","))
             }

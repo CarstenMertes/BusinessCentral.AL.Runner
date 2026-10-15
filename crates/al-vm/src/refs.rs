@@ -664,7 +664,8 @@ impl Session {
             | "OptionCaption"
             | "OptionMembers"
             | "OptionString" => self.enum_metadata(method, &t, pos, args),
-            "Active" => Ok(Value::Boolean(true)),
+            // A field with `Enabled = false` is not active (record/TestProbeRecordRefContracts.al:KeyRef_And_FieldRef_Active).
+            "Active" => Ok(Value::Boolean(self.field_enabled(&t, pos))),
             "Length" => match &field.ty {
                 RtType::Text(Some(n)) | RtType::Code(Some(n)) => Ok(Value::Integer(*n as i32)),
                 other => unsupported(format!("FieldRef.Length of a {} field", other.describe())),

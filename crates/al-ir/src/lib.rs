@@ -320,6 +320,11 @@ pub struct ReportExtModify {
     /// `OnBeforeAfterGetRecord` and `OnAfterAfterGetRecord` as routine indices.
     pub before: Option<usize>,
     pub after: Option<usize>,
+    /// `OnBeforePreDataItem` and `OnAfterPreDataItem` around the base item's `OnPreDataItem`.
+    #[serde(default)]
+    pub before_pre: Option<usize>,
+    #[serde(default)]
+    pub after_pre: Option<usize>,
 }
 
 /// A data item added by `addlast`: under a base item, or (`item.parent`) under another added item.

@@ -560,7 +560,14 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                             }
                             for t in s.triggers() {
                                 let tn = t.name().to_ascii_lowercase();
-                                if !["onbeforeaftergetrecord", "onafteraftergetrecord"].contains(&tn.as_str()) {
+                                if ![
+                                    "onbeforepredataitem",
+                                    "onafterpredataitem",
+                                    "onbeforeaftergetrecord",
+                                    "onafteraftergetrecord",
+                                ]
+                                .contains(&tn.as_str())
+                                {
                                     out.reasons
                                         .push(format!("trigger {tn} of modify({target}) is not supported yet"));
                                 }
@@ -945,6 +952,8 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
                 item,
                 before: trigger("OnBeforeAfterGetRecord"),
                 after: trigger("OnAfterAfterGetRecord"),
+                before_pre: trigger("OnBeforePreDataItem"),
+                after_pre: trigger("OnAfterPreDataItem"),
             }),
             None => reasons.push(format!("modify({name}): the report has no such data item")),
         }

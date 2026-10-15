@@ -867,9 +867,6 @@ impl Session {
                 });
             }
         }
-        if let Some(t) = item.on_pre {
-            self.call(object, t, owner.clone(), Vec::new())?;
-        }
         // The `modify` blocks of the extensions that name this item, in object id order.
         let modifies: Vec<(usize, &ir::ReportExtModify)> = match r {
             ItemRef::Base(i) => (0..run.exts.len())
@@ -881,6 +878,24 @@ impl Session {
                 .collect(),
             ItemRef::Added(..) => Vec::new(),
         };
+        // `OnPreDataItem` of the base, with the extensions' OnBefore/OnAfterPreDataItem around it,
+        // each in object id order (corpus reportextensiontrigger/TestReportExtensionBaseMembersContracts.al:
+        // "for every trigger the base runs first, then the extensions").
+        for &(k, m) in &modifies {
+            if let Some(t) = m.before_pre {
+                let (ext_inst, e) = &run.exts[k];
+                self.call(*e, t, ext_inst.clone(), Vec::new())?;
+            }
+        }
+        if let Some(t) = item.on_pre {
+            self.call(object, t, owner.clone(), Vec::new())?;
+        }
+        for &(k, m) in &modifies {
+            if let Some(t) = m.after_pre {
+                let (ext_inst, e) = &run.exts[k];
+                self.call(*e, t, ext_inst.clone(), Vec::new())?;
+            }
+        }
         self.ret_used = true;
         let mut more = matches!(self.record_op("FindSet", &rec, &mut [])?, Value::Boolean(true));
         'rows: while more {

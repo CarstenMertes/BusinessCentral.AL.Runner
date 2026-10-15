@@ -3586,9 +3586,12 @@ impl Lowerer<'_> {
         if &captions == names {
             return Ok(value);
         }
-        if !plain || captions.len() != names.len() {
+        // Every form of Format reads the caption list (types/TestProbeTextDateFormatContracts.al:
+        // Format_OptionFieldAndOptionVariable): standard formats 2 and 9 the ordinal, a length cuts or pads the caption.
+        let _ = plain;
+        if captions.len() != names.len() {
             return Err(format!(
-                "Format of option field {} whose OptionCaption differs from its members, with more than the value, is not pinned",
+                "Format of option field {} whose OptionCaption has another number of entries than its members is not pinned",
                 f.name
             ));
         }

@@ -657,7 +657,16 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     let template = text_arg(args, 2)?;
     crate::formatstr::format_with_string(&args[0], len, &template, ctx)
         .map(Value::Text)
-        .map_err(Signal::Unsupported)
+        .map_err(|e| match e.strip_prefix(crate::formatstr::INVALID_FORMAT_MARK) {
+            Some(template) => Signal::Error(AlError {
+                message: format!(
+                    "An invalid field or attribute has been specified for the 'Format' property.\r\\\r\\{template}"
+                ),
+                code: "InvalidFormatString".into(),
+                call_stack: String::new(),
+            }),
+            None => Signal::Unsupported(e),
+        })
 }
 
 fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {

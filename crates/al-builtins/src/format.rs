@@ -168,7 +168,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
     };
     // A Boolean pads on the right and cuts at the length (types/TestProbeScalarContracts.al:FormatBoolean_Numbers:
     // `Format(true, 10)` is `Yes       `, `Format(true, 2)` is `Ye`).
-    if matches!(v, Value::Boolean(_)) && length > 0 {
+    if matches!(v, Value::Boolean(_) | Value::Option(..)) && length > 0 {
         let cut: String = s.chars().take(length as usize).collect();
         return Ok(format!("{cut}{}", " ".repeat((length as usize).saturating_sub(cut.chars().count()))));
     }
@@ -218,9 +218,15 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
     if matches!(standard, 1 | 2 | 9) {
         return Ok(plain);
     }
-    if standard != 0 {
+    // Formats 3 and 4 are formats 0 and 1 with a trailing blank (types/TestProbeTextDateFormatContracts.al:
+    // Format_FormatStrings_Number, `standard_format_3` and `standard_format_4`).
+    if standard == 4 {
+        return Ok(format!("{plain} "));
+    }
+    if standard != 0 && standard != 3 {
         return Err(format!("Format of a Decimal with standard format {standard} (not pinned)").into());
     }
+    let tail = if standard == 3 { " " } else { "" };
     let (sign, digits) = plain.strip_prefix('-').map_or(("", plain.as_str()), |r| ("-", r));
     let (int, frac) = digits.split_once('.').map_or((digits, None), |(i, f)| (i, Some(f)));
     let mut grouped = String::new();
@@ -231,8 +237,8 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
         grouped.push(c);
     }
     Ok(match frac {
-        Some(f) => format!("{sign}{grouped}.{f}"),
-        None => format!("{sign}{grouped}"),
+        Some(f) => format!("{sign}{grouped}.{f}{tail}"),
+        None => format!("{sign}{grouped}{tail}"),
     })
 }
 
@@ -300,6 +306,14 @@ fn millis(ms: i64) -> String {
 /// Format_Time_StandardFormats). Format 0 and 1 are a 12-hour clock whose hour is padded with a
 /// space; format 1 adds the milliseconds (a time without any is not measured: refused); format 2 is
 /// the AL literal; format 9 the round-trip form.
+/// A standard format number the type does not have (types/TestProbeTextDateFormatContracts.al:Format_StandardNumbers_Time).
+fn no_such_format(n: i32, ty: &str) -> FormatFail {
+    FormatFail::Error {
+        message: format!("Standard format number {n} does not exist for the type '{ty}'."),
+        code: "InvalidStandardFormat".into(),
+    }
+}
+
 fn format_time(ms_of_day: i64, standard: i32) -> Result<String, FormatFail> {
     let (h, m, s, f) = (
         ms_of_day / 3_600_000,
@@ -310,10 +324,10 @@ fn format_time(ms_of_day: i64, standard: i32) -> Result<String, FormatFail> {
     let (h12, ap) = hour12(h);
     Ok(match standard {
         0 => format!("{h12:>2}:{m:02}:{s:02} {ap}"),
-        1 if f != 0 => format!("{h12:>2}:{m:02}:{s:02}{} {ap}", millis(f)),
+        1 => format!("{h12:>2}:{m:02}:{s:02}{} {ap}", millis(f)),
         2 => format!("{h:02}{m:02}{s:02}{}T", millis(f)),
         9 => format!("{h:02}:{m:02}:{s:02}{}", millis(f)),
-        n => return Err(format!("Format of a Time with standard format {n} (not pinned)").into()),
+        n => return Err(no_such_format(n, "Time")),
     })
 }
 
@@ -336,12 +350,17 @@ fn format_datetime(ms: i64, standard: i32) -> Result<String, FormatFail> {
     let date = format!("{m:02}/{d:02}/{:02}", y.rem_euclid(100));
     Ok(match standard {
         0 | 2 => format!("{date} {}", format_time_12h(in_day)),
-        1 if f != 0 => {
+        1 => {
             let (h12, ap) = hour12(h);
             format!("{date} {h12:02}:{mi:02}:{s:02}{} {ap}", millis(f))
         }
+        // Format 3 shows the seconds, never the milliseconds (types/TestProbeTextDateFormatContracts.al:Format_StandardNumbers_DateTime).
+        3 => {
+            let (h12, ap) = hour12(h);
+            format!("{date} {h12:02}:{mi:02}:{s:02} {ap}")
+        }
         9 => format!("{y:04}-{m:02}-{d:02}T{h:02}:{mi:02}:{s:02}{}Z", millis(f)),
-        n => return Err(format!("Format of a DateTime with standard format {n} (not pinned)").into()),
+        n => return Err(no_such_format(n, "DateTime")),
     })
 }
 
@@ -439,7 +458,7 @@ fn format_duration(ms: i64, standard: i32) -> Result<String, FormatFail> {
             let frac = if frac.is_empty() { "0" } else { frac };
             Ok(format!("{sign}P{d}DT{h}H{m}M{s}.{frac}S"))
         }
-        n => Err(format!("Format of a Duration with standard format {n} (not pinned)").into()),
+        n => Err(no_such_format(n, "Duration")),
     }
 }
 
@@ -479,14 +498,8 @@ fn format_date(day: i32, closing: bool, standard: i32) -> Result<String, FormatF
         5 => format!("{m:02}{d:02}{yy:02}"),
         6 => format!("{yy:02}{m:02}{d:02}"),
         7 => format!("{} {d}, {y}", &month[..3]),
-        8 => {
-            return Err(FormatFail::Error {
-                message: "Standard format number 8 does not exist for the type 'Date'.".into(),
-                code: "InvalidStandardFormat".into(),
-            });
-        }
         9 => format!("{y:04}-{m:02}-{d:02}"),
-        n => return Err(format!("Format of a Date with standard format {n} (not pinned)").into()),
+        n => return Err(no_such_format(n, "Date")),
     })
 }
 

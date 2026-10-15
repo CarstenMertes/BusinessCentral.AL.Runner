@@ -369,6 +369,35 @@ fn an_unregistered_member_of_a_registered_type_is_refused_by_name_not_forwarded(
     assert_eq!(host.log(), vec![]);
 }
 
+/// `--environment` (owner decision 2026-10-15): the tenant helper answers what the chosen server
+/// answers. SaaS is the probed oracle tier (IsSandbox Yes, IsProduction No, name ''); on-prem is
+/// IsSandbox No and IsProduction Yes (an unprobed assumption required by Microsoft's codeunit
+/// 134614, which expects IsSaaS false until the test library sets it).
+#[test]
+fn the_tenant_helper_follows_the_environment_of_the_host() {
+    let answers = |env: Option<al_host::Environment>| {
+        let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
+        let (program, blocked, oi, ri) = compile(
+            "H: DotNet NavTenantSettingsHelper;",
+            "exit(Format(H.IsSandbox()) + Format(H.IsProduction()));",
+            ": Text",
+        );
+        let engine = Engine::with_dotnet(program, blocked, cfg(&host));
+        let mut s = match env {
+            None => Session::new(engine),
+            Some(e) => Session::with_host(engine, al_host::Host::default().in_environment(e)),
+        };
+        let inst = s.instance(oi);
+        match s.call(oi, ri, inst, vec![]).map(|(v, _)| v) {
+            Ok(Value::Text(t)) => t,
+            other => panic!("{other:?}"),
+        }
+    };
+    assert_eq!(answers(None), "YesNo", "the default is the probed SaaS-like sandbox");
+    assert_eq!(answers(Some(al_host::Environment::Saas)), "YesNo");
+    assert_eq!(answers(Some(al_host::Environment::OnPrem)), "NoYes");
+}
+
 #[test]
 fn a_registry_member_without_a_pin_does_not_build() {
     fn nothing(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: &[Value]) -> Result<Value, Signal> {

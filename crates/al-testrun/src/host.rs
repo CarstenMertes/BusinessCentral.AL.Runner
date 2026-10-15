@@ -43,10 +43,18 @@ pub fn set_files_dir(dir: PathBuf) {
     let _ = FILES_DIR.set(dir);
 }
 
+/// The environment `--environment` named. Set once at start-up; the default is the probed SaaS-like sandbox.
+static ENVIRONMENT: OnceLock<al_host::Environment> = OnceLock::new();
+
+/// `--environment saas|onprem` (owner decision 2026-10-15, ADR-014 amendment).
+pub fn set_environment(environment: al_host::Environment) {
+    let _ = ENVIRONMENT.set(environment);
+}
+
 /// The real clock and AL Runner's identity, on the file system the command line chose: memory,
-/// unless `--files-dir` named a directory.
+/// unless `--files-dir` named a directory, on the environment `--environment` named.
 pub fn system_host() -> Host {
-    let host = Host::new(SystemClock, AlRunnerIdentity);
+    let host = Host::new(SystemClock, AlRunnerIdentity).in_environment(ENVIRONMENT.get().copied().unwrap_or_default());
     match FILES_DIR.get() {
         Some(dir) => host.with_files(DirFileSystem::new(dir.clone())),
         None => host,

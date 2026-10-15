@@ -337,6 +337,11 @@ pub struct ReportExtModify {
     pub before_pre: Option<usize>,
     #[serde(default)]
     pub after_pre: Option<usize>,
+    /// `OnBeforePostDataItem` and `OnAfterPostDataItem` around the base item's `OnPostDataItem`.
+    #[serde(default)]
+    pub before_post: Option<usize>,
+    #[serde(default)]
+    pub after_post: Option<usize>,
 }
 
 /// A data item added by `addlast`: under a base item, or (`item.parent`) under another added item.

@@ -312,16 +312,14 @@ impl Session {
 
     /// Before a Delete stores. Nothing is refused: the rows the platform's cascade also empties are
     /// the User Property row (pinned, TestUserDeleteCascadeOrder.al:26-84) and the Access Control rows
-    /// ([`Session::user_after_delete`], an assumption Microsoft's tests need).
+    /// ([`Session::user_after_delete`], pinned by onprem session/PZUserDelete.al).
     pub(crate) fn user_before_delete(&mut self, _t: &TableDef, _rec: &crate::records::Rec) -> Result<(), Signal> {
         Ok(())
     }
 
     /// After the User row is deleted: its User Property row goes (TestUserDeleteCascadeOrder.al:26-84),
-    /// and so do its Access Control rows. The second is an UNPROBED ASSUMPTION required by Microsoft's own
-    /// test (rule 3 exception, owner 2026-10-15): codeunit 134614 "Test App Permissions" deletes all users in
-    /// `InitializeData`, creates a super user and three more, and passes in Microsoft's CI only if the
-    /// deleted users' roles are gone. Probe: docs/probes-needed.md "User delete cascade to Access Control".
+    /// and so do its Access Control rows, with and without RunTrigger (onprem session/PZUserDelete.al:
+    /// DeleteUser_WithRunTrigger_RemovesItsAccessControlRows, DeleteUser_WithoutRunTrigger_AccessControlRows, BC 29.0).
     pub(crate) fn user_after_delete(&mut self, t: &TableDef, rec: &crate::records::Rec) -> Result<(), Signal> {
         let sid = rec.borrow().fields[pos(t, F_SID)].clone();
         let cx = self.cx.clone();

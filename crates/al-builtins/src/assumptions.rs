@@ -139,12 +139,6 @@ registry! {
         tests: "Find Record Management.FindRecordByDescriptionAndView; 12 Tests-SCM tests.",
         probe: "The Record.FilterGroup test through RecordRef.Open, FieldRef.SetRange and RecordRef.GetFilters.",
     },
-    ReportExtLocalProcedure => {
-        id: "reportext-local-procedure",
-        assumed: "A local procedure of a reportextension runs on the instance that runs the calling trigger, which holds the extension's variables and added data items.",
-        tests: "Serv. Get Source Documents (local IntegrationEvent publishers), Serv. Suggest Worksheet Lines; about 2000 bucket tests.",
-        probe: "A reportextension with an added data item, a global variable and local procedures that read both, run with Run and SaveAs.",
-    },
     DatabaseSidNumbers => {
         id: "database-sid-numbers",
         assumed: "Database.SID answers S-1-5-21-a-b-c-rid with a fixed domain part and a stable hash of the name as the rid.",

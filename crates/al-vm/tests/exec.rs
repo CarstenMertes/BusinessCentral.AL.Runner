@@ -541,3 +541,19 @@ fn evaluate_into_an_enum_reads_names_captions_and_ordinals() {
             S += Format(Evaluate(K, 'Nope')) + Format(Evaluate(K, '7')) + Format(K, 0, 2); exit(S); end; }";
     assert_eq!(text(run(src, "F", vec![])), "Yes5,Yes5,Yes,Yes5,YesYes,NoYes7");
 }
+
+#[test]
+fn a_constant_gives_the_same_value_every_time_it_is_evaluated() {
+    // A Decimal keeps its scale, a text is the text, an Option member is the member (constants are built once per session).
+    let src = cu(
+        "procedure D(): Decimal var i: Integer; d: Decimal; begin for i := 1 to 3 do d := 1.50; exit(d); end;
+        procedure T(): Text var i: Integer; t: Text; begin for i := 1 to 3 do t := t + 'ab'; exit(t); end;
+        procedure N(): Integer var i: Integer; n: Integer; begin for i := 1 to 4 do n += 2; exit(n); end;",
+    );
+    match run(&src, "D", vec![]) {
+        Ok(Value::Decimal(d)) => assert_eq!((d.to_string(), d.scale()), ("1.50".to_string(), 2)),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(text(run(&src, "T", vec![])), "ababab");
+    assert_eq!(int(run(&src, "N", vec![])), 8);
+}

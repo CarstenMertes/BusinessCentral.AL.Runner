@@ -294,6 +294,10 @@ pub struct Session {
     pub(crate) capture: Option<Box<capture::Capture>>,
     /// A capture is on and the routine running is one of the run's apps: the only thing the statements test (one byte).
     pub(crate) capturing: bool,
+    /// The constants of the program that cost something to build (a Decimal parsed from its text, a shared text, an
+    /// Option's member list), built the first time a node is evaluated, by the address of the node: the program does not
+    /// change while the session runs.
+    constants: std::collections::HashMap<usize, Value, PtrHash>,
     /// Set from another thread to stop the AL code of this session: every loop iteration checks it
     /// and ends the running test with `Signal::Unsupported` (the runner's per-test time limit).
     pub(crate) stop: Arc<std::sync::atomic::AtomicBool>,
@@ -470,6 +474,7 @@ impl Session {
             scratch_messages: None,
             capture: None,
             capturing: false,
+            constants: Default::default(),
             stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             commits: 0,
             error_scopes: Default::default(),
@@ -1250,7 +1255,7 @@ impl Session {
     fn eval(&mut self, e: &ir::Expr, f: &mut Frame) -> Result<Value, Signal> {
         use ir::Expr as E;
         match e {
-            E::Const(c) => Ok(constant(c)),
+            E::Const(c) => Ok(self.constant_once(c)),
             E::Load(p) => self.read(p, f),
             E::Convert(t, e) => {
                 let v = self.eval(e, f)?;
@@ -2075,6 +2080,55 @@ fn int(v: &Value) -> Result<i64, Signal> {
 pub(crate) fn value_kind(v: &Value) -> String {
     let d = v.describe();
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
+}
+
+/// Hashes a node address: a multiply, where the default hasher reads eight bytes through SipHash.
+#[derive(Default, Clone, Copy)]
+pub(crate) struct PtrHash(u64);
+
+impl std::hash::BuildHasher for PtrHash {
+    type Hasher = PtrHash;
+    fn build_hasher(&self) -> PtrHash {
+        PtrHash(0)
+    }
+}
+
+impl std::hash::Hasher for PtrHash {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        for b in bytes {
+            self.0 = (self.0.rotate_left(8) ^ u64::from(*b)).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+        }
+    }
+    fn write_usize(&mut self, n: usize) {
+        self.0 = (n as u64).wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    }
+}
+
+impl Session {
+    /// The value of a constant node. The ones that cost something to build are built once per session.
+    #[inline(always)]
+    fn constant_once(&mut self, c: &ir::Const) -> Value {
+        match c {
+            ir::Const::Integer(i) => Value::Integer(*i),
+            ir::Const::Boolean(b) => Value::Boolean(*b),
+            ir::Const::Decimal(_) | ir::Const::Text(_) | ir::Const::Option(..) => self.constant_cached(c),
+            other => constant(other),
+        }
+    }
+
+    #[inline(never)]
+    fn constant_cached(&mut self, c: &ir::Const) -> Value {
+        let key = c as *const ir::Const as usize;
+        if let Some(v) = self.constants.get(&key) {
+            return v.clone();
+        }
+        let v = constant(c);
+        self.constants.insert(key, v.clone());
+        v
+    }
 }
 
 fn constant(c: &ir::Const) -> Value {

@@ -109,9 +109,10 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).
         "executioncontext" => Some(&["Normal", "Install", "Upgrade"]),
-        // Only Standard is pinned (session/TestEnvironmentUserTenantContracts.al:247: a test run
-        // formats as `Standard`). The other members and all ordinals are not pinned.
-        "executionmode" => Some(&["Standard", "Debug", "Profile"]),
+        // Standard and Debug only (corpus must-not-compile 0010 to 0013 and 0019: Install, Uninstall, Upgrade,
+        // Report and Profile do not exist). A test run formats as `Standard`
+        // (session/TestEnvironmentUserTenantContracts.al:247); the ordinals are not pinned.
+        "executionmode" => Some(&["Standard", "Debug"]),
         // Only `LocalScope` is named by the corpus; the ordinals are not pinned.
         "notificationscope" => Some(&["LocalScope", "GlobalScope"]),
         "webserviceactionresultcode" => Some(&["None", "Get", "Created", "Updated", "Deleted"]),

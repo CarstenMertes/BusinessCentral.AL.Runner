@@ -112,6 +112,23 @@ fn an_imported_media_survives_modify_and_get() {
 }
 
 #[test]
+fn an_import_with_a_file_name_fills_the_field_like_the_other_forms() {
+    // Base Application's Document Attachment imports with `ImportStream(Stream, '', '', FileName)`
+    // ("description and mime-type are set empty and will be automatically set by platform code from
+    // the filename"). What the file name changes is visible only in the Tenant Media row, which this
+    // runtime does not read (ADR-017); the field and the bytes behave as in the three argument form
+    // (media/TestMediaSetPersistence.al:30-54).
+    let body = format!(
+        "Rec.Code := 'F1'; Rec.Insert(); {} id := Rec.Picture.ImportStream(ins, '', '', 'doc.pdf'); Rec.Modify();
+         {} Rec.Get('F1'); {} exit(a);",
+        feed("Rec", "bytes"),
+        yn("IsNullGuid(id)"),
+        yn("Rec.Picture.HasValue()")
+    );
+    assert_eq!(text("", &body).unwrap(), "NoYes");
+}
+
+#[test]
 fn an_import_is_not_saved_until_the_record_is() {
     // The field holds the media's id only once Modify wrote it: a second Get without it reads an
     // empty field (media/TestMediaEmptyMediaId.al:80-98 reads an empty field after Insert).
@@ -185,15 +202,7 @@ fn what_the_corpus_does_not_pin_is_refused() {
             "{body}: {r:?}"
         );
     };
-    // Importing into a field that already holds a value, in both types.
-    refused(
-        format!(
-            "Rec.Code := 'R1'; Rec.Insert(); {} Rec.Picture.ImportStream(ins, 'a'); {} Rec.Picture.ImportStream(ins, 'b'); exit('');",
-            feed("Rec", "x"),
-            feed("Rec", "y")
-        ),
-        "already has a value",
-    );
+    // A MediaSet that already has members.
     refused(
         format!(
             "Rec.Code := 'R2'; Rec.Insert(); {} Rec.Images.ImportStream(ins, 'a'); {} Rec.Images.ImportStream(ins, 'b'); exit('');",
@@ -211,4 +220,16 @@ fn what_the_corpus_does_not_pin_is_refused() {
         "Rec.Code := 'R4'; Rec.Insert(); Rec.Picture.ExportStream(outs); exit('');".into(),
         "empty field",
     );
+}
+
+// media/PXMediaFileName.al: importing into a Media field that already holds a value replaces it.
+#[test]
+fn importing_into_a_media_that_holds_a_value_replaces_it() {
+    let body = format!(
+        "Rec.Code := 'R1'; Rec.Insert(); {} Rec.Picture.ImportStream(ins, 'a'); {} Rec.Picture.ImportStream(ins, 'b');
+         Rec2.Src.CreateOutStream(outs); Rec.Picture.ExportStream(outs); Rec2.Src.CreateInStream(ins); ins.ReadText(a); exit(a);",
+        feed("Rec", "x"),
+        feed("Rec", "y")
+    );
+    assert_eq!(text("", &body).unwrap(), "y");
 }

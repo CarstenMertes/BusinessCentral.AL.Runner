@@ -272,6 +272,8 @@ pub struct PageState {
     pub window_from_start: bool,
     /// A read has run to the end of the view and read the last two rows once more.
     pub window_eof: bool,
+    /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
+    pub landing_first: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).
@@ -369,6 +371,7 @@ impl PageState {
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,
+            landing_first: false,
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),

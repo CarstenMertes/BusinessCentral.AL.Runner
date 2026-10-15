@@ -1,0 +1,135 @@
+name: Build packages
+
+# Builds alrunner for the three alpha targets, smoke tests each binary, packages it and attests it.
+# Used by release.yml (numbered alphas, and the dry run) and edge.yml (the rolling edge build).
+# Output: the artifact "packages" holding the archives and one SHA256SUMS. Nothing of Microsoft's
+# is built in or downloaded here: the smoke test runs a fixture project of this repository.
+
+on:
+  workflow_call:
+    inputs:
+      label:
+        description: Name used in the archive file names, for example "3.0.0-alpha.1" or "edge".
+        required: true
+        type: string
+      sha:
+        description: The commit to build.
+        required: true
+        type: string
+      attest:
+        description: Create a build provenance attestation for each archive.
+        required: false
+        type: boolean
+        default: true
+
+env:
+  CARGO_TERM_COLOR: always
+  # Thin LTO and stripped symbols for the shipped binaries (ADR-016). Set here, not in Cargo.toml,
+  # so local release builds keep their fast link.
+  CARGO_PROFILE_RELEASE_LTO: thin
+  CARGO_PROFILE_RELEASE_STRIP: symbols
+  ALRUNNER_COMMIT: ${{ inputs.sha }}
+
+jobs:
+  build:
+    name: build (${{ matrix.target }})
+    runs-on: ${{ matrix.os }}
+    permissions:
+      contents: read
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-unknown-linux-musl
+            os: ubuntu-latest
+            ext: tar.xz
+            # musl's allocator is slow, so this build links mimalloc (ADR-016).
+            features: --features mimalloc
+          - target: x86_64-pc-windows-msvc
+            os: windows-latest
+            ext: zip
+            features: ""
+          - target: aarch64-apple-darwin
+            os: macos-14
+            ext: tar.xz
+            features: ""
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          # The corpus is not needed to build or smoke test the binary.
+          submodules: false
+      - uses: dtolnay/rust-toolchain@1.98.1
+        with:
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: package-${{ matrix.target }}
+      - name: Install the musl C compiler (for mimalloc)
+        if: matrix.target == 'x86_64-unknown-linux-musl'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y musl-tools
+          echo "CC_x86_64_unknown_linux_musl=musl-gcc" >> "$GITHUB_ENV"
+      - name: Build
+        shell: bash
+        run: cargo build --release --locked -p alrunner-cli --target ${{ matrix.target }} ${{ matrix.features }}
+      - name: Smoke test
+        shell: bash
+        run: |
+          exe=target/${{ matrix.target }}/release/alrunner
+          [ "${{ matrix.ext }}" = zip ] && exe="$exe.exe"
+          release/smoke.sh "$exe"
+      - name: Package
+        shell: bash
+        run: |
+          name="alrunner-${{ inputs.label }}-${{ matrix.target }}"
+          mkdir -p stage dist
+          if [ "${{ matrix.ext }}" = zip ]; then
+            cp "target/${{ matrix.target }}/release/alrunner.exe" stage/
+          else
+            cp "target/${{ matrix.target }}/release/alrunner" stage/
+          fi
+          cp LICENSE stage/LICENSE
+          cp release/README.txt stage/README.txt
+          if [ "${{ matrix.ext }}" = zip ]; then
+            (cd stage && 7z a -tzip "../dist/$name.zip" . > /dev/null)
+          else
+            tar -C stage -cJf "dist/$name.tar.xz" .
+          fi
+          ls -l dist
+      - name: Attest build provenance
+        if: inputs.attest
+        uses: actions/attest-build-provenance@v2
+        with:
+          subject-path: dist/*
+      - uses: actions/upload-artifact@v4
+        with:
+          name: package-${{ matrix.target }}
+          path: dist/*
+          if-no-files-found: error
+
+  checksums:
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.sha }}
+          submodules: false
+      - uses: actions/download-artifact@v4
+        with:
+          pattern: package-*
+          path: dist
+          merge-multiple: true
+      - name: SHA256SUMS and install scripts
+        run: |
+          cp release/install.sh release/install.ps1 dist/
+          (cd dist && sha256sum alrunner-*.tar.xz alrunner-*.zip > SHA256SUMS && cat SHA256SUMS)
+      - uses: actions/upload-artifact@v4
+        with:
+          name: packages
+          path: dist/*
+          if-no-files-found: error

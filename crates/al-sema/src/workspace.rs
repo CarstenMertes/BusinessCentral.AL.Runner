@@ -3,7 +3,7 @@
 
 use al_syntax::ast;
 use rayon::prelude::*;
-use std::collections::{BTreeSet, HashMap};
+use std::collections::{BTreeSet, HashMap, HashSet};
 use std::sync::OnceLock;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
@@ -274,6 +274,9 @@ pub struct Workspace {
     flakes: std::sync::Mutex<Vec<String>>,
     /// Once set, the dependency objects that take part in the compile (see `restrict_to`).
     compiled: OnceLock<Vec<bool>>,
+    /// Once set (`Roots::reach_only`): the (object, routine offset) of the workspace procedures that
+    /// no selected test names; they are not checked and compile to stubs that refuse.
+    unreached: OnceLock<HashSet<(usize, usize)>>,
     /// Per app: how to read a file of a dependency app whose `files` hold no text (`load_apps_lazy`).
     loaders: Vec<Option<std::sync::Arc<dyn SourceLoader>>>,
     /// Per file: the text a loader gave, kept so a file is read once.
@@ -335,6 +338,7 @@ impl Workspace {
             usable_cache: Vec::new(),
             flakes: Default::default(),
             compiled: OnceLock::new(),
+            unreached: OnceLock::new(),
             loaders,
             lazy_text: Vec::new(),
         };
@@ -714,6 +718,16 @@ impl Workspace {
         let _ = self.compiled.set(compiled);
     }
 
+    /// Records the procedures a reach-only compile leaves out. Set once.
+    pub fn set_unreached(&self, unreached: HashSet<(usize, usize)>) {
+        let _ = self.unreached.set(unreached);
+    }
+
+    /// Whether the routine at `offset` of object `oi` was left out as unreached.
+    pub fn routine_unreached(&self, oi: usize, offset: usize) -> bool {
+        self.unreached.get().is_some_and(|u| u.contains(&(oi, offset)))
+    }
+
     /// Whether object `i` takes part in the compile: not a dependency's, or not left out by `restrict_to`.
     fn in_compile(&self, i: usize) -> bool {
         match self.compiled.get() {
@@ -769,8 +783,14 @@ impl Workspace {
 
     /// The files that were parsed after load and did not parse cleanly, as (path, message).
     pub fn lazy_parse_problems(&self) -> Vec<(String, String)> {
+        self.lazy_parse_problems_from(0)
+    }
+
+    /// [`lazy_parse_problems`](Self::lazy_parse_problems) for the files of the apps from index `first_app` on.
+    pub fn lazy_parse_problems_from(&self, first_app: usize) -> Vec<(String, String)> {
         self.files
             .iter()
+            .filter(|f| f.app >= first_app)
             .filter_map(|f| Some((f.path.clone(), f.problem.get()?.clone()?)))
             .collect()
     }
@@ -1023,52 +1043,64 @@ impl Workspace {
         root.children().filter_map(ast::Object::cast).nth(o.ordinal)
     }
 
+    /// Checks every object-name reference of the workspace's own objects. The objects are
+    /// independent (each reads the object index, which is complete before this runs), so they
+    /// run on all cores. `collect` keeps the objects in index order and the diagnostics of one
+    /// object in the order the serial loop produced them, so the list does not depend on the
+    /// number of threads (the final sort by file and offset is stable).
     fn resolve_references(&mut self) {
+        let per_object: Vec<Vec<Diagnostic>> = self
+            .objects
+            .par_iter()
+            .map(|o| self.unresolved_references_of(o))
+            .collect();
+        self.diagnostics.extend(per_object.into_iter().flatten());
+    }
+
+    fn unresolved_references_of(&self, o: &ObjectSym) -> Vec<Diagnostic> {
         let mut diags = Vec::new();
-        for o in &self.objects {
-            let file = &self.files[o.file];
-            // A dependency app compiled; its references are resolved when its code is used.
-            if file.lazy {
-                continue;
-            }
-            let Some(obj) = self.object_node(o) else {
-                continue;
+        let file = &self.files[o.file];
+        // A dependency app compiled; its references are resolved when its code is used.
+        if file.lazy {
+            return diags;
+        }
+        let Some(obj) = self.object_node(o) else {
+            return diags;
+        };
+        let node = obj.syntax().clone();
+        let mut check = |kind: ObjKind, parts: &[String], offset: usize| {
+            let name = parts.join(".");
+            let (code, message) = match self.resolve_ref(o.file, kind, parts) {
+                Resolution::Found(_) => return,
+                Resolution::Missing => ("AR0002", format!("unresolved {} `{name}`", kind.label())),
+                Resolution::Ambiguous(c) => (
+                    "AR0003",
+                    format!("ambiguous {} `{name}` ({} candidates)", kind.label(), c.len()),
+                ),
             };
-            let node = obj.syntax().clone();
-            let mut check = |kind: ObjKind, parts: &[String], offset: usize| {
-                let name = parts.join(".");
-                let (code, message) = match self.resolve_ref(o.file, kind, parts) {
-                    Resolution::Found(_) => return,
-                    Resolution::Missing => ("AR0002", format!("unresolved {} `{name}`", kind.label())),
-                    Resolution::Ambiguous(c) => (
-                        "AR0003",
-                        format!("ambiguous {} `{name}` ({} candidates)", kind.label(), c.len()),
-                    ),
-                };
-                diags.push(Diagnostic {
-                    file: file.path.clone(),
-                    offset,
-                    code,
-                    message,
-                });
-            };
-            let header_off = o.offset;
-            if let (Some(target), Some(base)) = (o.kind.extended(), obj.extends_parts()) {
-                check(target, &base, header_off);
-            }
-            for i in obj.implements_parts() {
-                check(ObjKind::Interface, &i, header_off);
-            }
-            for t in node.descendants().filter_map(ast::TypeRef::cast) {
-                if let Some(kind) = ObjKind::from_type_name(&t.type_name()) {
-                    let parts = t.object_name_parts();
-                    if !parts.is_empty() {
-                        check(kind, &parts, t.syntax().text_range().start().into());
-                    }
+            diags.push(Diagnostic {
+                file: file.path.clone(),
+                offset,
+                code,
+                message,
+            });
+        };
+        let header_off = o.offset;
+        if let (Some(target), Some(base)) = (o.kind.extended(), obj.extends_parts()) {
+            check(target, &base, header_off);
+        }
+        for i in obj.implements_parts() {
+            check(ObjKind::Interface, &i, header_off);
+        }
+        for t in node.descendants().filter_map(ast::TypeRef::cast) {
+            if let Some(kind) = ObjKind::from_type_name(&t.type_name()) {
+                let parts = t.object_name_parts();
+                if !parts.is_empty() {
+                    check(kind, &parts, t.syntax().text_range().start().into());
                 }
             }
         }
-        self.diagnostics.extend(diags);
+        diags
     }
 }
 
@@ -1561,6 +1593,54 @@ mod tests {
             ws.objects.iter().map(|o| (o.file, o.offset)).collect::<Vec<_>>(),
             again.objects.iter().map(|o| (o.file, o.offset)).collect::<Vec<_>>()
         );
+    }
+
+    #[test]
+    fn reference_diagnostics_keep_object_then_source_order_over_many_files() {
+        // `resolve_references` runs per object on all cores (owner decision 2026-10-15, ADR-026
+        // option 4). The list of diagnostics must be the list a serial loop gives: files in input
+        // order, within a file by offset, and several diagnostics of one object in the order of
+        // `extends`, `implements`, then type references in source order.
+        let files: Vec<(String, String)> = (0..300)
+            .map(|i| {
+                (
+                    format!("f{i:03}.al"),
+                    format!(
+                        "codeunit {} C{i} implements MissingI{i} {{ var R: Record MissingT{i}; L: List of [Codeunit MissingC{i}]; \
+                         procedure P(x: Page MissingP{i}) begin end; }}\n\
+                         tableextension {} E{i} extends MissingBase{i} {{ }}",
+                        50000 + i,
+                        70000 + i
+                    ),
+                )
+            })
+            .collect();
+        let mut want = Vec::new();
+        for i in 0..300 {
+            for (kind, name) in [
+                ("interface", format!("MissingI{i}")),
+                ("table", format!("MissingT{i}")),
+                ("codeunit", format!("MissingC{i}")),
+                ("page", format!("MissingP{i}")),
+                ("table", format!("MissingBase{i}")),
+            ] {
+                want.push(("AR0002", format!("unresolved {kind} `{name}`")));
+            }
+        }
+        let a = AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files,
+        };
+        for round in 0..10 {
+            let ws = load(vec![a.clone()]);
+            assert_eq!(codes(&ws), want, "round {round}");
+            let offsets: Vec<_> = ws.diagnostics.iter().map(|d| (d.file.clone(), d.offset)).collect();
+            let mut sorted = offsets.clone();
+            sorted.sort();
+            assert_eq!(offsets, sorted);
+        }
     }
 
     #[test]

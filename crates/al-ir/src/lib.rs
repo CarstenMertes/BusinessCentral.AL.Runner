@@ -154,7 +154,7 @@ pub enum DotNetOp {
     Set(String),
 }
 
-#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Object {
     /// `codeunit`, `table`, ...
     pub kind: String,
@@ -1142,6 +1142,9 @@ pub enum Expr {
     BaseInstance,
     /// `this` in a codeunit: the running instance as a Codeunit value.
     ThisInstance,
+    /// Code that lowers but refuses when it runs, with the reason (a call of a control add-in procedure:
+    /// control add-ins are not modelled).
+    Refused(String),
     /// `value is I` (`cast` false: a Boolean) or `value as I` (`cast` true: the same interface
     /// value) on an interface value. `objects` are the codeunits that implement `I`.
     InterfaceTest {

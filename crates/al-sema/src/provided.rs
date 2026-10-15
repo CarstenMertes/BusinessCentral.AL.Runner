@@ -65,6 +65,19 @@ pub struct DepBlock {
     pub calls: Vec<Vec<(u32, u32)>>,
 }
 
+impl DepBlock {
+    /// A block with nothing in it. A layer build marks the objects of the layers below as supplied
+    /// but never reads their lowered form (the lowering of other objects reads their facts), so it
+    /// does not decode their blocks.
+    pub fn placeholder() -> DepBlock {
+        DepBlock {
+            object: ir::Object::default(),
+            unsupported: Vec::new(),
+            calls: Vec::new(),
+        }
+    }
+}
+
 /// A set of lowered dependency objects, indexed like the objects of the dependency apps.
 pub trait DepSource: Sync {
     fn len(&self) -> usize;
@@ -101,6 +114,125 @@ impl DepSource for DepSet {
     }
     fn parse_problems(&self) -> &[(String, String)] {
         &self.parse_problems
+    }
+}
+
+/// One layer of a stacked set (owner decision 2026-10-15, ADR-022 amendment): the dependency apps
+/// are compiled in layers along their order. A layer holds the blocks of its own objects, which
+/// come after every object of the layers below (so their positions are the positions of a run
+/// that has all the layers), and a block for each object of a lower layer that its apps change
+/// (an extension, an implementer): the lowered form of that object with the layer present.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct DepLayer {
+    /// How many objects the layers below hold.
+    pub base_len: usize,
+    /// The program index of the object each slot of `set` describes, ascending: the overridden
+    /// objects (below `base_len`) first, then the layer's own, `base_len..`, with no gap.
+    pub objects: Vec<u32>,
+    /// Facts and blocks by slot. `parse_problems`: those of the layer's own files.
+    pub set: DepSet,
+}
+
+impl DepLayer {
+    /// A set that has nothing below it: the first layer.
+    pub fn whole(set: DepSet) -> DepLayer {
+        DepLayer {
+            base_len: 0,
+            objects: (0..set.facts.len() as u32).collect(),
+            set,
+        }
+    }
+}
+
+/// What [`Stack`] reads from one layer.
+pub trait LayerSource: Sync {
+    fn base_len(&self) -> usize;
+    /// The program index of each slot (see [`DepLayer::objects`]).
+    fn objects(&self) -> &[u32];
+    fn facts_at(&self, slot: usize) -> &DepFacts;
+    /// The block of `slot`, read and checked now.
+    fn block_at(&self, slot: usize) -> Result<DepBlock, String>;
+    fn parse_problems(&self) -> &[(String, String)];
+}
+
+impl LayerSource for DepLayer {
+    fn base_len(&self) -> usize {
+        self.base_len
+    }
+    fn objects(&self) -> &[u32] {
+        &self.objects
+    }
+    fn facts_at(&self, slot: usize) -> &DepFacts {
+        &self.set.facts[slot]
+    }
+    fn block_at(&self, slot: usize) -> Result<DepBlock, String> {
+        Ok(self.set.blocks[slot].clone())
+    }
+    fn parse_problems(&self) -> &[(String, String)] {
+        &self.set.parse_problems
+    }
+}
+
+/// The layers, lowest first, as one [`DepSource`]: an object comes from the highest layer that
+/// holds it.
+pub struct Stack<'a> {
+    layers: Vec<&'a dyn LayerSource>,
+    /// Per object: (layer, slot) of the highest layer that holds it.
+    at: Vec<(u32, u32)>,
+    problems: Vec<(String, String)>,
+}
+
+impl<'a> Stack<'a> {
+    /// An error says the layers do not fit each other (wrong order, a gap, an object out of range).
+    pub fn new(layers: Vec<&'a dyn LayerSource>) -> Result<Stack<'a>, String> {
+        let mut at: Vec<(u32, u32)> = Vec::new();
+        let mut problems = Vec::new();
+        for (li, l) in layers.iter().enumerate() {
+            if l.base_len() != at.len() {
+                return Err(format!(
+                    "layer {li} starts above {} objects, the layers below hold {}",
+                    l.base_len(),
+                    at.len()
+                ));
+            }
+            let base = at.len();
+            let mut own = 0usize;
+            let mut last: Option<u32> = None;
+            for (slot, &o) in l.objects().iter().enumerate() {
+                if last.is_some_and(|p| p >= o) {
+                    return Err(format!("layer {li}: objects are not ascending"));
+                }
+                last = Some(o);
+                let o = o as usize;
+                if o < base {
+                    at[o] = (li as u32, slot as u32);
+                } else if o == base + own {
+                    at.push((li as u32, slot as u32));
+                    own += 1;
+                } else {
+                    return Err(format!("layer {li}: object {o} leaves a gap"));
+                }
+            }
+            problems.extend(l.parse_problems().iter().cloned());
+        }
+        Ok(Stack { layers, at, problems })
+    }
+}
+
+impl DepSource for Stack<'_> {
+    fn len(&self) -> usize {
+        self.at.len()
+    }
+    fn facts(&self, object: usize) -> &DepFacts {
+        let (l, s) = self.at[object];
+        self.layers[l as usize].facts_at(s as usize)
+    }
+    fn block(&self, object: usize) -> Result<DepBlock, String> {
+        let (l, s) = self.at[object];
+        self.layers[l as usize].block_at(s as usize)
+    }
+    fn parse_problems(&self) -> &[(String, String)] {
+        &self.problems
     }
 }
 
@@ -431,5 +563,186 @@ codeunit 60031 WBar implements IWork { procedure Bump(): Integer begin exit(3); 
         assert!(*one.program == *many.program, "the programs differ");
         assert!(one.unsupported == many.unsupported, "the refusals differ");
         assert!(one.program.objects.len() > 150);
+    }
+
+    // ---- layers (owner decision 2026-10-15) ----
+
+    /// The layers of `layers` (each a list of apps, lowest first) built one on the other, and the
+    /// complete compile of all the apps: the stack must give the same facts, blocks and parse
+    /// problems for every object. Returns the number of objects a layer above the first overrides.
+    pub(crate) fn assert_stack_equals_complete(layers: Vec<Vec<AppSource>>) -> usize {
+        use crate::provided::{DepLayer, Stack};
+        let symbols = BTreeSet::new();
+        let mut all: Vec<AppSource> = Vec::new();
+        let mut built: Vec<DepLayer> = Vec::new();
+        let mut overrides = 0;
+        for apps in layers {
+            let below = all.len();
+            all.extend(apps);
+            if built.is_empty() {
+                built.push(DepLayer::whole(lower_for_cache(all.clone(), &symbols, None)));
+            } else {
+                let refs: Vec<&dyn LayerSource> = built.iter().map(|l| l as &dyn LayerSource).collect();
+                let stack = Stack::new(refs).expect("the layers fit");
+                let layer =
+                    crate::lower::lower_layer(all.clone(), below, &symbols, None, &stack).expect("a layer builds");
+                overrides += layer.objects.iter().filter(|&&o| (o as usize) < layer.base_len).count();
+                built.push(layer);
+            }
+        }
+        let complete = lower_for_cache(all, &symbols, None);
+        let refs: Vec<&dyn LayerSource> = built.iter().map(|l| l as &dyn LayerSource).collect();
+        let stack = Stack::new(refs).expect("the layers fit");
+        assert_eq!(stack.len(), complete.facts.len());
+        for oi in 0..stack.len() {
+            assert!(
+                stack.facts(oi) == &complete.facts[oi],
+                "facts of object {oi} `{}` differ",
+                complete.facts[oi].name
+            );
+            assert!(
+                stack.block(oi).unwrap() == complete.blocks[oi],
+                "block of object {oi} `{}` differs",
+                complete.facts[oi].name
+            );
+        }
+        assert_eq!(stack.parse_problems(), &complete.parse_problems[..]);
+        overrides
+    }
+
+    use crate::provided::LayerSource;
+
+    #[test]
+    fn a_layer_that_changes_nothing_below_it_overrides_nothing() {
+        let overrides = assert_stack_equals_complete(vec![
+            vec![app("d1", &[], BASE)],
+            vec![app(
+                "p",
+                &["d1"],
+                "codeunit 60000 C { procedure P(): Integer begin exit(1); end; }",
+            )],
+        ]);
+        assert_eq!(overrides, 0);
+    }
+
+    #[test]
+    fn a_layer_with_a_table_extension_overrides_the_table_and_what_embeds_it() {
+        let overrides =
+            assert_stack_equals_complete(vec![vec![app("d1", &[], BASE)], vec![app("p", &["d1"], TABLE_EXT)]]);
+        assert!(overrides >= 1, "the table is lowered again with the layer");
+    }
+
+    #[test]
+    fn a_layer_with_extensions_and_implementers_equals_the_complete_compile() {
+        let overrides = assert_stack_equals_complete(vec![
+            vec![
+                app("d1", &[], BASE),
+                app("d2", &["d1"], OTHER),
+                app("d3", &["d1"], MORE),
+            ],
+            vec![app("p", &["d1", "d2", "d3"], EVERYTHING)],
+        ]);
+        assert!(
+            overrides >= 4,
+            "table, page, interface users and the enum ({overrides})"
+        );
+    }
+
+    #[test]
+    fn a_layer_that_extends_and_implements_what_a_layer_below_it_added() {
+        // Three layers: the third extends the table the second extended, and implements the
+        // interface the first declared, so it overrides objects of both lower layers.
+        assert_stack_equals_complete(vec![
+            vec![app("d1", &[], BASE)],
+            vec![app("p", &["d1"], EVERYTHING)],
+            vec![app(
+                "q",
+                &["d1", "p"],
+                r#"
+tableextension 61000 QT extends T { fields { field(30; QX; Integer) { } } }
+pageextension 61001 QP extends P { layout { addlast(Content) { field(QXC; Rec.QX) { } } } }
+codeunit 61002 QImpl implements IFoo { procedure Bump(): Integer begin exit(3); end; }
+enumextension 61003 QE extends E { value(2; Z) { Implementation = IFoo = QImpl; } }
+codeunit 61004 QUse { procedure W() var R: Record T; begin R.QX := 1; R.WX := 2; R.DX := 3; end; }
+"#,
+            )],
+        ]);
+    }
+
+    #[test]
+    fn layers_for_queries_pages_parts_and_reports() {
+        assert_stack_equals_complete(vec![
+            vec![app("d1", &[], BASE), app("d3", &["d1"], MORE)],
+            vec![app("p", &["d1", "d3"], EXTENDS_REPORT_AND_INTERFACE)],
+            vec![app("q", &["d1", "d3", "p"], EXTENDS_A_PART_PAGE)],
+        ]);
+    }
+
+    #[test]
+    fn a_stack_refuses_layers_that_do_not_fit_each_other() {
+        use crate::provided::{DepLayer, Stack};
+        let one = DepLayer::whole(lower_for_cache(vec![app("d1", &[], BASE)], &BTreeSet::new(), None));
+        let again = one.clone();
+        // The second layer claims to start above 0 objects.
+        let refs: Vec<&dyn LayerSource> = vec![&one, &again];
+        assert!(Stack::new(refs).is_err());
+        let mut gap = DepLayer {
+            base_len: one.set.facts.len(),
+            objects: vec![one.set.facts.len() as u32 + 1],
+            set: DepSet::default(),
+        };
+        gap.set.facts.push(one.set.facts[0].clone());
+        gap.set.blocks.push(one.set.blocks[0].clone());
+        let refs: Vec<&dyn LayerSource> = vec![&one, &gap];
+        assert!(Stack::new(refs).is_err());
+    }
+
+    /// A workspace on top of a stack of layers: the same program, refusals and call graph as the
+    /// eager compile of all the apps.
+    #[test]
+    fn a_workspace_on_a_stack_of_layers_equals_the_eager_compile() {
+        use crate::provided::{DepLayer, Stack};
+        let symbols = BTreeSet::new();
+        let l1 = vec![
+            app("d1", &[], BASE),
+            app("d2", &["d1"], OTHER),
+            app("d3", &["d1"], MORE),
+        ];
+        let mut l12 = l1.clone();
+        l12.push(app("p", &["d1", "d2", "d3"], EVERYTHING));
+        let base = DepLayer::whole(lower_for_cache(l1.clone(), &symbols, None));
+        let refs: Vec<&dyn LayerSource> = vec![&base];
+        let layer =
+            crate::lower::lower_layer(l12.clone(), l1.len(), &symbols, None, &Stack::new(refs).unwrap()).unwrap();
+        let refs: Vec<&dyn LayerSource> = vec![&base, &layer];
+        let stack = Stack::new(refs).unwrap();
+        let ws_app = app(
+            "w",
+            &["d1", "p"],
+            "tableextension 70000 WT2 extends T { fields { field(40; W2; Integer) { } } }\ncodeunit 70001 W { procedure G() var R: Record T; begin R.W2 := 1; R.WX := 2; end; }",
+        );
+        let mut apps = l12.clone();
+        apps.push(ws_app);
+        let kinds: Vec<AppKind> = (0..apps.len())
+            .map(|i| {
+                if i < l12.len() {
+                    AppKind::Dependency
+                } else {
+                    AppKind::Workspace
+                }
+            })
+            .collect();
+        let roots = Roots {
+            eager: true,
+            ..Default::default()
+        };
+        let (_, eager) = compile_apps_with(apps.clone(), kinds.clone(), &symbols, None, roots.clone());
+        let (_, cached) = compile_apps_cached(apps, kinds, &symbols, None, roots, &stack)
+            .map_err(|e| e.1)
+            .expect("the layers fit");
+        assert!(*eager.program == *cached.program, "the programs differ");
+        assert!(eager.unsupported == cached.unsupported, "the refusals differ");
+        assert!(calls(&eager) == calls(&cached), "the call graphs differ");
+        assert_eq!(eager.dependency, cached.dependency);
     }
 }

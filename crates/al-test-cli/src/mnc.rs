@@ -180,6 +180,7 @@ pub fn run_case(case: &Case, bc_major: u16) -> Outcome {
         target: case.target,
         runtime: case.appjson_runtime.or(Some((16, 0))),
         app_json_keys: case.appjson_keys.clone(),
+        bc_major: Some(major),
     };
     let mut got: Vec<(String, String)> = checked
         .diagnostics

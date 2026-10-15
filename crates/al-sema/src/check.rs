@@ -243,6 +243,13 @@ pub struct Roots {
     /// (its routines are stubs that refuse), so the demand starts from the selected tests and the
     /// workspace's non-test code only. `None`: every test codeunit is a root.
     pub only_tests: Option<Vec<(usize, u32)>>,
+    /// With `only_tests`: a procedure of a workspace codeunit (one with no Subtype) that no selected
+    /// test names, directly or through the procedures it names, is neither checked nor compiled (a
+    /// stub that refuses). Names are matched by spelling, so the set is a superset of what can be
+    /// called. Triggers, event subscribers and codeunits with a Subtype always stay. For the compile
+    /// that weighs whether a pure test needs the install baseline: code beside the test that touches
+    /// tables must not drag the dependency apps in.
+    pub reach_only: bool,
     /// Check and lower every dependency routine instead of what the workspace reaches. The
     /// environment variable `AL_EAGER_DEPENDENCIES` does the same for a whole process. Used to
     /// compare the demand-driven compile with the complete one (outcomes must not differ).
@@ -260,9 +267,12 @@ pub struct Roots {
 }
 
 /// Members that platform enums do not have, as the AL compiler says (corpus must-not-compile 0010
-/// to 0013, BC 27.5: ExecutionMode has Standard and Debug). Only members a case pins are listed;
+/// to 0013 and 0019, BC 27.5: ExecutionMode has Standard and Debug). Only members a case pins are listed;
 /// the member lists in `al_builtins::sysenum` are not complete enough to judge a name absent.
-const ABSENT_ENUM_MEMBERS: &[(&str, &[&str])] = &[("ExecutionMode", &["Install", "Uninstall", "Upgrade", "Report"])];
+const ABSENT_ENUM_MEMBERS: &[(&str, &[&str])] = &[(
+    "ExecutionMode",
+    &["Install", "Uninstall", "Upgrade", "Report", "Profile"],
+)];
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
     check_with(ws, members, catalog, Roots::default())
@@ -279,6 +289,9 @@ pub fn check_with(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog, 
         Some(keep) => (0..ws.objects.len()).map(|oi| unselected_test(ws, oi, keep)).collect(),
     };
     let skip = |oi: usize| skipped.get(oi).copied().unwrap_or(false);
+    if roots.reach_only && roots.only_tests.is_some() {
+        ws.set_unreached(unreached_routines(ws, &skip));
+    }
     let provided = |oi: usize| roots.provided.get(oi).copied().unwrap_or(false);
     let mut timings = CheckTimings::default();
     let mut c = Checker::new(ws, members, catalog, system_enums(catalog), demand_mode);
@@ -383,6 +396,70 @@ fn check_workers() -> usize {
         .and_then(|v| v.parse().ok())
         .unwrap_or_else(|| std::thread::available_parallelism().map_or(1, |n| n.get()))
         .clamp(1, 32)
+}
+
+/// The procedures of the workspace's normal codeunits that no root names (`Roots::reach_only`). The
+/// roots are every other routine of the objects that are checked: test codeunits, triggers, event
+/// subscribers, objects that are not normal codeunits. A name in a root's text, or in the text of a
+/// procedure so named, makes every procedure of that name reachable.
+fn unreached_routines(ws: &Workspace, skip: &dyn Fn(usize) -> bool) -> HashSet<(usize, usize)> {
+    let names_in = |r: &ast::Routine| -> HashSet<String> {
+        r.syntax()
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|t| matches!(t.kind(), SyntaxKind::Ident | SyntaxKind::QuotedIdent))
+            .map(|t| ast::ident_text(&t).to_lowercase())
+            .collect()
+    };
+    // Free procedures by lower-case name; the rest are roots.
+    let mut free: HashMap<String, Vec<(usize, usize, HashSet<String>)>> = HashMap::new();
+    let mut wanted: HashSet<String> = HashSet::new();
+    for oi in 0..ws.objects.len() {
+        if ws.is_dependency(oi) || skip(oi) {
+            continue;
+        }
+        let obj = ws.object_ast(oi);
+        let normal_codeunit = ws.objects[oi].kind == ObjKind::Codeunit
+            && !obj.properties().any(|p| p.name().eq_ignore_ascii_case("Subtype"));
+        for r in ast::routines_in(obj.syntax()) {
+            let is_root = !normal_codeunit
+                || r.is_trigger()
+                || r.attributes().any(|a| {
+                    let n = a.name();
+                    n.eq_ignore_ascii_case("EventSubscriber") || n.to_ascii_lowercase().ends_with("event")
+                });
+            let names = names_in(&r);
+            if is_root {
+                wanted.extend(names);
+            } else {
+                let offset = usize::from(r.syntax().text_range().start());
+                free.entry(r.name().to_lowercase())
+                    .or_default()
+                    .push((oi, offset, names));
+            }
+        }
+    }
+    let mut reached: HashSet<(usize, usize)> = HashSet::new();
+    let mut queue: Vec<String> = wanted.iter().cloned().collect();
+    let mut asked: HashSet<String> = wanted;
+    while let Some(name) = queue.pop() {
+        if let Some(rs) = free.get(&name) {
+            for (oi, offset, names) in rs {
+                if reached.insert((*oi, *offset)) {
+                    for n in names {
+                        if asked.insert(n.clone()) {
+                            queue.push(n.clone());
+                        }
+                    }
+                }
+            }
+        }
+    }
+    free.into_values()
+        .flatten()
+        .map(|(oi, offset, _)| (oi, offset))
+        .filter(|k| !reached.contains(k))
+        .collect()
 }
 
 /// Whether object `oi` is a test codeunit of a workspace app that `keep` (app index, id) leaves out.
@@ -939,6 +1016,9 @@ impl<'a> Checker<'a> {
         let obj = self.ws.object_ast(oi);
         for r in ast::routines_in(obj.syntax()) {
             let offset = usize::from(r.syntax().text_range().start());
+            if self.ws.routine_unreached(oi, offset) {
+                continue;
+            }
             self.guard((oi, offset), |c| c.check_routine_in(&ctx, &r));
         }
         // What the test client does when it opens a workspace page or report, and what its actions
@@ -957,6 +1037,42 @@ impl<'a> Checker<'a> {
                 self.activate_source_table(oi);
             }
         }
+    }
+
+    /// The locals of routine `r` (by lower-case name) that are records of a platform table and are
+    /// named in the body only as `Name.Field` with `Field` a field of that table: nothing is asked
+    /// of the table, so the variable does not stand for its rows.
+    fn field_only_records(&self, file: usize, r: &ast::Routine, locals: &HashMap<String, Ty>) -> HashSet<String> {
+        let mut out = HashSet::new();
+        let Some(body) = r.body() else { return out };
+        for (name, t) in locals {
+            let Ty::Record { table, .. } = t else { continue };
+            let Some(ti) = self.resolve_quiet(file, ObjKind::Table, table) else {
+                continue;
+            };
+            if !self.ws.platform_table(ti) {
+                continue;
+            }
+            let only_fields = body
+                .descendants()
+                .filter(|n| n.kind() == SyntaxKind::NameRef && name_of(n).eq_ignore_ascii_case(name))
+                .all(|n| {
+                    let Some(p) = n.parent().filter(|p| p.kind() == SyntaxKind::MemberExpr) else {
+                        return false;
+                    };
+                    let mut kids = p.children();
+                    let (Some(base), Some(member)) = (kids.next(), kids.next()) else {
+                        return false;
+                    };
+                    base == n
+                        && self.members[ti].field(&name_of(&member)).is_some()
+                        && !p.parent().is_some_and(|g| g.kind() == SyntaxKind::CallExpr)
+                });
+            if only_fields {
+                out.insert(name.clone());
+            }
+        }
+        out
     }
 
     /// Checks one routine of the object `ctx` describes.
@@ -1027,8 +1143,21 @@ impl<'a> Checker<'a> {
                     locals.insert(n.to_lowercase(), ty.clone());
                 }
             }
-            // The types of everything in scope are used by the code that runs here.
-            for t in locals.values().chain(sc.rec.iter()) {
+            // The types of everything in scope are used by the code that runs here. A record variable
+            // of a catalog table (`Field`, `Key`, ...) that only has its fields assigned and read is a
+            // buffer in memory: it reads no row, so the shapes of all the objects the table lists are
+            // not needed (Library Assert's TypeNameOf is such a routine).
+            let buffers = self.field_only_records(file, r, &locals);
+            for (name, t) in locals.iter() {
+                if buffers.contains(name) {
+                    if let Ty::Record { table, .. } = t {
+                        self.resolve_at(file, ObjKind::Table, table);
+                    }
+                } else {
+                    self.touch_ty(file, t);
+                }
+            }
+            for t in sc.rec.iter() {
                 self.touch_ty(file, t);
             }
             sc.vars.push(locals);
@@ -1089,9 +1218,14 @@ impl<'a> Checker<'a> {
         // AL0161 (corpus must-not-compile 0001, 0002; handlers/TestPageExtensionBaseAccessContracts.al,
         // header): a page extension names a base page variable that is not `protected`, or calls a
         // `local` base procedure. The extension's own variables and parameters were looked up first.
-        if kind == ObjKind::PageExtension {
+        let base_kind = match kind {
+            ObjKind::PageExtension => Some(ObjKind::Page),
+            ObjKind::ReportExtension => Some(ObjKind::Report),
+            _ => None,
+        };
+        if let Some(base_kind) = base_kind {
             if let Some(b) = self.ws.extension_target(sc.oi) {
-                if self.ws.objects[b].kind == ObjKind::Page {
+                if self.ws.objects[b].kind == base_kind {
                     let base = self.ws.object_ast(b);
                     let is_var = crate::base_access::declares_var(&base, &name);
                     let is_local_proc = base
@@ -1109,15 +1243,33 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            return;
         }
-        // AL0118 (corpus must-not-compile 0005): a call of a bare name in a codeunit without
-        // `TableNo` that is no procedure of the codeunit and no system function. Nothing else can
-        // supply a bare name there. Objects with an implicit record or a base object (tables,
-        // pages, reports, extensions) are not judged: members of what they extend are out of reach.
+        // AL0118 (corpus must-not-compile 0005, 0030 to 0033, 0059). A call of a bare name that nothing can
+        // supply:
+        // - in a codeunit without `TableNo` (no implicit record): no procedure of the codeunit and no system
+        //   function;
+        // - in a table, a page, a report or a page extension: the lookup above also tried the implicit
+        //   record, the base object and the system functions, but not every implicit member of those is
+        //   modelled, so the name must also be a method name that no type of the catalog has;
+        // - the name `Rec` (not a call) in a codeunit without `TableNo`.
         let is_callee =
             node.parent().is_some_and(|p| p.kind() == SyntaxKind::CallExpr) && node.prev_sibling().is_none();
-        if kind == ObjKind::Codeunit && sc.rec.is_none() && is_callee {
+        let judged = match kind {
+            // A bare call can also be a method of the Codeunit type called on the running instance: `Run()`
+            // runs the codeunit itself (it compiles in BC; NP Retail's scanner import codeunits call it).
+            ObjKind::Codeunit => {
+                sc.rec.is_none()
+                    && ((is_callee
+                        && self.catalog.overloads("Codeunit", &name).is_empty()
+                        && self.catalog.hidden("Codeunit", &name).is_empty())
+                        || name.eq_ignore_ascii_case("Rec"))
+            }
+            ObjKind::Table | ObjKind::Page | ObjKind::Report | ObjKind::PageExtension => {
+                is_callee && !self.catalog.knows_name(&name) && !self.sibling_extension_declares(sc.oi, &name)
+            }
+            _ => false,
+        };
+        if judged {
             self.diag(
                 sc,
                 node,
@@ -1125,6 +1277,48 @@ impl<'a> Checker<'a> {
                 format!("The name '{name}' does not exist in the current context."),
             );
         }
+    }
+
+    /// Whether another extension of the object that extension `oi` extends declares a procedure `name`. The
+    /// extensions of one page merge, so a page extension calls a public or `internal` procedure of a sibling
+    /// (Microsoft's Tests-TestLibraries UsersPBTTest.PageExt.al calls RefreshFactboxes of Base Application's
+    /// UsersPerfFactboxes.PageExt.al).
+    fn sibling_extension_declares(&self, oi: usize, name: &str) -> bool {
+        let Some(base) = self.ws.extension_target(oi) else {
+            return false;
+        };
+        self.ws.extensions_of(base).iter().filter(|&&e| e != oi).any(|&e| {
+            self.ws
+                .object_ast(e)
+                .routines()
+                .any(|r| r.name().eq_ignore_ascii_case(name))
+        })
+    }
+
+    /// AL0132 (corpus must-not-compile 0060, 0061): `R.Name` or `R.Name(...)` on a `Record` variable
+    /// whose table the workspace declares, where `Name` is no field of the table, no procedure of it and
+    /// no method of `Record` in any version of the catalog. A table that an extension adds fields to is
+    /// not judged (the fields of an extension that was not loaded are out of reach).
+    fn al_unknown_record_member(&mut self, sc: &Scope, node: &SyntaxNode, base: &Ty, name: &str) {
+        let Ty::Record { table, .. } = base else { return };
+        if self.ws.is_dependency(sc.oi) {
+            return;
+        }
+        let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {
+            return;
+        };
+        if !self.ws.extensions_of(ti).is_empty()
+            || !self.catalog.overloads("Record", name).is_empty()
+            || !self.catalog.hidden("Record", name).is_empty()
+        {
+            return;
+        }
+        self.diag(
+            sc,
+            node,
+            "AL0132",
+            format!("'Record \"{table}\"' does not contain a definition for '{name}'"),
+        );
     }
 
     /// The AR1002 text. On a builtin type it says the name is in no version of the
@@ -1444,6 +1638,24 @@ impl<'a> Checker<'a> {
                 let r = kids[0].text_range();
                 self.types
                     .insert((sc.file, r.start().into(), r.end().into()), base_ty.clone());
+                // `CurrPage.Update(true)` is the page's method even when the page has an action or control of
+                // that name (System Application's "Schedule Feature Data Update" has an action `Update`): a
+                // control is not called. Real BC compiles that code; no corpus test names a control like a method.
+                if let Ty::Object(ObjKind::Page, page) = &base_ty {
+                    if node.parent().is_some_and(|p| p.kind() == CallExpr)
+                        && node.prev_sibling().is_none()
+                        && self
+                            .resolve(sc, ObjKind::Page, page)
+                            .is_some_and(|oi| self.named_section(oi, &mname).is_some())
+                    {
+                        if let Some(recv) = receiver_of(&base_ty) {
+                            let c = self.catalog_cands(&recv, &mname, true, &base_ty);
+                            if !c.is_empty() {
+                                return E::Callable(c);
+                            }
+                        }
+                    }
+                }
                 // `Q.Open()` is the query's method even when the query has a column named Open (Base
                 // Application's "Summarized Stock By Item Trkg." has one): a column is not called.
                 // Compiles in real BC; no corpus test names a column like a method (docs/probes-needed.md).
@@ -1478,6 +1690,7 @@ impl<'a> Checker<'a> {
                     Some(e) => e,
                     None => {
                         self.diag(sc, node, "AR1002", self.no_member(&mname, &base_ty));
+                        self.al_unknown_record_member(sc, node, &base_ty, &mname);
                         E::Val(Ty::Unknown)
                     }
                 }
@@ -2829,7 +3042,9 @@ mod tests {
                 &cu("procedure P() var R: Record \"ALT Universal\"; begin R.Nope := 1; end;")
             ]),
             vec![
-                "AR1002 no member `Nope` on Record \"ALT Universal\"; not known to the catalog (docs for runtime up to 17.0)"
+                "AR1002 no member `Nope` on Record \"ALT Universal\"; not known to the catalog (docs for runtime up to 17.0)",
+                // And the compiler's own code for it (corpus must-not-compile 0060).
+                "AL0132 'Record \"ALT Universal\"' does not contain a definition for 'Nope'"
             ]
         );
         assert_eq!(

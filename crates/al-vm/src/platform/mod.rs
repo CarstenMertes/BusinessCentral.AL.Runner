@@ -179,12 +179,19 @@ pub(crate) struct Providers {
     aggregate: permissions::Cache,
     grants: permissions::Grants,
     events: Rc<EventStats>,
+    /// The session's media: the rows of `Tenant Media`.
+    media: al_builtins::media::MediaStore,
     /// (subscriber codeunit id, lower-case function) to (object, routine); built on first use.
     event_index: RefCell<Option<EventIndex>>,
 }
 
 impl Providers {
-    pub(crate) fn new(engine: &Arc<Engine>, ident: Ident, events: Rc<EventStats>) -> Providers {
+    pub(crate) fn new(
+        engine: &Arc<Engine>,
+        ident: Ident,
+        events: Rc<EventStats>,
+        media: al_builtins::media::MediaStore,
+    ) -> Providers {
         let served = engine
             .program
             .objects
@@ -218,6 +225,7 @@ impl Providers {
             aggregate: RefCell::default(),
             grants: Default::default(),
             events,
+            media,
             event_index: RefCell::new(None),
         }
     }
@@ -289,11 +297,47 @@ impl Providers {
     /// Whether the listing of `kind` is the same for every session of the engine. Session, Active
     /// Session and Time Zone list the host's identity of this session.
     fn shares(kind: Virtual) -> bool {
-        !matches!(kind, Virtual::Session | Virtual::ActiveSession | Virtual::TimeZone)
+        !matches!(
+            kind,
+            Virtual::Session | Virtual::ActiveSession | Virtual::TimeZone | Virtual::TenantMedia
+        )
     }
 
     fn kind(&self, t: &TableDef) -> Virtual {
         self.served[t.object as usize].expect("serves() was true")
+    }
+
+    /// One `Tenant Media` row per imported media object, in id order: ID, Description, Content, Mime
+    /// Type, Height, Width and File Name (empty), as the importing methods leave them (corpus
+    /// media/PXMediaFileName.al, media/TestMediaSetPersistence.al:180-207).
+    fn tenant_media_rows(&self, t: &TableDef) -> Vec<mat::Entry> {
+        let objects = self.media.objects.borrow();
+        let mut ids: Vec<_> = objects.keys().copied().collect();
+        ids.sort();
+        ids.into_iter()
+            .map(|id| {
+                let o = &objects[&id];
+                let mut row = blank(t);
+                row[pos(t, 1)] = Value::Guid(id);
+                // The four argument import: what the file name changes in this row (its File Name, and
+                // the Description and Mime Type the platform derives from it when they are empty) is not
+                // pinned (docs/probes-needed.md, `Media.ImportStream(.., FileName)`).
+                if !o.file_name.is_empty() {
+                    return mat::Entry::poisoned(
+                        row,
+                        "a Tenant Media row of a media imported with a file name: its File Name, Description and Mime Type are not pinned".into(),
+                    );
+                }
+                row[pos(t, 2)] = Value::Text(o.description.clone());
+                let blob = al_builtins::stream::new_blob();
+                al_builtins::stream::write_bytes(&blob, &o.bytes);
+                row[pos(t, 3)] = Value::Blob(blob);
+                row[pos(t, 4)] = Value::Text(o.mime.clone());
+                row[pos(t, 5)] = Value::Integer(o.height);
+                row[pos(t, 6)] = Value::Integer(o.width);
+                mat::Entry::ok(row)
+            })
+            .collect()
     }
 
     /// The rows of a table that is listed in full.
@@ -315,11 +359,8 @@ impl Providers {
                     self.engine().program.objects[t.object as usize].id.unwrap_or(0)
                 )));
             }
-            Virtual::TenantMedia => {
-                return Err(refused(
-                    "Tenant Media: media live in the session's media store, which this table does not read yet (ADR-017)",
-                ));
-            }
+            // The media the session imported, read fresh each time (they change between reads).
+            Virtual::TenantMedia => return Ok(Listed::Own(Rc::new(mat::Mat::new(t, self.tenant_media_rows(t))))),
             _ => {}
         }
         let build = || mat::Mat::new(t, self.list_rows(t, kind));
@@ -340,7 +381,7 @@ impl Providers {
     fn list_rows(&self, t: &TableDef, kind: Virtual) -> Vec<mat::Entry> {
         match kind {
             Virtual::ApiWebhookEntity | Virtual::TenantMedia | Virtual::Unprovided => {
-                unreachable!("refused before listing")
+                unreachable!("refused or listed before")
             }
             Virtual::XmlPortMetadata => metadata::xmlport_metadata_rows(self, t),
             Virtual::EventSubscription => metadata::event_subscription_rows(self, t),

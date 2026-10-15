@@ -485,8 +485,19 @@ impl CorpusRuntime {
             && std::env::var_os("AL_EAGER_DEPENDENCIES").is_none();
         let n_apps = apps.len();
         let (apps, mut kinds, manifests, suites_in, only, order) = if use_cache {
-            let order: Vec<usize> = (0..n_apps)
+            // Dependency apps first, Microsoft's before the others (the layers of the compile
+            // cache follow this order), then the workspace's.
+            let deps: Vec<usize> = (0..n_apps)
                 .filter(|&i| kinds[i] == al_sema::AppKind::Dependency)
+                .collect();
+            let dep_apps: Vec<&al_sema::workspace::AppSource> = deps.iter().map(|&i| &apps[i]).collect();
+            let dep_manifests: Vec<Manifest> = deps
+                .iter()
+                .map(|&i| manifests.get(i).cloned().unwrap_or_default())
+                .collect();
+            let order: Vec<usize> = crate::compile_cache::dependency_order(&dep_apps, &dep_manifests)
+                .into_iter()
+                .map(|k| deps[k])
                 .chain((0..n_apps).filter(|&i| kinds[i] != al_sema::AppKind::Dependency))
                 .collect();
             let mut new_of = vec![0; n_apps];
@@ -588,8 +599,11 @@ impl CorpusRuntime {
                 }
             };
             let load = started.elapsed();
+            // Without the baseline's roots, and without the workspace's procedures no selected test names:
+            // a helper beside the tests that touches tables must not pull the dependency apps in.
             let first_roots = al_sema::check::Roots {
                 baseline: false,
+                reach_only: true,
                 ..roots.clone()
             };
             let (mut ws, lowered) = al_sema::lower::compile_loaded(ws, load, &catalog, first_roots);
@@ -675,7 +689,7 @@ impl CorpusRuntime {
                 "compile: {} error(s) the AL compiler would give for the workspace's code",
                 lowered.al_diagnostics.len()
             );
-            for d in lowered.al_diagnostics.iter().take(10) {
+            for d in lowered.al_diagnostics.iter().take(100) {
                 eprintln!("compile: error {} {}: {}", d.code, d.file, d.message);
             }
         }
@@ -1022,7 +1036,7 @@ fn lazy_index(
     symbols: &BTreeSet<String>,
     lazy: &[Option<al_sema::LazySource>],
     identities: &[Option<[u8; 32]>],
-) -> Result<Vec<Option<al_sema::LazyDep>>, al_cache::Key> {
+) -> Result<Vec<Option<al_sema::LazyDep>>, Box<al_cache::Key>> {
     let which: Vec<usize> = (0..apps.len()).filter(|&i| lazy[i].is_some()).collect();
     let refs: Vec<&al_sema::workspace::AppSource> = which.iter().map(|&i| &apps[i]).collect();
     let mans: Vec<Manifest> = which
@@ -1046,7 +1060,7 @@ fn lazy_index(
                 })
                 .collect())
         }
-        _ => Err(key),
+        _ => Err(Box::new(key)),
     }
 }
 
@@ -1096,7 +1110,7 @@ fn compile_with_cache(
             }
         }
     };
-    let (entry, mut report) = cache::open_or_build_with(
+    let (layers, mut report) = cache::open_or_build_with(
         cc,
         &mut apps[..n_dep],
         &manifests[..n_dep],
@@ -1105,8 +1119,10 @@ fn compile_with_cache(
         &identities[..n_dep.min(identities.len())],
         &mut |a| fill(a),
     )?;
-    report.objects = DepSource::len(&entry);
-    report.parse_problems = entry.parse_problems().to_vec();
+    // `open_or_build_with` checked that the layers fit each other.
+    let stack = layers.stack().map_err(|why| format!("compile cache: {why}"))?;
+    report.objects = DepSource::len(&stack);
+    report.parse_problems = layers.parse_problems();
     let catalog = match target {
         Some(t) => al_builtins::catalog::Catalog::for_target(t),
         None => al_builtins::catalog::Catalog::load(),
@@ -1132,7 +1148,7 @@ fn compile_with_cache(
         al_sema::Workspace::load_apps(apps, kinds, symbols)
     };
     let load = started.elapsed();
-    match al_sema::lower::compile_loaded_cached(ws, load, &catalog, roots.clone(), &entry) {
+    match al_sema::lower::compile_loaded_cached(ws, load, &catalog, roots.clone(), &stack) {
         Ok((ws, lowered)) => {
             report.relowered = (0..lowered.provided.len())
                 .filter(|&i| lowered.dependency[i] && !lowered.provided[i])
@@ -1145,7 +1161,9 @@ fn compile_with_cache(
             eprintln!("compile cache: {note}");
             report.notes.push(note);
             report.hit = false;
-            let _ = std::fs::remove_file(&report.file);
+            for l in &report.layers {
+                let _ = std::fs::remove_file(&l.file);
+            }
             if cc.require {
                 return Err(format!("--require-compile-cache: {}", report.notes.join("; ")));
             }
@@ -1568,37 +1586,13 @@ const WALL_BACKSTOP: u32 = 10;
 /// How often the watchdog reads the CPU clock.
 const WATCHDOG_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
-/// The CPU time the calling thread has used so far, and a handle to read it from another thread.
-#[cfg(unix)]
-fn thread_cpu_clock() -> Option<libc::clockid_t> {
-    let mut id: libc::clockid_t = 0;
-    // SAFETY: `id` is a valid out pointer; the thread is the calling one.
-    let rc = unsafe { libc::pthread_getcpuclockid(libc::pthread_self(), &mut id) };
-    (rc == 0).then_some(id)
-}
-
-#[cfg(not(unix))]
-fn thread_cpu_clock() -> Option<()> {
-    None
-}
-
-#[cfg(unix)]
-fn cpu_time(id: libc::clockid_t) -> Option<std::time::Duration> {
-    let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };
-    // SAFETY: `ts` is a valid out pointer.
-    let rc = unsafe { libc::clock_gettime(id, &mut ts) };
-    (rc == 0).then(|| std::time::Duration::new(ts.tv_sec as u64, ts.tv_nsec as u32))
-}
-
 impl Watchdog {
     /// Watches the calling thread.
     fn start(flag: Arc<std::sync::atomic::AtomicBool>, limit: std::time::Duration) -> Watchdog {
-        #[cfg(unix)]
-        let clock = thread_cpu_clock();
+        let clock = crate::cpuclock::ThreadClock::current();
         // The thread's CPU clock counts from the thread's birth, and a worker thread runs many tests:
         // the limit is measured from the reading at the start of this test.
-        #[cfg(unix)]
-        let base = clock.and_then(cpu_time).unwrap_or_default();
+        let base = clock.as_ref().and_then(|c| c.read()).unwrap_or_default();
         let (done, rx) = std::sync::mpsc::channel::<()>();
         let thread = std::thread::spawn(move || {
             let started = std::time::Instant::now();
@@ -1611,10 +1605,10 @@ impl Watchdog {
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     _ => return false,
                 }
-                #[cfg(unix)]
-                let used = clock.and_then(cpu_time).map(|cpu| cpu.saturating_sub(base));
-                #[cfg(not(unix))]
-                let used: Option<std::time::Duration> = None;
+                let used = clock
+                    .as_ref()
+                    .and_then(|c| c.read())
+                    .map(|cpu| cpu.saturating_sub(base));
                 match used {
                     Some(cpu) => {
                         if cpu >= limit || started.elapsed() >= limit * WALL_BACKSTOP {
@@ -2639,6 +2633,8 @@ page 60709 "PH Ro" { PageType = Card; SourceTable = "PH Row"; layout { area(Cont
 page 60710 "PH Desc" { PageType = List; SourceTable = "PH Row"; SourceTableView = sorting("No.") order(descending); layout { area(Content) { repeater(R) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } } }
 table 60704 "PH Lk" { LookupPageId = "PH Card"; fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
 page 60705 "PH Saved" { PageType = StandardDialog; SaveValues = true; layout { area(Content) { field(Rem; RemTxt) { } } } var RemTxt: Text[30]; }
+page 60711 "PH Saved X" { PageType = StandardDialog; SaveValues = true; SourceTable = "PH Row"; layout { area(Content) { field(RemX; RemTxt) { } } } var RemTxt: Text[30]; }
+pageextension 60712 "PH Saved XE" extends "PH Saved X" { layout { addlast(Content) { field(DescX; Rec.Descr) { } } } }
 codeunit 60703 PhT
 {
     Subtype = Test;
@@ -2722,6 +2718,16 @@ codeunit 60703 PhT
         if Seen <> 'kept' then Error('got %1', Seen);
     end;
 
+    // handlers/TestPageSaveValues.al as above, on a SaveValues page that an extension extends with a
+    // control bound to a field of Rec (it adds no variable-bound control: docs/probes-needed.md)
+    [Test] [HandlerFunctions('SaveRemX')]
+    procedure SaveValuesOnAnExtendedPageKeepsWhatOkStored()
+    begin
+        Seen := 'x'; Page.RunModal(Page::"PH Saved X");
+        Seen := ''; Page.RunModal(Page::"PH Saved X");
+        if Seen <> 'kept' then Error('got %1', Seen);
+    end;
+
     // handlers/TestPageTrapSharedScope_Tests.al:87: a page still held by the caller keeps the trap
     [Test]
     procedure TrapSurvivesWhileAnotherVariableHoldsThePage()
@@ -2785,6 +2791,11 @@ codeunit 60703 PhT
         if Seen = 'x' then begin P.Rem.SetValue('kept'); P.OK().Invoke(); end
         else begin Seen := P.Rem.Value(); P.Cancel().Invoke(); end;
     end;
+    [ModalPageHandler] procedure SaveRemX(var P: TestPage "PH Saved X")
+    begin
+        if Seen = 'x' then begin P.RemX.SetValue('kept'); P.OK().Invoke(); end
+        else begin Seen := P.RemX.Value(); P.Cancel().Invoke(); end;
+    end;
     [ModalPageHandler] procedure OkModal(var P: TestPage "PH Card") begin P.OK().Invoke(); end;
     [ModalPageHandler] procedure Nothing(var P: TestPage "PH Card") begin end;
     [ModalPageHandler] procedure CancelIt(var P: TestPage "PH Card") begin P.Cancel().Invoke(); end;
@@ -2807,6 +2818,7 @@ codeunit 60703 PhT
             "PlainModalHasNoCancel",
             "IdZeroUsesLookupPageId",
             "SaveValuesKeepsWhatOkStored",
+            "SaveValuesOnAnExtendedPageKeepsWhatOkStored",
             "TrapSurvivesWhileAnotherVariableHoldsThePage",
             "UpdateSavesTheNewRowAndRefreshesIt",
             "CurrPageEditableFalseInOnOpenPageNarrowsEverything",
@@ -3493,17 +3505,17 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
 
     /// The limit is per test: the CPU time a thread used before the test started does not count.
     /// Three tests on one thread, each using 60 % of the limit, all stay under it.
-    #[cfg(unix)]
+    #[cfg(any(unix, windows))]
     #[test]
     fn the_cpu_limit_is_measured_from_the_start_of_each_test() {
         let limit = std::time::Duration::from_millis(500);
         for n in 0..3 {
             let flag = Arc::new(std::sync::atomic::AtomicBool::new(false));
             let w = Watchdog::start(flag.clone(), limit);
-            let clock = thread_cpu_clock().expect("a CPU clock");
-            let from = cpu_time(clock).expect("a reading");
+            let clock = crate::cpuclock::ThreadClock::current().expect("a CPU clock");
+            let from = clock.read().expect("a reading");
             let mut x = 0u64;
-            while cpu_time(clock).expect("a reading") - from < limit * 6 / 10 {
+            while clock.read().expect("a reading") - from < limit * 6 / 10 {
                 x = x.wrapping_add(std::hint::black_box(1));
             }
             // Let the watchdog poll once more after the work.

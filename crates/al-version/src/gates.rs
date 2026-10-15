@@ -129,6 +129,13 @@ pub fn feature_key_rows_known(target: Option<&Target>) -> bool {
     target.is_some_and(|t| t.bc.major == 27)
 }
 
+/// Whether the platform tables of System.app that are `Scope = OnPrem`, internal or removed are known for
+/// this BC major: corpus must-not-compile 0020 to 0024 hold the lists for the symbols of BC 27 only, so
+/// the AL0296 / AL0161 / AL0433 verdicts for them are not given for another major.
+pub fn platform_table_scopes_known(bc_major: Option<u32>) -> bool {
+    bc_major == Some(27)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

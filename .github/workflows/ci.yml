@@ -20,11 +20,13 @@ name: CI
 
 on:
   push:
-    branches: [main]
+    branches: [main, release]
   pull_request:
   schedule:
     - cron: "17 5 * * *"
   workflow_dispatch:
+  # release.yml runs the same checks before it builds a numbered alpha.
+  workflow_call:
 
 env:
   # The built sidecar, for the sidecar tests and the corpus run. A missing .NET fails, not skips.
@@ -54,6 +56,22 @@ jobs:
       - run: cargo clippy --all-targets -- -D warnings
       # Without the cli-e2e feature: `corpus_harness` and `dev_tooling` run in the release-tests job.
       - run: cargo test --workspace --no-default-features
+
+  # The release builds macOS and Windows binaries. A compile error that only those targets show
+  # (a Unix-only call, a missing OS function) must fail the push, not the release. Check only: no
+  # link, no tests. Test code of the workspace is not checked on Windows.
+  portable:
+    name: portable check (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [macos-14, windows-latest]
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.98.1
+      - uses: Swatinem/rust-cache@v2
+      - run: cargo check --locked --workspace
 
   corpus:
     runs-on: ubuntu-latest
@@ -125,8 +143,13 @@ jobs:
           ./target/release/al-test-cli --all-versions --require-dotnet \
             --json pass-rate.json --markdown pass-rate.md --junit runtime-junit.xml || status=1
           normal_end=$(date +%s)
-          # Each version's file has its own "How long it took" table: the runtime's own cost.
-          cat pass-rate-*.md >> "$GITHUB_STEP_SUMMARY"
+          # One line per BC version: pass, fail, not run, rate and total time. Areas, phases and
+          # suites are in pass-rate-<v>.json and in the log.
+          {
+            echo "## Corpus pass rate"
+            echo
+            cat pass-rate-*.md
+          } >> "$GITHUB_STEP_SUMMARY"
 
           # --no-ratchet: the allow-listed differences fail the ratchet; compare_junit is the check.
           # --json keeps each eager run's phase times (every report has them).
@@ -189,7 +212,7 @@ jobs:
             echo
             echo "## With the compile cache"
             echo
-            echo "The times of the measured run, every dependency app taken from the cache:"
+            echo "One line per BC version, every dependency app taken from the cache (total time of the measured run):"
             echo
             cat cached-pass-rate-*.md
             echo

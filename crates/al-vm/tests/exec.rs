@@ -541,3 +541,33 @@ fn evaluate_into_an_enum_reads_names_captions_and_ordinals() {
             S += Format(Evaluate(K, 'Nope')) + Format(Evaluate(K, '7')) + Format(K, 0, 2); exit(S); end; }";
     assert_eq!(text(run(src, "F", vec![])), "Yes5,Yes5,Yes,Yes5,YesYes,NoYes7");
 }
+
+#[test]
+fn a_constant_gives_the_same_value_every_time_it_is_evaluated() {
+    // A Decimal keeps its scale, a text is the text, an Option member is the member (constants are built once per session).
+    let src = cu(
+        "procedure D(): Decimal var i: Integer; d: Decimal; begin for i := 1 to 3 do d := 1.50; exit(d); end;
+        procedure T(): Text var i: Integer; t: Text; begin for i := 1 to 3 do t := t + 'ab'; exit(t); end;
+        procedure N(): Integer var i: Integer; n: Integer; begin for i := 1 to 4 do n += 2; exit(n); end;",
+    );
+    match run(&src, "D", vec![]) {
+        Ok(Value::Decimal(d)) => assert_eq!((d.to_string(), d.scale()), ("1.50".to_string(), 2)),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(text(run(&src, "T", vec![])), "ababab");
+    assert_eq!(int(run(&src, "N", vec![])), 8);
+}
+
+#[test]
+fn a_for_loop_reads_its_counter_back_and_refuses_a_counter_beyond_integer() {
+    let src = cu("procedure Moved(): Integer var i: Integer; n: Integer; begin for i := 1 to 10 do begin n += 1; i += 2; end; exit(n); end;
+        procedure Down(): Integer var i: Integer; n: Integer; begin for i := 5 downto 1 do n := n * 10 + i; exit(n); end;
+        procedure Wide(): Integer var i: Integer; n: Integer; b: BigInteger; begin b := 2147483647; b += 1; for i := 2147483646 to b do n += 1; exit(n); end;");
+    // The body moves the counter: 1 -> 3 (+1) = 4, 7, 10, 13.
+    assert_eq!(int(run(&src, "Moved", vec![])), 4);
+    assert_eq!(int(run(&src, "Down", vec![])), 54321);
+    match run(&src, "Wide", vec![]) {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("overflows Integer"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}

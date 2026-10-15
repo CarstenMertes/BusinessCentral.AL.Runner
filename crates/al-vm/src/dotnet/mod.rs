@@ -417,7 +417,7 @@ impl Session {
                 }
             };
             self.write(var, item, f)?;
-            match self.exec_block(body, f) {
+            match self.exec_block_dyn(body, f) {
                 Err(Signal::Break) => return Ok(()),
                 Err(Signal::Continue) => {}
                 r => r?,

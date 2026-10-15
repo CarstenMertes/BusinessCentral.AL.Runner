@@ -171,7 +171,7 @@ that file's header and in `docs/probes-needed.md`.
 | Budget | Limit | Today |
 |---|---|---|
 | Cold compile of the corpus (`al-test-cli/tests/perf_budget.rs`) | ≤ 1 s | ~0.5 s |
-| Interpreter, six programs of `al-test-cli/tests/vm-bench` (`perf_vm.rs`, ADR-031) | instructions per iteration: Integer loop 2 990, Decimal loop 3 090, call 6 810, text 10 690, builtins 14 630, records 21 200 (the day's value plus 10 %; lowered by each fast path) | 2 716 / 2 804 / 6 184 / 9 710 / 13 293 / 19 264 |
+| Interpreter, six programs of `al-test-cli/tests/vm-bench` (`perf_vm.rs`, ADR-031) | instructions per iteration: Integer loop 1130, Decimal loop 2170, call 3020, text 7650, builtins 7000, records 17700 (the day's value plus 3 %; lowered by each fast path) | 1 088 / 2 100 / 2 926 / 7 418 / 6 795 / 17 179 |
 | Serial parse throughput (`al-syntax/tests/perf_parse_throughput.rs`) | ≥ 50 MB/s | ~65–75 MB/s |
 
 `cargo run --release -p al-test-cli --example phases` prints timings per

@@ -161,7 +161,7 @@ impl Session {
             Some(other) => return unsupported(format!("CompanySpecific of {}", other.describe())),
         };
         let company = if company_specific {
-            self.cx.company.clone()
+            self.cx.company.to_string()
         } else {
             String::new()
         };

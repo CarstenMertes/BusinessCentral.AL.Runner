@@ -54,9 +54,14 @@ impl Session {
         // A key set on fields no key starts with is one more key, as far as ordering goes.
         if let Some((index, fields)) = &r.adhoc {
             if r.key == *index && *index == t.keys.len() {
-                let mut with_key = (*t).clone();
-                with_key.keys.push(fields.clone());
-                return Ok(Arc::new(with_key));
+                // The table with that extra key is built once per (table, key fields), not on every operation.
+                let mut cache = self.adhoc_tables.borrow_mut();
+                let entry = cache.entry((r.table, fields.clone())).or_insert_with(|| {
+                    let mut with_key = (*t).clone();
+                    with_key.keys.push(fields.clone());
+                    Arc::new(with_key)
+                });
+                return Ok(entry.clone());
             }
         }
         Ok(t)
@@ -992,7 +997,11 @@ impl Session {
             let (_, e) = self.deferred_insert.take().expect("checked");
             return Err(Signal::Error(Box::new(e)));
         }
-        if let Some(schema) = &self.engine.program.objects[t.object as usize].table {
+        if let Some(schema) = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .filter(|_| self.engine.table_facts[t.object as usize].unresolved_init)
+        {
             if let Some(f) = schema.fields.iter().find(|f| f.init_text.is_some() && f.init.is_none()) {
                 // An InitValue BC accepts at compile time and cannot evaluate when it builds the
                 // buffer: Init() on a written record raises, on an untouched one does nothing

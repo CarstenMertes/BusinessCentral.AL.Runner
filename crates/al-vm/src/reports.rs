@@ -1777,7 +1777,7 @@ impl Session {
             // The manifest of both apps the corpus measured states no contextSensitiveHelpUrl, and the
             // page then states none either (handlers/TestReportDatasetHelpLink.al).
             help_link: String::new(),
-            company_name: self.cx.company.clone(),
+            company_name: self.cx.company.to_string(),
             company_id: id,
             user_name: self.host.identity.user_id(),
             now: (y, mo, d, (in_day / 3_600_000) as u32, (in_day / 60_000 % 60) as u32),

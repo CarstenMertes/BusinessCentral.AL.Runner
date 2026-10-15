@@ -75,6 +75,8 @@ pub struct Engine {
     /// (table object, field position) -> the error BC raises when it evaluates the field's
     /// `InitValue` (`0DT` on a DateTime, a closing-date literal on a Date).
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
+    /// What the VM asks of a table on every record operation, worked out once (ADR-035 decision 4).
+    pub(crate) table_facts: Vec<TableFacts>,
     /// Names this engine among all those the process built: state shared between sessions of one
     /// engine is keyed by it.
     pub uid: u64,
@@ -197,6 +199,23 @@ impl Engine {
                     .collect()
             })
             .collect();
+        let table_facts: Vec<TableFacts> = program
+            .objects
+            .iter()
+            .map(|o| TableFacts {
+                temporary: o.properties.iter().any(|(k, v)| {
+                    k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary")
+                }),
+                crm: o
+                    .properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("CRM")),
+                unresolved_init: o
+                    .table
+                    .as_ref()
+                    .is_some_and(|t| t.fields.iter().any(|f| f.init_text.is_some() && f.init.is_none())),
+            })
+            .collect();
         let mut unevaluable_init = std::collections::HashMap::new();
         for (i, o) in program.objects.iter().enumerate() {
             for (pos, f) in o.table.iter().flat_map(|t| t.fields.iter().enumerate()) {
@@ -215,6 +234,7 @@ impl Engine {
             unseeded: Default::default(),
             test_data: None,
             unevaluable_init,
+            table_facts,
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
             profile_seeds: Default::default(),
@@ -371,6 +391,8 @@ pub struct Session {
     /// Records (by handle) whose field a TestPage write is validating, with the field's number:
     /// what `CurrFieldNo` reads in the field's OnValidate.
     pub(crate) curr_field_no: Vec<(usize, i32)>,
+    /// Tables with an ad-hoc key appended, by (table object, key fields): see `Session::table`.
+    pub(crate) adhoc_tables: RefCell<std::collections::HashMap<(u32, Vec<usize>), Arc<al_data::TableDef>>>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
     /// `Database.LockTimeoutDuration` in milliseconds.
@@ -497,7 +519,7 @@ impl Session {
             truncate_undo: Default::default(),
             validating: Vec::new(),
             try_depth: 0,
-            cx: al_data::AccessContext { company, user },
+            cx: al_data::AccessContext { company: company.into(), user: user.into() },
             baseline_rows: Default::default(),
             ret_used: true,
             bindings: Vec::new(),
@@ -541,6 +563,7 @@ impl Session {
             commits: 0,
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
+            adhoc_tables: Default::default(),
             lock_timeout: true,
             lock_timeout_duration: 10,
             transaction_type: 0,
@@ -619,23 +642,14 @@ impl Session {
             RtType::Record(table, temporary) => {
                 // A table declared `TableType = Temporary` is temporary for every variable
                 // (corpus record 60198 TempOnly_IsTemporary_AlwaysTrue).
-                let temporary = &(*temporary
-                    || self.engine.program.objects[*table as usize]
-                        .properties
-                        .iter()
-                        .any(|(k, v)| {
-                            k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary")
-                        }));
+                let temporary = &(*temporary || self.engine.table_facts[*table as usize].temporary);
                 let temp_id = temporary.then(|| self.new_temp_id());
                 Value::Record(Rc::new(RefCell::new(RecordState {
                     table: *table,
                     temporary: *temporary,
                     temp_id,
                     company: None,
-                    crm: self.engine.program.objects[*table as usize]
-                        .properties
-                        .iter()
-                        .any(|(k, v)| k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("CRM")),
+                    crm: self.engine.table_facts[*table as usize].crm,
                     fields: self.initial_fields(*table as usize),
                     filters: Vec::new(),
                     filter_group: 0,
@@ -2171,6 +2185,17 @@ impl Session {
         }
         Ok((arr, flat))
     }
+}
+
+/// Facts about a table object that never change during a run.
+#[derive(Debug, Clone, Copy, Default)]
+pub(crate) struct TableFacts {
+    /// `TableType = Temporary`: every variable of the table is temporary.
+    pub(crate) temporary: bool,
+    /// `TableType = CRM`.
+    pub(crate) crm: bool,
+    /// Some field has an `InitValue` text that did not evaluate at compile time.
+    pub(crate) unresolved_init: bool,
 }
 
 /// The shared storage of an array value.

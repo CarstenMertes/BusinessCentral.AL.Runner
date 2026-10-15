@@ -42,8 +42,8 @@ impl Session {
     /// the Company table has no way to make a company, so the session company is the only one.
     pub(crate) fn find_company(&self, name: &str) -> Result<Option<String>, Signal> {
         // The name is case sensitive (record/TestChangeCompanyFiltersCopyDeleteContracts.al:243-245).
-        if !self.cx.company.is_empty() && name == self.cx.company {
-            return Ok(Some(self.cx.company.clone()));
+        if !self.cx.company.is_empty() && name == &*self.cx.company {
+            return Ok(Some(self.cx.company.to_string()));
         }
         let Some(t) = self.company_table() else {
             return Ok(None);
@@ -91,14 +91,14 @@ impl Session {
             ));
         }
         Ok(AccessContext {
-            company: company.clone(),
+            company: company.clone().into(),
             user: self.cx.user.clone(),
         })
     }
 
     /// `CurrentCompany` of `rec`.
     pub(crate) fn current_company_of(&self, rec: &Rec) -> String {
-        rec.borrow().company.clone().unwrap_or_else(|| self.cx.company.clone())
+        rec.borrow().company.clone().unwrap_or_else(|| self.cx.company.to_string())
     }
 
     /// The company a name stands for in `Open(.., Company)` and `ChangeCompany`: the empty name and
@@ -108,7 +108,7 @@ impl Session {
         if name.is_empty() {
             return Ok(Some(None));
         }
-        Ok(self.find_company(name)?.map(|c| (c != self.cx.company).then_some(c)))
+        Ok(self.find_company(name)?.map(|c| (c.as_str() != &*self.cx.company).then_some(c)))
     }
 
     /// `Record.ChangeCompany` and `RecordRef.ChangeCompany`: true once `rec` works in the company;
@@ -146,7 +146,7 @@ impl Session {
     /// (record/TestChangeCompanyFiltersCopyDeleteContracts.al:170-212); without triggers what happens
     /// to its data is not pinned, so a company that holds rows is refused.
     pub(crate) fn before_company_row_delete(&mut self, name: &str, run_trigger: bool) -> Result<(), Signal> {
-        if !self.cx.company.is_empty() && name == self.cx.company {
+        if !self.cx.company.is_empty() && name == &*self.cx.company {
             return unsupported("Delete of the session company's row in the Company table (not pinned)");
         }
         if !run_trigger && self.store.has_company_rows(name) {

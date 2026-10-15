@@ -138,7 +138,7 @@ pub struct RestoredChange {
 fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
     (
         if t.per_company {
-            cx.company.clone()
+            cx.company.to_string()
         } else {
             String::new()
         },

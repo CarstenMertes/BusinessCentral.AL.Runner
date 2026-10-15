@@ -253,8 +253,8 @@ pub struct Workspace {
     visible: Vec<BTreeSet<usize>>,
     by_name: HashMap<(ObjKind, String), Vec<usize>>,
     by_id: HashMap<(ObjKind, u32), Vec<usize>>,
-    /// The preprocessor symbols, for parsing files later.
-    symbols: BTreeSet<String>,
+    /// The preprocessor symbols of each app, for parsing files later.
+    symbols: Vec<BTreeSet<String>>,
     /// For an extension object, the object it extends (found without parsing its target).
     ext_target: Vec<Option<usize>>,
     /// For an extended object, its extensions in object order.
@@ -304,8 +304,24 @@ impl Workspace {
         apps: Vec<AppSource>,
         kinds: Vec<AppKind>,
         symbols: &BTreeSet<String>,
+        lazy: Vec<Option<LazyDep>>,
+    ) -> Workspace {
+        Workspace::load_apps_symbols(apps, kinds, symbols, &[], lazy)
+    }
+
+    /// [`load_apps_lazy`](Self::load_apps_lazy) where app `i` with `app_symbols[i]` set is preprocessed
+    /// with those symbols and not with `symbols` (a dependency app is compiled by its publisher with
+    /// the symbols of its own app.json; the project's symbols are for the project's apps).
+    pub fn load_apps_symbols(
+        apps: Vec<AppSource>,
+        kinds: Vec<AppKind>,
+        symbols: &BTreeSet<String>,
+        app_symbols: &[Option<BTreeSet<String>>],
         mut lazy: Vec<Option<LazyDep>>,
     ) -> Workspace {
+        let symbols_of: Vec<BTreeSet<String>> = (0..apps.len())
+            .map(|i| app_symbols.get(i).cloned().flatten().unwrap_or_else(|| symbols.clone()))
+            .collect();
         assert_eq!(apps.len(), kinds.len(), "one kind per app");
         lazy.resize_with(apps.len(), || None);
         for (i, l) in lazy.iter().enumerate() {
@@ -328,7 +344,7 @@ impl Workspace {
             by_name: HashMap::new(),
             by_id: HashMap::new(),
             apps: Vec::new(),
-            symbols: symbols.clone(),
+            symbols: symbols_of.clone(),
             ext_target: Vec::new(),
             ext_of: HashMap::new(),
             subscribers_of: HashMap::new(),
@@ -378,10 +394,11 @@ impl Workspace {
         let parsed: Vec<(ParsedFile, Vec<ByteRange>)> = inputs
             .par_iter()
             .zip(given.into_par_iter())
-            .map(|(&(_, _, lazy, _, src), given)| {
+            .map(|(&(ai, _, lazy, _, src), given)| {
                 if let Some(file) = given {
                     return (file, Vec::new());
                 }
+                let symbols = &symbols_of[ai];
                 if lazy {
                     (scanned_file(src, symbols), Vec::new())
                 } else {
@@ -666,14 +683,14 @@ impl Workspace {
         // Only a page can have properties to turn into routines; skip the extra parse otherwise.
         let expanded = f
             .has_page
-            .then(|| crate::pages::expand_ranges(src, &self.symbols))
+            .then(|| crate::pages::expand_ranges(src, &self.symbols[f.app]))
             .flatten();
         let text = expanded.as_ref().map(|(t, _)| t.as_str()).unwrap_or(src);
         let synthetic = expanded.as_ref().map(|(_, a)| a.clone()).unwrap_or_default();
         let parsed = if fresh {
-            parse_file(text, &self.symbols, &mut al_syntax::TreeCache::default())
+            parse_file(text, &self.symbols[f.app], &mut al_syntax::TreeCache::default())
         } else {
-            with_tree_cache(|cache| parse_file(text, &self.symbols, cache))
+            with_tree_cache(|cache| parse_file(text, &self.symbols[f.app], cache))
         };
         let problem = parsed.errors.first().map(|e| {
             let line = text[..e.offset.min(text.len())].matches('\n').count() + 1;

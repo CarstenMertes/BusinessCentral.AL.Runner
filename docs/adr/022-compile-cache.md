@@ -738,16 +738,7 @@ Application (8 to 11 s). This amends "Owner decision 2026-10-15: layered entries
    key too, so a project whose app.json says `application: 27.0` and one on `27.5` of the same build got different
    layers (the first attempt at sharing missed for that reason). The apps' own versions and source hashes, which are in
    the key, carry the build.
-4. **The preprocessor symbols stay in the key, because they do change a dependency compile.** `symbols` are the
-   `preprocessorSymbols` of the project's app.json files, and today they are applied to the dependency sources as well.
-   Microsoft's sources use them: `#if not CLEAN25` (1 837 times in Base Application 27.5), `CLEAN26`, `CLEAN27`,
-   `CLEANSCHEMA27` and more. A project that defines `CLEAN25` gets a Base Application without that code, in the uncached
-   run as well as the cached one. So two projects with different symbols do not share a layer, and that is correct for
-   the code as it is. It is also wrong against Business Central: Microsoft's apps are published already compiled without
-   the project's symbols. **Proposal for the owner (not done, it changes the uncached outcome): compile dependency apps
-   of publisher Microsoft with no project symbols and keep `symbols` out of their layers' keys.** That needs a symbol set
-   per app in `Workspace::load_apps_lazy` (the symbols are one set for all apps today), and one more rule for a partner
-   dependency that has its own `preprocessorSymbols`, which the loader does not read for dependencies.
+4. **The preprocessor symbols** were left in the key by this section's first version and are superseded by "Owner decision 2026-10-15 (third)" below.
 5. **The fixed cost of a layer** went from 0.8 to 2 s to 0.3 s. A layer build used to decode the blocks of all layers
    below it only to hand them to `lower_core`, which put them in a program nobody reads; they are now placeholders
    (`DepBlock::placeholder`, `ir::Object` derives `Default`), and the stack/complete equality tests still pass. The
@@ -767,6 +758,44 @@ The cold build of one project alone is slower with many layers: project B on an 
 layer (load 17 and 22) and 17.0 and 15.4 s as eight (load 21), about 3 s more, because each layer has its own fixed
 cost and the test libraries are compiled one at a time. Every project after the first on the same BC build saves the
 base layer.
+
+## Owner decision 2026-10-15 (third): preprocessor symbols belong to the app that has them (branch `dep-symbols`)
+
+**Decision (coordinator, for the owner).** In Business Central a dependency is compiled by its publisher with the
+symbols of its own `app.json`. A project that defines `CLEAN25` must not change Base Application's code (hard rule 6: this
+is observable). Until now the project's `preprocessorSymbols` (the union over its app.json files) were applied to every
+app, dependencies included. Microsoft's sources use them (`#if not CLEAN25` 1 837 times in Base Application 27.5, also
+`CLEAN26`, `CLEAN27`, `CLEANSCHEMA27`), so a project with `CLEAN25` got a different Base Application, in the uncached run
+and the cached one.
+
+1. **Every app is compiled with the symbols of its own app.json** (none for a Microsoft app, whose app.json has none). The
+   project's symbols apply to the workspace apps only. `Workspace::load_apps_symbols` takes a symbol set per app;
+   `load_apps_lazy` and `load_apps` are the same with no per-app sets. In a run, a dependency app gets its set from
+   `Manifest::symbols`, which comes from `package::Manifest::preprocessor_symbols` (read from the root `app.json` of a source
+   archive or folder; a compiled `.app` has none: its publisher compiled it) through `DependencyApp`. The parse after load
+   (a file parsed on first use) and the scan of a lazily read app use the same per-app set.
+2. **`symbols` left the key.** `Key` has no `symbols` field. `AppKey` has the app's own symbols (sorted), so two projects
+   share a layer whatever their own symbols are, and an app whose app.json symbols change gets a new layer. The source
+   index (`.alci`) key is built the same way. The cache format is 6.
+3. **Outcomes.** Compared before this change and after, uncached (`--no-compile-cache`), no test data:
+   - Corpus on BC 27, 28 and 29 and the OnPrem and isolation suites: 5 595, 5 593, 5 593, 6, 7, 72, 72 and 72 tests,
+     0 outcome differences. Tests-ERM: 9 333 tests, 0 differences. NP Retail's test app: 4 813 tests, 0 differences.
+     None of these dependencies carries symbols that differ from the project's (NP Retail's are `BC27` and `BC2700`, the
+     same in both of its app.json files, and no source of Microsoft's tests them).
+   - Where it does change an outcome: a partner library whose own app.json says `preprocessorSymbols: ["LIBSYM"]` and
+     has `#if not LIBSYM codeunit ... #endif` is now compiled with `LIBSYM` (the gated codeunit is gone, as in BC); before,
+     the project's symbols (none) were applied and the codeunit was there. In the same way a project with `CLEAN25` no
+     longer removes code from Base Application. Tests: `the_projects_symbols_do_not_reach_a_dependency_app` and
+     `a_dependency_is_compiled_with_the_symbols_of_its_own_app_json` (cached and uncached).
+4. **Layers built in parallel: not done, and not sound with this format.** Two layers that do not depend on each other
+   (for example Any and Library Assert) could be built at the same time only if they did not need each other's positions.
+   They do: a layer's objects take the positions after all the layers below it in the order, so the second layer's blocks
+   say object numbers that depend on how many objects the first has, and `lower_core` reads the facts of every lower
+   object. Compiling both on the same lower stack would put them at the same positions. The measurements show what is left
+   to win anyway: each layer's check, lower and encode already use all cores, and the serial part of a small layer is
+   0.1 to 0.3 s (scan of the apps below 0.1 to 0.3 s, drops 0.02 s, the rest under 0.05 s). The seven test-library layers of
+   Tests-ERM took 0.2 to 1.1 s each, 2.8 s together. Overlapping the scan of the next layer with the compile of this one
+   would save an estimated 0.6 s of that and costs a second workspace in memory; not built.
 
 ## Consequences
 

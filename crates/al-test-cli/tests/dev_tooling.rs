@@ -164,9 +164,10 @@ fn reports_carry_the_phase_timings_without_a_flag() {
     }
     assert!(t["suites"].as_array().is_some_and(|a| !a.is_empty()), "{t}");
     let text = std::fs::read_to_string(&md).unwrap();
-    assert!(text.contains("### How long it took"), "{text}");
+    // The markdown is one line: counts, rate and the total time.
+    assert_eq!(text.lines().count(), 1, "{text}");
     assert!(
-        text.contains("| Version | Load | Compile | Install baseline | Tests | Total |"),
+        text.starts_with("- BC 29") && text.contains(" passed, ") && text.trim_end().ends_with(" s"),
         "{text}"
     );
     // The same table comes back from the JSON file.

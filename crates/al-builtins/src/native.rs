@@ -440,6 +440,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
     ("Record.SetLoadFields#1", |c, r, a| c.record("SetLoadFields", r, a)),
     ("Record.AddLoadFields#1", |c, r, a| c.record("AddLoadFields", r, a)),
+    ("Record.LoadFields#1", |c, r, a| c.record("LoadFields", r, a)),
     ("Record.SetBaseLoadFields#1", |c, r, a| {
         c.record("SetBaseLoadFields", r, a)
     }),
@@ -501,11 +502,14 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "System.GetLastErrorText#2" => {
             "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
         }
-        "Media.ImportStream#2" => {
-            "Media.ImportStream with a file name: what the file name is stored as (the Tenant Media row) is not pinned; only the form with a description and a MIME type is (media/TestMediaPngImport.al)"
-        }
         "System.CaptionClassTranslate#1" => {
             "CaptionClassTranslate is in no corpus test, so how it resolves a caption class expression (the area, the language, the Caption Class codeunit event) is not pinned"
+        }
+        "Media.ImportFile#1" | "MediaSet.ImportFile#1" => {
+            "Media.ImportFile and MediaSet.ImportFile read a file of the service tier and are in no corpus test, so which file a test can name, the error for a missing file and what the Tenant Media row holds are not pinned"
+        }
+        "RecordRef.Copy#1" | "RecordRef.Copy#2" => {
+            "RecordRef.Copy is in no corpus test, so what it copies (the buffer, the filters, the key, the table view) and what ShareTable changes are not pinned"
         }
         "TestRequestPage.Editable#1" => {
             "TestRequestPage.Editable is in no corpus test (only the control form is, handlers/TestReqPageBoundVisibility.al), so whether the request page itself is editable is not pinned"
@@ -1167,6 +1171,17 @@ fn value_kind(v: &Value) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    // TestField with an ErrorInfo is implemented (issue 41): a check that holds raises nothing, a failing one
+    // is refused at run time (al-vm recmeta.rs `test_field`, al-vm/tests/scm_service_41.rs). Issue 42 refused
+    // it at lowering; that entry is gone because `lookup` now finds the ids.
+    #[test]
+    fn test_field_with_an_error_info_is_implemented_not_refused_at_lowering() {
+        for id in ["Record.TestField#2", "Record.TestField#4"] {
+            assert!(refusal(id).is_none(), "{id}");
+            assert!(lookup(id).is_some(), "{id}");
+        }
+    }
 
     // Base Application's Web Request Helper casts a caught .NET exception with `GetDotNetType(WebException)`
     // after a web request failed; no corpus test calls GetDotNetType (issue 34).

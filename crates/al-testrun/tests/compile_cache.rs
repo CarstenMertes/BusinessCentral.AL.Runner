@@ -52,12 +52,14 @@ fn apps(base: &str) -> (Vec<AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>) {
                 version: "1.0.0.0".into(),
                 resources: vec![],
                 include_source: false,
+                symbols: vec![],
             },
             Manifest {
                 publisher: "Microsoft".into(),
                 version: "27.5.0.0".into(),
                 resources: vec![],
                 include_source: false,
+                symbols: vec![],
             },
         ],
     )
@@ -232,7 +234,7 @@ fn a_damaged_truncated_or_foreign_file_never_changes_an_outcome() {
             // The flipped byte is in a block this run does not read (an object the workspace
             // changes is compiled from source). Reading every block finds it.
             let (apps, _, manifests) = apps(BASE);
-            let key = compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None);
+            let key = compile_cache::key_for(&[&apps[1]], &manifests[1..], None);
             let (entry, _) = compile_cache::read_entry(dir.path(), &key)
                 .unwrap()
                 .expect("the file is there");
@@ -246,8 +248,8 @@ fn two_writers_and_a_reader_never_see_half_a_file() {
     let dir = tempfile::tempdir().unwrap();
     let (apps, _, manifests) = apps(BASE);
     let dep = [&apps[1]];
-    let key = compile_cache::key_for(&dep, &manifests[1..], &Default::default(), None);
-    let bytes = compile_cache::build_entry(vec![apps[1].clone()], &Default::default(), None, &key);
+    let key = compile_cache::key_for(&dep, &manifests[1..], None);
+    let bytes = compile_cache::build_entry(vec![apps[1].clone()], &manifests[1..], None, &key);
     let stop = std::sync::atomic::AtomicBool::new(false);
     std::thread::scope(|scope| {
         let writers: Vec<_> = (0..3)
@@ -289,32 +291,35 @@ fn two_writers_and_a_reader_never_see_half_a_file() {
 fn building_the_same_entry_twice_gives_the_same_bytes() {
     let (apps, _, manifests) = apps(BASE);
     let dep = [&apps[1]];
-    let key = compile_cache::key_for(&dep, &manifests[1..], &Default::default(), None);
-    let a = compile_cache::build_entry(vec![apps[1].clone()], &Default::default(), None, &key);
-    let b = compile_cache::build_entry(vec![apps[1].clone()], &Default::default(), None, &key);
+    let key = compile_cache::key_for(&dep, &manifests[1..], None);
+    let a = compile_cache::build_entry(vec![apps[1].clone()], &manifests[1..], None, &key);
+    let b = compile_cache::build_entry(vec![apps[1].clone()], &manifests[1..], None, &key);
     assert!(a == b);
 }
 
 #[test]
 fn the_key_changes_with_a_byte_of_source_a_symbol_or_the_target() {
     let (apps, _, manifests) = apps(BASE);
-    let base = compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest();
+    let base = compile_cache::key_for(&[&apps[1]], &manifests[1..], None).digest();
     let mut changed = apps[1].clone();
     changed.files[0].1.push(' ');
     assert_ne!(
         base,
-        compile_cache::key_for(&[&changed], &manifests[1..], &Default::default(), None).digest()
+        compile_cache::key_for(&[&changed], &manifests[1..], None).digest()
     );
     let mut other_path = apps[1].clone();
     other_path.files[0].0 = "renamed.al".into();
     assert_ne!(
         base,
-        compile_cache::key_for(&[&other_path], &manifests[1..], &Default::default(), None).digest()
+        compile_cache::key_for(&[&other_path], &manifests[1..], None).digest()
     );
-    let symbols: std::collections::BTreeSet<String> = ["CLEAN27".to_string()].into();
+    // The symbols of the app's own app.json are an input; the project's are not (they are not in
+    // the key at all).
+    let mut with_symbols = manifests.clone();
+    with_symbols[1].symbols = vec!["CLEAN27".into()];
     assert_ne!(
         base,
-        compile_cache::key_for(&[&apps[1]], &manifests[1..], &symbols, None).digest()
+        compile_cache::key_for(&[&apps[1]], &with_symbols[1..], None).digest()
     );
     let target = al_version::Target {
         bc: al_version::BcVersion::new(27, 5),
@@ -322,17 +327,17 @@ fn the_key_changes_with_a_byte_of_source_a_symbol_or_the_target() {
     };
     assert_ne!(
         base,
-        compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), Some(&target)).digest()
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], Some(&target)).digest()
     );
     assert_eq!(
         base,
-        compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None).digest()
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], None).digest()
     );
     // The BC version and build of the target do not change a compile of the dependency apps, only
     // the runtime does (the catalog): 27.0 and 27.5 share a layer, 27 and 28 (runtime 16 and 17) do not.
     let key_of = |bc: &str| {
         let t = al_version::Target::for_bc(al_version::BcVersion::parse(bc).unwrap());
-        compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), Some(&t)).digest()
+        compile_cache::key_for(&[&apps[1]], &manifests[1..], Some(&t)).digest()
     };
     assert_eq!(key_of("27.0"), key_of("27.5.46862.48827"));
     assert_ne!(key_of("27.0"), key_of("28.0"));
@@ -387,10 +392,10 @@ fn reportextensions_round_trip_and_a_format_1_file_is_rejected_and_rebuilt() {
     assert_eq!(outcomes(&second), want);
     // A format-1 file under this key's name.
     let (apps, _, manifests) = apps(&base);
-    let key = compile_cache::key_for(&[&apps[1]], &manifests[1..], &Default::default(), None);
+    let key = compile_cache::key_for(&[&apps[1]], &manifests[1..], None);
     let mut old = key.clone();
     old.format = 1;
-    let bytes = compile_cache::build_entry(vec![apps[1].clone()], &Default::default(), None, &old);
+    let bytes = compile_cache::build_entry(vec![apps[1].clone()], &manifests[1..], None, &old);
     let path = files(dir.path()).pop().unwrap();
     std::fs::write(&path, bytes).unwrap();
     let third = run(&base, cache(dir.path(), false)).unwrap();
@@ -714,4 +719,81 @@ fn the_layers_do_not_depend_on_the_order_the_apps_come_in() {
         let rt = shared_run(&order, cache(dir.path(), true)).unwrap();
         assert_eq!(layer_hits(&rt), vec![true, true, true], "{order:?}");
     }
+}
+
+// ---- preprocessor symbols belong to the app that has them (2026-10-15) -----------------------
+
+const WITH_CLEAN_CODE: &str = r#"
+#if not CLEAN25
+codeunit 50150 OldCode { procedure V(): Integer begin exit(25); end; }
+#endif
+codeunit 50151 Always { procedure V(): Integer begin exit(1); end; }
+table 50152 Thing { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { } } }
+"#;
+
+const USES_OLD: &str = r#"
+codeunit 60500 SymbolTests
+{
+    Subtype = Test;
+    [Test] procedure Old_Code_Is_There() var O: Codeunit OldCode; T: Record Thing; begin if T.Count() <> 0 then Error('rows'); if O.V() <> 25 then Error('v'); end;
+}
+"#;
+
+fn symbol_run(
+    dep_symbols: &[&str],
+    project_symbols: &[&str],
+    cc: Option<CompileCache>,
+) -> Result<CorpusRuntime, String> {
+    CorpusRuntime::try_run_suites_with(
+        vec![app("main", &["base"], USES_OLD), app("base", &[], WITH_CLEAN_CODE)],
+        vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
+        &[
+            Manifest::default(),
+            Manifest {
+                publisher: "Microsoft".into(),
+                version: "27.5.0.0".into(),
+                symbols: dep_symbols.iter().map(|s| s.to_string()).collect(),
+                ..Default::default()
+            },
+        ],
+        &project_symbols.iter().map(|s| s.to_string()).collect(),
+        None,
+        Default::default(),
+        &[SuiteRun::everything()],
+        &RunOptions {
+            compile_cache: cc,
+            ..Default::default()
+        },
+    )
+}
+
+/// A project that defines CLEAN25 does not change a dependency (hard rule 6): the publisher compiled
+/// the dependency with its own symbols.
+#[test]
+fn the_projects_symbols_do_not_reach_a_dependency_app() {
+    let dir = tempfile::tempdir().unwrap();
+    for cc in [None, cache(dir.path(), false), cache(dir.path(), true)] {
+        let rt = symbol_run(&[], &["CLEAN25"], cc).unwrap();
+        assert!(outcomes(&rt).iter().all(|l| l.contains("Pass")), "{:?}", outcomes(&rt));
+    }
+    // The key does not hold the project's symbols: a project without them hits the same entry.
+    let rt = symbol_run(&[], &[], cache(dir.path(), true)).unwrap();
+    assert!(rt.phases.cache.as_ref().unwrap().hit);
+}
+
+/// The dependency's own app.json symbols apply to it, cached and uncached alike, and another set
+/// is another layer.
+#[test]
+fn a_dependency_is_compiled_with_the_symbols_of_its_own_app_json() {
+    let dir = tempfile::tempdir().unwrap();
+    let plain = outcomes(&symbol_run(&["CLEAN25"], &[], None).unwrap());
+    assert!(plain.iter().all(|l| l.contains("NotRun")), "{plain:?}");
+    let first = symbol_run(&["CLEAN25"], &[], cache(dir.path(), false)).unwrap();
+    assert_eq!(outcomes(&first), plain);
+    let second = symbol_run(&["CLEAN25"], &[], cache(dir.path(), true)).unwrap();
+    assert_eq!(outcomes(&second), plain);
+    // Without the dependency's symbol the entry misses (another layer) and the code is there.
+    assert!(symbol_run(&[], &[], cache(dir.path(), true)).is_err());
+    let other = symbol_run(&[], &[], cache(dir.path(), false)).unwrap();
+    assert!(outcomes(&other).iter().all(|l| l.contains("Pass")));
 }

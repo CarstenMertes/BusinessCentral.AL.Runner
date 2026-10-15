@@ -1251,3 +1251,49 @@ to 9 s and 2.1 GB, against 0.3 s and 684 MB for the whole suite, and the install
 
 Result on the demo app, one pure test, load average about 19: compile 4.2 s -> 0.17 s, total 4.6 s -> 0.22 to 0.36 s,
 peak memory 2.1 GB -> 135 MB; the baseline is skipped (0.30 s saved).
+
+## Amendment 2026-10-15 (owner decision, branch `source-lookup`): a package without source is not found
+
+**Decision (owner).** "A package that is found but can't serve the source is not a package that is found by definition.
+We can only count a package as found if it actually contains the source. Otherwise the runner has to continue looking for
+the source code."
+
+The case: a project's `.alpackages` holds the symbol packages VS Code downloaded (the manifest and `SymbolReference.json`,
+no AL source). They used to satisfy the dependency: the search stopped, the artifact feed was not asked (when nothing else
+was missing), and every Microsoft object was "outside the workspace", the install baseline stopped at Upgrade Tag and no
+test data loaded.
+
+1. **A candidate without AL source does not satisfy a dependency** (`select.rs`, `Resolver::satisfy`). The search goes on:
+   the next search location, then the artifact feed for a Microsoft app, for the same app and a version that satisfies the
+   dependency. The `Application` aggregate holds no objects by design and still counts. A package of another publisher
+   without source, and not on the feed, leaves the dependency missing: `dependency skipped: dependency `X` by P (id)
+   version V or higher was not found with AL source (found only packages without AL source, which cannot serve it:
+   <files>); searched: <every location>; put its .app with AL source ...`, and what needs it is refused one test at a time
+   as before. A non-Microsoft package with source (a licensing app in `.alpackages`) works as it did.
+2. **The build of the Microsoft apps and of the test data follows what the project really targets.** `apps::choose_build`,
+   in this order: `--bc-version`; the build of the tests when they are Microsoft's; **the build of the Microsoft packages
+   the project carries in its package folders** (`al_deps::load::microsoft_packages_build`: the highest build among
+   Business Foundation, System Application, Base Application and Application, with or without source; `System` is left
+   out, its number is the platform's), used when it is of the target's major and not below the app.json floor; else the
+   newest published build of the target's major at or above the floor. The reason: a project's `.alpackages` holds what its
+   developer compiled against, while `application` in app.json is only a minimum (Pageworks: packages 28.4, app.json 28.0).
+   The BC minor of the target follows. The run header prints the rule (`build chosen by: ...`), a package build that is not
+   cached, on disk or published is said (`that build is not ..., so BC X was used`), and packages outside the major or below
+   the floor give a `note:`.
+3. **Tests:** `select.rs` (a symbol package alone is missing and says what was seen, a later place with source satisfies, the
+   aggregate counts), `load.rs` (the symbol package in the first place does not hide the source archive in the second;
+   the message names the places searched; the build of the packages), `artifact.rs` (the feed supplies the source when
+   `.alpackages` has only a symbol package; offline it stays missing with the reason), `apps.rs` (`choose_build`).
+
+**Measured on a scratch copy of Pageworks** (the owner's repository is read only; a copy with the Microsoft symbol packages of
+build 28.0.46665.48632 from another project's `.alpackages`, the test libraries that need the feed removed so that every
+declared dependency is in `.alpackages`; BC 28.5.54151.56376 from the feed was the nearest published build). `alrunner test
+Pageworks.Test/ Pageworks/`, load 16 to 21:
+
+| | Before | After |
+|---|---|---|
+| Dependencies loaded | 1 (the licensing app) | 9 (Microsoft's from the feed, with source) |
+| Test data | none | CRONUS 2 107 rows from 62 tables |
+| Tests | 1 013: 61 passed, 0 failed, 952 not run | 1 013: 82 passed, 9 failed, 922 not run |
+| Top refusal | 651 `codeunit <name> is outside the workspace` | 372 the same (the removed test libraries), 286 `[Native] ... no AL body` |
+| Time | 0.24 s | 2.8 s warm; 25 to 35 s on a cold compile cache |

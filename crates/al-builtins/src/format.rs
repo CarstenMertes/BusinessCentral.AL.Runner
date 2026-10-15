@@ -181,7 +181,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
     };
     // A Boolean pads on the right and cuts at the length (types/TestProbeScalarContracts.al:FormatBoolean_Numbers:
     // `Format(true, 10)` is `Yes       `, `Format(true, 2)` is `Ye`).
-    if matches!(v, Value::Boolean(_) | Value::Option(..)) && length > 0 {
+    if matches!(v, Value::Boolean(_) | Value::Option(..) | Value::Enum(..)) && length > 0 {
         let cut: String = s.chars().take(length as usize).collect();
         return Ok(format!(
             "{cut}{}",

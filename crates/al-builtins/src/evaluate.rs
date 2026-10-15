@@ -267,6 +267,9 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
             let Some(members) = c.enum_members(*id) else {
                 return unsupported("Evaluate into an Enum without its members");
             };
+            // White space around the text is ignored (types/W7EvaluateTests.al:EvaluateIntoAnEnum_DefaultFormat,
+            // ` Second ` gives Second).
+            let text = text.trim();
             let ordinal = (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
                 .then(|| text.parse::<i32>().ok())
                 .flatten();

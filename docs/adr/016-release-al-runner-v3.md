@@ -480,6 +480,9 @@ asked to defer features like these while startup is not a problem for v3.
      the server is the interface, not a speed feature. Supporting them needs
      the protocol even when start-up is fast.
 
+  The interface points of both tools, what v3 lacks and a stepwise plan are in
+  `docs/integrations/alchemist-lethal.md`. Gate R item 4 depends on it.
+
 ## Owner decision (2026-10-14): separate now, decide the cutover later
 
 - The runtime ships under a new binary name, and the work stays in the

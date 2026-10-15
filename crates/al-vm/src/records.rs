@@ -1232,9 +1232,13 @@ impl Session {
                 if let (Some(row), Some(i)) = (&stored, t.fields.iter().position(|f| f.id == 2_000_000_005)) {
                     let (mine, theirs) = (rec.borrow().fields[i].clone(), row[i].clone());
                     let version = |v: &Value| if let Value::BigInteger(n) = v { *n } else { 0 };
+                    // Stale means the stored row is NEWER than the buffer. A buffer that is newer than the row (the
+                    // transaction was rolled back to the last Commit after the buffer's own Modify, as an asserterror
+                    // does) is not stale: Microsoft's SMB Service Item TestItem_Reserve modifies such a buffer
+                    // and passes in BC (assumed from that test; docs/probes-needed.md).
                     if !rec.borrow().temporary
                         && version(&mine) != 0
-                        && version(&mine) != version(&theirs)
+                        && version(&mine) < version(&theirs)
                         && version(&theirs) <= self.committed_row_version
                     {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
@@ -1393,6 +1397,22 @@ impl Session {
                 Ok(Value::Null)
             }
             "Get" => {
+                // `Get(RecordId)`: the row the RecordId names, as RecordRef.Get(RecordId) does (corpus
+                // recordref/TestRecordRefKeys.al:48). The Record form has no corpus test (Base Application's Item
+                // Category Management does `ItemCategory.Get(RecId)`); the RecordId of another table is refused.
+                let from_id: Option<Vec<Value>> = match args {
+                    [Value::Library(_, l)] => match &*l.borrow() {
+                        al_builtins::value::LibraryValue::RecordId { table, key, .. } if *table == t.object => {
+                            Some(key.clone())
+                        }
+                        al_builtins::value::LibraryValue::RecordId { .. } => {
+                            return unsupported("Get of a RecordId of another table (error text not pinned)");
+                        }
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                let args = from_id.as_deref().unwrap_or(args);
                 let mut pk = Vec::new();
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();

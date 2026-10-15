@@ -813,6 +813,10 @@ pub struct Field {
     /// only. Empty when the relation is understood or not even that is clear.
     #[serde(default)]
     pub relation_meta: Vec<MetaRelationArm>,
+    /// For a relation with `Field = filter(x)` conditions (`relation_arms` empty): the arms the runtime applies
+    /// when a value is validated. Nothing but validation reads them.
+    #[serde(default)]
+    pub relation_runtime: Vec<RelationArm>,
     /// `FieldClass = FlowFilter`: holds the caller's filter, never a value.
     pub flow_filter: bool,
     /// A FlowField's `CalcFormula`, when lowered. A FlowField with neither
@@ -863,7 +867,11 @@ pub struct MetaRelationArm {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct RelationCond {
     pub field: usize,
+    /// The constant of `Field = const(x)`; for a `filter` condition the filter text as written.
     pub value: Const,
+    /// `Field = filter(text)`: the arm applies when the field's value passes the filter `value` holds.
+    #[serde(default)]
+    pub filter: bool,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

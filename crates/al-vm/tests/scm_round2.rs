@@ -200,3 +200,119 @@ codeunit 69332 C
 "#;
     assert_eq!(text(run(src, "F")), "recordref 69330");
 }
+
+// Base Application's Bin Content.Bin Code relates with `if ("Zone Code" = filter('')) Bin.Code where(...) else
+// if ("Zone Code" = filter(<> '')) Bin.Code where(...)`. The arm whose filter the field's value passes applies
+// (an assumption for `filter`, the `const` form is pinned by fieldref/TestFieldRefRelation.al; docs/probes-needed.md).
+#[test]
+fn a_table_relation_with_filter_conditions_picks_the_arm_the_value_passes() {
+    let src = r#"
+table 69340 "Bin" { fields { field(1; Loc; Code[10]) { } field(2; Zone; Code[10]) { } field(3; Code; Code[10]) { } } keys { key(PK; Loc, Code) { } } }
+table 69341 "Line"
+{
+    fields
+    {
+        field(1; Id; Integer) { }
+        field(2; Loc; Code[10]) { }
+        field(3; Zone; Code[10]) { }
+        field(4; BinCode; Code[10])
+        {
+            TableRelation = if (Zone = filter('')) Bin.Code where(Loc = field(Loc))
+                else if (Zone = filter(<> '')) Bin.Code where(Loc = field(Loc), Zone = field(Zone));
+        }
+    }
+    keys { key(PK; Id) { } }
+}
+codeunit 69342 C
+{
+    procedure Try(L: Record Line; B: Code[10]): Text
+    begin
+        if TryValidate(L, B) then exit('ok');
+        exit('no');
+    end;
+    [TryFunction]
+    local procedure TryValidate(var L: Record Line; B: Code[10]) begin L.Validate(BinCode, B); end;
+    procedure F(): Text
+    var Bn: Record Bin; L: Record Line; s: Text;
+    begin
+        Bn.Loc := 'L1'; Bn.Zone := ''; Bn.Code := 'B1'; Bn.Insert();
+        Bn.Loc := 'L1'; Bn.Zone := 'Z1'; Bn.Code := 'B2'; Bn.Insert();
+        L.Loc := 'L1';
+        L.Zone := '';
+        s := Try(L, 'B1') + Try(L, 'B2') + Try(L, 'B9');
+        L.Zone := 'Z1';
+        exit(s + '|' + Try(L, 'B2') + Try(L, 'B1'));
+    end;
+}
+"#;
+    // No zone: any bin of the location (B1 and B2 exist, B9 does not). Zone Z1: the bins of that zone only (B2).
+    assert_eq!(text(run(src, "F")), "okokno|okno");
+}
+
+#[test]
+fn get_takes_a_record_id() {
+    let src = r#"
+table 69350 "Cat" { fields { field(1; Code; Code[20]) { } field(2; Name; Text[20]) { } } keys { key(PK; Code) { } } }
+codeunit 69351 C
+{
+    procedure F(): Text
+    var A: Record Cat; B: Record Cat; Id: RecordId;
+    begin
+        A.Code := 'X'; A.Name := 'found'; A.Insert();
+        Id := A.RecordId();
+        B.Get(Id);
+        exit(B.Name);
+    end;
+}
+"#;
+    assert_eq!(text(run(src, "F")), "found");
+}
+
+// A buffer that wrote its row is current: after Insert, Modify and a Commit its next Modify is not stale
+// (record/TestRecordStaleBufferWrite.al pins the buffer older than ANOTHER buffer's committed change).
+#[test]
+fn a_buffer_that_wrote_the_row_can_modify_it_after_a_commit() {
+    let src = r#"
+table 69360 "Doc" { fields { field(1; Id; Integer) { } field(2; Kind; Integer) { } field(3; Cost; Decimal) { } }
+  keys { key(PK; Id) { } } }
+codeunit 69361 Lib { procedure Create(var D: Record Doc) begin D.Id := 1; D.Insert(true); D.Cost := 2; D.Modify(true); end; }
+codeunit 69362 C
+{
+    procedure F(): Text
+    var D: Record Doc; L: Codeunit Lib;
+    begin
+        L.Create(D);
+        Commit();
+        D.Validate(Kind, 3);
+        D.Modify(true);
+        D.Validate(Kind, 4);
+        D.Modify(true);
+        exit(Format(D.Kind));
+    end;
+}
+"#;
+    assert_eq!(text(run(src, "F")), "4");
+}
+
+// After an asserterror rolled the row back to the last Commit, the buffer that wrote the row meanwhile holds a newer
+// row version than the stored row; saving it again is not a stale write (SMB Service Item TestItem_Reserve).
+#[test]
+fn a_buffer_newer_than_its_rolled_back_row_can_be_saved() {
+    let src = r#"
+table 69360 "Doc" { fields { field(1; Id; Integer) { } field(2; Kind; Integer) { } } keys { key(PK; Id) { } } }
+codeunit 69362 C
+{
+    procedure F(): Text
+    var D: Record Doc;
+    begin
+        D.Id := 1; D.Insert(true);
+        Commit();
+        D.Kind := 3; D.Modify(true);
+        asserterror Error('boom');
+        D.Kind := 4; D.Modify(true);
+        exit(Format(D.Kind));
+    end;
+}
+"#;
+    assert_eq!(text(run(src, "F")), "4");
+}

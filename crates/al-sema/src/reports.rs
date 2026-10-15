@@ -780,6 +780,9 @@ impl<'a> Owner<'a> {
     }
 }
 
+/// An enclosing data item a `DataItemLinkReference` names: its index and its table.
+type EnclosingItem = (usize, Option<usize>);
+
 /// The IR of one data item. `parent_table` is the table of the item it is nested under.
 fn item_ir(
     o: &Owner,
@@ -788,7 +791,7 @@ fn item_ir(
     parent: Option<usize>,
     parent_table: Option<usize>,
     // The enclosing data item a `DataItemLinkReference` names: its index and its table.
-    enclosing: &dyn Fn(&str) -> Option<(usize, Option<usize>)>,
+    enclosing: &dyn Fn(&str) -> Option<EnclosingItem>,
     reasons: &mut Vec<String>,
 ) -> ir::ReportItem {
     let sec = &raw.section;

@@ -1735,7 +1735,12 @@ impl<'a> Checker<'a> {
         if c.is_empty() {
             c = base;
         } else {
-            let mut all = base;
+            // The same parameter types is AL0440 (the lowering refuses it): the extension's own
+            // procedure stays the candidate then.
+            let mut all: Vec<Cand> = base
+                .into_iter()
+                .filter(|b| !c.iter().any(|o| o.param_tys == b.param_tys))
+                .collect();
             all.extend(c);
             c = all;
         }
@@ -1839,7 +1844,13 @@ impl<'a> Checker<'a> {
         };
         let base = self.base_proc_cands(sc, &n);
         if !own.is_empty() || !own_obj.is_empty() {
-            return Some(E::Callable(base.into_iter().chain(own).chain(own_obj).collect()));
+            let own: Vec<Cand> = own.into_iter().chain(own_obj).collect();
+            let mut all: Vec<Cand> = base
+                .into_iter()
+                .filter(|b| !own.iter().any(|o| o.param_tys == b.param_tys))
+                .collect();
+            all.extend(own);
+            return Some(E::Callable(all));
         }
         if !base.is_empty() {
             return Some(E::Callable(base));

@@ -172,6 +172,7 @@ impl Describe for Scalar {
         match self {
             Scalar::Null => "a JSON null".into(),
             Scalar::Undefined => "an undefined JSON value".into(),
+            Scalar::Raw(t) => format!("the JSON number {t}"),
             Scalar::Val(v) => v.describe(),
         }
     }

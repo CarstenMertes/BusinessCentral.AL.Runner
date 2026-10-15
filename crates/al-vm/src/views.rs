@@ -103,14 +103,40 @@ impl Session {
         })
     }
 
+    /// `e` with the Option values of field `pos` carrying the field's OptionCaption entries: `GetFilter` and `GetFilters`
+    /// show the caption (record/TestProbeRecordRefContracts.al:Filters_GetFiltersText, `option_filter` is `Second`).
+    fn with_option_captions(&self, t: &TableDef, pos: usize, e: &FilterExpr) -> FilterExpr {
+        let Ok(Some((false, members))) = self.members_of_field(t, pos) else {
+            return e.clone();
+        };
+        let captions: std::sync::Arc<[String]> = members.iter().map(|m| m.2.clone()).collect::<Vec<_>>().into();
+        let map = |v: &Value| match v {
+            Value::Option(o, _) => Value::Option(*o, captions.clone()),
+            other => other.clone(),
+        };
+        match e {
+            FilterExpr::Range(a, b) => FilterExpr::Range(a.as_ref().map(map), b.as_ref().map(map)),
+            FilterExpr::Eq(v) => FilterExpr::Eq(map(v)),
+            FilterExpr::Ne(v) => FilterExpr::Ne(map(v)),
+            FilterExpr::Lt(v) => FilterExpr::Lt(map(v)),
+            FilterExpr::Le(v) => FilterExpr::Le(map(v)),
+            FilterExpr::Gt(v) => FilterExpr::Gt(map(v)),
+            FilterExpr::Ge(v) => FilterExpr::Ge(map(v)),
+            FilterExpr::Or(xs) => FilterExpr::Or(xs.iter().map(|x| self.with_option_captions(t, pos, x)).collect()),
+            FilterExpr::And(xs) => FilterExpr::And(xs.iter().map(|x| self.with_option_captions(t, pos, x)).collect()),
+            other => other.clone(),
+        }
+    }
+
     /// The filter on field `pos` as `GetFilter` reads it back ('' when there is none).
     pub(crate) fn field_filter_text(&self, rec: &Rec, pos: usize) -> Result<String, Signal> {
+        let table = self.table(rec)?;
         let r = rec.borrow();
         let parts = r
             .filters
             .iter()
             .filter(|f| f.field == pos && f.group == r.filter_group)
-            .map(|f| self.filter_text(&f.expr))
+            .map(|f| self.filter_text(&self.with_option_captions(&table, pos, &f.expr)))
             .collect::<Result<Vec<_>, _>>()?;
         Ok(parts.join(""))
     }
@@ -158,7 +184,7 @@ impl Session {
             parts.push(format!(
                 "{}: {}",
                 self.field_caption(t, f.field),
-                self.filter_text(&f.expr)?
+                self.filter_text(&self.with_option_captions(t, f.field, &f.expr))?
             ));
         }
         Ok(parts.join(", "))
@@ -187,19 +213,16 @@ impl Session {
     ) -> Result<String, Signal> {
         let name = |pos: usize| {
             if use_names {
-                t.fields[pos].name.clone()
+                // The caption stands for the name (record/TestProbeRecordRefContracts.al:GetTable_CopiesBufferFiltersKeyDirection:
+                // `Identifier=FILTER(1..5)` for field Id with Caption 'Identifier').
+                self.field_caption(t, pos)
             } else {
                 format!("Field{}", t.fields[pos].id)
             }
         };
         let (key, ascending) = {
             let r = rec.borrow();
-            if r.field_descending {
-                return Err(Signal::Unsupported(
-                    "GetView after a per-field SetAscending (not pinned)".into(),
-                ));
-            }
-            (r.key, r.ascending)
+            (r.key, r.ascending && !r.field_descending)
         };
         let mut out = format!(
             "SORTING({})",

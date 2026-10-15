@@ -87,12 +87,23 @@ fn assigning_a_character_into_a_code_upper_cases_it() {
 
 /// Tests-ERM "ERM Copy Name To Ledg. Entries".AddBlankEntry opens a table that has no row in the demo
 /// data, so `FindLast` is false and the FieldRef is never assigned, then calls `FieldRef.Value(..)`.
-/// No corpus test calls a member of an unassigned FieldRef, so the run is refused and says why.
+/// types/PSUnassignedFieldRef.al pins the read members as errors; assigning Value on one is not pinned, so it is
+/// refused and says why.
 #[test]
-fn a_member_of_a_field_ref_that_was_never_assigned_is_refused_as_not_pinned() {
+fn assigning_value_on_a_field_ref_that_was_never_assigned_is_refused_as_not_pinned() {
     let r = run("procedure F() var F: FieldRef; begin F.Value(1); end;");
     assert!(
         matches!(&r, Err(Signal::Unsupported(m)) if m.contains("FieldRef.Value") && m.contains("never assigned") && m.contains("not pinned")),
+        "{r:?}"
+    );
+}
+
+/// types/PSUnassignedFieldRef.al UnassignedFieldRef_Members: reading Name on a never-assigned FieldRef raises.
+#[test]
+fn name_of_a_field_ref_that_was_never_assigned_raises_not_initialized() {
+    let r = run("procedure F() var F: FieldRef; begin F.Name(); end;");
+    assert!(
+        matches!(&r, Err(Signal::Error(e)) if e.code == "NotInitialized" && e.message == "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."),
         "{r:?}"
     );
 }

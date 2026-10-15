@@ -52,6 +52,15 @@ fn text_of(vars: &str, body: &str) -> String {
     }
 }
 
+/// The message and code of the error the body raises.
+fn raised(vars: &str, body: &str) -> (String, String) {
+    let src = cu(&format!("procedure F(): Text var {vars} begin {body} end;"));
+    match run(&src, "F") {
+        Err(Signal::Error(e)) => (e.message, e.code),
+        other => panic!("{other:?}"),
+    }
+}
+
 fn unsupported(vars: &str, body: &str) -> bool {
     let src = cu(&format!("procedure F(): Text var {vars} begin {body} end;"));
     matches!(run(&src, "F"), Err(Signal::Unsupported(_)))
@@ -384,9 +393,16 @@ fn evaluate_reports_failure_through_its_result() {
 }
 
 #[test]
-fn evaluate_failure_without_using_the_result_is_refused_not_invented() {
-    // The error text of a failed statement-form Evaluate on an Integer is not pinned by the corpus.
-    assert!(unsupported("I: Integer;", "Evaluate(I, 'notanumber'); exit('');"));
+fn evaluate_failure_without_using_the_result_raises_the_pinned_error() {
+    // session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts, `evaluate_int_overflow_statement`;
+    // types/TestProbeScalarContracts.al:Evaluate_BooleanFailureError.
+    assert_eq!(
+        raised("I: Integer;", "Evaluate(I, 'notanumber'); exit('');"),
+        (
+            "The value \"notanumber\" can't be evaluated into type Integer.".into(),
+            "Evaluate".into()
+        )
+    );
 }
 
 #[test]
@@ -432,7 +448,13 @@ fn evaluate_guid_and_datetime_xml_form() {
 #[test]
 fn evaluate_of_forms_the_corpus_does_not_pin_is_refused() {
     assert!(unsupported("I: Integer;", "Evaluate(I, '1,000'); exit('');"));
-    assert!(unsupported("B: Boolean;", "Evaluate(B, 'maybe'); exit('');"));
+    assert_eq!(
+        raised("B: Boolean;", "Evaluate(B, 'maybe'); exit('');"),
+        (
+            "The value \"maybe\" can't be evaluated into type Boolean.".into(),
+            "Evaluate".into()
+        )
+    );
 }
 
 // ----------------------------------------------------------------- XML
@@ -450,11 +472,14 @@ fn xml_read_from_and_get_root() {
         "Ok := XmlDocument.ReadFrom('not xml', D); exit(Format(Ok));",
     );
     assert_eq!(t, "No");
-    // The error text of a failed ReadFrom whose result is unused is not pinned.
-    assert!(unsupported(
-        "D: XmlDocument;",
-        "XmlDocument.ReadFrom('not xml', D); exit('');"
-    ));
+    // The statement form raises (xml/TestProbeXmlContracts.al:ReadFrom_Invalid_Statement, `text only`).
+    assert_eq!(
+        raised("D: XmlDocument;", "XmlDocument.ReadFrom('not xml', D); exit('');"),
+        (
+            "The following exception was encountered when processing XML data: 'Data at the root level is invalid. Line 1, position 1.' at line 1 and position 1.".into(),
+            "Xml:Xml".into()
+        )
+    );
 }
 
 #[test]
@@ -975,7 +1000,6 @@ fn json_parser_edge_cases() {
         "{\"a\" 1}",
         "01",
         "'x'",
-        "{} x",
         "",
         "{\"a\":\"\\x\"}",
         "[1 2]",

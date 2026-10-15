@@ -38,6 +38,10 @@ const WEEKDAYS: [&str; 7] = [
     "Sunday",
 ];
 
+/// Marks an error string of [`format_with_string`] as the platform's "invalid field or attribute" error (the caller
+/// raises it; text/TestProbeTextDateFormatContracts.al:Format_FormatStrings_Number, Format_OptionFieldAndOptionVariable).
+pub const INVALID_FORMAT_MARK: &str = "\u{1}invalid-format:";
+
 /// What the codes that come after a number's digits need to know from the whole string.
 struct Numeric {
     value: Decimal,
@@ -61,13 +65,23 @@ pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn Form
         rest = &after[close + 1..];
     }
     pieces.push((false, rest));
-    let numeric = numeric_of(v, &pieces)?;
+    let numeric = numeric_of(v, &pieces).map_err(|e| {
+        if e == INVALID_FORMAT_MARK {
+            format!("{INVALID_FORMAT_MARK}{template}")
+        } else {
+            e
+        }
+    })?;
     let mut out = String::new();
     for (is_code, text) in pieces {
         if is_code {
-            out.push_str(
-                &code(v, text, numeric.as_ref(), ctx).map_err(|e| format!("format string `{template}`: {e}"))?,
-            );
+            out.push_str(&code(v, text, numeric.as_ref(), ctx).map_err(|e| {
+                if e == INVALID_FORMAT_MARK {
+                    format!("{INVALID_FORMAT_MARK}{template}")
+                } else {
+                    format!("format string `{template}`: {e}")
+                }
+            })?);
         } else {
             out.push_str(text);
         }
@@ -90,6 +104,10 @@ fn numeric_of(v: &Value, pieces: &[(bool, &str)]) -> Result<Option<Numeric>, Str
     for (is_code, text) in pieces {
         if !is_code {
             continue;
+        }
+        // `Filler Character 0` (a blank instead of the comma) is no code (Format_FormatStrings_Number).
+        if text.starts_with("Filler Character") && !text.starts_with("Filler Character,") {
+            return Err(INVALID_FORMAT_MARK.to_string());
         }
         if let Some(c) = text.strip_prefix("Filler Character,") {
             let mut it = c.chars();
@@ -136,7 +154,8 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
         return match (neg, w) {
             (true, w) => Ok(format!("{:>1$}", "-", w.unwrap_or(1))),
             (false, Some(w)) => Ok(" ".repeat(w)),
-            (false, None) => Err("code `<Sign>` on a number that is not negative (not pinned)".to_string()),
+            // A sign code without a width shows nothing for a number that is not negative.
+            (false, None) => Ok(String::new()),
         };
     }
     if code == "Integer" || code.starts_with("Integer,") {
@@ -144,21 +163,30 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
         let pad: String = std::iter::repeat_n(n.filler, w.saturating_sub(int.len())).collect();
         return Ok(format!("{pad}{int}"));
     }
-    if code == "Integer Thousand" {
-        return Ok(group(&int));
+    if code == "Integer Thousand" || code.starts_with("Integer Thousand,") {
+        let grouped = group(&int);
+        return Ok(match width(code, "Integer Thousand")? {
+            // A number that does not fit shows stars (`<Integer Thousand,3>` of 1234567 is `***`).
+            Some(w) if grouped.len() > w => "*".repeat(w),
+            Some(w) => format!("{grouped:>w$}"),
+            None => grouped,
+        });
+    }
+    if code == "Decimals" {
+        // Without a width: the decimals the value has (`5.5` shows `.5`, a whole number nothing).
+        let frac = abs.fract().normalize().to_string();
+        return Ok(frac.strip_prefix('0').map(str::to_string).unwrap_or_default());
     }
     if let Some(w) = width(code, "Decimals")? {
         if w < 2 {
             return refuse();
         }
         let digits = (w - 1) as u32;
-        let rounded = abs.round_dp_with_strategy(digits, RoundingStrategy::MidpointAwayFromZero);
-        if rounded.trunc() != abs.trunc() {
-            return Err(format!(
-                "code `<{code}>` rounding up into the integer part (not pinned)"
-            ));
+        // More decimals than the width holds show stars (`<Decimals,3>` of 1234.567 is `***`); fewer are padded with zeros.
+        if abs.fract().normalize().scale() > digits {
+            return Ok("*".repeat(w));
         }
-        let frac = format!("{:.*}", digits as usize, rounded.fract());
+        let frac = format!("{:.*}", digits as usize, abs.fract());
         return Ok(frac.trim_start_matches('0').to_string());
     }
     if code.starts_with("Filler Character,") || code.starts_with("Precision,") {
@@ -199,6 +227,10 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
     if let Some(n) = numeric {
         return numeric_code(n, code, v, ctx);
     }
+    // `<Integer>` is no code of an Option (Format_OptionFieldAndOptionVariable, `integer_cast_default`).
+    if matches!(v, Value::Option(..)) && code.starts_with("Integer") {
+        return Err(INVALID_FORMAT_MARK.to_string());
+    }
     if let Some(n) = code.strip_prefix("Standard Format,") {
         return match n.trim().parse::<i32>() {
             Ok(n) => format_value(v, 0, n, ctx).map_err(fail),
@@ -221,7 +253,8 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
             None => Err(format!("code `<Closing>` on {}", v.describe())),
         };
     }
-    let date = if closing { None } else { day_no.map(civil_from_day) };
+    // A closing date shows its day in the date codes ('5.3.2005'); only `<Closing>` shows the mark.
+    let date = day_no.map(civil_from_day);
     let hour12 = |ms: i64| {
         if ms / 3_600_000 % 12 == 0 {
             12
@@ -232,7 +265,10 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
     let part = match (code, date, clock) {
         ("Year4", Some((y, _, _)), _) => format!("{y:04}"),
         // A two-digit year below 10 would print as one digit or two: not measured.
-        ("Year", Some((y, _, _)), _) if y.rem_euclid(100) >= 10 => format!("{}", y.rem_euclid(100)),
+        // Two digits for 1999 and for 2000 to 2030, four for 1905, 1929, 1930 and 2105
+        // (text/TestProbeTextDateFormatContracts.al:Format_FormatStrings_Date); other years are not measured.
+        ("Year", Some((y, _, _)), _) if y == 1999 || (2000..=2030).contains(&y) => format!("{:02}", y.rem_euclid(100)),
+        ("Year", Some((y, _, _)), _) if matches!(y, 1905 | 1929 | 1930 | 2105) => format!("{y}"),
         ("Year,2", Some((y, _, _)), _) => format!("{:02}", y.rem_euclid(100)),
         ("Month", Some((_, m, _)), _) => format!("{m}"),
         ("Month,2", Some((_, m, _)), _) => format!("{m:02}"),
@@ -241,6 +277,9 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         ("Day,2", Some((_, _, d)), _) => format!("{d:02}"),
         ("Weekday Text", Some(_), _) => WEEKDAYS[((day_no.unwrap_or(1) - 1).rem_euclid(7)) as usize].to_string(),
         ("Hours24,2", _, Some(ms)) => format!("{:02}", ms / 3_600_000),
+        ("Hours24", _, Some(ms)) => format!("{}", ms / 3_600_000),
+        // A minute below 10 without a width is not measured (Dates_CreateDateTimeRoundTrip shows 30).
+        ("Minutes", _, Some(ms)) if ms / 60_000 % 60 >= 10 => format!("{}", ms / 60_000 % 60),
         // The twelve-hour clock pads the hour with a space (:Format_PictureCodes).
         ("Hours12,2", _, Some(ms)) => format!("{:>2}", hour12(ms)),
         ("Minutes,2", _, Some(ms)) => format!("{:02}", ms / 60_000 % 60),
@@ -299,6 +338,16 @@ mod tests {
     }
 
     #[test]
+    fn integer_thousand_with_a_width_shows_stars_when_the_number_does_not_fit() {
+        // text/TestProbeTextDateFormatContracts.al:Format_StringCodes, `integer_thousand_width_3` and `_10`.
+        assert_eq!(text(fmt(Value::Integer(1234567), "<Integer Thousand,3>")), "***");
+        assert_eq!(
+            text(fmt(Value::Integer(1234567), "<Integer Thousand,10>")),
+            " 1,234,567"
+        );
+    }
+
+    #[test]
     fn other_codes_and_values_are_refused() {
         let day = Value::Date(day_from_civil(2024, 3, 7), false);
         for (v, f) in [
@@ -306,8 +355,6 @@ mod tests {
             (day.clone(), "<Day,3>"),
             (day.clone(), "<Year4"),
             (Value::Date(0, false), "<Year4>"),
-            (Value::Decimal(1.into()), "<Integer Thousand,3>"),
-            (Value::Decimal(1.into()), "<Sign>"),
             (Value::Integer(1), "<Standard Format,x>"),
         ] {
             assert!(matches!(fmt(v, f), Err(Signal::Unsupported(_))), "{f}");
@@ -333,6 +380,11 @@ mod tests {
         );
         assert_eq!(text(fmt(Value::Integer(-5), "<Sign><Integer>")), "-5");
         assert_eq!(text(fmt(Value::Integer(5), "<Sign,1><Integer>")), " 5");
+        // text/TestProbeTextDateFormatContracts.al:Format_StringCodes, `sign_pos_dec`.
+        assert_eq!(
+            text(fmt(Value::Decimal("5.5".parse().unwrap()), "<Sign><Integer><Decimals>")),
+            "5.5"
+        );
     }
 
     #[test]

@@ -328,7 +328,8 @@ impl Parser<'_> {
                 None => (q.as_str(), case_insensitive),
             };
             if body.contains(['*', '?']) || ci {
-                let body = if matches!(self.ty, T::Code(_)) && !ci {
+                // A Code filter shows upper case with `@` too (types/TestProbeScalarContracts.al:SetFilter_CodeFieldUpperCases).
+                let body = if matches!(self.ty, T::Code(_)) {
                     body.to_uppercase()
                 } else {
                     body.to_string()
@@ -337,7 +338,7 @@ impl Parser<'_> {
             }
         }
         if let (Tok::Raw(s), T::Text(_) | T::Code(_)) = (&t, self.ty) {
-            let s = if matches!(self.ty, T::Code(_)) && !case_insensitive {
+            let s = if matches!(self.ty, T::Code(_)) {
                 s.to_uppercase()
             } else {
                 s.clone()

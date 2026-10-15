@@ -62,6 +62,9 @@ fn run() -> Result<ExitCode, String> {
         print!("{}", output::timings_table(&ts));
         return Ok(ExitCode::SUCCESS);
     }
+    if let Some(env) = args.environment {
+        al_test_cli::host::set_environment(env);
+    }
     if let Some(dir) = &args.files_dir {
         al_test_cli::host::set_files_dir(dir.clone());
     }

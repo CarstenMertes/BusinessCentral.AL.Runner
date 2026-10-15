@@ -350,13 +350,17 @@ impl Session {
             // Doc (Record.Ascending): with an argument sets the sort direction of the current key,
             // without one reads it (corpus record/TestRecordSort.al:111, TestCopyOntoTemporaryRecord.al).
             "Ascending" => {
-                if rec.borrow().field_descending {
-                    return unsupported("Ascending after a per-field SetAscending (not pinned)");
-                }
+                // After a per-field SetAscending(Field, false) the record reads as descending (record/TestProbeRecordRefContracts.al:
+                // GetTable_CopiesBufferFiltersKeyDirection, `rr_ascending` No).
                 match args.first() {
-                    None => Ok(Value::Boolean(rec.borrow().ascending)),
+                    None => Ok(Value::Boolean({
+                        let r = rec.borrow();
+                        r.ascending && !r.field_descending
+                    })),
                     Some(v) => {
-                        rec.borrow_mut().ascending = ops::truthy(v)?;
+                        let mut r = rec.borrow_mut();
+                        r.ascending = ops::truthy(v)?;
+                        r.field_descending = false;
                         Ok(Value::Null)
                     }
                 }
@@ -527,9 +531,6 @@ impl Session {
                     return Ok(Value::Null);
                 }
                 let s = src.borrow().clone();
-                if s.field_descending {
-                    return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
-                }
                 // Copy takes the fields, filters and key but does not move the target to the source's company
                 // (record/TestChangeCompanyFiltersCopyDeleteContracts.al:117-121).
                 let mut d = rec.borrow_mut();
@@ -548,6 +549,7 @@ impl Session {
                 d.key = s.key;
                 d.adhoc = s.adhoc;
                 d.ascending = s.ascending;
+                d.field_descending = s.field_descending;
                 d.position = s.position;
                 d.load.buffer = s.load.buffer;
                 d.load.partial = s.load.partial;

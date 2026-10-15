@@ -115,6 +115,11 @@ impl Session {
                     other = other.describe()
                 )),
             },
+            // corpus types/PSCaptionClass.al:5-8, :58-81 (CaptionClassTranslate_Expressions).
+            "System.CaptionClassTranslate#1" => match args.first().and_then(al_builtins::native::text_of) {
+                Some(t) => self.caption_class_translate(&t).map(Value::Text),
+                None => unsupported("CaptionClassTranslate of something that is not text"),
+            },
             "Session.CurrentClientType#1" => Ok(client_type(self.host.identity.current_client_type())),
             "Session.DefaultClientType#1" => Ok(client_type(self.host.identity.default_client_type())),
             _ => return None,
@@ -160,7 +165,12 @@ impl Session {
                 self.work_date = Some(*d);
                 Ok(Value::Null)
             }
-            // Whether the undefined date resets the work date to today is not pinned.
+            // The undefined date sets the work date back to today (session/TestProbeSessionMiscContracts.al:
+            // WorkDate_SetUndefined).
+            Some(Value::Date(0, false)) => {
+                self.work_date = None;
+                Ok(Value::Null)
+            }
             Some(other) => unsupported(format!(
                 "WorkDate({other}): only a defined, non-closing Date is pinned",
                 other = other.describe()

@@ -663,12 +663,16 @@ impl Session {
         let item = &def.items[level];
         let t: Arc<TableDef> = self.engine.tables[item.table].clone().expect("table");
         let mut filters = plan.scan[level].clone();
-        // A parent that had no match has nothing to link to.
-        let parent_missing = item.parent.is_some_and(|p| chosen[p].is_empty());
+        // A parent (or the item the link reads) that had no match has nothing to link to.
+        let parent_missing =
+            item.parent.is_some_and(|p| chosen[p].is_empty()) || item.link_items.iter().any(|&a| chosen[a].is_empty());
         if let Some(parent) = item.parent.filter(|_| !parent_missing) {
-            // Corpus query/TestQueryDataItemLinkMultiField.al: every equality of the link holds.
-            for (own, theirs) in &item.link {
-                let v = ops::convert(chosen[parent][*theirs].clone(), &t.fields[*own].ty)?;
+            // The link reads the parent's row, or an item further out (corpus branch al-runtime-rs-staging,
+            // query/PXQueryOuterLink.al:6-11). Corpus query/TestQueryDataItemLinkMultiField.al: every
+            // equality of the link holds.
+            for (k, (own, theirs)) in item.link.iter().enumerate() {
+                let linked = item.link_items.get(k).copied().unwrap_or(parent);
+                let v = ops::convert(chosen[linked][*theirs].clone(), &t.fields[*own].ty)?;
                 filters.push(FieldFilter {
                     field: *own,
                     expr: FilterExpr::Eq(v),

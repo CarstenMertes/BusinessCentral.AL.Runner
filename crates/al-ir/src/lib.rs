@@ -516,8 +516,12 @@ pub struct QueryItem {
     pub parent: Option<usize>,
     /// `SqlJoinType = LeftOuterJoin`, which is also the default of a nested dataitem.
     pub left_outer: bool,
-    /// `DataItemLink`: (field position in this table, field position in the parent's table).
+    /// `DataItemLink`: (field position in this table, field position in the linked item's table).
     pub link: Vec<(usize, usize)>,
+    /// For each `link` pair, the enclosing dataitem whose current row it reads, when any pair reads an item
+    /// further out than the parent (a link to the grandparent); empty when every pair reads the parent.
+    #[serde(default)]
+    pub link_items: Vec<usize>,
     /// `DataItemTableFilter`: conditions on fields of this table.
     pub table_filter: Vec<CalcCond>,
 }

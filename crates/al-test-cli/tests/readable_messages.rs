@@ -26,7 +26,7 @@ const KEPT: &[(&str, &str, &str)] = &[
     ),
     (
         "alrunner-cli/src/run.rs",
-        r#"let key = warm_key(&inputs, &dependencies, &symbols, &format!("{:?}", chosen.target));"#,
+        r#"let target_key = format!("{:?} {}", chosen.target, a.execute);"#,
         "part of a hash key for the warm slot, never shown",
     ),
     (

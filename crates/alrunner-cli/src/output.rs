@@ -323,6 +323,7 @@ mod tests {
             assumptions: Vec::new(),
             time: std::time::Duration::ZERO,
             coverage: Vec::new(),
+            messages: Vec::new(),
         }
     }
 

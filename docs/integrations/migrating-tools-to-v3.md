@@ -16,7 +16,7 @@ page grows with each step).
 | 1 | `alrunner test` flags LethAL uses, v2-shaped `--output-json` | done (this page, sections 1 to 5) |
 | 2 | Cobertura coverage (`--coverage`, `--coverage-out`), per-test statements (`--coverage-json`) | done (sections 3 and 4a) |
 | 3 | `alrunner serve` (`runTests`, `cancel`, `shutdown`) | done (section 4b; ADR-028, Proposed) |
-| 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | not yet |
+| 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | done (section 4b; ADR-028) |
 | 5 | `captureValues`, `iterationTracking` | not yet |
 | 6 | `alrunner debug --stdio` (DAP) | not yet |
 
@@ -153,7 +153,7 @@ error at start-up (exit 2).
 | Command | v3 |
 |---|---|
 | `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test`, `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `code`, `captureValues`, `iterationTracking`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
-| `execute` | `{"error": "execute is not implemented yet"}` (step 4). |
+| `execute` | Runs the `OnRun` trigger of one codeunit per app (`sourcePaths`) or of inline `code`; one answer line without `type`: `{"exitCode","tests":[{"name","status","durationMs","message","stackTrace","stackFrames","messages"}],"warnings","coverage","perTestCoverage"}`. `captureValues` and `iterationTracking` are accepted and earn a `warnings` entry (step 5): `capturedValues` and `loops` are not sent. Names: `Codeunit<ID>.OnRun`, for `code` `<object name>.OnRun`. Details in ADR-028, item 9. |
 | `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it stops **after the current test**: the tests that ran were already streamed, and the summary has `cancelled: true`, `exitCode: 130`, as in v2. |
 | `shutdown` | `{"status":"shutting down"}`, then exit 0. EOF on stdin exits too. |
 

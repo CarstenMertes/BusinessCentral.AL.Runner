@@ -409,7 +409,24 @@ impl Session {
             }))
     }
 
+    /// Keeps the text of every `Message` raised outside a test method, for a scratch run
+    /// ([`Session::take_messages`]). Without this such a call is refused.
+    pub fn capture_messages(&mut self) {
+        self.scratch_messages.get_or_insert_with(Vec::new);
+    }
+
+    /// The texts kept since [`Session::capture_messages`] (or the last call), in order.
+    pub fn take_messages(&mut self) -> Vec<String> {
+        self.scratch_messages.as_mut().map(std::mem::take).unwrap_or_default()
+    }
+
     pub(crate) fn ui_message(&mut self, text: String) -> Result<(), Signal> {
+        if self.ui.is_none() {
+            if let Some(log) = self.scratch_messages.as_mut() {
+                log.push(text);
+                return Ok(());
+            }
+        }
         self.dispatch_ui(UiKind::Message, &text.clone(), vec![Value::Text(text)])
             .map(|_| ())
     }

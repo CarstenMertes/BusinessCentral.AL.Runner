@@ -22,6 +22,18 @@ const RUN_TESTS_FIELDS: &[&str] = &[
     "excludeTests",
     "testIsolation",
 ];
+/// The request fields of `execute`.
+const EXECUTE_FIELDS: &[&str] = &[
+    "command",
+    "sourcePaths",
+    "code",
+    "packagePaths",
+    "captureValues",
+    "iterationTracking",
+    "coverage",
+    "perTestCoverage",
+    "testIsolation",
+];
 /// Fields v2 knows and v3 defers (ADR-016).
 const DEFERRED: &[&str] = &["affectedOnly", "includeFailing", "strictEnvironment", "tdd"];
 /// Fields v2 reads for another command only: accepted, with a warning.
@@ -126,7 +138,7 @@ pub fn serve(daemon: &[String]) -> Result<(), String> {
                 return Ok(());
             }
             "runtests" => run_tests(&base, fields, &mut ctx, &flags),
-            "execute" => error("execute is not implemented yet (ADR-028, step 4)"),
+            "execute" => execute(&base, fields, &mut ctx, &flags),
             "" => error("a request needs a `command`"),
             other => error(format!("unknown command `{other}`")),
         }
@@ -276,6 +288,213 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
     }
 }
 
+/// The object keywords of AL: a `code` that starts with one (after white space and comments) is a whole object.
+const OBJECT_KEYWORDS: &[&str] = &[
+    "codeunit",
+    "table",
+    "tableextension",
+    "page",
+    "pageextension",
+    "pagecustomization",
+    "report",
+    "reportextension",
+    "query",
+    "xmlport",
+    "enum",
+    "enumextension",
+    "interface",
+    "permissionset",
+    "permissionsetextension",
+    "profile",
+    "controladdin",
+    "entitlement",
+    "dotnet",
+];
+
+/// Whether `code` is a declaration of an AL object (`// comments` and `/* comments */` first, then an object keyword),
+/// as opposed to a list of statements.
+fn is_object_declaration(code: &str) -> bool {
+    let mut rest = code.trim_start_matches('\u{feff}');
+    loop {
+        rest = rest.trim_start();
+        if let Some(after) = rest.strip_prefix("//") {
+            rest = after.split_once('\n').map_or("", |(_, tail)| tail);
+        } else if let Some(after) = rest.strip_prefix("/*") {
+            rest = after.split_once("*/").map_or("", |(_, tail)| tail);
+        } else {
+            break;
+        }
+    }
+    let word: String = rest.chars().take_while(|c| c.is_ascii_alphabetic()).collect();
+    OBJECT_KEYWORDS.iter().any(|k| word.eq_ignore_ascii_case(k)) && rest[word.len()..].starts_with(char::is_whitespace)
+}
+
+/// The folder of the inline app a request with `code` runs, written fresh: an `app.json` and one file. Without
+/// Microsoft's apps in sight the app has no dependencies (it runs at once); with `--bc-version`, `--dep`,
+/// `--package-cache` or `packagePaths` it is built for that BC version and sees the Base Application.
+fn inline_app(code: &str, with_microsoft: bool, bc_version: Option<&str>) -> Result<PathBuf, String> {
+    let dir = std::env::temp_dir().join(format!("alrunner-execute-{}", std::process::id()));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let mut app = json!({
+        "id": "6f3f1a4e-3d52-4c1e-9d4b-0a1c2e3f4a5b",
+        "name": "AL Runner Inline Execute",
+        "publisher": "AL Runner",
+        "version": "1.0.0.0",
+        "idRanges": [{ "from": 50000, "to": 99999 }],
+    });
+    if with_microsoft {
+        let major = bc_version
+            .and_then(|v| v.split('.').next())
+            .filter(|m| m.chars().all(|c| c.is_ascii_digit()) && !m.is_empty())
+            .unwrap_or("27");
+        app["platform"] = json!(format!("{major}.0.0.0"));
+        app["application"] = json!(format!("{major}.0.0.0"));
+    }
+    std::fs::write(dir.join("app.json"), app.to_string()).map_err(|e| e.to_string())?;
+    let source = if is_object_declaration(code) {
+        code.to_string()
+    } else {
+        format!(
+            "codeunit 50100 \"AL Runner Inline Execute\"\n{{\n    trigger OnRun()\n    begin\n{code}\n    end;\n}}\n"
+        )
+    };
+    std::fs::write(dir.join("Inline.al"), source).map_err(|e| e.to_string())?;
+    Ok(dir)
+}
+
+/// `execute`: the `OnRun` trigger of one codeunit per app (the lowest object id, one that declares no test first), or of
+/// the inline `code`, run in the warm process. One answer line without a `type`, like v2's.
+fn execute(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, flags: &Flags) {
+    let mut warnings = Vec::new();
+    for key in fields.keys() {
+        if DEFERRED.contains(&key.as_str()) {
+            return error(format!(
+                "`{key}` is deferred in v3 (ADR-016): it only hides run cost and waits until it is measured to matter"
+            ));
+        }
+        if !EXECUTE_FIELDS.contains(&key.as_str()) {
+            if RUN_TESTS_FIELDS.contains(&key.as_str()) {
+                warnings.push(format!("`{key}` is read by `runTests` only; `execute` ignores it"));
+            } else {
+                return error(format!("unknown field `{key}` for execute"));
+            }
+        }
+    }
+    for key in ["captureValues", "iterationTracking"] {
+        if flag(fields, key).unwrap_or(false) {
+            warnings.push(format!(
+                "`{key}` is not implemented yet (ADR-028, step 5): the run happens, `capturedValues` and `loops` stay empty"
+            ));
+        }
+    }
+    let code = match fields.get("code") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(c)) => Some(c.clone()),
+        Some(_) => return error("`code` is a string"),
+    };
+    let sources = match string_list(fields, "sourcePaths") {
+        Ok(s) => s,
+        Err(e) => return error(e),
+    };
+    if code.is_some() && !sources.is_empty() {
+        return error("`code` and `sourcePaths` are mutually exclusive");
+    }
+    if code.is_none() && sources.is_empty() {
+        return error("`execute` needs `sourcePaths` or `code`");
+    }
+    let mut a = base.clone();
+    match string_list(fields, "packagePaths") {
+        Ok(p) => a.package_caches.extend(p.into_iter().map(PathBuf::from)),
+        Err(e) => return error(e),
+    }
+    let inline = code.is_some();
+    a.apps = match &code {
+        Some(code) => {
+            let with_microsoft = a.bc_version.is_some() || !a.deps.is_empty() || !a.package_caches.is_empty();
+            match inline_app(code, with_microsoft, a.bc_version.as_deref()) {
+                Ok(dir) => vec![dir],
+                Err(e) => return error(e),
+            }
+        }
+        None => sources.into_iter().map(PathBuf::from).collect(),
+    };
+    if let Some(i) = fields.get("testIsolation").and_then(Value::as_str) {
+        if !["codeunit", "test", "disabled"].contains(&i.to_ascii_lowercase().as_str()) {
+            return error(format!("`testIsolation` is codeunit, test or disabled, not `{i}`"));
+        }
+        warnings.push("`testIsolation` has no effect on `execute`: one OnRun trigger runs".into());
+    }
+    let (want_coverage, want_per_test) = match (flag(fields, "coverage"), flag(fields, "perTestCoverage")) {
+        (Ok(c), Ok(p)) => (c || p, p),
+        (Err(e), _) | (_, Err(e)) => return error(e),
+    };
+    a.coverage = want_coverage;
+    a.quiet = true;
+    a.execute = true;
+    flags.cancel.store(false, Ordering::SeqCst);
+    flags.running.store(true, Ordering::SeqCst);
+    ctx.report = None;
+    ctx.used = None;
+    // The answer is one line: no `test` line is streamed.
+    let streaming = ctx.on_test.take();
+    let outcome = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| run::test_with(&a, Some(ctx))));
+    ctx.on_test = streaming;
+    flags.running.store(false, Ordering::SeqCst);
+    let cancelled = flags.cancel.swap(false, Ordering::SeqCst);
+    match outcome {
+        Err(p) => {
+            ctx.runtime.clear();
+            let msg = p
+                .downcast_ref::<String>()
+                .cloned()
+                .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+                .unwrap_or_default();
+            error(format!("the run panicked (a runtime bug): {msg}"));
+        }
+        Ok(Err(e)) => error(e),
+        Ok(Ok(code_)) => {
+            let Some(report) = ctx.report.take() else {
+                return error("the run produced no report");
+            };
+            let mut tests = Vec::new();
+            for (i, row) in report.doc["tests"].as_array().into_iter().flatten().enumerate() {
+                let mut row = row.as_object().cloned().unwrap_or_default();
+                let mut line = test_line(&mut row);
+                line.remove("type");
+                // An inline object is named by its own name: `X.OnRun`.
+                if inline {
+                    if let Some(name) = report.object_names.get(i) {
+                        line.insert("name".into(), json!(format!("{name}.OnRun")));
+                    }
+                }
+                if let Some(m) = report.messages.get(i).filter(|m| !m.is_empty()) {
+                    line.insert("messages".into(), json!(m));
+                }
+                tests.push(Value::Object(line));
+            }
+            if tests.is_empty() {
+                warnings.push("no codeunit with an OnRun trigger in the app".into());
+            }
+            let mut response = json!({ "exitCode": code_, "tests": tests });
+            if cancelled {
+                response["cancelled"] = json!(true);
+            }
+            if !warnings.is_empty() {
+                response["warnings"] = json!(warnings);
+            }
+            if let Some(cov) = &report.coverage {
+                if want_coverage {
+                    response["coverage"] = cov["coverage"].clone();
+                }
+                if want_per_test {
+                    response["perTestCoverage"] = cov["perTestCoverage"].clone();
+                }
+            }
+            out(&response);
+        }
+    }
+}
+
 /// A `test` line of v2: the row of the JSON document, with `stackFrames` split out of the stack text.
 fn test_line(row: &mut Map<String, Value>) -> Map<String, Value> {
     let mut line = Map::new();
@@ -302,6 +521,28 @@ mod tests {
 
     fn base() -> TestArgs {
         daemon_args(&["--define".into(), "S".into()]).unwrap()
+    }
+
+    #[test]
+    fn code_that_starts_with_an_object_keyword_is_an_object_and_anything_else_is_statements() {
+        for object in [
+            "codeunit 50100 X { }",
+            "  \n// a comment\n/* another\n one */\nTable 50101 T { }",
+            "\u{feff}pageextension 50102 P extends \"Customer Card\" { }",
+            "interface IFoo { }",
+        ] {
+            assert!(is_object_declaration(object), "{object}");
+        }
+        for statements in [
+            "Message('hi');",
+            "codeunitCount := 1;",
+            "tableName := 'x';",
+            "",
+            "// only a comment",
+            "var x: Integer; begin end;",
+        ] {
+            assert!(!is_object_declaration(statements), "{statements}");
+        }
     }
 
     #[test]

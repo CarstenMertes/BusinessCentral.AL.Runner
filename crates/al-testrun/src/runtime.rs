@@ -151,6 +151,8 @@ pub struct TestResult {
     /// With `RunOptions::coverage`: the statements the test ran, as (position id, runs), sorted by id. Position ids
     /// index `CorpusRuntime::coverage_statements`' `pos` and `Program::positions`.
     pub coverage: Vec<(u32, u32)>,
+    /// With `RunOptions::execute`: the text of the `Message` calls the run made, in order.
+    pub messages: Vec<String>,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -233,6 +235,8 @@ struct Unit {
     without_baseline: bool,
     /// Count the statements each test runs (`RunOptions::coverage`).
     coverage: bool,
+    /// Run the `OnRun` trigger as the one test (`RunOptions::execute`).
+    execute: bool,
     hooks: crate::events::Hooks,
 }
 
@@ -244,6 +248,7 @@ type UnitOutcomes = (
     Vec<(String, std::time::Duration)>,
     Vec<(String, Vec<Assumption>)>,
     Vec<(String, Vec<(u32, u32)>)>,
+    Vec<(String, Vec<String>)>,
 );
 
 struct UnitResult {
@@ -283,7 +288,7 @@ fn run_unit(
             si: u.si,
             oi: u.oi,
             id: u.id,
-            result: Ok((Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())),
+            result: Ok((Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new())),
             took: started.elapsed(),
             sidecar_start: std::time::Duration::ZERO,
         };
@@ -292,10 +297,11 @@ fn run_unit(
         let mut stacks = Vec::new();
         let mut times = Vec::new();
         let mut hits = Vec::new();
+        let mut messages = Vec::new();
         if u.coverage {
             crate::coverage::begin();
         }
-        let done = run_codeunit_full(
+        let done = run_codeunit_core(
             engine,
             lowered,
             u.oi,
@@ -305,9 +311,11 @@ fn run_unit(
             &mut stacks,
             &mut times,
             &mut hits,
+            &mut messages,
             limit,
+            u.execute,
         );
-        (done, stacks, times, hits, crate::coverage::finish())
+        (done, stacks, times, hits, crate::coverage::finish(), messages)
     }))
     .map_err(|p| {
         p.downcast_ref::<String>()
@@ -329,7 +337,7 @@ fn run_unit(
             coverage,
         };
         match &result {
-            Ok((done, stacks, times, _, covs)) => {
+            Ok((done, stacks, times, _, covs, _)) => {
                 for (test, outcome) in done.iter().filter(|(t, _)| !have.contains(t)) {
                     let stack = stacks.iter().find(|(n, _)| n == test).map(|(_, s)| s.clone());
                     let time = times
@@ -367,6 +375,34 @@ fn run_unit(
         took: started.elapsed(),
         sidecar_start: crate::dotnet::take_start_time(),
     }
+}
+
+/// The codeunit a scratch run executes in the app `app` (the program's numbering; `None`: any app that is not a
+/// dependency): of the codeunits with an `OnRun` trigger the one with the lowest id, a codeunit that declares no test
+/// before one that does.
+fn on_run_target(lowered: &Lowered, app: Option<usize>) -> Option<usize> {
+    lowered
+        .program
+        .objects
+        .iter()
+        .enumerate()
+        .filter(|(oi, o)| {
+            o.kind == "codeunit"
+                && o.id.is_some()
+                && !lowered.dependency[*oi]
+                && app.is_none_or(|a| o.app as usize == a)
+                && o.routines
+                    .iter()
+                    .any(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnRun"))
+        })
+        .min_by_key(|(_, o)| {
+            let is_test = test_routines(o).next().is_some()
+                || o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.eq_ignore_ascii_case("Test"));
+            (is_test, o.id)
+        })
+        .map(|(oi, _)| oi)
 }
 
 /// Whether object `oi` is a test codeunit that `suite` runs under the selection `only`.
@@ -434,6 +470,9 @@ pub struct RunOptions {
     /// Count how often each statement of the workspace's apps runs, per test (`alrunner test --coverage`).
     /// Off, a run pays one branch per statement.
     pub coverage: bool,
+    /// A scratch run (`alrunner serve`'s `execute`): the `OnRun` trigger of one codeunit per `SuiteRun`'s app runs
+    /// instead of the tests, and the text of its `Message` calls is kept in `TestResult::messages`.
+    pub execute: bool,
     /// Callbacks while the run goes on: a line per test as it finishes, and a flag that stops the run after the
     /// current test (`alrunner serve`).
     pub hooks: crate::events::Hooks,
@@ -958,6 +997,7 @@ impl CorpusRuntime {
         // must show no outcome that changes. A run with a custom test runner keeps it too.
         let try_skip = baseline_wanted
             && std::env::var_os("AL_FORCE_BASELINE").is_none()
+            && !opts.execute
             && suites.iter().all(|s| s.runner.is_none());
         let compile_started = std::time::Instant::now();
         // The compile cache holds the dependency apps, which come first in the program (ADR-022).
@@ -1374,6 +1414,22 @@ impl CorpusRuntime {
         let mut units: Vec<Unit> = Vec::new();
         let mut list: Vec<TestResult> = Vec::new();
         for (si, suite) in suites.iter().enumerate() {
+            if opts.execute {
+                // A scratch run: the `OnRun` trigger of one codeunit of the suite's app.
+                if let Some(oi) = on_run_target(lowered, suite.app) {
+                    units.push(Unit {
+                        si,
+                        oi,
+                        id: lowered.program.objects[oi].id.unwrap_or(0),
+                        isolation: TestIsolation::default(),
+                        without_baseline: false,
+                        coverage: opts.coverage,
+                        execute: true,
+                        hooks: opts.hooks.clone(),
+                    });
+                }
+                continue;
+            }
             let isolation = match suite.runner {
                 None => Ok(TestIsolation::default()),
                 Some(r) => runner_isolation(lowered, r),
@@ -1389,6 +1445,7 @@ impl CorpusRuntime {
                         isolation: opts.isolation.unwrap_or(*i),
                         without_baseline: false,
                         coverage: opts.coverage,
+                        execute: false,
                         hooks: opts.hooks.clone(),
                     }),
                     Err(why) => {
@@ -1405,6 +1462,7 @@ impl CorpusRuntime {
                                 assumptions: Vec::new(),
                                 time: std::time::Duration::ZERO,
                                 coverage: Vec::new(),
+                                messages: Vec::new(),
                             });
                         }
                     }
@@ -1509,7 +1567,8 @@ impl CorpusRuntime {
                         call_stack: String,
                         assumptions: Vec<Assumption>,
                         time: std::time::Duration,
-                        coverage: Vec<(u32, u32)>| {
+                        coverage: Vec<(u32, u32)>,
+                        messages: Vec<String>| {
                 list.push(TestResult {
                     suite: r.si,
                     app: order[o.app as usize],
@@ -1521,10 +1580,11 @@ impl CorpusRuntime {
                     assumptions,
                     time,
                     coverage,
+                    messages,
                 })
             };
             match r.result {
-                Ok((done, stacks, times, hits, mut covs)) => {
+                Ok((done, stacks, times, hits, mut covs, mut msgs)) => {
                     for (name, outcome) in done {
                         let stack = stacks.iter().find(|(n, _)| *n == name).map(|(_, s)| s.clone());
                         let marks = hits.iter().find(|(n, _)| *n == name).map(|(_, h)| h.clone());
@@ -1541,14 +1601,37 @@ impl CorpusRuntime {
                             .position(|(n, _)| *n == name)
                             .map(|i| std::mem::take(&mut covs[i].1))
                             .unwrap_or_default();
-                        push(&mut list, &name, &outcome, stack.unwrap_or_default(), marks, time, cov);
+                        let said = msgs
+                            .iter()
+                            .position(|(n, _)| *n == name)
+                            .map(|i| std::mem::take(&mut msgs[i].1))
+                            .unwrap_or_default();
+                        push(
+                            &mut list,
+                            &name,
+                            &outcome,
+                            stack.unwrap_or_default(),
+                            marks,
+                            time,
+                            cov,
+                            said,
+                        );
                         times_by_case.insert((r.si, r.id, name.to_lowercase()), time);
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
                     }
                 }
                 Err(msg) => {
                     panics += 1;
-                    for t in test_routines(&lowered.program.objects[r.oi]) {
+                    let panicked: Vec<&al_ir::Routine> = if opts.execute {
+                        lowered.program.objects[r.oi]
+                            .routines
+                            .iter()
+                            .filter(|t| t.is_trigger && t.name.eq_ignore_ascii_case("OnRun"))
+                            .collect()
+                    } else {
+                        test_routines(&lowered.program.objects[r.oi]).collect()
+                    };
+                    for t in panicked {
                         let outcome = Outcome::NotRun(format!("runtime panic (bug): {msg}"));
                         push(
                             &mut list,
@@ -1557,6 +1640,7 @@ impl CorpusRuntime {
                             String::new(),
                             Vec::new(),
                             std::time::Duration::ZERO,
+                            Vec::new(),
                             Vec::new(),
                         );
                         outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
@@ -2031,11 +2115,44 @@ pub fn run_codeunit_full(
     object: usize,
     baseline: Option<&al_vm::Baseline>,
     isolation: TestIsolation,
-    mut observe: Option<&mut Observer>,
+    observe: Option<&mut Observer>,
     stacks: &mut Vec<(String, String)>,
     times: &mut Vec<(String, std::time::Duration)>,
     hits: &mut Vec<(String, Vec<Assumption>)>,
     limit: Option<std::time::Duration>,
+) -> Vec<(String, Outcome)> {
+    run_codeunit_core(
+        engine,
+        lowered,
+        object,
+        baseline,
+        isolation,
+        observe,
+        stacks,
+        times,
+        hits,
+        &mut Vec::new(),
+        limit,
+        false,
+    )
+}
+
+/// [`run_codeunit_full`], or with `execute` the `OnRun` trigger of the codeunit run as its one test, with the text of
+/// the `Message` calls it made kept in `messages` (a scratch run).
+#[allow(clippy::too_many_arguments)]
+fn run_codeunit_core(
+    engine: &Arc<Engine>,
+    lowered: &Lowered,
+    object: usize,
+    baseline: Option<&al_vm::Baseline>,
+    isolation: TestIsolation,
+    mut observe: Option<&mut Observer>,
+    stacks: &mut Vec<(String, String)>,
+    times: &mut Vec<(String, std::time::Duration)>,
+    hits: &mut Vec<(String, Vec<Assumption>)>,
+    messages: &mut Vec<(String, Vec<String>)>,
+    limit: Option<std::time::Duration>,
+    execute: bool,
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
@@ -2048,14 +2165,21 @@ pub fn run_codeunit_full(
         session.enable_coverage();
     }
     let instance = session.instance(object);
+    let is_on_run = |r: usize| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun");
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
+            if execute {
+                return is_on_run(r);
+            }
             obj.routines[r]
                 .attributes
                 .iter()
                 .any(|a| a.name.eq_ignore_ascii_case("Test"))
         })
         .collect();
+    if execute {
+        session.capture_messages();
+    }
     let all = |o: Outcome| {
         tests
             .iter()
@@ -2092,6 +2216,7 @@ pub fn run_codeunit_full(
     session.in_test_codeunit = true;
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
+        .filter(|_| !execute)
     {
         if let Some(reason) = blocked_reason(lowered, object, on_run) {
             return all(Outcome::NotRun(format!("OnRun: {reason}")));
@@ -2144,7 +2269,13 @@ pub fn run_codeunit_full(
             Outcome::NotRun(reason.clone())
         } else {
             let bound = handlers.unwrap_or_default();
-            match bind_handlers(&mut session, &instance, &bound) {
+            // A scratch run has no UI scope: its `Message` calls are kept, not handled.
+            let bound_ok = if execute {
+                Ok(())
+            } else {
+                bind_handlers(&mut session, &instance, &bound)
+            };
+            match bound_ok {
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
                     session.last_error = Default::default();
@@ -2163,7 +2294,16 @@ pub fn run_codeunit_full(
                     session.tx_model = model;
                     let commits_before = session.commits;
                     session.clear_stop();
-                    let watchdog = limit.map(|l| Watchdog::start(session.stop_flag(), l));
+                    // A scratch run is stopped by `cancel` too, and has a watchdog for that even without a limit.
+                    let cancel = if execute { crate::events::cancel_flag() } else { None };
+                    let watchdog = match (limit, &cancel) {
+                        (None, None) => None,
+                        (l, _) => Some(Watchdog::start_cancellable(
+                            session.stop_flag(),
+                            l.unwrap_or(std::time::Duration::from_secs(u32::MAX.into())),
+                            cancel.clone(),
+                        )),
+                    };
                     session.set_runner_frames(runner_frames(&lowered.program, engine));
                     // A panic in the test is a runtime bug: it is caught here, so that it ends this codeunit and not
                     // the process (a server must outlive it). The session is not trusted after it.
@@ -2231,6 +2371,10 @@ pub fn run_codeunit_full(
                         }
                         // A refused test did not run: what it wrote before the refusal must not
                         // reach the next test of the codeunit.
+                        Err(Signal::Unsupported(_)) if execute && crate::events::cancelled() => {
+                            session.rollback_transaction();
+                            Outcome::NotRun("cancelled".into())
+                        }
                         Err(Signal::Unsupported(r)) => {
                             session.rollback_transaction();
                             refused_mid_run.get_or_insert_with(|| format!("{}: {r}", routine.name));
@@ -2282,6 +2426,9 @@ pub fn run_codeunit_full(
             hits.push((routine.name.clone(), marks));
         }
         let took = test_started.elapsed();
+        if execute {
+            messages.push((routine.name.clone(), session.take_messages()));
+        }
         times.push((routine.name.clone(), took));
         let cov = if covering { session.take_coverage() } else { Vec::new() };
         if crate::events::wants_events() {
@@ -2353,7 +2500,18 @@ const WATCHDOG_POLL: std::time::Duration = std::time::Duration::from_millis(50);
 
 impl Watchdog {
     /// Watches the calling thread.
+    #[cfg(test)]
     fn start(flag: Arc<std::sync::atomic::AtomicBool>, limit: std::time::Duration) -> Watchdog {
+        Watchdog::start_cancellable(flag, limit, None)
+    }
+
+    /// [`Watchdog::start`] that also stops the routine when `cancel` is set (a scratch run: `cancel` ends it at once;
+    /// a test run lets the running test finish).
+    fn start_cancellable(
+        flag: Arc<std::sync::atomic::AtomicBool>,
+        limit: std::time::Duration,
+        cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
+    ) -> Watchdog {
         let clock = crate::cpuclock::ThreadClock::current();
         // The thread's CPU clock counts from the thread's birth, and a worker thread runs many tests:
         // the limit is measured from the reading at the start of this test.
@@ -2369,6 +2527,13 @@ impl Watchdog {
                 match rx.recv_timeout(WATCHDOG_POLL) {
                     Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {}
                     _ => return false,
+                }
+                if cancel
+                    .as_ref()
+                    .is_some_and(|c| c.load(std::sync::atomic::Ordering::Relaxed))
+                {
+                    flag.store(true, std::sync::atomic::Ordering::Relaxed);
+                    return false;
                 }
                 let used = clock
                     .as_ref()

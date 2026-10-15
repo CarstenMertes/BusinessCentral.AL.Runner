@@ -61,6 +61,11 @@ pub(crate) fn cancelled() -> bool {
     CURRENT.with(|c| c.borrow().0.cancel.as_ref().is_some_and(|f| f.load(Ordering::Relaxed)))
 }
 
+/// The flag that stops the run (for a scratch run, whose one routine is stopped while it runs).
+pub(crate) fn cancel_flag() -> Option<Arc<AtomicBool>> {
+    CURRENT.with(|c| c.borrow().0.cancel.clone())
+}
+
 pub(crate) fn wants_events() -> bool {
     CURRENT.with(|c| c.borrow().0.on_test.is_some())
 }

@@ -10,22 +10,22 @@
 # The artifact cache key of CI follows the pin (`--print-builds`).
 corpus_repo = "corpus"
 corpus_app = "corpus/tests/al-language"
-corpus_commit = "2c09ecd4c10a4a7146db05441bf6e5adffb65261"
+corpus_commit = "2cc72c12dac99a9a6ab33478c7cb6a92b084e311"
 
 [[version]]
 major = 27
 bc_version = "27.5"
 bc_build = "27.5.46862.56249"
-workflow_run = 38739215829
-artifact_id = 11976017829
+workflow_run = 38791720616
+artifact_id = 12002420631
 junit = "27/junit.xml"
 baseline = "metrics/27/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 38739215829
-artifact_id = 11975770943
+workflow_run = 38791720616
+artifact_id = 11999474335
 oracle = "27/junit-onprem.xml"
 baseline = "metrics/27/passing-onprem.txt"
 
@@ -33,16 +33,16 @@ baseline = "metrics/27/passing-onprem.txt"
 major = 28
 bc_version = "28.5"
 bc_build = "28.5.54151.56267"
-workflow_run = 38739215829
-artifact_id = 11975934783
+workflow_run = 38791720616
+artifact_id = 12002356980
 junit = "28/junit.xml"
 baseline = "metrics/28/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 38739215829
-artifact_id = 11975246271
+workflow_run = 38791720616
+artifact_id = 12000557496
 oracle = "28/junit-onprem.xml"
 baseline = "metrics/28/passing-onprem.txt"
 
@@ -80,15 +80,15 @@ baseline = "metrics/28/passing-isolation-codeunit.txt"
 major = 29
 bc_version = "29.0"
 bc_build = "29.0.54011.56262"
-workflow_run = 38739215829
-artifact_id = 11975599580
+workflow_run = 38791720616
+artifact_id = 12001363652
 junit = "29/junit.xml"
 baseline = "metrics/29/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 38739215829
-artifact_id = 11975890757
+workflow_run = 38791720616
+artifact_id = 12001145028
 oracle = "29/junit-onprem.xml"
 baseline = "metrics/29/passing-onprem.txt"

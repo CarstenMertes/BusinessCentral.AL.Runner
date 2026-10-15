@@ -60,6 +60,15 @@ pub enum Gate {
     /// `SetView` and `SetFilter` of text that is no table filter raise the Evaluate error `The value "..." can't be
     /// evaluated into type TableFilter.` from BC 28 (records/W4PlatformAndMeta.al, corpus bump 9). Not consumed yet.
     TableFilterEvaluateError,
+    /// The conversion and argument error texts of BC 27.5 and later (`The value "x" can't be evaluated into type Integer.`)
+    /// differ from those of BC 27.0 and 27.3 (`The type NavInteger is unknown.`, `Invalid Conversion. Source: NavChar, ...`).
+    /// The corpus compiles those tests from the BC 28 symbols on (`#if BC28PLUS`), so BC 27.5 is not covered either, and only the
+    /// BC 28 and 29 values are pinned. HttpHeaders.al also pins the code of a blank header name per major (27 Format,
+    /// 28 Argument, 29 Format). Not consumed yet (corpus bump 10).
+    ConversionErrorTextsFrom28,
+    /// A test codeunit that runs a `List of [Interface ...]` is compiled only for BC 29: on BC 27 the server's generated C# does not
+    /// compile and on BC 28 no result comes back (codeunit/lt-enums-interfaces/OjT71052.al, corpus bump 10). Not consumed yet.
+    InterfaceListCodeunitFrom29,
 }
 
 impl Gate {
@@ -77,6 +86,8 @@ impl Gate {
         Gate::MediaExportKeepsTheImportedBytes,
         Gate::PlatformMetadataColumnsFrom29,
         Gate::TableFilterEvaluateError,
+        Gate::ConversionErrorTextsFrom28,
+        Gate::InterfaceListCodeunitFrom29,
     ];
 
     /// The first BC major with the new behaviour.
@@ -90,11 +101,13 @@ impl Gate {
             | Gate::PermissionObjectNameLongerFrom29
             | Gate::QueryAggregateOverBigInteger
             | Gate::MediaExportKeepsTheImportedBytes
-            | Gate::PlatformMetadataColumnsFrom29 => 29,
+            | Gate::PlatformMetadataColumnsFrom29
+            | Gate::InterfaceListCodeunitFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
             | Gate::FromBase64InvalidTextRaises
-            | Gate::TableFilterEvaluateError => 28,
+            | Gate::TableFilterEvaluateError
+            | Gate::ConversionErrorTextsFrom28 => 28,
         }
     }
 
@@ -172,6 +185,32 @@ impl Gate {
             Gate::TableFilterEvaluateError => &[Evidence {
                 file: "records/W4PlatformAndMeta.al",
                 lines: "256",
+            }],
+            Gate::ConversionErrorTextsFrom28 => &[
+                Evidence {
+                    file: "errors/lt-error-handling/ErTRuntimeErrors.al",
+                    lines: "13",
+                },
+                Evidence {
+                    file: "network/lt-http/HttpHeaders.al",
+                    lines: "282,304,306",
+                },
+                Evidence {
+                    file: "record/lt-record-read/RcAGetFind.al",
+                    lines: "200",
+                },
+                Evidence {
+                    file: "recordref/lt-refs/RfTFieldFilters.al",
+                    lines: "118",
+                },
+                Evidence {
+                    file: "recordref/lt-refs/RfTValues.al",
+                    lines: "178",
+                },
+            ],
+            Gate::InterfaceListCodeunitFrom29 => &[Evidence {
+                file: "codeunit/lt-enums-interfaces/OjT71052.al",
+                lines: "43",
             }],
             Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
                 file: "types/W7Media.al",

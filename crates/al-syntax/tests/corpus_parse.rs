@@ -26,10 +26,21 @@ fn corpus_files() -> Vec<PathBuf> {
     out
 }
 
+/// A must-not-compile case is rejected by the real compiler; a case about a syntax error is not
+/// expected to parse. Such files must still round-trip byte for byte, but their parse errors are
+/// not failures and their blocks are not counted as structure (corpus bump 10 added cases for
+/// missing `end`, extra `end`, a variable named `begin`).
+fn is_must_not_compile(f: &Path) -> bool {
+    f.components().any(|c| c.as_os_str() == "must-not-compile")
+}
+
 /// Corpus files the parser does not handle yet. Each is a red corpus test waiting for a fix, not a
 /// pass: the runtime reports every case in such a file as not run (the file does not compile).
 /// An entry whose file now parses fails the test below, so the list only shrinks (ADR-007).
-const KNOWN_UNPARSED: &[(&str, &str)] = &[];
+const KNOWN_UNPARSED: &[(&str, &str)] = &[(
+    "types/lt-variant/VaTTextConst.al",
+    "the parser does not know the TextConst type with its language list (corpus bump 10)",
+)];
 
 #[test]
 fn every_corpus_file_parses_without_errors_and_round_trips() {
@@ -41,6 +52,9 @@ fn every_corpus_file_parses_without_errors_and_round_trips() {
         let parse = al_syntax::parse(&src, &syms);
         if parse.syntax().text() != src.as_str() {
             failures.push(format!("{}: tree text differs from source", f.display()));
+        }
+        if is_must_not_compile(f) {
+            continue;
         }
         if let Some(e) = parse.errors.first() {
             let line = src[..e.offset.min(src.len())].matches('\n').count() + 1;
@@ -86,6 +100,9 @@ fn corpus_code_is_parsed_structurally_not_swallowed() {
     let syms = al_version::corpus_symbols(27);
     let (mut kw_routines, mut kw_begins, mut nodes_routines, mut nodes_blocks, mut test_attrs) = (0, 0, 0, 0, 0);
     for f in corpus_files() {
+        if is_must_not_compile(&f) {
+            continue;
+        }
         let src = std::fs::read_to_string(&f).unwrap();
         let tree = al_syntax::parse(&src, &syms).syntax();
         for t in tree.descendants_with_tokens().filter_map(|e| e.into_token()) {

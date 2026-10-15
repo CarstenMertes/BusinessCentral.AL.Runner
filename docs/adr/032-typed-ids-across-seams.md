@@ -59,7 +59,7 @@ bytes; decode is allocation work).
 
 ## Migration (each step merges green; one enum per branch)
 
-1. `ObjKind` in `al-ir` (largest fan-out; do it first while few branches are open).
+1. (Done on branch objkind-ir, 2026-10-16.) `ObjKind` in `al-ir` (largest fan-out; do it first while few branches are open).
 2. `BuiltinId` and the single registry.
 3. `RecordOp`, `PageOp`.
 4. `LibraryKind`.

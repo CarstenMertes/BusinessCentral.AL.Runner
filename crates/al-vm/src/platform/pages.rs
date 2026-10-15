@@ -7,7 +7,7 @@
 //! TestPageExtensionControlPrecompiledRows_Tests.al.
 
 use super::mat::Entry;
-use super::objects::{Catalog, base_kind, ident, member, prop, string_lit, truthy};
+use super::objects::{Catalog, ident, member, prop, string_lit, truthy};
 use super::{Blank, Providers, option, pos};
 use al_builtins::value::{RtType, Value};
 use al_data::{Row, TableDef};
@@ -50,7 +50,7 @@ fn source_table_id(c: &Catalog, o: &Object) -> Result<u32, String> {
     match prop(o, "SourceTable") {
         None => Ok(0),
         Some(v) => c
-            .id_of("table", v)
+            .id_of(al_ir::ObjKind::Table, v)
             .map_err(|why| format!("page '{}': SourceTable {why}", o.name)),
     }
 }
@@ -175,7 +175,7 @@ pub(super) fn page_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let mut out = Vec::new();
     let blank = Blank::new(t);
     for o in c.objects {
-        let (Some(id), "page") = (o.id, base_kind(o)) else {
+        let (Some(id), al_ir::ObjKind::Page) = (o.id, o.kind) else {
             continue;
         };
         let mut key = blank.row();
@@ -220,7 +220,7 @@ fn page_metadata_row(c: &Catalog, o: &Object, t: &TableDef, mut r: Row) -> Resul
     r[pos(t, 6)] = Value::Integer(match prop(o, "CardPageID") {
         None => 0,
         Some(v) => c
-            .id_of("page", v)
+            .id_of(al_ir::ObjKind::Page, v)
             .map_err(|e| format!("page '{}': CardPageID {e}", o.name))? as i32,
     });
     r[pos(t, 5)] = option(t, 5, page_type);
@@ -306,7 +306,7 @@ pub(super) fn page_control_field_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
     let mut out = Vec::new();
     let blank = Blank::new(t);
     for o in c.objects {
-        let (Some(id), "page") = (o.id, base_kind(o)) else {
+        let (Some(id), al_ir::ObjKind::Page) = (o.id, o.kind) else {
             continue;
         };
         let Some(page) = &o.page else {

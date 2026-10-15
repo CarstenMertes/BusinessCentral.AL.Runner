@@ -16,7 +16,7 @@
 //!   is the Tenant Permission Set rows that are assignable, as they are now.
 
 use super::mat::{Entry, Mat};
-use super::objects::{Catalog, base_kind, prop, string_lit, truthy};
+use super::objects::{Catalog, prop, string_lit, truthy};
 use super::{Providers, blank, pos};
 use al_builtins::filter::{FieldFilter, FilterExpr};
 use al_builtins::value::Value;
@@ -46,7 +46,7 @@ pub(super) fn sets(p: &Providers) -> Vec<PSet> {
     let c = Catalog::new(&engine);
     c.objects
         .iter()
-        .filter(|o| base_kind(o) == "permissionset" && o.id.is_some())
+        .filter(|o| o.kind == al_ir::ObjKind::PermissionSet && o.id.is_some())
         .map(|o| {
             let role = o.name.to_uppercase();
             let null_app = role == "SUPER" || role == "SECURITY";
@@ -156,11 +156,9 @@ impl Providers {
     /// The schema of the stored Tenant Permission Set table, if the program compiled it.
     pub(super) fn tenant_permission_set_def(&self) -> Option<Arc<TableDef>> {
         let engine = self.engine();
-        let oi = engine
-            .program
-            .objects
-            .iter()
-            .position(|o| o.kind == "table" && o.id == Some(TENANT_PERMISSION_SET) && o.table.is_some())?;
+        let oi = engine.program.objects.iter().position(|o| {
+            o.is_kind(al_ir::ObjKind::Table) && o.id == Some(TENANT_PERMISSION_SET) && o.table.is_some()
+        })?;
         engine.tables[oi].clone()
     }
 }
@@ -236,7 +234,7 @@ fn last_name(s: &str) -> String {
     parts.pop().unwrap_or_default().trim().to_string()
 }
 
-fn parse_grants(o: &Object, ids: &dyn Fn(&str, &str) -> Result<u32, String>) -> Result<Vec<Grant>, String> {
+fn parse_grants(o: &Object, ids: &dyn Fn(al_ir::ObjKind, &str) -> Result<u32, String>) -> Result<Vec<Grant>, String> {
     let Some(text) = prop(o, "Permissions") else {
         return Ok(Vec::new());
     };
@@ -253,13 +251,13 @@ fn parse_grants(o: &Object, ids: &dyn Fn(&str, &str) -> Result<u32, String>) -> 
             return Err(bad("grants a whole object type (not listed row by row)"));
         }
         let (kind, ty) = match kind_word.to_ascii_lowercase().as_str() {
-            "tabledata" => (0, "table"),
-            "table" => (1, "table"),
-            "report" => (3, "report"),
-            "codeunit" => (5, "codeunit"),
-            "xmlport" => (6, "xmlport"),
-            "page" => (8, "page"),
-            "query" => (9, "query"),
+            "tabledata" => (0, al_ir::ObjKind::Table),
+            "table" => (1, al_ir::ObjKind::Table),
+            "report" => (3, al_ir::ObjKind::Report),
+            "codeunit" => (5, al_ir::ObjKind::Codeunit),
+            "xmlport" => (6, al_ir::ObjKind::XmlPort),
+            "page" => (8, al_ir::ObjKind::Page),
+            "query" => (9, al_ir::ObjKind::Query),
             other => return Err(bad(&format!("is a `{other}` grant (not pinned)"))),
         };
         let id = ids(ty, &last_name(name)).map_err(|why| bad(&why))?;
@@ -324,13 +322,13 @@ impl Grants {
             .get_or_init(|| {
                 let engine = p.engine();
                 let c = Catalog::new(&engine);
-                let ids = |ty: &str, name: &str| c.id_of(ty, name);
+                let ids = |ty: al_ir::ObjKind, name: &str| c.id_of(ty, name);
                 let mut sets = Vec::new();
                 let mut by_name: HashMap<String, Vec<usize>> = HashMap::new();
                 for o in c
                     .objects
                     .iter()
-                    .filter(|o| base_kind(o) == "permissionset" && o.id.is_some())
+                    .filter(|o| o.kind == al_ir::ObjKind::PermissionSet && o.id.is_some())
                 {
                     let role = o.name.to_uppercase();
                     let app = if role == "SUPER" || role == "SECURITY" {
@@ -530,7 +528,7 @@ impl Providers {
                 .program
                 .objects
                 .iter()
-                .position(|o| o.kind == "table" && o.id == Some(id) && o.table.is_some())
+                .position(|o| o.is_kind(al_ir::ObjKind::Table) && o.id == Some(id) && o.table.is_some())
             else {
                 continue;
             };

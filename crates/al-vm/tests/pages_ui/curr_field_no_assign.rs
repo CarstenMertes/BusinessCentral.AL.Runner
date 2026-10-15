@@ -24,3 +24,22 @@ fn an_assignment_to_curr_field_no_is_read_back_on_the_same_record_only() {
     let v = run("R.K := 'A'; exit(R.Before());");
     assert!(matches!(v, Ok(Value::Integer(0))), "{v:?}");
 }
+
+/// The assignment belongs to the record variable, not to the memory address it happened to have: a later record
+/// variable that gets the address of a dropped one reads 0 (corpus misc/lt-inferred-behaviors/P69CurrFieldNo.al,
+/// CurrFieldNo_InValidateAndModify failed in a full run once the allocator reused an address).
+#[test]
+fn a_new_record_does_not_inherit_the_assignment_of_a_dropped_one() {
+    let src =
+        "table 60990 \"CFN\" { fields { field(1; K; Code[10]) { } field(2; V; Integer) { } } keys { key(PK; K) { } }
+           procedure Before(): Integer begin exit(CurrFieldNo); end;
+           procedure Set(): Integer begin CurrFieldNo := FieldNo(V); exit(CurrFieldNo); end; }
+         codeunit 50100 C {
+           procedure Assign() var R: Record CFN; begin R.K := 'A'; R.Set(); end;
+           procedure Read(): Integer var R: Record CFN; begin R.K := 'B'; exit(R.Before()); end;
+           procedure F(): Integer var I: Integer; begin
+             for I := 1 to 200 do begin Assign(); if Read() <> 0 then exit(I); end;
+             exit(0); end; }";
+    let v = al_testkit::run_in(src, "C", "F");
+    assert!(matches!(v, Ok(Value::Integer(0))), "{v:?}");
+}

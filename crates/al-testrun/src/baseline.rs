@@ -69,7 +69,7 @@ impl BaselineRun {
 }
 
 fn is_install(o: &al_ir::Object) -> bool {
-    o.kind == "codeunit"
+    o.is_kind(al_ir::ObjKind::Codeunit)
         && o.properties
             .iter()
             .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"))
@@ -109,7 +109,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
     }
     let company_initialize = (0..objs.len()).find(|&oi| {
         lowered.dependency[oi]
-            && objs[oi].kind == "codeunit"
+            && objs[oi].is_kind(al_ir::ObjKind::Codeunit)
             && objs[oi].id == Some(2)
             && objs[oi].name.eq_ignore_ascii_case("Company-Initialize")
     });

@@ -389,9 +389,10 @@ pub struct Session {
     /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
     /// (see `errorcollect.rs`).
     pub(crate) error_scopes: errorcollect::Scopes,
-    /// Records (by handle) whose field a TestPage write is validating, with the field's number:
-    /// what `CurrFieldNo` reads in the field's OnValidate.
-    pub(crate) curr_field_no: Vec<(usize, i32)>,
+    /// Records whose `CurrFieldNo` is set (a TestPage write validating a field, or an assignment in table
+    /// code), with the field's number: what `CurrFieldNo` reads. Held weakly: the entry keeps the record's
+    /// allocation, so a later record cannot get the same address and inherit the number.
+    pub(crate) curr_field_no: Vec<(std::rc::Weak<RefCell<RecordState>>, i32)>,
     /// Tables with an ad-hoc key appended, by (table object, key fields): see `Session::table`.
     pub(crate) initial_cache: std::collections::HashMap<usize, Option<Vec<Value>>>,
     pub(crate) adhoc_tables: RefCell<AdhocTables>,
@@ -1577,10 +1578,18 @@ impl Session {
                     let Value::Integer(n) = self.eval(e, f)? else {
                         return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
                     };
-                    let handle = Rc::as_ptr(&rec) as usize;
-                    match self.curr_field_no.iter_mut().rev().find(|(h, _)| *h == handle) {
+                    match self
+                        .curr_field_no
+                        .iter_mut()
+                        .rev()
+                        .find(|(w, _)| std::ptr::eq(w.as_ptr(), Rc::as_ptr(&rec)))
+                    {
                         Some(entry) => entry.1 = n,
-                        None => self.curr_field_no.push((handle, n)),
+                        None => {
+                            // Entries of dropped records are dead; forget them before adding one.
+                            self.curr_field_no.retain(|(w, _)| w.strong_count() > 0);
+                            self.curr_field_no.push((Rc::downgrade(&rec), n));
+                        }
                     }
                     return Ok(Value::Null);
                 }
@@ -1601,9 +1610,9 @@ impl Session {
                 if id == "System.ClearAll#1" {
                     let object = f.instance.borrow().object as usize;
                     let o = &self.engine.program.objects[object];
-                    let keep: Vec<usize> = match o.kind.as_str() {
-                        "codeunit" | "table" => o.rec_slot.into_iter().collect(),
-                        "page" => o
+                    let keep: Vec<usize> = match o.kind {
+                        al_ir::ObjKind::Codeunit | al_ir::ObjKind::Table => o.rec_slot.into_iter().collect(),
+                        al_ir::ObjKind::Page => o
                             .rec_slot
                             .into_iter()
                             .chain(o.page.as_ref().map(|p| p.curr_page_slot))
@@ -1731,11 +1740,10 @@ impl Session {
     /// What `CurrFieldNo` reads on `rec`: the field number a TestPage write is validating on this
     /// record, 0 anywhere else (handlers/TestPageCurrFieldNo_Tests.al:36-123).
     fn curr_field_of(&self, rec: &Rc<RefCell<RecordState>>) -> i32 {
-        let handle = Rc::as_ptr(rec) as usize;
         self.curr_field_no
             .iter()
             .rev()
-            .find(|(h, _)| *h == handle)
+            .find(|(w, _)| std::ptr::eq(w.as_ptr(), Rc::as_ptr(rec)))
             .map_or(0, |(_, n)| *n)
     }
 
@@ -2485,7 +2493,7 @@ impl al_builtins::native::Ctx for Session {
             .program
             .objects
             .iter()
-            .any(|o| o.kind == "table" && o.id.is_some_and(|id| i64::from(id) == i64::from(number)))
+            .any(|o| o.is_kind(al_ir::ObjKind::Table) && o.id.is_some_and(|id| i64::from(id) == i64::from(number)))
     }
     fn install_scope(&self) -> bool {
         self.install_scope

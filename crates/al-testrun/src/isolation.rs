@@ -67,7 +67,7 @@ pub fn runner_isolation(lowered: &al_sema::lower::Lowered, runner: u32) -> Resul
         .program
         .objects
         .iter()
-        .find(|o| o.kind == "codeunit" && o.id == Some(runner))
+        .find(|o| o.is_kind(al_ir::ObjKind::Codeunit) && o.id == Some(runner))
     else {
         return Err(format!("test runner codeunit {runner} is not in the compiled apps"));
     };

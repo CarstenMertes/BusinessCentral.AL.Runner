@@ -13,7 +13,7 @@ pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) ->
         .iter()
         .enumerate()
         .filter(|(oi, o)| {
-            o.kind == "codeunit"
+            o.is_kind(al_ir::ObjKind::Codeunit)
                 && !lowered.dependency[*oi]
                 && o.properties
                     .iter()

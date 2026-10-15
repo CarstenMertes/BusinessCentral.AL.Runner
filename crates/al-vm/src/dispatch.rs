@@ -86,12 +86,12 @@ impl Session {
         }
         let sender = if p.include_sender {
             let o = &engine.program.objects[object];
-            match (o.kind.as_str(), o.rec_slot) {
-                ("codeunit", _) => Some(Value::Codeunit(instance)),
+            match (o.kind, o.rec_slot) {
+                (al_ir::ObjKind::Codeunit, _) => Some(Value::Codeunit(instance)),
                 // The sender of a page's event is the page (a `Page` variable), not its Rec: Item Tracking Lines
                 // publishes with IncludeSender and Asm. Item Tracking Mgt. takes `var sender: Page "Item Tracking
                 // Lines"`. Not pinned by the corpus (assumption page-event-sender).
-                ("page", _) => match o.globals.iter().position(|g| g.name == "CurrPage") {
+                (al_ir::ObjKind::Page, _) => match o.globals.iter().position(|g| g.name == "CurrPage") {
                     Some(slot) => {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageEventSender);
                         Some(instance.borrow().globals[slot].clone())
@@ -154,7 +154,7 @@ impl Session {
                 .program
                 .objects
                 .get(ev.object)
-                .is_none_or(|o| o.kind != "table");
+                .is_none_or(|o| !o.is_kind(al_ir::ObjKind::Table));
         if unpinned {
             self.unpinned_event_depth += 1;
         }

@@ -69,6 +69,15 @@ pub enum Gate {
     /// A test codeunit that runs a `List of [Interface ...]` is compiled only for BC 29: on BC 27 the server's generated C# does not
     /// compile and on BC 28 no result comes back (codeunit/lt-enums-interfaces/OjT71052.al, corpus bump 10). Not consumed yet.
     InterfaceListCodeunitFrom29,
+    /// Probed values that are the same on BC 28 and 29 and differ on BC 27 (the laptop writer's probes-needed files, corpus
+    /// bump 11): the date control shorthands, metadata table rows and keys, report dataset rows and names, the SystemRowVersion
+    /// aggregates, Media import with three arguments. Each guarded test names its fact; split into one gate per fact when the
+    /// runtime implements it. Not consumed yet.
+    ProbedValuesDifferFrom28,
+    /// Probed values that are the same on BC 29 and differ on BC 27 and 28 (corpus bump 11): BLOB length after a fresh Get, the
+    /// BigInteger/Integer FlowField type mismatch, the report dataset header bytes and lines and a second SaveAs on one variable,
+    /// Report/Field metadata rows, Media import, BigInteger into an Enum field. Not consumed yet.
+    ProbedValuesDifferFrom29,
 }
 
 impl Gate {
@@ -88,6 +97,8 @@ impl Gate {
         Gate::TableFilterEvaluateError,
         Gate::ConversionErrorTextsFrom28,
         Gate::InterfaceListCodeunitFrom29,
+        Gate::ProbedValuesDifferFrom28,
+        Gate::ProbedValuesDifferFrom29,
     ];
 
     /// The first BC major with the new behaviour.
@@ -102,12 +113,14 @@ impl Gate {
             | Gate::QueryAggregateOverBigInteger
             | Gate::MediaExportKeepsTheImportedBytes
             | Gate::PlatformMetadataColumnsFrom29
-            | Gate::InterfaceListCodeunitFrom29 => 29,
+            | Gate::InterfaceListCodeunitFrom29
+            | Gate::ProbedValuesDifferFrom29 => 29,
             Gate::ReportSaveAsDataItemIdentity
             | Gate::FeatureKeyListChangedFrom28
             | Gate::FromBase64InvalidTextRaises
             | Gate::TableFilterEvaluateError
-            | Gate::ConversionErrorTextsFrom28 => 28,
+            | Gate::ConversionErrorTextsFrom28
+            | Gate::ProbedValuesDifferFrom28 => 28,
         }
     }
 
@@ -193,7 +206,7 @@ impl Gate {
                 },
                 Evidence {
                     file: "network/lt-http/HttpHeaders.al",
-                    lines: "282,304,306",
+                    lines: "282,304",
                 },
                 Evidence {
                     file: "record/lt-record-read/RcAGetFind.al",
@@ -212,6 +225,58 @@ impl Gate {
                 file: "codeunit/lt-enums-interfaces/OjT71052.al",
                 lines: "43",
             }],
+            Gate::ProbedValuesDifferFrom28 => &[
+                Evidence {
+                    file: "misc/lt-probes-needed-1/PnACalcFieldsBC29.al",
+                    lines: "210",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-2/PnBPages.al",
+                    lines: "297",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-2/PnBReportSaveAs.al",
+                    lines: "185,291",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-3/PnC21Metadata.al",
+                    lines: "297,385,468",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-5/PnE06Media.al",
+                    lines: "65",
+                },
+            ],
+            Gate::ProbedValuesDifferFrom29 => &[
+                Evidence {
+                    file: "misc/lt-probes-needed-1/PnABlobLength.al",
+                    lines: "34",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-1/PnACalcFieldsBC29.al",
+                    lines: "87,253",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-2/PnBRecordMisc.al",
+                    lines: "627",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-2/PnBReportSaveAs.al",
+                    lines: "103,143,417",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-3/PnC21Metadata.al",
+                    lines: "255,427",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-5/PnE06Media.al",
+                    lines: "23",
+                },
+                Evidence {
+                    file: "misc/lt-probes-needed-5/PnE13EnumConv.al",
+                    lines: "159",
+                },
+            ],
             Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
                 file: "types/W7Media.al",
                 lines: "134,141,146",

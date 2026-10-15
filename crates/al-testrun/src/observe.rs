@@ -268,11 +268,11 @@ type Check = Result<(), String>;
 impl Walk<'_> {
     fn check_object(&self, o: usize) -> Check {
         let obj = &self.objects[o];
-        if obj.kind != "codeunit" {
-            return Err(format!("{} {} is not a codeunit", obj.kind, obj.name));
+        if !obj.is_kind(al_ir::ObjKind::Codeunit) {
+            return Err(format!("{} {} is not a codeunit", obj.kind_text(), obj.name));
         }
         for g in &obj.globals {
-            ty(&g.ty).map_err(|w| format!("{} {} has a global `{}`: {w}", obj.kind, obj.name, g.name))?;
+            ty(&g.ty).map_err(|w| format!("{} {} has a global `{}`: {w}", obj.kind_text(), obj.name, g.name))?;
         }
         Ok(())
     }

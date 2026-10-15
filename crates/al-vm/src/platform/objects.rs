@@ -17,32 +17,27 @@ use al_data::{Row, TableDef};
 use al_ir::Object;
 use std::collections::HashMap;
 
-/// The kind of an object, shells included (`uncompiled table` is a table).
-pub(super) fn base_kind(o: &Object) -> &str {
-    o.kind.strip_prefix("uncompiled ").unwrap_or(&o.kind)
-}
-
 /// The option ordinal of the AllObj "Object Type" member for an object kind, if the kind is listed.
 /// Members: TableData=0, Table=1, Report=3, Codeunit=5, XMLport=6, MenuSuite=7, Page=8, Query=9,
 /// System=10, FieldNumber=11, PageExtension=14, TableExtension=15, Enum=16, EnumExtension=17,
 /// Profile=18, ProfileExtension=19, PermissionSet=20, PermissionSetExtension=21,
 /// ReportExtension=22 (the declaration of the AllObj table in the platform app).
-pub(super) fn object_type(kind: &str) -> Option<i32> {
+pub(super) fn object_type(kind: al_ir::ObjKind) -> Option<i32> {
     Some(match kind {
-        "table" => 1,
-        "report" => 3,
-        "codeunit" => 5,
-        "xmlport" => 6,
-        "page" => 8,
-        "query" => 9,
-        "pageextension" => 14,
-        "tableextension" => 15,
-        "enum" => 16,
-        "enumextension" => 17,
-        "profile" => 18,
-        "permissionset" => 20,
-        "permissionsetextension" => 21,
-        "reportextension" => 22,
+        al_ir::ObjKind::Table => 1,
+        al_ir::ObjKind::Report => 3,
+        al_ir::ObjKind::Codeunit => 5,
+        al_ir::ObjKind::XmlPort => 6,
+        al_ir::ObjKind::Page => 8,
+        al_ir::ObjKind::Query => 9,
+        al_ir::ObjKind::PageExtension => 14,
+        al_ir::ObjKind::TableExtension => 15,
+        al_ir::ObjKind::Enum => 16,
+        al_ir::ObjKind::EnumExtension => 17,
+        al_ir::ObjKind::Profile => 18,
+        al_ir::ObjKind::PermissionSet => 20,
+        al_ir::ObjKind::PermissionSetExtension => 21,
+        al_ir::ObjKind::ReportExtension => 22,
         _ => return None,
     })
 }
@@ -51,20 +46,20 @@ pub(super) fn object_type(kind: &str) -> Option<i32> {
 /// codeunits and the extension kinds, not enums, permission sets or profiles (corpus
 /// record/TestAllObjVirtualTable.al `AllObjWithCaption_FindEnum_BaseApplicationEnum_AppIdIsEmpty`
 /// pins the enum; the rest is AL Runner's reading of the platform provider).
-fn carries_app_id(kind: &str) -> bool {
+fn carries_app_id(kind: al_ir::ObjKind) -> bool {
     matches!(
         kind,
-        "table"
-            | "report"
-            | "xmlport"
-            | "page"
-            | "query"
-            | "codeunit"
-            | "pageextension"
-            | "tableextension"
-            | "enumextension"
-            | "permissionsetextension"
-            | "reportextension"
+        al_ir::ObjKind::Table
+            | al_ir::ObjKind::Report
+            | al_ir::ObjKind::XmlPort
+            | al_ir::ObjKind::Page
+            | al_ir::ObjKind::Query
+            | al_ir::ObjKind::Codeunit
+            | al_ir::ObjKind::PageExtension
+            | al_ir::ObjKind::TableExtension
+            | al_ir::ObjKind::EnumExtension
+            | al_ir::ObjKind::PermissionSetExtension
+            | al_ir::ObjKind::ReportExtension
     )
 }
 
@@ -153,7 +148,7 @@ pub(super) struct Catalog<'a> {
     pub objects: &'a [Object],
     pub apps: &'a [al_ir::AppInfo],
     /// (base kind, lower-case name) to the ids of the objects of that name.
-    names: HashMap<(&'a str, String), Vec<u32>>,
+    names: HashMap<(al_ir::ObjKind, String), Vec<u32>>,
     /// Table id to the first table object of that id.
     tables: HashMap<u32, &'a Object>,
 }
@@ -161,12 +156,12 @@ pub(super) struct Catalog<'a> {
 impl<'a> Catalog<'a> {
     pub(super) fn new(engine: &'a Engine) -> Catalog<'a> {
         let program = &engine.program;
-        let mut names: HashMap<(&str, String), Vec<u32>> = HashMap::new();
+        let mut names: HashMap<(al_ir::ObjKind, String), Vec<u32>> = HashMap::new();
         let mut tables: HashMap<u32, &Object> = HashMap::new();
         for o in &program.objects {
             if let Some(id) = o.id {
-                names.entry((base_kind(o), o.name.to_lowercase())).or_default().push(id);
-                if base_kind(o) == "table" {
+                names.entry((o.kind, o.name.to_lowercase())).or_default().push(id);
+                if o.kind == al_ir::ObjKind::Table {
                     tables.entry(id).or_insert(o);
                 }
             }
@@ -197,7 +192,7 @@ impl<'a> Catalog<'a> {
     }
 
     /// The id of the object of `kind` that a property value names: a number, `Page::"X"` or a name.
-    pub(super) fn id_of(&self, kind: &str, value: &str) -> Result<u32, String> {
+    pub(super) fn id_of(&self, kind: al_ir::ObjKind, value: &str) -> Result<u32, String> {
         let v = value.trim();
         let v = v.split_once("::").map_or(v, |(_, rest)| rest);
         if let Ok(n) = v.parse::<u32>() {
@@ -272,24 +267,24 @@ fn namespace(o: &Object) -> String {
 
 /// The text of "Object Subtype" for an object (AllObjWithCaption).
 fn subtype_text(c: &Catalog, o: &Object) -> Result<String, String> {
-    let kind = base_kind(o);
+    let kind = o.kind;
     let unknown = |what: &str, v: &str| format!("{kind} '{}': {what} `{v}` is not understood", o.name);
     Ok(match kind {
-        "table" => match prop(o, "TableType") {
+        al_ir::ObjKind::Table => match prop(o, "TableType") {
             None => "Normal".into(),
             Some(v) => member(TABLE_TYPES, v).ok_or_else(|| unknown("TableType", v))?.into(),
         },
-        "page" => match prop(o, "PageType") {
+        al_ir::ObjKind::Page => match prop(o, "PageType") {
             None => "Card".into(),
             Some(v) => member(PAGE_TYPES, v).ok_or_else(|| unknown("PageType", v))?.into(),
         },
-        "query" => match prop(o, "QueryType") {
+        al_ir::ObjKind::Query => match prop(o, "QueryType") {
             None => "Normal".into(),
             Some(v) => member(QUERY_TYPES, v).ok_or_else(|| unknown("QueryType", v))?.into(),
         },
         // A codeunit's Normal subtype is the empty string, and so is Install, which the compiler
         // writes into the metadata as Normal (TestAllObjVirtualTable.al, the codeunit and install cases).
-        "codeunit" => match prop(o, "Subtype") {
+        al_ir::ObjKind::Codeunit => match prop(o, "Subtype") {
             None => String::new(),
             Some(v) => match member(CODEUNIT_SUBTYPES, v).ok_or_else(|| unknown("Subtype", v))? {
                 "Normal" | "Install" => String::new(),
@@ -297,7 +292,11 @@ fn subtype_text(c: &Catalog, o: &Object) -> Result<String, String> {
             },
         },
         // The id of the object the extension extends, as a decimal string.
-        "pageextension" | "tableextension" | "enumextension" | "permissionsetextension" | "reportextension" => {
+        al_ir::ObjKind::PageExtension
+        | al_ir::ObjKind::TableExtension
+        | al_ir::ObjKind::EnumExtension
+        | al_ir::ObjKind::PermissionSetExtension
+        | al_ir::ObjKind::ReportExtension => {
             let _ = c;
             o.extends_id.map(|id| id.to_string()).unwrap_or_default()
         }
@@ -366,7 +365,7 @@ pub(super) fn all_obj_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         &c,
         t,
         |o| {
-            let (Some(id), Some(ty)) = (o.id, object_type(base_kind(o))) else {
+            let (Some(id), Some(ty)) = (o.id, object_type(o.kind)) else {
                 return None;
             };
             Some(vec![(1, option(t, 1, ty)), (3, Value::Integer(id as i32))])
@@ -389,7 +388,7 @@ pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entr
         &c,
         t,
         |o| {
-            let (Some(id), Some(ty)) = (o.id, object_type(base_kind(o))) else {
+            let (Some(id), Some(ty)) = (o.id, object_type(o.kind)) else {
                 return None;
             };
             Some(vec![(1, option(t, 1, ty)), (3, Value::Integer(id as i32))])
@@ -402,7 +401,7 @@ pub(super) fn all_obj_with_caption_rows(p: &Providers, t: &TableDef) -> Vec<Entr
             r[pos(t, 30)] = Value::Text(subtype_text(&c, o)?.into());
             r[pos(t, 60)] = Value::Guid(pkg);
             r[pos(t, 61)] = Value::Guid(runtime_package_id(&c, o));
-            r[pos(t, 62)] = Value::Guid(if carries_app_id(base_kind(o)) { owner } else { [0; 16] });
+            r[pos(t, 62)] = Value::Guid(if carries_app_id(o.kind) { owner } else { [0; 16] });
             r[pos(t, 63)] = Value::Text(namespace(o).into());
             Ok(())
         },
@@ -417,8 +416,8 @@ pub(super) fn codeunit_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> 
     entries(
         &c,
         t,
-        |o| match (o.id, base_kind(o)) {
-            (Some(id), "codeunit") => Some(vec![(1, Value::Integer(id as i32))]),
+        |o| match (o.id, o.kind) {
+            (Some(id), al_ir::ObjKind::Codeunit) => Some(vec![(1, Value::Integer(id as i32))]),
             _ => None,
         },
         |o, r| {
@@ -465,7 +464,7 @@ fn table_no(c: &Catalog, o: &Object) -> Result<u32, String> {
     match prop(o, "TableNo") {
         None => Ok(0),
         Some(v) => c
-            .id_of("table", v)
+            .id_of(al_ir::ObjKind::Table, v)
             .map_err(|why| format!("codeunit '{}': TableNo {why}", o.name)),
     }
 }
@@ -499,8 +498,8 @@ pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     entries(
         &c,
         t,
-        |o| match (o.id, base_kind(o)) {
-            (Some(id), "table") => Some(vec![(1, Value::Integer(id as i32))]),
+        |o| match (o.id, o.kind) {
+            (Some(id), al_ir::ObjKind::Table) => Some(vec![(1, Value::Integer(id as i32))]),
             _ => None,
         },
         |o, r| {
@@ -515,7 +514,7 @@ pub(super) fn table_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                 match prop(o, name) {
                     None => Ok(0),
                     Some(v) => c
-                        .id_of("page", v)
+                        .id_of(al_ir::ObjKind::Page, v)
                         .map(|i| i as i32)
                         .map_err(|why| format!("table '{}': {name} {why}", o.name)),
                 }

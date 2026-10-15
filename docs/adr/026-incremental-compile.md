@@ -231,3 +231,39 @@ For a **dependency set that changes**:
 For Option 4: the diagnostics order test for a workspace with unresolved references, the corpus ratchet, and
 `al-test-cli --timings` before and after on Tests-ERM. For Options 2 and 3: the differential above, a test that
 changes one file of a library app in the middle of a set, and `tools/cache_vs_uncached.sh run` with 0 differences.
+
+## Prior art: Microsoft RAD (research of 2026-10-15)
+
+Source: Microsoft Learn and the microsoft/AL issue tracker. No Microsoft code was read or copied.
+
+- **RAD is incremental publishing, not an incremental whole-app compiler.** The AL extension for VS Code records the
+  changed objects of the project in `.vscode/rad.json` (added, modified, removed, by file) on each build. A RAD publish
+  compiles that delta as its own unit against the app that is already published and installs it. Microsoft says it
+  "is an interim state and doesn't replace a full publish"; the app that ships is always a full build.
+  [Learn: Work with RAD](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-rad-publishing),
+  [microsoft/AL #7976](https://github.com/microsoft/AL/issues/7976).
+- **RAD does not recompile dependents of a changed object.** It trusts the server to catch a break. Our checker has no
+  server, so it would need the read log of Option 3 or a full compile (inference from the sources above).
+- **The compiler reuse is in the editor process.** `al.incrementalBuild` lets a build finish the language server's
+  background compilation. It is not a cross-process cache, so a cold command-line run has nothing to reuse.
+  [Learn: AL extension configuration](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-al-extension-configuration),
+  [microsoft/AL #6277](https://github.com/microsoft/AL/issues/6277).
+- **Dependencies are handled per app.** Symbols come from `.app` files. In a workspace the project references are
+  resolved from the live project, and publishing a base app uninstalls and recompiles the apps that depend on it as
+  whole apps. ALTool's `graph extract-all` is incremental per app, keyed by a content hash. This matches the layers of
+  this ADR (one unit per app, a change rebuilds the app and the apps above it).
+  [Learn: project references](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-work-workspace-projects-references),
+  [Learn: ALTool](https://learn.microsoft.com/en-us/dynamics365/business-central/dev-itpro/developer/devenv-al-tool).
+- **What RAD leaves out on purpose:** translations, permissions, report layouts, table data and web service
+  definitions; object ID renames are not detected.
+- **Its bug list is a list of test cases for a differential check** of any per-object incremental compile here (each
+  one a case that changes one or a few files and is compared with a full compile): deleted objects, renamed or moved
+  files and case-only renames (stale or duplicate objects, [#6214](https://github.com/microsoft/AL/issues/6214),
+  [#6077](https://github.com/microsoft/AL/issues/6077)), a reverted file (git revert, [#5561](https://github.com/microsoft/AL/issues/5561)),
+  page extensions ([#5594](https://github.com/microsoft/AL/issues/5594)), report request pages
+  ([#8222](https://github.com/microsoft/AL/issues/8222)), permission objects ([#7804](https://github.com/microsoft/AL/issues/7804)),
+  a bogus "removed" entry ([#5686](https://github.com/microsoft/AL/issues/5686)), and test codeunits not found after a delta
+  publish ([#7227](https://github.com/microsoft/AL/issues/7227)).
+- **Consequence for this ADR:** Microsoft made the same split as the measurements here. Reuse for the app being edited
+  lives in the editor; across apps the unit is the app. That supports layers (Option 2, built) over per-object reuse
+  across versions (Option 3, not built).

@@ -1033,7 +1033,7 @@ fn lazy_index(
     symbols: &BTreeSet<String>,
     lazy: &[Option<al_sema::LazySource>],
     identities: &[Option<[u8; 32]>],
-) -> Result<Vec<Option<al_sema::LazyDep>>, al_cache::Key> {
+) -> Result<Vec<Option<al_sema::LazyDep>>, Box<al_cache::Key>> {
     let which: Vec<usize> = (0..apps.len()).filter(|&i| lazy[i].is_some()).collect();
     let refs: Vec<&al_sema::workspace::AppSource> = which.iter().map(|&i| &apps[i]).collect();
     let mans: Vec<Manifest> = which
@@ -1057,7 +1057,7 @@ fn lazy_index(
                 })
                 .collect())
         }
-        _ => Err(key),
+        _ => Err(Box::new(key)),
     }
 }
 

@@ -435,6 +435,7 @@ fn layered_run(lib: &str, imp: &str, cc: Option<CompileCache>) -> Result<CorpusR
         publisher: p.into(),
         version: v.into(),
         resources: vec![],
+        ..Default::default()
     };
     CorpusRuntime::try_run_suites_with(
         vec![
@@ -536,6 +537,7 @@ fn a_change_in_a_microsoft_app_rebuilds_every_layer() {
             publisher: p.into(),
             version: v.into(),
             resources: vec![],
+            ..Default::default()
         };
         CorpusRuntime::try_run_suites_with(
             vec![

@@ -1439,6 +1439,24 @@ impl<'a> Checker<'a> {
                 let r = kids[0].text_range();
                 self.types
                     .insert((sc.file, r.start().into(), r.end().into()), base_ty.clone());
+                // `CurrPage.Update(true)` is the page's method even when the page has an action or control of
+                // that name (System Application's "Schedule Feature Data Update" has an action `Update`): a
+                // control is not called. Real BC compiles that code; no corpus test names a control like a method.
+                if let Ty::Object(ObjKind::Page, page) = &base_ty {
+                    if node.parent().is_some_and(|p| p.kind() == CallExpr)
+                        && node.prev_sibling().is_none()
+                        && self
+                            .resolve(sc, ObjKind::Page, page)
+                            .is_some_and(|oi| self.named_section(oi, &mname).is_some())
+                    {
+                        if let Some(recv) = receiver_of(&base_ty) {
+                            let c = self.catalog_cands(&recv, &mname, true, &base_ty);
+                            if !c.is_empty() {
+                                return E::Callable(c);
+                            }
+                        }
+                    }
+                }
                 if let Some(r) = self.field_res(sc, &base_ty, &mname) {
                     self.record(sc, node, r);
                 }

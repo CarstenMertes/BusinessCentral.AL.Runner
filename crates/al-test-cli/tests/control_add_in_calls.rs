@@ -62,3 +62,43 @@ fn a_control_add_in_call_refuses_only_when_it_runs() {
         other => panic!("{other:?}"),
     }
 }
+
+// `CurrPage.Update(true)` on a page that has an action named Update is the page's method: an action is not called
+// (System Application's "Schedule Feature Data Update" does it; real BC compiles it). Issue 34.
+#[test]
+fn curr_page_update_is_the_method_when_an_action_has_the_same_name() {
+    let src = r#"
+table 63510 "CU Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+page 63511 "CU Card"
+{
+    PageType = Card; SourceTable = "CU Row";
+    layout { area(Content) { field(Id; Rec.Id) { } } }
+    actions { area(Processing) { action(Update) { trigger OnAction() begin Done := true; CurrPage.Update(true); end; } } }
+    var Done: Boolean;
+}
+codeunit 63512 T
+{
+    Subtype = Test;
+    [Test] procedure UpdateAction() var R: Record "CU Row"; P: TestPage "CU Card"; begin R.Id := 1; R.Insert(); P.OpenEdit(); P.GoToRecord(R); P.Update.Invoke(); P.Close(); end;
+}
+"#;
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
+    let o = run_codeunit(&engine, &l, oi);
+    assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
+}

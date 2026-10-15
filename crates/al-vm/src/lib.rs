@@ -16,6 +16,7 @@ mod baseline;
 pub use baseline::Baseline;
 pub use faultsite::FaultFrame;
 mod callstack;
+mod profile;
 mod companies;
 mod dataset;
 mod dispatch;
@@ -376,6 +377,7 @@ impl Session {
 
     /// A session whose clock, identity and file system come from `host`.
     pub fn with_host(engine: Arc<Engine>, host: al_host::Host) -> Session {
+        profile::init();
         // The session of a run with test data works in the restored company.
         let host = match &engine.test_data {
             Some(td) => host.in_company(td.provider.company()),
@@ -1086,6 +1088,9 @@ impl Session {
             S::Pos(p) => {
                 if let Some(top) = self.call_stack.last_mut() {
                     top.pos = *p;
+                }
+                if profile::ON.load(std::sync::atomic::Ordering::Relaxed) {
+                    self.profile_sample();
                 }
                 if self.code_coverage {
                     self.coverage_hit(*p);

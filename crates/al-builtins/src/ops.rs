@@ -157,7 +157,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             }
         }
         // The untracked call stack marker moves between Text slots unread (see `native::text_of`).
-        (Value::Text(s), T::Text(_)) if s.contains(crate::native::UNTRACKED_CALL_STACK) => Value::Text(s),
+        (Value::Text(s), T::Text(_)) if s.has_marker() => Value::Text(s),
         // Text-like.
         (v, T::Text(max)) if crate::native::text_of(&v).is_some() => {
             Value::Text(fit_txt(crate::native::text_of(&v).expect("text"), *max)?)
@@ -567,7 +567,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::BigInteger(a), V::Integer(b)) => return Ok(a.cmp(&i64::from(*b))),
         (V::Decimal(a), V::Decimal(b)) => return Ok(a.cmp(b)),
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b))
-            if !a.contains(crate::native::UNTRACKED_CALL_STACK) && !b.contains(crate::native::UNTRACKED_CALL_STACK) =>
+            if !a.has_marker() && !b.has_marker() =>
         {
             return Ok(a.cmp(b));
         }

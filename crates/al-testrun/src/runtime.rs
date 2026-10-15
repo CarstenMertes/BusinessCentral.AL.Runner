@@ -1812,9 +1812,16 @@ pub fn run_codeunit_full(
         }
     }
     // What publishing the app does first: run its install codeunits, then commit.
-    session.set_install_scope(true);
-    let skipped_installs = run_install_codeunits(lowered, &mut session);
-    session.set_install_scope(false);
+    let skipped_installs = match baseline.and_then(|b| b.workspace_installs.clone()) {
+        // Already run once for the whole run, with the baseline.
+        Some(skipped) => skipped,
+        None => {
+            session.set_install_scope(true);
+            let skipped = run_install_codeunits(lowered, &mut session);
+            session.set_install_scope(false);
+            skipped
+        }
+    };
     session.in_test_codeunit = true;
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
@@ -2216,7 +2223,7 @@ fn bind_handlers(
 /// OnInstallAppPerDatabase with no company chosen (the order measured on BC 27.5), and commits
 /// after each. An installer that cannot run is skipped; returned are the tables it touches and
 /// why, so tests that touch them can be reported not run.
-fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
+pub(crate) fn run_install_codeunits(lowered: &Lowered, session: &mut Session) -> Vec<(BTreeSet<u32>, String)> {
     let mut skipped = Vec::new();
     let installers: Vec<usize> = lowered
         .program

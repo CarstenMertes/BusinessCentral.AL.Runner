@@ -255,6 +255,30 @@ registry! {
         tests: "Gen. Jnl.-Post Line PostVend (ERM Gen. Lines for Vendor, over 1,000 Tests-ERM and Tests-General Journal tests).",
         probe: "Error('%1', Rec.RecordId), StrSubstNo and TestField on a RecordId field, with a text key that needs quotes.",
     },
+    TimeSubtraction => {
+        id: "time-subtraction",
+        assumed: "Time - Time is a Duration in milliseconds, Time - Integer is a Time that many milliseconds earlier; a result outside the day and the undefined Time are refused. (Time + Integer is pinned by json/TestProbeJsonContracts.al:ValueTypes_DurationTimeDateTime; the probe types/PUTimeArithmetic.al for the subtractions is on the corpus staging branch.)",
+        tests: "Time arithmetic in Library - ERM and Library - Manufacturing: about 700 Time - Time and 530 Time - Integer refusals in the Tests-ERM, Tests-SCM and Tests-Job buckets.",
+        probe: "Merge types/PUTimeArithmetic.al from the staging branch (Time_MinusTime_IsDuration, Time_PlusMinusInteger_Values, _PastMidnight).",
+    },
+    DateTimeDateTimeMethods => {
+        id: "datetime-date-time-methods",
+        assumed: "The instance methods DateTime.Date() and DateTime.Time() give what DT2Date and DT2Time give, the undefined DateTime included. (DT2Date and DT2Time are pinned by text/TestProbeTextDateFormatContracts.al:Dates_DateTime_DT2DateTime.)",
+        tests: "About 975 Tests-ERM, Tests-SCM and Tests-General Journal tests (Library - Random and Library - Utility date and time helpers).",
+        probe: "Dt.Date() and Dt.Time() for a set DateTime and for 0DT, next to DT2Date(Dt) and DT2Time(Dt).",
+    },
+    LoadFieldsNonStored => {
+        id: "load-fields-non-stored",
+        assumed: "SetLoadFields and AddLoadFields accept a field that is not stored (a FlowField) and add nothing to the load request for it. (The documentation says a runtime error or a false result; Microsoft's own code passes a FlowField and runs on real BC.)",
+        tests: "Sales Line SetLoadFieldsForInvDiscoundCalculation (\"Reserved Quantity\"): about 2,350 Tests-ERM and Tests-SCM tests.",
+        probe: "SetLoadFields(FlowField) and SetLoadFields(Normal, FlowField) then FindFirst and AreFieldsLoaded of the normal field; AddLoadFields the same; the result of SetLoadFields used as a value.",
+    },
+    SetTableTemporaryIntoPermanent => {
+        id: "settable-temporary-into-permanent",
+        assumed: "RecordRef.SetTable of a RecordRef on a temporary record into a record variable that is not declared temporary makes that variable temporary and share the temporary rows. (Permanent into permanent and temporary into temporary are pinned by recordref/TestRecordRefGetSetTableContracts.al.)",
+        tests: "Mfg. Dimension Management OnCheckDimValuePostingOnAfterCreateDimTableIDs: SetTable(PurchaseLine) of the temporary Purchase Line of a posting check; about 1,450 Tests-ERM and Tests-SCM tests.",
+        probe: "Tmp.Insert; RR.GetTable(Tmp); RR.SetTable(Perm); Perm.IsTemporary, Perm.Get, Perm.Insert and Perm.Count afterwards; the same for a permanent RecordRef into a temporary variable.",
+    },
 }
 
 thread_local! {

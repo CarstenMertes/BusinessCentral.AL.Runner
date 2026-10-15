@@ -544,12 +544,30 @@ impl Session {
                 let Some(Value::Record(dst)) = args.first() else {
                     return unsupported(format!("RecordRef.SetTable of {}", args.first().describe()));
                 };
-                let (same_table, same_kind) = {
+                let (same_table, same_kind, temp_into_permanent) = {
                     let (s, d) = (rec.borrow(), dst.borrow());
-                    (s.table == d.table, s.temporary == d.temporary)
+                    (
+                        s.table == d.table,
+                        s.temporary == d.temporary,
+                        s.temporary && !d.temporary,
+                    )
                 };
-                if !same_table || !same_kind {
-                    return unsupported("RecordRef.SetTable into a record of another table or temporary-ness");
+                if !same_table || !(same_kind || temp_into_permanent) {
+                    return unsupported(
+                        "RecordRef.SetTable into a record of another table or into a temporary record from a permanent table",
+                    );
+                }
+                // A temporary RecordRef set into a record that is not declared temporary: the record then reads and
+                // writes the temporary rows (Mfg. Dimension Management, the temporary Purchase Line of a posting
+                // check). Not pinned by the corpus (assumption settable-temporary-into-permanent).
+                if temp_into_permanent && !Rc::ptr_eq(&rec, dst) {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::SetTableTemporaryIntoPermanent,
+                    );
+                    let s = rec.borrow();
+                    let mut d = dst.borrow_mut();
+                    d.temporary = true;
+                    d.temp_id = s.temp_id.clone();
                 }
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();

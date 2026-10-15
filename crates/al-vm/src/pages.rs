@@ -2052,8 +2052,21 @@ impl Session {
             return unsupported(format!("{how}() on a page without a source table"));
         }
         // Leaving a row saves it.
+        let anchor = st.borrow_mut().after_new.take();
         if let Left::Stay = self.leave_row(st, how)? {
             return Ok(Value::Boolean(false));
+        }
+        // A new line saved in the middle of a list: Next() goes to the row below the one it was
+        // started under, not to the row after its own key (corpus
+        // handlers/ProbeTestPageForms.al:227-253, where a row with the last key, added below row 2,
+        // is followed by row 3 and not by the blank line).
+        let cursor_now = st.borrow().cursor;
+        if let ("Next", Some(anchor), Cursor::Row) = (how, anchor, cursor_now) {
+            if self.next_below_anchor(st, anchor)? {
+                st.borrow_mut().cursor = Cursor::Row;
+                self.arrive(st)?;
+                return Ok(Value::Boolean(true));
+            }
         }
         let r = self.page_move_inner(st, how);
         self.torn_down_on_error(st, r).map(Value::Boolean)
@@ -2074,6 +2087,31 @@ impl Session {
             }
             other => other,
         }
+    }
+
+    /// Moves the page's record to the row after `anchor` in key order, when there is one and it is
+    /// not the row just saved; else leaves the record as it was and answers false.
+    fn next_below_anchor(&mut self, st: &St, anchor: Vec<Value>) -> Result<bool, Signal> {
+        if self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord") {
+            return Ok(false);
+        }
+        let rec = self.page_rec(st);
+        let saved = rec.borrow().fields.clone();
+        rec.borrow_mut().fields = anchor;
+        self.ret_used = true;
+        let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
+        let found = matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true));
+        let moved = found && {
+            self.ret_used = true;
+            matches!(self.record_op("Next", &rec, &mut [Value::Integer(1)])?, Value::Integer(n) if n != 0)
+        };
+        let table = self.table(&rec)?;
+        let same = moved && Self::same_values(&table.primary_key(&rec.borrow().fields), &table.primary_key(&saved));
+        if moved && !same {
+            return Ok(true);
+        }
+        rec.borrow_mut().fields = saved;
+        Ok(false)
     }
 
     fn page_move_inner(&mut self, st: &St, how: &str) -> Result<bool, Signal> {
@@ -2563,6 +2601,10 @@ impl Session {
         let rec = self.page_rec(st);
         self.set_xrec(st);
         self.note_lower_key(st)?;
+        // A list line started below a stored row: remember the row (see `PageState::after_new`).
+        let anchor = (keep_focus && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
+            .then(|| rec.borrow().fields.clone());
+        st.borrow_mut().after_new = anchor;
         let table = rec.borrow().table as usize;
         let fresh = self.initial_fields(table);
         rec.borrow_mut().fields = fresh;
@@ -3112,6 +3154,14 @@ impl Session {
             }
         }
         match m {
+            // `Ctl.Value := x` is the setter form of the property, and does what SetValue does
+            // (corpus handlers/ProbeTestPageForms.al:109-131: OnValidate runs with the assigned text).
+            "Value" if !args.is_empty() && self.in_cue_group(st, idx) => Ok(Value::Null),
+            "Value" if !args.is_empty() => {
+                let r = self.control_set_value(st, idx, args)?;
+                self.resync_parts_linked_by(st, idx)?;
+                Ok(r)
+            }
             "Value" => {
                 if self.shows_no_row(st, idx) {
                     return Ok(Value::Text(String::new()));

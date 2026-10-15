@@ -225,7 +225,10 @@ codeunit 50000 "T" { Subtype = Test;
   [Test] procedure ScansOtherTable() var F: Record Field; begin F.SetRange(TableNo, 50001); F.SetRange("No.", 1); if F.FindFirst() then; end; }"#,
     );
     let why = not_run(&o, "ScansAllFields");
-    assert!(why.contains("ObsoleteState = Moved") && why.contains("not pinned"), "{why}");
+    assert!(
+        why.contains("ObsoleteState = Moved") && why.contains("not pinned"),
+        "{why}"
+    );
     assert!(!why.contains("is not understood"), "{why}");
     // A filter that excludes the field's row never reaches it.
     assert!(

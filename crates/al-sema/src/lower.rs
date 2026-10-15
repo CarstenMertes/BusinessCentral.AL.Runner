@@ -6775,7 +6775,15 @@ page 50011 "SV P" {
             "{SAVE_VALUES_PAGE} pageextension 50012 \"SV X\" extends \"SV P\" {{ layout {{ addlast(Content) {{ field(Q; Rec.Qty) {{ }} }} }} }}"
         );
         let (_, l) = lower_src(&src);
-        let pg = l.program.objects.iter().find(|o| o.name == "SV P").unwrap().page.clone().unwrap();
+        let pg = l
+            .program
+            .objects
+            .iter()
+            .find(|o| o.name == "SV P")
+            .unwrap()
+            .page
+            .clone()
+            .unwrap();
         assert!(pg.unsupported.is_empty(), "{:?}", pg.unsupported);
     }
 
@@ -6786,9 +6794,19 @@ page 50011 "SV P" {
             "{SAVE_VALUES_PAGE} pageextension 50012 \"SV X\" extends \"SV P\" {{ layout {{ addlast(Content) {{ field(V; ExtVar) {{ }} }} }} var ExtVar: Integer; }}"
         );
         let (_, l) = lower_src(&src);
-        let pg = l.program.objects.iter().find(|o| o.name == "SV P").unwrap().page.clone().unwrap();
+        let pg = l
+            .program
+            .objects
+            .iter()
+            .find(|o| o.name == "SV P")
+            .unwrap()
+            .page
+            .clone()
+            .unwrap();
         assert!(
-            pg.unsupported.iter().any(|w| w.contains("SaveValues") && w.contains("variable")),
+            pg.unsupported
+                .iter()
+                .any(|w| w.contains("SaveValues") && w.contains("variable")),
             "{:?}",
             pg.unsupported
         );

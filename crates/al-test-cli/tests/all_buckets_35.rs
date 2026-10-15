@@ -23,6 +23,9 @@ fn get_last_error_text_with_the_flag_is_refused_with_its_reason() {
     assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
     let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
     let why = l.unsupported[oi][0].first().cloned().unwrap_or_default();
-    assert!(why.contains("ExcludeCustomerContent") && why.contains("not pinned"), "{why}");
+    assert!(
+        why.contains("ExcludeCustomerContent") && why.contains("not pinned"),
+        "{why}"
+    );
     assert!(!why.contains("is not implemented"), "{why}");
 }

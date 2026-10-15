@@ -341,7 +341,7 @@ fn graph_first_group(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> 
 }
 
 /// `GetCurrentUser()` on a tier without Entra ID returns without an error and leaves the UserInfo null (probe agent,
-/// BC 29.0.54011.55816, OnPrem codeunit 61296, tests/al-language-onprem/session/PZAzureAdUser.al): Microsoft's
+/// OnPrem codeunit 61296 of the newest major, tests/al-language-onprem/session/PZAzureAdUser.al): Microsoft's
 /// `InitializeGraphUser` then asks for the authentication object id of the session user.
 fn graph_current_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     no_args(args, "GraphQuery.GetCurrentUser")?;
@@ -482,7 +482,7 @@ pub fn types() -> Vec<RegistryType> {
                     member(
                         "GetCurrentUser",
                         Pin::Probe(
-                            "probe tests/al-language-onprem/session/PZAzureAdUser.al (corpus branch al-runtime-rs-staging; BC 29.0.54011.55816)"
+                            "probe tests/al-language-onprem/session/PZAzureAdUser.al (corpus branch al-runtime-rs-staging, OnPrem codeunit 61296)"
                                 .into(),
                         ),
                         graph_current_user,

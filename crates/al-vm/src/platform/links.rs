@@ -13,6 +13,7 @@ use crate::Session;
 use crate::records::Rec;
 use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::{RtType, Value};
 use al_data::TableDef;
 
@@ -48,19 +49,23 @@ impl Session {
         };
         let old = std::rc::Rc::new(std::cell::RefCell::new(rec.borrow().clone()));
         old.borrow_mut().fields = old_fields.to_vec();
-        let old_rid = self.record_op("RecordId", &old, &mut [])?;
-        let new_rid = self.record_op("RecordId", rec, &mut [])?;
+        let old_rid = self.record_op(RecordOp::RecordId, &old, &mut [])?;
+        let new_rid = self.record_op(RecordOp::RecordId, rec, &mut [])?;
         let Value::Record(link) = self.default_value(&RtType::Record(link_obj as u32, false)) else {
             unreachable!("a record type makes a record")
         };
-        self.record_op("SetRange", &link, &mut [Value::Integer(pos(2) as i32), old_rid])?;
+        self.record_op(RecordOp::SetRange, &link, &mut [Value::Integer(pos(2) as i32), old_rid])?;
         if t.per_company {
             let company = Value::Text(self.cx.company.clone().into());
-            self.record_op("SetRange", &link, &mut [Value::Integer(pos(12) as i32), company])?;
-        }
-        if !al_builtins::ops::truthy(&self.record_op("IsEmpty", &link, &mut [])?)? {
             self.record_op(
-                "ModifyAll",
+                RecordOp::SetRange,
+                &link,
+                &mut [Value::Integer(pos(12) as i32), company],
+            )?;
+        }
+        if !al_builtins::ops::truthy(&self.record_op(RecordOp::IsEmpty, &link, &mut [])?)? {
+            self.record_op(
+                RecordOp::ModifyAll,
                 &link,
                 &mut [Value::Integer(pos(2) as i32), new_rid, Value::Boolean(false)],
             )?;
@@ -79,7 +84,7 @@ impl Session {
 
     pub(crate) fn record_links(
         &mut self,
-        method: &str,
+        method: RecordOp,
         rec: &Rec,
         t: &TableDef,
         args: &mut [Value],
@@ -94,7 +99,7 @@ impl Session {
 
     fn record_links_inner(
         &mut self,
-        method: &str,
+        method: RecordOp,
         rec: &Rec,
         t: &TableDef,
         args: &mut [Value],
@@ -115,17 +120,21 @@ impl Session {
                 .position(|f| f.id == id)
                 .expect("Record Link field")
         };
-        let rid = self.record_op("RecordId", rec, &mut [])?;
+        let rid = self.record_op(RecordOp::RecordId, rec, &mut [])?;
         // A fresh Record Link record, filtered to the links of record `of`, and to `company` when
         // one is given.
         let linked = |s: &mut Session, of: &Value, company: Option<&str>| -> Result<Rec, Signal> {
             let Value::Record(link) = s.default_value(&RtType::Record(link_obj as u32, false)) else {
                 unreachable!("a record type makes a record")
             };
-            s.record_op("SetRange", &link, &mut [Value::Integer(pos(2) as i32), of.clone()])?;
+            s.record_op(
+                RecordOp::SetRange,
+                &link,
+                &mut [Value::Integer(pos(2) as i32), of.clone()],
+            )?;
             if let Some(c) = company {
                 s.record_op(
-                    "SetRange",
+                    RecordOp::SetRange,
                     &link,
                     &mut [Value::Integer(pos(12) as i32), Value::Text(c.to_string().into())],
                 )?;
@@ -137,26 +146,26 @@ impl Session {
         let own_company = self.cx.company.clone();
         let scoped = t.per_company.then_some(&*own_company);
         match method {
-            "HasLinks" => {
+            RecordOp::HasLinks => {
                 let link = linked(self, &rid, scoped)?;
-                let empty = self.record_op("IsEmpty", &link, &mut [])?;
+                let empty = self.record_op(RecordOp::IsEmpty, &link, &mut [])?;
                 Ok(Value::Boolean(!al_builtins::ops::truthy(&empty)?))
             }
-            "DeleteLinks" => {
+            RecordOp::DeleteLinks => {
                 let link = linked(self, &rid, scoped)?;
-                self.record_op("DeleteAll", &link, &mut [Value::Boolean(false)])?;
+                self.record_op(RecordOp::DeleteAll, &link, &mut [Value::Boolean(false)])?;
                 Ok(Value::Null)
             }
             // DeleteLink compares the company with the session company even for a table that is not
             // per company, so it leaves the row AddLink wrote there (same file, `DeleteLink_*`).
-            "DeleteLink" => {
+            RecordOp::DeleteLink => {
                 let id = args.first().cloned().unwrap_or(Value::Null);
                 let link = linked(self, &rid, Some(&*own_company))?;
-                self.record_op("SetRange", &link, &mut [Value::Integer(pos(1) as i32), id])?;
-                self.record_op("DeleteAll", &link, &mut [Value::Boolean(false)])?;
+                self.record_op(RecordOp::SetRange, &link, &mut [Value::Integer(pos(1) as i32), id])?;
+                self.record_op(RecordOp::DeleteAll, &link, &mut [Value::Boolean(false)])?;
                 Ok(Value::Null)
             }
-            "AddLink" => {
+            RecordOp::AddLink => {
                 let text = |i: usize, max: usize| {
                     al_builtins::native::text_of(args.get(i).unwrap_or(&Value::Null))
                         .unwrap_or_default()
@@ -184,11 +193,11 @@ impl Session {
                         String::new().into()
                     });
                 }
-                self.record_op("Insert", &link, &mut [Value::Boolean(false)])?;
+                self.record_op(RecordOp::Insert, &link, &mut [Value::Boolean(false)])?;
                 let id = link.borrow().fields[pos(1)].clone();
                 Ok(id)
             }
-            "CopyLinks" => {
+            RecordOp::CopyLinks => {
                 let from = match args.first() {
                     Some(Value::Record(from)) => from.clone(),
                     Some(Value::Library(_, lib)) => match &*lib.borrow() {
@@ -199,21 +208,21 @@ impl Session {
                 };
                 let from_t = self.table(&from)?;
                 let from_scope = from_t.per_company.then_some(&*own_company);
-                let from_rid = self.record_op("RecordId", &from, &mut [])?;
+                let from_rid = self.record_op(RecordOp::RecordId, &from, &mut [])?;
                 // Copying a record's links onto itself changes nothing
                 // (TestRecordLinkTable.al `CopyLinks_SourceOntoItself_DoesNotDuplicateTheRows`).
                 if al_builtins::ops::compare(&from_rid, &rid).is_ok_and(|o| o.is_eq()) {
                     return Ok(Value::Null);
                 }
                 let source = linked(self, &from_rid, from_scope)?;
-                self.record_op("SetCurrentKey", &source, &mut [Value::Integer(pos(1) as i32)])?;
+                self.record_op(RecordOp::SetCurrentKey, &source, &mut [Value::Integer(pos(1) as i32)])?;
                 // Read the rows first, then write: the copies must not join the scan.
                 let mut rows = Vec::new();
-                if al_builtins::ops::truthy(&self.record_op("FindSet", &source, &mut [])?)? {
+                if al_builtins::ops::truthy(&self.record_op(RecordOp::FindSet, &source, &mut [])?)? {
                     loop {
-                        self.record_op("CalcFields", &source, &mut [Value::Integer(pos(9) as i32)])?;
+                        self.record_op(RecordOp::CalcFields, &source, &mut [Value::Integer(pos(9) as i32)])?;
                         rows.push(source.borrow().fields.clone());
-                        if !matches!(self.record_op("Next", &source, &mut [])?, Value::Integer(n) if n != 0) {
+                        if !matches!(self.record_op(RecordOp::Next, &source, &mut [])?, Value::Integer(n) if n != 0) {
                             break;
                         }
                     }
@@ -236,7 +245,7 @@ impl Session {
                             String::new().into()
                         });
                     }
-                    self.record_op("Insert", &link, &mut [Value::Boolean(false)])?;
+                    self.record_op(RecordOp::Insert, &link, &mut [Value::Boolean(false)])?;
                 }
                 Ok(Value::Null)
             }

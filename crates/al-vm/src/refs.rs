@@ -11,6 +11,7 @@ use al_builtins::catalog::Catalog;
 use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::{LibraryValue, RecordState, RtType, Value};
 use al_data::TableDef;
 use std::cell::RefCell;
@@ -350,7 +351,7 @@ impl Session {
                 let t = self.table(&dst)?;
                 let mut forwarded = vec![Value::Record(src)];
                 forwarded.extend(args.get(1).cloned());
-                return self.record_meta_op("Copy", &dst, &t, &mut forwarded);
+                return self.record_meta_op(RecordOp::Copy, &dst, &t, &mut forwarded);
             }
 
             "Number" => match &*lib.borrow() {
@@ -417,13 +418,13 @@ impl Session {
                         None => return Err(Signal::Error(Box::new(al_builtins::native::unpinned_error()))),
                     }
                 }
-                self.load_fields_op(method, &rec, &t, &positions)
+                self.load_fields_op(record_method(method), &rec, &t, &positions)
             }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
             "RecordId" => Ok(self.record_id(&rec, &t)),
             "LockTable" | "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission"
             | "CountApprox" | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" | "Ascending"
-            | "SetRecFilter" => self.record_meta_op(method, &rec, &t, args),
+            | "SetRecFilter" => self.record_meta_op(record_method(method), &rec, &t, args),
             // Doc (RecordRef.Get): loads the row a RecordId names; the table must be the ref's own.
             "Get" => {
                 let key = match args.first() {
@@ -439,13 +440,13 @@ impl Session {
                     other => return unsupported(format!("RecordRef.Get of {}", other.describe())),
                 };
                 let mut a = key;
-                self.record_op("Get", &rec, &mut a)
+                self.record_op(RecordOp::Get, &rec, &mut a)
             }
             // As Record.GetBySystemId, and a miss with the result unused raises "The <table> does not
             // exist" naming the Guid (PXEnumRecordRef.al:199-301).
             "GetBySystemId" => self.get_by_system_id(&rec, &t, args, true),
             "AddLink" | "DeleteLink" | "DeleteLinks" | "HasLinks" | "CopyLinks" => {
-                self.record_links(method, &rec, &t, args)
+                self.record_links(record_method(method), &rec, &t, args)
             }
             "Duplicate" => {
                 // A duplicate of a temporary RecordRef is temporary and sees the same rows (record/
@@ -464,7 +465,7 @@ impl Session {
                 }
             }
             "IsEmpty" | "Count" | "Init" | "Insert" | "Modify" | "Delete" | "DeleteAll" | "Find" | "FindFirst"
-            | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(method, &rec, args),
+            | "FindLast" | "FindSet" | "Next" | "Reset" | "Rename" => self.record_op(record_method(method), &rec, args),
             "Field" => {
                 let no = int_arg(args, 0)?;
                 match t.fields.iter().position(|f| i64::from(al_field_no(f.id)) == no) {
@@ -533,7 +534,7 @@ impl Session {
                 }
             }
             "KeyCount" => Ok(Value::Integer(key_count(&self.base_table(&t)) as i32)),
-            "CurrentKey" => self.record_meta_op("CurrentKey", &rec, &t, args),
+            "CurrentKey" => self.record_meta_op(RecordOp::CurrentKey, &rec, &t, args),
             // recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:75-176. Keys number from 1 in
             // declaration order and the hidden SystemId key is last; an index outside them raises
             // DB:KeyNotFound; a current key of fields no declared key starts with reports -1.
@@ -733,17 +734,17 @@ impl Session {
                 if stored {
                     return unsupported("FieldRef.CalcField of a field that is not a FlowField (not pinned)");
                 }
-                self.flow_op("CalcFields", &rec, &[Value::Integer(pos as i32)])
+                self.flow_op(RecordOp::CalcFields, &rec, &[Value::Integer(pos as i32)])
             }
             "Validate" => {
                 let mut a = vec![Value::Integer(pos as i32)];
                 a.extend(args.iter().cloned());
-                self.record_op("Validate", &rec, &mut a)
+                self.record_op(RecordOp::Validate, &rec, &mut a)
             }
             "TestField" | "FieldError" => {
                 let mut a = vec![Value::Integer(pos as i32)];
                 a.extend(args.iter().cloned());
-                self.record_meta_op(method, &rec, &t, &mut a)
+                self.record_meta_op(record_method(method), &rec, &t, &mut a)
             }
             "IsOptimizedForTextSearch" => Ok(Value::Boolean(
                 self.field_property(&t, pos, "OptimizeForTextSearch")
@@ -768,7 +769,7 @@ impl Session {
             "SetRange" | "SetFilter" => {
                 let mut a = vec![Value::Integer(pos as i32)];
                 a.extend(args.iter().cloned());
-                self.record_op(method, &rec, &mut a)
+                self.record_op(record_method(method), &rec, &mut a)
             }
             other => unsupported(format!("FieldRef.{other}")),
         }
@@ -921,4 +922,9 @@ impl Session {
             other => unsupported(format!("FieldRef.{other}")),
         }
     }
+}
+
+/// The record method a RecordRef method forwards to; the RecordRef arms that forward are listed by name.
+fn record_method(method: &str) -> RecordOp {
+    RecordOp::from_name(method).expect("a RecordRef method that forwards to the record")
 }

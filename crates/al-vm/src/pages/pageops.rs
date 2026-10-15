@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::record_op::RecordOp;
 
 impl Session {
     /// The `TestPage.*` / `TestField.*` methods (ADR-012).
@@ -398,7 +399,7 @@ impl Session {
                 }
                 let fields = src.borrow().fields.clone();
                 dst.borrow_mut().fields = fields;
-                self.record_op("SetRecFilter", dst, &mut [])?;
+                self.record_op(RecordOp::SetRecFilter, dst, &mut [])?;
                 Ok(Value::Null)
             }
             // Which record a page variable reports after it ran is not pinned: no corpus test calls GetRecord

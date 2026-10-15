@@ -40,6 +40,7 @@ pub mod pagefmt;
 pub mod platform;
 pub mod platform_native;
 pub mod querybuiltins;
+pub mod record_op;
 pub mod refs;
 pub mod sessionfns;
 pub mod sessiontypes;

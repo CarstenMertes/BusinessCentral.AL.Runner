@@ -25,6 +25,7 @@
 use crate::Session;
 use crate::platform::{blank, pos};
 use al_builtins::native::{AlError, Ctx, Signal};
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::Value;
 use al_data::{AccessContext, Row, Scan, Store, TableDef, WriteOutcome};
 use std::sync::Arc;
@@ -197,8 +198,10 @@ impl Session {
 
     /// `ModifyAll`, `Rename` and `Truncate` on the User table would skip or change the triggers
     /// above in ways nothing pins.
-    pub(crate) fn user_bulk_refusal(&self, t: &TableDef, temporary: bool, method: &str) -> Result<(), Signal> {
-        if self.is_user_row(t, temporary) && matches!(method, "ModifyAll" | "Rename" | "Truncate") {
+    pub(crate) fn user_bulk_refusal(&self, t: &TableDef, temporary: bool, method: RecordOp) -> Result<(), Signal> {
+        if self.is_user_row(t, temporary)
+            && matches!(method, RecordOp::ModifyAll | RecordOp::Rename | RecordOp::Truncate)
+        {
             return unsupported(format!(
                 "{method} on the User table: the platform's User triggers on it are not pinned (docs/probes-needed.md)"
             ));

@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::record_op::RecordOp;
 
 impl Session {
     pub(super) fn page_open(&mut self, st: &St, mode: PageMode) -> Result<Value, Signal> {
@@ -289,7 +290,7 @@ impl Session {
             }
             self.ret_used = true;
             let rec = self.page_rec(st);
-            self.record_op("FindLast", &rec, &mut [])?;
+            self.record_op(RecordOp::FindLast, &rec, &mut [])?;
             return self.start_draft(st, false);
         }
         if with_record {
@@ -299,7 +300,7 @@ impl Session {
             if self.stored_row(&rec)?.is_some() {
                 self.ret_used = true;
                 let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
-                if matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true)) {
+                if matches!(self.record_op(RecordOp::Get, &rec, &mut pk)?, Value::Boolean(true)) {
                     st.borrow_mut().cursor = Cursor::Row;
                     return self.arrive(st);
                 }
@@ -428,7 +429,7 @@ impl Session {
             rec.borrow_mut().fields = fields;
             self.ret_used = false;
             self.immediate_errors = true;
-            let inserted = self.record_op("Insert", &rec, &mut [Value::Boolean(true)]);
+            let inserted = self.record_op(RecordOp::Insert, &rec, &mut [Value::Boolean(true)]);
             self.immediate_errors = false;
             inserted?;
         }
@@ -597,9 +598,9 @@ impl Session {
         self.ret_used = true;
         Ok(matches!(
             match which {
-                "-" => self.record_op("FindFirst", &rec, &mut [])?,
-                "+" => self.record_op("FindLast", &rec, &mut [])?,
-                w => self.record_op("Find", &rec, &mut [Value::Text(w.into())])?,
+                "-" => self.record_op(RecordOp::FindFirst, &rec, &mut [])?,
+                "+" => self.record_op(RecordOp::FindLast, &rec, &mut [])?,
+                w => self.record_op(RecordOp::Find, &rec, &mut [Value::Text(w.into())])?,
             },
             Value::Boolean(true)
         ))
@@ -614,7 +615,7 @@ impl Session {
         }
         let rec = self.page_rec(st);
         self.ret_used = true;
-        let moved = self.record_op("Next", &rec, &mut [Value::Integer(steps)])?;
+        let moved = self.record_op(RecordOp::Next, &rec, &mut [Value::Integer(steps)])?;
         Ok(matches!(moved, Value::Integer(n) if n != 0))
     }
 
@@ -748,7 +749,7 @@ impl Session {
             rec.borrow_mut().fields[pos] = v.clone();
             if validate {
                 self.ret_used = false;
-                self.record_op("Validate", &rec, &mut [Value::Integer(pos as i32), v])?;
+                self.record_op(RecordOp::Validate, &rec, &mut [Value::Integer(pos as i32), v])?;
             }
         }
         Ok(())
@@ -823,7 +824,10 @@ impl Session {
                     });
                 }
                 self.ret_used = true;
-                if matches!(self.record_op("FindFirst", &probe, &mut [])?, Value::Boolean(true)) {
+                if matches!(
+                    self.record_op(RecordOp::FindFirst, &probe, &mut [])?,
+                    Value::Boolean(true)
+                ) {
                     dec(&probe.borrow().fields[last])
                 } else {
                     None

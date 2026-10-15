@@ -100,7 +100,7 @@ fn create(ctx: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     };
     let mut s = fresh(text(a, 0)?, collectible);
     if let Some(rec @ Value::Record(_)) = a.get_mut(2) {
-        let id = ctx.record("RecordId", Some(rec), &mut [])?;
+        let id = ctx.record(crate::record_op::RecordOp::RecordId, Some(rec), &mut [])?;
         if let Value::Library(_, l) = &id {
             if let LibraryValue::RecordId { table_no, .. } = &*l.borrow() {
                 s.table_id = *table_no as i32;

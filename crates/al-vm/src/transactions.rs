@@ -9,6 +9,7 @@
 
 use crate::{AlError, Session, Signal};
 use al_builtins::builtin_id::ids;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::Value;
 
 /// The transaction model of the running test method (`[TransactionModel(...)]`).
@@ -368,15 +369,22 @@ impl Session {
     /// Refuses a write to a persistent table while the test body has no transaction. Only
     /// `Insert` is pinned (codeunit/TestWriteTxTestBoundary.al:Test09_NoneTestCannotWriteDirectly);
     /// the other writes are refused as unsupported rather than given a guessed outcome.
-    pub(crate) fn gate_write(&self, method: &str) -> Result<(), Signal> {
+    pub(crate) fn gate_write(&self, method: RecordOp) -> Result<(), Signal> {
         if !self.no_transaction() && !self.request_only_page {
             return Ok(());
         }
         match method {
-            "Insert" | "Modify" | "Delete" | "DeleteAll" | "ModifyAll" | "Rename" | "Truncate" => {
-                Err(al_error_code(NO_TRANSACTION, NO_TRANSACTION_CODE))
-            }
-            m => unsupported(format!("{m} under TransactionModel::None (the refusal is not pinned)")),
+            RecordOp::Insert
+            | RecordOp::Modify
+            | RecordOp::Delete
+            | RecordOp::DeleteAll
+            | RecordOp::ModifyAll
+            | RecordOp::Rename
+            | RecordOp::Truncate => Err(al_error_code(NO_TRANSACTION, NO_TRANSACTION_CODE)),
+            m => unsupported(format!(
+                "{} under TransactionModel::None (the refusal is not pinned)",
+                m.name()
+            )),
         }
     }
 

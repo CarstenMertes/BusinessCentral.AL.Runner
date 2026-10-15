@@ -4,6 +4,7 @@
 
 use super::*;
 use al_builtins::filter::{FieldFilter, FilterExpr};
+use al_builtins::record_op::RecordOp;
 
 /// Filter group `RunPageLink` filters land in (corpus handlers/TestActionRunPageLinkFilterGroup.al:
 /// `g0=AAA|g2=|g4=`, unlike a part's SubPageLink).
@@ -231,7 +232,7 @@ impl Session {
             }
             let mut pk = table.primary_key(&host_rec.borrow().fields);
             self.ret_used = true;
-            if !matches!(self.record_op("Get", &rec, &mut pk)?, Value::Boolean(true)) {
+            if !matches!(self.record_op(RecordOp::Get, &rec, &mut pk)?, Value::Boolean(true)) {
                 return unsupported("RunPageOnRec from a host row that is not stored (not pinned)");
             }
         }
@@ -297,7 +298,7 @@ impl Session {
         let shown = rec.borrow().fields.clone();
         let loaded = self.page_xrec_fields(st);
         self.ret_used = true;
-        self.record_op("Get", &rec, &mut pk)?;
+        self.record_op(RecordOp::Get, &rec, &mut pk)?;
         // Nothing was written when the stored row is the one the host loaded.
         // (A Blob field is a shared buffer and compares unequal to its own copy.)
         let unchanged = loaded.len() == rec.borrow().fields.len()

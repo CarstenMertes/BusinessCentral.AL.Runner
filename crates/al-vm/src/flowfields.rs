@@ -11,6 +11,7 @@ use al_builtins::describe::Describe;
 use al_builtins::filter::{FieldFilter, FilterExpr, parse_filter_with};
 use al_builtins::native::{AlError, Signal, text_of};
 use al_builtins::ops;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::{RecordState, RtType, Value};
 use al_data::{Scan, Store, TableDef, position};
 use al_ir as ir;
@@ -628,7 +629,7 @@ impl Session {
         Ok(true)
     }
 
-    pub(crate) fn flow_op(&mut self, method: &str, rec: &Rec, args: &[Value]) -> Result<Value, Signal> {
+    pub(crate) fn flow_op(&mut self, method: RecordOp, rec: &Rec, args: &[Value]) -> Result<Value, Signal> {
         let positions: Vec<usize> = args
             .iter()
             .map(|a| match a {
@@ -637,13 +638,13 @@ impl Session {
             })
             .collect::<Result<_, _>>()?;
         match method {
-            "CalcFields" => {
+            RecordOp::CalcFields => {
                 self.calc_fields(rec, &positions)?;
             }
-            "CalcSums" => {
+            RecordOp::CalcSums => {
                 self.calc_sums(rec, &positions)?;
             }
-            "SetAutoCalcFields" => {
+            RecordOp::SetAutoCalcFields => {
                 let table = rec.borrow().table as usize;
                 for &p in &positions {
                     self.check_calc_field(table, p)?;

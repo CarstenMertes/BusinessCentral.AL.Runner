@@ -12,6 +12,7 @@ use crate::{Session, Signal};
 use al_builtins::builtin_id::ids;
 use al_builtins::describe::Describe;
 use al_builtins::ops;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::{Instance, Value};
 use al_ir as ir;
 use std::cell::RefCell;
@@ -1077,7 +1078,7 @@ impl Session {
             }
         }
         self.ret_used = true;
-        let mut more = matches!(self.record_op("FindSet", &rec, &mut [])?, Value::Boolean(true));
+        let mut more = matches!(self.record_op(RecordOp::FindSet, &rec, &mut [])?, Value::Boolean(true));
         'rows: while more {
             if run.dataset {
                 self.dataset_autocalc(run, r, &rec)?;
@@ -1119,7 +1120,7 @@ impl Session {
                 }
             }
             self.ret_used = true;
-            more = !matches!(self.record_op("Next", &rec, &mut [])?, Value::Integer(0));
+            more = !matches!(self.record_op(RecordOp::Next, &rec, &mut [])?, Value::Integer(0));
         }
         // `OnPostDataItem` of the base, with the extensions' OnBefore/OnAfterPostDataItem around it
         // (reportext/W3RpExtProcedures.al:SaveAs_AddedItem_RunsAfterTheParentsNestedItems_Order, BC 27.5 and 29.0).

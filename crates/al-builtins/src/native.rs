@@ -2,6 +2,7 @@
 
 use crate::describe::Describe;
 use crate::format::{FormatCtx, FormatFail, format_value, try_format};
+use crate::record_op::RecordOp;
 use crate::value::Value;
 use std::rc::Rc;
 
@@ -69,7 +70,12 @@ pub trait Ctx: FormatCtx {
     fn set_last_error(&mut self, e: AlError);
     /// Record methods (`Record.Insert`, ...) need the store, triggers and
     /// table metadata: the VM implements them. `method` is the catalog name.
-    fn record(&mut self, method: &str, rec: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal>;
+    fn record(
+        &mut self,
+        op: crate::record_op::RecordOp,
+        rec: Option<&mut Value>,
+        args: &mut [Value],
+    ) -> Result<Value, Signal>;
     /// `TestPage` / `TestField` / `TestAction` methods: the VM's test client
     /// implements them (ADR-012). `method` is `Receiver.Name`.
     fn page(&mut self, method: &str, _recv: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
@@ -368,23 +374,23 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Enum.Names#1", enum_names),
     ("Enum.Ordinals#1", enum_ordinals),
     ("Enum.FromInteger#1", enum_from_integer),
-    ("Record.Init#1", |c, r, a| c.record("Init", r, a)),
-    ("Record.Insert#1", |c, r, a| c.record("Insert", r, a)),
-    ("Record.Insert#2", |c, r, a| c.record("Insert", r, a)),
-    ("Record.Modify#1", |c, r, a| c.record("Modify", r, a)),
-    ("Record.Delete#1", |c, r, a| c.record("Delete", r, a)),
-    ("Record.DeleteAll#1", |c, r, a| c.record("DeleteAll", r, a)),
-    ("Record.Get#1", |c, r, a| c.record("Get", r, a)),
-    ("Record.Find#1", |c, r, a| c.record("Find", r, a)),
-    ("Record.FindFirst#1", |c, r, a| c.record("FindFirst", r, a)),
-    ("Record.FindLast#1", |c, r, a| c.record("FindLast", r, a)),
-    ("Record.FindSet#1", |c, r, a| c.record("FindSet", r, a)),
-    ("Record.FindSet#2", |c, r, a| c.record("FindSet", r, a)),
-    ("Record.Next#1", |c, r, a| c.record("Next", r, a)),
-    ("Record.Count#1", |c, r, a| c.record("Count", r, a)),
-    ("Record.IsEmpty#1", |c, r, a| c.record("IsEmpty", r, a)),
-    ("Record.SetRange#1", |c, r, a| c.record("SetRange", r, a)),
-    ("Record.SetFilter#1", |c, r, a| c.record("SetFilter", r, a)),
+    ("Record.Init#1", |c, r, a| c.record(RecordOp::Init, r, a)),
+    ("Record.Insert#1", |c, r, a| c.record(RecordOp::Insert, r, a)),
+    ("Record.Insert#2", |c, r, a| c.record(RecordOp::Insert, r, a)),
+    ("Record.Modify#1", |c, r, a| c.record(RecordOp::Modify, r, a)),
+    ("Record.Delete#1", |c, r, a| c.record(RecordOp::Delete, r, a)),
+    ("Record.DeleteAll#1", |c, r, a| c.record(RecordOp::DeleteAll, r, a)),
+    ("Record.Get#1", |c, r, a| c.record(RecordOp::Get, r, a)),
+    ("Record.Find#1", |c, r, a| c.record(RecordOp::Find, r, a)),
+    ("Record.FindFirst#1", |c, r, a| c.record(RecordOp::FindFirst, r, a)),
+    ("Record.FindLast#1", |c, r, a| c.record(RecordOp::FindLast, r, a)),
+    ("Record.FindSet#1", |c, r, a| c.record(RecordOp::FindSet, r, a)),
+    ("Record.FindSet#2", |c, r, a| c.record(RecordOp::FindSet, r, a)),
+    ("Record.Next#1", |c, r, a| c.record(RecordOp::Next, r, a)),
+    ("Record.Count#1", |c, r, a| c.record(RecordOp::Count, r, a)),
+    ("Record.IsEmpty#1", |c, r, a| c.record(RecordOp::IsEmpty, r, a)),
+    ("Record.SetRange#1", |c, r, a| c.record(RecordOp::SetRange, r, a)),
+    ("Record.SetFilter#1", |c, r, a| c.record(RecordOp::SetFilter, r, a)),
     // Event subscriptions are session state; the VM intercepts these ids
     // (al-vm dispatch.rs). Registered so lowering accepts them.
     ("Session.ApplicationArea#1", vm_only),
@@ -459,22 +465,30 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.IsNullGuid#1", |_, _, a| {
         Ok(Value::Boolean(matches!(a[0], Value::Guid(g) if g == [0; 16])))
     }),
-    ("Record.Reset#1", |c, r, a| c.record("Reset", r, a)),
-    ("Record.CalcFields#1", |c, r, a| c.record("CalcFields", r, a)),
-    ("Record.SetCurrentKey#1", |c, r, a| c.record("SetCurrentKey", r, a)),
-    ("Record.Validate#1", |c, r, a| c.record("Validate", r, a)),
-    ("Record.Rename#1", |c, r, a| c.record("Rename", r, a)),
-    ("Record.Truncate#1", |c, r, a| c.record("Truncate", r, a)),
-    ("Record.CalcSums#1", |c, r, a| c.record("CalcSums", r, a)),
-    ("Record.SetLoadFields#1", |c, r, a| c.record("SetLoadFields", r, a)),
-    ("Record.AddLoadFields#1", |c, r, a| c.record("AddLoadFields", r, a)),
-    ("Record.LoadFields#1", |c, r, a| c.record("LoadFields", r, a)),
-    ("Record.SetBaseLoadFields#1", |c, r, a| {
-        c.record("SetBaseLoadFields", r, a)
+    ("Record.Reset#1", |c, r, a| c.record(RecordOp::Reset, r, a)),
+    ("Record.CalcFields#1", |c, r, a| c.record(RecordOp::CalcFields, r, a)),
+    ("Record.SetCurrentKey#1", |c, r, a| {
+        c.record(RecordOp::SetCurrentKey, r, a)
     }),
-    ("Record.AreFieldsLoaded#1", |c, r, a| c.record("AreFieldsLoaded", r, a)),
+    ("Record.Validate#1", |c, r, a| c.record(RecordOp::Validate, r, a)),
+    ("Record.Rename#1", |c, r, a| c.record(RecordOp::Rename, r, a)),
+    ("Record.Truncate#1", |c, r, a| c.record(RecordOp::Truncate, r, a)),
+    ("Record.CalcSums#1", |c, r, a| c.record(RecordOp::CalcSums, r, a)),
+    ("Record.SetLoadFields#1", |c, r, a| {
+        c.record(RecordOp::SetLoadFields, r, a)
+    }),
+    ("Record.AddLoadFields#1", |c, r, a| {
+        c.record(RecordOp::AddLoadFields, r, a)
+    }),
+    ("Record.LoadFields#1", |c, r, a| c.record(RecordOp::LoadFields, r, a)),
+    ("Record.SetBaseLoadFields#1", |c, r, a| {
+        c.record(RecordOp::SetBaseLoadFields, r, a)
+    }),
+    ("Record.AreFieldsLoaded#1", |c, r, a| {
+        c.record(RecordOp::AreFieldsLoaded, r, a)
+    }),
     ("Record.SetAutoCalcFields#1", |c, r, a| {
-        c.record("SetAutoCalcFields", r, a)
+        c.record(RecordOp::SetAutoCalcFields, r, a)
     }),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
@@ -1116,7 +1130,7 @@ fn array_len(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
 fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let v = &mut args[0];
     *v = match v {
-        Value::Record(_) => return ctx.record("Clear", Some(v), &mut []),
+        Value::Record(_) => return ctx.record(RecordOp::Clear, Some(v), &mut []),
         // Clearing a RecordRef/FieldRef/KeyRef closes it: a fresh, unopened handle.
         Value::Library(name, _)
             if matches!(
@@ -1399,8 +1413,8 @@ pub(crate) mod tests {
         fn set_last_error(&mut self, e: AlError) {
             self.err = e;
         }
-        fn record(&mut self, m: &str, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-            Err(Signal::Unsupported(m.into()))
+        fn record(&mut self, m: RecordOp, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+            Err(Signal::Unsupported(m.name().into()))
         }
         fn commit(&mut self) -> Result<(), Signal> {
             Ok(())

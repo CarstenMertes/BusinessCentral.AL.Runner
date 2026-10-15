@@ -22,6 +22,7 @@ use crate::Session;
 use crate::records::Rec;
 use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::{Buffer, FieldSet, Value};
 use al_data::TableDef;
 
@@ -130,7 +131,7 @@ impl Session {
 
     pub(crate) fn load_fields_op(
         &mut self,
-        method: &str,
+        method: RecordOp,
         rec: &Rec,
         t: &TableDef,
         args: &[Value],
@@ -140,7 +141,7 @@ impl Session {
         let schema = engine.program.objects[t.object as usize].table.as_ref();
         let stored = |p: usize| schema.is_some_and(|s| s.fields.get(p).is_some_and(|f| f.stored));
         match method {
-            "SetLoadFields" | "AddLoadFields" => {
+            RecordOp::SetLoadFields | RecordOp::AddLoadFields => {
                 // A field that is not stored (a FlowField, as in Sales Line SetLoadFieldsForInvDiscoundCalculation)
                 // is accepted and adds nothing to the request: it is no column to load. Not pinned by the corpus.
                 let no_args = wanted.is_empty();
@@ -152,11 +153,11 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 match (method, no_args) {
                     // No arguments: back to the default load set (record/TestRecordPartialLoad.al:61-99).
-                    ("SetLoadFields", true) => r.load.request = None,
-                    ("SetLoadFields", false) => r.load.request = Some(wanted),
+                    (RecordOp::SetLoadFields, true) => r.load.request = None,
+                    (RecordOp::SetLoadFields, false) => r.load.request = Some(wanted),
                     // Without a request the load is already full: nothing to add. The result is
                     // the documentation's (docs/probes-needed.md).
-                    ("AddLoadFields", _) => match &mut r.load.request {
+                    (RecordOp::AddLoadFields, _) => match &mut r.load.request {
                         None => return Ok(Value::Boolean(false)),
                         Some(req) => {
                             for p in wanted {
@@ -171,7 +172,7 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
-            "SetBaseLoadFields" => {
+            RecordOp::SetBaseLoadFields => {
                 // Only the full-load case is pinned as callable (record/TestRecordExtended.al:71-80);
                 // what the base set holds is not.
                 // After SetLoadFields(Cd), SetBaseLoadFields loads the whole row again (session/
@@ -188,7 +189,7 @@ impl Session {
                 }
                 Ok(Value::Boolean(false))
             }
-            "AreFieldsLoaded" => {
+            RecordOp::AreFieldsLoaded => {
                 if wanted.is_empty() {
                     return unsupported("AreFieldsLoaded without fields");
                 }

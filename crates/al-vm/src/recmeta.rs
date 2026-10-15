@@ -6,6 +6,7 @@ use crate::Session;
 use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
+use al_builtins::record_op::RecordOp;
 use al_builtins::value::{RecordState, RtType, Value};
 use al_data::{Store, TableDef};
 use std::cell::RefCell;
@@ -212,36 +213,38 @@ impl Session {
 
     pub(crate) fn record_meta_op(
         &mut self,
-        method: &str,
+        method: RecordOp,
         rec: &Rec,
         t: &TableDef,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
         self.connection_check(rec)?;
         match method {
-            "AddLink" | "DeleteLink" | "DeleteLinks" | "HasLinks" | "CopyLinks" => {
-                self.record_links(method, rec, t, args)
-            }
-            "TableName" => Ok(Value::Text(t.name.clone().into())),
-            "TableCaption" => Ok(Value::Text(self.caption(t).into())),
-            "FieldName" => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone().into())),
-            "FieldCaption" => self
+            RecordOp::AddLink
+            | RecordOp::DeleteLink
+            | RecordOp::DeleteLinks
+            | RecordOp::HasLinks
+            | RecordOp::CopyLinks => self.record_links(method, rec, t, args),
+            RecordOp::TableName => Ok(Value::Text(t.name.clone().into())),
+            RecordOp::TableCaption => Ok(Value::Text(self.caption(t).into())),
+            RecordOp::FieldName => Ok(Value::Text(t.fields[arg_pos(args, 0)?].name.clone().into())),
+            RecordOp::FieldCaption => self
                 .field_caption_checked(t, arg_pos(args, 0)?)
                 .map(|s| Value::Text(s.into())),
-            "FieldNo" => Ok(Value::Integer(crate::refs::al_field_no(t.fields[arg_pos(args, 0)?].id))),
+            RecordOp::FieldNo => Ok(Value::Integer(crate::refs::al_field_no(t.fields[arg_pos(args, 0)?].id))),
             // True for an enabled field (corpus record/TestRecordTriggers.al:223-231). What a field
             // with `Enabled = false` answers is not pinned: refused (docs/probes-needed.md).
-            "FieldActive" => {
+            RecordOp::FieldActive => {
                 let pos = arg_pos(args, 0)?;
                 // False for `Enabled = false`, true for the rest, a Pending obsolete field included
                 // (record/TestRowVersionFieldNumberFieldActiveContracts.al:110-119).
                 Ok(Value::Boolean(self.field_enabled(t, pos)))
             }
-            "RecordId" => Ok(self.record_id(rec, t)),
-            "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
+            RecordOp::RecordId => Ok(self.record_id(rec, t)),
+            RecordOp::IsTemporary => Ok(Value::Boolean(rec.borrow().temporary)),
             // Without an argument, whether the current row is marked; with one, marks or unmarks it.
             // What the call returns then (the previous state?) is not pinned, so a used result is refused.
-            "Mark" => {
+            RecordOp::Mark => {
                 let pk = t.primary_key(&rec.borrow().fields);
                 let at = rec.borrow().marks.iter().position(|m| ops::compare_keys(m, &pk));
                 match args.first() {
@@ -262,20 +265,20 @@ impl Session {
                     }
                 }
             }
-            "MarkedOnly" => match args.first() {
+            RecordOp::MarkedOnly => match args.first() {
                 None => Ok(Value::Boolean(rec.borrow().marked_only)),
                 Some(v) => {
                     rec.borrow_mut().marked_only = ops::truthy(v)?;
                     Ok(Value::Null)
                 }
             },
-            "ClearMarks" => {
+            RecordOp::ClearMarks => {
                 rec.borrow_mut().marks.clear();
                 Ok(Value::Null)
             }
             // The bounds of a range filter on the field in the current group. With no filter BC raises an
             // error whose text the corpus does not pin (record/TestFilterContracts.al:190-211): refused.
-            "GetRangeMin" | "GetRangeMax" => {
+            RecordOp::GetRangeMin | RecordOp::GetRangeMax => {
                 use al_builtins::filter::FilterExpr as F;
                 let pos = arg_pos(args, 0)?;
                 let r = rec.borrow();
@@ -297,14 +300,18 @@ impl Session {
                     return unsupported(format!("{method} without a filter (error text not pinned)"));
                 };
                 match (&f.expr, method) {
-                    (F::Range(Some(lo), _), "GetRangeMin") | (F::Eq(lo), "GetRangeMin") => Ok(lo.clone()),
-                    (F::Range(_, Some(hi)), "GetRangeMax") | (F::Eq(hi), "GetRangeMax") => Ok(hi.clone()),
+                    (F::Range(Some(lo), _), RecordOp::GetRangeMin) | (F::Eq(lo), RecordOp::GetRangeMin) => {
+                        Ok(lo.clone())
+                    }
+                    (F::Range(_, Some(hi)), RecordOp::GetRangeMax) | (F::Eq(hi), RecordOp::GetRangeMax) => {
+                        Ok(hi.clone())
+                    }
                     _ => unsupported(format!("{method} of a filter that is not a single range")),
                 }
             }
             // corpus record/TestRecordExtended.al:15-40: Record.Relation on a field without a TableRelation
             // raises an error whose text is not pinned (FieldRef.Relation answers 0 instead).
-            "Relation" => {
+            RecordOp::Relation => {
                 let pos = arg_pos(args, 0)?;
                 let has = self.engine.program.objects[t.object as usize]
                     .table
@@ -316,21 +323,21 @@ impl Session {
                 self.field_relation(rec, t, pos).map(Value::Integer)
             }
             // Locking and permissions are not observable in one session: only the answers the corpus pins.
-            "LockTable" => {
+            RecordOp::LockTable => {
                 // corpus record/TestRecordLock.al:33-41 expects an error mentioning 'not supported' for Wait = false.
                 if matches!(args.first(), Some(Value::Boolean(false))) {
                     return unsupported("LockTable(false) is rejected in the cloud (error text not pinned)");
                 }
                 Ok(Value::Null)
             }
-            "Consistent" => Ok(Value::Null),
-            "ReadConsistency" => Ok(Value::Boolean(false)),
-            "RecordLevelLocking" => Ok(Value::Boolean(true)),
-            "ReadPermission" | "WritePermission" => Ok(Value::Boolean(true)),
-            "CountApprox" => self.record_op("Count", rec, &mut []),
-            "CurrentCompany" => Ok(Value::Text(self.current_company_of(rec).into())),
-            "ReadIsolation" | "SecurityFiltering" => {
-                let (enum_name, is_iso) = if method == "ReadIsolation" {
+            RecordOp::Consistent => Ok(Value::Null),
+            RecordOp::ReadConsistency => Ok(Value::Boolean(false)),
+            RecordOp::RecordLevelLocking => Ok(Value::Boolean(true)),
+            RecordOp::ReadPermission | RecordOp::WritePermission => Ok(Value::Boolean(true)),
+            RecordOp::CountApprox => self.record_op(RecordOp::Count, rec, &mut []),
+            RecordOp::CurrentCompany => Ok(Value::Text(self.current_company_of(rec).into())),
+            RecordOp::ReadIsolation | RecordOp::SecurityFiltering => {
+                let (enum_name, is_iso) = if method == RecordOp::ReadIsolation {
                     ("IsolationLevel", true)
                 } else {
                     ("SecurityFilter", false)
@@ -354,23 +361,23 @@ impl Session {
                     Some(other) => unsupported(format!("{method}({})", other.describe())),
                 }
             }
-            "GetPosition" => {
+            RecordOp::GetPosition => {
                 let use_names = match args.first() {
                     Some(v) => ops::truthy(v)?,
                     None => true,
                 };
                 self.get_position(rec, t, use_names).map(|s| Value::Text(s.into()))
             }
-            "SetPosition" => {
+            RecordOp::SetPosition => {
                 let text = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
                 self.set_position(rec, t, &text).map(|()| Value::Null)
             }
-            "TransferFields" => self.transfer_fields(rec, t, args),
-            "GetBySystemId" => self.get_by_system_id(rec, t, args, false),
-            "ModifyAll" => self.modify_all(rec, t, args),
+            RecordOp::TransferFields => self.transfer_fields(rec, t, args),
+            RecordOp::GetBySystemId => self.get_by_system_id(rec, t, args, false),
+            RecordOp::ModifyAll => self.modify_all(rec, t, args),
             // Doc (Record.Ascending): with an argument sets the sort direction of the current key,
             // without one reads it (corpus record/TestRecordSort.al:111, TestCopyOntoTemporaryRecord.al).
-            "Ascending" => {
+            RecordOp::Ascending => {
                 // After a per-field SetAscending(Field, false) the record reads as descending (record/TestProbeRecordRefContracts.al:
                 // GetTable_CopiesBufferFiltersKeyDirection, `rr_ascending` No).
                 match args.first() {
@@ -393,15 +400,15 @@ impl Session {
             // own that is not pinned.
             // The companies are the session company and the rows of the Company table; a record in
             // another company reads and writes that company's rows (record/TestRecordChangeCompanyRows.al).
-            "ChangeCompany" => self.change_company(rec, args),
-            "SetAscending" | "GetAscending" => {
+            RecordOp::ChangeCompany => self.change_company(rec, args),
+            RecordOp::SetAscending | RecordOp::GetAscending => {
                 let pos = arg_pos(args, 0)?;
                 if t.keys[rec.borrow().key] != [pos] {
                     return unsupported(format!(
                         "{method} on a field that is not the only field of the current key (per-field direction not pinned)"
                     ));
                 }
-                if method == "GetAscending" {
+                if method == RecordOp::GetAscending {
                     let r = rec.borrow();
                     return Ok(Value::Boolean(r.ascending && !r.field_descending));
                 }
@@ -421,7 +428,7 @@ impl Session {
             }
             // The key's field names (corpus record/TestCopyOntoTemporaryRecord.al:93 `'No.'`,
             // TestBCMetadataContracts.al:196-208 contains the names).
-            "CurrentKey" => {
+            RecordOp::CurrentKey => {
                 let key = rec.borrow().key;
                 Ok(Value::Text(
                     t.keys[key]
@@ -439,32 +446,32 @@ impl Session {
                         .into(),
                 ))
             }
-            "HasFilter" => Ok(Value::Boolean(Self::has_filter(rec))),
-            "GetFilters" => self.get_filters(rec, t).map(|s| Value::Text(s.into())),
-            "GetFilter" => self
+            RecordOp::HasFilter => Ok(Value::Boolean(Self::has_filter(rec))),
+            RecordOp::GetFilters => self.get_filters(rec, t).map(|s| Value::Text(s.into())),
+            RecordOp::GetFilter => self
                 .field_filter_text(rec, arg_pos(args, 0)?)
                 .map(|s| Value::Text(s.into())),
-            "GetView" => {
+            RecordOp::GetView => {
                 let use_names = match args.first() {
                     Some(v) => ops::truthy(v)?,
                     None => true,
                 };
                 self.get_view(rec, t, use_names).map(|s| Value::Text(s.into()))
             }
-            "SetView" => {
+            RecordOp::SetView => {
                 let view = al_builtins::native::text_of(args.first().unwrap_or(&Value::Null)).unwrap_or_default();
                 self.set_view(rec, t, &view).map(|()| Value::Null)
             }
             // Returns the group it sets, or the current one without an argument (corpus
             // record/TestRecordRuntimeTextsAndViews.al:Record_FilterGroup_ReturnsTheGroupJustSet_...).
-            "FilterGroup" => Self::filter_group(rec, args),
+            RecordOp::FilterGroup => Self::filter_group(rec, args),
             // Doc (Record.SetRecFilter): filters the primary key fields to the current values; the
             // filters on other fields stay (record/TestRecordViewCopyMarkContracts.al:41,
             // SetRecFilter_KeepsFiltersOnOtherFields_AndFiltersOnThePrimaryKey).
             // With another current key it also filters that key's fields, after the primary key's
             // (records/W4SortKeys.al:RecordRef_SetRecFilter_AndRecordSetRecFilter: current key Txt gives
             // `Id: 3, Txt: b`, on a Record and on a RecordRef, BC 27.5 and 29.0).
-            "SetRecFilter" => {
+            RecordOp::SetRecFilter => {
                 let group = rec.borrow().filter_group;
                 let mut pk: Vec<usize> = t.keys[0].clone();
                 let current = rec.borrow().key;
@@ -494,7 +501,7 @@ impl Session {
             // (record/TestRecordFilter.al:226-239, TestFilterAdvancedContracts.al:216-223). Both
             // fields have to be of one type, and only the group 0 filters are copied: how a filter
             // group or a conversion between types behaves is not pinned.
-            "CopyFilter" => {
+            RecordOp::CopyFilter => {
                 let [Value::Integer(from), Value::Record(dst), Value::Integer(to)] = args else {
                     return unsupported(format!("CopyFilter with {}", args.describe()));
                 };
@@ -543,7 +550,7 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
-            "CopyFilters" => {
+            RecordOp::CopyFilters => {
                 let Some(Value::Record(src)) = args.first() else {
                     return unsupported(format!("CopyFilters from {}", args.first().describe()));
                 };
@@ -555,7 +562,7 @@ impl Session {
             }
             // Doc (Record.Copy) and corpus record/TestCopyOntoTemporaryRecord.al:66-110: the buffer, filters,
             // key and direction come over; a temporary target keeps its own rows and stays temporary.
-            "Copy" => {
+            RecordOp::Copy => {
                 let Some(Value::Record(src)) = args.first() else {
                     return unsupported(format!("Copy from {}", args.first().describe()));
                 };
@@ -594,8 +601,8 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
-            "TestField" => self.test_field(rec, t, args),
-            "FieldError" => self.field_error(rec, t, args),
+            RecordOp::TestField => self.test_field(rec, t, args),
+            RecordOp::FieldError => self.field_error(rec, t, args),
             other => unsupported(format!("Record.{other}")),
         }
     }
@@ -980,7 +987,7 @@ impl Session {
                 }
             };
             let copy = Rc::new(RefCell::new(copy));
-            self.record_op("Modify", &copy, &mut [Value::Boolean(run_trigger)])?;
+            self.record_op(RecordOp::Modify, &copy, &mut [Value::Boolean(run_trigger)])?;
         }
         Ok(Value::Null)
     }

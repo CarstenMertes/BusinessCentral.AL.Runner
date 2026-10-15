@@ -39,11 +39,27 @@ pub enum Gate {
     /// ` tableId="<table id>" systemId="<guid>"` after its name. Before BC 28 it carries neither
     /// (27.5 absent, 28.5 and 29.0 present; BC 28.0 to 28.4 were not measured).
     ReportSaveAsDataItemIdentity,
-    /// The platform table "Feature Key" has another list of columns and rows from BC 28: the corpus asserts
-    /// the 27.x list (16 rows, the columns up to "Description In English") only below BC 28
-    /// (`#if not BC28PLUS`); above, only that the table has rows. Not consumed yet: the runtime has no
-    /// provider for the table's other columns.
+    /// The platform table "Feature Key" has another list of rows from BC 28: the corpus asserts the 27.x list (16 rows)
+    /// only below BC 28 (`#if not BC28PLUS`, record/TestFieldLenAndFeatureKeyContracts.al); above, only that the table
+    /// has rows. Not consumed yet (see `feature_key_rows_known`).
     FeatureKeyListChangedFrom28,
+    /// Column 15 of the Permission table ("AL Object Name") is Text[100] from BC 29, Text[30] before
+    /// (permissions/W6PermissionColumns.al, corpus bump 9). Not consumed yet.
+    PermissionObjectNameLongerFrom29,
+    /// A query aggregate (Sum, Average, Min, Max) over a BigInteger column is accepted from BC 29
+    /// (query/W7QueryAggregates.al, corpus bump 9). Not consumed yet.
+    QueryAggregateOverBigInteger,
+    /// `Base64Convert.FromBase64` of text that is not Base64 raises from BC 28 (types/PVBase64.al, corpus bump 9).
+    /// Not consumed yet.
+    FromBase64InvalidTextRaises,
+    /// Exporting a Media from BC 29 writes the imported bytes back (types/W7Media.al, corpus bump 9). Not consumed yet.
+    MediaExportKeepsTheImportedBytes,
+    /// The platform metadata tables (All Obj, All Obj with Caption, Field, Key, Table and Codeunit Metadata) list other
+    /// columns and rows from BC 29 (metadata/W6*.al, corpus bump 9). Not consumed yet.
+    PlatformMetadataColumnsFrom29,
+    /// `SetView` and `SetFilter` of text that is no table filter raise the Evaluate error `The value "..." can't be
+    /// evaluated into type TableFilter.` from BC 28 (records/W4PlatformAndMeta.al, corpus bump 9). Not consumed yet.
+    TableFilterEvaluateError,
 }
 
 impl Gate {
@@ -55,6 +71,12 @@ impl Gate {
         Gate::ReportSaveAsXmlHeaderHasCompanyBlock,
         Gate::ReportSaveAsDataItemIdentity,
         Gate::FeatureKeyListChangedFrom28,
+        Gate::PermissionObjectNameLongerFrom29,
+        Gate::QueryAggregateOverBigInteger,
+        Gate::FromBase64InvalidTextRaises,
+        Gate::MediaExportKeepsTheImportedBytes,
+        Gate::PlatformMetadataColumnsFrom29,
+        Gate::TableFilterEvaluateError,
     ];
 
     /// The first BC major with the new behaviour.
@@ -64,22 +86,45 @@ impl Gate {
             | Gate::FlowFieldMinMaxOverRowVersionRefused
             | Gate::SuperPermissionSetIgnoresAppId
             | Gate::NotSaaSInfrastructure
-            | Gate::ReportSaveAsXmlHeaderHasCompanyBlock => 29,
-            Gate::ReportSaveAsDataItemIdentity | Gate::FeatureKeyListChangedFrom28 => 28,
+            | Gate::ReportSaveAsXmlHeaderHasCompanyBlock
+            | Gate::PermissionObjectNameLongerFrom29
+            | Gate::QueryAggregateOverBigInteger
+            | Gate::MediaExportKeepsTheImportedBytes
+            | Gate::PlatformMetadataColumnsFrom29 => 29,
+            Gate::ReportSaveAsDataItemIdentity
+            | Gate::FeatureKeyListChangedFrom28
+            | Gate::FromBase64InvalidTextRaises
+            | Gate::TableFilterEvaluateError => 28,
         }
     }
 
     /// The corpus guards that pin both sides.
     pub fn evidence(self) -> &'static [Evidence] {
         match self {
-            Gate::FlowFieldSumIntegerIntoBigInteger => &[Evidence {
-                file: "record/TestCalcFormulaValidationTests.Codeunit.al",
-                lines: "205,227",
-            }],
-            Gate::FlowFieldMinMaxOverRowVersionRefused => &[Evidence {
-                file: "record/TestCalcFormulaSystemFieldsTests.Codeunit.al",
-                lines: "298,306,353",
-            }],
+            Gate::FlowFieldSumIntegerIntoBigInteger => &[
+                Evidence {
+                    file: "record/TestCalcFormulaValidationTests.Codeunit.al",
+                    lines: "205,227",
+                },
+                Evidence {
+                    file: "record/TestProbeCalcFieldsContracts.al",
+                    lines: "120,125",
+                },
+                Evidence {
+                    file: "calcfields/W4CalcFields.al",
+                    lines: "31",
+                },
+            ],
+            Gate::FlowFieldMinMaxOverRowVersionRefused => &[
+                Evidence {
+                    file: "record/TestCalcFormulaSystemFieldsTests.Codeunit.al",
+                    lines: "298,306,353",
+                },
+                Evidence {
+                    file: "calcfields/W4CalcFields.al",
+                    lines: "105",
+                },
+            ],
             Gate::SuperPermissionSetIgnoresAppId => &[Evidence {
                 file: "permissions/TestMetadataPermissionSet.al",
                 lines: "98,106",
@@ -88,24 +133,64 @@ impl Gate {
                 file: "session/TestEnvironmentUserTenantContracts.al",
                 lines: "169",
             }],
-            Gate::ReportSaveAsXmlHeaderHasCompanyBlock => &[Evidence {
-                file: "handlers/TestReportSaveAsDatasetContracts.al",
-                lines: "243",
-            }],
-            Gate::FeatureKeyListChangedFrom28 => &[
+            Gate::ReportSaveAsXmlHeaderHasCompanyBlock => &[
                 Evidence {
-                    file: "record/TestFeatureKeyEnabledContracts.al",
-                    lines: "33",
+                    file: "handlers/TestReportSaveAsDatasetContracts.al",
+                    lines: "243",
                 },
                 Evidence {
-                    file: "record/TestFieldLenAndFeatureKeyContracts.al",
-                    lines: "97",
+                    file: "report/W3ReportDataset.al",
+                    lines: "164,209",
                 },
             ],
-            Gate::ReportSaveAsDataItemIdentity => &[Evidence {
-                file: "handlers/TestReportSaveAsDatasetContracts.al",
-                lines: "299",
+            Gate::PermissionObjectNameLongerFrom29 => &[Evidence {
+                file: "permissions/W6PermissionColumns.al",
+                lines: "122",
             }],
+            Gate::QueryAggregateOverBigInteger => &[Evidence {
+                file: "query/W7QueryAggregates.al",
+                lines: "148",
+            }],
+            Gate::FromBase64InvalidTextRaises => &[Evidence {
+                file: "types/PVBase64.al",
+                lines: "145",
+            }],
+            Gate::PlatformMetadataColumnsFrom29 => &[
+                Evidence {
+                    file: "metadata/W6AllObj.al",
+                    lines: "207,212",
+                },
+                Evidence {
+                    file: "metadata/W6FieldKeyRows.al",
+                    lines: "167,262",
+                },
+                Evidence {
+                    file: "metadata/W6TableCodeunitMetadata.al",
+                    lines: "258",
+                },
+            ],
+            Gate::TableFilterEvaluateError => &[Evidence {
+                file: "records/W4PlatformAndMeta.al",
+                lines: "256",
+            }],
+            Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
+                file: "types/W7Media.al",
+                lines: "134,141,146",
+            }],
+            Gate::FeatureKeyListChangedFrom28 => &[Evidence {
+                file: "record/TestFieldLenAndFeatureKeyContracts.al",
+                lines: "97",
+            }],
+            Gate::ReportSaveAsDataItemIdentity => &[
+                Evidence {
+                    file: "handlers/TestReportSaveAsDatasetContracts.al",
+                    lines: "299",
+                },
+                Evidence {
+                    file: "report/W3ReportDataset.al",
+                    lines: "294,314",
+                },
+            ],
         }
     }
 }
@@ -122,11 +207,23 @@ pub fn has(target: Option<&Target>, gate: Gate) -> bool {
     target.is_none_or(|t| t.has(gate))
 }
 
-/// Whether the rows of the Feature Key table are known for this target: they were measured on BC 27.5
-/// (record/TestFieldLenAndFeatureKeyContracts.al, `#if not BC28PLUS`) and not on any other major. It is
-/// not a gate: no oracle pins the newer side, so there is no behaviour to switch to.
-pub fn feature_key_rows_known(target: Option<&Target>) -> bool {
-    target.is_some_and(|t| t.bc.major == 27)
+/// Which list of Feature Key rows a target has (record/PFFeatureKeyColumns.al keys them on the version of the application):
+/// the rows differ per minor, and were measured on the newest minor of each major. The 27.0 and 28.0 rows differ from
+/// those and are not served.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FeatureKeyRows {
+    Bc27,
+    Bc28,
+    Bc29,
+}
+
+pub fn feature_key_rows(target: Option<&Target>) -> Option<FeatureKeyRows> {
+    match target.map(|t| (t.bc.major, t.bc.minor))? {
+        (27, _) => Some(FeatureKeyRows::Bc27),
+        (28, 5) => Some(FeatureKeyRows::Bc28),
+        (29, 0) => Some(FeatureKeyRows::Bc29),
+        _ => None,
+    }
 }
 
 /// Whether the platform tables of System.app that are `Scope = OnPrem`, internal or removed are known for

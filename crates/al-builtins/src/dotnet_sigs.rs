@@ -18,6 +18,8 @@ pub enum Ret {
     Text,
     /// A `DotNet` object (for example `Instance()`); its type stays "known at run time".
     Object,
+    /// No result (a setter): the call is a statement.
+    Void,
 }
 
 /// `Microsoft.Dynamics.Nav.Types.ALConfigSettings`.
@@ -29,7 +31,14 @@ pub const TEST_EXECUTION: &str = "Microsoft.Dynamics.Nav.Runtime.NavTestExecutio
 /// `Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper`.
 /// Azure AD Graph's query object (System Application "Azure AD Graph Impl.").
 pub const GRAPH_QUERY: &str = "Microsoft.Dynamics.Nav.AzureADGraphClient.GraphQuery";
+/// `Microsoft.Dynamics.Nav.LicensingService.Model.TenantInfo` (the answer of `GraphQuery.GetTenantDetail`).
+pub const TENANT_INFO: &str = "Microsoft.Dynamics.Nav.LicensingService.Model.TenantInfo";
 pub const USER_ACCOUNT_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper";
+
+/// `System.IO.Compression.GZipStream`, behind System Application's "Data Compression".
+pub const GZIP_STREAM: &str = "System.IO.Compression.GZipStream";
+/// `System.IO.Compression.CompressionMode`.
+pub const COMPRESSION_MODE: &str = "System.IO.Compression.CompressionMode";
 
 /// (CLR type, member, result). One row per registry member that returns a value.
 pub const SIGS: &[(&str, &str, Ret)] = &[
@@ -40,6 +49,11 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (GRAPH_QUERY, "GetGroupInfo", Ret::Object),
     (GRAPH_QUERY, "FindFirstGroupInfoForDisplayName", Ret::Object),
     (GRAPH_QUERY, "GetUser", Ret::Object),
+    (GRAPH_QUERY, "GetCurrentUser", Ret::Object),
+    (GRAPH_QUERY, "GetTenantDetail", Ret::Object),
+    (TENANT_INFO, "InitialDomain", Ret::Text),
+    (TENANT_INFO, "CountryLetterCode", Ret::Text),
+    (TENANT_INFO, "PreferredLanguage", Ret::Text),
     (AL_CONFIG_SETTINGS, "Instance", Ret::Object),
     (
         AL_CONFIG_SETTINGS,
@@ -66,6 +80,7 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (AL_CONFIG_SETTINGS, "IsSaaS", Ret::Boolean),
     (TENANT_SETTINGS_HELPER, "IsSandbox", Ret::Boolean),
     (TENANT_SETTINGS_HELPER, "IsProduction", Ret::Boolean),
+    (TENANT_SETTINGS_HELPER, "SetTestTenantEnvironmentType", Ret::Void),
     (TENANT_SETTINGS_HELPER, "GetEnvironmentName", Ret::Text),
     (TENANT_SETTINGS_HELPER, "GetLinkedPowerPlatformEnvironmentId", Ret::Text),
     (TENANT_SETTINGS_HELPER, "GetEnvironmentApplicationSetting", Ret::Text),
@@ -75,6 +90,11 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (USER_ACCOUNT_HELPER, "IsUserDelegatedAdmin", Ret::Boolean),
     (USER_ACCOUNT_HELPER, "GetEffectivePermissionForObject", Ret::Text),
     (TEST_EXECUTION, "IsInTestMode", Ret::Boolean),
+    (GZIP_STREAM, "GZipStream", Ret::Object),
+    (GZIP_STREAM, "CopyTo", Ret::Void),
+    (GZIP_STREAM, "Dispose", Ret::Void),
+    (COMPRESSION_MODE, "Compress", Ret::Object),
+    (COMPRESSION_MODE, "Decompress", Ret::Object),
 ];
 
 /// The declared result of `member` on `clr_type`, if the runtime provides that member.

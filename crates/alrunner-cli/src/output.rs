@@ -8,6 +8,8 @@ use al_testrun::runtime::TestResult;
 pub struct Counts {
     pub total: usize,
     pub pass: usize,
+    /// Of the passes: the tests that ran through an unprobed assumption (`al_builtins::assumptions`).
+    pub flagged: usize,
     pub fail: usize,
     pub not_run: usize,
     /// Of the not run: the tests a missing or unusable .NET helper stopped (the reason starts with `dotnet-unavailable`).
@@ -20,7 +22,10 @@ impl Counts {
         for r in results {
             c.total += 1;
             match r.outcome {
-                Outcome::Pass => c.pass += 1,
+                Outcome::Pass => {
+                    c.pass += 1;
+                    c.flagged += usize::from(!r.assumptions.is_empty());
+                }
                 Outcome::Fail(_) => c.fail += 1,
                 Outcome::NotRun(ref why) => {
                     c.not_run += 1;
@@ -85,8 +90,13 @@ pub fn first_line(s: &str, max: usize) -> String {
 /// `Tests: 12 total, 5 passed, 1 failed, 6 not run`, and the warning that goes with a run that
 /// has no test data.
 pub fn summary_line(c: &Counts, test_data: bool) -> String {
+    let flagged = if c.flagged > 0 {
+        format!(" ({} flagged: rely on unprobed assumptions)", c.flagged)
+    } else {
+        String::new()
+    };
     format!(
-        "Tests: {} total, {} passed, {} failed, {} not run{}",
+        "Tests: {} total, {} passed{flagged}, {} failed, {} not run{}",
         c.total,
         c.pass,
         c.fail,
@@ -135,6 +145,79 @@ pub fn stack_lines(stack: &str) -> Vec<String> {
         .collect()
 }
 
+/// The `--output-json` document, shaped like AL Runner v2's (`Reporter.SerializeJsonOutput`), pretty printed so that the
+/// document starts with a `{` in column 0.
+///
+/// - `tests[].name` is `Codeunit<ID>.<Method>`; `status` is `pass`, `fail` or `error`; `durationMs`, `message` and
+///   `stackTrace` (the AL call stack, one frame per line) are left out when empty.
+/// - v2 told an assertion failure (`fail`) from an unexpected exception (`error`). v3 has no such difference to
+///   draw: every failing test is `fail`.
+/// - A test that did not run is `error` with the message `NotRun: out-of-scope: <reason>`, and `notRun: true`; one that
+///   the time limit stopped is `error` with `Test exceeded <N>s timeout.` (the sentence v2 used). So `errors` counts the
+///   tests not run, and `skipped` is 0.
+/// - `codeunit`, `codeunitName` and `method` are v3's additions.
+pub fn json(results: &[&TestResult], exit_code: u8, wall_s: f64) -> String {
+    use serde_json::{Map, Value, json};
+    let c = Counts::of(results.iter().copied());
+    let tests: Vec<Value> = results
+        .iter()
+        .map(|r| {
+            let mut t = Map::new();
+            t.insert("name".into(), json!(format!("Codeunit{}.{}", r.codeunit, r.test)));
+            t.insert("codeunit".into(), json!(r.codeunit));
+            t.insert("codeunitName".into(), json!(r.codeunit_name));
+            t.insert("method".into(), json!(r.test));
+            let (status, message) = match &r.outcome {
+                Outcome::Pass => ("pass", None),
+                Outcome::Fail(m) => ("fail", Some(m.clone())),
+                Outcome::NotRun(why) => {
+                    t.insert("notRun".into(), json!(true));
+                    ("error", Some(not_run_message(why)))
+                }
+            };
+            t.insert("status".into(), json!(status));
+            if !r.time.is_zero() {
+                t.insert("durationMs".into(), json!(r.time.as_millis() as u64));
+            }
+            if let Some(m) = message {
+                t.insert("message".into(), json!(m));
+            }
+            if !r.call_stack.is_empty() {
+                t.insert("stackTrace".into(), json!(stack_lines(&r.call_stack).join("\n")));
+            }
+            Value::Object(t)
+        })
+        .collect();
+    let doc = json!({
+        "tests": tests,
+        "passed": c.pass,
+        "failed": c.fail,
+        "errors": c.not_run,
+        "skipped": 0,
+        "notRun": c.not_run,
+        "total": c.total,
+        "exitCode": exit_code,
+        "wallSeconds": (wall_s * 1000.0).round() / 1000.0,
+    });
+    serde_json::to_string_pretty(&doc).expect("a JSON value serializes")
+}
+
+/// The message of a not-run test in the JSON document: v2's timeout sentence for a test the time limit stopped, else the
+/// refusal reason in the form LethAL recognizes as "the runner refused" (`<Type>: out-of-scope: ...`).
+fn not_run_message(why: &str) -> String {
+    const LIMIT: &str = "the test used more than the time limit of ";
+    if let Some(rest) = why.strip_prefix(LIMIT) {
+        if let Some(n) = rest
+            .split_whitespace()
+            .next()
+            .filter(|n| n.bytes().all(|b| b.is_ascii_digit()))
+        {
+            return format!("Test exceeded {n}s timeout.");
+        }
+    }
+    format!("NotRun: out-of-scope: {}", why.lines().next().unwrap_or(""))
+}
+
 pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> String {
     let c = Counts::of(results.iter().copied());
     let mut s = format!(
@@ -172,13 +255,25 @@ pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> St
                 esc(&r.test),
                 r.time.as_secs_f64()
             );
+            // The assumptions a test ran through are a property of the test case, also of a pass: a flagged
+            // pass is still a pass for the tools that read this file.
+            let props = if r.assumptions.is_empty() {
+                String::new()
+            } else {
+                format!(
+                    "<properties><property name=\"assumptions\" value=\"{}\" /></properties>",
+                    esc(&al_testrun::flagged::id_list(&r.assumptions))
+                )
+            };
             match &r.outcome {
+                Outcome::Pass if !props.is_empty() => s.push_str(&format!("{head}>{props}</testcase>\n")),
                 Outcome::Pass => s.push_str(&format!("{head} />\n")),
-                Outcome::Fail(m) if r.call_stack.is_empty() => {
-                    s.push_str(&format!("{head}><failure message=\"{}\" /></testcase>\n", esc(m)))
-                }
+                Outcome::Fail(m) if r.call_stack.is_empty() => s.push_str(&format!(
+                    "{head}>{props}<failure message=\"{}\" /></testcase>\n",
+                    esc(m)
+                )),
                 Outcome::Fail(m) => s.push_str(&format!(
-                    "{head}><failure message=\"{}\">{}</failure></testcase>\n",
+                    "{head}>{props}<failure message=\"{}\">{}</failure></testcase>\n",
                     esc(m),
                     esc(&stack_lines(&r.call_stack).join("\n"))
                 )),
@@ -205,8 +300,65 @@ mod tests {
             test: test.into(),
             outcome,
             call_stack: String::new(),
+            assumptions: Vec::new(),
             time: std::time::Duration::ZERO,
+            coverage: Vec::new(),
         }
+    }
+
+    #[test]
+    fn json_has_the_shape_of_v2_and_rows_for_the_tests_not_run() {
+        let mut slow = r(
+            1,
+            "A",
+            "Slow",
+            Outcome::NotRun(
+                "the test used more than the time limit of 5 s of CPU time and was stopped (--test-timeout-secs); x"
+                    .into(),
+            ),
+        );
+        slow.time = std::time::Duration::from_millis(5000);
+        let mut f = r(1, "A", "Bad", Outcome::Fail("boom".into()));
+        f.call_stack = "\"A\"(CodeUnit 1).Bad line 1".into();
+        f.time = std::time::Duration::from_millis(12);
+        let rs = [
+            r(1, "A", "Good", Outcome::Pass),
+            f,
+            r(2, "B", "Refused", Outcome::NotRun("no provider\nsecond line".into())),
+            slow,
+        ];
+        let refs: Vec<&TestResult> = rs.iter().collect();
+        let text = json(&refs, 1, 1.23456);
+        assert!(text.starts_with("{\n"), "{text}");
+        let v: serde_json::Value = serde_json::from_str(&text).unwrap();
+        assert_eq!(
+            (v["passed"].as_u64(), v["failed"].as_u64(), v["errors"].as_u64()),
+            (Some(1), Some(1), Some(2))
+        );
+        assert_eq!(
+            (v["total"].as_u64(), v["skipped"].as_u64(), v["exitCode"].as_u64()),
+            (Some(4), Some(0), Some(1))
+        );
+        assert_eq!(v["wallSeconds"].as_f64(), Some(1.235));
+        let t = &v["tests"];
+        assert_eq!(t[0]["name"], "Codeunit1.Good");
+        assert_eq!(t[0]["status"], "pass");
+        assert!(t[0].get("message").is_none() && t[0].get("durationMs").is_none());
+        assert_eq!(
+            (
+                t[1]["status"].as_str(),
+                t[1]["message"].as_str(),
+                t[1]["durationMs"].as_u64()
+            ),
+            (Some("fail"), Some("boom"), Some(12))
+        );
+        assert_eq!(t[1]["stackTrace"], "\"A\"(CodeUnit 1).Bad line 1");
+        assert_eq!(t[2]["name"], "Codeunit2.Refused");
+        assert_eq!(
+            (t[2]["status"].as_str(), t[2]["message"].as_str()),
+            (Some("error"), Some("NotRun: out-of-scope: no provider"))
+        );
+        assert_eq!(t[3]["message"], "Test exceeded 5s timeout.");
     }
 
     #[test]
@@ -214,6 +366,7 @@ mod tests {
         let c = |pass, fail, not_run| Counts {
             total: pass + fail + not_run,
             pass,
+            flagged: 0,
             fail,
             not_run,
             dotnet_unavailable: 0,
@@ -258,6 +411,43 @@ mod tests {
         let none = Counts::of(rs[..1].iter().chain(rs[2..].iter()));
         assert_eq!(exit_code(&none, false), 7);
         assert!(dotnet_warning(&none, "").is_none());
+    }
+
+    #[test]
+    fn a_pass_that_ran_through_an_assumption_is_flagged_in_the_summary_and_junit_and_still_a_pass() {
+        let mut flagged = r(1, "A", "T1", Outcome::Pass);
+        flagged.assumptions = vec![
+            al_testrun::assumptions::Assumption::GuidToText,
+            al_testrun::assumptions::Assumption::RecordGetRecordId,
+        ];
+        let rs = [
+            flagged,
+            r(1, "A", "T2", Outcome::Pass),
+            r(1, "A", "T3", Outcome::Fail("x".into())),
+        ];
+        let c = Counts::of(rs.iter());
+        assert_eq!((c.pass, c.flagged), (2, 1));
+        assert_eq!(
+            summary_line(&c, true),
+            "Tests: 3 total, 2 passed (1 flagged: rely on unprobed assumptions), 1 failed, 0 not run"
+        );
+        let clean = Counts::of(rs[1..].iter());
+        assert_eq!(
+            summary_line(&clean, true),
+            "Tests: 2 total, 1 passed, 1 failed, 0 not run"
+        );
+        let refs: Vec<&TestResult> = rs.iter().collect();
+        let x = junit(&refs, None, 0.0);
+        assert!(
+            x.contains("name=\"T1\" time=\"0.000\"><properties><property name=\"assumptions\" value=\"guid-to-text,record-get-record-id\" /></properties></testcase>"),
+            "{x}"
+        );
+        assert!(x.contains("name=\"T2\" time=\"0.000\" />"), "{x}");
+        assert!(x.contains("failures=\"1\""), "{x}");
+        assert!(
+            !x.contains("name=\"T1\"><skipped") && !x.contains("name=\"T1\"><failure"),
+            "{x}"
+        );
     }
 
     #[test]

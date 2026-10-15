@@ -5,6 +5,7 @@
 use crate::explain::{self, TestDetail};
 use crate::isolation::{Checkpoint, TestIsolation, runner_isolation};
 use crate::{CaseId, Outcome};
+use al_builtins::assumptions::Assumption;
 use al_builtins::describe::Describe;
 use al_builtins::native::{AlError, Signal};
 use al_sema::lower::Lowered;
@@ -122,6 +123,10 @@ pub struct CorpusRuntime {
     details: std::collections::HashMap<(usize, u32, String), TestDetail>,
     /// Every test the run decided, codeunit by codeunit.
     results: Vec<TestResult>,
+    /// The unprobed assumptions each test ran through, same key as `outcomes`; tests with none are absent.
+    marks: std::collections::HashMap<(usize, u32, String), Vec<Assumption>>,
+    /// With `RunOptions::coverage`: every statement of the workspace's apps.
+    coverage_statements: Vec<crate::coverage::CoverageStatement>,
 }
 
 /// One test as the run left it, in the order the test codeunits were scheduled.
@@ -138,8 +143,14 @@ pub struct TestResult {
     /// For a failure with an AL error: the call stack of the error, innermost frame first, one per
     /// line (`GetLastErrorCallStack` form). Empty otherwise.
     pub call_stack: String,
+    /// The unprobed assumptions the test ran through (`al_builtins::assumptions`), in registry order. A test
+    /// that passed with a non-empty list is a flagged pass.
+    pub assumptions: Vec<Assumption>,
     /// The wall time the test took; zero for a test that was not started.
     pub time: std::time::Duration,
+    /// With `RunOptions::coverage`: the statements the test ran, as (position id, runs), sorted by id. Position ids
+    /// index `CorpusRuntime::coverage_statements`' `pos` and `Program::positions`.
+    pub coverage: Vec<(u32, u32)>,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -220,14 +231,18 @@ struct Unit {
     isolation: TestIsolation,
     /// Run without putting the install baseline back (`AL_CHECK_BASELINE_RULE`).
     without_baseline: bool,
+    /// Count the statements each test runs (`RunOptions::coverage`).
+    coverage: bool,
 }
 
-/// What a test codeunit left: each test's outcome, the call stack of each AL error that failed one, and
-/// how long each test that ran took (wall time).
+/// What a test codeunit left: each test's outcome, the call stack of each AL error that failed one, how long
+/// each test that ran took (wall time), and the unprobed assumptions each test ran through.
 type UnitOutcomes = (
     Vec<(String, Outcome)>,
     Vec<(String, String)>,
     Vec<(String, std::time::Duration)>,
+    Vec<(String, Vec<Assumption>)>,
+    Vec<(String, Vec<(u32, u32)>)>,
 );
 
 struct UnitResult {
@@ -262,6 +277,10 @@ fn run_unit(
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
         let mut stacks = Vec::new();
         let mut times = Vec::new();
+        let mut hits = Vec::new();
+        if u.coverage {
+            crate::coverage::begin();
+        }
         let done = run_codeunit_full(
             engine,
             lowered,
@@ -271,9 +290,10 @@ fn run_unit(
             observe,
             &mut stacks,
             &mut times,
+            &mut hits,
             limit,
         );
-        (done, stacks, times)
+        (done, stacks, times, hits, crate::coverage::finish())
     }))
     .map_err(|p| {
         p.downcast_ref::<String>()
@@ -350,6 +370,12 @@ pub struct RunOptions {
     /// to read them (`deps::load_project_with`). The run reads what it needs; a missing entry means
     /// the app has its text.
     pub lazy: Vec<Option<al_sema::LazySource>>,
+    /// `alrunner test --isolation`: the isolation of every test codeunit, instead of the runner's property (`None`: the runner's,
+    /// else Codeunit).
+    pub isolation: Option<TestIsolation>,
+    /// Count how often each statement of the workspace's apps runs, per test (`alrunner test --coverage`).
+    /// Off, a run pays one branch per statement.
+    pub coverage: bool,
 }
 
 /// A test runner run over the test codeunits of some apps (the unit of an oracle file).
@@ -830,6 +856,8 @@ impl CorpusRuntime {
         let baseline = baseline_run.map(|b| b.baseline);
         let tests_started = std::time::Instant::now();
         let mut outcomes = std::collections::HashMap::new();
+        let mut marks_by_test: std::collections::HashMap<(usize, u32, String), Vec<Assumption>> =
+            std::collections::HashMap::new();
         let mut times_by_case: std::collections::HashMap<(usize, u32, String), std::time::Duration> =
             Default::default();
         let mut details = std::collections::HashMap::new();
@@ -851,8 +879,9 @@ impl CorpusRuntime {
                         si,
                         oi,
                         id,
-                        isolation: *i,
+                        isolation: opts.isolation.unwrap_or(*i),
                         without_baseline: false,
+                        coverage: opts.coverage,
                     }),
                     Err(why) => {
                         for r in test_routines(o) {
@@ -865,7 +894,9 @@ impl CorpusRuntime {
                                 test: r.name.clone(),
                                 outcome: Outcome::NotRun(why.clone()),
                                 call_stack: String::new(),
+                                assumptions: Vec::new(),
                                 time: std::time::Duration::ZERO,
+                                coverage: Vec::new(),
                             });
                         }
                     }
@@ -968,7 +999,9 @@ impl CorpusRuntime {
                         test: &str,
                         outcome: &Outcome,
                         call_stack: String,
-                        time: std::time::Duration| {
+                        assumptions: Vec<Assumption>,
+                        time: std::time::Duration,
+                        coverage: Vec<(u32, u32)>| {
                 list.push(TestResult {
                     suite: r.si,
                     app: order[o.app as usize],
@@ -977,18 +1010,30 @@ impl CorpusRuntime {
                     test: test.to_string(),
                     outcome: outcome.clone(),
                     call_stack,
+                    assumptions,
                     time,
+                    coverage,
                 })
             };
             match r.result {
-                Ok((done, stacks, times)) => {
+                Ok((done, stacks, times, hits, mut covs)) => {
                     for (name, outcome) in done {
                         let stack = stacks.iter().find(|(n, _)| *n == name).map(|(_, s)| s.clone());
+                        let marks = hits.iter().find(|(n, _)| *n == name).map(|(_, h)| h.clone());
+                        let marks = marks.unwrap_or_default();
+                        if !marks.is_empty() {
+                            marks_by_test.insert((r.si, r.id, name.to_lowercase()), marks.clone());
+                        }
                         let time = times
                             .iter()
                             .find(|(n, _)| *n == name)
                             .map_or(std::time::Duration::ZERO, |(_, d)| *d);
-                        push(&mut list, &name, &outcome, stack.unwrap_or_default(), time);
+                        let cov = covs
+                            .iter()
+                            .position(|(n, _)| *n == name)
+                            .map(|i| std::mem::take(&mut covs[i].1))
+                            .unwrap_or_default();
+                        push(&mut list, &name, &outcome, stack.unwrap_or_default(), marks, time, cov);
                         times_by_case.insert((r.si, r.id, name.to_lowercase()), time);
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
                     }
@@ -997,7 +1042,15 @@ impl CorpusRuntime {
                     panics += 1;
                     for t in test_routines(&lowered.program.objects[r.oi]) {
                         let outcome = Outcome::NotRun(format!("runtime panic (bug): {msg}"));
-                        push(&mut list, &t.name, &outcome, String::new(), std::time::Duration::ZERO);
+                        push(
+                            &mut list,
+                            &t.name,
+                            &outcome,
+                            String::new(),
+                            Vec::new(),
+                            std::time::Duration::ZERO,
+                            Vec::new(),
+                        );
                         outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
                     }
                 }
@@ -1021,6 +1074,11 @@ impl CorpusRuntime {
         // The workspace and the lowered program are big: dropping them takes as long as lowering
         // a tenth of the corpus, and nothing waits for it.
         let compile_parts = lowered.timings;
+        let coverage_statements = if opts.coverage {
+            crate::coverage::statements(&lowered.program, |oi| !lowered.dependency[oi], |a| order[a])
+        } else {
+            Vec::new()
+        };
         retire((ws, lowered));
         Ok(CorpusRuntime {
             outcomes,
@@ -1043,6 +1101,8 @@ impl CorpusRuntime {
             },
             details,
             results: list,
+            marks: marks_by_test,
+            coverage_statements,
         })
     }
 }
@@ -1053,13 +1113,27 @@ impl CorpusRuntime {
         &self.results
     }
 
+    /// With `RunOptions::coverage`: every statement of the workspace's apps (the position ids that
+    /// `TestResult::coverage` counts).
+    pub fn coverage_statements(&self) -> &[crate::coverage::CoverageStatement] {
+        &self.coverage_statements
+    }
+
     /// Where `case` of the run named `suite` was refused or failed; only with `RunOptions::trace`.
     pub fn detail_in(&self, suite: &str, case: &CaseId) -> Option<&TestDetail> {
         let si = self.suites.iter().position(|s| s == suite)?;
         self.details.get(&(si, case.codeunit, case.name.to_lowercase()))
     }
 
-    /// The outcome of `case` in the run named `suite` (the first run has the empty name).
+    /// The unprobed assumptions `case` ran through in the run named `suite`; empty for a clean test.
+    pub fn assumptions_in(&self, suite: &str, case: &CaseId) -> &[Assumption] {
+        self.suites
+            .iter()
+            .position(|s| s == suite)
+            .and_then(|si| self.marks.get(&(si, case.codeunit, case.name.to_lowercase())))
+            .map_or(&[], Vec::as_slice)
+    }
+
     /// How long `case` took in the first run.
     pub fn first_time(&self, case: &CaseId) -> std::time::Duration {
         self.times
@@ -1078,6 +1152,7 @@ impl CorpusRuntime {
             .unwrap_or_default()
     }
 
+    /// The outcome of `case` in the run named `suite` (the first run has the empty name).
     pub fn outcome_in(&self, suite: &str, case: &CaseId) -> Outcome {
         self.suites
             .iter()
@@ -1372,6 +1447,7 @@ pub fn run_codeunit_observed(
         observe,
         &mut Vec::new(),
         &mut Vec::new(),
+        &mut Vec::new(),
         None,
     )
 }
@@ -1392,6 +1468,7 @@ pub fn run_codeunit_limited(
         baseline,
         isolation,
         None,
+        &mut Vec::new(),
         &mut Vec::new(),
         &mut Vec::new(),
         limit,
@@ -1441,6 +1518,7 @@ pub fn run_codeunit_full(
     mut observe: Option<&mut Observer>,
     stacks: &mut Vec<(String, String)>,
     times: &mut Vec<(String, std::time::Duration)>,
+    hits: &mut Vec<(String, Vec<Assumption>)>,
     limit: Option<std::time::Duration>,
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
@@ -1449,6 +1527,10 @@ pub fn run_codeunit_full(
         session.restore_baseline(b);
     }
     session.trace_faults(observe.is_some());
+    let covering = crate::coverage::enabled();
+    if covering {
+        session.enable_coverage();
+    }
     let instance = session.instance(object);
     let tests: Vec<usize> = (0..obj.routines.len())
         .filter(|&r| {
@@ -1527,6 +1609,7 @@ pub fn run_codeunit_full(
         let mut failure: Option<AlError> = None;
         let mut refused_in = None;
         session.clear_fault_site();
+        al_builtins::assumptions::clear_hits();
         let outcome = if let Err(reason) = &handlers {
             Outcome::NotRun(reason.clone())
         } else if let Some(b) = blocked_site(lowered, object, r) {
@@ -1544,6 +1627,7 @@ pub fn run_codeunit_full(
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
                     session.last_error = Default::default();
+                    al_builtins::assumptions::clear_hits();
                     // The AL test runner enables every application area before each test method
                     // (corpus session/TestSessionApplicationAreaTestBoundary.al:67552).
                     session.start_test_method();
@@ -1651,7 +1735,14 @@ pub fn run_codeunit_full(
                 stacks.push((routine.name.clone(), e.call_stack.clone()));
             }
         }
+        let marks = al_builtins::assumptions::take_hits();
+        if !marks.is_empty() {
+            hits.push((routine.name.clone(), marks));
+        }
         times.push((routine.name.clone(), test_started.elapsed()));
+        if covering {
+            crate::coverage::push(&routine.name, session.take_coverage());
+        }
         out.push((routine.name.clone(), outcome));
     }
     out
@@ -3609,5 +3700,122 @@ codeunit 50101 "Lib" { procedure SetupCount(): Integer var S: Record "Setup"; be
             std::thread::sleep(WATCHDOG_POLL * 3);
             assert!(!w.finish() && x > 0, "test {n} was stopped under 60 % of the limit");
         }
+    }
+
+    /// The test names with the unprobed assumptions each ran through, from the first test codeunit of `src`.
+    fn assumptions_of(src: &str) -> Vec<(String, Vec<&'static str>)> {
+        let (ws, l) = al_sema::lower::compile(
+            vec![AppSource {
+                id: "a".into(),
+                name: "a".into(),
+                dependencies: vec![],
+                files: vec![("f.al".into(), src.into())],
+            }],
+            &Default::default(),
+        );
+        assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+        let engine = Engine::new(l.program.clone(), Vec::new().into_iter().collect());
+        let oi = l
+            .program
+            .objects
+            .iter()
+            .position(|o| {
+                o.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.eq_ignore_ascii_case("Test"))
+            })
+            .unwrap();
+        let mut hits = Vec::new();
+        let done = run_codeunit_full(
+            &engine,
+            &l,
+            oi,
+            None,
+            TestIsolation::Codeunit,
+            None,
+            &mut Vec::new(),
+            &mut Vec::new(),
+            &mut hits,
+            None,
+        );
+        for (name, outcome) in &done {
+            assert_eq!(*outcome, Outcome::Pass, "{name}");
+        }
+        hits.into_iter()
+            .map(|(n, h)| (n, h.iter().map(|a| a.info().id).collect()))
+            .collect()
+    }
+
+    const FLAGGED: &str = "codeunit 60150 T
+{
+    Subtype = Test;
+
+    [Test]
+    procedure RunsAnAssumption()
+    var
+        G: Guid;
+        T: Text[50];
+    begin
+        T := Format(G);
+        T := G;
+    end;
+
+    [Test]
+    procedure RunsNone()
+    var
+        X: Integer;
+    begin
+        X := 1;
+    end;
+
+    [Test]
+    procedure RunsNoneAfterTheOneThatDid()
+    var
+        X: Integer;
+    begin
+        X := 2;
+    end;
+}";
+
+    #[test]
+    fn a_test_that_runs_an_assumed_path_is_marked_and_the_marks_do_not_leak_to_the_next_test() {
+        let hits = assumptions_of(FLAGGED);
+        let of = |n: &str| hits.iter().find(|(t, _)| t == n).map(|(_, h)| h.clone());
+        assert_eq!(of("RunsAnAssumption"), Some(vec!["guid-to-text"]), "{hits:?}");
+        assert_eq!(of("RunsNone"), None, "{hits:?}");
+        assert_eq!(of("RunsNoneAfterTheOneThatDid"), None, "{hits:?}");
+    }
+
+    #[test]
+    fn a_statement_marked_at_compile_time_marks_the_test_only_when_it_runs() {
+        let src = "codeunit 60151 T
+{
+    Subtype = Test;
+
+    [Test]
+    procedure RunsTheMarkedStatement()
+    var
+        A: array[2, 2] of Integer;
+    begin
+        A[1][2] := 3;
+    end;
+
+    [Test]
+    procedure SkipsTheMarkedStatement()
+    var
+        A: array[2, 2] of Integer;
+    begin
+        if false then
+            A[1][2] := 3;
+    end;
+}";
+        let hits = assumptions_of(src);
+        let of = |n: &str| hits.iter().find(|(t, _)| t == n).map(|(_, h)| h.clone());
+        assert_eq!(
+            of("RunsTheMarkedStatement"),
+            Some(vec!["chained-array-index"]),
+            "{hits:?}"
+        );
+        assert_eq!(of("SkipsTheMarkedStatement"), None, "{hits:?}");
     }
 }

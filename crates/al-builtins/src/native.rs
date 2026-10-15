@@ -28,6 +28,8 @@ pub enum Signal {
     Error(AlError),
     Exit(Option<Value>),
     Break,
+    /// `continue`: go on with the next round of the innermost loop.
+    Continue,
     /// Behaviour the runtime does not implement yet, met at run time (an edge
     /// case no corpus test pins). The runner reports the test as not run.
     Unsupported(String),
@@ -404,6 +406,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.RunModal#3", vm_only),
     ("Report.Execute#1", vm_only),
     ("Report.Execute#3", vm_only),
+    ("Report.WordXmlPart#1", vm_only),
+    ("Report.WordXmlPart#2", vm_only),
     ("Report.Print#1", vm_only),
     ("Report.Print#2", vm_only),
     ("Report.RunRequestPage#1", vm_only),
@@ -500,17 +504,11 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "System.GetLastErrorText#2" => {
             "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
         }
-        "System.CaptionClassTranslate#1" => {
-            "CaptionClassTranslate is in no corpus test, so how it resolves a caption class expression (the area, the language, the Caption Class codeunit event) is not pinned"
-        }
         "Media.ImportFile#1" | "MediaSet.ImportFile#1" => {
             "Media.ImportFile and MediaSet.ImportFile read a file of the service tier and are in no corpus test, so which file a test can name, the error for a missing file and what the Tenant Media row holds are not pinned"
         }
         "RecordRef.Copy#1" | "RecordRef.Copy#2" => {
             "RecordRef.Copy is in no corpus test, so what it copies (the buffer, the filters, the key, the table view) and what ShareTable changes are not pinned"
-        }
-        "TestRequestPage.Editable#1" => {
-            "TestRequestPage.Editable is in no corpus test (only the control form is, handlers/TestReqPageBoundVisibility.al), so whether the request page itself is editable is not pinned"
         }
         _ => return None,
     })
@@ -565,6 +563,7 @@ pub fn lookup(id: &str) -> Option<NativeFn> {
         .find(|(i, _)| *i == id)
         .map(|(_, f)| *f)
         .or_else(|| derived().get(id).copied())
+        .or_else(|| crate::platform_native::lookup(id))
 }
 
 /// Every registered id, for the conformance test.
@@ -623,6 +622,7 @@ fn database_sid(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
     let Some(name) = args.first().and_then(text_of) else {
         return unsupported("Database.SID without a user name (whose SID it answers is not pinned)");
     };
+    crate::assumptions::assume(crate::assumptions::Assumption::DatabaseSidNumbers);
     // FNV-1a over the name's UTF-8 bytes: the same on every platform and run.
     let hash = name.bytes().fold(0xcbf2_9ce4_8422_2325_u64, |h, b| {
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
@@ -690,7 +690,16 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     let template = text_arg(args, 2)?;
     crate::formatstr::format_with_string(&args[0], len, &template, ctx)
         .map(Value::Text)
-        .map_err(Signal::Unsupported)
+        .map_err(|e| match e.strip_prefix(crate::formatstr::INVALID_FORMAT_MARK) {
+            Some(template) => Signal::Error(AlError {
+                message: format!(
+                    "An invalid field or attribute has been specified for the 'Format' property.\r\\\r\\{template}"
+                ),
+                code: "InvalidFormatString".into(),
+                call_stack: String::new(),
+            }),
+            None => Signal::Unsupported(e),
+        })
 }
 
 fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
@@ -829,12 +838,15 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     if sub.is_empty() {
         return Ok(Value::Integer(0));
     }
-    let hay: Vec<u16> = s.encode_utf16().collect();
-    let needle: Vec<u16> = sub.encode_utf16().collect();
-    let pos = hay
-        .windows(needle.len())
-        .position(|w| w == needle.as_slice())
-        .map_or(0, |p| p + 1);
+    // A match at a char boundary is the same match unit by unit; the position counts UTF-16 units. No copy of the
+    // text: a loop that calls StrPos on a long text (Pageworks' asset parsing) would copy it each time.
+    let pos = s.find(sub.as_str()).map_or(0, |b| {
+        if s.is_ascii() {
+            b + 1
+        } else {
+            s[..b].encode_utf16().count() + 1
+        }
+    });
     Ok(Value::Integer(pos as i32))
 }
 
@@ -909,31 +921,38 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
 /// `StrCheckSum(String [, WeightString] [, Modulus])`: `(M - (sum of digit * weight) mod M) mod M`, the
 /// formula of the documentation (methods-auto/text/text-strchecksum-method.md, its example gives 0
 /// for '4378' with weights '1234' and modulus 7). The corpus pins only that the result is not
-/// negative, is below the modulus and is not 0 for '12345' (session/TestSystemExtended.al:218-256).
-/// The documentation says a non-digit or a too long weight string raises, without a text: refused.
+/// negative, is below the modulus and is not 0 for '12345' (session/TestSystemExtended.al:218-256);
+/// values and the four errors: types/TestProbeScalarContracts.al:25-123.
 fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let digits = |s: &str| -> Option<Vec<i64>> { s.chars().map(|c| c.to_digit(10).map(i64::from)).collect() };
     let source = text_arg(args, 0)?;
     let Some(source) = digits(&source) else {
-        return unsupported("StrCheckSum of a string with a character that is not 0-9 (error text not pinned)");
+        return raise("The value string must be numeric.", "ALSystemString");
     };
     let mut weights = match args.get(1) {
         Some(_) => {
             let Some(w) = digits(&text_arg(args, 1)?) else {
-                return unsupported("StrCheckSum with a weight character that is not 0-9 (error text not pinned)");
+                return raise("The weight string must be numeric.", "ALSystemString");
             };
             w
         }
         None => Vec::new(),
     };
+    // An empty source is 0 whatever the weights (types/TestProbeScalarContracts.al:StrCheckSum_Values, `empty_w1`).
+    if source.is_empty() {
+        return Ok(Value::Integer(0));
+    }
     if weights.len() > source.len() {
-        return unsupported("StrCheckSum with a weight string longer than the source (error text not pinned)");
+        return raise(
+            "The weight parameter cannot be longer than the value string.",
+            "ALSystemString",
+        );
     }
     // A short weight string is padded with 1 up to the length of the source.
     weights.resize(source.len(), 1);
     let modulus = int_arg(args, 2).unwrap_or(10);
     if modulus < 1 {
-        return unsupported("StrCheckSum with a modulus below 1 (not pinned)");
+        return raise("The modulus parameter cannot be less than 1.", "ALSystemString");
     }
     if source.is_empty() {
         return Ok(Value::Integer(0));
@@ -943,17 +962,46 @@ fn strchecksum(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Re
 }
 
 fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    let s: Vec<u16> = text_arg(args, 0)?.encode_utf16().collect();
-    let pos = int_arg(args, 1).unwrap_or(1);
-    if pos < 1 {
-        return unsupported("CopyStr with Position < 1");
-    }
-    let start = (pos as usize - 1).min(s.len());
-    let end = match int_arg(args, 2) {
-        Some(len) if len < 0 => return unsupported("CopyStr with a negative Length"),
-        Some(len) => (start + len as usize).min(s.len()),
-        None => s.len(),
+    let whole = text_arg(args, 0)?;
+    copystr_of(&whole, int_arg(args, 1).unwrap_or(1), int_arg(args, 2))
+}
+
+/// `CopyStr` of a text the caller holds by reference (the VM's fast path reads a variable without copying it).
+pub fn copystr_of(whole: &str, pos: i64, len: Option<i64>) -> Result<Value, Signal> {
+    // A text of ASCII only is indexed by byte, with no copy: a loop of CopyStr over a long text stays linear in
+    // the loop (Pageworks' asset parsing).
+    let ascii = whole.is_ascii();
+    let s: Vec<u16> = if ascii {
+        Vec::new()
+    } else {
+        whole.encode_utf16().collect()
     };
+    let total = if ascii { whole.len() } else { s.len() };
+    // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.
+    if pos < 1 {
+        return raise(
+            format!(
+                "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to 2,147,483,647."
+            ),
+            "OutsidePermittedRange",
+        );
+    }
+    let start = (pos as usize - 1).min(total);
+    let end = match len {
+        Some(len) if len < 0 => {
+            return raise(
+                format!(
+                    "The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: {len}. The permitted range is: from 0 to 2,147,483,647."
+                ),
+                "OutsidePermittedRange",
+            );
+        }
+        Some(len) => (start + len as usize).min(total),
+        None => total,
+    };
+    if ascii {
+        return Ok(Value::Text(whole[start..end].to_string()));
+    }
     Ok(Value::Text(String::from_utf16_lossy(&s[start..end])))
 }
 
@@ -1093,6 +1141,11 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                 "Clear of a DotNet variable that holds a {ty}: whether BC disposes the object is not pinned"
             ));
         }
+        // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
+        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload") => Value::Library(
+            name.clone(),
+            std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
+        ),
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
     Ok(Value::Null)
@@ -1361,27 +1414,39 @@ pub(crate) mod tests {
         );
     }
 
-    // A standard format number that is not measured is a refusal the test can report, not a panic
-    // that takes the whole codeunit down.
+    // A standard format number a type does not have raises the pinned error, not a panic that takes the whole codeunit down
+    // (text/TestProbeTextDateFormatContracts.al:Dates_Format_Time, Dates_Format_DateTime, Dates_Format_Duration).
     #[test]
-    fn format_of_a_value_without_a_pinned_format_is_a_refusal() {
-        for v in [Value::Duration(3_600_000), Value::Time(43_200_001), Value::DateTime(5)] {
+    fn format_number_a_type_does_not_have_raises_the_pinned_error() {
+        for (v, ty) in [
+            (Value::Duration(3_600_000), "Duration"),
+            (Value::Time(43_200_001), "Time"),
+            (Value::DateTime(5), "DateTime"),
+        ] {
             let args = vec![v, Value::Integer(0), Value::Integer(7)];
-            assert!(matches!(call("System.Format#1", args), Err(Signal::Unsupported(_))));
+            let Err(Signal::Error(e)) = call("System.Format#1", args) else {
+                panic!("{ty}: format 7 must raise");
+            };
+            assert_eq!(
+                (e.message.as_str(), e.code.as_str()),
+                (
+                    format!("Standard format number 7 does not exist for the type '{ty}'.").as_str(),
+                    "InvalidStandardFormat"
+                )
+            );
         }
     }
 
     #[test]
-    fn formats_that_are_not_pinned_are_refused_not_panics() {
-        // A Duration with a standard format number that is not measured: Unsupported, so the test is
-        // reported as not run instead of a panic taking the whole codeunit down.
-        assert!(matches!(
-            call(
-                "System.Format#1",
-                vec![Value::Duration(86_400_000), Value::Integer(0), Value::Integer(5)]
-            ),
-            Err(Signal::Unsupported(_))
-        ));
+    fn a_duration_format_number_that_does_not_exist_raises() {
+        // text/TestProbeTextDateFormatContracts.al:Dates_Format_Duration, `duration_fmt_5`.
+        let Err(Signal::Error(e)) = call(
+            "System.Format#1",
+            vec![Value::Duration(86_400_000), Value::Integer(0), Value::Integer(5)],
+        ) else {
+            panic!("format 5 of a Duration must raise");
+        };
+        assert_eq!(e.code, "InvalidStandardFormat");
     }
 
     #[test]
@@ -1426,14 +1491,19 @@ pub(crate) mod tests {
             0
         );
         assert_eq!(n(call("Text.StrCheckSum#1", vec![t("")])), 0);
-        assert!(matches!(
-            call("Text.StrCheckSum#1", vec![t("12a")]),
-            Err(Signal::Unsupported(_))
-        ));
-        assert!(matches!(
-            call("Text.StrCheckSum#1", vec![t("12"), t("123")]),
-            Err(Signal::Unsupported(_))
-        ));
+        // types/TestProbeScalarContracts.al:StrCheckSum_NonDigitSource and the StrCheckSum tests after it.
+        for (args, message) in [
+            (vec![t("12a")], "The value string must be numeric."),
+            (
+                vec![t("12"), t("123")],
+                "The weight parameter cannot be longer than the value string.",
+            ),
+        ] {
+            let Err(Signal::Error(e)) = call("Text.StrCheckSum#1", args) else {
+                panic!("{message}");
+            };
+            assert_eq!((e.message.as_str(), e.code.as_str()), (message, "ALSystemString"));
+        }
     }
 
     #[test]
@@ -1465,10 +1535,11 @@ pub(crate) mod tests {
             )),
             "lo"
         );
-        assert!(matches!(
-            call("Text.CopyStr#1", vec![t("Hello"), Value::Integer(0)]),
-            Err(Signal::Unsupported(_))
-        ));
+        // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`.
+        let Err(Signal::Error(e)) = call("Text.CopyStr#1", vec![t("Hello"), Value::Integer(0)]) else {
+            panic!("CopyStr from position 0 must raise");
+        };
+        assert_eq!(e.code, "OutsidePermittedRange");
     }
 
     #[test]

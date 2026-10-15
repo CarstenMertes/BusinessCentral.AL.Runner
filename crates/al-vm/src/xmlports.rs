@@ -7,7 +7,7 @@
 //! Integer, Decimal, Text and Code, tables with triggers or event subscribers, and so on.
 
 use crate::records::Rec;
-use crate::transactions::{TRANSACTION_STOPPED, TxModel, al_error};
+use crate::transactions::TxModel;
 use crate::{AlError, Session, Signal};
 use al_builtins::describe::Describe;
 use al_builtins::ops;
@@ -304,7 +304,7 @@ impl Session {
                     self.last_error = al_builtins::native::unpinned_error();
                     Ok(Value::Boolean(false))
                 } else {
-                    Err(al_error(TRANSACTION_STOPPED))
+                    Err(crate::transactions::transaction_stopped())
                 };
             }
             if self.try_depth > 0 {

@@ -670,6 +670,10 @@ impl Session {
             // The link reads the parent's row, or an item further out (corpus branch al-runtime-rs-staging,
             // query/PXQueryOuterLink.al:6-11). Corpus query/TestQueryDataItemLinkMultiField.al: every
             // equality of the link holds.
+            if item.link_items.windows(2).any(|w| w[0] != w[1]) {
+                // Parts of one DataItemLink that name different enclosing data items.
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::MixedDataItemLink);
+            }
             for (k, (own, theirs)) in item.link.iter().enumerate() {
                 let linked = item.link_items.get(k).copied().unwrap_or(parent);
                 let v = ops::convert(chosen[linked][*theirs].clone(), &t.fields[*own].ty)?;

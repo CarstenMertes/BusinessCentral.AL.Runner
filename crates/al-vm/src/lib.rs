@@ -174,6 +174,9 @@ pub struct Session {
     pub(crate) page_handler_depth: usize,
     /// `CodeCoverageLog` is recording.
     pub(crate) code_coverage: bool,
+    /// `alrunner test --coverage`: runs per statement position (`Program::positions`) since the last
+    /// [`Session::take_coverage`]. `None` when coverage is off, which costs one branch per statement.
+    coverage_counts: Option<(Vec<u32>, Vec<u32>)>,
     /// What recording noted (`platform/coverage.rs`).
     pub(crate) recorder: platform::coverage::Recorder,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
@@ -196,6 +199,9 @@ pub struct Session {
     fault_site: Vec<faultsite::FaultFrame>,
     /// `IsolatedStorage` by (scope, key): the value and whether it was stored encrypted.
     pub(crate) isolated_storage: std::collections::HashMap<(String, String), (String, bool)>,
+    /// What the isolated storage held at the last commit: a rollback goes back to it (session/
+    /// TestProbeSessionMiscContracts.al:IsolatedStorage_NotRolledBack, whose name is the opposite of its result).
+    pub(crate) isolated_committed: std::collections::HashMap<(String, String), (String, bool)>,
     /// An install codeunit is running.
     install_scope: bool,
     /// Registered table connections by (type member, lower-case name), and the default name per type.
@@ -294,6 +300,8 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
+    /// `Database.LockTimeoutDuration` in milliseconds.
+    pub(crate) lock_timeout_duration: i64,
     /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
     /// method starts at 0, UpdateNoLocks (`start_test_method`).
     pub(crate) transaction_type: i32,
@@ -333,6 +341,9 @@ pub struct Session {
     /// (`CurrReport.Skip`, `Break`, `Quit`), and the request it made (al-vm reports.rs).
     pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
     pub(crate) report_flow: Option<crate::reports::Flow>,
+    /// The request page of a `RunRequestPage` is open: a table write in its handler finds no transaction
+    /// (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler).
+    pub(crate) request_only_page: bool,
     /// The report instances that `Execute` has run: a second `Execute` on one is refused.
     /// A page opened for a `RunObject` action looks its handler up without failing when there is
     /// none (al-vm pages/runobject.rs).
@@ -346,9 +357,11 @@ pub struct Session {
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
-/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al); BC's exact limit
-/// and the text of its error are not pinned, so exceeding this is Unsupported.
-pub const MAX_CALL_DEPTH: usize = 1000;
+/// completes and one of 5000 is refused (codeunit/TestCodeunitRecursionDepth.al).
+/// The deepest call chain, the test method included: 991 recursive calls under a test run (codeunit/
+/// TestCodeunitRecursionDepth.al:RecursionDepth_JustInsideTheCeiling_Completes); a [TryFunction] counts for two frames
+/// (session/TestProbeSessionMiscContracts.al:CallDepth_990, CallDepth_1000, CallDepth_1001).
+pub const MAX_CALL_DEPTH: usize = 992;
 
 impl Session {
     /// A session on the deterministic test host: a frozen clock and AL Runner's identity.
@@ -419,6 +432,7 @@ impl Session {
             committed_row_version: 0,
             page_handler_depth: 0,
             code_coverage: false,
+            coverage_counts: None,
             recorder: Default::default(),
             frames: Vec::new(),
             call_stack: Vec::new(),
@@ -428,6 +442,7 @@ impl Session {
             fault_trace: false,
             fault_site: Vec::new(),
             isolated_storage: Default::default(),
+            isolated_committed: Default::default(),
             install_scope: false,
             sequences: Default::default(),
             table_connections: Default::default(),
@@ -448,6 +463,7 @@ impl Session {
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
+            lock_timeout_duration: 10,
             transaction_type: 0,
             tx_phase: crate::transactions::TX_FRESH,
             media,
@@ -457,6 +473,7 @@ impl Session {
             report_quit: false,
             report_trigger: None,
             report_flow: None,
+            request_only_page: false,
             report_executed: Vec::new(),
             report_preview_pinned: Vec::new(),
             dataset: None,
@@ -482,6 +499,17 @@ impl Session {
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
         self.committed_row_version = self.next_row_version;
+        self.isolated_committed = self.isolated_storage.clone();
+        self.end_write_phase();
+    }
+
+    /// The transaction a write call started has ended (record/TestProbeRecordRefContracts.al:WriteTransaction_State starts
+    /// it with a write that changes nothing; codeunit/TestWriteTxTestBoundary.al:Test10 to Test13d end it with the run or
+    /// the page operation, and a rollback ends it too).
+    fn end_write_phase(&mut self) {
+        if self.tx_phase == crate::transactions::TX_WRITE {
+            self.tx_phase = crate::transactions::TX_FRESH;
+        }
     }
 
     /// Discards every change since the last commit. The AutoIncrement counters are not
@@ -490,6 +518,7 @@ impl Session {
     pub fn rollback_transaction(&mut self) {
         self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
+        self.isolated_storage = self.isolated_committed.clone();
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
         // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
         // recorded is written into them again at the next read.
@@ -497,6 +526,7 @@ impl Session {
         for (slot, value) in std::mem::take(&mut self.truncate_undo) {
             self.autoinc.insert(slot, value);
         }
+        self.end_write_phase();
     }
 
     /// The session's database, for runners that manage transactions around tests.
@@ -573,7 +603,22 @@ impl Session {
             name: app.name.clone(),
             publisher: app.publisher.clone(),
             version,
-            dependencies: app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect(),
+            dependencies: {
+                let mut deps: Vec<[u8; 16]> = app.dependencies.iter().filter_map(|d| ops::parse_guid(d)).collect();
+                // The app under test also depends on the "Application" app, which its manifest states as `application`
+                // (session/TestProbeSessionMiscContracts.al:ModuleInfo_CurrentModule: 6 dependencies, the Application one last).
+                deps.sort();
+                if !app.dependency {
+                    if let Some(application) = ops::parse_guid(al_builtins::moduleinfo::APPLICATION_APP_ID) {
+                        if !deps.contains(&application) {
+                            deps.push(application);
+                        }
+                    }
+                }
+                // BC lists them by id.
+                deps.sort();
+                deps
+            },
             synthesized: false,
         })
     }
@@ -617,6 +662,7 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            rerun: false,
             base: None,
         }))
     }
@@ -657,6 +703,7 @@ impl Session {
             object: object as u32,
             globals,
             initialized: true,
+            rerun: false,
             base: None,
         }))
     }
@@ -697,9 +744,11 @@ impl Session {
             return Err(Signal::Unsupported(reason.clone()));
         }
         if self.depth >= MAX_CALL_DEPTH {
-            return Err(Signal::Unsupported(format!(
-                "call depth over {MAX_CALL_DEPTH} (BC's limit and error text are not pinned)"
-            )));
+            return Err(Signal::Error(al_builtins::native::AlError {
+                message: "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator.".into(),
+                code: "StackOverflow".into(),
+                call_stack: String::new(),
+            }));
         }
         self.depth += 1;
         // The builtin being run (a record write that runs triggers and events) keeps its own
@@ -725,6 +774,16 @@ impl Session {
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
+        if !r.is_trigger
+            && engine.program.objects[object]
+                .report_ext
+                .as_ref()
+                .is_some_and(|e| !e.added.is_empty())
+        {
+            // A procedure of a reportextension that adds data items: it runs on the instance that runs the
+            // extension's triggers (only local procedures are reachable otherwise; reportext-procs).
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportExtLocalProcedure);
+        }
         let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len());
         for s in &r.locals {
             locals.push(self.default_value(&s.ty));
@@ -774,6 +833,10 @@ impl Session {
             self.error_scopes.open();
         }
         self.try_depth += usize::from(is_try);
+        // A [TryFunction] takes a platform scope of its own on top of its frame (session/
+        // TestProbeSessionMiscContracts.al:CallDepth_1000 stops at 988 frames below test, TryDepth and TryDepthF, while
+        // codeunit/TestCodeunitRecursionDepth.al:RecursionDepth_JustInsideTheCeiling_Completes runs 991 frames under a test).
+        self.depth += usize::from(is_try);
         let test_scope = if self.code_coverage {
             self.coverage_enter(object, routine)
         } else {
@@ -802,12 +865,13 @@ impl Session {
             outcome = self.close_error_scope(outcome);
         }
         self.try_depth -= usize::from(is_try);
+        self.depth -= usize::from(is_try);
         self.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
             Ok(()) => None,
             Err(Signal::Exit(v)) => v,
-            Err(Signal::Break) => None,
+            Err(Signal::Break | Signal::Continue) => None,
             Err(e) => {
                 // Variables set before the error stay set for the caller that catches it
                 // (error-handling/TestTryFunctionContracts.al, codeunit/TestScopeIsolationContracts.al).
@@ -833,6 +897,24 @@ impl Session {
         self.stop.clone()
     }
 
+    /// Starts counting how often each statement runs (`alrunner test --coverage`).
+    pub fn enable_coverage(&mut self) {
+        self.coverage_counts = Some((Vec::new(), Vec::new()));
+    }
+
+    /// The statements that ran since the last call, as (position id, runs); counting starts again.
+    pub fn take_coverage(&mut self) -> Vec<(u32, u32)> {
+        let Some((counts, touched)) = &mut self.coverage_counts else {
+            return Vec::new();
+        };
+        let mut out: Vec<(u32, u32)> = touched
+            .drain(..)
+            .map(|id| (id, std::mem::take(&mut counts[id as usize])))
+            .collect();
+        out.sort_unstable();
+        out
+    }
+
     /// Rearms the stop flag for the next test.
     pub fn clear_stop(&self) {
         self.stop.store(false, std::sync::atomic::Ordering::Relaxed);
@@ -856,6 +938,10 @@ impl Session {
     fn exec(&mut self, s: &ir::Stmt, f: &mut Frame) -> Result<(), Signal> {
         use ir::Stmt as S;
         match s {
+            S::Assume(a) => {
+                al_builtins::assumptions::assume(*a);
+                Ok(())
+            }
             S::Assign(p, e) => {
                 let v = self.eval(e, f)?;
                 self.write(p, v, f)
@@ -874,6 +960,7 @@ impl Session {
                     self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     // The condition belongs to the loop's line, not to the body's last statement.
@@ -887,6 +974,7 @@ impl Session {
                     self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     self.restore_pos(here);
@@ -912,8 +1000,8 @@ impl Session {
                     ));
                 }
                 // Option bounds of an Integer loop take its type as an assignment does: the ordinal (Microsoft's
-                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; documented
-                // assumption, docs/probes-needed.md).
+                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; pinned by the
+                // corpus Option_InCaseAndLoopBounds, types/ for_to_option).
                 let bound = |v: Value| match v {
                     Value::Option(o, _) => Value::Integer(o),
                     v => v,
@@ -927,6 +1015,7 @@ impl Session {
                     self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     i = int(&self.read(var, f)?)?;
@@ -945,7 +1034,9 @@ impl Session {
                 let items: Vec<Value> = match coll {
                     Value::List(l) => l.borrow().clone(),
                     // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
-                    other => match al_builtins::xml::node_list_items(&other) {
+                    other => match al_builtins::json::array_items(&other)
+                        .or_else(|| al_builtins::xml::node_list_items(&other))
+                    {
                         Some(items) => items,
                         None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
@@ -954,6 +1045,7 @@ impl Session {
                     self.write(var, item, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                 }
@@ -980,12 +1072,23 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
+            S::Continue => Err(Signal::Continue),
             S::Pos(p) => {
                 if let Some(top) = self.call_stack.last_mut() {
                     top.pos = *p;
                 }
                 if self.code_coverage {
                     self.coverage_hit(*p);
+                }
+                if let Some((counts, touched)) = &mut self.coverage_counts {
+                    let i = *p as usize;
+                    if counts.len() <= i {
+                        counts.resize(self.engine.program.positions.len().max(i + 1), 0);
+                    }
+                    if counts[i] == 0 {
+                        touched.push(*p);
+                    }
+                    counts[i] += 1;
                 }
                 Ok(())
             }
@@ -1175,6 +1278,7 @@ impl Session {
                 self.page_control(p, *control, *runtime)
             }
             E::FieldOf(base, pos) => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldOfProcedureResult);
                 let record = self.eval(base, f)?;
                 self.read_record_field(record, *pos)
             }
@@ -1183,19 +1287,70 @@ impl Session {
                 self.query_column(q, *column)
             }
             E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
+            E::CharAt(text, index) if self.with_borrowed_text(text, f, |_| ()).is_some() => {
+                let i = int(&self.eval(index, f)?)?;
+                // Same answers as the general path below, on the text where it is held.
+                if i < 1 {
+                    return al_builtins::native::raise(
+                        format!(
+                            "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
+                        ),
+                        "OutsidePermittedRange",
+                    );
+                }
+                let at = i as usize - 1;
+                match self.with_borrowed_text(text, f, |t| {
+                    if t.is_ascii() {
+                        (at <= t.len()).then(|| t.as_bytes().get(at).map_or(0, |b| u16::from(*b)))
+                    } else {
+                        let units: Vec<u16> = t.encode_utf16().collect();
+                        match units.get(at) {
+                            Some(u) => Some(*u),
+                            None if at == units.len() => Some(0),
+                            None => None,
+                        }
+                    }
+                }) {
+                    Some(Some(u)) => Ok(Value::Char(u)),
+                    _ => Err(Signal::Unsupported(
+                        "a text read more than one position past its length (not pinned)".into(),
+                    )),
+                }
+            }
             E::CharAt(text, index) => {
                 let t = self.eval(text, f)?;
                 let Some(t) = al_builtins::native::text_of(&t) else {
                     return Err(Signal::Unsupported(format!("indexing {} as a text", t.describe())));
                 };
                 let i = int(&self.eval(index, f)?)?;
-                usize::try_from(i - 1)
-                    .ok()
-                    .and_then(|i| t.encode_utf16().nth(i))
-                    .map(Value::Char)
-                    .ok_or_else(|| {
-                        Signal::Unsupported("a text indexed outside its length (error text not pinned)".into())
-                    })
+                // types/TestProbeScalarContracts.al:TextChar_AssignByIndex: position 0 and below raise, the position after
+                // the last character reads as the character 0; further positions are not pinned.
+                if i < 1 {
+                    return al_builtins::native::raise(
+                        format!(
+                            "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
+                        ),
+                        "OutsidePermittedRange",
+                    );
+                }
+                if t.is_ascii() {
+                    // No copy of a long text for each character read.
+                    return match t.as_bytes().get(i as usize - 1) {
+                        Some(u) => Ok(Value::Char(u16::from(*u))),
+                        None if i as usize == t.len() + 1 => Ok(Value::Char(0)),
+                        None => Err(Signal::Unsupported(
+                            "a text read more than one position past its length (not pinned)".into(),
+                        )),
+                    };
+                }
+                let units: Vec<u16> = t.encode_utf16().collect();
+                match units.get(i as usize - 1) {
+                    Some(u) => Ok(Value::Char(*u)),
+                    None if i as usize == units.len() + 1 => Ok(Value::Char(0)),
+                    None => Err(Signal::Unsupported(
+                        "a text read more than one position past its length (not pinned)".into(),
+                    )),
+                }
             }
             E::DotNetCoerce(t, e) => {
                 self.dotnet.clear_null_string();
@@ -1213,6 +1368,38 @@ impl Session {
                 args,
                 ret_used,
             } => {
+                // `CopyStr(Var, p [, n])` and `StrLen(Var)` on a text variable read it where it is held.
+                if let (None, Some(ir::Arg::Value(first))) = (receiver.as_deref(), args.first()) {
+                    if matches!(id.as_str(), "Text.CopyStr#1" | "Text.StrLen#1")
+                        && self.with_borrowed_text(first, f, |_| ()).is_some()
+                    {
+                        let mut rest = Vec::with_capacity(args.len() - 1);
+                        for a in &args[1..] {
+                            let ir::Arg::Value(e) = a else {
+                                return Err(Signal::Unsupported(format!("{id} with this argument")));
+                            };
+                            rest.push(self.eval(e, f)?);
+                        }
+                        let num = |v: Option<&Value>| match v {
+                            Some(Value::Integer(n)) => Some(i64::from(*n)),
+                            Some(Value::BigInteger(n)) => Some(*n),
+                            Some(Value::Byte(n)) => Some(i64::from(*n)),
+                            Some(Value::Char(n)) => Some(i64::from(*n)),
+                            _ => None,
+                        };
+                        let r = if id == "Text.StrLen#1" {
+                            self.with_borrowed_text(first, f, |t| Value::Integer(Value::text_len(t) as i32))
+                                .map(Ok)
+                        } else {
+                            let pos = num(rest.first()).unwrap_or(1);
+                            let len = num(rest.get(1));
+                            self.with_borrowed_text(first, f, |t| al_builtins::native::copystr_of(t, pos, len))
+                        };
+                        if let Some(r) = r {
+                            return r;
+                        }
+                    }
+                }
                 // Event subscriptions are session state: the VM runs them (dispatch.rs).
                 if let "Session.BindSubscription#1" | "Session.UnbindSubscription#1" = id.as_str() {
                     let Some(ir::Arg::Value(e)) = args.first() else {
@@ -1223,6 +1410,23 @@ impl Session {
                 }
                 // `CurrFieldNo` is a property of the implicit Rec, not a catalog method: the lowerer
                 // emits this id with the Rec as receiver.
+                if id == "Record.SetCurrFieldNo#1" {
+                    let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver.as_deref(), args.first()) else {
+                        return Err(Signal::Unsupported("CurrFieldNo := without a record".into()));
+                    };
+                    let Value::Record(rec) = self.read(p, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+                    };
+                    let Value::Integer(n) = self.eval(e, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
+                    };
+                    let handle = Rc::as_ptr(&rec) as usize;
+                    match self.curr_field_no.iter_mut().rev().find(|(h, _)| *h == handle) {
+                        Some(entry) => entry.1 = n,
+                        None => self.curr_field_no.push((handle, n)),
+                    }
+                    return Ok(Value::Null);
+                }
                 if id == "Record.CurrFieldNo#1" {
                     let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
                         return Err(Signal::Unsupported("CurrFieldNo without a record".into()));
@@ -1486,6 +1690,28 @@ impl Session {
         }
     }
 
+    /// Runs `g` on the text a plain variable read (`E::Load` of a local or a global) holds, without copying it.
+    /// `None` when `e` is anything else, holds no text, or holds one with the call-stack marker (the general path
+    /// handles those). A loop of `CopyStr(Big, i, 1)` over a long text would otherwise copy it on every round.
+    fn with_borrowed_text<R>(&self, e: &ir::Expr, f: &Frame, g: impl FnOnce(&str) -> R) -> Option<R> {
+        fn plain(v: &Value) -> Option<&str> {
+            match v {
+                // The call-stack marker U+E000 (byte 0xEE) is in call-stack texts, which are short: a long text is
+                // not scanned for it on every read.
+                Value::Text(s) | Value::Code(s) if s.len() > 65536 || !s.as_bytes().contains(&0xEE) => Some(s),
+                _ => None,
+            }
+        }
+        match e {
+            ir::Expr::Load(ir::Place::Local(i)) => plain(f.locals.get(*i)?).map(g),
+            ir::Expr::Load(ir::Place::Global(i)) => {
+                let inst = f.instance.borrow();
+                plain(inst.globals.get(*i)?).map(g)
+            }
+            _ => None,
+        }
+    }
+
     fn read(&mut self, p: &ir::Place, f: &mut Frame) -> Result<Value, Signal> {
         match p {
             ir::Place::Local(i) => Ok(f.locals[*i].clone()),
@@ -1577,10 +1803,13 @@ impl Session {
                                         al_builtins::stream::BlobBuf {
                                             bytes: b.bytes.clone(),
                                             write_pos: 0,
-                                            // A copy shows the bytes, but CalcFields fetches the Blob from the
-                                            // stored row again (types/ProbeTypeFormsAndFilters.al:
+                                            // A copy shows the bytes (and a stream over it reads them, streams/
+                                            // TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes), but CalcFields
+                                            // fetches the Blob from the stored row again (types/ProbeTypeFormsAndFilters.al:
                                             // FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
-                                            loaded: false,
+                                            loaded: true,
+                                            refetch: true,
+                                            persisted: false,
                                         },
                                     )))
                                 }
@@ -1671,23 +1900,44 @@ impl Session {
             ));
         };
         let mut units: Vec<u16> = s.encode_utf16().collect();
-        let in_range = i >= 1 && (i as usize) <= units.len() + 1 && max.is_none_or(|m| i as usize <= m as usize);
-        let (Some(unit), true) = (unit, in_range) else {
+        let Some(unit) = unit else {
             return Err(Signal::Unsupported(format!(
-                "assigning {v} to character {i} of a text (only the next position within the length is pinned)",
+                "assigning {v} to a character of a text (only a UTF-16 character is pinned)",
                 v = v.describe()
             )));
         };
+        // A position outside 1 to the length plus one raises (types/TestProbeScalarContracts.al:TextChar_AssignByIndex:
+        // 5, 0 and -1 on 'abc'); the position after the last one appends, and past the declared length it raises the
+        // length error of an assignment.
+        if i < 1 || (i as usize) > units.len() + 1 {
+            return al_builtins::native::raise(
+                format!(
+                    "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to {}.",
+                    units.len()
+                ),
+                "OutsidePermittedRange",
+            );
+        }
         let i = i as usize - 1;
         if i == units.len() {
             units.push(unit);
         } else {
             units[i] = unit;
         }
+        if let Some(m) = max.filter(|m| units.len() > *m as usize) {
+            return al_builtins::native::raise(
+                format!(
+                    "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                    units.len(),
+                    String::from_utf16_lossy(&units)
+                ),
+                "StringLengthExceeded",
+            );
+        }
         let text = String::from_utf16(&units)
             .map_err(|_| Signal::Unsupported("a text that ends up with a lone surrogate".into()))?;
         if is_code {
-            return self.write(base, Value::Code(text.to_uppercase()), f);
+            return self.write(base, Value::Code(ops::upper_code(&text)), f);
         }
         self.write(base, Value::Text(text), f)
     }
@@ -1910,9 +2160,11 @@ impl al_builtins::native::Ctx for Session {
         let bc = self.engine.target.as_ref().map(|t| &t.bc);
         let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
         al_builtins::value::ModuleInfoState {
+            // The module BC answers for the null app id: the base application W1 (session/
+            // TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).
             id: [0; 16],
-            name: String::new(),
-            publisher: String::new(),
+            name: "W1".into(),
+            publisher: "Microsoft".into(),
             version: Some([major, minor, 0, 0]),
             dependencies: Vec::new(),
             synthesized: true,

@@ -40,6 +40,8 @@ pub struct Args {
     /// `--files-dir DIR`: the `File` data type reads and writes real files under DIR. Without it
     /// files live in memory and are gone when the test ends.
     pub files_dir: Option<PathBuf>,
+    /// `--environment saas|onprem`: what Environment Information answers (default saas, as probed).
+    pub environment: Option<al_host::Environment>,
     /// `--no-download`: never fetch a dependency app from Microsoft's artifact feed (ADR-013).
     pub no_download: bool,
     /// `--cache-dir DIR`: where downloaded artifacts are kept (else `ALRUNNER_CACHE`, else
@@ -72,6 +74,10 @@ pub struct Args {
     pub explain: Option<String>,
     /// `--top-refusals [N]`: rank the refusal reasons; N entries (default 10).
     pub top_refusals: Option<usize>,
+    /// `--top-assumptions [N]`: rank the unprobed assumptions by the flagged passes that ran through them.
+    pub top_assumptions: Option<usize>,
+    /// `--list-assumptions`: print the registry of unprobed assumptions with the counts of the last run, then stop.
+    pub list_assumptions: bool,
     /// `--top-refusals-area AREA`: the ranking counts only that area (and selects it).
     pub top_refusals_area: Option<String>,
     /// `--baseline-diff`: list what newly passes, what fails and what left the baseline.
@@ -135,6 +141,28 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             a.top_refusals = Some(n);
             continue;
         }
+        if flag == "--list-assumptions" {
+            a.list_assumptions = true;
+            continue;
+        }
+        if flag == "--top-assumptions" {
+            let n = match it.peek() {
+                Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) => {
+                    let n = it
+                        .next()
+                        .unwrap_or_default()
+                        .parse()
+                        .map_err(|_| "--top-assumptions: number too large")?;
+                    if n == 0 {
+                        return Err("--top-assumptions needs a count of at least 1".into());
+                    }
+                    n
+                }
+                _ => DEFAULT_TOP,
+            };
+            a.top_assumptions = Some(n);
+            continue;
+        }
         let mut text = || it.next().ok_or_else(|| format!("{flag} needs a value"));
         match flag.as_str() {
             "--root" => a.root = Some(text()?.into()),
@@ -161,6 +189,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
             "--require-dotnet" => a.require_dotnet = true,
             "--files-dir" => a.files_dir = Some(text()?.into()),
+            "--environment" => a.environment = Some(text()?.parse().map_err(|e| format!("--environment: {e}"))?),
             "--no-download" => a.no_download = true,
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--fetch-deps" => a.fetch_deps = true,
@@ -234,6 +263,9 @@ INPUT
   --deps DIR                  extra directory of .app packages for the dependencies (repeatable)
   --no-deps                   run the corpus alone, without Microsoft's apps
   --no-download               never fetch a dependency app from the artifact feed
+  --environment ENV           the server Environment Information describes: saas (default, as probed) or
+                              onprem (IsSaaS and IsSandbox No until a test library changes them;
+                              an unprobed assumption Microsoft's suites need)
   --files-dir DIR             let the File data type read and write real files under DIR (default: in memory)
   --cache-dir DIR             where downloaded artifacts are kept (default: ~/.cache/al-runtime)
 
@@ -256,6 +288,12 @@ DIAGNOSE
                               (routine, file, line), and for a failure the error, code and stack
   --top-refusals [N]          rank the refusal reasons of the not-run cases (default 10), numbers
                               and quoted names folded together, with an example test each
+  --top-assumptions [N]       rank the unprobed assumptions (default 10) by the passes that ran through
+                              them. Such a pass is FLAGGED: the summary counts it (N passed, M flagged:
+                              rely on unprobed assumptions), --junit lists its ids in a property,
+                              --json carries them, --explain names them
+  --list-assumptions          print the registry of unprobed assumptions with the counts of the last
+                              run, then stop
   --top-refusals-area FOLDER  the same for one corpus folder; also selects that folder
   --baseline-diff             per version: cases that newly pass, cases that fail and are not in
                               the baseline, and baseline cases that no longer pass; listed by area
@@ -332,6 +370,15 @@ mod tests {
         let a = run(&["--top-refusals", "--no-deps"]).unwrap();
         assert!(a.no_deps && a.top_refusals == Some(DEFAULT_TOP));
         assert!(run(&["--top-refusals", "0"]).is_err());
+    }
+
+    #[test]
+    fn top_assumptions_takes_an_optional_count_and_list_assumptions_is_a_flag() {
+        assert_eq!(run(&["--top-assumptions"]).unwrap().top_assumptions, Some(DEFAULT_TOP));
+        assert_eq!(run(&["--top-assumptions", "4"]).unwrap().top_assumptions, Some(4));
+        assert!(run(&["--top-assumptions", "0"]).is_err());
+        assert!(run(&["--list-assumptions"]).unwrap().list_assumptions);
+        assert!(!run(&["--no-deps"]).unwrap().list_assumptions);
     }
 
     #[test]

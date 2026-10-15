@@ -60,10 +60,11 @@ pub(crate) fn declares_collect(attrs: &[al_ir::Attribute]) -> Result<bool, Signa
 
 /// The text a scope raises when it closes holding several errors. The corpus pins that it carries
 /// the first message and calls it a "Multiple errors occurred..." summary (errorinfo/
-/// TestErrorInfoType.al:129,500-503); the rest of the wording is a documentation-only assumption
-/// (docs/probes-needed.md).
+/// TestErrorInfoType.al:129,500-503); the whole text is session/TestProbeSessionMiscContracts.al:ErrorCollection_ScopeExitText.
 fn summary(first: &str) -> String {
-    format!("Multiple errors occurred. {first}")
+    format!(
+        "Multiple errors occurred during the operation the first of which is: {first}. All errors can be found under 'Detailed Information'."
+    )
 }
 
 impl Session {
@@ -86,7 +87,7 @@ impl Session {
     pub(crate) fn close_error_scope(&mut self, outcome: Result<(), Signal>) -> Result<(), Signal> {
         let sc = &mut self.error_scopes;
         let start = sc.starts.pop().unwrap_or(0);
-        if matches!(&outcome, Err(e) if !matches!(e, Signal::Exit(_) | Signal::Break)) {
+        if matches!(&outcome, Err(e) if !matches!(e, Signal::Exit(_) | Signal::Break | Signal::Continue)) {
             sc.held.truncate(start);
             return outcome;
         }
@@ -96,9 +97,10 @@ impl Session {
         let held = std::mem::take(&mut sc.held);
         let first = al_builtins::errorinfo::message_of(&held[0]).unwrap_or_default();
         let message = if held.len() == 1 { first } else { summary(&first) };
+        // session/TestProbeSessionMiscContracts.al:ErrorCollection_ScopeExitText, ErrorCollection_SingleError: code Dialog.
         Err(Signal::Error(AlError {
             message,
-            code: String::new(),
+            code: "Dialog".into(),
             call_stack: String::new(),
         }))
     }

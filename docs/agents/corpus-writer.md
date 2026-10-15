@@ -129,6 +129,7 @@ Each of these broke a published batch.
 
 - **Upgrade versus fresh install.** `run-corpus.sh` bumps the app version on every run, so after the first run the container does an *upgrade*: install triggers do **not** run. A broken install trigger only shows on a fresh database. The gate rejects install codeunits, so you should not have any; if you ever add one on purpose, test it with `docker compose down && docker compose up -d --wait` (wipes the database; republish the fixture) and then one run.
 - **A lower or equal app version is silently ignored** by the container. The script keeps the counter in `$WORK/ver.n`; if the container was recreated, delete it.
+- **Compile with the compiler of every CI leg before each push.** CI compiles BC 27 with AL 16.x, BC 28 with AL 17.x and BC 29 with AL 18.x, each with its own preprocessor symbols. Code that the 29 compiler accepts can fail on 16.x or 17.x (example: an Integer FlowField over a BigInteger field gives AL0427 on 27 and 28 only). That turns every 27 and 28 leg red at compile time with no test run. `CORPUS=~/corpus BCLINUX=~/bc-linux tools/corpus-writer/compile-legs.sh` installs the three compilers (through `install-al-compiler.sh 27.0`, `28.0`, `29.0`), compiles the Cloud app once per group with the right symbols and fails on any error. Run it after the BC 29 loop and before every push to your branch.
 - Do not run two compile/publish runs at the same time against one container.
 - If the container is out of memory the whole machine suffers: close other heavy programs. `docker stats` shows the use.
 - After each run the script restores `app.json` and generated layout files; do not commit `tests/al-language/app.json` changes of version or `preprocessorSymbols`.
@@ -159,3 +160,65 @@ The matrix has ten Cloud legs (27.0, 27.3, 27.5, 28.0 to 28.5, 29.0) and ten OnP
 ## Where the facts go
 
 Put the result in the test file header, not only in the commit. The runtime reads the header and the assertions. When a row of `docs/probes-needed.md` is settled by your tests, say which row in the handover message; the publisher updates the document.
+
+## Corpus layout
+
+The corpus must stay ordered and free of duplicates. Rules for every writer and for the publisher:
+
+1. **One folder per topic**, named for the topic and not for the writer or the batch. New tests go into the folder that owns their topic (table below). A new topic gets a new folder under `tests/al-language/`; the name is a lower-case singular or plural noun like the existing ones.
+2. **File and codeunit names say what is tested**: `<Topic><Aspect>.al`, codeunit `"<Topic> <Aspect>"` (for example `text/lt-text-functions/CaseConv.al`, codeunit `"LT TxB CaseConv"`). Never a writer or batch prefix in a new name (`PA`, `PX`, `W4`, `batch3`, ...). Test procedures are named `Member_Case_Result`.
+3. **Adding a procedure to an existing topic codeunit is allowed**; changing or removing an existing test procedure is not (the oracle uses their names). If the codeunit has too many tests (over about 25 observations in one procedure, or one codeunit mixing topics), start a new codeunit in the same folder.
+4. **Do not move or rename existing files or tests.** Test names are part of the oracle. A later one-time consolidation is listed below; the owner decides when.
+5. Object ids stay inside your writer range (laptop 70000-74999; the publisher uses 61200-61299 for OnPrem and 69000-69999 for the rest). `check-object-ids.py` enforces uniqueness.
+6. **A new writer range must be added to the CI `codeunit_range`** (`.github/workflows/ci.yml`, input `codeunit_range` of the Cloud job and of the OnPrem job) in the same commit that starts using it. CI only runs the test codeunits inside that range; a range that is not listed compiles but runs nothing, and the run is still green. Current ranges: Cloud `60000..60999|67000..69999|70000..74999`, OnPrem `61200..61299`.
+7. **The hand-over check is the junit, not the green run.** After the CI run of your branch, download the junit artifacts and count your tests (`python3 tools/corpus-writer/ci-failures.py <run id>` prints failures; count the `testcase` elements whose codeunit id is in your range with a one-line script) and compare the number with the tests you wrote. Fewer than you wrote means a range or a gate problem, whatever the run's colour.
+
+Folder map (`tests/al-language/` unless stated):
+
+| Topic | Folder |
+|---|---|
+| Text, Code, Label, TextBuilder, string builtins | `text/` (`lt-text-functions`, `lt-text-instance`, `lt-label-textbuilder`); older: `types/` |
+| JSON types | `json/` |
+| XML types, XmlPort | `xml/`, `xmlport/` |
+| Streams, Blob, Media, MediaSet, Base64 | `streams/`; older: `media/`, `types/` |
+| List, Dictionary, Array, collections | `collections/` |
+| Date, Time, DateTime, Duration, Decimal, Integer, Boolean, Guid, Option, Enum, Variant | `types/` |
+| Record (fields, keys, filters, find, modify, triggers, validate, relations, CalcFields, FlowFilters) | `record/`, `records/`, `calcfields/`, `filters/`, `system-fields/`, `tableglobals/` |
+| RecordRef, FieldRef, KeyRef | `recordref/`, `fieldref/` |
+| Table and table extension triggers | `tableextension/`, `tableextensiontrigger/` |
+| Pages, TestPage, page extensions, page events | `pages/`, `pageext*/`, `testpart/`, `controls/`, `pagefindrecord/`, `pageupdate/`, `pagesave/`, `pageapplicationarea/`, `appareas/` |
+| Reports, report extensions, datasets, request pages | `report/`, `reportext/`, `reportextensiontrigger/`, `filterpage/` |
+| Queries | `query/` |
+| Codeunits, interfaces, events, subscribers | `codeunit/`, `events/`, `extensionevents/` |
+| Errors, ErrorInfo, error handling | `errors/`, `errorinfo/`, `error-handling/` |
+| Session, user, company, permissions, access control, profiles | `session/`, `permissions/`, `access-control/`, `profile/` |
+| Platform tables and metadata (Field, Key, AllObj, Feature Key, system tables) | `metadata/`, `platform/`, `misc/` |
+| HttpClient and network | `network/`; handler tests in the OnPrem app |
+| Install and upgrade | `install/` (no new install codeunits, see rules) |
+| Shared fixtures | `_fixtures/` (and `fixtures/`) |
+| OnPrem scope objects | `tests/al-language-onprem/<same topic folder>` |
+| Must-not-compile | `tests/must-not-compile/cases/NNNN-short-name.al` |
+
+Older files that carry a writer or batch prefix (`PA*`, `PC*`, `PE*`, `PF*`, `PO*`, `PR*`, `PS*`, `PT*`, `PU*`, `PV*`, `PW*`, `PX*`, `PY*`, `PZ*`, `W1*` to `W7*`, and the `handlers/` folder with about 500 files) stay where they are for now. A later one-time consolidation would move them by topic into the folders above: `W1*` into `pages/`, `W2*` into `appareas/`, `bgtasks/`, `controls/`, `misc/`, `W3*` into `report/`, `reportext/`, `W4*` into `calcfields/`, `events/`, `records/`, `recordref/`, `W5*` into `session/`, `errors/`, `W6*` into `metadata/`, `platform/`, `session/`, `W7*` into `types/`, `query/`, `streams/`, `xmlport/`, `PW*`/`PX*`/`PY*`/`PZ*`/`PU*`/`PV*` into `types/` and `session/`, and the files in `handlers/` into the folder of what they test (`report/`, `pageupdate/`, `session/`, ...). Moving renames the oracle test names, so it needs the owner's decision and a regenerated baseline.
+
+## Check before you write
+
+Before you write a test for a member, in this order:
+
+1. Look the member up in `docs/corpus-coverage.md` (in al-runtime-rs): it lists, per type, which overloads the corpus already calls. A pinned overload is not new work unless you add cases it misses.
+2. `grep -rn "<MemberName>(" tests/al-language/<topic folder> tests/al-language-onprem` in the corpus. Read the matching tests. Add only the cases that are missing (other inputs, edge values, error texts, other types of the argument).
+3. Write your tests. Before you hand the branch over run the duplicate finder:
+
+```bash
+python3 tools/corpus-writer/dupfinder.py --corpus ~/corpus --new-git origin/al-runtime-rs-staging --show
+```
+
+It lists the new tests whose facts (member plus literal inputs) already exist in other files, with the place they exist. Remove or reduce a test that only repeats an existing fact. A listed test that also checks other inputs or another context stays; say so in the handover message. The publisher runs the same command on your branch before merging.
+
+## Which BC is the reference
+
+The corpus CI and the local container run BC on Linux (MsDyn365Bc.On.Linux). It matches
+Business Central on Windows to about 99.9% and is much faster, but Microsoft does not support
+it. The Windows nightly run of the corpus (official Microsoft BC container) is the final
+reference. When the nightly flags a test that the Linux CI passed, the difference is an
+upstream issue for the BC on Linux repository, not a reason to change the probe.

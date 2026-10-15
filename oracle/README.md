@@ -8,13 +8,13 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 | Field | Value |
 |---|---|
 | Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `al-runtime-rs` |
-| Corpus pin | `ae3fe8857795946ddb12b4668627444d3f89681c` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
+| Corpus pin | `2c09ecd4c10a4a7146db05441bf6e5adffb65261` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `ae3fe88` (the pin) | 38687483111 | `junit-test-results-27.5` | 11952016210 | 5595 |
-| 28 | 28.5 | `ae3fe88` (the pin) | 38687483111 | `junit-test-results-28.5` | 11951637328 | 5593 (+26 `OnRun`) |
-| 29 | 29.0 | `ae3fe88` (the pin) | 38687483111 | `junit-test-results-29.0` | 11951255985 | 5593 (+26 `OnRun`) |
+| 27 | 27.5 | `2c09ecd` (the pin) | 38739215829 | `junit-test-results-27.5` | 11976017829 | 6555 |
+| 28 | 28.5 | `2c09ecd` (the pin) | 38739215829 | `junit-test-results-28.5` | 11975934783 | 6555 (+26 `OnRun`) |
+| 29 | 29.0 | `2c09ecd` (the pin) | 38739215829 | `junit-test-results-29.0` | 11975599580 | 6559 (+26 `OnRun`) |
 
 Every file has 0 failures. Each run published two artifacts with the same name; the
 oracle is the large one (the main suite, `junit-al-language.xml`). The small one is
@@ -29,7 +29,7 @@ overall count.
 
 | Name | App | Oracle file | From | Cases |
 |---|---|---|---|---|
-| `onprem` (27, 28, 29) | `tests/al-language-onprem` | `<major>/junit-onprem.xml` | the small artifact of the same CI run as the main oracle (ids 11950933248, 11949878942, 11949953828), copied unchanged | 72 |
+| `onprem` (27, 28, 29) | `tests/al-language-onprem` | `<major>/junit-onprem.xml` | the small artifact of the same CI run as the main oracle (ids 11957600568, 11957362118, 11956862735), copied unchanged | 72 |
 | `isolation-function` (28 only) | `tests/al-language-isolation-probe` | `28/xunit-isolation-function.xml` | the Windows nightly of 2026-10-13, BC 28.4, run 38341042967, artifact 11788517730 | 7 |
 | `isolation-codeunit` (28 only) | the same app | `28/xunit-isolation-codeunit.xml` | the same artifact | 7 (T5 fails on BC, on purpose) |
 

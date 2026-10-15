@@ -621,7 +621,7 @@ impl Session {
             }
             // `ObjectId(UseNames)`: `Page <id>`, or with names (the default) `Page <Caption>`, the object name when
             // the page has no Caption. Taken from the probed report form (handlers/PWRefusedBuiltins.al:78-107,
-            // BC 27.5); for a page it is a documented assumption (docs/probes-needed.md). It reads the object, so
+            // BC 27.5; the page form is pinned by handlers/PRPageObjectId.al). It reads the object, so
             // a page that has not run answers too.
             "ObjectId" if method.starts_with("Page.") => {
                 let names = match args.first() {
@@ -657,6 +657,26 @@ impl Session {
                     },
                     None => Ok(Value::Text(self.page_caption(st))),
                 }
+            }
+            // `ObjectId(UseNames)` (CurrPage and a Page variable alike, open or not): `Page <id>`, or with names, the
+            // default, `Page <Caption>` and the object name when the page has no Caption (handlers/PRPageObjectId.al).
+            "ObjectId" if method.starts_with("Page.") => {
+                let names = match args.first() {
+                    None => true,
+                    Some(v) => ops::truthy(v)?,
+                };
+                let engine = self.engine();
+                let o = &engine.program.objects[st.borrow().object as usize];
+                if !names {
+                    return Ok(Value::Text(format!("Page {}", o.id.unwrap_or(0))));
+                }
+                let caption = o
+                    .properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+                    .map(|(_, v)| unquote(v))
+                    .unwrap_or_else(|| o.name.clone());
+                Ok(Value::Text(format!("Page {caption}")))
             }
             "Caption" => {
                 self.require_open(st)?;
@@ -738,6 +758,13 @@ impl Session {
             // handlers/TestPageSetRecord.al).
             "SetRecord" => match args.first() {
                 Some(Value::Record(r)) => {
+                    // Inside a Page-typed modal handler the page holds the record already
+                    // (handlers/PSModalPageHandlerTyped.al: GetRecord answers the record SetRecord handed).
+                    if st.borrow().typed_handler && self.has_source(st) {
+                        let rec = self.page_rec(st);
+                        rec.borrow_mut().fields = r.borrow().fields.clone();
+                        return Ok(Value::Null);
+                    }
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
                     st.borrow_mut().set_record = Some(copy);
                     Ok(Value::Null)
@@ -1036,6 +1063,9 @@ impl Session {
         let mut handler = None;
         let engine = self.engine();
         let page = page_of(&engine, st);
+        for a in &page.assumes {
+            al_builtins::assumptions::assume(*a);
+        }
         self.page_instance(st)?;
         {
             let mut s = st.borrow_mut();
@@ -1211,10 +1241,20 @@ impl Session {
 
     fn save_values(&self, st: &St) -> bool {
         let object = st.borrow().object as usize;
-        self.engine.program.objects[object]
+        let on = self.engine.program.objects[object]
             .properties
             .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("SaveValues") && v.trim().eq_ignore_ascii_case("true"))
+            .any(|(k, v)| k.eq_ignore_ascii_case("SaveValues") && v.trim().eq_ignore_ascii_case("true"));
+        // A SaveValues page that page extensions extend is driven as one without extensions (assumed).
+        if on
+            && self.engine.program.objects[object]
+                .page
+                .as_ref()
+                .is_some_and(|p| !p.extensions.is_empty())
+        {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SaveValuesWithExtensions);
+        }
+        on
     }
 
     fn var_slots(&self, st: &St) -> Vec<usize> {
@@ -1785,7 +1825,7 @@ impl Session {
     /// TestPageField_Caption_UnresolvedCaptionClass_ReturnsExpressionUnchanged;
     /// autoformat/TestCaptionClassResolverFailure.al: an error the subscriber raises reaches the
     /// open, and a subscriber that claims nothing changes nothing). The language handed to the
-    /// event is assumed to be 1033 (docs/probes-needed.md).
+    /// event is the session language (types/PSCaptionClass.al).
     fn caption_class_text(&mut self, st: &St, text: &str) -> Result<String, Signal> {
         if let Some(rest) = text.strip_prefix("3,") {
             return Ok(rest.to_string());
@@ -1794,6 +1834,26 @@ impl Session {
         if text.contains(',') && area.trim().parse::<u32>().is_ok() {
             return unsupported(format!("CaptionClass `{text}` is resolved by the platform"));
         }
+        let _ = st;
+        self.raise_resolve_caption_class(area, expr, text)
+    }
+
+    /// `CaptionClassTranslate(Text)`: area 3 gives the text after the first comma without an event ('3,One,Two' is
+    /// `One,Two`, '3,' is empty); a text with no comma and the empty text come back unchanged without an event; any other
+    /// area raises OnResolveCaptionClass of the Caption Class codeunit with the area, the rest after the first comma and the
+    /// session language, and comes back unchanged when no subscriber resolves it (corpus types/PSCaptionClass.al:5-8,
+    /// CaptionClassTranslate_Expressions).
+    pub(crate) fn caption_class_translate(&mut self, text: &str) -> Result<String, Signal> {
+        let Some((area, expr)) = text.split_once(',') else {
+            return Ok(text.to_string());
+        };
+        if area == "3" {
+            return Ok(expr.to_string());
+        }
+        self.raise_resolve_caption_class(area, expr, text)
+    }
+
+    fn raise_resolve_caption_class(&mut self, area: &str, expr: &str, text: &str) -> Result<String, Signal> {
         if !self
             .engine
             .events
@@ -1801,7 +1861,6 @@ impl Session {
         {
             return Ok(text.to_string());
         }
-        let _ = st;
         let names: Vec<String> = ["CaptionArea", "CaptionExpr", "Language", "Caption", "Resolved"]
             .iter()
             .map(|n| n.to_string())
@@ -1809,7 +1868,7 @@ impl Session {
         let mut args = vec![
             Value::Text(area.to_string()),
             Value::Text(expr.to_string()),
-            Value::Integer(1033),
+            Value::Integer(self.global_language),
             Value::Text(String::new()),
             Value::Boolean(false),
         ];
@@ -2591,6 +2650,11 @@ impl Session {
         if st.borrow().open {
             return unsupported("running a page that is already open");
         }
+        if modal {
+            if let Some(handler) = self.take_typed_modal_handler(object) {
+                return self.answer_typed_modal(&st, record, handler);
+            }
+        }
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
         st.borrow_mut().modal = modal && !trapped;
         let handler = self.open_page(&st, PageMode::Edit, record, if trapped { None } else { Some(kind) })?;
@@ -2598,6 +2662,73 @@ impl Session {
             return Ok(Value::Null);
         };
         self.answer_page(&st, handler, modal)
+    }
+
+    /// A `[ModalPageHandler]` typed as the Page itself (handlers/PSModalPageHandlerTyped.al): the handler gets the page
+    /// object the code ran, never opened. `GetRecord` gives the record `RunModal` was given (an empty one when none),
+    /// `LookupMode` is Yes, `SetRecord` and `GetRecord` work on it, `Response` arrives as None, and the value the
+    /// handler leaves in it is what `Page.RunModal` answers. Whether the page's own triggers run is not pinned, so a
+    /// page that declares one is refused.
+    fn answer_typed_modal(&mut self, st: &St, record: Option<Rec>, handler: Handler) -> Result<Value, Signal> {
+        for t in [
+            "oninit",
+            "onopenpage",
+            "onclosepage",
+            "onqueryclosepage",
+            "onaftergetrecord",
+            "onaftergetcurrrecord",
+            "onfindrecord",
+            "onnextrecord",
+        ] {
+            if self.declares(st, t) {
+                return unsupported(format!(
+                    "a Page-typed ModalPageHandler for a page that declares {t} (whether its triggers run is not pinned)"
+                ));
+            }
+        }
+        self.page_instance(st)?;
+        if self.has_source(st) {
+            if let Some(r) = &record {
+                let rec = self.page_rec(st);
+                rec.borrow_mut().fields = r.borrow().fields.clone();
+            }
+        }
+        {
+            let mut s = st.borrow_mut();
+            s.lookup = true;
+            s.typed_handler = true;
+            s.cursor = Cursor::Row;
+        }
+        let (hobject, hroutine, hinst) = handler;
+        let none = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .position(|m| *m == "None")
+            .unwrap_or(0) as i32;
+        let members: std::sync::Arc<[String]> = al_builtins::value::ACTION_MEMBERS
+            .iter()
+            .map(|m| m.to_string())
+            .collect();
+        self.page_handler_depth += 1;
+        let handled = self.call(
+            hobject,
+            hroutine,
+            hinst,
+            vec![Value::TestPage(st.clone()), Value::Option(none, members)],
+        );
+        self.page_handler_depth -= 1;
+        {
+            let mut s = st.borrow_mut();
+            s.typed_handler = false;
+            s.cursor = Cursor::None;
+        }
+        let (_, finals) = handled?;
+        match finals.get(1) {
+            Some(v @ Value::Option(..)) => Ok(v.clone()),
+            other => unsupported(format!(
+                "a Page-typed ModalPageHandler left {} in Response",
+                other.describe()
+            )),
+        }
     }
 
     /// Hands the open page `st` to its handler, closes it if the handler left it open, and for a
@@ -3276,6 +3407,8 @@ impl Session {
                 // (corpus testpageclose/TestPageClosingActions.al).
                 return self.close_with(st, name, true, true);
             }
+            // The built-in OK and Cancel are visible (report/TestProbeReportContracts.al:RequestPage_InvokeActionNotFound).
+            ControlTarget::BuiltIn(_) if m == "Visible" => return Ok(Value::Boolean(true)),
             _ => return unsupported(format!("{method} on a built-in control")),
         };
         // The data items and actions of a report's request page.
@@ -3417,7 +3550,9 @@ impl Session {
                 let name = if m == "HideValue" { "hidevalue" } else { "showmandatory" };
                 let engine = self.engine();
                 match page_of(&engine, st).controls[idx].prop(name) {
-                    None => Ok(Value::Boolean(false)),
+                    // ShowMandatory is true when the page says nothing (handlers/TestProbePageHandlerContracts.al:
+                    // TestPage_Members_ShowMandatoryHideValue_Defaults); HideValue is false.
+                    None => Ok(Value::Boolean(m == "ShowMandatory")),
                     Some(ir::PropVal::Lit(l)) => Ok(Value::Boolean(unquote(l).eq_ignore_ascii_case("true"))),
                     Some(_) => unsupported(format!("TestField.{m} of a computed property")),
                 }
@@ -3784,7 +3919,26 @@ impl Session {
         // saved, and the saved row is read again: OnAfterGetRecord of the base runs before the
         // action (corpus handlers/TestPageExtensionBaseAccessContracts.al:338-342, where the base
         // copies a variable an extension control set into a variable the action logs).
-        if was_dirty && !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+        // A page with OnAfterGetRecord reads that row as a clean page does, and nothing more
+        // (pageext/PCCurrRecordReads.al:Card_DirtyPage_ReadsAfterEachAction and
+        // List_DirtyPage_ReadsAfterEachAction: one OnAfterGetRecord before the action body, no
+        // OnAfterGetCurrRecord); the reads after it follow below.
+        let dirty_reread_only = was_dirty
+            && self.declares(st, "onaftergetrecord")
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord")
+            && self.has_source(st)
+            && st.borrow().open
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && page_of(&engine, st).controls[idx].run_object.is_none()
+            && page_of(&engine, st).controls[idx].trigger("onaction").is_some();
+        if dirty_reread_only && st.borrow().host.is_none() {
+            // The edit reaches the server with the action, so the rows read after it hold it
+            // (Name reads 'dirty' after the action in the same tests).
+            self.save_row(st)?;
+        }
+        if was_dirty && !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") && !dirty_reread_only {
             st.borrow_mut().refresh = true;
             self.run_refresh(st)?;
             st.borrow_mut().refresh = false;
@@ -3793,7 +3947,7 @@ impl Session {
         // pageext/PCCurrRecordReads.al:Card_ReadsAfterEachAction and List_ReadsAfterEachAction: one
         // OnAfterGetRecord before the action's own trigger, only when the row is not dirty, which has
         // its re-read above).
-        let reads_rows = !was_dirty
+        let reads_rows = (!was_dirty || dirty_reread_only)
             && self.declares(st, "onaftergetrecord")
             && !self.declares(st, "onfindrecord")
             && !self.declares(st, "onnextrecord")
@@ -4313,6 +4467,16 @@ impl Session {
         if let Value::Library(name, _) = v {
             return unsupported(format!("control text of a {name} value"));
         }
+        // A control with HideValue = true shows no value (handlers/TestProbePageHandlerContracts.al:
+        // TestPage_Members_ShowMandatoryHideValue_Defaults, `hidevalue_field_value` is empty).
+        {
+            let engine = self.engine();
+            if let Some(ir::PropVal::Lit(l)) = page_of(&engine, st).controls[idx].prop("hidevalue") {
+                if unquote(l).eq_ignore_ascii_case("true") {
+                    return Ok(String::new());
+                }
+            }
+        }
         let f = self.control_format(st, idx)?;
         let engine = self.engine();
         let caption = move |id: u32, ordinal: i32| {
@@ -4456,7 +4620,10 @@ impl Session {
             page_of(&engine, st).controls[idx].binding,
             ir::Binding::Var(_) | ir::Binding::BaseVar(_)
         ) || (st.borrow().lookup && self.is_list_page(st))
-            || st.borrow().editable_off;
+            || st.borrow().editable_off
+            // A request page that says `Editable = false` makes its variable-bound fields read No too
+            // (handlers/PSRequestPageEditable.al Editable_RequestPageEditableFalse).
+            || (self.is_request_page(st) && !self.page_editable(st));
         // A label is never editable (handlers/TestPageLabelControlContracts.al). A cuegroup with
         // `Editable = false` makes its fields read No (handlers/TestPageCueGroupFixedGridContracts.al:
         // CueGroup_SetValue_IsSilentlyIgnored).

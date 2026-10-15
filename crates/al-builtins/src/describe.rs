@@ -172,6 +172,7 @@ impl Describe for Scalar {
         match self {
             Scalar::Null => "a JSON null".into(),
             Scalar::Undefined => "an undefined JSON value".into(),
+            Scalar::Raw(t) => format!("the JSON number {t}"),
             Scalar::Val(v) => v.describe(),
         }
     }
@@ -198,6 +199,7 @@ impl Describe for Signal {
             Signal::Error(e) => e.message.clone(),
             Signal::Exit(_) => "an Exit".into(),
             Signal::Break => "a Break".into(),
+            Signal::Continue => "a Continue".into(),
             Signal::Unsupported(why) => why.clone(),
         }
     }

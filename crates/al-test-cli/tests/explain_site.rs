@@ -21,12 +21,12 @@ codeunit 63100 T
     end;
 
     [Test]
-    procedure DividesByZero()
+    procedure ReadsTheUndefinedDate()
     var
-        a: Decimal;
+        a: Integer; d: Date;
     begin
         a := 0;
-        a := 1 / a;
+        a := Date2DMY(d, 1);
     end;
 
     [Test]
@@ -147,14 +147,14 @@ fn a_failure_names_the_error_and_every_routine_it_left_with_its_line() {
 #[test]
 fn a_refusal_while_running_names_the_statement() {
     let (_, rows) = run();
-    let (_, outcome, d) = of(&rows, "DividesByZero");
+    let (_, outcome, d) = of(&rows, "ReadsTheUndefinedDate");
     assert!(
-        matches!(outcome, Outcome::NotRun(r) if r.contains("division by zero")),
+        matches!(outcome, Outcome::NotRun(r) if r.contains("Date2DMY of an undefined date")),
         "{outcome:?}"
     );
     assert_eq!(d.refused_in, None);
     assert_eq!(d.raised_in.len(), 1);
-    assert_eq!(d.raised_in[0].who, "codeunit 63100 \"T\".DividesByZero");
+    assert_eq!(d.raised_in[0].who, "codeunit 63100 \"T\".ReadsTheUndefinedDate");
     assert_eq!(d.raised_in[0].at, "a: src/t.al:18:9");
     let text = explain::render("head", outcome, "passes", Some(d));
     assert!(
@@ -167,7 +167,7 @@ fn a_refusal_while_running_names_the_statement() {
 fn an_error_that_was_caught_does_not_stand_for_a_later_one() {
     let (_, rows) = run();
     let (_, outcome, d) = of(&rows, "AssertErrorIsCaught_ThenSecondErrorEscapes");
-    // DividesByZero, which runs before it, was refused while it ran, so a failure of this codeunit is
+    // ReadsTheUndefinedDate, which runs before it, was refused while it ran, so a failure of this codeunit is
     // reported as not run (runtime.rs: the shared state is no longer BC's); the error is still the
     // second one, and `--explain` still shows where it was raised.
     assert!(

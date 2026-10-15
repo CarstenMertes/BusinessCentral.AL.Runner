@@ -321,6 +321,9 @@ pub struct PageState {
     pub lower_key: Option<Vec<Value>>,
     /// The record `Page.SetRecord` handed a page variable, shown when the page runs.
     pub set_record: Option<Rc<RefCell<RecordState>>>,
+    /// A `Page`-typed modal handler is running on this page: the page never opened, `GetRecord` and `SetRecord`
+    /// read and write its Rec (handlers/PSModalPageHandlerTyped.al).
+    pub typed_handler: bool,
     /// For a part: the page that hosts it and the index of the part control on that page.
     pub host: Option<(std::rc::Weak<RefCell<PageState>>, usize)>,
     /// The instances of the page's extensions (extension object, instance): they share the page's
@@ -396,6 +399,7 @@ impl PageState {
             hidden_parts: Vec::new(),
             lower_key: None,
             set_record: None,
+            typed_handler: false,
             host: None,
             ext_instances: Vec::new(),
             parameters_wanted: false,
@@ -636,6 +640,9 @@ pub struct Buffer {
     pub unsure: FieldSet,
     /// The primary key of the row fetched, when the buffer is partial (`None` for a full one).
     pub row: Option<String>,
+    /// `Clear` kept this buffer: it carries over to a fetch of the same row only; a fetch of another row starts afresh
+    /// (record/TestRecordPartialLoadNarrowAfterFetch.al:121-185).
+    pub cleared: bool,
 }
 
 /// Partial-record state of a record variable. A default one is a full load that fetched nothing.
@@ -794,6 +801,10 @@ pub struct Instance {
     pub object: u32,
     pub globals: Vec<Value>,
     pub initialized: bool,
+    /// A report variable a `Run` just reset: its next method call other than `Run` runs `OnInitReport` again,
+    /// a `Run` does not (report/TestProbeReportContracts.al:ReportVariable_RunTwice_GlobalsReset against
+    /// handlers/TestReportRuntimeContracts.al:Report_Run_ResetsTheGlobals_NotOnInitReport_RunTwiceIsAllowed_ExecuteTwiceThrows).
+    pub rerun: bool,
     /// For the instance of a page or report extension: the instance of the page or report it
     /// extends (ADR-023). `Weak`, so the link adds no reference cycle. `None` for every other
     /// instance.

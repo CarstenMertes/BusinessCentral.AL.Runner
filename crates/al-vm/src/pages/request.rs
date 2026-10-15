@@ -108,7 +108,12 @@ impl Session {
             return unsupported("a request page without a handler");
         };
         self.page_handler_depth += 1;
+        // The handler of a `RunRequestPage` finds no transaction, while the page's own triggers write as ever
+        // (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler; handlers/TestReportInstanceRunReqPage.al
+        // writes a log row from OnOpenPage).
+        let outer = std::mem::replace(&mut self.request_only_page, want_parameters);
         let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
+        self.request_only_page = outer;
         self.page_handler_depth -= 1;
         if let Err(e) = handled {
             self.mark_closed(&st);
@@ -356,14 +361,21 @@ impl Session {
                         Value::Option(n, _) | Value::Enum(_, n) => n.to_string(),
                         other => al_builtins::format::try_format(other, 0, 9, self).map_err(Signal::Unsupported)?,
                     };
+                    // The parameter carries the name of the variable, not of the control (report/TestProbeReportContracts.al:
+                    // RunRequestPage_ParametersText: control OptName shows variable NameValue).
+                    let var_name = engine.program.objects[who.unwrap_or(object)]
+                        .globals
+                        .get(slot)
+                        .map_or_else(|| c.name.clone(), |g| g.name.clone());
                     options.push_str(&format!(
                         "<Field name=\"{}\">{}</Field>",
-                        xml_escape(&c.name),
+                        xml_escape(&var_name),
                         xml_escape(&text)
                     ));
                 }
                 (ir::ControlKind::DataItem, ir::Binding::Var(slot)) => {
-                    self.require_filters_shown(object)?;
+                    // ShowFilter = false still writes the data item with its view (report/TestProbeReportContracts.al:
+                    // RequestPage_ShowFilterFalse); only the item's filter methods stay refused.
                     let rec = match inst.borrow().globals[*slot].clone() {
                         Value::Record(r) => r,
                         other => {
@@ -430,13 +442,17 @@ impl Session {
             .and_then(|r| r.split("</Options>").next())
             .unwrap_or("");
         for (name, text) in named_elements(options, "Field") {
-            let Some(c) = page
-                .controls
-                .iter()
-                .find(|c| c.kind == ir::ControlKind::Field && c.name == name)
-            else {
+            let Some(c) = page.controls.iter().find(|c| {
+                c.kind == ir::ControlKind::Field
+                    && c.binding.var_slot(c.owner).is_some_and(|(slot, who)| {
+                        engine.program.objects[who.unwrap_or(object)]
+                            .globals
+                            .get(slot)
+                            .is_some_and(|g| g.name == name)
+                    })
+            }) else {
                 return unsupported(format!(
-                    "a parameter for the control {name}, which the request page does not have"
+                    "a parameter for the variable {name}, which no control of the request page shows"
                 ));
             };
             let Some((slot, who)) = c.binding.var_slot(c.owner) else {

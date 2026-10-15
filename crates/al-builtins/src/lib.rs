@@ -10,6 +10,7 @@ pub mod wsac;
 pub mod xml;
 pub mod xmlport;
 
+pub mod assumptions;
 pub mod catalog;
 pub mod collation;
 pub mod collections;
@@ -34,6 +35,7 @@ pub mod ops;
 pub mod pagebuiltins;
 pub mod pagefmt;
 pub mod platform;
+pub mod platform_native;
 pub mod querybuiltins;
 pub mod refs;
 pub mod sessionfns;

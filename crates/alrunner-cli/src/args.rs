@@ -7,6 +7,8 @@ use std::path::PathBuf;
 pub enum Command {
     Help,
     Version,
+    /// `alrunner --list-assumptions`: the registry of unprobed assumptions with the counts of the last run.
+    ListAssumptions(Option<PathBuf>),
     Test(Box<TestArgs>),
     /// `alrunner warm`: find (or download) the demo backup and build its index.
     Warm(Box<TestArgs>),
@@ -33,12 +35,31 @@ pub struct TestArgs {
     /// `--filter TEXT`: select the tests whose name contains TEXT (any case).
     pub filters: Vec<String>,
     pub junit: Option<PathBuf>,
+    /// `--output-json [FILE]`: the v2-shaped JSON document. `Some(None)`: on stdout, and the human report goes to
+    /// stderr. `Some(Some(file))`: written to the file, the report stays on stdout.
+    pub output_json: Option<Option<PathBuf>>,
+    /// `--isolation codeunit|test|disabled`: the isolation of every test codeunit (default: Codeunit).
+    pub isolation: Option<al_testrun::isolation::TestIsolation>,
+    /// `--exclude-test TEXT`: tests whose name matches are left out of the selection. Repeatable.
+    pub excludes: Vec<String>,
+    /// `--test-exact NAME`: the test whose method name or `Codeunit<ID>.<Method>` is exactly NAME. Repeatable.
+    pub exact: Vec<String>,
+    /// `--define SYMBOL`: a preprocessor symbol for the apps. Repeatable. `--preprocessor-symbols A,B` adds several.
+    pub defines: Vec<String>,
+    /// `--coverage`: count the statements of the APPs each test runs.
+    pub coverage: bool,
+    /// `--coverage-out FILE`: write Cobertura XML there (implies `--coverage`; default `coverage.cobertura.xml`).
+    pub coverage_out: Option<PathBuf>,
+    /// `--coverage-json FILE`: write the statements and the statements of each test as JSON (implies `--coverage`).
+    pub coverage_json: Option<PathBuf>,
     /// `--explain TEST`: run one test and say where it was refused or failed.
     pub explain: Option<String>,
     /// `--top-refusals [N]`: how many refusal reasons to list (default 10).
     pub top_refusals: Option<usize>,
     /// `--top-failures [N]`: how many failure messages to list, ranked (default 10).
     pub top_failures: Option<usize>,
+    /// `--top-assumptions [N]`: the unprobed assumptions the tests ran through, ranked by flagged passes.
+    pub top_assumptions: Option<usize>,
     /// `--refusal-detail TEXT`: the reasons that contain TEXT, grouped finer than `--top-refusals`.
     pub refusal_detail: Option<String>,
     pub allow_not_run: bool,
@@ -53,6 +74,8 @@ pub struct TestArgs {
     pub test_timeout_secs: Option<u64>,
     pub require_dotnet: bool,
     pub files_dir: Option<PathBuf>,
+    /// `--environment saas|onprem`: what Environment Information answers (default saas, as probed).
+    pub environment: Option<al_host::Environment>,
     /// `--test-data [PATH]`: restore a CRONUS company from a BC backup (ADR-020).
     pub test_data: bool,
     /// `--no-test-data`: run without company data. Test data is on by default (ADR-020, owner
@@ -142,10 +165,42 @@ OUTPUT
     --top-refusals [N]   List the N most common reasons tests were not run (default 10).
     --top-failures [N]   List the N most common failure messages (default 10), numbers and quoted
                          values folded.
+    --top-assumptions [N]  List the N unprobed assumptions most passes ran through (default 10). A pass
+                         that went through one is a FLAGGED pass: the summary counts it (N passed (M
+                         flagged: rely on unprobed assumptions)), --junit lists its assumption ids in a
+                         property, --explain names them. --list-assumptions (alone) prints the registry with the
+                         counts of the last run.
     --refusal-detail TEXT  List the not-run reasons that contain TEXT (site and call arguments
                          folded, names kept), most common first (default 30 lines).
     --junit FILE         Write JUnit XML. A test that did not run is <skipped> with its reason.
+    --output-json [FILE] Write one JSON document of the shape of AL Runner v2: `tests[]` with
+                         `name` (`Codeunit<ID>.<Method>`), `status` (`pass`, `fail`, `error`),
+                         `durationMs`, `message`, `stackTrace`, and `passed`, `failed`, `errors`,
+                         `skipped`, `total`, `notRun`, `exitCode`, `wallSeconds`. A test that did not
+                         run is `error` with the message `NotRun: out-of-scope: <reason>`; one the
+                         time limit stopped is `error` with `Test exceeded <N>s timeout.`. Without
+                         FILE the document is the only thing on stdout and the report goes to
+                         stderr. `--output-json=FILE` also works. See docs/integrations/migrating-tools-to-v3.md.
     --timings            Compile phases and the slowest test codeunits.
+
+COVERAGE
+    --coverage           Count how often each statement of the APPs runs, per test. Writes Cobertura XML to
+                         `coverage.cobertura.xml` (see --coverage-out). Off, a run pays one branch per statement.
+    --coverage-out FILE  Write the Cobertura XML to FILE (implies --coverage). Files are named relative to
+                         the working directory when they lie below it; a line has the runs of the
+                         statements that start on it.
+    --coverage-json FILE Write a JSON document with `coverage` ([{file, statements: [{id, scope, line,
+                         column, endLine, hits}]}]) and `perTestCoverage` ([{test, coverage: [...]}]) (implies --coverage): every statement with
+                         its runs, and for each test the statements it ran. File names are absolute with
+                         forward slashes (`archive.zip!/inner/path.al` inside a package). Statements are the
+                         ones the lowering marks, one per AL statement.
+
+ISOLATION
+    --isolation MODE     `codeunit` (default): the database is rolled back when a test codeunit ends.
+                         `test` (also `function`, `method`): it is rolled back to its state after OnRun
+                         after every test method; the codeunit's AL variables are kept, as BC's
+                         TestIsolation = Function does. `disabled`: not pinned, so every test is
+                         reported as not run.
 
 EXIT CODES
     0  every selected test passed
@@ -183,8 +238,17 @@ TEST DATA
     tables the reader failed on (with its text), and columns left out.
 
 OTHER
+    --environment ENV    The server Environment Information describes: `saas` (default; the probed
+                         sandbox: IsSaaS and IsSandbox Yes) or `onprem` (IsSaaS and IsSandbox No
+                         until a test library's SetTestability* calls change them; Microsoft's own
+                         test suites expect this, for example codeunit 134614). The on-prem values
+                         are an unprobed assumption (docs/probes-needed.md).
     --files-dir DIR      Let the File data type read and write real files under DIR.
-    --test-timeout-secs N  A test that uses more than N seconds of CPU time (default 20; the
+    --define SYMBOL      A preprocessor symbol (`#if SYMBOL`) for the APPs. Repeatable.
+                         `--preprocessor-symbols A,B` names several.
+    --auto-provision     Accepted and ignored (v2 downloaded platform apps with it; v3 always does,
+                         unless --no-download).
+    --test-timeout-secs N  (`--test-timeout N` is the same) A test that uses more than N seconds of CPU time (default 20; the
                          load of the machine does not count; a test that hangs without
                          computing is stopped at 10 times N of wall time) is stopped at its
                          next loop iteration and reported as not run, with the limit as the
@@ -193,6 +257,8 @@ OTHER
     --dotnet-timeout-secs N, --require-dotnet     The optional .NET helper (ADR-014).
 
 ENVIRONMENT
+    ALRUNNER_TEST_TIMEOUT, AL_RUNNER_TEST_TIMEOUT_SEC  The test time limit in seconds when
+    --test-timeout-secs is not given (the second is AL Runner v2's name).
     AL_CHECK_THREADS, AL_LOWER_THREADS, AL_TEST_THREADS  Worker threads of the check, the
     lowering and the test codeunits (default: one per core).
 ";
@@ -237,6 +303,17 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     match first.as_str() {
         "--help" | "-h" | "help" => return Ok(Command::Help),
         "--version" | "-V" | "version" => return Ok(Command::Version),
+        "--list-assumptions" => {
+            // `--list-assumptions [--cache-dir DIR]`: the counts come from the last run that left them in the cache.
+            let mut dir = None;
+            while let Some(f) = it.next() {
+                match f.as_str() {
+                    "--cache-dir" => dir = it.next().map(PathBuf::from),
+                    other => return Err(format!("unknown option `{other}` for --list-assumptions")),
+                }
+            }
+            return Ok(Command::ListAssumptions(dir));
+        }
         "test" => {}
         "warm" => return parse_warm(it),
         "run" | "serve" | "debug" | "deps" | "package" | "helper" | "doctor" | "migrate" | "guide" => {
@@ -267,6 +344,24 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             a.top_refusals = Some(n);
             continue;
         }
+        if flag == "--list-assumptions" {
+            return Ok(Command::ListAssumptions(a.cache_dir.clone()));
+        }
+        if flag == "--top-assumptions" {
+            let n = match it.peek() {
+                Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) => {
+                    let v = it.next().unwrap_or_default();
+                    let n = number("--top-assumptions", &v)?;
+                    if n == 0 {
+                        return Err("--top-assumptions needs a count of at least 1".into());
+                    }
+                    n
+                }
+                _ => DEFAULT_TOP,
+            };
+            a.top_assumptions = Some(n);
+            continue;
+        }
         if flag == "--top-failures" {
             let n = match it.peek() {
                 Some(v) if !v.is_empty() && v.bytes().all(|b| b.is_ascii_digit()) => {
@@ -280,6 +375,18 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 _ => DEFAULT_TOP,
             };
             a.top_failures = Some(n);
+            continue;
+        }
+        if flag == "--output-json" {
+            // The file is optional and an APP is positional: only a name that ends in `.json` is the file.
+            a.output_json = Some(match it.peek() {
+                Some(v) if v.to_ascii_lowercase().ends_with(".json") => it.next().map(PathBuf::from),
+                _ => None,
+            });
+            continue;
+        }
+        if let Some(path) = flag.strip_prefix("--output-json=") {
+            a.output_json = Some(Some(PathBuf::from(path)));
             continue;
         }
         if flag == "--test-data" {
@@ -316,6 +423,35 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                     .push(v.parse().map_err(|_| format!("{flag} needs an object id, got `{v}`"))?);
             }
             "--filter" | "--test" => a.filters.push(text()?),
+            "--coverage" => a.coverage = true,
+            "--coverage-out" => {
+                a.coverage = true;
+                a.coverage_out = Some(text()?.into());
+            }
+            "--coverage-json" => {
+                a.coverage = true;
+                a.coverage_json = Some(text()?.into());
+            }
+            "--test-exact" => a.exact.push(text()?),
+            "--exclude-test" => a.excludes.push(text()?),
+            "--define" => a.defines.push(text()?),
+            "--preprocessor-symbols" => a.defines.extend(
+                text()?
+                    .split(',')
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(String::from),
+            ),
+            "--auto-provision" => {}
+            "--isolation" | "--test-isolation" => {
+                let v = text()?;
+                a.isolation = Some(match v.to_ascii_lowercase().as_str() {
+                    "codeunit" => al_testrun::isolation::TestIsolation::Codeunit,
+                    "test" | "function" | "method" => al_testrun::isolation::TestIsolation::Function,
+                    "disabled" => al_testrun::isolation::TestIsolation::Disabled,
+                    _ => return Err(format!("{flag} needs codeunit, test or disabled, got `{v}`")),
+                });
+            }
             "--refusal-detail" => a.refusal_detail = Some(text()?),
             "--junit" => a.junit = Some(text()?.into()),
             "--explain" => a.explain = Some(text()?),
@@ -324,6 +460,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--quiet" | "-q" => a.quiet = true,
             "--timings" => a.timings = true,
             "--files-dir" => a.files_dir = Some(text()?.into()),
+            "--environment" => a.environment = Some(text()?.parse().map_err(|e| format!("--environment: {e}"))?),
             "--dotnet-sidecar" => a.dotnet_sidecar = Some(text()?.into()),
             "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(text()?.into()),
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
@@ -332,7 +469,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 let v = text()?;
                 a.dotnet_timeout_secs = Some(number(&flag, &v)? as u64);
             }
-            "--test-timeout-secs" => {
+            "--test-timeout-secs" | "--test-timeout" => {
                 let v = text()?;
                 a.test_timeout_secs = Some(number(&flag, &v)? as u64);
             }
@@ -422,6 +559,57 @@ mod tests {
     }
 
     #[test]
+    fn the_flags_of_the_v2_tools_parse() {
+        use al_testrun::isolation::TestIsolation as I;
+        let a = test_args(
+            "test A --isolation test --exclude-test Codeunit1.X --exclude-test Y --test-exact Codeunit1.Z --define FOO \
+             --preprocessor-symbols A,B --auto-provision --test-timeout 7 --test Codeunit1.Z",
+        );
+        assert_eq!(a.isolation, Some(I::Function));
+        assert_eq!(a.excludes, vec!["Codeunit1.X", "Y"]);
+        assert_eq!(a.exact, vec!["Codeunit1.Z"]);
+        assert_eq!(a.defines, vec!["FOO", "A", "B"]);
+        assert_eq!(a.test_timeout_secs, Some(7));
+        assert_eq!(a.filters, vec!["Codeunit1.Z"]);
+        assert_eq!(test_args("test A --isolation codeunit").isolation, Some(I::Codeunit));
+        assert_eq!(
+            test_args("test A --test-isolation disabled").isolation,
+            Some(I::Disabled)
+        );
+        assert!(
+            p("test A --isolation nope")
+                .unwrap_err()
+                .contains("codeunit, test or disabled")
+        );
+    }
+
+    #[test]
+    fn coverage_flags_turn_coverage_on() {
+        assert!(!test_args("test A").coverage);
+        assert!(test_args("test A --coverage").coverage);
+        let a = test_args("test A --coverage-out c.xml --coverage-json c.json");
+        assert!(a.coverage);
+        assert_eq!(a.coverage_out, Some(PathBuf::from("c.xml")));
+        assert_eq!(a.coverage_json, Some(PathBuf::from("c.json")));
+    }
+
+    #[test]
+    fn output_json_takes_a_file_only_when_the_name_ends_in_json() {
+        assert_eq!(test_args("test A --output-json").output_json, Some(None));
+        assert_eq!(
+            test_args("test A --output-json r.json").output_json,
+            Some(Some(PathBuf::from("r.json")))
+        );
+        assert_eq!(
+            test_args("test A --output-json=out/r.txt").output_json,
+            Some(Some(PathBuf::from("out/r.txt")))
+        );
+        let a = test_args("test --output-json A");
+        assert_eq!(a.output_json, Some(None));
+        assert_eq!(a.apps, vec![PathBuf::from("A")]);
+    }
+
+    #[test]
     fn refusal_detail_takes_a_text() {
         assert_eq!(
             test_args("test A --refusal-detail is_not_lowered")
@@ -438,6 +626,18 @@ mod tests {
         let a = test_args("test --top-failures A");
         assert_eq!(a.apps, vec![PathBuf::from("A")]);
         assert!(p("test A --top-failures 0").is_err());
+    }
+
+    #[test]
+    fn assumption_options_parse() {
+        assert_eq!(test_args("test A --top-assumptions").top_assumptions, Some(DEFAULT_TOP));
+        assert_eq!(test_args("test A --top-assumptions 3").top_assumptions, Some(3));
+        assert_eq!(p("--list-assumptions").unwrap(), Command::ListAssumptions(None));
+        assert_eq!(
+            p("--list-assumptions --cache-dir /c").unwrap(),
+            Command::ListAssumptions(Some("/c".into()))
+        );
+        assert!(p("--list-assumptions --nope").is_err());
     }
 
     #[test]

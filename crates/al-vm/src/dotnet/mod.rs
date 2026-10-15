@@ -2,6 +2,7 @@
 //! provider, then refusal. Marshalling between AL values and the host's wire values lives here
 //! too.
 
+pub mod compression;
 pub mod policy;
 pub mod registry;
 pub mod server_classes;
@@ -418,6 +419,7 @@ impl Session {
             self.write(var, item, f)?;
             match self.exec_block(body, f) {
                 Err(Signal::Break) => return Ok(()),
+                Err(Signal::Continue) => {}
                 r => r?,
             }
         }
@@ -477,6 +479,9 @@ impl Session {
         count: Option<i64>,
     ) -> Result<(), Signal> {
         let engine = self.engine.clone();
+        if let Some(r) = compression::write_into(out, src, count) {
+            return r;
+        }
         let host_stream = |v: &Value| -> Result<Option<(DotNetHandle, String)>, Signal> {
             match v {
                 Value::DotNet(o) => match &o.kind {

@@ -49,6 +49,11 @@ fn run() -> Result<ExitCode, String> {
         }
         Parsed::Run(a) => *a,
     };
+    if args.list_assumptions {
+        let root = al_deps::cache::cache_root_from_env(args.cache_dir.as_deref());
+        print!("{}", al_testrun::flagged::list(&root));
+        return Ok(ExitCode::SUCCESS);
+    }
     if !args.timings_tables.is_empty() {
         let mut ts = Vec::new();
         for f in &args.timings_tables {
@@ -56,6 +61,9 @@ fn run() -> Result<ExitCode, String> {
         }
         print!("{}", output::timings_table(&ts));
         return Ok(ExitCode::SUCCESS);
+    }
+    if let Some(env) = args.environment {
+        al_test_cli::host::set_environment(env);
     }
     if let Some(dir) = &args.files_dir {
         al_test_cli::host::set_files_dir(dir.clone());
@@ -484,6 +492,8 @@ fn run_version(
         compile_cache,
         test_time_limit: None,
         lazy: Vec::new(),
+        isolation: None,
+        coverage: false,
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(
@@ -585,7 +595,18 @@ fn run_version(
     }
     let outcome = |c: &oracle::CaseId| rt.outcome(c);
     let area_of = |cu: u32| index.area_of(cu).map(str::to_string);
-    let mut rep = report::build(&cases, &area_of, &outcome);
+    let marks_of = |c: &oracle::CaseId| rt.assumptions_in("", c).to_vec();
+    let mut rep = report::build_with(&cases, &area_of, &outcome, &marks_of);
+    // The assumptions the run went through, ranked; the counts are kept for --list-assumptions.
+    let rows = al_testrun::flagged::rank(
+        rt.results()
+            .iter()
+            .map(|r| (matches!(r.outcome, report::Outcome::Pass), r.assumptions.as_slice())),
+    );
+    if !selecting {
+        al_testrun::flagged::save_hits(&al_deps::cache::cache_root_from_env(args.cache_dir.as_deref()), &rows);
+    }
+    rep.assumptions = report::AssumptionCount::of(&rows);
     rep.dependencies = dependency_summary;
     rep.bc_build = bc_build.clone();
     rep.timings = Some(timings);
@@ -606,6 +627,7 @@ fn run_version(
             &cases,
             &|cu| suite_index.area_of(cu).map(str::to_string),
             &|c| rt.outcome_in(&suite.name, c),
+            &|c| rt.assumptions_in(&suite.name, c).to_vec(),
         );
         if !unmapped.is_empty() {
             return Err(format!(
@@ -633,10 +655,11 @@ fn run_version(
     if let Some(p) = &args.junit {
         write(
             &per_version(p, version.major, all),
-            &output::junit(
+            &output::junit_with(
                 &cases,
                 &outcome,
                 &|c| rt.first_time(c).as_secs_f64(),
+                &marks_of,
                 bc_build.as_deref(),
             ),
         )?;
@@ -651,10 +674,11 @@ fn run_version(
             );
             write(
                 &per_version(&p.with_file_name(name), version.major, all),
-                &output::junit(
+                &output::junit_with(
                     cases,
                     &|c| rt.outcome_in(&suite.name, c),
                     &|c| rt.time_in(&suite.name, c).as_secs_f64(),
+                    &|c| rt.assumptions_in(&suite.name, c).to_vec(),
                     bc_build.as_deref(),
                 ),
             )?;
@@ -668,26 +692,36 @@ fn run_version(
         .cloned()
         .collect();
     println!(
-        "BC {}: {}/{} pass ({:.1}%), {} fail, {} not run",
+        "BC {}: {}/{} pass ({:.1}%){}, {} fail, {} not run",
         version.bc_version,
         rep.overall.pass,
         rep.overall.total,
         rep.overall.rate() * 100.0,
+        flagged_note(rep.overall.flagged),
         rep.overall.fail,
         rep.overall.not_run
     );
     for x in rep.suites.iter().filter(|x| !selecting || x.counts.total > 0) {
         println!(
-            "BC {} {}: {}/{} pass ({:.1}%), {} fail, {} not run; BC fails {} on purpose, the runtime fails {} of them",
+            "BC {} {}: {}/{} pass ({:.1}%){}, {} fail, {} not run; BC fails {} on purpose, the runtime fails {} of them",
             x.oracle_leg,
             x.name,
             x.counts.pass,
             x.counts.total,
             x.counts.rate() * 100.0,
+            flagged_note(x.counts.flagged),
             x.counts.fail,
             x.counts.not_run,
             x.bc_failed,
             x.bc_failed_reproduced
+        );
+    }
+
+    if let Some(n) = args.top_assumptions {
+        println!("\n{}", al_testrun::flagged::render_top(&rows, n));
+    } else if rep.overall.flagged + rep.suites.iter().map(|x| x.counts.flagged).sum::<usize>() > 0 && !selecting {
+        println!(
+            "--top-assumptions ranks the unprobed assumptions the flagged passes ran through; --list-assumptions describes them."
         );
     }
 
@@ -719,6 +753,13 @@ fn run_version(
             "\n{}",
             explain::render(&head, &outcome, oracle_says, rt.detail_in(name, &case.id))
         );
+        let marks = rt.assumptions_in(name, &case.id);
+        if !marks.is_empty() {
+            println!(
+                "{}",
+                al_testrun::flagged::render_explain(marks, outcome == report::Outcome::Pass)
+            );
+        }
         return Ok(VersionRun {
             code: 0,
             oracle: oracle_ok,
@@ -869,6 +910,15 @@ fn run_version(
         oracle: oracle_ok,
         passing,
     })
+}
+
+/// ", M flagged" after a pass rate, or nothing when no pass was flagged.
+fn flagged_note(flagged: usize) -> String {
+    if flagged == 0 {
+        String::new()
+    } else {
+        format!(" (flagged: {flagged} rely on unprobed assumptions)")
+    }
 }
 
 /// The one case `--explain PATTERN` means, as (suite index or `None` for the main app, case): a

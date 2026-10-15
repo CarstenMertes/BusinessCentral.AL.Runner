@@ -1775,7 +1775,11 @@ impl<'a> Checker<'a> {
                 // `Host.OpenView.Invoke()` is the control called OpenView, not the built-in method:
                 // a member that is itself the receiver of another member can only be a control
                 // (corpus handlers/TestPageActionRunPageMode.al: actions named OpenView and OpenEdit).
+                // `Part.Page` is the page the part shows, also when that page has a control called Page (Base
+                // Application's Purch. Invoice Subform has a group "Page"): real BC compiles
+                // `CurrPage.PurchLines.Page.ForceTotalsCalculation()`; no corpus test names a control Page.
                 if matches!(base_ty, Ty::TestPage(_) | Ty::TestRequestPage(_) | Ty::TestPart(_))
+                    && !(matches!(base_ty, Ty::TestPart(_)) && mname.eq_ignore_ascii_case("Page"))
                     && node
                         .parent()
                         .is_some_and(|p| p.kind() == MemberExpr && p.children().next().as_ref() == Some(node))
@@ -1848,6 +1852,11 @@ impl<'a> Checker<'a> {
                             Ty::Array(_, el) if matches!(*el, Ty::Option(_)) => *el,
                             t => t,
                         };
+                        // `Mode::Decompress` on a `DotNet CompressionMode` variable: a static member of the
+                        // .NET type (a .NET enum's member), read like `Mode.Decompress`.
+                        if matches!(&t, Ty::DotNet(alias) if !alias.is_empty()) {
+                            self.record(sc, node, Res::DotNetMember(rhs.clone()));
+                        }
                         self.scope_member(sc, node, &t, &rhs);
                         E::Val(t)
                     }
@@ -2116,6 +2125,17 @@ impl<'a> Checker<'a> {
             self.record(sc, node, res);
             return Some(E::Val(t));
         }
+        // `this.Id` in a query's own code: the running query's column (corpus query/PRQueryOpenColumn.al `PeekThis`).
+        if let Some(rec) = sc.rec.clone() {
+            if matches!(rec, Ty::Object(ObjKind::Query, _)) && sc.self_obj == sc.oi {
+                if let Some(r) = self.field_res(sc, &rec, &n) {
+                    if let Some(e) = self.member(sc, &rec, &n) {
+                        self.record(sc, node, r);
+                        return Some(e);
+                    }
+                }
+            }
+        }
         let own: Vec<Cand> = self.members[sc.self_obj]
             .procedures_named(&n)
             .iter()
@@ -2324,7 +2344,9 @@ impl<'a> Checker<'a> {
                             al_builtins::dotnet_sigs::Ret::Boolean => Ty::Boolean,
                             al_builtins::dotnet_sigs::Ret::Integer => Ty::Integer,
                             al_builtins::dotnet_sigs::Ret::Text => Ty::Text(None),
-                            al_builtins::dotnet_sigs::Ret::Object => Ty::DotNet(String::new()),
+                            al_builtins::dotnet_sigs::Ret::Object | al_builtins::dotnet_sigs::Ret::Void => {
+                                Ty::DotNet(String::new())
+                            }
                         },
                     );
                 return Some(E::Callable(vec![Cand {
@@ -2452,7 +2474,7 @@ impl<'a> Checker<'a> {
                     return Some(E::Callable(c));
                 }
                 if let (Ty::TestPart(part), true) = (t, name.eq_ignore_ascii_case("Page")) {
-                    if resolved.is_some_and(|oi| self.named_section(oi, name).is_none()) {
+                    if resolved.is_some() {
                         return Some(E::Val(Ty::Object(ObjKind::Page, part.clone())));
                     }
                 }
@@ -2787,9 +2809,32 @@ fn fits(arg: &Ty, param: &str) -> bool {
             if param.contains('"') {
                 return arg == param.to_ascii_lowercase();
             }
+            // A `var` list or dictionary takes exactly its own element types: overloads that differ in
+            // them (`GetValues(var List of [JsonValue])` and `(var List of [JsonObject])`) are told
+            // apart by the argument's. Text and Code are one kind and their length does not count.
+            // A built-in's `List of [T]` names a placeholder, not an element type.
+            if matches!(other, Ty::List(_) | Ty::Dictionary(..)) && param.contains('[') && !param.contains("[T") {
+                return generic_shape(&arg) == generic_shape(param);
+            }
             arg.starts_with(p)
         }
     }
+}
+
+/// A `List of [..]` or `Dictionary of [..]` spelled for comparing element types: lower case, no
+/// lengths, Code as Text.
+fn generic_shape(t: &str) -> String {
+    let mut out = String::new();
+    let mut depth_len = false;
+    for c in t.to_ascii_lowercase().chars() {
+        match c {
+            '[' if out.ends_with("text") || out.ends_with("code") => depth_len = true,
+            ']' if depth_len => depth_len = false,
+            _ if depth_len => {}
+            _ => out.push(c),
+        }
+    }
+    out.replace("code", "text")
 }
 
 fn is_field_param(name: &str) -> bool {

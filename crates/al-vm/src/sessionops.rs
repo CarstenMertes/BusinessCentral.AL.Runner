@@ -193,6 +193,32 @@ impl Session {
             // company that states a display name is not modelled.
             return Ok(Value::Text(self.cx.company.clone()));
         }
+        if id == "CompanyProperty.ID#1" {
+            // A Guid that identifies the company; stable for a name (the Company table's SystemId is not modelled).
+            let mut h: u64 = 0xcbf2_9ce4_8422_2325;
+            for b in self.cx.company.bytes() {
+                h = (h ^ u64::from(b)).wrapping_mul(0x0100_0000_01b3);
+            }
+            let mut g = [0u8; 16];
+            g[..8].copy_from_slice(&h.to_le_bytes());
+            g[8..].copy_from_slice(&h.rotate_left(17).to_le_bytes());
+            g[6] = (g[6] & 0x0f) | 0x40;
+            g[8] = (g[8] & 0x3f) | 0x80;
+            return Ok(Value::Guid(g));
+        }
+        if id == "CompanyProperty.UrlName#1" {
+            // The company name as it stands in a URL: unreserved characters kept, the rest percent-encoded
+            // (session/TestProbeSessionMiscContracts.al:Company_Names scrubs both the name and its `%20` form).
+            let mut out = String::new();
+            for b in self.cx.company.bytes() {
+                if b.is_ascii_alphanumeric() || matches!(b, b'-' | b'_' | b'.' | b'~') {
+                    out.push(char::from(b));
+                } else {
+                    out.push_str(&format!("%{b:02X}"));
+                }
+            }
+            return Ok(Value::Text(out));
+        }
         if id == "Database.CompanyName#1" {
             // The company of the session, the same name `Record.CurrentCompany` answers
             // (session/TestDatabase.al:69-75, session/TestSessionFunctions.al:25).
@@ -201,7 +227,9 @@ impl Session {
         match id {
             // The counter has handed out `next_row_version` so far; the database never reports
             // zero (session/TestSystemExtended.al:635-659, TestBCDatabaseContracts.al:100-117).
-            "Database.LastUsedRowVersion#1" => return Ok(Value::BigInteger(self.next_row_version.max(1))),
+            // What the database holds committed: a row inserted in the open transaction does not count yet
+            // (record/TestProbeRecordRefContracts.al:LastUsedRowVersion_StartsAndGrows, `grows_after_insert` No).
+            "Database.LastUsedRowVersion#1" => return Ok(Value::BigInteger(self.committed_row_version.max(1))),
             // Set when given a value, read otherwise; the default is the documented one
             // (docs/probes-needed.md). session/TestSystemExtended.al:608-630 only calls it.
             "Database.LockTimeout#1" => {
@@ -211,6 +239,20 @@ impl Session {
                     Some(other) => return unsupported(format!("LockTimeout with {}", other.describe())),
                 }
                 return Ok(Value::Boolean(self.lock_timeout));
+            }
+            // Set when given a value, read otherwise. Only "positive" is pinned (corpus types/PVLabelSplitForeach.al
+            // on the staging branch: positive, 10 ms on the probe tier, "the exact default is a server setting").
+            "Database.LockTimeoutDuration#1" => {
+                match args.first() {
+                    None | Some(Value::Null) => {}
+                    Some(Value::Duration(d)) => self.lock_timeout_duration = *d,
+                    Some(Value::Integer(i)) => self.lock_timeout_duration = i64::from(*i),
+                    Some(other) => return unsupported(format!("LockTimeoutDuration with {}", other.describe())),
+                }
+                // The catalog types the result as an Integer (a Duration in AL); the id is pinned (pinned_ids.tsv).
+                return Ok(Value::Integer(
+                    i32::try_from(self.lock_timeout_duration).unwrap_or(i32::MAX),
+                ));
             }
             // The type of the transaction (session/ProbeSystemEnumMembers.al:60-161, BC 27.5;
             // TestClearAllTransactionTypeContracts.al:224-253):
@@ -406,9 +448,15 @@ impl Session {
             None => Ok(format!("app{app}")),
             Some(Value::Option(0, _)) => Ok(format!("app{app}")),
             Some(Value::Option(1, _)) => Ok(format!("app{app}:company:{}", self.cx.company)),
-            Some(Value::Option(..)) => {
-                unsupported("IsolatedStorage with a user data scope (needs an identity, ADR-013)")
-            }
+            // The user scopes add the session user (session/TestProbeSessionMiscContracts.al:IsolatedStorage_Behaviour:
+            // nothing was set there, a Get answers false).
+            Some(Value::Option(2, _)) => Ok(format!("app{app}:user:{}", self.host.identity.user_id())),
+            Some(Value::Option(3, _)) => Ok(format!(
+                "app{app}:company:{}:user:{}",
+                self.cx.company,
+                self.host.identity.user_id()
+            )),
+            Some(Value::Option(..)) => unsupported("IsolatedStorage with a data scope the corpus does not name"),
             Some(other) => unsupported(format!("IsolatedStorage with data scope {}", other.describe())),
         }
     }
@@ -463,7 +511,16 @@ impl Session {
                         };
                         Ok(Value::Boolean(true))
                     }
-                    None if found => Ok(Value::Boolean(false)),
+                    // A missing key empties the target (session/TestProbeSessionMiscContracts.al:IsolatedStorage_Behaviour,
+                    // `get_missing` shows `No ` with the variable cleared).
+                    None if found => {
+                        args[target] = if n == 1 || n == 3 {
+                            secret_text(String::new())
+                        } else {
+                            Value::Text(String::new())
+                        };
+                        Ok(Value::Boolean(false))
+                    }
                     None => unsupported("IsolatedStorage.Get of a missing key as a statement (error text not pinned)"),
                 }
             }

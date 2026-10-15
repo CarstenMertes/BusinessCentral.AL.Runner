@@ -214,9 +214,22 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_098, "API Webhook Notification Aggr", Provider::Stored),
 ];
 
+/// Platform tables that only the System app of a later major declares (the registry above is checked against the System app
+/// of the first major the corpus pins, `tests/platform_tables.rs`). Ordinary stored tables here, written by install code:
+/// "Agent Install" (System Application "Agent Upgrade") and "MCP Install" insert into them, and without a provider the install
+/// baseline of those majors stopped at them and left tables unseeded. No corpus test touches them.
+pub const LATER_MAJORS: &[(u32, &str, Provider)] = &[
+    (2_000_000_297, "Agent Creation Control", Provider::Stored),
+    (2_000_000_292, "MCP Configuration", Provider::Stored),
+];
+
 /// The provider of platform table `id`, if it has one.
 pub fn provider(id: u32) -> Option<Provider> {
-    REGISTRY.iter().find(|(i, _, _)| *i == id).map(|(_, _, p)| *p)
+    REGISTRY
+        .iter()
+        .chain(LATER_MAJORS)
+        .find(|(i, _, _)| *i == id)
+        .map(|(_, _, p)| *p)
 }
 
 /// The computed-table provider of platform table `id`, if it is one.
@@ -243,9 +256,9 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al. TableName, Class, Enabled and "Field Caption"
     // are read from the declaration (probe batch 5); Len (6) from the type (record/TestFieldLenAndFeatureKeyContracts.al); Type Name (9), ExternalName (10) and the rest are not.
     (2_000_000_041, &[1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 24, 25, 26, 27]),
-    // Feature Key (BC 27): ID (1), Enabled (2) and Data Update Required (8), record/TestFieldLenAndFeatureKeyContracts.al,
-    // TestFeatureKeyEnabledContracts.al.
-    (2_000_000_211, &[1, 2, 8]),
+    // Feature Key: ID (1), Enabled (2), Mandatory By (5), Can Try (6), Is One Way (7), Data Update Required (8) and Mandatory By Version (9),
+    // record/PFFeatureKeyColumns.al, TestFieldLenAndFeatureKeyContracts.al, TestFeatureKeyEnabledContracts.al.
+    (2_000_000_211, &[1, 2, 5, 6, 7, 8, 9]),
     // Key: record/TestKeyVirtualTable.al.
     (2_000_000_063, &[1, 2, 4, 7, 9, 10, 11, 13]),
     // Page Metadata: record/TestPageMetadata*.al. Caption (3) and CardPageID (6) are read from the declaration (probe batch 5).

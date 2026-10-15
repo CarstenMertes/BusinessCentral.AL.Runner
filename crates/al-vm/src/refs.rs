@@ -340,7 +340,14 @@ impl Session {
             "ChangeCompany" => self.change_company(&rec, args),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
-            "FilterGroup" => Self::filter_group(&rec, args),
+            "FilterGroup" => {
+                // The setter with -1 (the OR group) is pinned (record/PWFilterGroupOr.al:OrGroup_RecordRef);
+                // the getter form and the other groups are not.
+                if !matches!(args, [Value::Integer(al_builtins::filter::OR_GROUP)]) {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefFilterGroup);
+                }
+                Self::filter_group(&rec, args)
+            }
             "GetFilters" => self.get_filters(&rec, &t).map(Value::Text),
             "GetView" => {
                 let use_names = match args.first() {
@@ -398,9 +405,8 @@ impl Session {
                 self.record_links(method, &rec, &t, args)
             }
             "Duplicate" => {
-                if rec.borrow().temporary {
-                    return unsupported("Duplicate of a temporary RecordRef (shared table not pinned)");
-                }
+                // A duplicate of a temporary RecordRef is temporary and sees the same rows (record/
+                // TestProbeRecordRefContracts.al:Duplicate_OfTemporaryRef: `istemporary=Yes count=1`).
                 let copy = rec.borrow().clone();
                 Ok(handle(
                     "RecordRef",
@@ -548,10 +554,8 @@ impl Session {
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();
                     // SetTable does not move the target either (:123-127); GetTable takes the company.
-                    if s.field_descending {
-                        return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
-                    }
                     let mut d = dst.borrow_mut();
+                    d.field_descending = s.field_descending;
                     d.fields = s.fields.clone();
                     d.filters = s.filters.clone();
                     d.key = s.key;
@@ -602,6 +606,17 @@ impl Session {
     fn fieldref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
         let (rec, pos) = match &*lib.borrow() {
             LibraryValue::FieldRef(r, p) | LibraryValue::KeyFieldRef(r, p) => (r.clone(), *p),
+            // Name, Number, Value(), Type, Length and Record raise on a FieldRef that was never assigned
+            // (types/PSUnassignedFieldRef.al UnassignedFieldRef_Members).
+            _ if matches!(method, "Name" | "Number" | "Type" | "Length" | "Record")
+                || (method == "Value" && args.is_empty()) =>
+            {
+                return Err(Signal::Error(AlError {
+                    message: "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized.".into(),
+                    code: "NotInitialized".into(),
+                    call_stack: String::new(),
+                }));
+            }
             _ => {
                 return unsupported(format!(
                     "FieldRef.{method} on a FieldRef that was never assigned: what BC does (an error, or a no-op) is not pinned (docs/probes-needed.md)"
@@ -683,7 +698,8 @@ impl Session {
             | "OptionCaption"
             | "OptionMembers"
             | "OptionString" => self.enum_metadata(method, &t, pos, args),
-            "Active" => Ok(Value::Boolean(true)),
+            // A field with `Enabled = false` is not active (record/TestProbeRecordRefContracts.al:KeyRef_And_FieldRef_Active).
+            "Active" => Ok(Value::Boolean(self.field_enabled(&t, pos))),
             "Length" => match &field.ty {
                 RtType::Text(Some(n)) | RtType::Code(Some(n)) => Ok(Value::Integer(*n as i32)),
                 other => unsupported(format!("FieldRef.Length of a {} field", other.describe())),
@@ -823,9 +839,8 @@ impl Session {
             "GetEnumValueCaption" => Ok(Value::Text(at(args)?.map(|m| m.2.clone()).unwrap_or_default())),
             "GetEnumValueNameFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.1.clone())),
             "GetEnumValueCaptionFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.2.clone())),
-            "OptionMembers" | "OptionString" | "OptionCaption" if is_enum => {
-                unsupported(format!("FieldRef.{method} on an Enum field"))
-            }
+            // An Enum field answers the names and the captions of its members like an Option (record/
+            // TestProbeRecordRefContracts.al:FieldRef_EnumAndOptionInfo).
             "OptionMembers" | "OptionString" => Ok(Value::Text(
                 members.iter().map(|m| m.1.as_str()).collect::<Vec<_>>().join(","),
             )),

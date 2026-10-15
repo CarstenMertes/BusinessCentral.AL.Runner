@@ -22,45 +22,129 @@ pub(super) fn time_zone_rows(t: &TableDef, i: &Ident) -> Vec<Entry> {
         .collect()
 }
 
-/// The Feature Key table of the BC 27.5 platform: 16 rows, `Data Update Required` set for three of them
-/// (record/TestFieldLenAndFeatureKeyContracts.al:83-125) and `Enabled` None or All Users per row
-/// (record/TestFeatureKeyEnabledContracts.al:FeatureKey_Enabled_PerId_On27; the state is per tenant, and the
-/// corpus image is the 27.3 and 27.5 one). `Mandatory`, `Will Be Enabled On` and the other columns are not pinned. The rows
-/// of other majors were not measured: one poisoned entry stands for all of them, so a read is refused.
+/// The Feature Key table: ID, `Enabled` (None or All Users per row), `Mandatory By` (the wave the mandatory-by version falls in),
+/// `Mandatory By Version`, `Can Try`, `Is One Way` and `Data Update Required`, per major from record/PFFeatureKeyColumns.al
+/// (FeatureKey_RowsPerId_PerMeasuredVersion; the state is per tenant); `Enabled` and `Data Update Required` of the first major
+/// also record/TestFieldLenAndFeatureKeyContracts.al:83-125. The three lists are the newest minor of each major; other
+/// minors differ in a few rows and are refused. The Description columns are not pinned.
 pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>) -> Vec<Entry> {
-    const ROWS: &[(&str, bool, bool)] = &[
-        ("AdvancedTellMe", false, false),
-        ("CalcOnlyVisibleFlowFields", false, true),
-        ("ConcealedMaskType", false, true),
-        ("ConcurrentInventoryPosting", false, true),
-        ("ConcurrentJobPosting", false, true),
-        ("ConcurrentResourcePosting", false, true),
-        ("DisableSoapWebServicesOnMicrosoftUIPages", false, true),
-        ("EnableMcpAccess", false, true),
-        ("FinancialReportDefaults", false, true),
-        ("FullTextSearch", false, false),
-        ("GLCurrencyRevaluation", true, false),
-        ("Manufacturing_FlushingMethod_ActivateManualWoPick", true, false),
-        ("ReminderTermsCommunicationTexts", false, true),
-        ("SalesPrices", true, false),
-        ("SaveValueToDatabasePromptly", false, true),
-        ("SemanticMetadataSearch", false, true),
+    // (ID, Enabled is All Users, Mandatory By Version major, Can Try, Is One Way, Data Update Required)
+    type Row = (&'static str, bool, u32, bool, bool, bool);
+    const ROWS_FIRST: &[Row] = &[
+        ("AdvancedTellMe", false, 28, false, false, false),
+        ("CalcOnlyVisibleFlowFields", true, 28, true, false, false),
+        ("ConcealedMaskType", true, 29, false, false, false),
+        ("ConcurrentInventoryPosting", true, 29, false, false, false),
+        ("ConcurrentJobPosting", true, 29, false, false, false),
+        ("ConcurrentResourcePosting", true, 29, false, false, false),
+        (
+            "DisableSoapWebServicesOnMicrosoftUIPages",
+            true,
+            29,
+            false,
+            false,
+            false,
+        ),
+        ("EnableMcpAccess", true, 28, false, false, false),
+        ("FinancialReportDefaults", true, 29, true, false, false),
+        ("FullTextSearch", false, 28, true, false, false),
+        ("GLCurrencyRevaluation", false, 28, false, true, true),
+        (
+            "Manufacturing_FlushingMethod_ActivateManualWoPick",
+            false,
+            29,
+            false,
+            true,
+            true,
+        ),
+        ("ReminderTermsCommunicationTexts", true, 28, false, false, false),
+        ("SalesPrices", false, 28, false, true, true),
+        ("SaveValueToDatabasePromptly", true, 29, true, false, false),
+        ("SemanticMetadataSearch", true, 28, false, false, false),
     ];
-    if !al_version::feature_key_rows_known(target) {
-        return vec![Entry::poisoned_prefix(
-            blank(t),
-            0,
-            "Feature Key: its rows are measured for one BC major only (docs/probes-needed.md)".into(),
-        )];
-    }
-    ROWS.iter()
-        .map(|(id, data_update, all_users)| {
+    const ROWS_SECOND: &[Row] = &[
+        ("AdvancedTellMe", false, 29, false, false, false),
+        ("ConcealedMaskType", true, 29, false, false, false),
+        ("ConcurrentInventoryPosting", true, 29, false, false, false),
+        ("ConcurrentJobPosting", true, 29, false, false, false),
+        ("ConcurrentResourcePosting", true, 29, false, false, false),
+        (
+            "DisableSoapWebServicesOnMicrosoftUIPages",
+            true,
+            29,
+            false,
+            false,
+            false,
+        ),
+        ("EXRPerformantTrialBalance", true, 31, true, false, false),
+        ("FinancialReportDefaults", true, 29, true, false, false),
+        ("FullTextSearch", false, 29, true, false, false),
+        (
+            "Manufacturing_FlushingMethod_ActivateManualWoPick",
+            false,
+            29,
+            false,
+            true,
+            true,
+        ),
+        ("ReminderTermsCommunicationTexts", true, 29, false, false, false),
+        ("SalesPrices", false, 31, false, true, true),
+        ("SaveValueToDatabasePromptly", true, 29, true, false, false),
+        ("SemanticMetadataSearch", false, 29, false, false, false),
+    ];
+    const ROWS_THIRD: &[Row] = &[
+        ("AcceleratedDepreciation", false, 31, false, true, true),
+        ("AdvancedTellMe", true, 30, false, false, false),
+        ("ConcurrentInventoryPosting", true, 31, false, false, false),
+        ("ConcurrentJobPosting", true, 31, false, false, false),
+        ("ConcurrentResourcePosting", true, 31, false, false, false),
+        (
+            "DisableSoapWebServicesOnMicrosoftUIPages",
+            true,
+            29,
+            false,
+            false,
+            false,
+        ),
+        ("DocumentReportExperience", true, 31, false, false, false),
+        ("EXRPerformantTrialBalance", true, 31, true, false, false),
+        ("FinancialReportDefaults", true, 29, true, false, false),
+        ("FullTextSearch", false, 30, true, false, false),
+        ("SalesPrices", false, 31, false, true, true),
+        ("SaveValueToDatabasePromptly", true, 30, true, false, false),
+        ("SemanticMetadataSearch", true, 30, false, false, false),
+    ];
+    use al_version::FeatureKeyRows;
+    let rows = match al_version::feature_key_rows(target) {
+        Some(FeatureKeyRows::Bc27) => ROWS_FIRST,
+        Some(FeatureKeyRows::Bc28) => ROWS_SECOND,
+        Some(FeatureKeyRows::Bc29) => ROWS_THIRD,
+        None => {
+            return vec![Entry::poisoned_prefix(
+                blank(t),
+                0,
+                "Feature Key: its rows are served for the minors they were measured on only (docs/probes-needed.md)"
+                    .into(),
+            )];
+        }
+    };
+    rows.iter()
+        .map(|(id, all_users, version, can_try, one_way, data_update)| {
             let mut r = blank(t);
             r[pos(t, 1)] = Value::Text((*id).into());
-            // Enabled: None or All Users, as the 27.3 and 27.5 service tiers read it
-            // (record/TestFeatureKeyEnabledContracts.al:FeatureKey_Enabled_PerId_On27).
             r[pos(t, 2)] = option(t, 2, i32::from(*all_users));
+            // The wave text of the mandatory-by version: 28.0 is 2026 Wave 1, then one wave per half year.
+            let wave = match version {
+                28 => "2026 Wave 1 (from April to September 2026)",
+                29 => "2026 Wave 2 (from October 2026 to March 2027)",
+                30 => "2027 Wave 1 (from April to September 2027)",
+                _ => "2027 Wave 2 (from October 2027 to March 2028)",
+            };
+            r[pos(t, 5)] = Value::Text(wave.into());
+            r[pos(t, 6)] = Value::Boolean(*can_try);
+            r[pos(t, 7)] = Value::Boolean(*one_way);
             r[pos(t, 8)] = Value::Boolean(*data_update);
+            r[pos(t, 9)] = Value::Text(format!("{version}.0"));
             Entry::ok(r)
         })
         .collect()

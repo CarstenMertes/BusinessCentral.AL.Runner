@@ -1302,6 +1302,7 @@ fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a Seq<'a>, oi:
         lines: None,
         emit_pos: false,
         routine_idx: 0,
+        assumed: Vec::new(),
     }
 }
 
@@ -2027,6 +2028,8 @@ struct Lowerer<'a> {
     emit_pos: bool,
     /// Index of the routine being lowered in its object.
     routine_idx: usize,
+    /// The assumptions the lowering of each statement being lowered rests on (innermost last).
+    assumed: Vec<Vec<al_builtins::assumptions::Assumption>>,
 }
 
 /// What lowering asks about an object again and again. Each answer is computed on first use and
@@ -2101,7 +2104,7 @@ fn key(file: usize, n: &SyntaxNode) -> (usize, usize, usize) {
     (file, r.start().into(), r.end().into())
 }
 
-fn is_stmt(k: SyntaxKind) -> bool {
+pub(crate) fn is_stmt(k: SyntaxKind) -> bool {
     use SyntaxKind::*;
     matches!(
         k,
@@ -2152,6 +2155,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
         (receiver, name),
         ("FieldRef" | "TestField", "Value")
+            | ("InStream" | "OutStream", "Position")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
             | ("Notification", "Id" | "Message" | "Scope")
             | (
@@ -2299,12 +2303,27 @@ impl Lowerer<'_> {
                 (Some(ws), None) if ws.is_empty() => Some(Vec::new()),
                 _ => None,
             };
+            // A filter text with an AL-quoted identifier read as a filter text: only the CalcFormula and
+            // DataItemTableView forms are pinned.
+            let quoted = a.wheres.iter().flatten().any(|w| {
+                matches!(w, crate::relation::ParsedWhere::Value { text, .. }
+                    if !text.starts_with('\'') && !text.contains("::") && text.contains('"'))
+            }) || a
+                .condition_raw
+                .iter()
+                .zip(&a.filter_conditions)
+                .any(|(raw, filter)| *filter && raw.contains('"'));
             arms.push(ir::RelationArm {
                 conditions,
                 table,
                 table_name: a.path.join("."),
                 field,
                 wheres,
+                assumes: if quoted {
+                    vec![al_builtins::assumptions::Assumption::TableRelationQuotes]
+                } else {
+                    Vec::new()
+                },
             });
         }
         arms
@@ -2864,6 +2883,7 @@ impl Lowerer<'_> {
             extensions,
             ext_triggers,
             action_areas: layout.action_areas.clone(),
+            assumes: layout.assumes.clone(),
         }
     }
 
@@ -3540,13 +3560,37 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
-        let body = match r.body() {
+        let mut body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
         // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
         // would answer the default value of the return type, which is not what the platform answers.
-        if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
+        // A few have an implementation here (`platform_native`, pinned by the corpus); the others are refused.
+        let native = (body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")))
+            .then(|| {
+                let types: Vec<String> = r
+                    .params()
+                    .map(|p| p.type_ref().map(|t| t.type_name().to_lowercase()).unwrap_or_default())
+                    .collect();
+                al_builtins::platform_native::find(&self.ws.objects[self.oi].name, &r.name(), &types)
+            })
+            .flatten();
+        if let Some(entry) = native {
+            let call = ir::Expr::Builtin {
+                id: entry.id.to_string(),
+                receiver: None,
+                args: (0..params)
+                    .map(|i| ir::Arg::Value(ir::Expr::Load(ir::Place::Local(i))))
+                    .collect(),
+                ret_used: ret_ty.is_some(),
+            };
+            body = vec![if ret_ty.is_some() {
+                ir::Stmt::Exit(Some(call))
+            } else {
+                ir::Stmt::Expr(call)
+            }];
+        } else if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
             self.reasons.push(format!(
                 "[Native] procedure `{}` is implemented by the platform and has no AL body (what it answers is not pinned)",
                 r.name()
@@ -3613,9 +3657,12 @@ impl Lowerer<'_> {
         if &captions == names {
             return Ok(value);
         }
-        if !plain || captions.len() != names.len() {
+        // Every form of Format reads the caption list (text/TestProbeTextDateFormatContracts.al:
+        // Format_OptionFieldAndOptionVariable): standard formats 2 and 9 the ordinal, a length cuts or pads the caption.
+        let _ = plain;
+        if captions.len() != names.len() {
             return Err(format!(
-                "Format of option field {} whose OptionCaption differs from its members, with more than the value, is not pinned",
+                "Format of option field {} whose OptionCaption has another number of entries than its members is not pinned",
                 f.name
             ));
         }
@@ -3704,13 +3751,46 @@ impl Lowerer<'_> {
         n.map(|n| self.stmt(n)).unwrap_or_default()
     }
 
+    /// Notes that the lowering of the statement being lowered rests on assumption `a`: the statement is
+    /// preceded by `Stmt::Assume(a)`, so a test that runs it is reported as flagged.
+    fn assume(&mut self, a: al_builtins::assumptions::Assumption) {
+        if let Some(frame) = self.assumed.last_mut() {
+            if !frame.contains(&a) {
+                frame.push(a);
+            }
+        }
+    }
+
     fn stmt(&mut self, n: &SyntaxNode) -> Vec<ir::Stmt> {
+        self.assumed.push(Vec::new());
+        let mut out = self.stmt_plain(n);
+        let marks = self.assumed.pop().unwrap_or_default();
+        if !marks.is_empty() && !out.is_empty() {
+            // After the position marker, which belongs to the statement that follows it.
+            let at = usize::from(matches!(out.first(), Some(ir::Stmt::Pos(_))));
+            for (i, a) in marks.into_iter().enumerate() {
+                out.insert(at + i, ir::Stmt::Assume(a));
+            }
+        }
+        out
+    }
+
+    fn stmt_plain(&mut self, n: &SyntaxNode) -> Vec<ir::Stmt> {
         use SyntaxKind::*;
         let kids: Vec<SyntaxNode> = n.children().collect();
         let r = match n.kind() {
             Block => return self.stmts_of(n),
             // A try function called as a statement behaves like a normal method
             // (doc: TryFunction attribute), so its errors propagate.
+            // `continue;` (a statement of the AL language that Base Application's Inventory Adjustment uses): the
+            // checker sees a bare name that is no variable, procedure or field.
+            ExprStmt
+                if kids[0].kind() == NameRef
+                    && kids[0].text().to_string().trim().eq_ignore_ascii_case("continue")
+                    && self.res(&kids[0]).is_none() =>
+            {
+                Ok(ir::Stmt::Continue)
+            }
             ExprStmt => self.expr(&kids[0]).map(|e| match e {
                 ir::Expr::Builtin { id, receiver, args, .. } => ir::Stmt::Expr(ir::Expr::Builtin {
                     id,
@@ -3830,6 +3910,28 @@ impl Lowerer<'_> {
     }
 
     fn assign(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Stmt> {
+        // `CurrFieldNo := FieldNo(X)` in table code sets the field number of the implicit Rec. Base Application's
+        // `SelltoContactLookup` does it before it validates a field. The corpus pins reading CurrFieldNo
+        // (handlers/TestPageCurrFieldNo_Tests.al); the assignment is not pinned (docs/probes-needed.md).
+        if kids[0].kind() == SyntaxKind::NameRef
+            && matches!(self.res(&kids[0]), Some(Res::Global(g)) if g == "currfieldno")
+            && !self.globals.contains_key("currfieldno")
+        {
+            if !sig_tokens(n).iter().any(|t| t.kind() == SyntaxKind::Assign) {
+                return Err("a compound assignment to CurrFieldNo is not lowered (not pinned)".into());
+            }
+            let rec = self
+                .rec_slot
+                .ok_or("CurrFieldNo outside code that has an implicit Rec")?;
+            let value = self.expr(&kids[1])?;
+            let value = self.convert_to(&Ty::Integer, &self.ty_of(&kids[1]), value)?;
+            return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
+                id: "Record.SetCurrFieldNo#1".into(),
+                receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
+                args: vec![ir::Arg::Value(value)],
+                ret_used: false,
+            }));
+        }
         // `X.Property := value` on a DotNet value (ADR-014).
         if let Some(Res::DotNetMember(name)) = self.res(&kids[0]).cloned() {
             if kids[0].kind() == SyntaxKind::MemberExpr {
@@ -4034,6 +4136,24 @@ impl Lowerer<'_> {
         Ok(ir::SetElem::Range(lo, hi))
     }
 
+    /// The argument for a `var` parameter: the variable it names. Base Application passes the implicit
+    /// `CurrFieldNo` to event publishers that declare `var CallingFieldNo: Integer` (`Sales Header`,
+    /// `OnBeforeShouldSearchForCustomerByName`). `CurrFieldNo` is no variable, so the callee gets a copy of its
+    /// value and what it assigns to its parameter stays there. Whether BC writes the assignment back to
+    /// `CurrFieldNo` is not pinned (docs/probes-needed.md).
+    fn by_var_arg(&mut self, a: &SyntaxNode) -> L<ir::Arg> {
+        match self.place(a) {
+            Ok(p) => Ok(ir::Arg::Ref(p)),
+            Err(_)
+                if a.kind() == SyntaxKind::NameRef
+                    && a.text().to_string().trim().eq_ignore_ascii_case("CurrFieldNo") =>
+            {
+                Ok(ir::Arg::Value(self.expr(a)?))
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     fn place(&mut self, n: &SyntaxNode) -> L<ir::Place> {
         match n.kind() {
             SyntaxKind::ParenExpr => self.place(&n.children().next().ok_or("empty parentheses")?),
@@ -4042,6 +4162,7 @@ impl Lowerer<'_> {
                 // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index.
                 if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_of(&kids[0]), Ty::Array(..)) {
                     if let ir::Place::Index(root, mut idx) = self.place(&kids[0])? {
+                        self.assume(al_builtins::assumptions::Assumption::ChainedArrayIndex);
                         for k in &kids[1..] {
                             idx.push(self.expr(k)?);
                         }
@@ -4485,6 +4606,21 @@ impl Lowerer<'_> {
                 self.call(n, &kids[0], &args)
             }
             ScopeExpr => match self.res(n).cloned() {
+                // `Mode::Decompress` with `Mode: DotNet CompressionMode`: the type's static member.
+                Some(Res::DotNetMember(name)) => {
+                    let Ty::DotNet(alias) = self.ty_of(n) else {
+                        return Err(format!("`{name}` is not a member of a DotNet value"));
+                    };
+                    let ty = self.ws.resolve_dotnet(self.file, &alias).ok_or_else(|| {
+                        format!("DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies")
+                    })?;
+                    Ok(ir::Expr::DotNet {
+                        ty: Some(ty),
+                        receiver: Some(Box::new(self.expr(&kids[0])?)),
+                        op: ir::DotNetOp::Get(name),
+                        args: Vec::new(),
+                    })
+                }
                 Some(Res::EnumValue { object, value }) => Ok(ir::Expr::Const(ir::Const::Enum(object as u32, value))),
                 Some(Res::OptionValue(i)) => match self.ty_of(n) {
                     Ty::Option(m) => Ok(ir::Expr::Const(ir::Const::Option(i, m))),
@@ -4517,6 +4653,23 @@ impl Lowerer<'_> {
             NameRef | MemberExpr | IndexExpr => match self.res(n).cloned() {
                 Some(Res::Proc { .. }) | Some(Res::Builtin(_)) | Some(Res::DotNetMember(_)) => self.call(n, n, &[]),
                 // `Q.Amount`: the current row's value of a query column.
+                Some(Res::QueryColumn { query, column })
+                    if n.kind() == MemberExpr
+                        && query == self.oi
+                        && kids[0].kind() == NameRef
+                        && kids[0].text().to_string().trim().eq_ignore_ascii_case("this") =>
+                {
+                    // `this.Id` (corpus query/PRQueryOpenColumn.al `PeekThis`).
+                    let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
+                    if layout.query.columns[column].filter_element {
+                        return Err("reading a filter element of a query (not pinned)".into());
+                    }
+                    let slot = *self.globals.get("currquery").ok_or("the running query")?;
+                    Ok(ir::Expr::QueryColumn {
+                        query: Box::new(ir::Expr::Load(ir::Place::Global(slot))),
+                        column,
+                    })
+                }
                 Some(Res::QueryColumn { query, column }) if n.kind() == MemberExpr => {
                     let layout = self.checked.queries[query].as_ref().ok_or("query layout")?;
                     if layout.query.columns[column].filter_element {
@@ -4831,7 +4984,7 @@ impl Lowerer<'_> {
                 for (i, a) in args.iter().enumerate() {
                     let p = sig.params.get(i).ok_or("too many arguments")?;
                     if p.by_var {
-                        out.push(ir::Arg::Ref(self.place(a)?));
+                        out.push(self.by_var_arg(a)?);
                     } else {
                         let value = self.expr(a)?;
                         out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
@@ -4938,6 +5091,8 @@ impl Lowerer<'_> {
                             0,
                         )))))
                     }
+                    // A Label is its text: the variable holds none (reads lower to the constant).
+                    Some(r) if sig.instance && sig.receiver == "Label" => Some(Box::new(ir::Arg::Value(self.expr(r)?))),
                     Some(r) if sig.instance => Some(Box::new(match self.place(r) {
                         Ok(p) => ir::Arg::Ref(p),
                         Err(_) => ir::Arg::Value(self.expr(r)?),
@@ -6226,18 +6381,15 @@ codeunit 50101 C2
             "{:?}",
             arg0("Q")
         );
-        // Another Format form on a captioned option is refused rather than guessed.
+        // Every Format form reads the caption list (text/TestProbeTextDateFormatContracts.al:
+        // Format_OptionFieldAndOptionVariable), standard format 9 included.
         let c = l.program.objects.iter().position(|o| o.name == "C").unwrap();
         let w = l.program.objects[c]
             .routines
             .iter()
             .position(|r| r.name == "W")
             .unwrap();
-        assert!(
-            l.unsupported[c][w].iter().any(|r| r.contains("not pinned")),
-            "{:?}",
-            l.unsupported[c][w]
-        );
+        assert!(l.unsupported[c][w].is_empty(), "{:?}", l.unsupported[c][w]);
     }
 
     #[test]

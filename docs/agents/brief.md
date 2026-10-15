@@ -33,6 +33,14 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
   lands. This is evidence, not a guess: a behavior no test requires is still refused.
   The code path must mark the assumption when it runs (its probes-needed row id),
   so a test that passes through it is reported as a flagged pass, never as a clean one.
+  How: add an entry (id, assumed behavior, Microsoft tests, probe wanted) to
+  `crates/al-builtins/src/assumptions.rs` and call `assumptions::assume(Assumption::YourId)` on the
+  path (at runtime, or `Lowerer::assume` in `al-sema/src/lower.rs` for a compile-time choice, which becomes
+  an `ir::Stmt::Assume`). Mark only the part no corpus test pins. Regenerate the table in
+  `docs/probes-needed.md` with `UPDATE_ASSUMPTIONS_DOC=1 cargo test -p al-builtins assumptions`.
+  When a probe pins it, delete the entry: the compiler lists the marker sites that remain.
+  `alrunner test --top-assumptions` ranks the entries by flagged passes; `--list-assumptions`
+  prints the registry with the counts of the last run (also in `al-test-cli`).
 - **Unsupported is refused explicitly.** Use a lowering reason, a diagnostic in
   `al-sema`, or `Signal::Unsupported`. Never run a guessed or partial behavior
   silently.
@@ -58,10 +66,11 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
 - **Probes need real BC.** You have no BC container. Do not try to run one.
   Record what a probe must show in `docs/probes-needed.md` and refuse the
   behavior until the owner's probe result arrives.
-- **A probe that passed on real BC is enough to start.** When a probe sits on the
-  corpus branch `al-runtime-rs-staging` and the full corpus CI run on that commit is
-  green, implement against it and cite the staging file. The branch merges into
-  `main` only after the corpus bump that brings the probe in.
+- **A probe that passed on real BC is enough to implement and merge.** When a probe
+  sits on the corpus branch `al-runtime-rs-staging` (or a writer branch) and passed
+  on real BC (the local BC 29 container or the corpus CI), implement against it and
+  cite the staging file. The branch may merge into `main` before the corpus bump;
+  the bump then turns the cited behavior into a ratcheted corpus case. Do not wait.
 - **A corpus bump shrinks `docs/probes-needed.md`.** Whoever bumps the corpus
   deletes every row the new cases pin, and reports the table row count before
   and after.

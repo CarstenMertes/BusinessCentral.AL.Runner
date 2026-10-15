@@ -29,6 +29,11 @@ pub struct BlobBuf {
     /// fetched with `CalcFields` before a stream reads it
     /// (streams/TestBlob.al Blob_Get_WithoutCalcFields_InStreamReadsEmpty).
     pub loaded: bool,
+    /// The buffer is the copy a record assignment made: its bytes show, but `CalcFields` fetches the Blob from the stored
+    /// row (types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes) unless a write came first.
+    pub refetch: bool,
+    /// A `Modify` of a temporary record wrote this content to the row; a write through a stream clears it.
+    pub persisted: bool,
 }
 
 /// A buffer that follows the borrowing rules of a `RefCell` (any number of readers or one writer,
@@ -68,6 +73,8 @@ pub fn new_blob() -> BlobRef {
         bytes: Vec::new(),
         write_pos: 0,
         loaded: true,
+        refetch: false,
+        persisted: false,
     }))
 }
 
@@ -77,6 +84,8 @@ pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
         bytes: b.borrow().bytes.clone(),
         write_pos: 0,
         loaded,
+        refetch: false,
+        persisted: false,
     }))
 }
 
@@ -90,6 +99,8 @@ pub fn write_bytes(b: &BlobRef, bytes: &[u8]) {
     buf.bytes.extend_from_slice(&bytes[overlap..]);
     buf.write_pos = at + bytes.len();
     buf.loaded = true;
+    buf.refetch = false;
+    buf.persisted = false;
 }
 
 /// How text becomes bytes in a stream. Windows is cp1252 and the default; MSDos gives the same
@@ -267,6 +278,8 @@ fn blob_create_out(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
         let mut buf = b.borrow_mut();
         buf.write_pos = 0;
         buf.loaded = true;
+        buf.refetch = false;
+        buf.persisted = false;
     }
     set_stream(&a[0], LibraryValue::OutStream(b, enc))?;
     Ok(Value::Null)
@@ -286,6 +299,8 @@ pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
         bytes: Vec::new(),
         write_pos: 0,
         loaded: true,
+        refetch: false,
+        persisted: false,
     });
     set_stream(
         &a[0],
@@ -304,9 +319,10 @@ fn blob_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResu
     if !buf.loaded {
         // Before CalcFields the length is the stored size, which is 6 more than the content
         // (:Blob_Length_WithoutCalcFields_ReportsTheStoredSize, one measurement: 5 bytes read as 11).
-        // Whether the 6 is constant is docs/probes-needed.md; an empty blob is refused.
+        // Whether the 6 is constant is docs/probes-needed.md; an empty blob is 0 (streams/TestProbeStreamContracts.al:
+        // BlobLength_EmptyUnloaded).
         if buf.bytes.is_empty() {
-            return unsupported("Blob.Length of an empty field that has not been loaded (not pinned)");
+            return Ok(Value::Integer(0));
         }
         return Ok(Value::Integer(buf.bytes.len() as i32 + 6));
     }
@@ -321,7 +337,7 @@ fn in_state<'a>(r: Option<&'a mut Value>) -> Result<std::cell::RefMut<'a, Librar
 }
 
 /// Reads the rest of an `InStream` value and moves its position to the end.
-pub(crate) fn drain_in(v: &mut Value) -> Result<Vec<u8>, Signal> {
+pub fn drain_in(v: &mut Value) -> Result<Vec<u8>, Signal> {
     with_in(Some(v), |s| Ok(s.drain()))
 }
 
@@ -380,20 +396,62 @@ fn in_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult
     with_in(r, |s| Ok(Value::BigInteger(s.len() as i64)))
 }
 
-fn in_position(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if !a.is_empty() {
-        return unsupported("InStream.Position with a new position (not pinned)");
+/// `Position` is 1-based: 1 at the start, the length plus one after the last byte (streams/TestProbeStreamContracts.al:
+/// ReadText_LengthPositionAndTerminators). `Position := P` outside 1 to the length raises.
+fn group_thousands(n: i64) -> String {
+    let digits = n.unsigned_abs().to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
     }
-    with_in(r, |s| Ok(Value::BigInteger(s.pos as i64)))
+    if n < 0 { format!("-{out}") } else { out }
+}
+
+fn in_position(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    if let Some(v) = a.first() {
+        let p = match v {
+            Value::Integer(n) => i64::from(*n),
+            Value::BigInteger(n) => *n,
+            other => return unsupported(format!("InStream.Position := {}", other.describe())),
+        };
+        return with_in(r, |s| {
+            let len = s.len() as i64;
+            if p < 1 || p > len {
+                return crate::native::raise(
+                    format!(
+                        "The value of Position parameter 1 is outside of the permitted range. The current value is: {}. The permitted range is: from 1 to {len}.",
+                        group_thousands(p)
+                    ),
+                    "OutsidePermittedRange",
+                );
+            }
+            s.pos = (p - 1) as usize;
+            Ok(Value::Null)
+        });
+    }
+    with_in(r, |s| Ok(Value::BigInteger(s.pos as i64 + 1)))
 }
 
 /// Reads up to the next line feed or the end of the stream. The line feed is consumed and every
 /// carriage return in the line is dropped, so CR LF is one terminator, a lone CR is not one, and a
 /// final CR adds no line (streams/TestStreamsRuntimeContracts.al:InStream_ReadText_SplitsAtLineFeed_AndDropsALoneCarriageReturn).
 fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() > 1 {
-        return unsupported("InStream.ReadText with a length (not pinned)");
+    // `ReadText(Text, Length)` reads at most Length characters, and stops after a line feed
+    // (streams/TestProbeStreamContracts.al:ReadText_LengthPositionAndTerminators).
+    let max_chars = match a.get(1) {
+        None => usize::MAX,
+        Some(Value::Integer(n)) if *n >= 0 => *n as usize,
+        Some(_) => {
+            return unsupported("InStream.ReadText with a length that is not a non-negative Integer (not pinned)");
+        }
+    };
+    if a.len() > 2 {
+        return unsupported("InStream.ReadText with more arguments (not pinned)");
     }
+    let mut enc_used = Encoding::Windows;
     let text = with_in(r, |s| {
         // A UTF-16 byte order mark at the start decides the encoding, whatever the stream was created with:
         // the XmlPort export is UTF-16 with a mark, and the corpus reads it back with the default encoding
@@ -422,22 +480,30 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         let (text, consumed) = s.with_data(|data| {
             let rest = &data[pos.min(data.len())..];
             let mut end = 0;
-            while end + unit <= rest.len() && !is_unit(&rest[end..end + unit], b'\n') {
+            while end + unit <= rest.len() && end / unit < max_chars && !is_unit(&rest[end..end + unit], b'\n') {
                 end += unit;
             }
+            // Stopping on the length leaves the line feed unread.
+            let at_lf = end + unit <= rest.len() && is_unit(&rest[end..end + unit], b'\n');
             let line: Vec<u8> = rest[..end]
                 .chunks(unit)
                 .filter(|u| !is_unit(u, b'\r'))
                 .flatten()
                 .copied()
                 .collect();
-            let consumed = (end + unit).min(rest.len());
+            let consumed = if at_lf || end + unit > rest.len() {
+                (end + unit).min(rest.len())
+            } else {
+                end
+            };
             (enc.decode(&line), consumed)
         });
         s.pos = pos + consumed;
+        enc_used = enc;
         Ok(text)
     })?;
-    let n = Value::text_len(&text) as i32;
+    // The count is the bytes of the text in the stream's encoding, without the terminators (a UTF-16 `ab` is 4).
+    let n = (Value::text_len(&text) * enc_used.unit()) as i32;
     a[0] = Value::Text(text);
     Ok(Value::Integer(n))
 }
@@ -522,8 +588,10 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
         return Ok(Value::Integer(count as i32));
     }
     let width = match a[0] {
-        Value::Integer(_) => 4,
-        Value::Byte(_) => 1,
+        Value::Integer(_) | Value::Boolean(_) | Value::Date(..) => 4,
+        Value::Byte(_) | Value::Char(_) => 1,
+        Value::BigInteger(_) => 8,
+        Value::Guid(_) => 16,
         // streams/TestStreamsBinaryDateDecimalContracts.al:117-123.
         Value::Decimal(_) => 12,
         _ => {
@@ -535,14 +603,42 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     };
     let bytes = with_in(r, |s| {
         let pos = s.pos;
+        // Fewer bytes than the type needs, also none at all: the stream data error (streams/TestProbeStreamContracts.al:
+        // Read_IntoTypes, a BigInteger or a Decimal read from 4 bytes; types/PRFileUpload.al:ReadFromUnfilledStream, a Byte).
         let got = s
             .with_data(|d| d.get(pos..pos + width).map(<[u8]>::to_vec))
-            .ok_or_else(|| Signal::Unsupported("InStream.Read past the end (error text not pinned)".into()))?;
+            .ok_or_else(|| {
+                Signal::Error(crate::native::AlError {
+                    message: "Invalid data encountered in stream, unable to read text.".into(),
+                    code: "InvalidStreamData".into(),
+                    call_stack: String::new(),
+                })
+            })?;
         s.pos += width;
         Ok(got)
     })?;
     a[0] = match a[0] {
         Value::Byte(_) => Value::Byte(bytes[0]),
+        Value::Char(_) => Value::Char(u16::from(bytes[0])),
+        Value::Boolean(_) => Value::Boolean(bytes.iter().any(|b| *b != 0)),
+        Value::BigInteger(_) => Value::BigInteger(i64::from_le_bytes(bytes[..8].try_into().expect("8 bytes"))),
+        Value::Guid(_) => {
+            let mut g: [u8; 16] = bytes[..16].try_into().expect("16 bytes");
+            g[0..4].reverse();
+            g[4..6].reverse();
+            g[6..8].reverse();
+            Value::Guid(g)
+        }
+        Value::Date(..) => {
+            // The inverse of `date_bytes`: twice the day number plus 731, plus 1 for a closing date.
+            let n = i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+            if n == 0 {
+                Value::Date(0, false)
+            } else {
+                let closing = (n - 731) % 2 != 0;
+                Value::Date((n - 731 - i32::from(closing)) / 2, closing)
+            }
+        }
         Value::Decimal(_) => Value::Decimal(decimal_from_bytes(&bytes)?),
         _ => Value::Integer(i32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]])),
     };
@@ -571,7 +667,7 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
 }
 
 /// Writes bytes to an `OutStream` argument whatever its encoding (the caller pins the bytes).
-pub(crate) fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
+pub fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
     let (b, _) = out_buf(Some(stream))?;
     write_bytes(&b, bytes);
     Ok(())
@@ -685,11 +781,39 @@ fn decimal_from_bytes(b: &[u8]) -> Result<rust_decimal::Decimal, Signal> {
 /// (:OutStream_Write_BinaryFormsOfEachType, all little endian), a Date 4 and a Decimal 12 (see
 /// [`date_bytes`], [`decimal_bytes`]).
 fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() != 1 {
-        return unsupported("OutStream.Write with a length (not pinned)");
-    }
     let (b, enc) = out_buf(r)?;
+    // `Write(Text, Length)` writes the first Length characters (all of a shorter text) and the zero byte
+    // (streams/TestProbeStreamContracts.al:WriteText_NonAscii_Char_Byte_Length, `write_text_len3`, `write_text_len5_over`).
+    if a.len() == 2 {
+        let (Some(t), Value::Integer(n)) = (crate::native::text_of(&a[0]), &a[1]) else {
+            return unsupported(
+                "OutStream.Write with a length of something else than a Text and an Integer (not pinned)",
+            );
+        };
+        let cut: String = t.chars().take(usize::try_from(*n).unwrap_or(0)).collect();
+        if !cut.is_ascii() {
+            return unsupported("OutStream.Write(Text, Length) of non-ASCII characters (not pinned)");
+        }
+        let mut v = enc.encode(&cut);
+        v.extend(std::iter::repeat_n(0, enc.unit()));
+        write_bytes(&b, &v);
+        return Ok(Value::Integer(v.len() as i32));
+    }
+    if a.len() != 1 {
+        return unsupported("OutStream.Write with more arguments (not pinned)");
+    }
     let bytes: Vec<u8> = match &a[0] {
+        // A Char is one byte (streams/TestProbeStreamContracts.al:WriteText_NonAscii_Char_Byte_Length: 65 is 41, 228 is E4).
+        Value::Char(c) if *c < 256 => vec![*c as u8],
+        // A Guid is written as .NET writes it: the first three groups little endian
+        // (streams/TestProbeStreamContracts.al:WriteBooleanGuidBigIntegerOthers).
+        Value::Guid(g) => {
+            let mut v = g.to_vec();
+            v[0..4].reverse();
+            v[4..6].reverse();
+            v[6..8].reverse();
+            v
+        }
         // One byte: the probe's blob writer builds the streams BigText.Read decodes from `Write(Byte)` alone
         // (corpus types/PEOptionEnumBigText.al:313-333, whose results fix the bytes on BC 27.5).
         Value::Byte(b) => vec![*b],
@@ -706,7 +830,8 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         // (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_AfterWriteTextAndAfterWriteText_NonAscii:
         // 'wörld' is 77 F6 72 6C 64 00).
         Value::Text(t) | Value::Code(t)
-            if t.is_ascii() || (enc == Encoding::Windows && enc.decode(&enc.encode(t)) == *t) =>
+            if t.is_ascii()
+                || (matches!(enc, Encoding::Windows | Encoding::MsDos) && enc.decode(&enc.encode(t)) == *t) =>
         {
             let mut v = enc.encode(t);
             v.extend(std::iter::repeat_n(0, enc.unit()));

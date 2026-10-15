@@ -16,7 +16,7 @@
 use super::registry::{MemberFn, MemberKind, MemberRefFn, Pin, RegistryMember, RegistryType};
 use crate::Session;
 use al_builtins::dotnet_sigs::{
-    AL_CONFIG_SETTINGS, GRAPH_QUERY, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER,
+    AL_CONFIG_SETTINGS, GRAPH_QUERY, TENANT_INFO, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER,
 };
 use al_builtins::native::Signal;
 use al_builtins::value::{DotNetKind, DotNetObject, Value};
@@ -118,21 +118,26 @@ config_flag!(
 );
 config_flag!(membership_entitlement, "ALConfigSettings.IsSaaS", Value::Boolean(false));
 
-/// Whether the tenant is a sandbox. The oracle tenant is one (probe: `IsSandbox` true,
-/// `IsProduction` false, `IsSaaS` true, no testability flag set). AL Runner's skeleton tenant is
-/// Production; the probe wins. Fixed here until the identity configuration carries the
-/// environment type (ADR-013).
-const TENANT_IS_SANDBOX: bool = true;
+/// Whether the tenant is a sandbox. The SaaS environment is the oracle tier (probe: `IsSandbox`
+/// true, `IsProduction` false, `IsSaaS` true, no testability flag set). AL Runner's skeleton tenant
+/// is Production; the probe wins. The on-prem environment (`--environment onprem`, owner decision
+/// 2026-10-15) is not a sandbox: Microsoft's codeunit 134614 "Test App Permissions" deletes all
+/// users before it sets `SetTestabilitySoftwareAsAService(true)`, which passes only when `IsSaaS`
+/// is false until then. UNPROBED ASSUMPTION (docs/probes-needed.md "Environment Information on an
+/// on-prem server"); the OnPrem suite probe, when it lands, wins.
+fn tenant_is_sandbox(s: &Session) -> bool {
+    s.host.identity.environment() == al_host::Environment::Saas
+}
 
-fn is_sandbox(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+fn is_sandbox(s: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     no_args(args, "NavTenantSettingsHelper.IsSandbox")?;
-    Ok(Value::Boolean(TENANT_IS_SANDBOX))
+    Ok(Value::Boolean(tenant_is_sandbox(s)))
 }
 
 /// BC's body is `!IsSandbox()`.
-fn is_production(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+fn is_production(s: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     no_args(args, "NavTenantSettingsHelper.IsProduction")?;
-    Ok(Value::Boolean(!TENANT_IS_SANDBOX))
+    Ok(Value::Boolean(!tenant_is_sandbox(s)))
 }
 
 fn text(what: &str, args: Args, want: usize, v: &str) -> Result<Value, Signal> {
@@ -143,6 +148,24 @@ fn text(what: &str, args: Args, want: usize, v: &str) -> Result<Value, Signal> {
         )));
     }
     Ok(Value::Text(v.into()))
+}
+
+/// `SetTestTenantEnvironmentType(Boolean)`: what the test library's `SetTestabilitySandbox` /
+/// `SetTestabilitySoftwareAsAService` reach changes nothing a test can see on the probe tier
+/// (corpus tests/al-language-onprem/session/PVEnvironmentTestability.al, staging 8217373: after
+/// SetTestabilitySandbox(false) the session still reads IsSandbox Yes, IsProduction No and the name
+/// "Sandbox"). So the setter is accepted and does nothing.
+fn set_test_tenant_environment_type(
+    _: &mut Session,
+    _: Option<&Rc<DotNetObject>>,
+    args: Args,
+) -> Result<Value, Signal> {
+    match args {
+        [Value::Boolean(_)] => Ok(Value::Null),
+        _ => Err(Signal::Unsupported(
+            "DotNet NavTenantSettingsHelper.SetTestTenantEnvironmentType takes one Boolean here".into(),
+        )),
+    }
 }
 
 /// The wrapper answers 'Sandbox' (probe). Whether the helper returns that or an empty name that
@@ -335,6 +358,32 @@ fn graph_first_group(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> 
     graph_null_reference("FindFirstGroupInfoForDisplayName")
 }
 
+/// `GetCurrentUser()` on a tier without Entra ID returns without an error and leaves the UserInfo null (probe agent,
+/// OnPrem codeunit 61296 of the newest major, tests/al-language-onprem/session/PZAzureAdUser.al): Microsoft's
+/// `InitializeGraphUser` then asks for the authentication object id of the session user.
+fn graph_current_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "GraphQuery.GetCurrentUser")?;
+    Ok(Value::Null)
+}
+
+/// `GetTenantDetail()` answers a TenantInfo whose three strings are empty (see `TENANT_INFO_PIN`).
+fn graph_tenant_detail(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "GraphQuery.GetTenantDetail")?;
+    Ok(Value::DotNet(Rc::new(DotNetObject::new(DotNetKind::Internal {
+        type_name: TENANT_INFO.into(),
+        state: RefCell::new(Vec::new()),
+    }))))
+}
+
+/// Microsoft's Azure AD Tenant Impl. raises "Failed to retrieve ..." for a null TenantInfo, and the corpus test
+/// expects '' from `GetAadTenantDomainName`, `GetCountryLetterCode` and `GetPreferredLanguage`.
+const TENANT_INFO_PIN: &str = "session/TestEnvironmentUserTenantContracts.al:213-232 (GetAadTenantDomainName, GetCountryLetterCode and GetPreferredLanguage answer '' without an error)";
+
+fn tenant_info_empty_text(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "TenantInfo member")?;
+    Ok(Value::Text(String::new()))
+}
+
 fn graph_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
     graph_null_reference("GetUser")
 }
@@ -349,6 +398,12 @@ fn al_runner(what: &str) -> Pin {
 
 /// The shipped types.
 pub fn types() -> Vec<RegistryType> {
+    let mut all = super::compression::types();
+    all.extend(own_types());
+    all
+}
+
+fn own_types() -> Vec<RegistryType> {
     let cfg = |name: &str, f: MemberFn| member(name, Pin::Probe(CFG_PIN.into()), f);
     vec![
         RegistryType {
@@ -380,6 +435,13 @@ pub fn types() -> Vec<RegistryType> {
             members: vec![
                 member("IsSandbox", probe("156 (IsSandbox true, IsSaaS true)"), is_sandbox),
                 member("IsProduction", probe("157 (IsProduction false)"), is_production),
+                member(
+                    "SetTestTenantEnvironmentType",
+                    Pin::Corpus(
+                        "tests/al-language-onprem/session/PVEnvironmentTestability.al:25-60 (staging 8217373)".into(),
+                    ),
+                    set_test_tenant_environment_type,
+                ),
                 member(
                     "GetEnvironmentName",
                     probe("180 ('Sandbox' through the wrapper; the raw name is not observable)"),
@@ -443,8 +505,28 @@ pub fn types() -> Vec<RegistryType> {
                     g("GetGroupInfo", graph_group_info),
                     g("FindFirstGroupInfoForDisplayName", graph_first_group),
                     g("GetUser", graph_user),
+                    member(
+                        "GetTenantDetail",
+                        Pin::Corpus(TENANT_INFO_PIN.into()),
+                        graph_tenant_detail,
+                    ),
+                    member(
+                        "GetCurrentUser",
+                        Pin::Probe(
+                            "probe tests/al-language-onprem/session/PZAzureAdUser.al (corpus branch al-runtime-rs-staging, OnPrem codeunit 61296)"
+                                .into(),
+                        ),
+                        graph_current_user,
+                    ),
                 ]
             },
+        },
+        RegistryType {
+            clr_name: TENANT_INFO.into(),
+            members: ["InitialDomain", "CountryLetterCode", "PreferredLanguage"]
+                .into_iter()
+                .map(|n| member(n, Pin::Corpus(TENANT_INFO_PIN.into()), tenant_info_empty_text))
+                .collect(),
         },
         RegistryType {
             clr_name: TEST_EXECUTION.into(),

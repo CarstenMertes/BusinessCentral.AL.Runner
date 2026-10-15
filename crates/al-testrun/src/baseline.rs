@@ -362,7 +362,7 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
                     }
                     Stmt::Exit(e) => e.iter().for_each(|e| self.expr(e)),
                     Stmt::AssertError(b) => self.stmts(b),
-                    Stmt::Break | Stmt::Pos(_) => {}
+                    Stmt::Break | Stmt::Continue | Stmt::Pos(_) | Stmt::Assume(_) => {}
                 }
             }
         }

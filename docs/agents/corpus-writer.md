@@ -160,3 +160,11 @@ The matrix has ten Cloud legs (27.0, 27.3, 27.5, 28.0 to 28.5, 29.0) and ten OnP
 ## Where the facts go
 
 Put the result in the test file header, not only in the commit. The runtime reads the header and the assertions. When a row of `docs/probes-needed.md` is settled by your tests, say which row in the handover message; the publisher updates the document.
+
+## Which BC is the reference
+
+The corpus CI and the local container run BC on Linux (MsDyn365Bc.On.Linux). It matches
+Business Central on Windows to about 99.9% and is much faster, but Microsoft does not support
+it. The Windows nightly run of the corpus (official Microsoft BC container) is the final
+reference. When the nightly flags a test that the Linux CI passed, the difference is an
+upstream issue for the BC on Linux repository, not a reason to change the probe.

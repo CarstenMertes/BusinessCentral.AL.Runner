@@ -1348,7 +1348,7 @@ pub(crate) mod tests {
     }
 
     // TestField with an ErrorInfo is implemented (issue 41): a check that holds raises nothing, a failing one
-    // is refused at run time (al-vm recmeta.rs `test_field`, al-vm/tests/scm_service_41.rs). Issue 42 refused
+    // is refused at run time (al-vm recmeta.rs `test_field`, al-vm/tests/store/scm_service_41.rs). Issue 42 refused
     // it at lowering; that entry is gone because `lookup` now finds the ids.
     #[test]
     fn test_field_with_an_error_info_is_implemented_not_refused_at_lowering() {
@@ -1551,7 +1551,7 @@ pub(crate) mod tests {
     #[test]
     fn the_call_stack_of_a_recorded_error_is_refused_not_invented() {
         // codeunit/TestCodeunitAlCallStack.al expects AL frames such as `(CodeUnit 60211)`. The VM
-        // fills them in (al-vm/tests/call_stack.rs); an error that has no frame gets a marker no
+        // fills them in (al-vm/tests/language/call_stack.rs); an error that has no frame gets a marker no
         // text function reads.
         let mut ctx = TestCtx::default();
         let f = lookup("System.GetLastErrorCallStack#1").unwrap();

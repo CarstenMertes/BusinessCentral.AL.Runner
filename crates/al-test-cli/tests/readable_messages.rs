@@ -137,7 +137,8 @@ fn no_message_formats_a_value_with_the_debug_format() {
     let mut found = Vec::new();
     for f in &files {
         let rel = f.strip_prefix(root()).unwrap().to_string_lossy().replace('\\', "/");
-        if rel.ends_with("tests.rs") {
+        // `al-testkit` is a dev-dependency: its messages are what a failing test prints about a value.
+        if rel.ends_with("tests.rs") || rel.starts_with("crates/al-testkit/") {
             continue;
         }
         let text = std::fs::read_to_string(f).unwrap();

@@ -292,6 +292,8 @@ pub struct Session {
     pub(crate) scratch_messages: Option<Vec<String>>,
     /// Value capture and loop tracking (`capture.rs`); `None`: off, and the statements run as they always did.
     pub(crate) capture: Option<Box<capture::Capture>>,
+    /// A capture is on and the routine running is one of the run's apps: the only thing the statements test (one byte).
+    pub(crate) capturing: bool,
     /// Set from another thread to stop the AL code of this session: every loop iteration checks it
     /// and ends the running test with `Signal::Unsupported` (the runner's per-test time limit).
     pub(crate) stop: Arc<std::sync::atomic::AtomicBool>,
@@ -467,6 +469,7 @@ impl Session {
             in_test_codeunit: false,
             scratch_messages: None,
             capture: None,
+            capturing: false,
             stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             commits: 0,
             error_scopes: Default::default(),
@@ -862,9 +865,17 @@ impl Session {
             routine,
             pos: ir::NO_POS,
         });
-        self.cap_enter_frame(object, r, &frame.locals);
-        let mut outcome = self.exec_block(&r.body, &mut frame);
-        self.cap_leave_frame(&outcome);
+        if self.capture.is_some() {
+            self.cap_enter_frame(object, r, &frame.locals);
+        }
+        let mut outcome = if self.capturing {
+            self.exec_block::<true>(&r.body, &mut frame)
+        } else {
+            self.exec_block::<false>(&r.body, &mut frame)
+        };
+        if self.capture.is_some() {
+            self.cap_leave_frame(&outcome);
+        }
         if self.fault_trace && matches!(outcome, Err(Signal::Error(_) | Signal::Unsupported(_))) {
             self.note_fault();
         }
@@ -944,17 +955,28 @@ impl Session {
         Ok(())
     }
 
-    fn exec_block(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
-        if self.capture.as_ref().is_some_and(|c| c.tracking()) {
+    /// Runs a block. `CAP` is whether a capture watches the routine (`capture.rs`): the two instances are two
+    /// functions, so a run without a capture executes code that has no trace of it.
+    fn exec_block<const CAP: bool>(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
+        if CAP {
             return self.exec_block_captured(stmts, f);
         }
         for s in stmts {
-            self.exec(s, f)?;
+            self.exec::<false>(s, f)?;
         }
         Ok(())
     }
 
-    fn exec(&mut self, s: &ir::Stmt, f: &mut Frame) -> Result<(), Signal> {
+    /// [`Session::exec_block`] for the instance the routine running now needs.
+    fn exec_block_dyn(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
+        if self.capturing {
+            self.exec_block::<true>(stmts, f)
+        } else {
+            self.exec_block::<false>(stmts, f)
+        }
+    }
+
+    fn exec<const CAP: bool>(&mut self, s: &ir::Stmt, f: &mut Frame) -> Result<(), Signal> {
         use ir::Stmt as S;
         match s {
             S::Assume(a) => {
@@ -978,18 +1000,20 @@ impl Session {
             S::Expr(e) => self.eval(e, f).map(|_| ()),
             S::If(c, t, e) => {
                 if ops::truthy(&self.eval(c, f)?)? {
-                    self.exec_block(t, f)
+                    self.exec_block::<CAP>(t, f)
                 } else {
-                    self.exec_block(e, f)
+                    self.exec_block::<CAP>(e, f)
                 }
             }
             S::While(c, body) => {
                 let here = self.call_stack.last().map(|t| t.pos);
-                let lid = self.cap_loop_enter();
+                let lid = if CAP { self.cap_loop_enter() } else { None };
                 while ops::truthy(&self.eval(c, f)?)? {
                     self.check_stop()?;
-                    self.cap_loop_pass(lid);
-                    match self.exec_block(body, f) {
+                    if CAP {
+                        self.cap_loop_pass(lid);
+                    }
+                    match self.exec_block::<CAP>(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
@@ -997,16 +1021,20 @@ impl Session {
                     // The condition belongs to the loop's line, not to the body's last statement.
                     self.restore_pos(here);
                 }
-                self.cap_loop_exit(lid);
+                if CAP {
+                    self.cap_loop_exit(lid);
+                }
                 Ok(())
             }
             S::Repeat(body, until) => {
                 let here = self.call_stack.last().map(|t| t.pos);
-                let lid = self.cap_loop_enter();
+                let lid = if CAP { self.cap_loop_enter() } else { None };
                 loop {
                     self.check_stop()?;
-                    self.cap_loop_pass(lid);
-                    match self.exec_block(body, f) {
+                    if CAP {
+                        self.cap_loop_pass(lid);
+                    }
+                    match self.exec_block::<CAP>(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
@@ -1016,7 +1044,9 @@ impl Session {
                         break;
                     }
                 }
-                self.cap_loop_exit(lid);
+                if CAP {
+                    self.cap_loop_exit(lid);
+                }
                 Ok(())
             }
             S::For {
@@ -1046,10 +1076,12 @@ impl Session {
                 let (from, to) = (bound(from), bound(to));
                 let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
-                let lid = self.cap_loop_enter();
+                let lid = if CAP { self.cap_loop_enter() } else { None };
                 while if *down { i >= end } else { i <= end } {
                     self.check_stop()?;
-                    self.cap_loop_pass(lid);
+                    if CAP {
+                        self.cap_loop_pass(lid);
+                    }
                     let slot_ty = self.place_type(var, f);
                     if matches!(slot_ty, RtType::Option(_) | RtType::Enum(_)) {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
@@ -1061,8 +1093,10 @@ impl Session {
                         ops::convert(Value::BigInteger(i), &slot_ty)?
                     };
                     self.write(var, counter, f)?;
-                    self.cap_loop_var(var, f);
-                    match self.exec_block(body, f) {
+                    if CAP {
+                        self.cap_loop_var(var, f);
+                    }
+                    match self.exec_block::<CAP>(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
@@ -1072,7 +1106,9 @@ impl Session {
                     i = int(&bound(self.read(var, f)?))?;
                     i += if *down { -1 } else { 1 };
                 }
-                self.cap_loop_exit(lid);
+                if CAP {
+                    self.cap_loop_exit(lid);
+                }
                 Ok(())
             }
             S::Foreach { var, collection, body } => {
@@ -1093,18 +1129,24 @@ impl Session {
                         None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
                 };
-                let lid = self.cap_loop_enter();
+                let lid = if CAP { self.cap_loop_enter() } else { None };
                 for item in items {
-                    self.cap_loop_pass(lid);
+                    if CAP {
+                        self.cap_loop_pass(lid);
+                    }
                     self.write(var, item, f)?;
-                    self.cap_loop_var(var, f);
-                    match self.exec_block(body, f) {
+                    if CAP {
+                        self.cap_loop_var(var, f);
+                    }
+                    match self.exec_block::<CAP>(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
                     }
                 }
-                self.cap_loop_exit(lid);
+                if CAP {
+                    self.cap_loop_exit(lid);
+                }
                 Ok(())
             }
             S::Case {
@@ -1115,10 +1157,10 @@ impl Session {
                 let v = self.eval(scrutinee, f)?;
                 for (labels, body) in branches {
                     if self.matches_any(&v, labels, f)? {
-                        return self.exec_block(body, f);
+                        return self.exec_block::<CAP>(body, f);
                     }
                 }
-                self.exec_block(otherwise, f)
+                self.exec_block::<CAP>(otherwise, f)
             }
             S::Exit(e) => {
                 let v = match e {
@@ -1154,7 +1196,7 @@ impl Session {
                 // earlier writes are lost with it
                 // (record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
                 // Asserterror_InAModalHandler_RollsBackToTheLastCommit).
-                match self.exec_block(body, f) {
+                match self.exec_block::<CAP>(body, f) {
                     Err(Signal::Error(mut e)) => {
                         // The caught error rolls the transaction back to the last commit
                         // (record/TestRecordRenameRollback.al).

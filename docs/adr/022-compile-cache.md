@@ -1,4 +1,4 @@
-# ADR-022: Compile cache: one entry per dependency set
+# ADR-022: Compile cache: one entry per dependency set (layers since 2026-10-15)
 
 - Status: Accepted (owner, 2026-10-14; the measurement below amended decisions 2 to 4 and the owner accepted the amendments)
 - Date: 2026-10-14
@@ -640,6 +640,82 @@ which slice 1 and 2 already serve without any block; for any other run an object
 number (`Codeunit.Run(id)`, `RecordRef.Open`) or a page action, so a stub would be a guess. Recommendation: not now.
 The larger costs of a non-pure cached run are the install baseline (0.2 s, which also needs the snapshot the owner
 left out of version 1) and the 0.9 s of system time that 670 MB of allocation and its release cost.
+
+## Owner decision 2026-10-15: layered entries (branch `layered-cache`)
+
+**Decision (owner).** Day to day a developer edits their implementation app and their test app all the time. A change
+in their own code must never recompile Base Application or the rest of Microsoft's stack. The implementation app comes
+from `.alpackages` as a dependency of the test app, so under decision 2 (one entry per dependency set) one changed line
+rebuilt the whole set (10.9 s measured in ADR-026). That is replaced by layers. Large partner implementation apps
+(thousands of objects) are a second concern (ADR-026, "NP Retail").
+
+This amends decision 2 and the first amendment of 2026-10-14. The cache format changes (`al_cache::FORMAT` 4 to 5);
+every old file misses and is built again.
+
+1. **The unit is a layer.** The dependency apps are put in a canonical order: a topological order (every app after the
+   apps it depends on) that takes the apps whose publisher is `Microsoft` first, then the others in the order they came
+   (`compile_cache::dependency_order`; a cycle or a repeated app id keeps the caller's order). Layer 1 is all the leading
+   Microsoft apps, the platform `System.app` included. **Every other dependency app is a layer of its own.** The workspace
+   apps still come after all layers. (Finer granularity for Microsoft apps was not taken: a hotfix of Base Application
+   rebuilds the layers above it anyway, and the apps under it, System Application and Business Foundation, are 14 % of
+   the objects, ADR-022 section 7.)
+2. **The key of a layer** is the key of decision 4 for the apps of that layer, plus the digest of the key of the layer
+   below (all zeros for layer 1). So a change in an app (source, version, manifest) changes the key of its layer and of
+   every layer above it, and of no layer below. The executable hash, the target and the preprocessor symbols are in every
+   layer's key. A test lists the fields of `Key` and fails when one has no miss test (`below` has one).
+3. **Positions stay stable because an upper layer only appends.** The program holds the layers in order and the
+   workspace last. An object of layer k has the position it has when all layers up to k are present, whatever comes
+   above; the base fields of a table and the extension fields of layers below keep their positions, and an extension
+   field of layer k is appended after them (extension fields are numbered in object order). Nothing above a layer can
+   move anything in it, which is why a change in a late app cannot disturb an early layer and the IR needs no remap.
+4. **What a layer holds.** Its own objects (blocks and facts, positions from the end of the layers below), and a block
+   and facts for each lower object that it changes: an object its apps extend or implement, and the objects that embed
+   that, the same set the workspace re-lowers (`provided::relower_set`, ADR-022 "What makes a block unusable"). These are
+   lowered again with the layer present, so for every object the block of the highest layer that holds it is the block
+   of the complete compile of all layers up to it. The file is the entry format with two more index fields (`base_len`,
+   and the program position of every slot). Layers above the first compress with the dictionary of the first (training
+   one took about 1.4 s of 6 for NP Retail's layer, for blocks of the same kind).
+5. **Build.** Layers are built lowest first. Layer 1 is `lower_for_cache` (unchanged). A higher layer is
+   `lower::lower_layer`: all apps up to the layer are loaded, the objects below are taken from a `provided::Stack` of the
+   layers under it, the layer's apps are compiled completely (the eager rule of decision 7), and the result keeps only
+   the objects that were not taken from below. A run finds the layers of its dependency set, builds the missing ones in
+   order (a layer that is present is kept even when one under it was rebuilt, because its key says which layers it was
+   made on), and compiles the workspace on the `Stack` exactly as it did on one entry.
+6. **Writing and pruning** stay as in decision 5. A run that builds a layer keeps the files of all its layers and
+   removes the ones nothing used for 30 days. `--build-compile-cache` and `--require-compile-cache` work per layer; a
+   miss in any layer is a miss for `--require-compile-cache`, and the error names the files.
+7. **The zero-difference rule holds, with no allow list.** Evidence:
+   - `provided.rs` tests build layers on top of each other and compare, object by object, facts and blocks of the
+     stack with `lower_for_cache` of all apps (a layer that changes nothing, a table extension, extensions and
+     implementers of every kind, a third layer that extends what the second added, query, page-part and report cases),
+     and the `Program`, refusals and call graph of a workspace compiled on a stack with the eager compile.
+   - `al-cache` tests: a layer file round trip, a layer file refused when the layer below changed.
+   - `al-testrun/tests/compile_cache.rs`: a change in the implementation app rebuilds only its layer, a change in a library
+     app rebuilds its layer and the ones above, a change in a Microsoft app rebuilds all, a deleted or damaged lower or
+     upper file is rebuilt and never changes an outcome, and the caller's app order does not matter.
+   - `tools/cache_vs_uncached.sh run` and `tools/demand_vs_eager.sh run`: 0 differences on BC 27, 28 and 29 and the
+     OnPrem and isolation suites. `tools/baseline_rule_check.sh run`: 0. Not in the corpus (all its dependencies are
+     Microsoft's, one layer): Tests-ERM cached against `--no-compile-cache` (9333 tests, 0 differences) and NP Retail's
+     test app (4813 tests) with a two-layer set built cold, built again after a one-file change, and uncached
+     (0 differences each).
+
+**Measured (2026-10-15, release build, 12 cores shared with other agents; the 1-minute load average is given with
+each figure, and was 14 to 25 throughout).** Rebuild after one changed file in a non-Microsoft dependency app:
+
+| Set | Before (one entry per set) | After (layers) |
+|---|---|---|
+| 4 Microsoft apps + a 1-file partner library (BC 27.5), test app on top | 5.9, 6.0, 6.0, 6.6 s (load 14 to 16) | layer 2 only: 1.4, 1.6, 2.3 s (load 14 to 15); the Microsoft layer is a hit |
+| The same 5 apps cold | 6.0 s | 9.2 s (8.4 for layer 1, 0.75 for layer 2) |
+| 12 Microsoft apps + NP Retail (7 234 files, 7 234 objects, 42 % of the set) | 14.8, 24.5, 25.6, 29.0 s (load 17 to 25) | layer 2 only: 11.2, 11.9, 12.4 s (load 22 to 23); 7.7 and 8.7 s at load 16 and 23 |
+
+The fixed cost of a layer rebuild is about 1.3 s (load and scan of all apps, the blocks of the layers below, drop of the
+workspace); the rest is 1.0 to 1.5 ms per object of the layer. ADR-026 had estimated 0.3 s for a 300 object library on
+the ratio of 0.9 ms per object; the fixed cost was not in that estimate. A big partner app is not helped much (see
+ADR-026): its own layer is most of the old cost.
+
+**Not done.** The fixed 1.3 s: the sources of the layers below are read and scanned again for each layer built (the
+`.alci` source index is not used for the layer build); the blocks of the layers below are decoded though only their
+facts are read. A partner app that Microsoft's apps depend on (never seen) makes the order fall back to the caller's.
 
 ## Consequences
 

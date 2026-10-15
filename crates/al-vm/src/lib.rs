@@ -250,6 +250,10 @@ pub struct Session {
     pub(crate) error_finals: Option<Vec<Value>>,
     /// The highest rowversion handed out when the last `Commit` ran: rows at or below it are durable.
     pub(crate) committed_row_version: i64,
+    /// The rowversions a rollback discarded, as ranges `(after, upto]`: what the last commit had
+    /// handed out and what had been handed out when the rollback ran. A buffer can still carry
+    /// one (its own write was rolled back); see `records.rs` `Modify`.
+    pub(crate) rolled_back_row_versions: Vec<(i64, i64)>,
     /// Handler functions bound to the running test method (None outside one).
     pub(crate) ui: Option<ui::UiScope>,
     /// The TestPage variable whose `Trap()` waits for the next plain `Page.Run` (ADR-012).
@@ -417,6 +421,7 @@ impl Session {
             event_stats,
             error_finals: None,
             committed_row_version: 0,
+            rolled_back_row_versions: Vec::new(),
             page_handler_depth: 0,
             code_coverage: false,
             recorder: Default::default(),
@@ -490,6 +495,10 @@ impl Session {
     pub fn rollback_transaction(&mut self) {
         self.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
+        if self.next_row_version > self.committed_row_version {
+            self.rolled_back_row_versions
+                .push((self.committed_row_version, self.next_row_version));
+        }
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
         // Rollback_RowsReadBeforeAnAsserterror, Rollback_RowsFirstReadInsideFailingScope): what was
         // recorded is written into them again at the next read.

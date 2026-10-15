@@ -70,6 +70,8 @@ impl Session {
         self.next_guid = b.next_guid;
         self.next_row_version = b.next_row_version;
         self.committed_row_version = b.committed_row_version;
+        // The baseline was captured after a commit: no buffer of it reaches the new session.
+        self.rolled_back_row_versions.clear();
         self.autoinc = b.autoinc.clone();
         self.isolated_storage = b.isolated_storage.clone();
         self.sequences = b.sequences.clone();

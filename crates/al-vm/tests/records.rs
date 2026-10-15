@@ -582,6 +582,46 @@ fn modify_through_a_stale_buffer_is_refused_only_after_a_commit() {
     assert!(matches!(r, Ok(Value::Integer(9))), "{r:?}");
 }
 
+// A buffer whose own Modify an asserterror rolled back carries a rowversion the stored (committed)
+// row never had; a later Modify through it is accepted on real BC (Microsoft's Tests-SCM codeunit
+// 137510 "SMB Service Item": TestItem_Reserve, _ItemTracking, _CostingMethod, _ProdBOM, _ProdRtng;
+// issue 47). Not pinned by a corpus test: docs/probes-needed.md "Rolled-back rowversion".
+#[test]
+fn modify_through_a_buffer_whose_write_was_rolled_back_is_accepted() {
+    let r = run(
+        "procedure F(): Integer var Rec: Record \"ALT T\"; begin
+            Rec.\"No.\" := 'a'; Rec.Insert(); Commit();
+            Rec.Grp := 1; Rec.Modify();
+            asserterror Error('unrelated');
+            Rec.Grp := 2; Rec.Modify();
+            Rec.Get('a'); exit(Rec.Grp);
+        end;",
+        "F",
+    );
+    assert!(matches!(r, Ok(Value::Integer(2))), "{r:?}");
+}
+
+// What is not pinned stays refused: the row changed by a committed write after the rollback that
+// discarded the buffer's own write.
+#[test]
+fn modify_through_a_rolled_back_buffer_after_a_newer_committed_write_is_refused() {
+    let r = run(
+        "procedure F(): Integer var Rec: Record \"ALT T\"; Other: Record \"ALT T\"; begin
+            Rec.\"No.\" := 'a'; Rec.Insert(); Commit();
+            Rec.Grp := 1; Rec.Modify();
+            asserterror Error('unrelated');
+            Other.Get('a'); Other.Grp := 5; Other.Modify(); Commit();
+            Rec.Grp := 2; Rec.Modify();
+            Rec.Get('a'); exit(Rec.Grp);
+        end;",
+        "F",
+    );
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("rolled back")),
+        "{r:?}"
+    );
+}
+
 // OnInstallAppPerDatabase runs with CompanyName() empty (measured on real BC 27.5, not yet a corpus
 // test; docs/probes-needed.md): a per-company table cannot be accessed there, a table with
 // DataPerCompany = false can.

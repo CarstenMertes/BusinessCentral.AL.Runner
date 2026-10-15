@@ -1233,11 +1233,26 @@ impl Session {
                 if let (Some(row), Some(i)) = (&stored, t.fields.iter().position(|f| f.id == 2_000_000_005)) {
                     let (mine, theirs) = (rec.borrow().fields[i].clone(), row[i].clone());
                     let version = |v: &Value| if let Value::BigInteger(n) = v { *n } else { 0 };
-                    if !rec.borrow().temporary
-                        && version(&mine) != 0
-                        && version(&mine) != version(&theirs)
-                        && version(&theirs) <= self.committed_row_version
-                    {
+                    let (mine, theirs) = (version(&mine), version(&theirs));
+                    // A rowversion a rollback discarded: the buffer's own write was undone (an
+                    // asserterror after it), so the buffer is newer than the row, not older. Real BC
+                    // saves it (Microsoft's Tests-SCM 137510 TestItem_ProdRtng and four more, issue
+                    // 47; no corpus test: docs/probes-needed.md "Rolled-back rowversion"). A row a
+                    // committed write changed after that rollback is not covered by that evidence.
+                    let rolled_back = self
+                        .rolled_back_row_versions
+                        .iter()
+                        .find(|(after, upto)| *after < mine && mine <= *upto)
+                        .map(|&(_, upto)| upto);
+                    let stale =
+                        !rec.borrow().temporary && mine != 0 && mine != theirs && theirs <= self.committed_row_version;
+                    if stale && rolled_back.is_some_and(|upto| theirs > upto) {
+                        return unsupported(format!(
+                            "Modify of {} through a buffer whose own write was rolled back, after a committed write by another variable changed the row (whether BC saves it is not pinned, docs/probes-needed.md)",
+                            t.name
+                        ));
+                    }
+                    if stale && rolled_back.is_none() {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
                         return Err(Signal::Error(AlError {
                             message: format!(

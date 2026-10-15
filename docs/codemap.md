@@ -145,10 +145,26 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0122, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `al_enum_assignment`, `ABSENT_ENUM_MEMBERS`).
 - `base_access.rs` (78): Page and report extension code that names the base object's members (ADR-023): which probes are pinned (`PINNED`), the `AL_UNPINNED_BASE_ACCESS` switch, the base's visible variables and procedures, and the slot of a base variable from syntax. Entry: `PINNED`, `pinned`, `scope_enabled`, `visible_vars`, `visible_procs`, `slot_of`.
 - `calcformula.rs` (513): The `CalcFormula` property of a FlowField, as syntax. Entry: `Formula` 18, `Cond` 28, `CondValue` 35, `parse` 48.
-- `check.rs` (2492): Resolves every name, member access and call in routine bodies, inferring types. Entry: `check_with` 122, `Checker` 323, `check_object` 647, `check_routine_in` 672, `CheckResult` 43, `Res` 67, `Roots` 103.
+- `check/mod.rs` (755): Resolves every name, member access and call in routine bodies, inferring types. Holds `CheckResult`, `Res`, `Roots`, the checker state and the entry points. Entry: `check_with` 175, `Checker` 506, `CheckResult` 29, `Res` 82, `Roots` 124.
+- `check/posmap.rs` (123): The position-keyed maps the checker fills: FxHash and the sharded `PosMap`. Entry: `PosMap` 42, `union` 88.
+- `check/object.rs` (549): The checker's object context, name resolution, and the walk over an object's routines. Entry: `object_ctx` 126, `check_object` 353, `check_routine_in` 423, `walk` 522.
+- `check/infer.rs` (800): Type inference for expressions and the diagnostics that hang off it. Entry: `infer` 235, `al_unresolved_name` 92, `name` 723.
+- `check/calls.rs` (375): Overload picking and the lookup of callables. Entry: `pick` 8, `lookup_callable` 74, `lookup_name` 228.
+- `check/member.rs` (291): Members of a type: page controls, record fields, sections. Entry: `member` 40, `field_of` 217.
+- `check/fit.rs` (178): Candidates and whether an argument type fits a parameter type. Entry: `fits` 22, `sig_cand` 110, `proc_cand` 4.
 - `check/demand.rs` (1417): Demand-driven checking of dependency apps (ADR-013 decision 6): what a test reaches is compiled, the rest is not. Entry: `Demand` 44, `run_demand` 765, `reach` 247, `reach_baseline` 261, `activate` 351, `activate_table` 398, `activate_ops` 451, `activate_global` 498.
 - `lib.rs` (16): Crate root of the semantic model.
-- `lower.rs` (4806): Lowers resolved syntax to the typed IR (ADR-011). Anything inexpressible becomes a refusal reason on the routine. Entry: `lower_with_positions` 33, `Lowered` 17, `Lowerer` 1110, `routine` 2390, `stmt` 2585, `expr` 2946, `call` 3276, `compile_apps_with` 3543, `compile_with_roots` 3566.
+- `lower/mod.rs` (352): Lowers resolved syntax to the typed IR (ADR-011). Anything inexpressible becomes a refusal reason on the routine. Holds `Lowered`, the `Lowerer` state and the module list. Entry: `Lowered` 26, `Lowerer` 127.
+- `lower/assemble.rs` (1162): Lowering a whole workspace: drives the objects (in parallel), builds the shared data, relowers the objects an edit touched. Entry: `lower_with_positions` 114, `build_shared` 168, `lower_core` 763, `relower_objects` 1008.
+- `lower/shared.rs` (880): What the lowering of an object reads (`Shared`) and the per-object state (`Nodes`, `Local`, `Seq`), `lower_object`, the constants and literal helpers. Entry: `Shared` 6, `make_lowerer` 173, `lower_object` 211.
+- `lower/tables.rs` (518): Table schemas: relations, field triggers, CalcFormulas. Entry: `table_schema` 311, `relation_arms` 10, `lower_calc` 445.
+- `lower/pages.rs` (458): Page control trees, `RunObject`, part links. Entry: `page` 8, `run_object` 292.
+- `lower/convert.rs` (359): Name resolution helpers, runtime types, conversion of a value to a target type. Entry: `rt` 67, `convert_to` 186.
+- `lower/stmt.rs` (737): Routines and statements. Entry: `routine` 5, `stmt` 277, `assign` 425, `place` 670.
+- `lower/expr.rs` (636): Expressions, constants, operands, controls. Entry: `expr` 280, `constant` 228.
+- `lower/dotnet.rs` (76): Arguments and members of `DotNet` values (ADR-014). Entry: `dotnet_arg` 7, `dotnet_member` 30.
+- `lower/call.rs` (404): Calls. Entry: `call` 6.
+- `lower/compile.rs` (306): Load, check and lower in one go, and the cached layer variants. Entry: `compile` 6, `compile_apps_with` 46, `compile_with_roots` 270.
 - `members.rs` (708): Members of objects: table fields (extensions merged), enum values, procedure signatures. Entry: `MemberTable` 108, `build` 147, `FieldInfo` 15, `ProcSig` 48.
 - `provided.rs` (450): Dependency objects whose lowered form comes from a compile cache (ADR-022): `DepFacts`, `DepBlock`, `DepSource`, layers (`DepLayer`, `LayerSource`, `Stack`), which blocks the workspace or a layer invalidates (`relower_set`). Entry: `DepSet` 76, `relower_set` 150, `touched` 120, `check_identity` 100.
 - `pages.rs` (932): Pages for the test client (ADR-012). Entry: `expand` 153, `expand_ranges` 159, `control_sections` 143, `classify_source` 81.

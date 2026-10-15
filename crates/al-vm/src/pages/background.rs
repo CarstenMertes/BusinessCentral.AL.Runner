@@ -78,14 +78,14 @@ impl Session {
             .program
             .objects
             .iter()
-            .position(|o| o.kind == "codeunit" && o.id == Some(codeunit as u32))
+            .position(|o| o.is_kind(al_ir::ObjKind::Codeunit) && o.id == Some(codeunit as u32))
         else {
             // A codeunit of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
             if engine
                 .program
                 .objects
                 .iter()
-                .any(|o| o.kind == "uncompiled codeunit" && o.id == Some(codeunit as u32))
+                .any(|o| o.is_shell_of(al_ir::ObjKind::Codeunit) && o.id == Some(codeunit as u32))
             {
                 return unsupported(format!(
                     "background task of codeunit {codeunit}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"

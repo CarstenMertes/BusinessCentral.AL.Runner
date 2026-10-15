@@ -157,10 +157,33 @@ pub enum DotNetOp {
     Set(String),
 }
 
+impl Object {
+    /// A compiled object of this kind (a shell of the same kind is not).
+    pub fn is_kind(&self, kind: ObjKind) -> bool {
+        self.kind == kind && !self.uncompiled
+    }
+
+    /// The kind as the text the compiler used to write: `codeunit`, or `uncompiled codeunit` for a shell.
+    pub fn kind_text(&self) -> String {
+        if self.uncompiled {
+            format!("uncompiled {}", self.kind)
+        } else {
+            self.kind.to_string()
+        }
+    }
+
+    /// A shell (an object of a dependency app that was not compiled) of this kind.
+    pub fn is_shell_of(&self, kind: ObjKind) -> bool {
+        self.kind == kind && self.uncompiled
+    }
+}
+
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct Object {
-    /// `codeunit`, `table`, ...
-    pub kind: String,
+    pub kind: ObjKind,
+    /// A shell: the object belongs to a dependency app that was not compiled (it keeps its number
+    /// stable; nothing looks it up by kind and id as a runnable object).
+    pub uncompiled: bool,
     pub id: Option<u32>,
     pub name: String,
     pub globals: Vec<Slot>,
@@ -1382,7 +1405,8 @@ mod tests {
                 subscriber: "codeunit \"S\"".into(),
             }],
             objects: vec![Object {
-                kind: "codeunit".into(),
+                kind: ObjKind::Codeunit,
+                uncompiled: false,
                 id: Some(50100),
                 name: "C".into(),
                 globals: vec![Slot {

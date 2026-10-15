@@ -589,7 +589,12 @@ xmlport 50010 X
             &Default::default(),
         );
         assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
-        l.program.objects.iter().find(|o| o.kind == "xmlport").cloned().unwrap()
+        l.program
+            .objects
+            .iter()
+            .find(|o| o.kind == al_ir::ObjKind::XmlPort)
+            .cloned()
+            .unwrap()
     }
 
     // The element variables take the first global slots, then the two hidden streams, then the
@@ -642,7 +647,12 @@ xmlport 50010 X
             }],
             &Default::default(),
         );
-        let o = l.program.objects.iter().find(|o| o.kind == "xmlport").unwrap();
+        let o = l
+            .program
+            .objects
+            .iter()
+            .find(|o| o.kind == al_ir::ObjKind::XmlPort)
+            .unwrap();
         let why = o.xmlport.as_ref().unwrap().unsupported.join(";");
         assert!(why.contains("unknown field Nope"), "{why}");
     }
@@ -658,7 +668,12 @@ xmlport 50010 X
             }],
             &Default::default(),
         );
-        let o = l.program.objects.iter().find(|o| o.kind == "xmlport").unwrap();
+        let o = l
+            .program
+            .objects
+            .iter()
+            .find(|o| o.kind == al_ir::ObjKind::XmlPort)
+            .unwrap();
         o.xmlport.as_ref().unwrap().unsupported.join(";")
     }
 
@@ -672,7 +687,12 @@ xmlport 50010 X
             }],
             &Default::default(),
         );
-        let o = l.program.objects.iter().find(|o| o.kind == "xmlport").unwrap();
+        let o = l
+            .program
+            .objects
+            .iter()
+            .find(|o| o.kind == al_ir::ObjKind::XmlPort)
+            .unwrap();
         o.xmlport.as_ref().unwrap().run_unsupported.join(";")
     }
 

@@ -162,7 +162,8 @@ impl Session {
         let engine = self.engine.clone();
         let program = &engine.program;
         for (oi, o) in program.objects.iter().enumerate() {
-            let (Some(id), "table") = (o.id, o.kind.as_str()) else {
+            let (Some(id), al_ir::ObjKind::Table) = (o.id, if o.uncompiled { al_ir::ObjKind::Other } else { o.kind })
+            else {
                 continue;
             };
             if !COVERAGE_TABLES.contains(&id) {
@@ -219,7 +220,7 @@ impl Session {
         let mut row = |oi: usize, line: u32, text: Option<&str>, kind: &str, hits: u32, status: &str| {
             let o = &program.objects[oi];
             let mut r = super::blank(t);
-            r[super::pos(t, 1)] = Self::option_member(t, 1, &o.kind);
+            r[super::pos(t, 1)] = Self::option_member(t, 1, o.kind.label());
             r[super::pos(t, 2)] = Value::Integer(o.id.unwrap_or(0) as i32);
             r[super::pos(t, 3)] = Value::Integer(line as i32);
             r[super::pos(t, 4)] = Self::option_member(t, 4, kind);
@@ -304,7 +305,7 @@ impl Session {
             .filter_map(|&(test, oi, ri)| {
                 let o = &program.objects[oi];
                 let mut r = super::blank(t);
-                r[super::pos(t, 1)] = Self::option_member(t, 1, &o.kind);
+                r[super::pos(t, 1)] = Self::option_member(t, 1, o.kind.label());
                 r[super::pos(t, 2)] = Value::Integer(o.id? as i32);
                 r[super::pos(t, 3)] = Self::method_id(ri);
                 r[super::pos(t, 4)] = Value::Integer(test);

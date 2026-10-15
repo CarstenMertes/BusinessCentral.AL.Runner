@@ -133,16 +133,15 @@ fn error(message: String) -> Signal {
 /// role center; 0 for none). A profile whose role center name is not exactly one page gets no row:
 /// the row would be wrong.
 pub(crate) fn profile_seeds(program: &al_ir::Program) -> Vec<(usize, i32)> {
-    let kind = |o: &al_ir::Object| o.kind.strip_prefix("uncompiled ").unwrap_or(&o.kind).to_string();
     let mut pages: std::collections::HashMap<String, Vec<u32>> = std::collections::HashMap::new();
     for p in &program.objects {
-        if let (true, Some(id)) = (kind(p) == "page", p.id) {
+        if let (true, Some(id)) = (p.kind == al_ir::ObjKind::Page, p.id) {
             pages.entry(p.name.to_ascii_lowercase()).or_default().push(id);
         }
     }
     let mut out = Vec::new();
     for (oi, o) in program.objects.iter().enumerate() {
-        if kind(o) != "profile" {
+        if o.kind != al_ir::ObjKind::Profile {
             continue;
         }
         // `RoleCenter = 9006;` names the page by id (Base Application's profiles do), `RoleCenter = Name;` by name.

@@ -251,7 +251,7 @@ impl Session {
                     .program
                     .objects
                     .iter()
-                    .any(|o| o.kind == "uncompiled table" && i64::from(o.id.unwrap_or(0)) == n) =>
+                    .any(|o| o.is_shell_of(al_ir::ObjKind::Table) && i64::from(o.id.unwrap_or(0)) == n) =>
                 {
                     unsupported(format!(
                         "RecordRef.Open on table {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"

@@ -227,7 +227,7 @@ impl Session {
                     .program
                     .objects
                     .iter()
-                    .position(|o| o.kind == "codeunit" && o.id == u32::try_from(*n).ok())
+                    .position(|o| o.is_kind(al_ir::ObjKind::Codeunit) && o.id == u32::try_from(*n).ok())
                 else {
                     // A codeunit of a dependency app that nothing reached is not compiled (ADR-013);
                     // BC has it, so this is not the missing-object error.
@@ -236,7 +236,7 @@ impl Session {
                         .program
                         .objects
                         .iter()
-                        .any(|o| o.kind == "uncompiled codeunit" && o.id == u32::try_from(*n).ok())
+                        .any(|o| o.is_shell_of(al_ir::ObjKind::Codeunit) && o.id == u32::try_from(*n).ok())
                     {
                         return unsupported(format!(
                             "Codeunit.Run of codeunit {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"

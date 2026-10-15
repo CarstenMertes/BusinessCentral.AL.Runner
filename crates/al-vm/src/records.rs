@@ -527,7 +527,7 @@ impl Session {
             (
                 o.rec_slot,
                 o.xrec_slot,
-                matches!(o.kind.as_str(), "table" | "tableextension"),
+                !o.uncompiled && matches!(o.kind, al_ir::ObjKind::Table | al_ir::ObjKind::TableExtension),
             )
         };
         let existing = if per_variable {

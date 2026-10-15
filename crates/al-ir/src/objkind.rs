@@ -3,6 +3,7 @@
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[serde(rename_all = "lowercase")]
 pub enum ObjKind {
     Table,
     TableExtension,
@@ -20,6 +21,7 @@ pub enum ObjKind {
     PermissionSetExtension,
     Profile,
     #[default]
+    #[serde(rename = "object")]
     Other,
 }
 
@@ -161,6 +163,13 @@ mod tests {
         }
         assert!("Table".parse::<ObjKind>().is_err());
         assert!("uncompiled table".parse::<ObjKind>().is_err());
+    }
+
+    #[test]
+    fn serialized_form_is_the_label() {
+        for k in ObjKind::ALL {
+            assert_eq!(serde_json::to_string(&k).unwrap(), format!("\"{}\"", k.label()));
+        }
     }
 
     #[test]

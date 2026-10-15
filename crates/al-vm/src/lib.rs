@@ -1581,9 +1581,9 @@ impl Session {
                 if id == "System.ClearAll#1" {
                     let object = f.instance.borrow().object as usize;
                     let o = &self.engine.program.objects[object];
-                    let keep: Vec<usize> = match o.kind.as_str() {
-                        "codeunit" | "table" => o.rec_slot.into_iter().collect(),
-                        "page" => o
+                    let keep: Vec<usize> = match o.kind {
+                        al_ir::ObjKind::Codeunit | al_ir::ObjKind::Table => o.rec_slot.into_iter().collect(),
+                        al_ir::ObjKind::Page => o
                             .rec_slot
                             .into_iter()
                             .chain(o.page.as_ref().map(|p| p.curr_page_slot))
@@ -2451,7 +2451,7 @@ impl al_builtins::native::Ctx for Session {
             .program
             .objects
             .iter()
-            .any(|o| o.kind == "table" && o.id.is_some_and(|id| i64::from(id) == i64::from(number)))
+            .any(|o| o.is_kind(al_ir::ObjKind::Table) && o.id.is_some_and(|id| i64::from(id) == i64::from(number)))
     }
     fn install_scope(&self) -> bool {
         self.install_scope

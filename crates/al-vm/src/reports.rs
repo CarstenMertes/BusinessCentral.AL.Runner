@@ -368,13 +368,13 @@ impl Session {
     fn report_word_xml_part(&mut self, id: &str, receiver: Option<Value>, args: &[Value]) -> Result<Value, Signal> {
         let static_form = id == "Report.WordXmlPart#2";
         let (flag_at, schema) = if static_form {
-            let known =
-                match args.first() {
-                    Some(Value::Integer(n)) => self.engine.program.objects.iter().any(|o| {
-                        (o.kind == "report" || o.kind == "uncompiled report") && o.id == u32::try_from(*n).ok()
-                    }),
-                    _ => true,
-                };
+            let known = match args.first() {
+                Some(Value::Integer(n)) => self.engine.program.objects.iter().any(|o| {
+                    (o.is_kind(al_ir::ObjKind::Report) || o.is_shell_of(al_ir::ObjKind::Report))
+                        && o.id == u32::try_from(*n).ok()
+                }),
+                _ => true,
+            };
             if !known {
                 return Err(crate::transactions::al_error_code("", "AL:MetadataNotFound"));
             }
@@ -444,7 +444,7 @@ impl Session {
             .program
             .objects
             .iter()
-            .position(|o| o.kind == "report" && o.id == u32::try_from(*n).ok())
+            .position(|o| o.is_kind(al_ir::ObjKind::Report) && o.id == u32::try_from(*n).ok())
         else {
             // A report of a dependency app that nothing reached is not compiled (ADR-013); BC has it.
             if self
@@ -452,7 +452,7 @@ impl Session {
                 .program
                 .objects
                 .iter()
-                .any(|o| o.kind == "uncompiled report" && o.id == u32::try_from(*n).ok())
+                .any(|o| o.is_shell_of(al_ir::ObjKind::Report) && o.id == u32::try_from(*n).ok())
             {
                 return unsupported(format!(
                     "{id} of report {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
@@ -513,7 +513,7 @@ impl Session {
         let object = inst.borrow().object as usize;
         let engine = self.engine.clone();
         let o = &engine.program.objects[object];
-        if !first || o.kind != "report" {
+        if !first || !o.is_kind(al_ir::ObjKind::Report) {
             return Ok(false);
         }
         let Some(on_init) = o.report.as_ref().and_then(|r| r.on_init) else {
@@ -535,7 +535,9 @@ impl Session {
     /// not pinned anywhere else.
     fn report_quit_builtin(&mut self, running: &Inst) -> Result<Value, Signal> {
         let object = running.borrow().object as usize;
-        if self.engine.program.objects[object].kind == "report" && self.report_init_depth == Some(self.depth) {
+        if self.engine.program.objects[object].is_kind(al_ir::ObjKind::Report)
+            && self.report_init_depth == Some(self.depth)
+        {
             self.report_quit = true;
             // Leaves the trigger; `report_init` sees the flag.
             return Err(Signal::Exit(None));
@@ -547,10 +549,10 @@ impl Session {
     /// ends and the run reads the request (`report_trigger_call`).
     fn report_flow_builtin(&mut self, running: &Inst, flow: Flow) -> Result<Value, Signal> {
         let object = running.borrow().object as usize;
-        let on_report = matches!(
-            self.engine.program.objects[object].kind.as_str(),
-            "report" | "reportextension"
-        );
+        let on_report = {
+            let o = &self.engine.program.objects[object];
+            o.is_kind(al_ir::ObjKind::Report) || o.is_kind(al_ir::ObjKind::ReportExtension)
+        };
         let allowed = match self.report_trigger {
             Some((depth, kind)) if on_report && depth == self.depth => match flow {
                 Flow::Skip | Flow::Break => kind == TrigKind::Row,

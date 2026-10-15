@@ -358,6 +358,9 @@ impl Session {
                 && ev.starts_with("on")
                 && ev.ends_with("event")
                 && !al_ir::RAISED_PAGE_EVENTS.contains(&ev.as_str())
+                // The field events of a page are raised when the client writes the field, so they are refused there
+                // (`control_set_value`), not for a page that is merely opened.
+                && !matches!(ev.as_str(), "onaftervalidateevent" | "onbeforevalidateevent")
                 // The client has no operation that deletes the page's row (an action without code of ours is not on the
                 // runtime page, `action_without_behaviour`); a page that is merely
                 // opened never raises this event. Base
@@ -3095,6 +3098,28 @@ impl Session {
     /// and records a refusal in the control's ledger (corpus handlers/TestPageValidationError_Tests.al,
     /// TestPageReadOnlySetValue.al:1-30, TestPageBooleanSpelling_Tests.al).
     fn control_set_value(&mut self, st: &St, idx: usize, args: &mut [Value]) -> Result<Value, Signal> {
+        // A subscriber to OnBeforeValidateEvent / OnAfterValidateEvent of this control would run in BC; the client does
+        // not raise them yet, so a write to such a control is refused (a page that is merely opened is not).
+        {
+            let engine = self.engine();
+            let object = st.borrow().object as usize;
+            let name = page_of(&engine, st).controls[idx].name.clone();
+            for ev in ["onbeforevalidateevent", "onaftervalidateevent"] {
+                let compiled = engine
+                    .events
+                    .subscribers
+                    .get(&(object, ev.to_string()))
+                    .is_some_and(|v| {
+                        v.iter()
+                            .any(|s| s.element.is_empty() || s.element.eq_ignore_ascii_case(&name))
+                    });
+                if compiled || engine.events.missing_for(object, ev, Some(&name)).is_some() {
+                    return unsupported(format!(
+                        "page event {ev} of control {name}: a subscriber listens, and the test client does not raise it yet"
+                    ));
+                }
+            }
+        }
         // SetValue through a part whose control says Editable = false writes anyway
         // (testpart/TestPartCloseLinkEditableContracts.al:
         // Parts_EnabledReadsTheControl_EditableFalseDoesNotBlockWrites). New() and Next() onto the

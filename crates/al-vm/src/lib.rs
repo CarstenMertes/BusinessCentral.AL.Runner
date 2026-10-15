@@ -992,18 +992,17 @@ impl Session {
                 body,
             } => {
                 let (from, to) = (self.eval(from, f)?, self.eval(to, f)?);
-                // No corpus test loops over a Boolean (`for B := false to true`), which Microsoft's tests do:
-                // whether it runs for false then true is not pinned (docs/probes-needed.md).
+                // A loop over a Boolean (`for Stepwise := false to true do`, 27 Microsoft codeunits) runs for false and
+                // then for true, the variable holding the Boolean each round (registry entry for-boolean). Not pinned.
                 if matches!(from, Value::Boolean(_)) || matches!(to, Value::Boolean(_)) {
-                    return Err(Signal::Unsupported(
-                        "for loop over a Boolean: whether it runs for false and then true, and the value left in the variable, are not pinned (docs/probes-needed.md)".into(),
-                    ));
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
                 }
                 // Option bounds of an Integer loop take its type as an assignment does: the ordinal (Microsoft's
                 // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; pinned by the
                 // corpus Option_InCaseAndLoopBounds, types/ for_to_option).
                 let bound = |v: Value| match v {
                     Value::Option(o, _) | Value::Enum(_, o) => Value::Integer(o),
+                    Value::Boolean(b) => Value::Integer(i32::from(b)),
                     v => v,
                 };
                 if matches!(from, Value::Enum(..)) || matches!(to, Value::Enum(..)) {
@@ -1018,7 +1017,13 @@ impl Session {
                     if matches!(slot_ty, RtType::Option(_) | RtType::Enum(_)) {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
                     }
-                    self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
+                    let counter = if matches!(slot_ty, RtType::Boolean) {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
+                        Value::Boolean(i != 0)
+                    } else {
+                        ops::convert(Value::BigInteger(i), &slot_ty)?
+                    };
+                    self.write(var, counter, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}

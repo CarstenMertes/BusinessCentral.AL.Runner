@@ -161,6 +161,27 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
                         i += 1;
                         break;
                     }
+                    // A placeholder inside the quotes is replaced like any other (the filter text '''%1''|''%2''' in
+                    // Gen. Jnl.-Show CT Entries filters a blank currency as ''|''). A text or an Integer is put in as it
+                    // reads; any other type is not pinned (registry entry filter-placeholder-in-quotes).
+                    Some('%') if c.get(i + 1).is_some_and(|d| d.is_ascii_digit()) => {
+                        let n = c[i + 1].to_digit(10).expect("digit") as usize;
+                        let arg = args
+                            .get(n.wrapping_sub(1))
+                            .ok_or("filter placeholder without an argument")?;
+                        match arg {
+                            Value::Text(t) | Value::Code(t) => lit.push_str(t),
+                            Value::Integer(v) => lit.push_str(&v.to_string()),
+                            other => {
+                                return Err(format!(
+                                    "placeholder %{n} inside quotes holds {}: only a text or an Integer is put in (not pinned)",
+                                    other.describe()
+                                ));
+                            }
+                        }
+                        crate::assumptions::assume(crate::assumptions::Assumption::FilterPlaceholderInQuotes);
+                        i += 2;
+                    }
                     Some(ch) => {
                         lit.push(*ch);
                         i += 1;

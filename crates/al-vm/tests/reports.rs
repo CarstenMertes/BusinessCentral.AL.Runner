@@ -207,6 +207,27 @@ report 60913 "STV Counting Report"
     }
 }
 
+// A DataItemTableView that filters, next to a SetTableView (Whse.-Source - Create Document and its callers; about 800
+// Microsoft tests). Both apply (docs/probes-needed.md, registry entry data-item-view-and-table-view).
+report 60914 "STW Filtered Report"
+{
+    UsageCategory = ReportsAndAnalysis;
+    ApplicationArea = All;
+    ProcessingOnly = true;
+    dataset
+    {
+        dataitem(Rows; "RRE Row")
+        {
+            DataItemTableView = sorting("Entry No.") where("Entry No." = filter(1 .. 2));
+            trigger OnAfterGetRecord()
+            var LogRec: Record "RRE Log";
+            begin
+                LogRec.Log(CopyStr('STW-' + Rows.Name, 1, 50));
+            end;
+        }
+    }
+}
+
 // corpus handlers/RgfFilterReport.Report.al
 report 60998 "RGF Filter Report"
 {
@@ -841,6 +862,25 @@ fn settableview_restricts_the_data_item_to_the_view() {
         end;"
         ),
         "STV-first,STV-second"
+    );
+}
+
+// The view of SetTableView and the report's own filtering DataItemTableView both apply: the rows are those that pass
+// both (assumed, registry entry data-item-view-and-table-view).
+#[test]
+fn settableview_and_a_filtering_dataitemtableview_both_apply() {
+    assert_eq!(
+        f(
+            "var H: Codeunit Helpers; Row: Record \"RRE Row\"; R: Report \"STW Filtered Report\"; begin
+            H.Seed();
+            Row.SetRange(\"Entry No.\", 2, 3);
+            R.SetTableView(Row);
+            R.UseRequestPage(false);
+            R.Run();
+            exit(H.Visited('STW-'));
+        end;"
+        ),
+        "STW-second"
     );
 }
 

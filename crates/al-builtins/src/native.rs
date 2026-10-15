@@ -495,11 +495,17 @@ const REGISTRY: &[(&str, NativeFn)] = &[
 /// `docs/probes-needed.md`, "Builtins refused until a probe pins them").
 pub fn refusal(id: &str) -> Option<&'static str> {
     Some(match id {
+        "System.GetDotNetType#1" => {
+            "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
+        }
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
         "RecordRef.GetBySystemId#1" => {
             "RecordRef.GetBySystemId is in no corpus test (only Record.GetBySystemId is), so whether it behaves as the Record form, loads the row into the RecordRef and how it answers a RecordRef that is not open are not pinned"
+        }
+        "System.GetLastErrorText#2" => {
+            "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
         }
         "Media.ImportStream#2" => {
             "Media.ImportStream with a file name: what the file name is stored as (the Tenant Media row) is not pinned; only the form with a description and a MIME type is (media/TestMediaPngImport.al)"
@@ -1167,6 +1173,14 @@ fn value_kind(v: &Value) -> String {
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
+
+    // Base Application's Web Request Helper casts a caught .NET exception with `GetDotNetType(WebException)`
+    // after a web request failed; no corpus test calls GetDotNetType (issue 34).
+    #[test]
+    fn get_dot_net_type_is_refused_with_its_reason() {
+        let why = refusal("System.GetDotNetType#1").unwrap_or_default();
+        assert!(why.contains("GetDotNetType") && why.contains("not pinned"), "{why}");
+    }
 
     #[derive(Default)]
     pub(crate) struct TestCtx {

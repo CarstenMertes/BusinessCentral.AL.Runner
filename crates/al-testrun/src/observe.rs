@@ -164,6 +164,7 @@ const PUBLISHER_ATTRIBUTES: &[&str] = &[
 pub fn may_observe_baseline(lowered: &Lowered, tests: &[usize]) -> Option<String> {
     let objects = &lowered.program.objects;
     let mut walk = Walk {
+        whole: HashSet::new(),
         objects,
         seen_objects: HashSet::new(),
         seen_routines: HashSet::new(),
@@ -253,6 +254,9 @@ pub fn text_looks_pure(
 }
 
 struct Walk<'a> {
+    /// The local slots of the routine being walked that are used as a whole (read, written, passed or
+    /// given a method), as opposed to only through their fields.
+    whole: HashSet<usize>,
     objects: &'a [Object],
     seen_objects: HashSet<usize>,
     seen_routines: HashSet<(usize, usize)>,
@@ -302,13 +306,25 @@ impl Walk<'_> {
     }
 
     fn routine(&mut self, r: &Routine) -> Check {
-        for s in &r.locals {
-            ty(&s.ty).map_err(|w| format!("local `{}`: {w}", s.name))?;
+        // A record variable is a buffer in memory until something reads or writes rows through it. A
+        // routine that only assigns and reads its fields (Library Assert's TypeNameOf does) touches no
+        // row, counter or storage; any other use of the variable, or handing it on, may.
+        self.whole.clear();
+        self.stmts(&r.body)?;
+        for (i, s) in r.locals.iter().enumerate() {
+            if matches!(s.ty, RtType::Record(..)) {
+                if self.whole.contains(&i) {
+                    return Err(format!("local `{}`: a record variable used as a whole", s.name));
+                }
+            } else {
+                ty(&s.ty).map_err(|w| format!("local `{}`: {w}", s.name))?;
+            }
         }
-        if let Some(t) = &r.ret {
-            ty(t).map_err(|w| format!("return value: {w}"))?;
+        match &r.ret {
+            Some(RtType::Record(..)) => Err("return value: a record variable".into()),
+            Some(t) => ty(t).map_err(|w| format!("return value: {w}")),
+            None => Ok(()),
         }
-        self.stmts(&r.body)
     }
 
     fn stmts(&mut self, body: &[Stmt]) -> Check {
@@ -385,11 +401,17 @@ impl Walk<'_> {
 
     fn place(&mut self, p: &Place) -> Check {
         match p {
-            Place::Local(_) | Place::Global(_) => Ok(()),
+            Place::Local(i) => {
+                self.whole.insert(*i);
+                Ok(())
+            }
+            Place::Global(_) => Ok(()),
             Place::Index(inner, idx) => {
                 self.place(inner)?;
                 idx.iter().try_for_each(|e| self.expr(e))
             }
+            // A field of a local record variable: the variable stays a buffer in memory.
+            Place::Field(inner, _) if matches!(**inner, Place::Local(_)) => Ok(()),
             Place::Field(..) => Err("reads or writes a record field".into()),
             Place::BaseGlobal(_) => Err("uses a variable of a base page or report".into()),
         }
@@ -457,6 +479,7 @@ impl Walk<'_> {
                 args.iter().try_for_each(|a| self.arg(a))
             }
             Expr::ThisInstance => Ok(()),
+            Expr::Refused(_) => Err("refuses when it runs".into()),
             Expr::BaseInstance => Err("uses the base page or report".into()),
             Expr::EnumImpl { .. } => Err("creates the codeunit an enum value implements".into()),
             Expr::Control { .. } => Err("reads a control of a test page".into()),
@@ -566,10 +589,29 @@ mod tests {
     }
 
     #[test]
-    fn a_record_variable_may_observe_it() {
-        let src =
-            format!("{TABLE}codeunit 60002 T {{ Subtype = Test; [Test] procedure P() var R: Record S; begin end; }}");
+    fn a_record_variable_used_as_a_whole_may_observe_it() {
+        let src = format!(
+            "{TABLE}codeunit 60002 T {{ Subtype = Test; [Test] procedure P() var R: Record S; begin R.DeleteAll(); end; }}"
+        );
+        assert!(verdict(&src, &["T"]).unwrap().contains("Record.DeleteAll"));
+        // handing the record to a routine lets that routine do anything with it
+        let src = format!(
+            "{TABLE}codeunit 60001 H {{ procedure Fill(var R: Record S) begin R.K := 'A'; end; }}
+            codeunit 60002 T {{ Subtype = Test; var Hp: Codeunit H; [Test] procedure P() var R: Record S; begin Hp.Fill(R); end; }}"
+        );
         assert!(verdict(&src, &["T"]).unwrap().contains("record variable"));
+    }
+
+    #[test]
+    fn a_record_variable_whose_fields_are_set_and_read_is_a_buffer_in_memory() {
+        // Library Assert's TypeNameOf does this: a local `Field` record whose `Type` is assigned and formatted.
+        // No row is read or written, so the baseline cannot show.
+        let src = format!(
+            "{TABLE}codeunit 60001 H {{ procedure Name(): Text var R: Record S; begin R.K := 'A'; exit(Format(R.K)); end; }}
+            codeunit 60002 T {{ Subtype = Test; var Hp: Codeunit H;
+              [Test] procedure P() var R: Record S; begin if Hp.Name() <> 'A' then Error('x'); end; }}"
+        );
+        assert_eq!(verdict(&src, &["T"]), None);
     }
 
     #[test]
@@ -631,7 +673,7 @@ mod tests {
             codeunit 60002 T {{ Subtype = Test; [Test] procedure P() var F: Interface IFoo; begin F := Pure; if F.N() <> 1 then Error('x'); end; }}"
         );
         let why = verdict(&src, &["T"]).unwrap_or_default();
-        assert!(why.contains("Dirty") && why.contains("record variable"), "{why}");
+        assert!(why.contains("Dirty") && why.contains("Record.Count"), "{why}");
     }
 
     #[test]

@@ -275,20 +275,24 @@ fn a_where_const_naming_an_option_member_with_a_hyphen_is_enforced() {
     );
 }
 
-/// A relation filtered by `field(F)` where F is a FlowField of the same record: whether BC calculates F
-/// for the check is not pinned (probe in docs/probes-needed.md). Reading F as it stands (0 or blank, no
-/// CalcFields) made `Validate` fail with "cannot be found in the related table" for a value BC accepts
-/// (a Pageworks test); the run is refused, not wrong.
+/// A relation filtered by `field(F)` where F is a FlowField of the same record: the check calculates F
+/// itself, so `Validate` passes without a prior CalcFields and fails when the calculated value does not
+/// match (staging types/PZMisc.al:Validate_TableRelationFilteredByAFlowField, BC 29.0; a Pageworks test).
 #[test]
-fn a_relation_filtered_by_a_flowfield_of_the_record_is_refused_not_failed() {
+fn a_relation_filtered_by_a_flowfield_of_the_record_calculates_it() {
     let r = run(
-        "procedure F() var P: Record \"Rel Parent\"; C: Record \"Rel Flow Child\"; begin
-            P.Code := 'X'; P.Grp := 'G'; P.Insert(); Commit();
-            C.Id := 1; C.Validate(ByFlow, 'X');
+        "procedure F(): Text var P: Record \"Rel Parent\"; FP: Record \"Rel Flow Parent\"; C: Record \"Rel Flow Child\"; Seen: Text; begin
+            P.Code := 'X'; P.Grp := 'G'; P.Insert();
+            P.Code := 'Y'; P.Grp := 'H'; P.Insert();
+            FP.Id := 7; FP.Grp := 'G'; FP.Insert(); Commit();
+            C.Id := 1; C.ParentId := 7;
+            C.Validate(ByFlow, 'X'); Seen := C.ByFlow;
+            asserterror C.Validate(ByFlow, 'Y'); exit(Seen + '|' + GetLastErrorText());
         end;",
     );
-    match r {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("FlowField") && why.contains("not pinned"), "{why}"),
-        other => panic!("expected a refusal, got {other:?}"),
-    }
+    let t = text(r);
+    assert!(
+        t.starts_with("X|") && t.contains("cannot be found in the related table"),
+        "{t}"
+    );
 }

@@ -1159,6 +1159,20 @@ fn array_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<
     })
 }
 
+/// The tokens of a JsonArray as `JsonToken` values, for `foreach`: in order, and as the array was when the
+/// loop started (an element added inside is not visited; corpus types/PVLabelSplitForeach.al on the
+/// staging branch). `None` for any other value.
+pub fn array_items(v: &Value) -> Option<Vec<Value>> {
+    let Value::Library(_, h) = v else { return None };
+    if !matches!(&*h.borrow(), LibraryValue::Json(_)) {
+        return None;
+    }
+    with_node(h, |n| match n {
+        JsonNode::Array(kids) => Some(kids.iter().map(|k| tagged("JsonToken", k.clone())).collect()),
+        _ => None,
+    })
+}
+
 fn array_count(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let h = recv(r)?;
     with_node(&h, |n| match n {

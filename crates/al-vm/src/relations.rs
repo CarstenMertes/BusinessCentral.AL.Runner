@@ -191,17 +191,17 @@ impl Session {
                         .map_err(|e| Signal::Unsupported(format!("where() of a relation: {e}")))?,
                     group: 0,
                 },
-                ir::RelationWhere::Field { own, .. } if Self::is_flow_field(&schema.fields[*own]) => {
-                    // Whether the check calculates the FlowField first is not pinned; the value as it
-                    // stands (no CalcFields) made a valid value fail (docs/probes-needed.md).
-                    return unsupported(format!(
-                        "the TableRelation of {}.{} filters by `field({})`, a FlowField of the same record: whether BC calculates it for the check is not pinned",
-                        t.name, field.name, schema.fields[*own].name
-                    ));
-                }
                 ir::RelationWhere::Field { related: p, own } => FieldFilter {
                     field: *p,
-                    expr: FilterExpr::Eq(ops::convert(rec.borrow().fields[*own].clone(), &related.fields[*p].ty)?),
+                    expr: FilterExpr::Eq({
+                        // The check calculates a FlowField the filter names (staging types/PZMisc.al:
+                        // Validate_TableRelationFilteredByAFlowField, BC 29.0). Whether the calculated value
+                        // stays on the record is not observed (docs/probes-needed.md).
+                        if Self::is_flow_field(&schema.fields[*own]) {
+                            self.calc_fields(rec, &[*own])?;
+                        }
+                        ops::convert(rec.borrow().fields[*own].clone(), &related.fields[*p].ty)?
+                    }),
                     group: 0,
                 },
             });
@@ -224,7 +224,13 @@ impl Session {
                 self.message_value(&value)?,
                 self.caption(&related)
             ),
-            code: "DB:PrimRecordNotFound".into(),
+            // The related table "Field" (2000000041) answers DB:RecordNotFound (staging types/PZMisc.al:
+            // Validate_TableRelation_MissingFieldNumber, BC 29.0); other tables DB:PrimRecordNotFound.
+            code: if self.engine.program.objects[related.object as usize].id == Some(2_000_000_041) {
+                "DB:RecordNotFound".into()
+            } else {
+                "DB:PrimRecordNotFound".into()
+            },
             call_stack: String::new(),
         }))
     }

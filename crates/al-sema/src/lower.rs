@@ -3560,15 +3560,37 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
-        let body = match r.body() {
+        let mut body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
         // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
         // would answer the default value of the return type, which is not what the platform answers.
-        // The platform's Base64Convert codeunit is the one the runtime implements (al-vm platformnative.rs).
-        let implemented = self.ws.objects[self.oi].name == "Base64Convert";
-        if body.is_empty() && !implemented && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
+        // A few have an implementation here (`platform_native`, pinned by the corpus); the others are refused.
+        let native = (body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")))
+            .then(|| {
+                let types: Vec<String> = r
+                    .params()
+                    .map(|p| p.type_ref().map(|t| t.type_name().to_lowercase()).unwrap_or_default())
+                    .collect();
+                al_builtins::platform_native::find(&self.ws.objects[self.oi].name, &r.name(), &types)
+            })
+            .flatten();
+        if let Some(entry) = native {
+            let call = ir::Expr::Builtin {
+                id: entry.id.to_string(),
+                receiver: None,
+                args: (0..params)
+                    .map(|i| ir::Arg::Value(ir::Expr::Load(ir::Place::Local(i))))
+                    .collect(),
+                ret_used: ret_ty.is_some(),
+            };
+            body = vec![if ret_ty.is_some() {
+                ir::Stmt::Exit(Some(call))
+            } else {
+                ir::Stmt::Expr(call)
+            }];
+        } else if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
             self.reasons.push(format!(
                 "[Native] procedure `{}` is implemented by the platform and has no AL body (what it answers is not pinned)",
                 r.name()
@@ -4584,6 +4606,21 @@ impl Lowerer<'_> {
                 self.call(n, &kids[0], &args)
             }
             ScopeExpr => match self.res(n).cloned() {
+                // `Mode::Decompress` with `Mode: DotNet CompressionMode`: the type's static member.
+                Some(Res::DotNetMember(name)) => {
+                    let Ty::DotNet(alias) = self.ty_of(n) else {
+                        return Err(format!("`{name}` is not a member of a DotNet value"));
+                    };
+                    let ty = self.ws.resolve_dotnet(self.file, &alias).ok_or_else(|| {
+                        format!("DotNet '{alias}' has no dotnet {{ }} declaration in this app or its dependencies")
+                    })?;
+                    Ok(ir::Expr::DotNet {
+                        ty: Some(ty),
+                        receiver: Some(Box::new(self.expr(&kids[0])?)),
+                        op: ir::DotNetOp::Get(name),
+                        args: Vec::new(),
+                    })
+                }
                 Some(Res::EnumValue { object, value }) => Ok(ir::Expr::Const(ir::Const::Enum(object as u32, value))),
                 Some(Res::OptionValue(i)) => match self.ty_of(n) {
                     Ty::Option(m) => Ok(ir::Expr::Const(ir::Const::Option(i, m))),
@@ -5052,6 +5089,8 @@ impl Lowerer<'_> {
                             0,
                         )))))
                     }
+                    // A Label is its text: the variable holds none (reads lower to the constant).
+                    Some(r) if sig.instance && sig.receiver == "Label" => Some(Box::new(ir::Arg::Value(self.expr(r)?))),
                     Some(r) if sig.instance => Some(Box::new(match self.place(r) {
                         Ok(p) => ir::Arg::Ref(p),
                         Err(_) => ir::Arg::Value(self.expr(r)?),

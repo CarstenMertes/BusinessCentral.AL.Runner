@@ -771,7 +771,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("Text", "Substring", _) => substring,
         ("Text", "PadLeft", _) => pad_left,
         ("Text", "PadRight", _) => pad_right,
-        ("Text", "Split", _) => split,
+        // A Label has Split like a Text (corpus types/PVLabelSplitForeach.al, staging 8217373).
+        ("Text" | "Label", "Split", _) => split,
         ("Text", "ConvertStr", [_, _, _]) => convert_str,
         ("Text", "DelChr", _) => del_chr,
         ("Text", "IncStr", _) => inc_str,

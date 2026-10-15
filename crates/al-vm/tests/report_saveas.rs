@@ -911,10 +911,10 @@ fn a_second_saveas_on_one_report_variable_is_refused() {
     assert!(why.contains("second SaveAs"), "{why}");
 }
 
-// handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText: a parent with no
-// child rows is written with no nested DataItems (assumption: docs/probes-needed.md).
+// report/W3ReportDataset.al:Rows_ParentsWithoutChildRows (staging probe, BC 27 to 29): a parent row whose item
+// declares nested items but no child row reaches them is written with an empty `DataItems` element.
 #[test]
-fn a_parent_row_without_child_rows_has_no_nested_data_items_element() {
+fn a_parent_row_without_child_rows_has_an_empty_nested_data_items_element() {
     let text = f("var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; Parent: Record \"Probe Rep Parent\"; Out: OutStream; begin
             H.Seed();
             Parent.Init(); Parent.Id := 3; Parent.Insert();
@@ -925,7 +925,7 @@ fn a_parent_row_without_child_rows_has_no_nested_data_items_element() {
     let third = text.rsplit("<Column name=\"PNo\">3</Column>|").next().unwrap();
     assert!(third.starts_with("        <Column name=\"PName\"></Column>|"), "{text}");
     assert!(
-        third.contains("      </Columns>|    </DataItem>|  </DataItems>|</ReportDataSet>|"),
+        third.contains("      </Columns>|      <DataItems />|    </DataItem>|  </DataItems>|</ReportDataSet>|"),
         "{third}"
     );
 }

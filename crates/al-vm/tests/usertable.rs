@@ -227,11 +227,9 @@ fn what_the_corpus_does_not_pin_is_refused() {
     assert!(unsupported(r).contains("authentication email"));
 }
 
-/// Deleting a User deletes its Access Control rows, in every company, and no one else's. No corpus
-/// test pins it: Microsoft's codeunit 134614 "Test App Permissions" (Tests-SINGLESERVER) deletes all
-/// users in `InitializeData` and then creates new ones with the same roles, which passes on real BC only
-/// if the rows go with their users (owner decision 2026-10-15, hard rule 3 exception;
-/// docs/probes-needed.md "User delete cascade to Access Control").
+/// Deleting a User deletes its Access Control rows, and no one else's (staging
+/// tests/al-language-onprem/session/PZUserDelete.al:DeleteUser_WithRunTrigger_RemovesItsAccessControlRows and
+/// DeleteUser_WithoutRunTrigger_AccessControlRows, BC 29.0; also what Microsoft's codeunit 134614 needs).
 #[test]
 fn deleting_a_user_deletes_its_access_control_rows_and_only_those() {
     let r = run("NewUser(U, ''); NewUser(V, ''); \
@@ -259,4 +257,30 @@ fn writing_many_users_terminates() {
     let r = run("for i := 1 to 50 do NewUser(U, ''); U.Reset(); exit(Format(U.Count()));");
     // 50 new users and the session user the platform seeds.
     assert_eq!(text(r), "51");
+}
+
+/// With IsSaaS true (the default environment) deleting the only enabled SUPER user raises
+/// "There should be at least one enabled 'SUPER' user." with code Dialog (staging
+/// PZUserDelete.al:DeleteAllUsers_AsTheOnlySuperUser_IsRefused, BC 29.0). Other users go.
+#[test]
+fn deleting_the_only_super_user_is_refused_on_saas() {
+    let r = run(
+        "NewUser(U, ''); Ac.\"User Security ID\" := U.\"User Security ID\"; Ac.\"Role ID\" := 'D365 BASIC'; Ac.Insert(); \
+         U.Delete(true); exit('ok');",
+    );
+    assert_eq!(text(r), "ok");
+    let r = run("U.SetRange(\"User Security ID\", UserSecurityId()); U.FindFirst(); U.Delete(true); exit('ok');");
+    match r {
+        Err(Signal::Error(e)) => {
+            assert_eq!(e.message, "There should be at least one enabled 'SUPER' user.");
+            assert_eq!(e.code, "Dialog");
+        }
+        other => panic!("{other:?}"),
+    }
+    // A second enabled SUPER user lets the first go.
+    let r = run(
+        "NewUser(V, ''); Ac.\"User Security ID\" := V.\"User Security ID\"; Ac.\"Role ID\" := 'SUPER'; Ac.Insert(); \
+         U.SetRange(\"User Security ID\", UserSecurityId()); U.FindFirst(); U.Delete(true); exit('ok');",
+    );
+    assert_eq!(text(r), "ok");
 }

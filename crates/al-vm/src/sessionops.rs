@@ -240,16 +240,19 @@ impl Session {
                 }
                 return Ok(Value::Boolean(self.lock_timeout));
             }
-            // `LockTimeoutDuration` reads and sets the lock wait. Base Application's "Job Queue Entry".GetRecLockedExtendedTimeout reads it,
-            // sets 600 and puts the value it read back (Microsoft's job queue tests need it). What it reads before any set is
-            // not pinned: the runtime answers 0 and no wait is modelled (docs/probes-needed.md, row LockTimeoutDuration).
+            // Set when given a value, read otherwise. Only "positive" is pinned (corpus types/PVLabelSplitForeach.al
+            // on the staging branch: positive, 10 ms on the probe tier, "the exact default is a server setting").
             "Database.LockTimeoutDuration#1" => {
                 match args.first() {
                     None | Some(Value::Null) => {}
-                    Some(Value::Integer(n)) => self.lock_timeout_duration = *n,
+                    Some(Value::Duration(d)) => self.lock_timeout_duration = *d,
+                    Some(Value::Integer(i)) => self.lock_timeout_duration = i64::from(*i),
                     Some(other) => return unsupported(format!("LockTimeoutDuration with {}", other.describe())),
                 }
-                return Ok(Value::Integer(self.lock_timeout_duration));
+                // The catalog types the result as an Integer (a Duration in AL); the id is pinned (pinned_ids.tsv).
+                return Ok(Value::Integer(
+                    i32::try_from(self.lock_timeout_duration).unwrap_or(i32::MAX),
+                ));
             }
             // The type of the transaction (session/ProbeSystemEnumMembers.al:60-161, BC 27.5;
             // TestClearAllTransactionTypeContracts.al:224-253):

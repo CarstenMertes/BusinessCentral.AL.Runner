@@ -695,6 +695,38 @@ fn assignment_converts_to_the_slot_type() {
     );
 }
 
+// ADR-031 item 2.2: a value whose type is the slot's own type needs no conversion. Only types whose conversion is
+// the identity are dropped: a Text or Code keeps it (the length of a concatenation is checked there), as does every
+// pair of different types.
+#[test]
+fn an_assignment_between_equal_scalar_types_has_no_convert() {
+    let (_, l) = lower_src(
+        "codeunit 50100 C { procedure P() var A: Integer; B: Integer; C: Decimal; D: Decimal; G: Boolean; H: Boolean; T1: Date; T2: Date; begin A := B; C := D; G := H; T1 := T2; end; }",
+    );
+    let (_, r) = routine(&l, "P");
+    assert_eq!(r.body.len(), 4, "{:?}", r.body);
+    for st in &r.body {
+        assert!(
+            matches!(st, ir::Stmt::Assign(_, ir::Expr::Load(_))),
+            "an equal-type assignment must not convert: {st:?}"
+        );
+    }
+}
+
+#[test]
+fn an_assignment_between_different_or_length_checked_types_keeps_its_convert() {
+    let (_, l) = lower_src(
+        "codeunit 50100 C { procedure P() var D: Decimal; I: Integer; S: Text[10]; U: Text[10]; B: BigInteger; begin D := I; S := U; B := I; end; }",
+    );
+    let (_, r) = routine(&l, "P");
+    for st in &r.body {
+        assert!(
+            matches!(st, ir::Stmt::Assign(_, ir::Expr::Convert(..))),
+            "a conversion that can change the value stays: {st:?}"
+        );
+    }
+}
+
 #[test]
 fn compound_assignment_reads_the_place() {
     let (_, l) = lower_src("codeunit 50100 C { procedure P() var I: Integer; begin I += 2; end; }");

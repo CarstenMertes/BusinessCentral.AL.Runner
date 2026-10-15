@@ -1867,11 +1867,9 @@ impl Session {
             }
             "Validate" => {
                 let pos = arg_pos(args, 0)?;
-                let schema = self.engine.program.objects[t.object as usize]
-                    .table
-                    .clone()
-                    .expect("table");
-                let field = schema.fields[pos].clone();
+                let engine = self.engine.clone();
+                let schema = engine.program.objects[t.object as usize].table.as_ref().expect("table");
+                let field = &schema.fields[pos];
                 // A Validate nested in an OnValidate of the same record keeps the outer call's
                 // before-image as xRec (corpus record/TestXRecContracts.al:133).
                 let handle = Rc::as_ptr(rec) as usize;

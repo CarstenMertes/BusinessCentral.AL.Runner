@@ -1895,7 +1895,7 @@ impl Session {
                 if outer.is_none() {
                     self.validating.push((handle, before));
                 }
-                let r = self.validate_hooks(&t, rec, &xrec, &field, snapshot);
+                let r = self.validate_hooks(&t, rec, &xrec, field, snapshot);
                 if outer.is_none() {
                     self.validating.pop();
                 }

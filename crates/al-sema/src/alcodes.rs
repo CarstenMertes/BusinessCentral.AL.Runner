@@ -27,15 +27,25 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
         "AL0118",
         "a bare call of a name that is not a procedure or system function, in a codeunit",
     ),
-    ("AL0124", "app.json key `assemblyProbingPaths` at runtime 16.0"),
-    ("AL0132", "ExecutionMode::Install, Uninstall, Upgrade, Report"),
+    (
+        "AL0124",
+        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1 and 17.0",
+    ),
+    ("AL0132", "ExecutionMode::Install, Uninstall, Upgrade, Report, Profile"),
     (
         "AL0161",
-        "a page extension names a non-protected variable or a local procedure of its base page",
+        "a page extension names a non-protected variable or a local procedure of its base page, or a report extension does; a Cloud app names an internal agent table of the platform",
     ),
-    ("AL0162", "OnInit in a page extension"),
+    ("AL0162", "OnInit, OnFindRecord and OnNextRecord in a page extension"),
     ("AL0197", "two objects of one type and name in one app"),
-    ("AL0296", "a Cloud app names a platform table that is Scope = OnPrem"),
+    (
+        "AL0296",
+        "a Cloud app names a platform table that is Scope = OnPrem (the 123 of System.app that the corpus lists)",
+    ),
+    (
+        "AL0433",
+        "a Cloud app names a removed platform table (the 14 of System.app that the corpus lists)",
+    ),
     (
         "AL0365",
         "DataItemLink on a query data item with SqlJoinType = CrossJoin",
@@ -46,7 +56,7 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ),
     (
         "AL0440",
-        "a page extension procedure with the signature of a base page procedure",
+        "a page or report extension procedure, or a second procedure of a codeunit, table, page or report, with the signature of a procedure it could reach",
     ),
 ];
 
@@ -79,6 +89,9 @@ pub enum AppTarget {
     Internal,
 }
 
+/// The app runtimes (major, minor) at which the compiler refuses `assemblyProbingPaths` (corpus 0007, 0071 to 0073).
+const ASSEMBLY_PROBING_REFUSED: &[(u32, u32)] = &[(15, 0), (16, 0), (16, 1), (17, 0)];
+
 /// What the compiler knows of an app besides its source.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct AppContext {
@@ -87,12 +100,219 @@ pub struct AppContext {
     pub runtime: Option<(u32, u32)>,
     /// The top-level keys of app.json.
     pub app_json_keys: Vec<String>,
+    /// The BC major the app is compiled for (the platform symbols it sees); `None` when not known.
+    pub bc_major: Option<u32>,
 }
 
 /// Platform tables declared `Scope = OnPrem`. Pinned by the must-not-compile corpus: cases 0006
 /// (`Published Application`) and 0014 (`API Webhook Entity`), BC 27.5 compiler. Other platform
 /// tables may be OnPrem too; none is guessed (docs/probes-needed.md).
 pub const ONPREM_PLATFORM_TABLES: &[&str] = &["Published Application", "API Webhook Entity"];
+
+/// The platform tables of System.app (BC 27.0) with `Scope = OnPrem`: naming one from a Cloud app is AL0296. Corpus
+/// must-not-compile 0020 to 0024 name all 123, 30 per case, with the symbols of BC 27 only, so the verdict is not
+/// known for another major. Sorted by name.
+pub const ONPREM_PLATFORM_TABLES_27: &[&str] = &[
+    "API Webhook Entity",
+    "API Webhook Notification",
+    "API Webhook Notification Aggr",
+    "API Webhook Subscription",
+    "Agent",
+    "Agent Access Control Data",
+    "Agent Data",
+    "Agent Task Data",
+    "Agent Task File Data",
+    "Agent Task Log Entry",
+    "Agent Task Log Entry Data",
+    "Agent Task Memory Entry",
+    "Agent Task Memory Entry Data",
+    "Agent Task Message Data",
+    "Agent Task Msg Attach Data",
+    "Agent Task Page Script",
+    "Agent Task Timeline",
+    "Agent Task Timeline Step",
+    "Agent Task Timeline Step Data",
+    "Agent Task Timeline Step Det.",
+    "Agent Task User Int. Data",
+    "Agent Troubleshoot Info Data",
+    "Application Dependency",
+    "Application Object Metadata",
+    "Application Resource",
+    "Configuration Package File",
+    "Data Sensitivity",
+    "Database",
+    "Debugger Breakpoint",
+    "Debugger Call Stack",
+    "Debugger Variable",
+    "Debugger Watch",
+    "Debugger Watch Value",
+    "Designed Query",
+    "Designed Query Caption",
+    "Designed Query Category",
+    "Designed Query Column",
+    "Designed Query Column Filter",
+    "Designed Query Data Item",
+    "Designed Query Filter",
+    "Designed Query Group",
+    "Designed Query Join",
+    "Designed Query Management",
+    "Designed Query Obj",
+    "Designed Query Order By",
+    "Device",
+    "Document Service",
+    "Document Service Scenario",
+    "Drive",
+    "Entitlement",
+    "Entitlement Set",
+    "Ext. Business Event Definition",
+    "Extension Database Snapshot",
+    "Extension Execution Info",
+    "External Event Activity Log",
+    "External Event Log Entry",
+    "External Event Notification",
+    "External Event Subscription",
+    "File",
+    "Inplace Installed Application",
+    "Installed Application",
+    "Intelligent Cloud",
+    "Intelligent Cloud Status",
+    "Isolated Storage",
+    "MCP Configuration",
+    "MCP Configuration Tool",
+    "Media",
+    "Media Set",
+    "Membership Entitlement",
+    "NAV App",
+    "NAV App Capabilities",
+    "NAV App Data Archive",
+    "NAV App Dependencies",
+    "NAV App Extra",
+    "NAV App Object Metadata",
+    "NAV App Object Prerequisites",
+    "NAV App Publish Reference",
+    "NAV App Published App",
+    "NAV App Resource",
+    "NAV App Tenant App",
+    "NAV App Tenant Operation",
+    "Object",
+    "Object Metadata",
+    "Page Documentation",
+    "Page Info And Fields",
+    "Page Table Field",
+    "Page Usage State",
+    "Performance Profile Scheduler",
+    "Performance Profiles",
+    "Permission Range",
+    "Power BI Blob",
+    "Power BI Default Selection",
+    "Profile",
+    "Profile Configuration Symbols",
+    "Profile Metadata",
+    "Profile Page Metadata",
+    "Published Application",
+    "Query Navigation",
+    "Report Printer",
+    "Report Settings Override",
+    "SID - Account ID",
+    "Send-To Program",
+    "Server Instance",
+    "Style Sheet",
+    "System Object",
+    "Table Field Types",
+    "Table Information",
+    "Table Synch. Setup",
+    "Tenant Application Storage",
+    "Tenant Feature Key",
+    "Tenant Profile",
+    "Tenant Profile Extension",
+    "Tenant Profile Page Metadata",
+    "Tenant Profile Setting",
+    "Token Cache",
+    "Upgrade Blob Storage",
+    "User AI Consumption Data",
+    "User Consumption Log Entry",
+    "User Page Metadata",
+    "User Property",
+    "Web Service",
+    "Webhook Notification",
+    "Webhook Subscription",
+];
+
+/// The tables among them that are `Access = Internal` in the namespace `System.Agents.Internal`: naming one is also AL0161
+/// (corpus 0023, 0024; BC 27).
+pub const INTERNAL_AGENT_TABLES_27: &[&str] = &[
+    "Agent Access Control Data",
+    "Agent Data",
+    "Agent Task Data",
+    "Agent Task File Data",
+    "Agent Task Log Entry Data",
+    "Agent Task Memory Entry Data",
+    "Agent Task Message Data",
+    "Agent Task Msg Attach Data",
+    "Agent Task Timeline Step Data",
+    "Agent Task User Int. Data",
+    "Agent Troubleshoot Info Data",
+];
+
+/// The tables among them that are removed, with the compiler's reason: naming one is also AL0433 (corpus 0020, 0021; BC 27).
+pub const REMOVED_PLATFORM_TABLES_27: &[(&str, &str)] = &[
+    (
+        "Debugger Breakpoint",
+        "Support for the classic debugger engine has been removed..",
+    ),
+    (
+        "Debugger Call Stack",
+        "Support for the classic debugger engine has been removed..",
+    ),
+    (
+        "Debugger Variable",
+        "Support for the classic debugger engine has been removed..",
+    ),
+    (
+        "Debugger Watch",
+        "Support for the classic debugger engine has been removed..",
+    ),
+    (
+        "NAV App",
+        "This table is deprecated in favour of the \"Published Application\" table..",
+    ),
+    (
+        "NAV App Dependencies",
+        "This table is deprecated in favour of the \"Application Dependency\" table..",
+    ),
+    (
+        "NAV App Object Metadata",
+        "This table is deprecated in favour of the \"Application Object Metadata\" table..",
+    ),
+    (
+        "NAV App Publish Reference",
+        "This table has been deprecated with the support for per tenant extensions..",
+    ),
+    (
+        "NAV App Published App",
+        "This table has been deprecated with the support for per tenant extensions..",
+    ),
+    (
+        "NAV App Resource",
+        "This table is deprecated in favour of the \"Application Resource\" table..",
+    ),
+    (
+        "NAV App Tenant App",
+        "This table is deprecated in favour of the \"Installed Application\" table..",
+    ),
+    (
+        "Profile",
+        "Support for System Profiles has been removed. Profiles should now be defined in AL extensions and should be accessed through the All Profile virtual table.. Tag: 22.0.",
+    ),
+    (
+        "Profile Metadata",
+        "Support for System Profiles has been removed. Profiles should now be defined in AL extensions and should be accessed through the All Profile virtual table.. Tag: 22.0.",
+    ),
+    (
+        "Profile Page Metadata",
+        "Support for System Profiles has been removed. Profiles should now be defined in AL extensions and should be accessed through the All Profile virtual table.. Tag: 22.0.",
+    ),
+];
 
 fn push(out: &mut Vec<Diagnostic>, ws: &Workspace, file: usize, offset: usize, code: &'static str, message: String) {
     out.push(Diagnostic {
@@ -141,8 +361,10 @@ pub fn check_workspace(ws: &Workspace) -> Vec<Diagnostic> {
         match o.kind {
             ObjKind::PageExtension => {
                 page_extension_triggers(ws, oi, &obj, &mut out);
-                page_extension_procedures(ws, oi, &obj, &mut out);
+                extension_procedures(ws, oi, &obj, ObjKind::Page, &mut out);
             }
+            ObjKind::ReportExtension => extension_procedures(ws, oi, &obj, ObjKind::Report, &mut out),
+            ObjKind::Codeunit => duplicate_procedures(ws, oi, &obj, &mut out),
             ObjKind::Query => query_joins(ws, o.file, obj.sections(), &mut out),
             ObjKind::Report => report_columns(ws, o.file, obj.sections(), &mut out),
             _ => {}
@@ -183,18 +405,24 @@ fn duplicate_names(ws: &Workspace, out: &mut Vec<Diagnostic>) {
     }
 }
 
-/// AL0162. A page has the trigger OnInit; a page extension does not (corpus 0004). Only OnInit is
-/// refused: the other trigger names a page extension may not declare are not pinned.
+/// The triggers of a page that a page extension may not declare (corpus 0004, 0017, 0018). The other
+/// twelve page triggers compile in an extension (corpus al-language/pageext/POPageExtTriggers.al);
+/// any other trigger name is not judged here.
+const PAGE_ONLY_TRIGGERS: &[&str] = &["OnInit", "OnFindRecord", "OnNextRecord"];
+
+/// AL0162. A page has the triggers OnInit, OnFindRecord and OnNextRecord; a page extension does not
+/// (corpus 0004, 0017, 0018).
 fn page_extension_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
     for t in obj.triggers() {
-        if t.name().eq_ignore_ascii_case("OnInit") {
+        let name = t.name();
+        if PAGE_ONLY_TRIGGERS.iter().any(|p| p.eq_ignore_ascii_case(&name)) {
             push(
                 out,
                 ws,
                 ws.objects[oi].file,
                 t.keyword_offset().unwrap_or_else(|| offset_of(t.syntax())),
                 "AL0162",
-                "'OnInit' is not a valid trigger".to_string(),
+                format!("'{name}' is not a valid trigger"),
             );
         }
     }
@@ -209,12 +437,12 @@ pub(crate) fn signature(r: &ast::Routine) -> Vec<(bool, String)> {
         .collect()
 }
 
-/// AL0440. A page extension procedure with the name and parameter types of a procedure of its
-/// base page that it could otherwise reach (not `local`), corpus 0003 and
+/// AL0440. A page or report extension procedure with the name and parameter types of a procedure of
+/// its base object that it could otherwise reach (not `local`), corpus 0003 (page), 0042 (report) and
 /// handlers/TestPageExtensionBaseAccessContracts.al:20.
-fn page_extension_procedures(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+fn extension_procedures(ws: &Workspace, oi: usize, obj: &ast::Object, base_kind: ObjKind, out: &mut Vec<Diagnostic>) {
     let Some(base) = ws.extension_target(oi) else { return };
-    if ws.objects[base].kind != ObjKind::Page {
+    if ws.objects[base].kind != base_kind {
         return;
     }
     let base_ast = ws.object_ast(base);
@@ -229,10 +457,42 @@ fn page_extension_procedures(ws: &Workspace, oi: usize, obj: &ast::Object, out: 
                 r.keyword_offset().unwrap_or_else(|| offset_of(r.syntax())),
                 "AL0440",
                 format!(
-                    "The Page '{}' already defines a method called '{name}' with the same parameter types in '{}'.",
-                    ws.objects[base].name, ws.apps[ws.objects[base].app].name
+                    "The {} '{}' already defines a method called '{name}' with the same parameter types in '{}'.",
+                    display_kind(base_kind),
+                    ws.objects[base].name,
+                    ws.apps[ws.objects[base].app].name
                 ),
             );
+        }
+    }
+}
+
+/// AL0440. A procedure of a codeunit that repeats the name and parameter types of an earlier one of the same
+/// codeunit (corpus 0043; the names compare without case, the parameter types as written without blanks).
+/// Other object types are not judged: no case pins them.
+fn duplicate_procedures(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let mut seen: Vec<(String, Vec<(bool, String)>)> = Vec::new();
+    for r in obj.routines() {
+        if r.is_trigger() {
+            continue;
+        }
+        let key = (r.name().to_lowercase(), signature(&r));
+        if seen.contains(&key) {
+            push(
+                out,
+                ws,
+                ws.objects[oi].file,
+                r.keyword_offset().unwrap_or_else(|| offset_of(r.syntax())),
+                "AL0440",
+                format!(
+                    "The Codeunit '{}' already defines a method called '{}' with the same parameter types in '{}'.",
+                    ws.objects[oi].name,
+                    r.name(),
+                    ws.apps[ws.objects[oi].app].name
+                ),
+            );
+        } else {
+            seen.push(key);
         }
     }
 }
@@ -286,7 +546,18 @@ fn report_columns(
         if s.name().eq_ignore_ascii_case("column") {
             let props = properties_of(&s);
             let include = property(&props, "IncludeCaption").is_some_and(|v| v.eq_ignore_ascii_case("true"));
-            if include && s.arg_name_parts(1).is_none() && s.args().len() >= 2 {
+            // The source is a call (`Format(Id)`, corpus 0015); an indexed variable's field
+            // (`BomComponent[Level]."No."`, Base Application's "Quantity Explosion of BOM") is a named field.
+            let is_call = s.args().get(1).is_some_and(|a| {
+                let mut quoted = false;
+                a.chars().any(|c| {
+                    if c == '"' {
+                        quoted = !quoted;
+                    }
+                    c == '(' && !quoted
+                })
+            });
+            if include && s.arg_name_parts(1).is_none() && is_call {
                 if let Some(p) = s.properties().find(|p| p.name().eq_ignore_ascii_case("IncludeCaption")) {
                     push(
                         out,
@@ -307,9 +578,12 @@ fn report_columns(
 /// The checks that need the facts of app `app` (`AppContext`).
 pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    // AL0124 (corpus 0007): app.json at runtime 16.0 does not take `assemblyProbingPaths`.
-    // Only runtime 16.0 is pinned.
-    if ctx.runtime == Some((16, 0)) && ctx.app_json_keys.iter().any(|k| k == "assemblyProbingPaths") {
+    // AL0124 (corpus 0007, 0071 to 0073): a Cloud app's app.json at runtime 15.0, 16.0, 16.1 or 17.0 does not
+    // take `assemblyProbingPaths`. Those four runtimes are pinned, and only for the default target (Cloud).
+    if ctx.target == AppTarget::Cloud
+        && ctx.runtime.is_some_and(|r| ASSEMBLY_PROBING_REFUSED.contains(&r))
+        && ctx.app_json_keys.iter().any(|k| k == "assemblyProbingPaths")
+    {
         if let Some(file) = ws.files.iter().position(|f| f.app == app) {
             push(
                 &mut out,
@@ -321,7 +595,8 @@ pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagno
             );
         }
     }
-    // AL0296 (corpus 0006, 0014): a Cloud app names a platform table that is Scope = OnPrem.
+    // AL0296 (corpus 0006, 0014; and for BC 27 0020 to 0024): a Cloud app names a platform table that is
+    // Scope = OnPrem. The same tables can add AL0161 (internal agent tables) and AL0433 (removed tables).
     if ctx.target == AppTarget::Cloud {
         for (fi, f) in ws.files.iter().enumerate() {
             if f.app != app {
@@ -336,7 +611,12 @@ pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagno
                     continue;
                 }
                 let Some(name) = t.object_name() else { continue };
-                let Some(table) = ONPREM_PLATFORM_TABLES.iter().find(|x| x.eq_ignore_ascii_case(&name)) else {
+                let any_major = ONPREM_PLATFORM_TABLES.iter().find(|x| x.eq_ignore_ascii_case(&name));
+                let on_27 = al_version::platform_table_scopes_known(ctx.bc_major);
+                let in_27 = on_27
+                    .then(|| ONPREM_PLATFORM_TABLES_27.iter().find(|x| x.eq_ignore_ascii_case(&name)))
+                    .flatten();
+                let Some(table) = any_major.or(in_27) else {
                     continue;
                 };
                 // A table of that name in the app (or what it depends on) is the one named.
@@ -353,6 +633,34 @@ pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagno
                         "The application object or method '{table}' has scope 'OnPrem' and cannot be used for 'Cloud' development."
                     ),
                 );
+                if !on_27 {
+                    continue;
+                }
+                if let Some(agent) = INTERNAL_AGENT_TABLES_27.iter().find(|x| x.eq_ignore_ascii_case(&name)) {
+                    push(
+                        &mut out,
+                        ws,
+                        fi,
+                        offset_of(&n),
+                        "AL0161",
+                        format!(
+                            "'Table System.Agents.Internal.\"{agent}\"' is inaccessible due to its protection level"
+                        ),
+                    );
+                }
+                if let Some((removed, reason)) = REMOVED_PLATFORM_TABLES_27
+                    .iter()
+                    .find(|(x, _)| x.eq_ignore_ascii_case(&name))
+                {
+                    push(
+                        &mut out,
+                        ws,
+                        fi,
+                        offset_of(&n),
+                        "AL0433",
+                        format!("Table '{removed}' is removed. Reason: {reason}"),
+                    );
+                }
             }
         }
     }
@@ -418,6 +726,11 @@ mod tests {
         // OnOpenPage is allowed.
         let ok = ext("trigger OnOpenPage() begin end;");
         assert!(codes(&[BASE, &ok]).is_empty());
+        // Corpus 0017, 0018.
+        let find = ext("trigger OnFindRecord(Which: Text): Boolean begin exit(true); end;");
+        assert_eq!(codes(&[BASE, &find]), vec!["AL0162"]);
+        let next = ext("trigger OnNextRecord(Steps: Integer): Integer begin exit(0); end;");
+        assert_eq!(codes(&[BASE, &next]), vec!["AL0162"]);
     }
 
     #[test]
@@ -430,6 +743,20 @@ mod tests {
         assert!(codes(&[BASE, &ext("procedure Plus(a: Text): Integer begin exit(2); end;")]).is_empty());
         // A local base procedure is not reachable, so it is not a clash.
         assert!(codes(&[BASE, &ext("procedure Secret(): Integer begin exit(2); end;")]).is_empty());
+    }
+
+    #[test]
+    fn al0440_second_procedure_with_the_signature_of_an_earlier_one_in_a_codeunit() {
+        let dup = "codeunit 50000 C { local procedure Foo(A: Integer) begin end; local procedure foo(B: Integer) begin end; }";
+        assert_eq!(codes(&[dup]), vec!["AL0440"]);
+        // Another parameter type or var-ness is an overload; a table is not judged.
+        let overload = "codeunit 50000 C { procedure Foo(A: Integer) begin end; procedure Foo(A: Text) begin end; procedure Foo(var A: Integer) begin end; }";
+        assert!(codes(&[overload]).is_empty());
+        // Corpus 0042: a report extension procedure with the signature of a protected base procedure.
+        let table = "table 50001 T { fields { field(1; Id; Integer) { } } }";
+        let base = "report 50002 BR { dataset { dataitem(Row; T) { column(Id; Id) { } } } protected procedure Bump(): Integer begin exit(1); end; }";
+        let ext = "reportextension 50003 BRE extends BR { procedure Bump(): Integer begin exit(2); end; }";
+        assert_eq!(codes(&[table, base, ext]), vec!["AL0440"]);
     }
 
     #[test]
@@ -455,8 +782,94 @@ mod tests {
     }
 
     #[test]
+    fn al0118_bare_call_of_an_unknown_name_in_a_table_page_report_and_page_extension() {
+        let t = "table 50000 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { Clustered = true; } }
+            procedure Run() begin NoSuchProcedure(); end; }";
+        assert_eq!(codes(&[t]), vec!["AL0118"]);
+        let t = "table 50000 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { Clustered = true; } } }";
+        let page =
+            "page 50001 P { PageType = Card; SourceTable = T; trigger OnOpenPage() begin NoSuchProcedure(); end; }";
+        assert_eq!(codes(&[t, page]), vec!["AL0118"]);
+        let report = "report 50002 R { dataset { dataitem(Row; T) { column(Id; Id) { } } } trigger OnPreReport() begin NoSuchProcedure(); end; }";
+        assert_eq!(codes(&[t, report]), vec!["AL0118"]);
+        let ext = ext("trigger OnOpenPage() begin NoSuchProcedure(); end;");
+        assert_eq!(codes(&[BASE, &ext]), vec!["AL0118"]);
+        // What a table, page or report can call is not judged: an own procedure, an implicit record method,
+        // a page method, a system function.
+        let ok = "table 50000 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { Clustered = true; } }
+            procedure Own() begin end;
+            procedure Run() begin Own(); Init(); SetRange(Id, 1); Message('x'); end; }";
+        assert!(codes(&[ok]).is_empty());
+        let ok_page = "page 50001 P { PageType = Card; SourceTable = T; trigger OnOpenPage() begin SetRange(Id, 1); Update(false); end; }";
+        assert!(codes(&[t, ok_page]).is_empty());
+    }
+
+    #[test]
+    fn al0118_is_not_given_for_the_codeunits_own_run() {
+        // A bare `Run()` in a codeunit runs the codeunit itself (a method of the Codeunit type, called on the
+        // running instance); real BC compiles it (NP Retail's scanner import codeunits do).
+        let cu = "codeunit 50000 C { trigger OnRun() begin end;
+            procedure Go() begin if not Run() then Message('failed'); end; }";
+        assert!(codes(&[cu]).is_empty(), "{:?}", codes(&[cu]));
+        // A name that is a method of no type is still refused.
+        let bad = "codeunit 50000 C { procedure Go() begin NoSuchProcedure(); end; }";
+        assert_eq!(codes(&[bad]), vec!["AL0118"]);
+    }
+
+    #[test]
+    fn al0118_is_not_given_for_a_procedure_of_a_sibling_page_extension() {
+        // Microsoft's test library calls `RefreshFactboxes`, an `internal procedure` of another page extension
+        // of the same base page (Tests-TestLibraries UsersPBTTest.PageExt.al, Base Application
+        // UsersPerfFactboxes.PageExt.al); real BC compiles it.
+        let sibling = "pageextension 50003 BPE2 extends BP { internal procedure Refresh(a: Integer) begin end; }";
+        let caller = "pageextension 50002 BPE extends BP { trigger OnOpenPage() begin Refresh(1); end; }";
+        assert!(
+            codes(&[BASE, sibling, caller]).is_empty(),
+            "{:?}",
+            codes(&[BASE, sibling, caller])
+        );
+        // Without the sibling the name is unknown.
+        assert_eq!(codes(&[BASE, caller]), vec!["AL0118"]);
+    }
+
+    #[test]
+    fn al0118_rec_in_a_codeunit_without_table_no() {
+        let cu = "table 50000 T { fields { field(1; Id; Integer) { } } }
+            codeunit 50001 C { procedure P() begin Rec.Id := 1; end; }";
+        assert_eq!(codes(&[cu]), vec!["AL0118"]);
+        let ok = "table 50000 T { fields { field(1; Id; Integer) { } } }
+            codeunit 50001 C { TableNo = T; trigger OnRun() begin Rec.Id := 1; end; }";
+        assert!(codes(&[ok]).is_empty());
+    }
+
+    #[test]
+    fn al0132_record_field_or_method_that_does_not_exist() {
+        let t = "table 50000 T { fields { field(1; Id; Integer) { } } }";
+        let body = |stmt: &str| format!("codeunit 50001 C {{ procedure P() var R: Record T; begin {stmt} end; }}");
+        assert_eq!(codes(&[t, &body("R.NoSuchField := 1;")]), vec!["AL0132"]);
+        assert_eq!(codes(&[t, &body("R.NoSuchMethod();")]), vec!["AL0132"]);
+        assert!(codes(&[t, &body("R.Id := 1; R.Init(); R.SetRange(Id, 1);")]).is_empty());
+        // A table that an extension adds to is not judged.
+        let ext = "tableextension 50002 TE extends T { fields { field(50000; Extra; Integer) { } } }";
+        assert!(codes(&[t, ext, &body("R.Extra := 1;")]).is_empty());
+    }
+
+    #[test]
+    fn al0161_in_a_report_extension() {
+        let t = "table 50000 T { fields { field(1; Id; Integer) { } } }";
+        let base = "report 50001 BR { dataset { dataitem(Row; T) { column(Id; Id) { } } } var Hidden: Integer;
+            local procedure SecretLocal(): Integer begin exit(1); end; protected var Shown: Integer; }";
+        let var = "reportextension 50002 E extends BR { trigger OnPreReport() begin Hidden := 1; end; }";
+        assert_eq!(codes(&[t, base, var]), vec!["AL0161"]);
+        let proc_ = "reportextension 50002 E extends BR { trigger OnPreReport() var V: Integer; begin V := SecretLocal(); end; }";
+        assert_eq!(codes(&[t, base, proc_]), vec!["AL0161"]);
+        let ok = "reportextension 50002 E extends BR { trigger OnPreReport() begin Shown := 1; end; }";
+        assert!(codes(&[t, base, ok]).is_empty());
+    }
+
+    #[test]
     fn al0132_execution_mode_members_that_do_not_exist() {
-        for m in ["Install", "Uninstall", "Upgrade", "Report"] {
+        for m in ["Install", "Uninstall", "Upgrade", "Report", "Profile"] {
             let cu =
                 format!("codeunit 50000 C {{ procedure M(): ExecutionMode begin exit(ExecutionMode::{m}); end; }}");
             assert_eq!(codes(&[&cu]), vec!["AL0132"], "{m}");
@@ -500,6 +913,11 @@ mod tests {
             vec!["AL0385"]
         );
         assert!(codes(&[PARENT, &r("column(IdText; Id) { IncludeCaption = true; }")]).is_empty());
+        // An indexed variable's field is a named field (Base Application's "Quantity Explosion of BOM").
+        let indexed =
+            "report 50001 R { dataset { dataitem(Row; P) { column(IdText; Arr[Level].Id) { IncludeCaption = true; } } }
+            var Arr: array[3] of Record P; Level: Integer; }";
+        assert!(codes(&[PARENT, indexed]).is_empty(), "{:?}", codes(&[PARENT, indexed]));
         assert!(codes(&[PARENT, &r("column(IdText; Format(Id)) { }")]).is_empty());
     }
 
@@ -508,7 +926,30 @@ mod tests {
             target,
             runtime,
             app_json_keys: keys.iter().map(|k| k.to_string()).collect(),
+            bc_major: None,
         }
+    }
+
+    #[test]
+    fn al0296_al0161_and_al0433_for_the_platform_tables_of_bc_27_only() {
+        let cu = |t: &str| {
+            format!("codeunit 50000 C {{ procedure P(): Integer var R: Record \"{t}\"; begin exit(R.Count()); end; }}")
+        };
+        let at = |major, t: &str| {
+            let mut c = ctx(AppTarget::Cloud, None, &[]);
+            c.bc_major = Some(major);
+            let mut v = ctx_codes(&cu(t), &c);
+            v.sort();
+            v
+        };
+        assert_eq!(at(27, "Designed Query"), vec!["AL0296"]);
+        assert_eq!(at(27, "Agent Data"), vec!["AL0161", "AL0296"]);
+        assert_eq!(at(27, "Profile"), vec!["AL0296", "AL0433"]);
+        // Not pinned for another major, and a table that is not on the list is not judged.
+        assert!(at(28, "Designed Query").is_empty());
+        assert!(at(27, "Company").is_empty());
+        // Cases 0006 and 0014 hold for every major.
+        assert_eq!(at(28, "Published Application"), vec!["AL0296"]);
     }
 
     #[test]
@@ -529,6 +970,16 @@ mod tests {
             ctx_codes(cu, &ctx(AppTarget::Cloud, Some((16, 0)), &keys)),
             vec!["AL0124"]
         );
+        for r in [(15, 0), (16, 1), (17, 0)] {
+            assert_eq!(
+                ctx_codes(cu, &ctx(AppTarget::Cloud, Some(r), &keys)),
+                vec!["AL0124"],
+                "{r:?}"
+            );
+        }
+        // Another runtime, another target and no key are not judged.
+        assert!(ctx_codes(cu, &ctx(AppTarget::Cloud, Some((18, 0)), &keys)).is_empty());
+        assert!(ctx_codes(cu, &ctx(AppTarget::OnPrem, Some((16, 0)), &keys)).is_empty());
         assert!(ctx_codes(cu, &ctx(AppTarget::Cloud, Some((16, 0)), &[])).is_empty());
         assert!(ctx_codes(cu, &ctx(AppTarget::Cloud, None, &keys)).is_empty());
     }

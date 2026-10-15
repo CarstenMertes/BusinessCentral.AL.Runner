@@ -675,7 +675,7 @@ impl CorpusRuntime {
                 "compile: {} error(s) the AL compiler would give for the workspace's code",
                 lowered.al_diagnostics.len()
             );
-            for d in lowered.al_diagnostics.iter().take(10) {
+            for d in lowered.al_diagnostics.iter().take(100) {
                 eprintln!("compile: error {} {}: {}", d.code, d.file, d.message);
             }
         }

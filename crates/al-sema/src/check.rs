@@ -260,9 +260,12 @@ pub struct Roots {
 }
 
 /// Members that platform enums do not have, as the AL compiler says (corpus must-not-compile 0010
-/// to 0013, BC 27.5: ExecutionMode has Standard and Debug). Only members a case pins are listed;
+/// to 0013 and 0019, BC 27.5: ExecutionMode has Standard and Debug). Only members a case pins are listed;
 /// the member lists in `al_builtins::sysenum` are not complete enough to judge a name absent.
-const ABSENT_ENUM_MEMBERS: &[(&str, &[&str])] = &[("ExecutionMode", &["Install", "Uninstall", "Upgrade", "Report"])];
+const ABSENT_ENUM_MEMBERS: &[(&str, &[&str])] = &[(
+    "ExecutionMode",
+    &["Install", "Uninstall", "Upgrade", "Report", "Profile"],
+)];
 
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
     check_with(ws, members, catalog, Roots::default())
@@ -1089,9 +1092,14 @@ impl<'a> Checker<'a> {
         // AL0161 (corpus must-not-compile 0001, 0002; handlers/TestPageExtensionBaseAccessContracts.al,
         // header): a page extension names a base page variable that is not `protected`, or calls a
         // `local` base procedure. The extension's own variables and parameters were looked up first.
-        if kind == ObjKind::PageExtension {
+        let base_kind = match kind {
+            ObjKind::PageExtension => Some(ObjKind::Page),
+            ObjKind::ReportExtension => Some(ObjKind::Report),
+            _ => None,
+        };
+        if let Some(base_kind) = base_kind {
             if let Some(b) = self.ws.extension_target(sc.oi) {
-                if self.ws.objects[b].kind == ObjKind::Page {
+                if self.ws.objects[b].kind == base_kind {
                     let base = self.ws.object_ast(b);
                     let is_var = crate::base_access::declares_var(&base, &name);
                     let is_local_proc = base
@@ -1109,15 +1117,33 @@ impl<'a> Checker<'a> {
                     }
                 }
             }
-            return;
         }
-        // AL0118 (corpus must-not-compile 0005): a call of a bare name in a codeunit without
-        // `TableNo` that is no procedure of the codeunit and no system function. Nothing else can
-        // supply a bare name there. Objects with an implicit record or a base object (tables,
-        // pages, reports, extensions) are not judged: members of what they extend are out of reach.
+        // AL0118 (corpus must-not-compile 0005, 0030 to 0033, 0059). A call of a bare name that nothing can
+        // supply:
+        // - in a codeunit without `TableNo` (no implicit record): no procedure of the codeunit and no system
+        //   function;
+        // - in a table, a page, a report or a page extension: the lookup above also tried the implicit
+        //   record, the base object and the system functions, but not every implicit member of those is
+        //   modelled, so the name must also be a method name that no type of the catalog has;
+        // - the name `Rec` (not a call) in a codeunit without `TableNo`.
         let is_callee =
             node.parent().is_some_and(|p| p.kind() == SyntaxKind::CallExpr) && node.prev_sibling().is_none();
-        if kind == ObjKind::Codeunit && sc.rec.is_none() && is_callee {
+        let judged = match kind {
+            // A bare call can also be a method of the Codeunit type called on the running instance: `Run()`
+            // runs the codeunit itself (it compiles in BC; NP Retail's scanner import codeunits call it).
+            ObjKind::Codeunit => {
+                sc.rec.is_none()
+                    && ((is_callee
+                        && self.catalog.overloads("Codeunit", &name).is_empty()
+                        && self.catalog.hidden("Codeunit", &name).is_empty())
+                        || name.eq_ignore_ascii_case("Rec"))
+            }
+            ObjKind::Table | ObjKind::Page | ObjKind::Report | ObjKind::PageExtension => {
+                is_callee && !self.catalog.knows_name(&name) && !self.sibling_extension_declares(sc.oi, &name)
+            }
+            _ => false,
+        };
+        if judged {
             self.diag(
                 sc,
                 node,
@@ -1125,6 +1151,48 @@ impl<'a> Checker<'a> {
                 format!("The name '{name}' does not exist in the current context."),
             );
         }
+    }
+
+    /// Whether another extension of the object that extension `oi` extends declares a procedure `name`. The
+    /// extensions of one page merge, so a page extension calls a public or `internal` procedure of a sibling
+    /// (Microsoft's Tests-TestLibraries UsersPBTTest.PageExt.al calls RefreshFactboxes of Base Application's
+    /// UsersPerfFactboxes.PageExt.al).
+    fn sibling_extension_declares(&self, oi: usize, name: &str) -> bool {
+        let Some(base) = self.ws.extension_target(oi) else {
+            return false;
+        };
+        self.ws.extensions_of(base).iter().filter(|&&e| e != oi).any(|&e| {
+            self.ws
+                .object_ast(e)
+                .routines()
+                .any(|r| r.name().eq_ignore_ascii_case(name))
+        })
+    }
+
+    /// AL0132 (corpus must-not-compile 0060, 0061): `R.Name` or `R.Name(...)` on a `Record` variable
+    /// whose table the workspace declares, where `Name` is no field of the table, no procedure of it and
+    /// no method of `Record` in any version of the catalog. A table that an extension adds fields to is
+    /// not judged (the fields of an extension that was not loaded are out of reach).
+    fn al_unknown_record_member(&mut self, sc: &Scope, node: &SyntaxNode, base: &Ty, name: &str) {
+        let Ty::Record { table, .. } = base else { return };
+        if self.ws.is_dependency(sc.oi) {
+            return;
+        }
+        let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {
+            return;
+        };
+        if !self.ws.extensions_of(ti).is_empty()
+            || !self.catalog.overloads("Record", name).is_empty()
+            || !self.catalog.hidden("Record", name).is_empty()
+        {
+            return;
+        }
+        self.diag(
+            sc,
+            node,
+            "AL0132",
+            format!("'Record \"{table}\"' does not contain a definition for '{name}'"),
+        );
     }
 
     /// The AR1002 text. On a builtin type it says the name is in no version of the
@@ -1478,6 +1546,7 @@ impl<'a> Checker<'a> {
                     Some(e) => e,
                     None => {
                         self.diag(sc, node, "AR1002", self.no_member(&mname, &base_ty));
+                        self.al_unknown_record_member(sc, node, &base_ty, &mname);
                         E::Val(Ty::Unknown)
                     }
                 }
@@ -2829,7 +2898,9 @@ mod tests {
                 &cu("procedure P() var R: Record \"ALT Universal\"; begin R.Nope := 1; end;")
             ]),
             vec![
-                "AR1002 no member `Nope` on Record \"ALT Universal\"; not known to the catalog (docs for runtime up to 17.0)"
+                "AR1002 no member `Nope` on Record \"ALT Universal\"; not known to the catalog (docs for runtime up to 17.0)",
+                // And the compiler's own code for it (corpus must-not-compile 0060).
+                "AL0132 'Record \"ALT Universal\"' does not contain a definition for 'Nope'"
             ]
         );
         assert_eq!(

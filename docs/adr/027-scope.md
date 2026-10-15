@@ -1,6 +1,6 @@
 # ADR-027: Scope: what AL Runner v3 runs, replaces, refuses and defers
 
-- Status: Proposed
+- Status: Accepted (owner decisions 2026-10-15; see the end)
 - Date: 2026-10-15
 - Needs: owner review of section 5 (open decisions) before it is accepted
 
@@ -168,3 +168,22 @@ Each item: the question, why v3 could differ from v2, and the recommended defaul
 - `al-test-cli --top-refusals 60` on the corpus (BC 27.5, 28.5 and 29.0 sections), 2026-10-15.
 - Not verified by a run: rows 1, 8 (job queue), 9, 10, 12. Their v3 behavior is inferred from
   the code paths named. Check these before the ADR is accepted.
+
+## Owner decisions (2026-10-15)
+
+1. **HTTP:** build `HttpClient` with in-process `[HttpClientHandler]` mocks. A send that no
+   handler catches gets BC's own blocked-request error. v3 never opens a network connection;
+   no localhost exception.
+2. **Permissions:** all permissions granted in 3.0, documented. A permission check mode can
+   come later as an opt-in flag (docs/ideas.md, idea 12).
+3. **Not-run tests in CI:** exit code 7 fails CI by default; `--allow-not-run` opts out.
+4. **Background sessions:** `StartSession` and `TaskScheduler.CreateTask` run their codeunit
+   inline, flagged as an unprobed assumption (rule 3 exception) until a probe pins when and
+   how BC runs them in a test session.
+
+The other open decisions take the recommended defaults listed above (decided by the
+orchestrator, recorded in docs/owner-review.md): no localhost, no mail outbox, no report
+PDF/Word/Excel rendering in the core, compiled-only dependency apps refused by name,
+Windows-only .NET libraries as in v2, no network or file access from DotNet, stable reason
+tokens in refusal texts, no telemetry, `TestIsolation = Disabled` refused until probed,
+effective-permission queries for other users refused, `--now` fake clock flag yes.

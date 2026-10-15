@@ -98,12 +98,12 @@ fn pct(a: usize, b: usize) -> f64 {
 pub fn coverage(ws: &Workspace, checked: &CheckResult, catalog: &Catalog, counted: &[usize]) -> CoverageMap {
     // The first call site of each id: (path, line), smallest in path and line order.
     let mut first: BTreeMap<String, (String, usize)> = BTreeMap::new();
-    let mut by_file: BTreeMap<usize, Vec<(u32, String)>> = BTreeMap::new();
+    let mut by_file: BTreeMap<usize, Vec<(usize, String)>> = BTreeMap::new();
     for (key, res) in checked.resolutions.iter() {
         if let Res::Builtin(id) = res {
-            let file = key.0 as usize;
+            let file = key.0;
             if counted.contains(&ws.files[file].app) {
-                by_file.entry(file).or_default().push((key.1 as u32, id.clone()));
+                by_file.entry(file).or_default().push((key.1, id.clone()));
             }
         }
     }
@@ -112,7 +112,7 @@ pub fn coverage(ws: &Workspace, checked: &CheckResult, catalog: &Catalog, counte
         let text = &ws.apps[f.app].files[f.file_in_app].1;
         calls.sort();
         for (offset, id) in calls {
-            let line = text[..(offset as usize).min(text.len())].matches('\n').count() + 1;
+            let line = text[..offset.min(text.len())].matches('\n').count() + 1;
             let site = (f.path.clone(), line);
             first
                 .entry(id)

@@ -109,25 +109,6 @@ pub fn summary_line(c: &Counts, test_data: bool) -> String {
     )
 }
 
-fn esc(s: &str) -> String {
-    let mut out = String::with_capacity(s.len());
-    for c in s.chars() {
-        match c {
-            '&' => out.push_str("&amp;"),
-            '<' => out.push_str("&lt;"),
-            '>' => out.push_str("&gt;"),
-            '"' => out.push_str("&quot;"),
-            '\n' => out.push_str("&#10;"),
-            '\r' => out.push_str("&#13;"),
-            '\t' => out.push_str("&#9;"),
-            // XML 1.0 has no other control characters.
-            c if (c as u32) < 0x20 => {}
-            c => out.push(c),
-        }
-    }
-    out
-}
-
 /// JUnit XML grouped by test codeunit. A test that did not run is `<skipped>` with its reason.
 /// `bc_build` is recorded as a property, so a build change that flips a test shows its cause.
 /// The frames of an error's call stack for a person: one per line, innermost first. A frame whose
@@ -239,17 +220,7 @@ fn not_run_message(why: &str) -> String {
 }
 
 pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> String {
-    let c = Counts::of(results.iter().copied());
-    let mut s = format!(
-        "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<testsuites tests=\"{}\" failures=\"{}\" errors=\"0\" skipped=\"{}\" time=\"{wall_s:.3}\">\n",
-        c.total, c.fail, c.not_run
-    );
-    if let Some(b) = bc_build {
-        s.push_str(&format!(
-            "  <properties><property name=\"bc_build\" value=\"{}\" /></properties>\n",
-            esc(b)
-        ));
-    }
+    let mut suites: Vec<al_testrun::junit::Suite> = Vec::new();
     let mut i = 0;
     while i < results.len() {
         let first = results[i];
@@ -257,54 +228,28 @@ pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> St
         while j < results.len() && results[j].app == first.app && results[j].codeunit == first.codeunit {
             j += 1;
         }
-        let group = &results[i..j];
-        let gc = Counts::of(group.iter().copied());
-        s.push_str(&format!(
-            "  <testsuite name=\"{}\" tests=\"{}\" failures=\"{}\" errors=\"0\" skipped=\"{}\" time=\"{:.3}\">\n    <properties><property name=\"codeunit\" value=\"{}\" /></properties>\n",
-            esc(&first.codeunit_name),
-            gc.total,
-            gc.fail,
-            gc.not_run,
-            group.iter().map(|r| r.time.as_secs_f64()).sum::<f64>(),
-            first.codeunit
-        ));
-        for r in group {
-            let head = format!(
-                "    <testcase classname=\"{}\" name=\"{}\" time=\"{:.3}\"",
-                esc(&r.codeunit_name),
-                esc(&r.test),
-                r.time.as_secs_f64()
-            );
-            // The assumptions a test ran through are a property of the test case, also of a pass: a flagged
-            // pass is still a pass for the tools that read this file.
-            let props = if r.assumptions.is_empty() {
-                String::new()
-            } else {
-                format!(
-                    "<properties><property name=\"assumptions\" value=\"{}\" /></properties>",
-                    esc(&al_testrun::flagged::id_list(&r.assumptions))
-                )
-            };
-            match &r.outcome {
-                Outcome::Pass if !props.is_empty() => s.push_str(&format!("{head}>{props}</testcase>\n")),
-                Outcome::Pass => s.push_str(&format!("{head} />\n")),
-                Outcome::Fail(m) if r.call_stack.is_empty() => s.push_str(&format!(
-                    "{head}>{props}<failure message=\"{}\" /></testcase>\n",
-                    esc(m)
-                )),
-                Outcome::Fail(m) => s.push_str(&format!(
-                    "{head}>{props}<failure message=\"{}\">{}</failure></testcase>\n",
-                    esc(m),
-                    esc(&stack_lines(&r.call_stack).join("\n"))
-                )),
-                Outcome::NotRun(m) => s.push_str(&format!("{head}><skipped message=\"{}\" /></testcase>\n", esc(m))),
-            }
-        }
-        s.push_str("  </testsuite>\n");
+        suites.push(al_testrun::junit::Suite {
+            name: first.codeunit_name.clone(),
+            codeunit: first.codeunit,
+            cases: results[i..j]
+                .iter()
+                .map(|r| al_testrun::junit::Case {
+                    class: r.codeunit_name.clone(),
+                    name: &r.test,
+                    time: r.time.as_secs_f64(),
+                    outcome: &r.outcome,
+                    assumptions: &r.assumptions,
+                    stack: if r.call_stack.is_empty() {
+                        String::new()
+                    } else {
+                        stack_lines(&r.call_stack).join("\n")
+                    },
+                })
+                .collect(),
+        });
         i = j;
     }
-    s.push_str("</testsuites>\n");
-    s
+    al_testrun::junit::write(&suites, al_testrun::junit::Dialect::Runner, bc_build, wall_s)
 }
 
 #[cfg(test)]

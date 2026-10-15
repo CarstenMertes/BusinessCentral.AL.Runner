@@ -65,6 +65,9 @@ pub struct TestArgs {
     /// `--refusal-detail TEXT`: the reasons that contain TEXT, grouped finer than `--top-refusals`.
     pub refusal_detail: Option<String>,
     pub allow_not_run: bool,
+    /// Not a command line option: `alrunner serve`'s `execute` runs the `OnRun` trigger of one codeunit per app
+    /// instead of the tests.
+    pub execute: bool,
     pub verbose: bool,
     pub quiet: bool,
     pub timings: bool,

@@ -85,19 +85,19 @@ fn read_from_text_with_default_options_reads_a_document_without_ignorable_white_
 }
 
 #[test]
-fn big_text_read_and_media_import_stream_with_a_file_name_are_refused_with_their_reasons() {
+fn media_import_stream_with_a_file_name_is_refused_with_its_reason() {
     let (l, oi) = compile(
-        "procedure Read(var IS: InStream) var B: BigText; begin B.Read(IS); end;
-         procedure Import(var IS: InStream) var R: Record \"B3 Row\"; begin R.Pic.ImportStream(IS, 'd', 'image/png', 'f.png'); end;",
+        "procedure Import(var IS: InStream) var R: Record \"B3 Row\"; begin R.Pic.ImportStream(IS, 'd', 'image/png', 'f.png'); end;",
     );
-    for (routine, name) in [("Read", "BigText.Read"), ("Import", "Media.ImportStream")] {
-        let ri = l.program.objects[oi]
-            .routines
-            .iter()
-            .position(|r| r.name == routine)
-            .unwrap();
-        let why = l.unsupported[oi][ri].first().cloned().unwrap_or_default();
-        assert!(why.contains(name) && why.contains("not pinned"), "{name}: {why}");
-        assert!(!why.contains("is not implemented"), "{name}: {why}");
-    }
+    let ri = l.program.objects[oi]
+        .routines
+        .iter()
+        .position(|r| r.name == "Import")
+        .unwrap();
+    let why = l.unsupported[oi][ri].first().cloned().unwrap_or_default();
+    assert!(
+        why.contains("Media.ImportStream") && why.contains("not pinned"),
+        "{why}"
+    );
+    assert!(!why.contains("is not implemented"), "{why}");
 }

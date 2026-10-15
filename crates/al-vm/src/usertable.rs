@@ -57,11 +57,11 @@ fn unsupported<T>(why: impl Into<String>) -> Result<T, Signal> {
 
 /// An error the server raises from the User table trigger. Its code is not pinned.
 fn refuse<T>(message: &str) -> Result<T, Signal> {
-    Err(Signal::Error(AlError {
+    Err(Signal::Error(Box::new(AlError {
         message: message.into(),
         code: String::new(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 /// Why an authentication email was not normalised.
@@ -366,11 +366,11 @@ impl Session {
         if other_enabled {
             return Ok(());
         }
-        Err(Signal::Error(AlError {
+        Err(Signal::Error(Box::new(AlError {
             message: "There should be at least one enabled 'SUPER' user.".into(),
             code: "Dialog".into(),
             call_stack: String::new(),
-        }))
+        })))
     }
 
     /// After the User row is deleted: its User Property row goes (TestUserDeleteCascadeOrder.al:26-84),

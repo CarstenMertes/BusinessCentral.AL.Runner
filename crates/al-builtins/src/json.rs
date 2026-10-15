@@ -48,11 +48,11 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 }
 
 fn error(message: impl Into<String>, code: &str) -> Signal {
-    Signal::Error(crate::native::AlError {
+    Signal::Error(Box::new(crate::native::AlError {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// A failed conversion, as .NET words it (json/TestJsonRuntimeContracts.al:JsonObject_Errors_TextAndCode).

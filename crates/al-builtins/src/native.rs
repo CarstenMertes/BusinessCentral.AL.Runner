@@ -15,17 +15,17 @@ pub struct AlError {
 
 /// Raises an AL error with a pinned text and code.
 pub fn raise<T>(message: impl Into<String>, code: &str) -> Result<T, Signal> {
-    Err(Signal::Error(AlError {
+    Err(Signal::Error(Box::new(AlError {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 /// Non-local control flow (ADR-002, ADR-011).
 #[derive(Debug, Clone)]
 pub enum Signal {
-    Error(AlError),
+    Error(Box<AlError>),
     Exit(Option<Value>),
     Break,
     /// `continue`: go on with the next round of the innermost loop.
@@ -48,7 +48,23 @@ pub enum ModuleLookup {
 }
 
 /// What builtins need from the running session.
+/// A request an `HttpClient` call sends, as a `[HttpClientHandler]` sees it (ADR-027 section 5).
+#[derive(Debug, Clone)]
+pub struct HttpOutgoing {
+    /// `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD` or the request's own method, upper case.
+    pub method: String,
+    /// The absolute uri in its normal form.
+    pub url: String,
+    pub has_secret_uri: bool,
+}
+
 pub trait Ctx: FormatCtx {
+    /// Gives `request` to the running test's `[HttpClientHandler]` and answers the response it filled; raises the
+    /// policy error without one. No request ever reaches a network.
+    fn http_send(&mut self, _request: HttpOutgoing) -> Result<crate::value::TestHttpResponseState, Signal> {
+        Err(Signal::Unsupported("an HttpClient call needs a session".into()))
+    }
+
     fn last_error(&self) -> AlError;
     fn set_last_error(&mut self, e: AlError);
     /// Record methods (`Record.Insert`, ...) need the store, triggers and
@@ -560,9 +576,19 @@ fn derived() -> &'static std::collections::HashMap<String, NativeFn> {
 
 /// The implementation registered for overload `id`, if any.
 pub fn lookup(id: &str) -> Option<NativeFn> {
-    all()
-        .find(|(i, _)| *i == id)
-        .map(|(_, f)| *f)
+    // One hash probe for the registered ids (the first registration of an id wins, as the scan it replaces did).
+    static REGISTERED: std::sync::OnceLock<std::collections::HashMap<&'static str, NativeFn>> =
+        std::sync::OnceLock::new();
+    let registered = REGISTERED.get_or_init(|| {
+        let mut m = std::collections::HashMap::new();
+        for (i, f) in all() {
+            m.entry(*i).or_insert(*f);
+        }
+        m
+    });
+    registered
+        .get(id)
+        .copied()
         .or_else(|| derived().get(id).copied())
         .or_else(|| crate::platform_native::lookup(id))
 }
@@ -680,11 +706,11 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
         .map(|s| Value::Text(s.into()))
         .map_err(|f| match f {
             FormatFail::Unsupported(s) => Signal::Unsupported(s),
-            FormatFail::Error { message, code } => Signal::Error(AlError {
+            FormatFail::Error { message, code } => Signal::Error(Box::new(AlError {
                 message,
                 code,
                 call_stack: String::new(),
-            }),
+            })),
         })
 }
 
@@ -695,13 +721,13 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     crate::formatstr::format_with_string(&args[0], len, &template, ctx)
         .map(|s| Value::Text(s.into()))
         .map_err(|e| match e.strip_prefix(crate::formatstr::INVALID_FORMAT_MARK) {
-            Some(template) => Signal::Error(AlError {
+            Some(template) => Signal::Error(Box::new(AlError {
                 message: format!(
                     "An invalid field or attribute has been specified for the 'Format' property.\r\\\r\\{template}"
                 ),
                 code: "InvalidFormatString".into(),
                 call_stack: String::new(),
-            }),
+            })),
             None => Signal::Unsupported(e),
         })
 }
@@ -767,11 +793,11 @@ fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -
 fn error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
     let message = substitute(&template, &args[1..], ctx)?;
-    Err(Signal::Error(AlError {
+    Err(Signal::Error(Box::new(AlError {
         message,
         code: "Dialog".into(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 /// `Message(String, Values...)`: the text is substituted like `StrSubstNo`
@@ -871,11 +897,11 @@ fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Resul
 /// that only mentions the call still runs.
 fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let url = text_arg(args, 0)?;
-    Err(Signal::Error(AlError {
+    Err(Signal::Error(Box::new(AlError {
         message: format!("Unhandled UI: Hyperlink {url}"),
         code: "MissingUIHandler".into(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 /// `Variant2Date(Variant)`: the Date a Variant holds (session/TestFinalCoverage.al:79-88). Another
@@ -916,12 +942,12 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
         });
     }
     if c.in_test_run() {
-        return Err(Signal::Error(AlError {
+        return Err(Signal::Error(Box::new(AlError {
             message: "Sessions can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled."
                 .into(),
             code: String::new(),
             call_stack: String::new(),
-        }));
+        })));
     }
     unsupported("StartSession outside an install trigger and a test run (a second session is not modelled)")
 }

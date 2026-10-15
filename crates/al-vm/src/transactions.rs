@@ -108,11 +108,11 @@ pub(crate) const TX_READ: u8 = 1;
 pub(crate) const TX_WRITE: u8 = 2;
 
 pub(crate) fn al_error_code(message: &str, code: &str) -> Signal {
-    Signal::Error(AlError {
+    Signal::Error(Box::new(AlError {
         message: message.to_string(),
         code: code.to_string(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
@@ -193,7 +193,7 @@ impl Session {
         // A deferred duplicate-key Insert comes out here (corpus record/TestRecordRuntimeTextsAndViews.al:
         // Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_...: "raised by Commit").
         if let Some((_, e)) = self.deferred_insert.take() {
-            return Err(Signal::Error(e));
+            return Err(Signal::Error(Box::new(e)));
         }
         self.commit_transaction();
         // The next transaction has not started and its type is Update (see `tx_phase`).
@@ -356,7 +356,7 @@ impl Session {
                     self.rollback_transaction();
                 }
                 self.error_finals = None;
-                self.last_error = e;
+                self.last_error = *e;
                 Ok(Value::Boolean(false))
             }
             // An unguarded run lets the error through (:UnguardedRun_PropagatesInnerError).

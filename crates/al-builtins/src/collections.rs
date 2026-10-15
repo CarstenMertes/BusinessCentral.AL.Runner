@@ -216,11 +216,11 @@ fn position(l: &[Value], v: &Value) -> Option<usize> {
 }
 
 fn error_code<T>(message: &str, code: &str) -> Result<T, Signal> {
-    Err(Signal::Error(crate::native::AlError {
+    Err(Signal::Error(Box::new(crate::native::AlError {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
-    }))
+    })))
 }
 
 const LIST_INVALID: &str = "An invalid argument was passed to a 'List' data type method.";

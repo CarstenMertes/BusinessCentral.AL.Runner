@@ -363,11 +363,11 @@ impl Session {
 /// sentence to the view text (record/TestRecordViewCopyMarkContracts.al:130,
 /// SetView_ReplacesTheFilters_KeepsTheDirection_AndRejectsGarbage).
 fn invalid_view(view: &str) -> Signal {
-    Signal::Error(al_builtins::native::AlError {
+    Signal::Error(Box::new(al_builtins::native::AlError {
         message: format!("Invalid expression of type: table view.{}{view}", crate::records::BR),
         code: "DB:Ok".into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 /// `e` with every Option and Enum value replaced by its ordinal.

@@ -78,11 +78,11 @@ fn nav_argument() -> Signal {
 }
 
 fn error(message: impl Into<String>, code: &str) -> Signal {
-    Signal::Error(crate::native::AlError {
+    Signal::Error(Box::new(crate::native::AlError {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
-    })
+    }))
 }
 
 fn new_node(data: XData) -> Handle {

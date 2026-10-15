@@ -106,7 +106,7 @@ fn add_entity_key(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
         c.set_last_error(error);
         return Ok(Value::Boolean(false));
     }
-    Err(Signal::Error(error))
+    Err(Signal::Error(Box::new(error)))
 }
 
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {

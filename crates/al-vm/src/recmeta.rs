@@ -744,11 +744,54 @@ impl Session {
             let Some(sp) = from.fields.iter().position(|f| f.id == df.id && f.stored) else {
                 continue;
             };
+            // An Enum field and an Option field with the same field number are the same kind of field to
+            // TransferFields: Base Application's "Sales Order Entity Buffer" holds `Shipping Advice` as an
+            // Option and `Sales Header` as an Enum, and its TransferFields from the header works in BC
+            // (assumed from Microsoft's passing tests; no corpus test, docs/probes-needed.md). The ordinal moves.
+            let enum_option = |a: &al_builtins::value::RtType, b: &al_builtins::value::RtType| {
+                use al_builtins::value::RtType as T;
+                matches!((a, b), (T::Enum(_), T::Option(_)) | (T::Option(_), T::Enum(_)))
+            };
+            if enum_option(&from.fields[sp].ty, &df.ty) {
+                let ordinal = match &src_fields[sp] {
+                    Value::Enum(_, o) | Value::Option(o, _) => *o,
+                    other => {
+                        return unsupported(format!(
+                            "TransferFields of {} between an Enum and an Option",
+                            other.describe()
+                        ));
+                    }
+                };
+                let moved = match &df.ty {
+                    al_builtins::value::RtType::Option(m) => Value::Option(ordinal, std::sync::Arc::from(m.as_slice())),
+                    al_builtins::value::RtType::Enum(id) => {
+                        if !self
+                            .engine
+                            .program
+                            .objects
+                            .get(*id as usize)
+                            .is_some_and(|o| o.enum_values.iter().any(|(v, _)| *v == ordinal))
+                        {
+                            return unsupported(format!(
+                                "TransferFields of the Option ordinal {ordinal} into the Enum field {}, which has no such value (not pinned)",
+                                df.name
+                            ));
+                        }
+                        Value::Enum(*id, ordinal)
+                    }
+                    _ => unreachable!("enum_option"),
+                };
+                updates.push((dp, moved));
+                continue;
+            }
             if !same_kind(&from.fields[sp].ty, &df.ty) {
                 if skip_mismatch {
                     continue;
                 }
-                return unsupported("TransferFields across fields of different types (error text not pinned)");
+                return unsupported(format!(
+                    "TransferFields across fields of different types (error text not pinned): field {} of {} and field {} of {}",
+                    from.fields[sp].name, from.name, df.name, t.name
+                ));
             }
             updates.push((dp, ops::convert(src_fields[sp].clone(), &df.ty)?));
         }

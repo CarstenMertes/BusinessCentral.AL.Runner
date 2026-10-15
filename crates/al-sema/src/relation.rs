@@ -16,6 +16,9 @@ pub struct ParsedArm {
     pub conditions: Vec<(String, String)>,
     /// Parallel to `conditions`: the condition is a `filter(...)`. Only [`parse_lenient`] sets it.
     pub filter_conditions: Vec<bool>,
+    /// Parallel to `conditions`: the text between the parentheses as written (quotes kept), which a
+    /// `filter(...)` needs: `filter('')` is the blank value, not an empty filter text.
+    pub condition_raw: Vec<String>,
     /// The related table (and optionally its field) as written: `["Microsoft", "Sales", "Customer", "No."]`.
     pub path: Vec<String>,
     /// `None` when a where() clause is present but not understood.
@@ -174,6 +177,7 @@ impl P {
     fn arm(&mut self) -> Option<ParsedArm> {
         let mut conditions = Vec::new();
         let mut filter_conditions = Vec::new();
+        let mut condition_raw = Vec::new();
         if self.word_is("if") {
             self.i += 1;
             let g = self.group()?;
@@ -190,6 +194,7 @@ impl P {
                 if (kw != "const" && !filter) || p.i != p.t.len() {
                     return None;
                 }
+                condition_raw.push(text.trim().to_string());
                 conditions.push((field, unquote(&text)));
                 filter_conditions.push(filter);
             }
@@ -234,6 +239,7 @@ impl P {
         Some(ParsedArm {
             conditions,
             filter_conditions,
+            condition_raw,
             path,
             wheres,
         })
@@ -309,6 +315,7 @@ mod tests {
         ParsedArm {
             conditions: conds.iter().map(|(a, b)| (a.to_string(), b.to_string())).collect(),
             filter_conditions: conds.iter().map(|_| false).collect(),
+            condition_raw: conds.iter().map(|(_, b)| b.to_string()).collect(),
             path: path.iter().map(|s| s.to_string()).collect(),
             wheres,
         }

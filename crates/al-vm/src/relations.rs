@@ -52,20 +52,52 @@ impl Session {
         if !field.relation {
             return Ok(None);
         }
-        if field.relation_arms.is_empty() {
+        // The arms with `Field = filter(x)` conditions are kept apart (`relation_runtime`) and apply here only.
+        let arms = if field.relation_arms.is_empty() {
+            &field.relation_runtime
+        } else {
+            &field.relation_arms
+        };
+        if arms.is_empty() {
             return unsupported(format!(
                 "the TableRelation of {}.{} has a shape that is not understood yet",
                 t.name, field.name
             ));
         }
         let r = rec.borrow();
-        for arm in &field.relation_arms {
-            let holds = arm.conditions.iter().all(|c| {
+        for arm in arms {
+            let mut holds = true;
+            for c in &arm.conditions {
                 // BC evaluates conditions on Normal fields and FlowFields only
                 // (corpus fieldref/TestFieldRefRelationFieldClass.al:106-145).
-                Self::is_flow_filter(&schema.fields[c.field])
-                    || ops::compare(&r.fields[c.field], &crate::constant(&c.value)).ok() == Some(Ordering::Equal)
-            });
+                if Self::is_flow_filter(&schema.fields[c.field]) {
+                    continue;
+                }
+                let ok = if c.filter {
+                    // `Field = filter(x)`: the arm applies when the field's value passes the filter, which reads
+                    // like a SetFilter text (`filter('')` the blank value, `filter(<> '')` any other). Only the
+                    // `const` form is pinned by the corpus; this one is an assumption (docs/probes-needed.md).
+                    let al_ir::Const::Text(text) = &c.value else {
+                        return unsupported("a filter condition of a TableRelation without its text");
+                    };
+                    let engine = self.engine.clone();
+                    let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+                    let expr = al_builtins::filter::parse_filter_with(text, &[], &t.fields[c.field].ty, &enums)
+                        .map_err(|e| {
+                            Signal::Unsupported(format!(
+                                "the filter condition `{text}` of the TableRelation of {}.{}: {e}",
+                                t.name, field.name
+                            ))
+                        })?;
+                    expr.matches(&r.fields[c.field])
+                } else {
+                    ops::compare(&r.fields[c.field], &crate::constant(&c.value)).ok() == Some(Ordering::Equal)
+                };
+                if !ok {
+                    holds = false;
+                    break;
+                }
+            }
             if holds {
                 return Ok(Some(arm.clone()));
             }

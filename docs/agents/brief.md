@@ -19,6 +19,11 @@ on the main machine or as a remote worker (`docs/agents/remote-worker.md`).
 
 ## How to work
 
+- **Tests of the interpreter use `al-testkit`** (`crates/al-testkit`, a dev-dependency): `al_testkit::run(src, routine)`,
+  `run_in(src, object, routine)`, `Built` for several calls on one session, and `text`/`int`/`boolean`/`error_message` to
+  read a result. Do not write another compile-and-call helper. The tests of `al-vm` are five area binaries
+  (`tests/{store,pages_ui,reporting,language,host}/main.rs` with one module per file) plus two that need a process of
+  their own (`dotnet.rs`; `base_access_refused.rs` sets an environment variable): a new test file is a module of its area.
 - **Red/green TDD for every behavior.** Write the failing test first. Keep the
   red run output for your report. A bug fix starts with a test that reproduces
   the bug.

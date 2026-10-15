@@ -152,6 +152,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "al-testkit"
+version = "3.0.0-alpha.1"
+dependencies = [
+ "al-builtins",
+ "al-ir",
+ "al-sema",
+ "al-vm",
+]
+
+[[package]]
 name = "al-testrun"
 version = "3.0.0-alpha.1"
 dependencies = [
@@ -185,6 +195,7 @@ dependencies = [
  "al-host",
  "al-ir",
  "al-sema",
+ "al-testkit",
  "al-version",
  "flate2",
  "rust_decimal",

@@ -14,8 +14,8 @@ pub(super) fn time_zone_rows(t: &TableDef, i: &Ident) -> Vec<Entry> {
         .enumerate()
         .map(|(n, z)| {
             let mut r = blank(t);
-            r[pos(t, 1)] = Value::Text(z.id.clone());
-            r[pos(t, 2)] = Value::Text(z.display_name.clone());
+            r[pos(t, 1)] = Value::Text(z.id.clone().into());
+            r[pos(t, 2)] = Value::Text(z.display_name.clone().into());
             r[pos(t, 3)] = Value::Integer(n as i32 + 1);
             Entry::ok(r)
         })
@@ -144,7 +144,7 @@ pub(super) fn feature_key_rows(t: &TableDef, target: Option<&al_version::Target>
             r[pos(t, 6)] = Value::Boolean(*can_try);
             r[pos(t, 7)] = Value::Boolean(*one_way);
             r[pos(t, 8)] = Value::Boolean(*data_update);
-            r[pos(t, 9)] = Value::Text(format!("{version}.0"));
+            r[pos(t, 9)] = Value::Text(format!("{version}.0").into());
             Entry::ok(r)
         })
         .collect()

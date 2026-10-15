@@ -83,7 +83,7 @@ impl Session {
                 }
                 Some(other) => unsupported(format!("Randomize with {}", other.describe())),
             },
-            "Database.UserId#1" => Ok(Value::Text(self.host.identity.user_id())),
+            "Database.UserId#1" => Ok(Value::Text(self.host.identity.user_id().into())),
             "Database.UserSecurityId#1" => Ok(Value::Guid(self.host.identity.user_security_id())),
             "Database.SessionId#1" => Ok(Value::Integer(self.host.identity.session_id())),
             // Only an id no session has is pinned (session/TestSessionComplete.al:45-52: 99999 is not active).
@@ -95,7 +95,7 @@ impl Session {
                 )),
             },
             "Database.ServiceInstanceId#1" => Ok(Value::Integer(self.host.identity.service_instance_id())),
-            "Database.TenantId#1" => Ok(Value::Text(self.host.identity.tenant_id())),
+            "Database.TenantId#1" => Ok(Value::Text(self.host.identity.tenant_id().into())),
             "System.GuiAllowed#1" => Ok(Value::Boolean(self.host.identity.gui_allowed())),
             "System.IsServiceTier#1" => Ok(Value::Boolean(self.host.identity.is_service_tier())),
             // The folder AL code writes scratch files to. BC's answer ends with `TEMP\` on the Linux tier
@@ -117,7 +117,7 @@ impl Session {
             },
             // corpus types/PSCaptionClass.al:5-8, :58-81 (CaptionClassTranslate_Expressions).
             "System.CaptionClassTranslate#1" => match args.first().and_then(al_builtins::native::text_of) {
-                Some(t) => self.caption_class_translate(&t).map(Value::Text),
+                Some(t) => self.caption_class_translate(&t).map(|s| Value::Text(s.into())),
                 None => unsupported("CaptionClassTranslate of something that is not text"),
             },
             "Session.CurrentClientType#1" => Ok(client_type(self.host.identity.current_client_type())),

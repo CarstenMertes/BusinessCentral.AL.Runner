@@ -622,25 +622,27 @@ fn database_sid(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> R
         (h ^ u64::from(b)).wrapping_mul(0x0000_0100_0000_01b3)
     });
     let rid = 1000 + hash % (i32::MAX as u64 - 1000);
-    Ok(Value::Text(format!("S-1-5-21-1004336348-1177238915-682003330-{rid}")))
+    Ok(Value::Text(
+        format!("S-1-5-21-1004336348-1177238915-682003330-{rid}").into(),
+    ))
 }
 
-pub fn text_of(v: &Value) -> Option<String> {
+pub fn text_of(v: &Value) -> Option<crate::text::Txt> {
     match v {
-        Value::Text(s) | Value::Code(s) if s.contains(UNTRACKED_CALL_STACK) => None,
+        Value::Text(s) | Value::Code(s) if s.has_marker() => None,
         Value::Text(s) | Value::Code(s) => Some(s.clone()),
-        Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from),
+        Value::Char(c) => char::from_u32(u32::from(*c)).map(|c| c.to_string().into()),
         _ => None,
     }
 }
 
-fn text_arg(args: &[Value], i: usize) -> Result<String, Signal> {
+fn text_arg(args: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
     // A Guid where a Text is expected is its text form, as in an assignment (`CopyStr(CreateGuid(), 1, 50)` in
     // Microsoft's Match General Jnl Lines UT, 61 tests; unprobed, docs/probes-needed.md "A Guid assigned to a Text
     // or Code"; hard rule 3 exception, owner 2026-10-15).
     if let Some(Value::Guid(g)) = args.get(i) {
         crate::assumptions::assume(crate::assumptions::Assumption::GuidAsTextArgument);
-        return Ok(crate::format::format_guid(g));
+        return Ok(crate::format::format_guid(g).into());
     }
     args.get(i).and_then(text_of).map_or_else(
         || unsupported(&format!("text argument {i} of type {}", args.get(i).describe())),
@@ -656,7 +658,7 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     // codeunit 61400, FormatOfDotNetObjects_IsToString). Other format numbers are not pinned.
     if matches!(&args[0], Value::DotNet(_)) && matches!(std, 0 | 2) {
         if let Some(r) = ctx.format_dotnet(&args[0]) {
-            return r.map(Value::Text);
+            return r.map(|s| Value::Text(s.into()));
         }
     }
     // A record as a whole, a RecordRef and a FieldRef need the table's schema.
@@ -664,11 +666,11 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
         || matches!(&args[0], Value::Library(n, _) if n == "RecordRef" || n == "FieldRef");
     if composite && std == 0 {
         if let Some(r) = ctx.format_composite(&args[0]) {
-            return r.map(|t| Value::Text(crate::format::pad(t, len)));
+            return r.map(|t| Value::Text(crate::format::pad(t, len).into()));
         }
     }
     format_value(&args[0], len, std, ctx)
-        .map(Value::Text)
+        .map(|s| Value::Text(s.into()))
         .map_err(|f| match f {
             FormatFail::Unsupported(s) => Signal::Unsupported(s),
             FormatFail::Error { message, code } => Signal::Error(AlError {
@@ -684,7 +686,7 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let template = text_arg(args, 2)?;
     crate::formatstr::format_with_string(&args[0], len, &template, ctx)
-        .map(Value::Text)
+        .map(|s| Value::Text(s.into()))
         .map_err(|e| match e.strip_prefix(crate::formatstr::INVALID_FORMAT_MARK) {
             Some(template) => Signal::Error(AlError {
                 message: format!(
@@ -711,7 +713,7 @@ fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
     if e.message == UNPINNED_ERROR {
         return unsupported("GetLastErrorText of an error whose text is not pinned");
     }
-    Ok(Value::Text(e.message))
+    Ok(Value::Text(e.message.into()))
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -719,7 +721,7 @@ fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
     if e.code == UNPINNED_ERROR {
         return unsupported("GetLastErrorCode of an error whose text is not pinned");
     }
-    Ok(Value::Text(e.code))
+    Ok(Value::Text(e.code.into()))
 }
 
 fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -731,10 +733,10 @@ fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [
         // as in BC, but its content is a marker that every text function refuses to read
         // ([`text_of`]), so a test that inspects the frames is not run while one that only calls
         // the function (error-handling/TestGetLastError.al) still passes.
-        return Ok(Value::Text(UNTRACKED_CALL_STACK.to_string()));
+        return Ok(Value::Text(UNTRACKED_CALL_STACK.to_string().into()));
     }
     if e.call_stack.is_empty() {
-        return Ok(Value::Text(String::new()));
+        return Ok(Value::Text(String::new().into()));
     }
     // The frames are separated by a backslash and the text ends with one, the runner's frames
     // below the test's (session/TestSessionInformationCallstackContracts.al:200-218).
@@ -744,7 +746,7 @@ fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [
         out.push('\\');
     }
     out.push_str(&ctx.runner_call_stack());
-    Ok(Value::Text(out))
+    Ok(Value::Text(out.into()))
 }
 
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -784,7 +786,7 @@ fn confirm(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
         Some(Value::Boolean(b)) => *b,
         Some(other) => return unsupported(&format!("Confirm default {}", other.describe())),
     };
-    Ok(Value::Boolean(ctx.ui_confirm(question, default)?))
+    Ok(Value::Boolean(ctx.ui_confirm(question.to_string(), default)?))
 }
 
 /// `StrMenu(Options, Default, Instruction)`. An omitted Default is 1 and an
@@ -797,9 +799,13 @@ fn str_menu(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     };
     let instruction = match args.get(2) {
         None => String::new(),
-        Some(_) => text_arg(args, 2)?,
+        Some(_) => text_arg(args, 2)?.to_string(),
     };
-    Ok(Value::Integer(ctx.ui_str_menu(options, default, instruction)?))
+    Ok(Value::Integer(ctx.ui_str_menu(
+        options.to_string(),
+        default,
+        instruction,
+    )?))
 }
 
 /// `%1`..`%9` replaced by `Format(arg)`. A placeholder without an argument
@@ -824,7 +830,7 @@ pub fn substitute(template: &str, args: &[Value], ctx: &dyn FormatCtx) -> Result
 }
 
 fn strlen(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Integer(Value::text_len(&text_arg(args, 0)?) as i32))
+    Ok(Value::Integer(text_arg(args, 0)?.utf16_len() as i32))
 }
 
 fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
@@ -962,7 +968,7 @@ fn copystr(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
 }
 
 /// `CopyStr` of a text the caller holds by reference (the VM's fast path reads a variable without copying it).
-pub fn copystr_of(whole: &str, pos: i64, len: Option<i64>) -> Result<Value, Signal> {
+pub fn copystr_of(whole: &crate::text::Txt, pos: i64, len: Option<i64>) -> Result<Value, Signal> {
     // A text of ASCII only is indexed by byte, with no copy: a loop of CopyStr over a long text stays linear in
     // the loop (Pageworks' asset parsing).
     let ascii = whole.is_ascii();
@@ -995,22 +1001,22 @@ pub fn copystr_of(whole: &str, pos: i64, len: Option<i64>) -> Result<Value, Sign
         None => total,
     };
     if ascii {
-        return Ok(Value::Text(whole[start..end].to_string()));
+        return Ok(Value::Text(whole[start..end].to_string().into()));
     }
-    Ok(Value::Text(String::from_utf16_lossy(&s[start..end])))
+    Ok(Value::Text(String::from_utf16_lossy(&s[start..end]).into()))
 }
 
 fn strsubstno(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
-    Ok(Value::Text(substitute(&template, &args[1..], ctx)?))
+    Ok(Value::Text(substitute(&template, &args[1..], ctx)?.into()))
 }
 
 fn uppercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(text_arg(args, 0)?.to_uppercase()))
+    Ok(Value::Text(text_arg(args, 0)?.to_uppercase().into()))
 }
 
 fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(text_arg(args, 0)?.to_lowercase()))
+    Ok(Value::Text(text_arg(args, 0)?.to_lowercase().into()))
 }
 
 /// `Clear(var X)`: the default of the value's own kind. Records go to the VM.
@@ -1056,8 +1062,8 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         Value::Decimal(_) => Value::Decimal(Default::default()),
         Value::Byte(_) => Value::Byte(0),
         Value::Char(_) => Value::Char(0),
-        Value::Text(_) => Value::Text(String::new()),
-        Value::Code(_) => Value::Code(String::new()),
+        Value::Text(_) => Value::Text(String::new().into()),
+        Value::Code(_) => Value::Code(String::new().into()),
         Value::Date(..) => Value::Date(0, false),
         Value::Time(_) => Value::Time(0),
         Value::DateTime(_) => Value::DateTime(0),
@@ -1205,7 +1211,9 @@ fn list_of(items: Vec<Value>) -> Value {
 /// `Ordinals()` position by position; BC's order is not pinned (docs/probes-needed.md).
 fn enum_names(ctx: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     let (_, members) = enum_receiver(ctx, r, "Enum.Names")?;
-    Ok(list_of(members.into_iter().map(|(_, n)| Value::Text(n)).collect()))
+    Ok(list_of(
+        members.into_iter().map(|(_, n)| Value::Text(n.into())).collect(),
+    ))
 }
 
 /// `Enum.Ordinals()` (session/TestSystemExtended.al:381-390, types/TestLanguageEdgeCases.al:91-105).
@@ -1373,7 +1381,7 @@ pub(crate) mod tests {
     }
     fn text(r: Result<Value, Signal>) -> String {
         match r {
-            Ok(Value::Text(s)) => s,
+            Ok(Value::Text(s)) => s.to_string(),
             other => panic!("{other:?}"),
         }
     }

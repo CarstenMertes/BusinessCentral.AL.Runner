@@ -203,7 +203,7 @@ fn try_get_string_tenant_setting(
             )));
         }
     };
-    *out = Value::Text(value);
+    *out = Value::Text(value.into());
     Ok(Value::Boolean(true))
 }
 
@@ -333,7 +333,7 @@ fn graph_collaboration(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args
 
 fn graph_directory_group(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     no_args(args, "GraphQuery.GetEnvironmentDirectoryGroup")?;
-    Ok(Value::Text(String::new()))
+    Ok(Value::Text(String::new().into()))
 }
 
 /// A call that needs the directory: the tier has none, the client object inside is null.
@@ -381,7 +381,7 @@ const TENANT_INFO_PIN: &str = "session/TestEnvironmentUserTenantContracts.al:213
 
 fn tenant_info_empty_text(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
     no_args(args, "TenantInfo member")?;
-    Ok(Value::Text(String::new()))
+    Ok(Value::Text(String::new().into()))
 }
 
 fn graph_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {

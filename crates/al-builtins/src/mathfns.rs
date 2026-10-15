@@ -60,7 +60,7 @@ fn round(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     }
     let direction = match a.get(2) {
         None => "=".to_string(),
-        Some(v) => crate::native::text_of(v).unwrap_or_default(),
+        Some(v) => crate::native::text_of(v).unwrap_or_default().to_string(),
     };
     let strategy = match direction.as_str() {
         "=" => RoundingStrategy::MidpointAwayFromZero,

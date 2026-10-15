@@ -496,7 +496,7 @@ fn run(body: &str) -> Result<Value, Signal> {
 
 fn f(body: &str) -> String {
     match run(body) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

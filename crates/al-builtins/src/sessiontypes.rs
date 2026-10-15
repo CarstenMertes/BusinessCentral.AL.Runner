@@ -43,7 +43,7 @@ fn with_notification<R>(r: Option<&mut Value>, f: impl FnOnce(&mut NotificationS
 
 fn text(a: &[Value], i: usize) -> Result<String, Signal> {
     match a.get(i).and_then(crate::native::text_of) {
-        Some(t) => Ok(t),
+        Some(t) => Ok(t.to_string()),
         None => unsupported(format!("a text argument, got {}", a.get(i).describe())),
     }
 }
@@ -77,7 +77,7 @@ fn locale_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn time_zone(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_settings(r, |s| s.time_zone.clone().unwrap_or_default()).map(Value::Text);
+        return with_settings(r, |s| s.time_zone.clone().unwrap_or_default()).map(|s| Value::Text(s.into()));
     }
     let t = text(a, 0)?;
     with_settings(r, |s| s.time_zone = Some(t)).map(|()| Value::Null)
@@ -85,7 +85,7 @@ fn time_zone(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn profile_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_settings(r, |s| s.profile_id.clone().unwrap_or_default()).map(Value::Text);
+        return with_settings(r, |s| s.profile_id.clone().unwrap_or_default()).map(|s| Value::Text(s.into()));
     }
     let t = text(a, 0)?;
     with_settings(r, |s| s.profile_id = Some(t)).map(|()| Value::Null)
@@ -104,7 +104,7 @@ fn profile_app_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
 /// An untouched instance is the empty company (session/TestSessionSettings.al:575-595).
 fn company(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_settings(r, |s| Value::Text(s.company.clone()));
+        return with_settings(r, |s| Value::Text(s.company.clone().into()));
     }
     let t = text(a, 0)?;
     with_settings(r, |s| s.company = t).map(|()| Value::Null)
@@ -174,7 +174,7 @@ fn request_update(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
 /// nobody set is empty (handlers/TestNotificationSendRecallContracts.al:65).
 fn n_message(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     if a.is_empty() {
-        return with_notification(r, |n| n.message.clone().unwrap_or_default()).map(Value::Text);
+        return with_notification(r, |n| n.message.clone().unwrap_or_default()).map(|s| Value::Text(s.into()));
     }
     let t = text(a, 0)?;
     with_notification(r, |n| n.message = Some(t)).map(|()| Value::Null)
@@ -239,7 +239,7 @@ fn n_get_data(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
             .map(|(_, v)| v.clone())
             .unwrap_or_default()
     })
-    .map(Value::Text)
+    .map(|s| Value::Text(s.into()))
 }
 
 /// Stored, never run: an action only matters when the notification is sent to a client

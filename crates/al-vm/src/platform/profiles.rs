@@ -52,10 +52,15 @@ impl Session {
             r[pos(t, 1)] = super::option(t, 1, 1);
             r[pos(t, 2)] = Value::Guid(owner);
             r[pos(t, 3)] = Value::Code(o.name.to_uppercase().chars().take(30).collect());
-            r[pos(t, 4)] = Value::Text(prop("ProfileDescription").and_then(text_of_literal).unwrap_or_default());
+            r[pos(t, 4)] = Value::Text(
+                prop("ProfileDescription")
+                    .and_then(text_of_literal)
+                    .unwrap_or_default()
+                    .into(),
+            );
             r[pos(t, 5)] = Value::Integer(role_center_id);
             r[pos(t, 6)] = Value::Boolean(prop("DefaultRoleCenter").is_some_and(super::objects::truthy));
-            r[pos(t, 14)] = Value::Text(app.map(|a| a.name.clone()).unwrap_or_default());
+            r[pos(t, 14)] = Value::Text(app.map(|a| a.name.clone()).unwrap_or_default().into());
             r[pos(t, 15)] = Value::Boolean(prop("Enabled").is_none_or(super::objects::truthy));
             r[pos(t, 16)] = Value::Text(
                 prop("Caption")
@@ -112,7 +117,7 @@ fn is_empty_guid(v: &Value) -> bool {
 }
 
 fn text(v: &Value) -> String {
-    al_builtins::native::text_of(v).unwrap_or_default()
+    al_builtins::native::text_of(v).unwrap_or_default().to_string()
 }
 
 /// The error the server raises from the table trigger. Its code is not pinned.

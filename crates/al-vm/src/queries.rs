@@ -219,11 +219,11 @@ impl Session {
                 let col = arg_col(args, 0)?;
                 let q = qs.borrow();
                 match q.filters.iter().find(|(c, _)| *c == col) {
-                    Some((_, e)) => self.filter_text(e).map(Value::Text),
+                    Some((_, e)) => self.filter_text(e).map(|s| Value::Text(s.into())),
                     None if def.columns[col].static_filter.is_some() => {
                         unsupported("GetFilter of a column with a static ColumnFilter (not pinned)")
                     }
-                    None => Ok(Value::Text(String::new())),
+                    None => Ok(Value::Text(String::new().into())),
                 }
             }
             "GetFilters" => {
@@ -235,10 +235,12 @@ impl Session {
                     let caption = self.column_caption(def, c)?;
                     parts.push(format!("{caption}: {}", self.filter_text(&e)?));
                 }
-                Ok(Value::Text(parts.join(", ")))
+                Ok(Value::Text(parts.join(", ").into()))
             }
-            "ColumnName" => Ok(Value::Text(def.columns[arg_col(args, 0)?].name.clone())),
-            "ColumnCaption" => self.column_caption(def, arg_col(args, 0)?).map(Value::Text),
+            "ColumnName" => Ok(Value::Text(def.columns[arg_col(args, 0)?].name.clone().into())),
+            "ColumnCaption" => self
+                .column_caption(def, arg_col(args, 0)?)
+                .map(|s| Value::Text(s.into())),
             // The number is not the position: the first and second column are neither 1 nor 2 and
             // the numbers differ (query/TestQueryRuntimeContracts.al:Query_ColumnNo_IsNotAOneBasedPosition,
             // query/TestQueryObject.al:347-361). The real numbers are not pinned (docs/probes-needed.md).

@@ -690,7 +690,7 @@ impl Session {
             Value::Byte(b) => DotNetValue::Byte(*b),
             Value::Char(c) => DotNetValue::Char(*c),
             Value::Decimal(d) => DotNetValue::Decimal(d.to_string()),
-            Value::Text(s) | Value::Code(s) => DotNetValue::Str(s.clone()),
+            Value::Text(s) | Value::Code(s) => DotNetValue::Str(s.to_string()),
             // A Date or DateTime is a .NET DateTime of unspecified kind, with no time zone shift;
             // the kind and zone rule is a probe (docs/probes-needed.md).
             Value::Date(0, _) | Value::DateTime(0) => {
@@ -756,7 +756,7 @@ impl Session {
                 Ok(d) => Value::Decimal(d),
                 Err(_) => return unsupported(format!("a .NET decimal '{s}' does not fit an AL Decimal")),
             },
-            DotNetValue::Str(s) => Value::Text(s),
+            DotNetValue::Str(s) => Value::Text(s.into()),
             DotNetValue::DateTime(ticks) => Value::DateTime(ticks.div_euclid(TICKS_PER_MS) + 1),
             DotNetValue::TimeSpan(ticks) => Value::Duration(ticks.div_euclid(TICKS_PER_MS)),
             DotNetValue::Guid(g) => Value::Guid(g),
@@ -782,7 +782,7 @@ impl Session {
         // `Value := <null string>` is neither Text nor DotNet).
         if matches!(v, Value::Null) && self.dotnet.null_string {
             return match t {
-                RtType::Text(_) | RtType::Code(_) => Ok(Value::Text(String::new())),
+                RtType::Text(_) | RtType::Code(_) => Ok(Value::Text(String::new().into())),
                 _ => fit(v, t),
             };
         }
@@ -818,7 +818,7 @@ impl Session {
                 U::Strict => unsupported(
                     "a null .NET string passed to a builtin: BC raises an error that asserterror cannot catch (not modeled)",
                 ),
-                _ => Ok(Value::Text(String::new())),
+                _ => Ok(Value::Text(String::new().into())),
             },
             Value::Null => unsupported(
                 "a null .NET object used as an operand: BC raises an error that asserterror cannot catch for Format and StrLen, and the other uses are not pinned",

@@ -68,7 +68,7 @@ fn create_text(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resul
 fn to_text(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     match r {
         Some(Value::Library(_, cell)) => match &*cell.borrow() {
-            LibraryValue::Version(v) => Ok(Value::Text(format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]))),
+            LibraryValue::Version(v) => Ok(Value::Text(format!("{}.{}.{}.{}", v[0], v[1], v[2], v[3]).into())),
             other => Err(Signal::Unsupported(format!(
                 "ToText of a Version nobody set ({})",
                 other.describe()

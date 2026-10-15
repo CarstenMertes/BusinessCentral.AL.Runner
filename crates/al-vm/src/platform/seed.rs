@@ -22,8 +22,8 @@ pub(super) const USER_PROPERTY: u32 = crate::usertable::USER_PROPERTY;
 /// A text value for the field `id`, as a Code or a Text by the field's type.
 fn text(t: &TableDef, id: u32, s: &str) -> Value {
     match t.fields.iter().find(|f| f.id == id).map(|f| &f.ty) {
-        Some(RtType::Code(_)) => Value::Code(s.to_string()),
-        _ => Value::Text(s.to_string()),
+        Some(RtType::Code(_)) => Value::Code(s.to_string().into()),
+        _ => Value::Text(s.to_string().into()),
     }
 }
 

@@ -71,7 +71,7 @@ pub(super) fn metadata_permission_set_rows(p: &Providers, t: &TableDef) -> Vec<E
         .map(|s| {
             let mut r = blank(t);
             r[pos(t, 1)] = Value::Guid(s.app);
-            r[pos(t, 2)] = Value::Code(upper_trunc(&s.role, 30));
+            r[pos(t, 2)] = Value::Code(upper_trunc(&s.role, 30).into());
             r[pos(t, 3)] = Value::Text(s.name.chars().take(30).collect());
             r[pos(t, 4)] = Value::Boolean(s.assignable);
             Entry::ok(r)
@@ -86,7 +86,7 @@ pub(super) fn permission_set_rows(p: &Providers, t: &TableDef, assignable_only: 
         .filter(|s| s.assignable || !assignable_only)
         .map(|s| {
             let mut r = blank(t);
-            r[pos(t, 1)] = Value::Code(upper_trunc(&s.role, 20));
+            r[pos(t, 1)] = Value::Code(upper_trunc(&s.role, 20).into());
             r[pos(t, 2)] = Value::Text(s.name.chars().take(30).collect());
             Entry::ok(r)
         })
@@ -119,9 +119,9 @@ pub(super) fn aggregate_rows(
         let mut r = blank(t);
         r[pos(t, 1)] = super::option(t, 1, 0);
         r[pos(t, 2)] = Value::Guid(s.app);
-        r[pos(t, 3)] = Value::Code(upper_trunc(&s.role, 20));
+        r[pos(t, 3)] = Value::Code(upper_trunc(&s.role, 20).into());
         r[pos(t, 4)] = Value::Text(s.name.chars().take(30).collect());
-        r[pos(t, 5)] = Value::Text(s.app_name);
+        r[pos(t, 5)] = Value::Text(s.app_name.into());
         out.push(Entry::ok(r));
     }
     if let Some(tenant) = p.tenant_permission_set_def() {
@@ -451,9 +451,9 @@ pub(super) fn grants_mat(
                     f.expr.matches(&Value::Guid(s.app))
                 } else if f.field == role_pos {
                     f.expr.matches(&Value::Code(if which == GrantTable::Legacy {
-                        upper_trunc(&s.role, 20)
+                        upper_trunc(&s.role, 20).into()
                     } else {
-                        upper_trunc(&s.role, 30)
+                        upper_trunc(&s.role, 30).into()
                     }))
                 } else {
                     true
@@ -478,7 +478,7 @@ pub(super) fn grants_mat(
             if let Some(a) = app_pos {
                 k[a] = Value::Guid(s.app);
             }
-            k[role_pos] = Value::Code(role.clone());
+            k[role_pos] = Value::Code(role.clone().into());
             k
         };
         let grants = match which {

@@ -138,7 +138,7 @@ fn enum_from_integer_carries_any_ordinal() {
 fn text_of(vars: &str, body: &str) -> Result<String, Signal> {
     let src = format!("codeunit 50100 C {{ procedure F(): Text var {vars} begin {body} end; }}");
     match run(&src, "F")? {
-        Value::Text(s) | Value::Code(s) => Ok(s),
+        Value::Text(s) | Value::Code(s) => Ok(s.to_string()),
         other => panic!("{other:?}"),
     }
 }
@@ -273,7 +273,7 @@ const ROWS: &str = "table 50900 \"ALT Row\" { fields { field(1; Id; Integer) { }
 fn text_with_table(body: &str) -> Result<String, Signal> {
     let src = format!("{ROWS}codeunit 50100 C {{ procedure F(): Text var R: Record \"ALT Row\"; begin {body} end; }}");
     match run(&src, "F")? {
-        Value::Text(s) => Ok(s),
+        Value::Text(s) => Ok(s.to_string()),
         other => panic!("{other:?}"),
     }
 }
@@ -514,7 +514,7 @@ fn error_info(body: &str) -> Result<String, Signal> {
         "{EI_ROW}codeunit 50100 C {{ procedure F(): Text var e: ErrorInfo; f: ErrorInfo; r1: Record \"EI Row\"; r2: Record \"EI Row\"; a: Text; d: Dictionary of [Text, Text]; back: Dictionary of [Text, Text]; begin {body} end; }}"
     );
     match run(&src, "F")? {
-        Value::Text(s) => Ok(s),
+        Value::Text(s) => Ok(s.to_string()),
         other => panic!("{other:?}"),
     }
 }
@@ -680,7 +680,7 @@ fn transfer(body: &str) -> Result<String, Signal> {
          codeunit 50100 C {{ procedure F(): Text var DT: DataTransfer; a: Text; begin {body} end; }}"
     );
     match run(&src, "F")? {
-        Value::Text(s) => Ok(s),
+        Value::Text(s) => Ok(s.to_string()),
         other => panic!("{other:?}"),
     }
 }
@@ -887,7 +887,7 @@ fn module_text(body: &str) -> Result<String, Signal> {
         "codeunit 50100 T {{ procedure F(): Text var c: Codeunit Callee; i: ModuleInfo; j: ModuleInfo; v: Version; a: Text; t2: Text; ids: List of [ModuleInfo]; g: Guid; ins: InStream; o: JsonObject; names: List of [Text]; begin {body} end; }}"
     );
     match run_two_apps(CALLEE, &main, "F")? {
-        Value::Text(s) => Ok(s),
+        Value::Text(s) => Ok(s.to_string()),
         other => panic!("{other:?}"),
     }
 }

@@ -167,7 +167,7 @@ fn field_row(
     r[pos(t, 4)] = Value::Text(if f.id == 2_000_000_000 {
         "$systemId".into()
     } else {
-        f.name.clone()
+        f.name.clone().into()
     });
     r[pos(t, 5)] = blank.option(
         t,
@@ -201,7 +201,7 @@ fn field_row(
             .join(","),
         _ => String::new(),
     };
-    r[pos(t, 24)] = Value::Text(option_string);
+    r[pos(t, 24)] = Value::Text(option_string.into());
     // ObsoleteState and ObsoleteReason (TestFieldObsoleteStateVirtualTable.al:18-45).
     let state = match fprop("ObsoleteState") {
         None => 0,
@@ -209,7 +209,7 @@ fn field_row(
             .ok_or_else(|| format!("{}: ObsoleteState `{v}` is not understood", what()))?,
     };
     r[pos(t, 25)] = blank.option(t, 25, state);
-    r[pos(t, 26)] = Value::Text(fprop("ObsoleteReason").and_then(string_lit).unwrap_or_default());
+    r[pos(t, 26)] = Value::Text(fprop("ObsoleteReason").and_then(string_lit).unwrap_or_default().into());
     // DataClassification: the field's own; else the table's; a FlowField is SystemMetadata and a
     // silent Blob is CustomerContent (TestFieldDataClassificationInheritance.al:17-50).
     let is_blob = matches!(&f.ty, RtType::Library(n) if n.eq_ignore_ascii_case("blob"));
@@ -303,7 +303,8 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                 key.iter()
                     .map(|&f| schema.fields[f].name.as_str())
                     .collect::<Vec<_>>()
-                    .join(","),
+                    .join(",")
+                    .into(),
             );
             r[pos(t, 7)] = Value::Boolean(kprop("Enabled").is_none_or(truthy));
             r[pos(t, 10)] = Value::Boolean(n == 0 || kprop("Clustered").is_some_and(truthy));

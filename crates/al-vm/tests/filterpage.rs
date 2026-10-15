@@ -59,7 +59,7 @@ fn run(body: &str) -> Result<Value, Signal> {
 
 fn f(vars_and_body: &str) -> String {
     match run(&format!("procedure F(): Text {vars_and_body}")) {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

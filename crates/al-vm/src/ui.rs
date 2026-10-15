@@ -410,7 +410,7 @@ impl Session {
     }
 
     pub(crate) fn ui_message(&mut self, text: String) -> Result<(), Signal> {
-        self.dispatch_ui(UiKind::Message, &text.clone(), vec![Value::Text(text)])
+        self.dispatch_ui(UiKind::Message, &text.clone(), vec![Value::Text(text.into())])
             .map(|_| ())
     }
 
@@ -418,7 +418,7 @@ impl Session {
         let finals = self.dispatch_ui(
             UiKind::Confirm,
             &question.clone(),
-            vec![Value::Text(question), Value::Boolean(default)],
+            vec![Value::Text(question.into()), Value::Boolean(default)],
         )?;
         match finals.get(1) {
             Some(Value::Boolean(b)) => Ok(*b),
@@ -433,7 +433,11 @@ impl Session {
         let finals = self.dispatch_ui(
             UiKind::StrMenu,
             &options.clone(),
-            vec![Value::Text(options), Value::Integer(default), Value::Text(instruction)],
+            vec![
+                Value::Text(options.into()),
+                Value::Integer(default),
+                Value::Text(instruction.into()),
+            ],
         )?;
         match finals.get(1) {
             Some(Value::Integer(n)) => Ok(*n),

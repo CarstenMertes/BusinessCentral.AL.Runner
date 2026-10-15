@@ -116,7 +116,7 @@ fn run(extra: &str, body: &str) -> Result<Value, Signal> {
 
 fn text(r: Result<Value, Signal>) -> String {
     match r {
-        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s,
+        Ok(Value::Text(s)) | Ok(Value::Code(s)) => s.to_string(),
         other => panic!("{other:?}"),
     }
 }

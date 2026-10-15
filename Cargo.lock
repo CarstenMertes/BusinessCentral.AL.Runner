@@ -139,6 +139,7 @@ dependencies = [
  "al-ir",
  "al-sema",
  "al-syntax",
+ "al-testkit",
  "al-testrun",
  "al-version",
  "al-vm",
@@ -158,6 +159,7 @@ dependencies = [
  "al-builtins",
  "al-ir",
  "al-sema",
+ "al-testrun",
  "al-vm",
 ]
 

@@ -2,7 +2,6 @@
 //! pin them (written against a real BC 27.5 service tier; corpus branch `al-runtime-rs`). The procedures
 //! below are those probes with the observer replaced by `Error` on a difference; each cites its probe.
 
-use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
 use al_test_cli::runtime::run_codeunit;
 use al_vm::Engine;
@@ -16,16 +15,7 @@ table 69170 \"PE Usage Row\" { fields { field(1; \"Code\"; Code[20]) { } field(2
 
 fn run(tests: &str) -> Vec<(String, Outcome)> {
     let src = format!("{OBJECTS} codeunit 69172 T {{ Subtype = Test; {tests} }}");
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src)],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let l = al_testkit::compile(&src);
     let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
     let blocked = l
         .unsupported

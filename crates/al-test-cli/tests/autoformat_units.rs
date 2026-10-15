@@ -6,7 +6,6 @@
 //! (:177-195); a currency with both places empty gives 2:2 for all four (:197-217); a code that is no
 //! currency gives 2:5 for all four (:263-290).
 
-use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
 use al_test_cli::runtime::run_codeunit;
 use al_vm::Engine;
@@ -38,24 +37,7 @@ page 62500 "AF Card"
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
     let src = format!("{OBJECTS}\ncodeunit 62501 T {{ Subtype = Test; {tests} }}");
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src)],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
-    let blocked = l
-        .unsupported
-        .iter()
-        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
-        .collect();
-    let engine = Engine::new(l.program.clone(), blocked);
-    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
-    run_codeunit(&engine, &l, oi)
+    al_testkit::outcomes_in(&src, "T")
 }
 
 const SEED: &str = "R: Record \"AF Row\"; P: TestPage \"AF Card\";";
@@ -126,16 +108,7 @@ page 62510 "AF Cur Card"
 
 fn currency_outcomes(tests: &str) -> Vec<(String, Outcome)> {
     let src = format!("{OBJECTS}{CURRENCY}\ncodeunit 62511 T {{ Subtype = Test; {tests} }}");
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src)],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let l = al_testkit::compile(&src);
     let blocked = l
         .unsupported
         .iter()

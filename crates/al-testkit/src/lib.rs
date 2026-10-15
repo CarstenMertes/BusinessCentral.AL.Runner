@@ -148,6 +148,21 @@ pub fn run_with(src: &str, object: &str, routine: &str, args: Vec<Value>) -> Res
     b.call(oi, ri, args)
 }
 
+/// With the `runner` feature: compiles `src` and runs the tests of the codeunit named `codeunit` the way `alrunner test` does
+/// (one session per codeunit, the install code first), giving each test's name and outcome.
+#[cfg(feature = "runner")]
+pub fn outcomes_in(src: &str, codeunit: &str) -> Vec<(String, al_testrun::Outcome)> {
+    let l = compile(src);
+    let engine = Engine::new(l.program.clone(), blocked(&l));
+    let oi = l
+        .program
+        .objects
+        .iter()
+        .position(|o| o.name == codeunit)
+        .unwrap_or_else(|| panic!("no object named {codeunit}"));
+    al_testrun::runtime::run_codeunit(&engine, &l, oi)
+}
+
 /// A session on a compiled program (the program moves into its engine).
 pub fn session(l: Lowered) -> Session {
     Session::new(Engine::new(l.program.clone(), blocked(&l)))

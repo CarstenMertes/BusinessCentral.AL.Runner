@@ -2,10 +2,7 @@
 //! (pinned by corpus record/PWFilterGroupOr.al; issue 17: Base Application's
 //! `FilterBlankSalesDiscountAccounts`). Other negative groups are refused, not guessed.
 
-use al_sema::workspace::AppSource;
 use al_test_cli::report::Outcome;
-use al_test_cli::runtime::run_codeunit;
-use al_vm::Engine;
 
 const OBJECTS: &str = r#"
 table 62600 "FG Row"
@@ -17,24 +14,7 @@ table 62600 "FG Row"
 
 fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
     let src = format!("{OBJECTS}\ncodeunit 62601 T {{ Subtype = Test; {tests} }}");
-    let (ws, l) = al_sema::lower::compile(
-        vec![AppSource {
-            id: "a".into(),
-            name: "a".into(),
-            dependencies: vec![],
-            files: vec![("f.al".into(), src)],
-        }],
-        &Default::default(),
-    );
-    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
-    let blocked = l
-        .unsupported
-        .iter()
-        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
-        .collect();
-    let engine = Engine::new(l.program.clone(), blocked);
-    let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
-    run_codeunit(&engine, &l, oi)
+    al_testkit::outcomes_in(&src, "T")
 }
 
 #[test]

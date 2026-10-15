@@ -8,6 +8,8 @@ pub enum Command {
     Help,
     Version,
     Test(Box<TestArgs>),
+    /// `alrunner serve`: the options every request's `alrunner test` run gets (ADR-028).
+    Serve(Vec<String>),
     /// `alrunner warm`: find (or download) the demo backup and build its index.
     Warm(Box<TestArgs>),
 }
@@ -109,6 +111,7 @@ alrunner: run AL tests without a service tier (AL Runner v3, preview)
 
 USAGE
     alrunner test [OPTIONS] APP...
+    alrunner serve [--protocol 2] [OPTIONS]
     alrunner --version | --help
 
 APP is an app folder (with app.json), a source archive (`Tests-SMB.Source.zip`) or an `.app`
@@ -203,6 +206,16 @@ EXIT CODES
        runtime): a problem of the machine; --allow-not-run makes this 0
     Order when several apply: 2, 6, 1, 8, 7.
 
+SERVE
+    alrunner serve       AL Runner v2's server protocol (ALchemist, LethAL): one JSON object per line on
+                         stdin, answers on stdout (a ready line first), logs on stderr. Commands:
+                         runTests, cancel, shutdown (execute: later). Each runTests request runs
+                         `alrunner test` as a child process, so nothing is kept between requests.
+                         The options are those of `test` that do not depend on a request (--package-cache,
+                         --define, --test-timeout, --bc-version, --cache-dir, --no-download, --dep, ...);
+                         the request carries sourcePaths, packagePaths, coverage, perTestCoverage, test,
+                         excludeTests, testIsolation. See docs/adr/028-alrunner-serve.md.
+
 WARM
     alrunner warm [PATH.bak] [--bc-version BUILD] [--cache-dir DIR] [--no-download]
                   [--test-data-company NAME]
@@ -286,6 +299,49 @@ fn parse_warm(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
     Ok(Command::Warm(Box::new(a)))
 }
 
+/// `alrunner serve [--protocol 2] [OPTIONS]`: the options are those of `alrunner test` that do not depend on a request;
+/// they are checked with its parser and handed to every run.
+fn parse_serve(args: Vec<String>) -> Result<Command, String> {
+    let mut daemon = Vec::new();
+    let mut it = args.into_iter();
+    while let Some(a) = it.next() {
+        match a.as_str() {
+            "--help" | "-h" => return Ok(Command::Help),
+            "--protocol" => match it.next().as_deref() {
+                Some("2") => {}
+                other => {
+                    return Err(format!(
+                        "--protocol: only protocol 2 exists, not `{}`",
+                        other.unwrap_or("(nothing)")
+                    ));
+                }
+            },
+            _ => daemon.push(a),
+        }
+    }
+    // A throw-away parse tells a good option from a bad one, and keeps out what only a request decides.
+    let mut probe = vec!["test".to_string(), "APP".to_string()];
+    probe.extend(daemon.iter().cloned());
+    let Command::Test(t) = parse(probe)? else {
+        return Err("alrunner serve: options of `alrunner test` only".into());
+    };
+    let t = *t;
+    if t.apps.len() != 1
+        || !t.codeunits.is_empty()
+        || !t.filters.is_empty()
+        || !t.excludes.is_empty()
+        || !t.exact.is_empty()
+        || t.junit.is_some()
+        || t.output_json.is_some()
+        || t.coverage
+        || t.explain.is_some()
+        || t.isolation.is_some()
+    {
+        return Err("alrunner serve takes only the options that do not depend on a request: --package-cache, --dep, --define, --preprocessor-symbols, --test-timeout, --bc-version, --cache-dir, --no-download, --test-data and the like; the rest comes in each `runTests` request".into());
+    }
+    Ok(Command::Serve(daemon))
+}
+
 pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> {
     let mut it = args.into_iter().peekable();
     let Some(first) = it.next() else {
@@ -296,7 +352,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         "--version" | "-V" | "version" => return Ok(Command::Version),
         "test" => {}
         "warm" => return parse_warm(it),
-        "run" | "serve" | "debug" | "deps" | "package" | "helper" | "doctor" | "migrate" | "guide" => {
+        "serve" => return parse_serve(it.collect()),
+        "run" | "debug" | "deps" | "package" | "helper" | "doctor" | "migrate" | "guide" => {
             return Err(format!(
                 "`alrunner {first}` is not implemented yet (ADR-016 lists it for a later step); only `alrunner test` exists"
             ));
@@ -546,6 +603,31 @@ mod tests {
     }
 
     #[test]
+    fn serve_takes_the_options_that_do_not_depend_on_a_request() {
+        match p("serve --protocol 2 --package-cache pc --define S --test-timeout 5 --no-download").unwrap() {
+            Command::Serve(d) => assert_eq!(
+                d,
+                [
+                    "--package-cache",
+                    "pc",
+                    "--define",
+                    "S",
+                    "--test-timeout",
+                    "5",
+                    "--no-download"
+                ]
+            ),
+            other => panic!("{other:?}"),
+        }
+        assert!(matches!(p("serve").unwrap(), Command::Serve(_)));
+        assert!(p("serve --protocol 1").unwrap_err().contains("only protocol 2"));
+        assert!(p("serve --nope").unwrap_err().contains("unknown option"));
+        assert!(p("serve --test Codeunit1.X").unwrap_err().contains("do not depend"));
+        assert!(p("serve --coverage").unwrap_err().contains("do not depend"));
+        assert!(p("serve OtherApp").unwrap_err().contains("do not depend"));
+    }
+
+    #[test]
     fn coverage_flags_turn_coverage_on() {
         assert!(!test_args("test A").coverage);
         assert!(test_args("test A --coverage").coverage);
@@ -670,6 +752,6 @@ mod tests {
                 .contains("not available")
         );
         assert!(p("test A --watch").unwrap_err().contains("deferred"));
-        assert!(p("serve").unwrap_err().contains("not implemented yet"));
+        assert!(p("run").unwrap_err().contains("not implemented yet"));
     }
 }

@@ -15,7 +15,7 @@ page grows with each step).
 |---|---|---|
 | 1 | `alrunner test` flags LethAL uses, v2-shaped `--output-json` | done (this page, sections 1 to 5) |
 | 2 | Cobertura coverage (`--coverage`, `--coverage-out`), per-test statements (`--coverage-json`) | done (sections 3 and 4a) |
-| 3 | `alrunner serve` (`runTests`, `shutdown`) | not yet. `alrunner serve` exits 2: "not implemented yet". |
+| 3 | `alrunner serve` (`runTests`, `cancel`, `shutdown`) | done (section 4b; ADR-028, Proposed) |
 | 4 | `execute`, `cancel`, `coverage`, `perTestCoverage` in `serve` | not yet |
 | 5 | `captureValues`, `iterationTracking` | not yet |
 | 6 | `alrunner debug --stdio` (DAP) | not yet |
@@ -27,7 +27,7 @@ page grows with each step).
 | binary `al-runner` | binary `alrunner` | Run `alrunner test ...`. There is no `al-runner` launcher. A tool that finds the binary by name on the PATH looks for `alrunner`; a configured path still works. |
 | `al-runner [FLAGS] DIR [DIR]` | `alrunner test [FLAGS] APP...` | Put the word `test` first. APP is an app folder (with `app.json`), a `*.Source.zip` or an `.app` that carries source. |
 | install: `dotnet tool install -g msdyn365bc.al.runner` | one binary | Do not run `dotnet tool`. The user sets the path. v3 needs no .NET (an optional helper exists for `DotNet` variables). |
-| `al-runner --server` | `alrunner serve` | Step 3. Not available yet. |
+| `al-runner --server [--package-cache P]... [--define S]... [--test-timeout N]` | `alrunner serve [--package-cache P]... [--define S]... [--test-timeout N]` | Same options (section 4b). |
 | `al-runner --dap stdio` | `alrunner debug --stdio` | Step 6. Not available yet. |
 
 ## 2. `--version`
@@ -141,6 +141,40 @@ load), no document is written, the message is on stderr and the exit code is 2.
 
 Cost: with coverage off the VM pays one `Option` check per statement. With it on, one counter bump per statement run.
 
+## 4b. `alrunner serve`
+
+Same wire as v2 (`protocolVersion` 2): one JSON object per line on stdin, answers on stdout, logs on stderr; first
+stdout line `{"ready":true}`; command names are case insensitive; `[server] request <n> done` on stderr after each
+request except `cancel`. Start options are the request-independent options of `alrunner test`
+(`--package-cache`, `--dep`, `--define`, `--preprocessor-symbols`, `--test-timeout`, `--bc-version`, `--cache-dir`,
+`--no-download`, `--test-data`, `--no-test-data`, `--allow-not-run`); `--protocol 2` is accepted. Anything else is an
+error at start-up (exit 2).
+
+| Command | v3 |
+|---|---|
+| `runTests` | Fields `sourcePaths` (required), `packagePaths`, `coverage`, `perTestCoverage`, `test`, `excludeTests`, `testIsolation` (`codeunit`, `test`, `disabled`). `affectedOnly`, `includeFailing`, `strictEnvironment`, `tdd`: `{"error": ...}` (deferred). `code`, `captureValues`, `iterationTracking`: accepted, with a `warnings` entry in the summary. Any other field: `{"error": "unknown field ..."}`. |
+| `execute` | `{"error": "execute is not implemented yet"}` (step 4). |
+| `cancel` | Answered at once: `{"type":"ack","command":"cancel","noop":bool}`. During a run it **kills the run**: the summary has `cancelled: true`, `exitCode: 130`, no test lines. v2 finished the running test and reported the tests before it. |
+| `shutdown` | `{"status":"shutting down"}`, then exit 0. EOF on stdin exits too. |
+
+Differences a client must adapt to:
+
+1. **Test lines arrive together, when the run ends**, not one by one (the runtime reports results at the end of the run).
+   Progress shown per test appears at the end.
+2. Each `runTests` is a fresh `alrunner test` process: nothing is warm, so a changed source file always shows. There is no
+   `cached: true`; `cached` is always `false`. A request costs the compile (the compile cache on disk helps).
+3. `test` lines have `type`, `name`, `status` (`pass`, `fail`, `error`), `durationMs`, `message`, `stackTrace`,
+   `stackFrames` (the AL stack split into lines), and `notRun: true` for a test that did not run (status `error`, message
+   `NotRun: out-of-scope: <reason>`; see section 4). `errorKind`, `alSourceFile`, `alSourceLine` are not sent.
+4. The `summary` has `exitCode` (the exit code of `alrunner test`, section 5), `passed`, `failed`, `errors` (= not run),
+   `notRun`, `total`, `cached`, `protocolVersion`, `wallSeconds`, `warnings` when there are some, `cancelled` when
+   cancelled, and `coverage` / `perTestCoverage` when asked for (section 4a shapes). `compilationErrors`,
+   `changedFiles`, `selection`, `companyInitFailures`, `sourceScanFailures` are not sent.
+5. A run that cannot start (a bad path, an app that does not load) answers `{"error": "the run produced no result (exit 2): ..."}`
+   instead of a summary with exit code 2 or 3.
+6. While a run is in progress only `cancel` and `shutdown` are answered; other requests get an `error` line (v2 queued them).
+7. `testIsolation: "test"` means TestIsolation Function (section 3), `"disabled"` runs nothing.
+
 ## 5. Exit codes
 
 | Code | v2 | v3 |
@@ -211,13 +245,18 @@ compile failure not scorable) must hold with the changes above.
 
 ## 9. ALchemist
 
-ALchemist needs `alrunner serve` and `alrunner debug` (steps 3 to 6). Until then nothing in this
-section can be applied. The changes it will need, so that they can be prepared:
+ALchemist needs `alrunner serve` (step 3, done), `execute` (step 4), value capture (step 5) and `alrunner debug`
+(step 6). Test Explorer runs can move now; scratch runs, inline values and debugging cannot.
 
-1. Binary lookup: also `which alrunner`; spawn `alrunner serve` instead of `al-runner --server`.
-2. Ready line, `runTests`, `summary` with `protocolVersion: 2` and `shutdown` are meant to be the same
-   as v2 (step 3). This page will list every deviation when step 3 lands.
-3. Debugger: `alrunner debug --stdio` instead of `al-runner --dap stdio` (step 6).
+1. Binary lookup (`alRunnerManager.ts:47-51, 129-139`): also `which alrunner`; spawn `alrunner serve` instead of
+   `al-runner --server` (`serverProcess.ts:125-141`). The version check only warns and accepts `3.0.0` (A3).
+2. `runtests` (lowercase) is accepted. ALchemist sends `captureValues` and `iterationTracking` on `runTests`: they earn
+   a `warnings` entry and are otherwise ignored, as in v2. It never sends `cobertura` or `testFilter`; both would be
+   refused as unknown fields. Section 4b lists the other differences (lines come together, `cancel` kills the run).
+3. `coverage` arrives in the summary in the v2 shape (section 4a). ALchemist reads `hitStatements` and `totalStatements`,
+   which neither v2 nor v3 sends (a tool-side issue noted in `alchemist-lethal.md`, section 6).
+4. Test names are `Codeunit<ID>.<Method>` as in v2; the label match in `testController.ts:493` (A8) must be checked on a run.
+5. Debugger: `alrunner debug --stdio` instead of `al-runner --dap stdio` (step 6).
 
 ## 10. What does not change for a tool
 

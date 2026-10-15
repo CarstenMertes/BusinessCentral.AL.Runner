@@ -142,7 +142,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 ### al-sema
 
-- `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `ABSENT_ENUM_MEMBERS`).
+- `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0122, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `al_enum_assignment`, `ABSENT_ENUM_MEMBERS`).
 - `base_access.rs` (78): Page and report extension code that names the base object's members (ADR-023): which probes are pinned (`PINNED`), the `AL_UNPINNED_BASE_ACCESS` switch, the base's visible variables and procedures, and the slot of a base variable from syntax. Entry: `PINNED`, `pinned`, `scope_enabled`, `visible_vars`, `visible_procs`, `slot_of`.
 - `calcformula.rs` (513): The `CalcFormula` property of a FlowField, as syntax. Entry: `Formula` 18, `Cond` 28, `CondValue` 35, `parse` 48.
 - `check.rs` (2492): Resolves every name, member access and call in routine bodies, inferring types. Entry: `check_with` 122, `Checker` 323, `check_object` 647, `check_routine_in` 672, `CheckResult` 43, `Res` 67, `Roots` 103.

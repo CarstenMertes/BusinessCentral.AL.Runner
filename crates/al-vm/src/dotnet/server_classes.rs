@@ -15,7 +15,9 @@
 
 use super::registry::{MemberFn, MemberKind, MemberRefFn, Pin, RegistryMember, RegistryType};
 use crate::Session;
-use al_builtins::dotnet_sigs::{AL_CONFIG_SETTINGS, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER};
+use al_builtins::dotnet_sigs::{
+    AL_CONFIG_SETTINGS, GRAPH_QUERY, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER,
+};
 use al_builtins::native::Signal;
 use al_builtins::value::{DotNetKind, DotNetObject, Value};
 use std::cell::RefCell;
@@ -288,6 +290,55 @@ fn member_ref(name: &str, pin: Pin, f: MemberRefFn) -> RegistryMember {
     }
 }
 
+/// Azure AD Graph on a tier without Microsoft Entra ID, probed on BC 27.5 (corpus branch
+/// al-runtime-rs-staging, tests/al-language-onprem/session/PXAzureAdGraph.al:1-12, 86-109).
+const GRAPH_PIN: &str =
+    "probe tests/al-language-onprem/session/PXAzureAdGraph.al:1-12,86-109 (corpus branch al-runtime-rs-staging)";
+
+fn graph_query_new(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "GraphQuery constructor")?;
+    Ok(Value::DotNet(Rc::new(DotNetObject::new(DotNetKind::Internal {
+        type_name: GRAPH_QUERY.into(),
+        state: RefCell::new(Vec::new()),
+    }))))
+}
+
+fn graph_collaboration(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "GraphQuery.IsM365CollaborationEnabled")?;
+    Ok(Value::Boolean(false))
+}
+
+fn graph_directory_group(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "GraphQuery.GetEnvironmentDirectoryGroup")?;
+    Ok(Value::Text(String::new()))
+}
+
+/// A call that needs the directory: the tier has none, the client object inside is null.
+fn graph_null_reference(member: &str) -> Result<Value, Signal> {
+    al_builtins::native::raise(
+        format!(
+            "A call to {GRAPH_QUERY}.{member} failed with this message: Object reference not set to an instance of an object."
+        ),
+        "DotNetInvoke:NullReference",
+    )
+}
+
+fn graph_group_page(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
+    graph_null_reference("GetGroupPage")
+}
+
+fn graph_group_info(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
+    graph_null_reference("GetGroupInfo")
+}
+
+fn graph_first_group(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
+    graph_null_reference("FindFirstGroupInfoForDisplayName")
+}
+
+fn graph_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
+    graph_null_reference("GetUser")
+}
+
 fn probe(what: &str) -> Pin {
     Pin::Probe(format!("{ENV_PROBE}:{what}"))
 }
@@ -376,6 +427,24 @@ pub fn types() -> Vec<RegistryType> {
                     effective_permission,
                 ),
             ],
+        },
+        RegistryType {
+            clr_name: GRAPH_QUERY.into(),
+            members: {
+                let g = |name: &str, f: MemberFn| member(name, Pin::Probe(GRAPH_PIN.into()), f);
+                vec![
+                    RegistryMember {
+                        kind: MemberKind::Construct,
+                        ..g("GraphQuery", graph_query_new)
+                    },
+                    g("IsM365CollaborationEnabled", graph_collaboration),
+                    g("GetEnvironmentDirectoryGroup", graph_directory_group),
+                    g("GetGroupPage", graph_group_page),
+                    g("GetGroupInfo", graph_group_info),
+                    g("FindFirstGroupInfoForDisplayName", graph_first_group),
+                    g("GetUser", graph_user),
+                ]
+            },
         },
         RegistryType {
             clr_name: TEST_EXECUTION.into(),

@@ -107,15 +107,16 @@ codeunit 69301 T {{ Subtype = Test;
 fn a_page_run_with_a_temporary_record_shows_the_temporary_rows() {
     let (ws, l) = compile(format!(
         "{OBJECTS}
-page 69312 \"CV List\" {{ PageType = List; InsertAllowed = false; DeleteAllowed = false; ModifyAllowed = false; SourceTable = \"CV Row\"; layout {{ area(Content) {{ repeater(R) {{ field(Code; Rec.Code) {{ }} }} }} }} }}
+page 69312 \"CV List\" {{ PageType = List; InsertAllowed = false; DeleteAllowed = false; ModifyAllowed = false; SourceTable = \"CV Row\"; layout {{ area(Content) {{ repeater(R) {{ field(Code; Rec.Code) {{ }} field(Number; Rec.Number) {{ }} }} }} }} }}
 codeunit 69301 T {{ Subtype = Test; var Rows: Text;
   [Test] [HandlerFunctions('ListHandler')] procedure TemporaryRows() var Perm: Record \"CV Row\"; Tmp: Record \"CV Row\" temporary; begin
-     Perm.Code := 'P1'; Perm.Insert(); Perm.Code := 'P2'; Perm.Insert();
-     Tmp.Code := 'T1'; Tmp.Insert();
+     Perm.Code := 'P1'; Perm.Number := 5; Perm.Insert(); Perm.Code := 'P2'; Perm.Number := 5; Perm.Insert();
+     Tmp.Code := 'T1'; Tmp.Number := 5; Tmp.Insert(); Tmp.Code := 'T2'; Tmp.Number := 6; Tmp.Insert();
      Page.RunModal(Page::\"CV List\", Tmp);
      if Rows <> 'T1;' then Error('rows %1', Rows);
   end;
   [ModalPageHandler] procedure ListHandler(var L: TestPage \"CV List\") begin
+     L.FILTER.SetFilter(Number, '5');
      if L.First() then repeat Rows += L.Code.Value + ';'; until not L.Next();
      L.OK().Invoke();
   end; }}"

@@ -793,26 +793,6 @@ pub(crate) fn lower_core(
             );
         }
     }
-    // Two extensions that add items last under one base item: the order is not pinned (ADR-025).
-    for (&base, exts) in &changing {
-        let mut seen: Vec<(usize, usize)> = Vec::new();
-        for &e in exts {
-            let Some(x) = ext_irs[e].as_ref() else { continue };
-            for a in x.added.iter().filter(|a| a.place == ir::AddedPlace::Last) {
-                if let Some(p) = a.base_parent {
-                    if seen.iter().any(|&(q, other)| q == p && other != e) {
-                        if let Some(r) = report_irs[base].as_mut() {
-                            r.unsupported.push(format!(
-                                "two reportextensions add data items last under the same data item ({}): their order is not pinned",
-                                a.item.name
-                            ));
-                        }
-                    }
-                    seen.push((p, e));
-                }
-            }
-        }
-    }
     // Why a variable of an xmlport or report is refused, and the report extension that changes a
     // run: the cache supplies them for its objects.
     let n_objects = ws.objects.len();
@@ -4117,10 +4097,16 @@ impl Lowerer<'_> {
         else {
             return Ok(());
         };
-        if crate::base_access::visible_procs(&self.ws.object_ast(base), &name)
-            .next()
-            .is_some()
-        {
+        // Only the same parameter types are AL0440; a different signature is an overload (corpus
+        // pageext/POPageExtOverload.al on the staging branch).
+        let mine = ast::routines_in(self.ws.object_ast(object).syntax())
+            .into_iter()
+            .find(|r| usize::from(r.syntax().text_range().start()) == offset);
+        let same_signature = |b: &ast::Routine| {
+            mine.as_ref()
+                .is_none_or(|m| crate::alcodes::signature(m) == crate::alcodes::signature(b))
+        };
+        if crate::base_access::visible_procs(&self.ws.object_ast(base), &name).any(|b| same_signature(&b)) {
             return Err(format!(
                 "AL0440: the {noun} extension declares a method `{name}` that the {noun} it extends already defines (BC does not compile it)"
             ));
@@ -4962,6 +4948,15 @@ impl Lowerer<'_> {
                         ir::Arg::Value(ir::Expr::Convert(self.rt(&el)?, Box::new(self.expr(a)?)))
                     } else if id.starts_with("System.Format#") && i == 0 {
                         ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
+                    // The substituted values of StrSubstNo, Message and Error are `Format`ted: an Option
+                    // field shows its caption (corpus xmlport/PWXmlPortFormatEvaluate.al:Import_Xml_Option,
+                    // `%3` of a field with OptionCaption).
+                    } else if i > 0
+                        && (id.starts_with("Text.StrSubstNo#")
+                            || id.starts_with("Dialog.Message#")
+                            || id.starts_with("Dialog.Error#"))
+                    {
+                        ir::Arg::Value(self.format_option_field(true, a)?)
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });

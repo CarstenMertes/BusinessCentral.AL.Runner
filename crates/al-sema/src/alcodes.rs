@@ -200,7 +200,7 @@ fn page_extension_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &m
     }
 }
 
-fn signature(r: &ast::Routine) -> Vec<(bool, String)> {
+pub(crate) fn signature(r: &ast::Routine) -> Vec<(bool, String)> {
     r.params()
         .map(|p| {
             let ty = p.type_ref().map(|t| t.text()).unwrap_or_default();

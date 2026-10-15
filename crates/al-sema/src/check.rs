@@ -1748,8 +1748,21 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // A procedure of the extension next to procedures of its base with the same name: the base's
+        // are overloads of it (corpus pageext/POPageExtOverload.al on corpus branch al-runtime-rs-staging:
+        // `Describe(5)` calls the base's Integer procedure, `Describe('t')` the extension's Text one).
+        let base = self.base_proc_cands(sc, n);
         if c.is_empty() {
-            c = self.base_proc_cands(sc, n);
+            c = base;
+        } else {
+            // The same parameter types is AL0440 (the lowering refuses it): the extension's own
+            // procedure stays the candidate then.
+            let mut all: Vec<Cand> = base
+                .into_iter()
+                .filter(|b| !c.iter().any(|o| o.param_tys == b.param_tys))
+                .collect();
+            all.extend(c);
+            c = all;
         }
         if c.is_empty() {
             c = self.global_cands(n);
@@ -1849,10 +1862,16 @@ impl<'a> Checker<'a> {
         } else {
             Vec::new()
         };
-        if !own.is_empty() || !own_obj.is_empty() {
-            return Some(E::Callable(own.into_iter().chain(own_obj).collect()));
-        }
         let base = self.base_proc_cands(sc, &n);
+        if !own.is_empty() || !own_obj.is_empty() {
+            let own: Vec<Cand> = own.into_iter().chain(own_obj).collect();
+            let mut all: Vec<Cand> = base
+                .into_iter()
+                .filter(|b| !own.iter().any(|o| o.param_tys == b.param_tys))
+                .collect();
+            all.extend(own);
+            return Some(E::Callable(all));
+        }
         if !base.is_empty() {
             return Some(E::Callable(base));
         }

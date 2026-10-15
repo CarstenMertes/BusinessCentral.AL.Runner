@@ -385,7 +385,7 @@ impl Walk<'_> {
             }
             Stmt::Exit(e) => e.as_ref().map_or(Ok(()), |e| self.expr(e)),
             Stmt::AssertError(b) => self.stmts(b),
-            Stmt::Break | Stmt::Pos(_) | Stmt::Assume(_) => Ok(()),
+            Stmt::Break | Stmt::Continue | Stmt::Pos(_) | Stmt::Assume(_) => Ok(()),
         }
     }
 

@@ -1,7 +1,7 @@
 {
-  "corpus_commit": "ae3fe8857795946ddb12b4668627444d3f89681c",
+  "corpus_commit": "5cf3635516410a1e7aae32f5829a43314e2cb8f9",
   "overloads": 1728,
-  "pinned": 855,
+  "pinned": 881,
   "types": [
     {
       "methods": [
@@ -187,9 +187,9 @@
         },
         {
           "id": "CompanyProperty.ID#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "CompanyProperty.ID static () -> Guid",
-          "site": null
+          "site": "session/TestProbeSessionMiscContracts.al:741"
         },
         {
           "id": "CompanyProperty.UrlName#1",
@@ -199,7 +199,7 @@
         }
       ],
       "overloads": 3,
-      "pinned": 2,
+      "pinned": 3,
       "type": "CompanyProperty"
     },
     {
@@ -342,7 +342,7 @@
           "id": "Database.CompanyName#1",
           "pinned": true,
           "signature": "Database.CompanyName static () -> Text",
-          "site": "handlers/TestReportSaveAsColumnTypesContracts.al:398"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:78"
         },
         {
           "id": "Database.CopyCompany#1",
@@ -396,13 +396,13 @@
           "id": "Database.LastUsedRowVersion#1",
           "pinned": true,
           "signature": "Database.LastUsedRowVersion static () -> BigInteger",
-          "site": "session/TestBCDatabaseContracts.al:108"
+          "site": "record/TestProbeRecordRefContracts.al:627"
         },
         {
           "id": "Database.LockTimeout#1",
           "pinned": true,
           "signature": "Database.LockTimeout static (?LockTimeout: Boolean) -> Boolean?",
-          "site": "session/TestSystemExtended.al:611"
+          "site": "record/TestProbeRecordRefContracts.al:646"
         },
         {
           "id": "Database.LockTimeoutDuration#1",
@@ -767,7 +767,7 @@
           "id": "Dialog.StrMenu#1",
           "pinned": true,
           "signature": "Dialog.StrMenu static (OptionMembers: Text, ?DefaultNumber: Integer, ?Instruction: Text) -> Integer",
-          "site": "handlers/TestUnhandledUiAndDialogDefaults.al:92"
+          "site": "handlers/TestProbePageHandlerContracts.al:222"
         },
         {
           "id": "Dialog.Update#1",
@@ -878,13 +878,13 @@
           "id": "Enum.Names#1",
           "pinned": true,
           "signature": "Enum.Names inst () -> List of [Text]",
-          "site": "types/ProbeNamespacedEnumQualified.al:16"
+          "site": "session/TestProbeSessionMiscContracts.al:926"
         },
         {
           "id": "Enum.Ordinals#1",
           "pinned": true,
           "signature": "Enum.Ordinals inst () -> List of [Integer]",
-          "site": "session/TestSystemExtended.al:376"
+          "site": "session/TestProbeSessionMiscContracts.al:927"
         }
       ],
       "overloads": 4,
@@ -919,9 +919,9 @@
         },
         {
           "id": "ErrorInfo.Callstack#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "ErrorInfo.Callstack inst () -> Text",
-          "site": null
+          "site": "session/TestProbeSessionMiscContracts.al:374"
         },
         {
           "id": "ErrorInfo.Collectible#1",
@@ -1027,7 +1027,7 @@
         }
       ],
       "overloads": 22,
-      "pinned": 17,
+      "pinned": 18,
       "type": "ErrorInfo"
     },
     {
@@ -1184,9 +1184,9 @@
         },
         {
           "id": "FieldRef.Record#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "FieldRef.Record inst () -> RecordRef",
-          "site": null
+          "site": "types/PSUnassignedFieldRef.al:51"
         },
         {
           "id": "FieldRef.Relation#1",
@@ -1442,7 +1442,7 @@
         }
       ],
       "overloads": 68,
-      "pinned": 28,
+      "pinned": 29,
       "type": "FieldRef"
     },
     {
@@ -1746,23 +1746,23 @@
           "id": "FileUpload.CreateInStream#1",
           "pinned": true,
           "signature": "FileUpload.CreateInStream inst (InStream: InStream)",
-          "site": "types/TestHttpRequestFileUploadFieldErrorContracts.al:66"
+          "site": "types/PRFileUpload.al:20"
         },
         {
           "id": "FileUpload.CreateInStream#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "FileUpload.CreateInStream inst (InStream: InStream, Encoding: TextEncoding)",
-          "site": null
+          "site": "types/PRFileUpload.al:28"
         },
         {
           "id": "FileUpload.FileName#1",
           "pinned": true,
           "signature": "FileUpload.FileName inst () -> Text",
-          "site": "types/TestHttpRequestFileUploadFieldErrorContracts.al:63"
+          "site": "types/PRFileUpload.al:92"
         }
       ],
       "overloads": 3,
-      "pinned": 2,
+      "pinned": 3,
       "type": "FileUpload"
     },
     {
@@ -2292,9 +2292,9 @@
         },
         {
           "id": "InStream.Position#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "InStream.Position inst (?Length: BigInteger) -> BigInteger?",
-          "site": null
+          "site": "streams/TestProbeStreamContracts.al:469"
         },
         {
           "id": "InStream.Read#1",
@@ -2364,7 +2364,7 @@
         }
       ],
       "overloads": 14,
-      "pinned": 5,
+      "pinned": 6,
       "type": "InStream"
     },
     {
@@ -2463,9 +2463,9 @@
         },
         {
           "id": "JsonArray.Add#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Add inst (Value: Boolean)",
-          "site": null
+          "site": "json/TestProbeJsonContracts.al:21"
         },
         {
           "id": "JsonArray.Add#3",
@@ -2523,9 +2523,9 @@
         },
         {
           "id": "JsonArray.Add#12",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Add inst (Value: JsonToken)",
-          "site": null
+          "site": "json/TestProbeJsonContracts.al:211"
         },
         {
           "id": "JsonArray.Add#13",
@@ -2997,7 +2997,7 @@
         }
       ],
       "overloads": 90,
-      "pinned": 22,
+      "pinned": 24,
       "type": "JsonArray"
     },
     {
@@ -3070,9 +3070,9 @@
         },
         {
           "id": "JsonObject.Add#12",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Add inst (Key: Text, Value: JsonToken) -> Boolean?",
-          "site": null
+          "site": "json/TestProbeJsonContracts.al:178"
         },
         {
           "id": "JsonObject.Add#13",
@@ -3400,7 +3400,7 @@
         }
       ],
       "overloads": 66,
-      "pinned": 38,
+      "pinned": 39,
       "type": "JsonObject"
     },
     {
@@ -3461,9 +3461,9 @@
         },
         {
           "id": "JsonToken.ReadFrom#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonToken.ReadFrom inst (String: Text) -> Boolean?",
-          "site": null
+          "site": "json/TestProbeJsonContracts.al:147"
         },
         {
           "id": "JsonToken.SelectToken#1",
@@ -3491,7 +3491,7 @@
         }
       ],
       "overloads": 14,
-      "pinned": 10,
+      "pinned": 11,
       "type": "JsonToken"
     },
     {
@@ -3576,9 +3576,9 @@
         },
         {
           "id": "JsonValue.AsToken#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonValue.AsToken inst () -> JsonToken",
-          "site": null
+          "site": "json/TestProbeJsonContracts.al:503"
         },
         {
           "id": "JsonValue.Clone#1",
@@ -3666,9 +3666,9 @@
         },
         {
           "id": "JsonValue.SetValue#8",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonValue.SetValue inst (Value: Duration)",
-          "site": null
+          "site": "json/TestProbeJsonContracts.al:502"
         },
         {
           "id": "JsonValue.SetValue#9",
@@ -3690,9 +3690,9 @@
         },
         {
           "id": "JsonValue.SetValue#12",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonValue.SetValue inst (Value: Time)",
-          "site": null
+          "site": "json/TestProbeJsonContracts.al:505"
         },
         {
           "id": "JsonValue.SetValueToNull#1",
@@ -3720,7 +3720,7 @@
         }
       ],
       "overloads": 37,
-      "pinned": 21,
+      "pinned": 24,
       "type": "JsonValue"
     },
     {
@@ -3729,13 +3729,13 @@
           "id": "KeyRef.Active#1",
           "pinned": true,
           "signature": "KeyRef.Active inst () -> Boolean",
-          "site": "recordref/TestBCMetadataContracts.al:90"
+          "site": "record/TestProbeRecordRefContracts.al:228"
         },
         {
           "id": "KeyRef.FieldCount#1",
           "pinned": true,
           "signature": "KeyRef.FieldCount inst () -> Integer",
-          "site": "recordref/TestBCMetadataContracts.al:38"
+          "site": "record/TestProbeRecordRefContracts.al:228"
         },
         {
           "id": "KeyRef.FieldIndex#1",
@@ -3887,7 +3887,7 @@
           "id": "List.Add#1",
           "pinned": true,
           "signature": "List.Add inst (Value: T)",
-          "site": "_fixtures/ProbeObserver.Codeunit.al:140"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:144"
         },
         {
           "id": "List.AddRange#1",
@@ -3905,19 +3905,19 @@
           "id": "List.Contains#1",
           "pinned": true,
           "signature": "List.Contains inst (Value: T) -> Boolean",
-          "site": "_fixtures/ProbeObserver.Codeunit.al:139"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:143"
         },
         {
           "id": "List.Count#1",
           "pinned": true,
           "signature": "List.Count inst () -> Integer",
-          "site": "_fixtures/ProbeObserver.Codeunit.al:167"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:171"
         },
         {
           "id": "List.Get#1",
           "pinned": true,
           "signature": "List.Get inst (Index: Integer) -> T",
-          "site": "_fixtures/ProbeObserver.Codeunit.al:173"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:177"
         },
         {
           "id": "List.Get#2",
@@ -3927,9 +3927,9 @@
         },
         {
           "id": "List.GetRange#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "List.GetRange inst (Index: Integer, Count: Integer) -> List of [T]",
-          "site": null
+          "site": "session/TestProbeSessionMiscContracts.al:1153"
         },
         {
           "id": "List.GetRange#2",
@@ -3945,9 +3945,9 @@
         },
         {
           "id": "List.Insert#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "List.Insert inst (Index: Integer, Value: T) -> Boolean?",
-          "site": null
+          "site": "session/TestProbeSessionMiscContracts.al:1148"
         },
         {
           "id": "List.LastIndexOf#1",
@@ -3993,7 +3993,7 @@
         }
       ],
       "overloads": 18,
-      "pinned": 14,
+      "pinned": 16,
       "type": "List"
     },
     {
@@ -4116,25 +4116,25 @@
       "methods": [
         {
           "id": "ModuleDependencyInfo.Id#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "ModuleDependencyInfo.Id inst () -> Guid",
-          "site": null
+          "site": "session/TestProbeSessionMiscContracts.al:500"
         },
         {
           "id": "ModuleDependencyInfo.Name#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "ModuleDependencyInfo.Name inst () -> Text",
-          "site": null
+          "site": "session/TestProbeSessionMiscContracts.al:500"
         },
         {
           "id": "ModuleDependencyInfo.Publisher#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "ModuleDependencyInfo.Publisher inst () -> Text",
-          "site": null
+          "site": "session/TestProbeSessionMiscContracts.al:500"
         }
       ],
       "overloads": 3,
-      "pinned": 0,
+      "pinned": 3,
       "type": "ModuleDependencyInfo"
     },
     {
@@ -4610,19 +4610,19 @@
           "id": "Page.GetRecord#1",
           "pinned": true,
           "signature": "Page.GetRecord inst (var Record: Record)",
-          "site": "handlers/TestPageCloseTriggersSelectionCardPageContracts.al:278"
+          "site": "handlers/PSModalPageHandlerTyped.al:136"
         },
         {
           "id": "Page.LookupMode#1",
           "pinned": true,
           "signature": "Page.LookupMode inst (?NewLookupMode: Boolean) -> Boolean?",
-          "site": "handlers/TestPageCloseActionByPageTypeContracts.al:241"
+          "site": "handlers/PSModalPageHandlerTyped.al:138"
         },
         {
           "id": "Page.ObjectId#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Page.ObjectId inst (?UseNames: Boolean) -> Text",
-          "site": null
+          "site": "handlers/PRPageObjectId.al:66"
         },
         {
           "id": "Page.PromptMode#1",
@@ -4740,7 +4740,7 @@
         }
       ],
       "overloads": 29,
-      "pinned": 19,
+      "pinned": 20,
       "type": "Page"
     },
     {
@@ -4798,7 +4798,7 @@
           "id": "Query.GetFilter#1",
           "pinned": true,
           "signature": "Query.GetFilter inst (Column: Any) -> Text",
-          "site": "query/TestQueryObject.al:319"
+          "site": "query/PRQueryOpenColumn.al:200"
         },
         {
           "id": "Query.GetFilters#1",
@@ -4888,13 +4888,13 @@
           "id": "Query.SetFilter#1",
           "pinned": true,
           "signature": "Query.SetFilter inst (Column: Any, String: Text, ?Value: Any*)",
-          "site": "query/PWQueryContracts.al:202"
+          "site": "query/PRQueryOpenColumn.al:202"
         },
         {
           "id": "Query.SetRange#1",
           "pinned": true,
           "signature": "Query.SetRange inst (Column: Any, ?FromValue: Any, ?ToValue: Any)",
-          "site": "query/PWQueryContracts.al:252"
+          "site": "query/PRQueryOpenColumn.al:163"
         },
         {
           "id": "Query.TopNumberOfRows#1",
@@ -5093,7 +5093,7 @@
           "id": "Record.Find#1",
           "pinned": true,
           "signature": "Record.Find inst (?Which: Text) -> Boolean?",
-          "site": "pageext/PCCurrRecordReads.al:248"
+          "site": "events/TestProbeEventContracts.al:907"
         },
         {
           "id": "Record.FindFirst#1",
@@ -5213,7 +5213,7 @@
           "id": "Record.Insert#3",
           "pinned": true,
           "signature": "Record.Insert inst (RunTrigger: Boolean, InsertWithSystemId: Boolean) -> Boolean?",
-          "site": "record/TestRecordGet.al:89"
+          "site": "events/TestProbeEventContracts.al:812"
         },
         {
           "id": "Record.IsEmpty#1",
@@ -5285,7 +5285,7 @@
           "id": "Record.ReadPermission#1",
           "pinned": true,
           "signature": "Record.ReadPermission inst () -> Boolean",
-          "site": "record/TestRecordTriggers.al:240"
+          "site": "record/TestProbeRecordRefContracts.al:517"
         },
         {
           "id": "Record.RecordId#1",
@@ -5297,7 +5297,7 @@
           "id": "Record.RecordLevelLocking#1",
           "pinned": true,
           "signature": "Record.RecordLevelLocking inst () -> Boolean",
-          "site": "record/TestRecordLock.al:102"
+          "site": "record/TestProbeRecordRefContracts.al:516"
         },
         {
           "id": "Record.Relation#1",
@@ -5327,7 +5327,7 @@
           "id": "Record.SetAscending#1",
           "pinned": true,
           "signature": "Record.SetAscending inst (Field: Any, Ascending: Boolean)",
-          "site": "handlers/TestPageViewRoundTripRoutes.al:78"
+          "site": "events/TestProbeEventContracts.al:939"
         },
         {
           "id": "Record.SetAutoCalcFields#1",
@@ -5345,7 +5345,7 @@
           "id": "Record.SetCurrentKey#1",
           "pinned": true,
           "signature": "Record.SetCurrentKey inst (Field1: Any, ?Field2: Any*) -> Boolean?",
-          "site": "handlers/TestPageViewRoundTripRoutes.al:77"
+          "site": "events/TestProbeEventContracts.al:931"
         },
         {
           "id": "Record.SetFilter#1",
@@ -5573,7 +5573,7 @@
           "id": "Record.WritePermission#1",
           "pinned": true,
           "signature": "Record.WritePermission inst () -> Boolean",
-          "site": "record/TestRecordTriggers.al:251"
+          "site": "record/TestProbeRecordRefContracts.al:518"
         }
       ],
       "overloads": 111,
@@ -5623,7 +5623,7 @@
           "id": "RecordRef.Ascending#1",
           "pinned": true,
           "signature": "RecordRef.Ascending inst (?SetAscending: Boolean) -> Boolean?",
-          "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:118"
+          "site": "record/TestProbeRecordRefContracts.al:69"
         },
         {
           "id": "RecordRef.Caption#1",
@@ -5707,7 +5707,7 @@
           "id": "RecordRef.CurrentKeyIndex#1",
           "pinned": true,
           "signature": "RecordRef.CurrentKeyIndex inst (?NewKeyIndex: Integer) -> Integer?",
-          "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:86"
+          "site": "record/TestProbeRecordRefContracts.al:68"
         },
         {
           "id": "RecordRef.Delete#1",
@@ -5737,7 +5737,7 @@
           "id": "RecordRef.Duplicate#1",
           "pinned": true,
           "signature": "RecordRef.Duplicate inst () -> RecordRef",
-          "site": "recordref/TestRecordRefGetSet.al:58"
+          "site": "record/TestProbeRecordRefContracts.al:164"
         },
         {
           "id": "RecordRef.Field#1",
@@ -5767,7 +5767,7 @@
           "id": "RecordRef.FieldExist#2",
           "pinned": true,
           "signature": "RecordRef.FieldExist inst (FieldNo: Integer) -> Boolean",
-          "site": "record/TestRowVersionFieldNumberFieldActiveContracts.al:68"
+          "site": "record/TestProbeRecordRefContracts.al:235"
         },
         {
           "id": "RecordRef.FieldIndex#1",
@@ -5851,7 +5851,7 @@
           "id": "RecordRef.GetView#1",
           "pinned": true,
           "signature": "RecordRef.GetView inst (?UseNames: Boolean) -> Text",
-          "site": "recordref/TestRecordRefFilter.al:39"
+          "site": "record/TestProbeRecordRefContracts.al:72"
         },
         {
           "id": "RecordRef.HasFilter#1",
@@ -5875,7 +5875,7 @@
           "id": "RecordRef.Insert#1",
           "pinned": true,
           "signature": "RecordRef.Insert inst () -> Boolean?",
-          "site": "record/TestRecordChangeCompanyRows.al:309"
+          "site": "record/TestProbeRecordRefContracts.al:191"
         },
         {
           "id": "RecordRef.Insert#2",
@@ -5905,13 +5905,13 @@
           "id": "RecordRef.IsTemporary#1",
           "pinned": true,
           "signature": "RecordRef.IsTemporary inst () -> Boolean",
-          "site": "recordref/PWRecordMisc.al:257"
+          "site": "record/TestProbeRecordRefContracts.al:212"
         },
         {
           "id": "RecordRef.KeyCount#1",
           "pinned": true,
           "signature": "RecordRef.KeyCount inst () -> Integer",
-          "site": "recordref/TestBCMetadataContracts.al:100"
+          "site": "record/TestProbeRecordRefContracts.al:225"
         },
         {
           "id": "RecordRef.KeyIndex#1",
@@ -6284,7 +6284,7 @@
           "id": "Report.Run#1",
           "pinned": true,
           "signature": "Report.Run inst ()",
-          "site": "handlers/TestPageActionRunObjectKinds_Tests.al:154"
+          "site": "handlers/PRRequestPageUpdate.al:157"
         },
         {
           "id": "Report.Run#2",
@@ -6537,7 +6537,7 @@
           "id": "RequestPage.Update#1",
           "pinned": true,
           "signature": "RequestPage.Update inst (?SaveRecord: Boolean)",
-          "site": "handlers/TestReportRequestPageUpdateObjectIdContracts.al:77"
+          "site": "handlers/PRRequestPageUpdate.al:78"
         }
       ],
       "overloads": 9,
@@ -6593,7 +6593,7 @@
           "id": "Session.CurrentClientType#1",
           "pinned": true,
           "signature": "Session.CurrentClientType static () -> ClientType",
-          "site": "session/TestSessionExtended.al:21"
+          "site": "session/TestProbeSessionMiscContracts.al:843"
         },
         {
           "id": "Session.CurrentExecutionMode#1",
@@ -6605,7 +6605,7 @@
           "id": "Session.DefaultClientType#1",
           "pinned": true,
           "signature": "Session.DefaultClientType static () -> ClientType",
-          "site": "session/TestSessionExtended.al:31"
+          "site": "session/TestProbeSessionMiscContracts.al:844"
         },
         {
           "id": "Session.EnableVerboseTelemetry#1",
@@ -6745,37 +6745,37 @@
           "id": "SessionSettings.Company#1",
           "pinned": true,
           "signature": "SessionSettings.Company inst (?NewCompanyName: Text) -> Text?",
-          "site": "session/TestSessionSettings.al:229"
+          "site": "session/TestProbeSessionMiscContracts.al:96"
         },
         {
           "id": "SessionSettings.Init#1",
           "pinned": true,
           "signature": "SessionSettings.Init inst ()",
-          "site": "session/TestSessionSettings.al:387"
+          "site": "session/TestProbeSessionMiscContracts.al:108"
         },
         {
           "id": "SessionSettings.LanguageId#1",
           "pinned": true,
           "signature": "SessionSettings.LanguageId inst (?NewLanguageId: Integer) -> Integer?",
-          "site": "session/TestSessionSettings.al:125"
+          "site": "session/TestProbeSessionMiscContracts.al:86"
         },
         {
           "id": "SessionSettings.LocaleId#1",
           "pinned": true,
           "signature": "SessionSettings.LocaleId inst (?NewLocaleId: Integer) -> Integer?",
-          "site": "session/TestSessionSettings.al:135"
+          "site": "session/TestProbeSessionMiscContracts.al:88"
         },
         {
           "id": "SessionSettings.ProfileAppId#1",
           "pinned": true,
           "signature": "SessionSettings.ProfileAppId inst (?NewProfileAppId: Guid) -> Guid?",
-          "site": "session/TestSessionSettings.al:199"
+          "site": "session/TestProbeSessionMiscContracts.al:94"
         },
         {
           "id": "SessionSettings.ProfileId#1",
           "pinned": true,
           "signature": "SessionSettings.ProfileId inst (?NewProfileId: Text) -> Text?",
-          "site": "session/TestSessionSettings.al:186"
+          "site": "session/TestProbeSessionMiscContracts.al:92"
         },
         {
           "id": "SessionSettings.ProfileSystemScope#1",
@@ -6787,13 +6787,13 @@
           "id": "SessionSettings.RequestSessionUpdate#1",
           "pinned": true,
           "signature": "SessionSettings.RequestSessionUpdate inst (saveSettings: Boolean)",
-          "site": "session/TestSessionSettings.al:481"
+          "site": "session/TestProbeSessionMiscContracts.al:109"
         },
         {
           "id": "SessionSettings.TimeZone#1",
           "pinned": true,
           "signature": "SessionSettings.TimeZone inst (?NewTimeZone: Text) -> Text?",
-          "site": "session/TestSessionSettings.al:160"
+          "site": "session/TestProbeSessionMiscContracts.al:90"
         }
       ],
       "overloads": 9,
@@ -6840,15 +6840,15 @@
         },
         {
           "id": "System.CaptionClassTranslate#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.CaptionClassTranslate static (CaptionClassText: Text) -> Text",
-          "site": null
+          "site": "types/PSCaptionClass.al:58"
         },
         {
           "id": "System.Clear#1",
           "pinned": true,
           "signature": "System.Clear static (var Variable: Any)",
-          "site": "_fixtures/ProbeObserver.Codeunit.al:170"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:174"
         },
         {
           "id": "System.Clear#2",
@@ -6992,7 +6992,7 @@
           "id": "System.Date2DWY#1",
           "pinned": true,
           "signature": "System.Date2DWY static (Date: Date, Value: Integer) -> Integer",
-          "site": "types/TestDateRoundFormatStringContracts.al:51"
+          "site": "text/TestProbeTextDateFormatContracts.al:692"
         },
         {
           "id": "System.Decrypt#1",
@@ -7184,7 +7184,7 @@
           "id": "System.IsNullGuid#1",
           "pinned": true,
           "signature": "System.IsNullGuid static (Guid: Guid) -> Boolean",
-          "site": "handlers/ProbeNotificationRecallEdges.al:106"
+          "site": "events/TestProbeEventContracts.al:31"
         },
         {
           "id": "System.IsServiceTier#1",
@@ -7208,13 +7208,13 @@
           "id": "System.Random#1",
           "pinned": true,
           "signature": "System.Random static (MaxNumber: Integer) -> Integer",
-          "site": "types/TestRandomSeededContracts.al:31"
+          "site": "types/TestProbeScalarContracts.al:643"
         },
         {
           "id": "System.Randomize#1",
           "pinned": true,
           "signature": "System.Randomize static (?Seed: Integer)",
-          "site": "types/TestRandomSeededContracts.al:30"
+          "site": "types/TestProbeScalarContracts.al:641"
         },
         {
           "id": "System.Round#1",
@@ -7278,7 +7278,7 @@
         }
       ],
       "overloads": 79,
-      "pinned": 54,
+      "pinned": 55,
       "type": "System"
     },
     {
@@ -7336,7 +7336,7 @@
           "id": "TestAction.Invoke#1",
           "pinned": true,
           "signature": "TestAction.Invoke inst ()",
-          "site": "handlers/PWPageVariableEditable.al:144"
+          "site": "handlers/PRRequestPageUpdate.al:172"
         },
         {
           "id": "TestAction.Visible#1",
@@ -7421,7 +7421,7 @@
           "id": "TestField.Editable#1",
           "pinned": true,
           "signature": "TestField.Editable inst () -> Boolean",
-          "site": "handlers/PWPageVariableEditable.al:143"
+          "site": "handlers/PSRequestPageEditable.al:162"
         },
         {
           "id": "TestField.Enabled#1",
@@ -7457,7 +7457,7 @@
           "id": "TestField.Lookup#1",
           "pinned": true,
           "signature": "TestField.Lookup inst ()",
-          "site": "handlers/TestPageFieldRelationLookup_Tests.al:104"
+          "site": "handlers/PRRequestPageUpdate.al:168"
         },
         {
           "id": "TestField.Lookup#2",
@@ -7949,7 +7949,7 @@
           "id": "TestRequestPage.Cancel#1",
           "pinned": true,
           "signature": "TestRequestPage.Cancel inst () -> TestAction",
-          "site": "handlers/TestBCReportHandlerContracts.al:273"
+          "site": "handlers/PSRequestPageEditable.al:190"
         },
         {
           "id": "TestRequestPage.Caption#1",
@@ -7959,9 +7959,9 @@
         },
         {
           "id": "TestRequestPage.Editable#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "TestRequestPage.Editable inst () -> Boolean",
-          "site": null
+          "site": "handlers/PSRequestPageEditable.al:160"
         },
         {
           "id": "TestRequestPage.Expand#1",
@@ -8039,7 +8039,7 @@
           "id": "TestRequestPage.OK#1",
           "pinned": true,
           "signature": "TestRequestPage.OK inst () -> TestAction",
-          "site": "handlers/TestBCReportHandlerContracts.al:279"
+          "site": "handlers/PRRequestPageUpdate.al:172"
         },
         {
           "id": "TestRequestPage.Preview#1",
@@ -8097,7 +8097,7 @@
         }
       ],
       "overloads": 25,
-      "pinned": 3,
+      "pinned": 4,
       "type": "TestRequestPage"
     },
     {
@@ -8112,7 +8112,7 @@
           "id": "Text.ConvertStr#1",
           "pinned": true,
           "signature": "Text.ConvertStr static (String: Text, FromCharacters: Text, ToCharacters: Text) -> Text",
-          "site": "text/TestTextExtended.al:27"
+          "site": "text/TestProbeTextDateFormatContracts.al:50"
         },
         {
           "id": "Text.CopyStr#1",
@@ -8142,19 +8142,19 @@
           "id": "Text.IncStr#1",
           "pinned": true,
           "signature": "Text.IncStr static (String: Text) -> Text",
-          "site": "text/TestTextExtended.al:85"
+          "site": "text/TestProbeTextDateFormatContracts.al:48"
         },
         {
           "id": "Text.IncStr#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Text.IncStr static (String: Text, Increment: BigInteger) -> Text",
-          "site": null
+          "site": "text/TestProbeTextDateFormatContracts.al:205"
         },
         {
           "id": "Text.IndexOf#1",
           "pinned": true,
           "signature": "Text.IndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer",
-          "site": "_fixtures/ProbeObserver.Codeunit.al:97"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:101"
         },
         {
           "id": "Text.IndexOfAny#1",
@@ -8172,13 +8172,13 @@
           "id": "Text.InsStr#1",
           "pinned": true,
           "signature": "Text.InsStr static (String: Text, SubString: Text, Position: Integer) -> Text",
-          "site": "text/TestTextOperations.al:99"
+          "site": "text/TestProbeTextDateFormatContracts.al:46"
         },
         {
           "id": "Text.LastIndexOf#1",
           "pinned": true,
           "signature": "Text.LastIndexOf inst (Value: Text, ?StartIndex: Integer) -> Integer",
-          "site": "text/TestTextExtended.al:415"
+          "site": "text/TestProbeTextDateFormatContracts.al:54"
         },
         {
           "id": "Text.LowerCase#1",
@@ -8202,13 +8202,13 @@
           "id": "Text.PadLeft#1",
           "pinned": true,
           "signature": "Text.PadLeft inst (Count: Integer, ?Char: Char) -> Text",
-          "site": "text/TestStringMethodContracts.al:244"
+          "site": "text/TestProbeTextDateFormatContracts.al:88"
         },
         {
           "id": "Text.PadRight#1",
           "pinned": true,
           "signature": "Text.PadRight inst (Count: Integer, ?Char: Char) -> Text",
-          "site": "text/TestStringMethodContracts.al:258"
+          "site": "text/TestProbeTextDateFormatContracts.al:88"
         },
         {
           "id": "Text.PadStr#1",
@@ -8238,7 +8238,7 @@
           "id": "Text.Split#1",
           "pinned": true,
           "signature": "Text.Split inst (?Separators: Text*) -> List of [Text]",
-          "site": "_fixtures/ProbeObserver.Codeunit.al:169"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:173"
         },
         {
           "id": "Text.Split#2",
@@ -8286,7 +8286,7 @@
           "id": "Text.Substring#1",
           "pinned": true,
           "signature": "Text.Substring inst (StartIndex: Integer, ?Count: Integer) -> Text",
-          "site": "_fixtures/ProbeObserver.Codeunit.al:100"
+          "site": "_fixtures/ProbeObserver.Codeunit.al:104"
         },
         {
           "id": "Text.ToLower#1",
@@ -8326,7 +8326,7 @@
         }
       ],
       "overloads": 37,
-      "pinned": 32,
+      "pinned": 33,
       "type": "Text"
     },
     {
@@ -8365,7 +8365,7 @@
           "id": "TextBuilder.Insert#1",
           "pinned": true,
           "signature": "TextBuilder.Insert inst (Position: Integer, Text: Text) -> Boolean?",
-          "site": "text/TestTextBuilder.al:84"
+          "site": "text/TestProbeTextDateFormatContracts.al:60"
         },
         {
           "id": "TextBuilder.Length#1",
@@ -8383,13 +8383,13 @@
           "id": "TextBuilder.Remove#1",
           "pinned": true,
           "signature": "TextBuilder.Remove inst (StartIndex: Integer, Count: Integer) -> Boolean?",
-          "site": "text/TestTextBuilder.al:97"
+          "site": "text/TestProbeTextDateFormatContracts.al:66"
         },
         {
           "id": "TextBuilder.Replace#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "TextBuilder.Replace inst (OldText: Text, NewText: Text) -> Boolean?",
-          "site": null
+          "site": "text/TestProbeTextDateFormatContracts.al:72"
         },
         {
           "id": "TextBuilder.Replace#2",
@@ -8411,7 +8411,7 @@
         }
       ],
       "overloads": 13,
-      "pinned": 9,
+      "pinned": 10,
       "type": "TextBuilder"
     },
     {
@@ -8999,13 +8999,13 @@
           "id": "Version.Create#1",
           "pinned": true,
           "signature": "Version.Create static (Major: Integer, Minor: Integer, ?Build: Integer, ?Revision: Integer) -> Version",
-          "site": "types/TestVersionCreateEncryptionContracts.al:32"
+          "site": "session/TestProbeSessionMiscContracts.al:455"
         },
         {
           "id": "Version.Create#2",
           "pinned": true,
           "signature": "Version.Create static (Version: Text) -> Version",
-          "site": "types/TestVersionCreateEncryptionContracts.al:43"
+          "site": "session/TestProbeSessionMiscContracts.al:461"
         },
         {
           "id": "Version.Major#1",
@@ -9029,7 +9029,7 @@
           "id": "Version.ToText#1",
           "pinned": true,
           "signature": "Version.ToText inst () -> Text",
-          "site": "types/TestVersionCreateEncryptionContracts.al:40"
+          "site": "session/TestProbeSessionMiscContracts.al:466"
         }
       ],
       "overloads": 7,
@@ -9325,9 +9325,9 @@
         },
         {
           "id": "XmlCData.Create#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.Create static (Value: Text) -> XmlCData",
-          "site": null
+          "site": "xml/TestProbeXmlContracts.al:76"
         },
         {
           "id": "XmlCData.GetDocument#1",
@@ -9409,7 +9409,7 @@
         }
       ],
       "overloads": 17,
-      "pinned": 0,
+      "pinned": 1,
       "type": "XmlCData"
     },
     {
@@ -9436,7 +9436,7 @@
           "id": "XmlComment.Create#1",
           "pinned": true,
           "signature": "XmlComment.Create static (Value: Text) -> XmlComment",
-          "site": "xml/TestXmlRuntimeContracts.al:45"
+          "site": "xml/TestProbeXmlContracts.al:82"
         },
         {
           "id": "XmlComment.GetDocument#1",
@@ -9545,7 +9545,7 @@
           "id": "XmlDeclaration.Create#1",
           "pinned": true,
           "signature": "XmlDeclaration.Create static (Version: Text, Encoding: Text, Standalone: Text) -> XmlDeclaration",
-          "site": "xml/TestXmlComplete.al:210"
+          "site": "xml/TestProbeXmlContracts.al:49"
         },
         {
           "id": "XmlDeclaration.Encoding#1",
@@ -9706,9 +9706,9 @@
         },
         {
           "id": "XmlDocument.GetChildNodes#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocument.GetChildNodes inst () -> XmlNodeList",
-          "site": null
+          "site": "xml/TestProbeXmlContracts.al:150"
         },
         {
           "id": "XmlDocument.GetDeclaration#1",
@@ -9750,7 +9750,7 @@
           "id": "XmlDocument.GetDocumentType#1",
           "pinned": true,
           "signature": "XmlDocument.GetDocumentType inst (var DocumentType: XmlDocumentType) -> Boolean?",
-          "site": "xml/TestXmlComplete.al:261"
+          "site": "xml/TestProbeXmlContracts.al:688"
         },
         {
           "id": "XmlDocument.GetParent#1",
@@ -9768,7 +9768,7 @@
           "id": "XmlDocument.NameTable#1",
           "pinned": true,
           "signature": "XmlDocument.NameTable inst () -> XmlNameTable",
-          "site": "xml/TestXmlDeep.al:213"
+          "site": "xml/TestProbeXmlContracts.al:528"
         },
         {
           "id": "XmlDocument.ReadFrom#1",
@@ -9822,7 +9822,7 @@
           "id": "XmlDocument.SelectNodes#1",
           "pinned": true,
           "signature": "XmlDocument.SelectNodes inst (XPath: Text, NamespaceManager: XmlNamespaceManager, var NodeList: XmlNodeList) -> Boolean?",
-          "site": "xml/TestXmlRuntimeContracts.al:302"
+          "site": "xml/TestProbeXmlContracts.al:582"
         },
         {
           "id": "XmlDocument.SelectNodes#2",
@@ -9846,7 +9846,7 @@
           "id": "XmlDocument.SetDeclaration#1",
           "pinned": true,
           "signature": "XmlDocument.SetDeclaration inst (Declaration: XmlDeclaration) -> Boolean?",
-          "site": "xml/TestXmlComplete.al:246"
+          "site": "xml/TestProbeXmlContracts.al:49"
         },
         {
           "id": "XmlDocument.WriteTo#1",
@@ -9874,7 +9874,7 @@
         }
       ],
       "overloads": 38,
-      "pinned": 19,
+      "pinned": 20,
       "type": "XmlDocument"
     },
     {
@@ -10130,7 +10130,7 @@
           "id": "XmlElement.GetChildNodes#1",
           "pinned": true,
           "signature": "XmlElement.GetChildNodes inst () -> XmlNodeList",
-          "site": "xml/TestXmlComplete.al:21"
+          "site": "xml/TestProbeXmlContracts.al:152"
         },
         {
           "id": "XmlElement.GetDescendantElements#1",
@@ -10160,19 +10160,19 @@
           "id": "XmlElement.GetDocument#1",
           "pinned": true,
           "signature": "XmlElement.GetDocument inst (var Document: XmlDocument) -> Boolean?",
-          "site": "xml/TestXmlExtended.al:130"
+          "site": "xml/TestProbeXmlContracts.al:296"
         },
         {
           "id": "XmlElement.GetNamespaceOfPrefix#1",
           "pinned": true,
           "signature": "XmlElement.GetNamespaceOfPrefix inst (Prefix: Text, var Result: Text) -> Boolean?",
-          "site": "xml/TestXmlNamespaceManager.al:81"
+          "site": "xml/TestProbeXmlContracts.al:298"
         },
         {
           "id": "XmlElement.GetParent#1",
           "pinned": true,
           "signature": "XmlElement.GetParent inst (var Parent: XmlElement) -> Boolean?",
-          "site": "xml/TestXmlRuntimeContracts.al:241"
+          "site": "xml/TestProbeXmlContracts.al:294"
         },
         {
           "id": "XmlElement.GetPrefixOfNamespace#1",
@@ -10202,7 +10202,7 @@
           "id": "XmlElement.InnerXml#1",
           "pinned": true,
           "signature": "XmlElement.InnerXml inst () -> Text",
-          "site": "xml/TestXmlComplete.al:149"
+          "site": "xml/TestProbeXmlContracts.al:111"
         },
         {
           "id": "XmlElement.IsEmpty#1",
@@ -10226,7 +10226,7 @@
           "id": "XmlElement.NamespaceUri#1",
           "pinned": true,
           "signature": "XmlElement.NamespaceUri inst () -> Text",
-          "site": "xml/TestXmlComplete.al:176"
+          "site": "xml/TestProbeXmlContracts.al:355"
         },
         {
           "id": "XmlElement.Remove#1",
@@ -10366,19 +10366,19 @@
           "id": "XmlNamespaceManager.AddNamespace#1",
           "pinned": true,
           "signature": "XmlNamespaceManager.AddNamespace inst (Prefix: Text, Uri: Text)",
-          "site": "xml/TestXmlRuntimeContracts.al:301"
+          "site": "xml/TestProbeXmlContracts.al:529"
         },
         {
           "id": "XmlNamespaceManager.HasNamespace#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlNamespaceManager.HasNamespace inst (Prefix: Text) -> Boolean",
-          "site": null
+          "site": "xml/TestProbeXmlContracts.al:535"
         },
         {
           "id": "XmlNamespaceManager.LookupNamespace#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlNamespaceManager.LookupNamespace inst (Prefix: Text, var Result: Text) -> Boolean?",
-          "site": null
+          "site": "xml/TestProbeXmlContracts.al:534"
         },
         {
           "id": "XmlNamespaceManager.LookupPrefix#1",
@@ -10390,7 +10390,7 @@
           "id": "XmlNamespaceManager.NameTable#1",
           "pinned": true,
           "signature": "XmlNamespaceManager.NameTable inst (?NewValue: XmlNameTable) -> XmlNameTable?",
-          "site": "xml/TestXmlRuntimeContracts.al:300"
+          "site": "xml/TestProbeXmlContracts.al:528"
         },
         {
           "id": "XmlNamespaceManager.PopScope#1",
@@ -10412,7 +10412,7 @@
         }
       ],
       "overloads": 8,
-      "pinned": 2,
+      "pinned": 4,
       "type": "XmlNamespaceManager"
     },
     {
@@ -10657,7 +10657,7 @@
           "id": "XmlProcessingInstruction.Create#1",
           "pinned": true,
           "signature": "XmlProcessingInstruction.Create static (Target: Text, Data: Text) -> XmlProcessingInstruction",
-          "site": "xml/TestXmlComplete.al:272"
+          "site": "xml/TestProbeXmlContracts.al:83"
         },
         {
           "id": "XmlProcessingInstruction.GetData#1",

@@ -1024,7 +1024,7 @@ fn shift_stmts(stmts: &mut [Stmt], by: u32) {
                 }
                 shift_stmts(otherwise, by);
             }
-            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break | Stmt::Assume(_) => {}
+            Stmt::Assign(..) | Stmt::Expr(_) | Stmt::Exit(_) | Stmt::Break | Stmt::Continue | Stmt::Assume(_) => {}
         }
     }
 }
@@ -1269,6 +1269,8 @@ pub enum Stmt {
     /// The statement that follows runs code that rests on an unprobed assumption of the lowering
     /// (`al_builtins::assumptions`): the VM marks the assumption when this runs and does nothing else.
     Assume(al_builtins::assumptions::Assumption),
+    /// `continue`: skip the rest of the loop body and go on with the next round.
+    Continue,
 }
 
 #[cfg(test)]

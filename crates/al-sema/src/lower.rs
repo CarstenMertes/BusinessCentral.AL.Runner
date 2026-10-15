@@ -3566,7 +3566,9 @@ impl Lowerer<'_> {
         };
         // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
         // would answer the default value of the return type, which is not what the platform answers.
-        if body.is_empty() && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
+        // The platform's Base64Convert codeunit is the one the runtime implements (al-vm platformnative.rs).
+        let implemented = self.ws.objects[self.oi].name == "Base64Convert";
+        if body.is_empty() && !implemented && r.attributes().any(|a| a.name().eq_ignore_ascii_case("native")) {
             self.reasons.push(format!(
                 "[Native] procedure `{}` is implemented by the platform and has no AL body (what it answers is not pinned)",
                 r.name()
@@ -3758,6 +3760,15 @@ impl Lowerer<'_> {
             Block => return self.stmts_of(n),
             // A try function called as a statement behaves like a normal method
             // (doc: TryFunction attribute), so its errors propagate.
+            // `continue;` (a statement of the AL language that Base Application's Inventory Adjustment uses): the
+            // checker sees a bare name that is no variable, procedure or field.
+            ExprStmt
+                if kids[0].kind() == NameRef
+                    && kids[0].text().to_string().trim().eq_ignore_ascii_case("continue")
+                    && self.res(&kids[0]).is_none() =>
+            {
+                Ok(ir::Stmt::Continue)
+            }
             ExprStmt => self.expr(&kids[0]).map(|e| match e {
                 ir::Expr::Builtin { id, receiver, args, .. } => ir::Stmt::Expr(ir::Expr::Builtin {
                     id,
@@ -3877,6 +3888,28 @@ impl Lowerer<'_> {
     }
 
     fn assign(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Stmt> {
+        // `CurrFieldNo := FieldNo(X)` in table code sets the field number of the implicit Rec. Base Application's
+        // `SelltoContactLookup` does it before it validates a field. The corpus pins reading CurrFieldNo
+        // (handlers/TestPageCurrFieldNo_Tests.al); the assignment is not pinned (docs/probes-needed.md).
+        if kids[0].kind() == SyntaxKind::NameRef
+            && matches!(self.res(&kids[0]), Some(Res::Global(g)) if g == "currfieldno")
+            && !self.globals.contains_key("currfieldno")
+        {
+            if !sig_tokens(n).iter().any(|t| t.kind() == SyntaxKind::Assign) {
+                return Err("a compound assignment to CurrFieldNo is not lowered (not pinned)".into());
+            }
+            let rec = self
+                .rec_slot
+                .ok_or("CurrFieldNo outside code that has an implicit Rec")?;
+            let value = self.expr(&kids[1])?;
+            let value = self.convert_to(&Ty::Integer, &self.ty_of(&kids[1]), value)?;
+            return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
+                id: "Record.SetCurrFieldNo#1".into(),
+                receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
+                args: vec![ir::Arg::Value(value)],
+                ret_used: false,
+            }));
+        }
         // `X.Property := value` on a DotNet value (ADR-014).
         if let Some(Res::DotNetMember(name)) = self.res(&kids[0]).cloned() {
             if kids[0].kind() == SyntaxKind::MemberExpr {
@@ -4079,6 +4112,24 @@ impl Lowerer<'_> {
             }
         }
         Ok(ir::SetElem::Range(lo, hi))
+    }
+
+    /// The argument for a `var` parameter: the variable it names. Base Application passes the implicit
+    /// `CurrFieldNo` to event publishers that declare `var CallingFieldNo: Integer` (`Sales Header`,
+    /// `OnBeforeShouldSearchForCustomerByName`). `CurrFieldNo` is no variable, so the callee gets a copy of its
+    /// value and what it assigns to its parameter stays there. Whether BC writes the assignment back to
+    /// `CurrFieldNo` is not pinned (docs/probes-needed.md).
+    fn by_var_arg(&mut self, a: &SyntaxNode) -> L<ir::Arg> {
+        match self.place(a) {
+            Ok(p) => Ok(ir::Arg::Ref(p)),
+            Err(_)
+                if a.kind() == SyntaxKind::NameRef
+                    && a.text().to_string().trim().eq_ignore_ascii_case("CurrFieldNo") =>
+            {
+                Ok(ir::Arg::Value(self.expr(a)?))
+            }
+            Err(e) => Err(e),
+        }
     }
 
     fn place(&mut self, n: &SyntaxNode) -> L<ir::Place> {
@@ -4894,7 +4945,7 @@ impl Lowerer<'_> {
                 for (i, a) in args.iter().enumerate() {
                     let p = sig.params.get(i).ok_or("too many arguments")?;
                     if p.by_var {
-                        out.push(ir::Arg::Ref(self.place(a)?));
+                        out.push(self.by_var_arg(a)?);
                     } else {
                         let value = self.expr(a)?;
                         out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));

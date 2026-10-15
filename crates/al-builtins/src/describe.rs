@@ -199,6 +199,7 @@ impl Describe for Signal {
             Signal::Error(e) => e.message.clone(),
             Signal::Exit(_) => "an Exit".into(),
             Signal::Break => "a Break".into(),
+            Signal::Continue => "a Continue".into(),
             Signal::Unsupported(why) => why.clone(),
         }
     }

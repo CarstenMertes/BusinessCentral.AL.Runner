@@ -31,6 +31,7 @@ mod interfaces;
 mod pages;
 mod partial;
 mod platform;
+mod platformnative;
 mod queries;
 mod recmeta;
 mod records;
@@ -297,6 +298,8 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
+    /// `Database.LockTimeoutDuration`: set and read back, no wait is modelled.
+    pub(crate) lock_timeout_duration: i32,
     /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
     /// method starts at 0, UpdateNoLocks (`start_test_method`).
     pub(crate) transaction_type: i32,
@@ -457,6 +460,7 @@ impl Session {
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
+            lock_timeout_duration: 0,
             transaction_type: 0,
             tx_phase: crate::transactions::TX_FRESH,
             media,
@@ -796,6 +800,18 @@ impl Session {
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }
+        // A `[Native]` procedure of the platform's Base64Convert codeunit: the service tier implements it
+        // (platformnative.rs).
+        if r.body.is_empty()
+            && r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Native"))
+            && engine.program.objects[object].name == "Base64Convert"
+        {
+            let args: Vec<Value> = locals[..r.params].to_vec();
+            let v = self.base64_native(&r.name, &args)?;
+            let mut finals = locals;
+            finals.truncate(r.params);
+            return Ok((v, finals));
+        }
         let mut frame = Frame {
             object,
             routine,
@@ -935,6 +951,7 @@ impl Session {
                     self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     // The condition belongs to the loop's line, not to the body's last statement.
@@ -948,6 +965,7 @@ impl Session {
                     self.check_stop()?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     self.restore_pos(here);
@@ -988,6 +1006,7 @@ impl Session {
                     self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                     i = int(&self.read(var, f)?)?;
@@ -1015,6 +1034,7 @@ impl Session {
                     self.write(var, item, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
+                        Err(Signal::Continue) => {}
                         r => r?,
                     }
                 }
@@ -1041,6 +1061,7 @@ impl Session {
                 Err(Signal::Exit(v))
             }
             S::Break => Err(Signal::Break),
+            S::Continue => Err(Signal::Continue),
             S::Pos(p) => {
                 if let Some(top) = self.call_stack.last_mut() {
                     top.pos = *p;
@@ -1296,6 +1317,23 @@ impl Session {
                 }
                 // `CurrFieldNo` is a property of the implicit Rec, not a catalog method: the lowerer
                 // emits this id with the Rec as receiver.
+                if id == "Record.SetCurrFieldNo#1" {
+                    let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver.as_deref(), args.first()) else {
+                        return Err(Signal::Unsupported("CurrFieldNo := without a record".into()));
+                    };
+                    let Value::Record(rec) = self.read(p, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+                    };
+                    let Value::Integer(n) = self.eval(e, f)? else {
+                        return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
+                    };
+                    let handle = Rc::as_ptr(&rec) as usize;
+                    match self.curr_field_no.iter_mut().rev().find(|(h, _)| *h == handle) {
+                        Some(entry) => entry.1 = n,
+                        None => self.curr_field_no.push((handle, n)),
+                    }
+                    return Ok(Value::Null);
+                }
                 if id == "Record.CurrFieldNo#1" {
                     let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
                         return Err(Signal::Unsupported("CurrFieldNo without a record".into()));

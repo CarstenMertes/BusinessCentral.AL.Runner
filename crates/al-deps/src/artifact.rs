@@ -16,7 +16,7 @@ use crate::cache::{BuildDir, Store, local_builds, local_platform_files};
 use crate::load::{Loaded, Planned, Request, ScanCache, plan_dependencies, read_planned};
 use crate::package::{Vars, read_info_with};
 use crate::remote::{HttpSource, RangeSource, RemoteError, RemoteZip, fetch_all, http_agent};
-use crate::select::{DepDecl, MissingPolicy, SelectError};
+use crate::select::{DepDecl, MICROSOFT_PLATFORM_APP_IDS, MissingPolicy, SelectError};
 use crate::zip::Entry;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
@@ -232,6 +232,25 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             }
         }
         dirs.extend(local_files.iter().cloned());
+        // Once a build is chosen, Microsoft's per-build apps of another major in the search directories (the corpus's
+        // `.alpackages` holds the BC 27.5 ones) do not stand in for the chosen build's: a run for another major
+        // loads that major's Base Application, System Application and so on from the build, so that what the apps
+        // answer (`Application System Constants`) is the major's own. Same major: the project's package stays.
+        if let Some((_, sel)) = &chosen {
+            let major = sel.build.major();
+            for dir in &dirs {
+                if let Some((found, _)) = scans.get_mut(dir) {
+                    found.retain(|f| {
+                        let per_build = MICROSOFT_PLATFORM_APP_IDS
+                            .iter()
+                            .any(|id| id.eq_ignore_ascii_case(&f.manifest.id));
+                        !(per_build
+                            && f.manifest.publisher.eq_ignore_ascii_case("Microsoft")
+                            && f.manifest.version.0 != major)
+                    });
+                }
+            }
+        }
         // Only the choice is made here; the sources are read once, after the last round.
         let round = plan_dependencies(
             &Request {

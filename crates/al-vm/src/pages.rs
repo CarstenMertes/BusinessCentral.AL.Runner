@@ -660,7 +660,11 @@ impl Session {
                         // handlers/PWPageVariableEditable.al:187-205: a page with `Editable = false`
                         // reads No before it runs).
                         None => {
-                            let own = self.page_editable(st);
+                            let engine = self.engine();
+                            let object = st.borrow().object as usize;
+                            let own = !engine.program.objects[object].properties.iter().any(|(k, v)| {
+                                k.eq_ignore_ascii_case("Editable") && v.trim().eq_ignore_ascii_case("false")
+                            });
                             Ok(Value::Boolean(st.borrow().editable_preset.unwrap_or(own)))
                         }
                     };

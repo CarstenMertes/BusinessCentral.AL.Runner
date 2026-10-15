@@ -775,30 +775,6 @@ pub enum LinkRhs {
     TableId(String),
 }
 
-/// Splits `text` at top-level `sep`, ignoring separators inside parentheses and quotes.
-pub fn pages_split_top(text: &str, sep: char) -> Vec<String> {
-    let mut out = Vec::new();
-    let (mut depth, mut start) = (0i32, 0usize);
-    let mut quote: Option<char> = None;
-    for (i, c) in text.char_indices() {
-        match (quote, c) {
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), _) => {}
-            (None, '\'' | '"') => quote = Some(c),
-            (None, '(') => depth += 1,
-            (None, ')') => depth -= 1,
-            (None, c) if c == sep && depth == 0 => {
-                out.push(text[start..i].trim().to_string());
-                start = i + c.len_utf8();
-            }
-            _ => {}
-        }
-    }
-    out.push(text[start..].trim().to_string());
-    out.retain(|s| !s.is_empty());
-    out
-}
-
 /// `'H1'|'H3'` → `H1|H3`: the AL string literals of a `filter(...)` or `const(...)` value
 /// without their quotes (`''` is a quote inside a literal); text outside quotes is kept.
 fn unquote_literals(inner: &str) -> String {
@@ -866,7 +842,7 @@ pub fn parse_run_object(text: &str) -> Result<(al_ir::RunKind, Vec<String>), Str
 /// `Err` names the part it does not understand.
 pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String> {
     let mut out = Vec::new();
-    for item in pages_split_top(text, ',') {
+    for item in crate::scan::split_trimmed(text, ',') {
         let eq = {
             // The first `=` outside quotes separates the part's field from the rhs.
             let mut quote: Option<char> = None;
@@ -887,7 +863,7 @@ pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String>
         let Some(eq) = eq else {
             return Err(format!("SubPageLink entry `{item}`"));
         };
-        let left = crate::text::unquote_double(&item[..eq]);
+        let left = crate::scan::unquote_double(&item[..eq]);
         let rhs = item[eq + 1..].trim();
         let open = rhs.find('(').ok_or_else(|| format!("SubPageLink entry `{item}`"))?;
         if !rhs.ends_with(')') {
@@ -896,13 +872,13 @@ pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String>
         let kind = rhs[..open].trim().to_ascii_lowercase();
         let inner = rhs[open + 1..rhs.len() - 1].trim();
         let parsed = match kind.as_str() {
-            "field" => LinkRhs::Field(crate::text::unquote_double(inner)),
+            "field" => LinkRhs::Field(crate::scan::unquote_double(inner)),
             "const" | "filter" => {
                 if let Some(t) = inner
                     .strip_prefix("Database::")
                     .or_else(|| inner.strip_prefix("database::"))
                 {
-                    LinkRhs::TableId(crate::text::unquote_double(t))
+                    LinkRhs::TableId(crate::scan::unquote_double(t))
                 } else {
                     LinkRhs::Filter(unquote_literals(inner))
                 }

@@ -274,7 +274,7 @@ impl Builder<'_> {
             return;
         }
         let mut items = Vec::new();
-        for part in query_split_top(text, ',') {
+        for part in crate::scan::split_query(text, ',') {
             let Some((l, r)) = split_once_top(&part, '=') else {
                 self.reason(format!("DataItemLink `{part}` is not understood"));
                 continue;
@@ -287,7 +287,7 @@ impl Builder<'_> {
             let mut anc = Some(parent);
             let mut found = None;
             while let Some(a) = anc {
-                if crate::text::unquote_double(&who).eq_ignore_ascii_case(&self.items[a].name) {
+                if crate::scan::unquote_double(&who).eq_ignore_ascii_case(&self.items[a].name) {
                     found = Some(a);
                     break;
                 }
@@ -304,8 +304,8 @@ impl Builder<'_> {
             if ttable == usize::MAX {
                 return;
             }
-            let own = self.stored_field(table, &crate::text::unquote_double(&l), "DataItemLink");
-            let theirs = self.stored_field(ttable, &crate::text::unquote_double(&field), "DataItemLink");
+            let own = self.stored_field(table, &crate::scan::unquote_double(&l), "DataItemLink");
+            let theirs = self.stored_field(ttable, &crate::scan::unquote_double(&field), "DataItemLink");
             if let (Some(o), Some(t)) = (own, theirs) {
                 self.items[idx].link.push((o, t));
                 items.push(target);
@@ -400,7 +400,7 @@ impl Builder<'_> {
         // The source field. A `Count` column has none.
         let source = match args.get(1) {
             Some(f) if table != usize::MAX => {
-                let f = crate::text::unquote_double(f);
+                let f = crate::scan::unquote_double(f);
                 match self.members[table]
                     .fields
                     .iter()
@@ -534,7 +534,7 @@ impl Builder<'_> {
     /// `OrderBy = ascending(A), descending(B)`.
     fn order_by(&mut self, text: &str) -> Vec<(usize, bool)> {
         let mut out = Vec::new();
-        for part in query_split_top(text, ',') {
+        for part in crate::scan::split_query(text, ',') {
             let part = part.trim();
             let lower = part.to_ascii_lowercase();
             let (asc, rest) = if let Some(r) = lower.strip_prefix("ascending") {
@@ -552,8 +552,8 @@ impl Builder<'_> {
             };
             // `ascending(A, B)` names several columns in one direction (Base Application's "Item
             // Application Entries Inb."), as `ascending(A), ascending(B)`.
-            for col in query_split_top(inner, ',') {
-                let col = crate::text::unquote_double(&col);
+            for col in crate::scan::split_query(inner, ',') {
+                let col = crate::scan::unquote_double(&col);
                 match self.columns.iter().position(|c| c.name.eq_ignore_ascii_case(&col)) {
                     Some(i) if !self.columns[i].filter_element => out.push((i, asc)),
                     _ => self.reason(format!("OrderBy names `{col}`, which is not a column of the dataset")),
@@ -604,42 +604,8 @@ impl Builder<'_> {
     }
 }
 
-/// `text` split at top-level `sep` (outside quotes and parentheses).
-fn query_split_top(text: &str, sep: char) -> Vec<String> {
-    let mut out = Vec::new();
-    let mut cur = String::new();
-    let (mut depth, mut quote) = (0i32, None::<char>);
-    for ch in text.chars() {
-        match (quote, ch) {
-            (Some(q), c) if c == q => {
-                quote = None;
-                cur.push(c);
-            }
-            (Some(_), c) => cur.push(c),
-            (None, '"' | '\'') => {
-                quote = Some(ch);
-                cur.push(ch);
-            }
-            (None, '(') => {
-                depth += 1;
-                cur.push(ch);
-            }
-            (None, ')') => {
-                depth -= 1;
-                cur.push(ch);
-            }
-            (None, c) if c == sep && depth == 0 => out.push(std::mem::take(&mut cur)),
-            (None, c) => cur.push(c),
-        }
-    }
-    if !cur.trim().is_empty() {
-        out.push(cur);
-    }
-    out
-}
-
 fn split_once_top(text: &str, sep: char) -> Option<(String, String)> {
-    let parts = query_split_top(text, sep);
+    let parts = crate::scan::split_query(text, sep);
     if parts.len() < 2 {
         return None;
     }
@@ -842,14 +808,14 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
     #[test]
     fn splitting_respects_quotes_and_parentheses() {
         assert_eq!(
-            query_split_top("\"A,B\" = X.\"C\", D = X.E", ','),
+            crate::scan::split_query("\"A,B\" = X.\"C\", D = X.E", ','),
             vec!["\"A,B\" = X.\"C\"".to_string(), " D = X.E".to_string()]
         );
         assert_eq!(
             split_once_top("Customer.\"No.\"", '.'),
             Some(("Customer".to_string(), "\"No.\"".to_string()))
         );
-        assert_eq!(crate::text::unquote_double(" \"No.\" "), "No.");
+        assert_eq!(crate::scan::unquote_double(" \"No.\" "), "No.");
     }
 
     #[test]

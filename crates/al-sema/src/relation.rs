@@ -84,28 +84,9 @@ fn lex(src: &str) -> Option<Vec<Tok>> {
         } else if ch == '(' {
             // Keep a parenthesised group's text raw, quotes respected, so `const(Database::"X")`
             // and `filter(<>'')` survive as written; the structure inside is read on demand.
-            let mut depth = 0;
-            let start = i + 1;
-            let mut quote: Option<char> = None;
-            loop {
-                let x = *c.get(i)?;
-                match (quote, x) {
-                    (Some(q), x) if x == q => quote = None,
-                    (Some(_), _) => {}
-                    (None, '"' | '\'') => quote = Some(x),
-                    (None, '(') => depth += 1,
-                    (None, ')') => {
-                        depth -= 1;
-                        if depth == 0 {
-                            break;
-                        }
-                    }
-                    _ => {}
-                }
-                i += 1;
-            }
-            out.push(Tok::Group(c[start..i].iter().collect()));
-            i += 1;
+            let close = crate::scan::matching_paren(&c, i)?;
+            out.push(Tok::Group(c[i + 1..close].iter().collect()));
+            i = close + 1;
         } else if ch == '.' {
             out.push(Tok::Sym("."));
             i += 1;
@@ -181,7 +162,7 @@ impl P {
         if self.word_is("if") {
             self.i += 1;
             let g = self.group()?;
-            for cond in split_commas(&g) {
+            for cond in crate::scan::split_slices(&g, ',') {
                 let mut p = P {
                     t: lex(cond)?,
                     i: 0,
@@ -195,7 +176,7 @@ impl P {
                     return None;
                 }
                 condition_raw.push(text.trim().to_string());
-                conditions.push((field, relation_unquote(&text)));
+                conditions.push((field, crate::scan::unquote_relation(&text)));
                 filter_conditions.push(filter);
             }
         }
@@ -207,7 +188,7 @@ impl P {
         if self.word_is("where") {
             self.i += 1;
             wheres = self.group().and_then(|g| {
-                split_commas(&g)
+                crate::scan::split_slices(&g, ',')
                     .into_iter()
                     .map(|w| {
                         let mut p = P {
@@ -224,11 +205,11 @@ impl P {
                         match kw.as_str() {
                             "const" | "filter" => Some(ParsedWhere::Value {
                                 related,
-                                text: relation_unquote(&text),
+                                text: crate::scan::unquote_relation(&text),
                             }),
                             "field" => Some(ParsedWhere::Field {
                                 related,
-                                own: relation_unquote(&text),
+                                own: crate::scan::unquote_relation(&text),
                             }),
                             _ => None,
                         }
@@ -244,41 +225,6 @@ impl P {
             wheres,
         })
     }
-}
-
-/// `a, b(c, d), e` → `a`, `b(c, d)`, `e` (commas inside parentheses and quotes stay).
-fn split_commas(s: &str) -> Vec<&str> {
-    let mut out = Vec::new();
-    let (mut depth, mut start, mut quote) = (0i32, 0usize, None::<char>);
-    for (i, ch) in s.char_indices() {
-        match (quote, ch) {
-            (Some(q), c) if c == q => quote = None,
-            (Some(_), _) => {}
-            (None, '"' | '\'') => quote = Some(ch),
-            (None, '(') => depth += 1,
-            (None, ')') => depth -= 1,
-            (None, ',') if depth == 0 => {
-                out.push(&s[start..i]);
-                start = i + 1;
-            }
-            _ => {}
-        }
-    }
-    out.push(&s[start..]);
-    out
-}
-
-/// A group's text as a plain value: quotes around one name or string removed.
-fn relation_unquote(s: &str) -> String {
-    let s = s.trim();
-    for q in ['"', '\''] {
-        if let Some(inner) = s.strip_prefix(q).and_then(|x| x.strip_suffix(q)) {
-            if !inner.contains(q) {
-                return inner.to_string();
-            }
-        }
-    }
-    s.to_string()
 }
 
 /// The arms of a `TableRelation` value, or `None` when its shape is not understood.

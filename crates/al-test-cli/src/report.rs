@@ -108,6 +108,9 @@ pub struct Timings {
     /// tests phase but is not the runtime's own cost, so it is reported apart.
     #[serde(default)]
     pub dotnet: Option<DotNetTimes>,
+    /// The ten tests that took longest, slowest first (wall time of the test alone).
+    #[serde(default)]
+    pub slowest_tests: Vec<SlowTest>,
     /// The compile cache of the dependency apps (ADR-022), when the run used it.
     #[serde(default)]
     pub compile_cache: Option<CacheTimes>,
@@ -200,6 +203,14 @@ impl DotNetTimes {
             self.processes, self.start_s, self.start_max_s, self.find_s, self.waited_s, self.calls, self.calls_s
         )
     }
+}
+
+/// A test and how long it took.
+#[derive(Debug, Clone, Default, PartialEq, Serialize, Deserialize)]
+pub struct SlowTest {
+    pub codeunit: u32,
+    pub name: String,
+    pub seconds: f64,
 }
 
 /// The time the tests of one test app took.

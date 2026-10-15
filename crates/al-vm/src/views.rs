@@ -187,19 +187,16 @@ impl Session {
     ) -> Result<String, Signal> {
         let name = |pos: usize| {
             if use_names {
-                t.fields[pos].name.clone()
+                // The caption stands for the name (record/TestProbeRecordRefContracts.al:GetTable_CopiesBufferFiltersKeyDirection:
+                // `Identifier=FILTER(1..5)` for field Id with Caption 'Identifier').
+                self.field_caption(t, pos)
             } else {
                 format!("Field{}", t.fields[pos].id)
             }
         };
         let (key, ascending) = {
             let r = rec.borrow();
-            if r.field_descending {
-                return Err(Signal::Unsupported(
-                    "GetView after a per-field SetAscending (not pinned)".into(),
-                ));
-            }
-            (r.key, r.ascending)
+            (r.key, r.ascending && !r.field_descending)
         };
         let mut out = format!(
             "SORTING({})",

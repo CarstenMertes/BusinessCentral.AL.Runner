@@ -382,9 +382,8 @@ impl Session {
                 self.record_links(method, &rec, &t, args)
             }
             "Duplicate" => {
-                if rec.borrow().temporary {
-                    return unsupported("Duplicate of a temporary RecordRef (shared table not pinned)");
-                }
+                // A duplicate of a temporary RecordRef is temporary and sees the same rows (record/
+                // TestProbeRecordRefContracts.al:Duplicate_OfTemporaryRef: `istemporary=Yes count=1`).
                 let copy = rec.borrow().clone();
                 Ok(handle(
                     "RecordRef",
@@ -532,10 +531,8 @@ impl Session {
                 if !Rc::ptr_eq(&rec, dst) {
                     let s = rec.borrow();
                     // SetTable does not move the target either (:123-127); GetTable takes the company.
-                    if s.field_descending {
-                        return unsupported("Copy of a record with a per-field SetAscending (not pinned)");
-                    }
                     let mut d = dst.borrow_mut();
+                    d.field_descending = s.field_descending;
                     d.fields = s.fields.clone();
                     d.filters = s.filters.clone();
                     d.key = s.key;
@@ -807,9 +804,8 @@ impl Session {
             "GetEnumValueCaption" => Ok(Value::Text(at(args)?.map(|m| m.2.clone()).unwrap_or_default())),
             "GetEnumValueNameFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.1.clone())),
             "GetEnumValueCaptionFromOrdinalValue" => Ok(Value::Text(by_ordinal(args)?.2.clone())),
-            "OptionMembers" | "OptionString" | "OptionCaption" if is_enum => {
-                unsupported(format!("FieldRef.{method} on an Enum field"))
-            }
+            // An Enum field answers the names and the captions of its members like an Option (record/
+            // TestProbeRecordRefContracts.al:FieldRef_EnumAndOptionInfo).
             "OptionMembers" | "OptionString" => Ok(Value::Text(
                 members.iter().map(|m| m.1.as_str()).collect::<Vec<_>>().join(","),
             )),

@@ -10,6 +10,8 @@ pub struct Counts {
     pub pass: usize,
     pub fail: usize,
     pub not_run: usize,
+    /// Of the not run: the tests a missing or unusable .NET helper stopped (the reason starts with `dotnet-unavailable`).
+    pub dotnet_unavailable: usize,
 }
 
 impl Counts {
@@ -20,7 +22,12 @@ impl Counts {
             match r.outcome {
                 Outcome::Pass => c.pass += 1,
                 Outcome::Fail(_) => c.fail += 1,
-                Outcome::NotRun(_) => c.not_run += 1,
+                Outcome::NotRun(ref why) => {
+                    c.not_run += 1;
+                    if why.starts_with(al_vm::dotnet::UNAVAILABLE) {
+                        c.dotnet_unavailable += 1;
+                    }
+                }
             }
         }
         c
@@ -28,18 +35,34 @@ impl Counts {
 }
 
 /// The exit code of a finished run (ADR-016 rule 2): 6 when nothing was selected, 1 when a test
-/// failed, 7 when a test was not run (unless `allow_not_run`), else 0. Codes 2 and 3 are decided
+/// failed, 8 when a test was not run because the .NET helper is unavailable (a problem of the
+/// machine, not of the tests; unless `allow_not_run`), 7 when a test was not run (unless
+/// `allow_not_run`), else 0. Codes 2 and 3 are decided
 /// before this point.
 pub fn exit_code(c: &Counts, allow_not_run: bool) -> u8 {
     if c.total == 0 {
         6
     } else if c.fail > 0 {
         1
+    } else if c.dotnet_unavailable > 0 && !allow_not_run {
+        8
     } else if c.not_run > 0 && !allow_not_run {
         7
     } else {
         0
     }
+}
+
+/// The warning for a run whose tests were stopped by a missing or unusable .NET helper, so that it
+/// is never mistaken for a lower pass count. `why` is the reason of one such test.
+pub fn dotnet_warning(c: &Counts, why: &str) -> Option<String> {
+    (c.dotnet_unavailable > 0).then(|| {
+        format!(
+            "WARNING: DotNet unavailable: {} test(s) not run because the .NET helper could not be used ({}). Pass --dotnet-sidecar PATH/AlDotNetSidecar.dll or set ALRT_DOTNET_SIDECAR; the pass count of this run is not comparable with one that had the helper.",
+            c.dotnet_unavailable,
+            first_line(why.trim_start_matches(al_vm::dotnet::UNAVAILABLE).trim_start_matches(':').trim(), 160)
+        )
+    })
 }
 
 /// The first line of a message, cut to `max` characters.
@@ -179,6 +202,7 @@ mod tests {
             pass,
             fail,
             not_run,
+            dotnet_unavailable: 0,
         };
         assert_eq!(exit_code(&c(3, 0, 0), false), 0);
         assert_eq!(exit_code(&c(2, 1, 0), false), 1);
@@ -186,6 +210,40 @@ mod tests {
         assert_eq!(exit_code(&c(2, 0, 1), true), 0);
         assert_eq!(exit_code(&c(1, 1, 1), true), 1);
         assert_eq!(exit_code(&c(0, 0, 0), true), 6);
+    }
+
+    #[test]
+    fn tests_stopped_by_a_missing_dotnet_helper_have_their_own_exit_code_and_warning() {
+        let rs = [
+            r(1, "A", "T1", Outcome::Pass),
+            r(
+                1,
+                "A",
+                "T2",
+                Outcome::NotRun("dotnet-unavailable: DotNet 'System.Convert' sidecar not built; run ...".into()),
+            ),
+            r(1, "A", "T3", Outcome::NotRun("something else".into())),
+        ];
+        let c = Counts::of(rs.iter());
+        assert_eq!((c.not_run, c.dotnet_unavailable), (2, 1));
+        assert_eq!(exit_code(&c, false), 8);
+        assert_eq!(
+            exit_code(&c, true),
+            0,
+            "--allow-not-run is the user's word that not run is fine"
+        );
+        let w = dotnet_warning(&c, "dotnet-unavailable: DotNet 'System.Convert' sidecar not built").unwrap();
+        assert!(
+            w.contains("DotNet unavailable: 1 test(s)") && w.contains("ALRT_DOTNET_SIDECAR"),
+            "{w}"
+        );
+        assert!(
+            w.contains("sidecar not built") && !w.contains("dotnet-unavailable"),
+            "{w}"
+        );
+        let none = Counts::of(rs[..1].iter().chain(rs[2..].iter()));
+        assert_eq!(exit_code(&none, false), 7);
+        assert!(dotnet_warning(&none, "").is_none());
     }
 
     #[test]

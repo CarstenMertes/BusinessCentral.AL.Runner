@@ -337,7 +337,7 @@ fn in_state<'a>(r: Option<&'a mut Value>) -> Result<std::cell::RefMut<'a, Librar
 }
 
 /// Reads the rest of an `InStream` value and moves its position to the end.
-pub(crate) fn drain_in(v: &mut Value) -> Result<Vec<u8>, Signal> {
+pub fn drain_in(v: &mut Value) -> Result<Vec<u8>, Signal> {
     with_in(Some(v), |s| Ok(s.drain()))
 }
 
@@ -667,7 +667,7 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
 }
 
 /// Writes bytes to an `OutStream` argument whatever its encoding (the caller pins the bytes).
-pub(crate) fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
+pub fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
     let (b, _) = out_buf(Some(stream))?;
     write_bytes(&b, bytes);
     Ok(())

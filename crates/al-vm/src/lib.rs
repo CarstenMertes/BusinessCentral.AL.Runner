@@ -31,7 +31,6 @@ mod interfaces;
 mod pages;
 mod partial;
 mod platform;
-mod platformnative;
 mod queries;
 mod recmeta;
 mod records;
@@ -301,8 +300,8 @@ pub struct Session {
     pub(crate) curr_field_no: Vec<(usize, i32)>,
     /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
     pub(crate) lock_timeout: bool,
-    /// `Database.LockTimeoutDuration`: set and read back, no wait is modelled.
-    pub(crate) lock_timeout_duration: i32,
+    /// `Database.LockTimeoutDuration` in milliseconds.
+    pub(crate) lock_timeout_duration: i64,
     /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
     /// method starts at 0, UpdateNoLocks (`start_test_method`).
     pub(crate) transaction_type: i32,
@@ -464,7 +463,7 @@ impl Session {
             error_scopes: Default::default(),
             curr_field_no: Vec::new(),
             lock_timeout: true,
-            lock_timeout_duration: 0,
+            lock_timeout_duration: 10,
             transaction_type: 0,
             tx_phase: crate::transactions::TX_FRESH,
             media,
@@ -796,18 +795,6 @@ impl Session {
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }
-        // A `[Native]` procedure of the platform's Base64Convert codeunit: the service tier implements it
-        // (platformnative.rs).
-        if r.body.is_empty()
-            && r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Native"))
-            && engine.program.objects[object].name == "Base64Convert"
-        {
-            let args: Vec<Value> = locals[..r.params].to_vec();
-            let v = self.base64_native(&r.name, &args)?;
-            let mut finals = locals;
-            finals.truncate(r.params);
-            return Ok((v, finals));
-        }
         let mut frame = Frame {
             object,
             routine,
@@ -876,7 +863,7 @@ impl Session {
         let ret = match outcome {
             Ok(()) => None,
             Err(Signal::Exit(v)) => v,
-            Err(Signal::Break) => None,
+            Err(Signal::Break | Signal::Continue) => None,
             Err(e) => {
                 // Variables set before the error stay set for the caller that catches it
                 // (error-handling/TestTryFunctionContracts.al, codeunit/TestScopeIsolationContracts.al).
@@ -1008,22 +995,30 @@ impl Session {
                 // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; pinned by the
                 // corpus Option_InCaseAndLoopBounds, types/ for_to_option).
                 let bound = |v: Value| match v {
-                    Value::Option(o, _) => Value::Integer(o),
+                    Value::Option(o, _) | Value::Enum(_, o) => Value::Integer(o),
                     v => v,
                 };
+                if matches!(from, Value::Enum(..)) || matches!(to, Value::Enum(..)) {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
+                }
                 let (from, to) = (bound(from), bound(to));
                 let (start, end) = (int(&from)?, int(&to)?);
                 let mut i = start;
                 while if *down { i >= end } else { i <= end } {
                     self.check_stop()?;
                     let slot_ty = self.place_type(var, f);
+                    if matches!(slot_ty, RtType::Option(_) | RtType::Enum(_)) {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
+                    }
                     self.write(var, ops::convert(Value::BigInteger(i), &slot_ty)?, f)?;
                     match self.exec_block(body, f) {
                         Err(Signal::Break) => break,
                         Err(Signal::Continue) => {}
                         r => r?,
                     }
-                    i = int(&self.read(var, f)?)?;
+                    // The counter is read back from the variable, which may be an Option (an Option field as the
+                    // loop variable, Sales Price Calc. Mgt.): its ordinal.
+                    i = int(&bound(self.read(var, f)?))?;
                     i += if *down { -1 } else { 1 };
                 }
                 Ok(())
@@ -1039,7 +1034,9 @@ impl Session {
                 let items: Vec<Value> = match coll {
                     Value::List(l) => l.borrow().clone(),
                     // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
-                    other => match al_builtins::xml::node_list_items(&other) {
+                    other => match al_builtins::json::array_items(&other)
+                        .or_else(|| al_builtins::xml::node_list_items(&other))
+                    {
                         Some(items) => items,
                         None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
                     },
@@ -1304,6 +1301,36 @@ impl Session {
                 self.query_column(q, *column)
             }
             E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
+            E::CharAt(text, index) if self.with_borrowed_text(text, f, |_| ()).is_some() => {
+                let i = int(&self.eval(index, f)?)?;
+                // Same answers as the general path below, on the text where it is held.
+                if i < 1 {
+                    return al_builtins::native::raise(
+                        format!(
+                            "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
+                        ),
+                        "OutsidePermittedRange",
+                    );
+                }
+                let at = i as usize - 1;
+                match self.with_borrowed_text(text, f, |t| {
+                    if t.is_ascii() {
+                        (at <= t.len()).then(|| t.as_bytes().get(at).map_or(0, |b| u16::from(*b)))
+                    } else {
+                        let units: Vec<u16> = t.encode_utf16().collect();
+                        match units.get(at) {
+                            Some(u) => Some(*u),
+                            None if at == units.len() => Some(0),
+                            None => None,
+                        }
+                    }
+                }) {
+                    Some(Some(u)) => Ok(Value::Char(u)),
+                    _ => Err(Signal::Unsupported(
+                        "a text read more than one position past its length (not pinned)".into(),
+                    )),
+                }
+            }
             E::CharAt(text, index) => {
                 let t = self.eval(text, f)?;
                 let Some(t) = al_builtins::native::text_of(&t) else {
@@ -1319,6 +1346,16 @@ impl Session {
                         ),
                         "OutsidePermittedRange",
                     );
+                }
+                if t.is_ascii() {
+                    // No copy of a long text for each character read.
+                    return match t.as_bytes().get(i as usize - 1) {
+                        Some(u) => Ok(Value::Char(u16::from(*u))),
+                        None if i as usize == t.len() + 1 => Ok(Value::Char(0)),
+                        None => Err(Signal::Unsupported(
+                            "a text read more than one position past its length (not pinned)".into(),
+                        )),
+                    };
                 }
                 let units: Vec<u16> = t.encode_utf16().collect();
                 match units.get(i as usize - 1) {
@@ -1345,6 +1382,38 @@ impl Session {
                 args,
                 ret_used,
             } => {
+                // `CopyStr(Var, p [, n])` and `StrLen(Var)` on a text variable read it where it is held.
+                if let (None, Some(ir::Arg::Value(first))) = (receiver.as_deref(), args.first()) {
+                    if matches!(id.as_str(), "Text.CopyStr#1" | "Text.StrLen#1")
+                        && self.with_borrowed_text(first, f, |_| ()).is_some()
+                    {
+                        let mut rest = Vec::with_capacity(args.len() - 1);
+                        for a in &args[1..] {
+                            let ir::Arg::Value(e) = a else {
+                                return Err(Signal::Unsupported(format!("{id} with this argument")));
+                            };
+                            rest.push(self.eval(e, f)?);
+                        }
+                        let num = |v: Option<&Value>| match v {
+                            Some(Value::Integer(n)) => Some(i64::from(*n)),
+                            Some(Value::BigInteger(n)) => Some(*n),
+                            Some(Value::Byte(n)) => Some(i64::from(*n)),
+                            Some(Value::Char(n)) => Some(i64::from(*n)),
+                            _ => None,
+                        };
+                        let r = if id == "Text.StrLen#1" {
+                            self.with_borrowed_text(first, f, |t| Value::Integer(Value::text_len(t) as i32))
+                                .map(Ok)
+                        } else {
+                            let pos = num(rest.first()).unwrap_or(1);
+                            let len = num(rest.get(1));
+                            self.with_borrowed_text(first, f, |t| al_builtins::native::copystr_of(t, pos, len))
+                        };
+                        if let Some(r) = r {
+                            return r;
+                        }
+                    }
+                }
                 // Event subscriptions are session state: the VM runs them (dispatch.rs).
                 if let "Session.BindSubscription#1" | "Session.UnbindSubscription#1" = id.as_str() {
                     let Some(ir::Arg::Value(e)) = args.first() else {
@@ -1632,6 +1701,28 @@ impl Session {
                     .map_or(RtType::Variant, |td| td.fields[*pos].ty.clone()),
                 _ => RtType::Variant,
             },
+        }
+    }
+
+    /// Runs `g` on the text a plain variable read (`E::Load` of a local or a global) holds, without copying it.
+    /// `None` when `e` is anything else, holds no text, or holds one with the call-stack marker (the general path
+    /// handles those). A loop of `CopyStr(Big, i, 1)` over a long text would otherwise copy it on every round.
+    fn with_borrowed_text<R>(&self, e: &ir::Expr, f: &Frame, g: impl FnOnce(&str) -> R) -> Option<R> {
+        fn plain(v: &Value) -> Option<&str> {
+            match v {
+                // The call-stack marker U+E000 (byte 0xEE) is in call-stack texts, which are short: a long text is
+                // not scanned for it on every read.
+                Value::Text(s) | Value::Code(s) if s.len() > 65536 || !s.as_bytes().contains(&0xEE) => Some(s),
+                _ => None,
+            }
+        }
+        match e {
+            ir::Expr::Load(ir::Place::Local(i)) => plain(f.locals.get(*i)?).map(g),
+            ir::Expr::Load(ir::Place::Global(i)) => {
+                let inst = f.instance.borrow();
+                plain(inst.globals.get(*i)?).map(g)
+            }
+            _ => None,
         }
     }
 

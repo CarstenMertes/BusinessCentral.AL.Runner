@@ -37,13 +37,6 @@ fn outcomes(tests: &str) -> Vec<(String, Outcome)> {
     run_codeunit(&engine, &l, oi)
 }
 
-fn not_run(o: &(String, Outcome)) -> String {
-    match &o.1 {
-        Outcome::NotRun(why) => why.clone(),
-        other => panic!("{}: {other:?}", o.0),
-    }
-}
-
 // types/TestSecretText.al:43: Unwrap is "the one API that returns the plain text"; what a secret
 // carries is pinned there (SecretStrSubstNo, IsEmpty).
 #[test]

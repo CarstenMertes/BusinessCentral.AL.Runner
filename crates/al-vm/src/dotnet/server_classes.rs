@@ -150,6 +150,24 @@ fn text(what: &str, args: Args, want: usize, v: &str) -> Result<Value, Signal> {
     Ok(Value::Text(v.into()))
 }
 
+/// `SetTestTenantEnvironmentType(Boolean)`: what the test library's `SetTestabilitySandbox` /
+/// `SetTestabilitySoftwareAsAService` reach changes nothing a test can see on the probe tier
+/// (corpus tests/al-language-onprem/session/PVEnvironmentTestability.al, staging 8217373: after
+/// SetTestabilitySandbox(false) the session still reads IsSandbox Yes, IsProduction No and the name
+/// "Sandbox"). So the setter is accepted and does nothing.
+fn set_test_tenant_environment_type(
+    _: &mut Session,
+    _: Option<&Rc<DotNetObject>>,
+    args: Args,
+) -> Result<Value, Signal> {
+    match args {
+        [Value::Boolean(_)] => Ok(Value::Null),
+        _ => Err(Signal::Unsupported(
+            "DotNet NavTenantSettingsHelper.SetTestTenantEnvironmentType takes one Boolean here".into(),
+        )),
+    }
+}
+
 /// The wrapper answers 'Sandbox' (probe). Whether the helper returns that or an empty name that
 /// the wrapper turns into 'Sandbox' is not observable through the wrapper; the empty name is the
 /// default of an unset `NavTenantSettings.EnvironmentName`.
@@ -380,6 +398,12 @@ fn al_runner(what: &str) -> Pin {
 
 /// The shipped types.
 pub fn types() -> Vec<RegistryType> {
+    let mut all = super::compression::types();
+    all.extend(own_types());
+    all
+}
+
+fn own_types() -> Vec<RegistryType> {
     let cfg = |name: &str, f: MemberFn| member(name, Pin::Probe(CFG_PIN.into()), f);
     vec![
         RegistryType {
@@ -411,6 +435,13 @@ pub fn types() -> Vec<RegistryType> {
             members: vec![
                 member("IsSandbox", probe("156 (IsSandbox true, IsSaaS true)"), is_sandbox),
                 member("IsProduction", probe("157 (IsProduction false)"), is_production),
+                member(
+                    "SetTestTenantEnvironmentType",
+                    Pin::Corpus(
+                        "tests/al-language-onprem/session/PVEnvironmentTestability.al:25-60 (staging 8217373)".into(),
+                    ),
+                    set_test_tenant_environment_type,
+                ),
                 member(
                     "GetEnvironmentName",
                     probe("180 ('Sandbox' through the wrapper; the raw name is not observable)"),

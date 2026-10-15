@@ -1,6 +1,6 @@
 # ADR-031: VM speed budget in CI and interpreter fast paths
 
-- Status: Proposed
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
 - Date: 2026-10-15
 - Related: ADR-009 (internals are free), ADR-011 decision 4 (bytecode only when a budget needs it), review
   `docs/reviews/2026-10-compile-ir-review.md` (R3, R4), plan `docs/reviews/2026-10-rework-plan.md`

@@ -1,6 +1,6 @@
 # ADR-036: One resolved tree from check to lower
 
-- Status: Proposed
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
 - Date: 2026-10-15
 - Related: ADR-011 (typed IR), ADR-013 (demand-driven check), ADR-029 (incremental compile), ADR-033 (symbolic IR),
   review `docs/reviews/2026-10-compile-ir-review.md` (F1.1, R8)

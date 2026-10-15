@@ -1,6 +1,6 @@
 # ADR-032: Typed ids across seams
 
-- Status: Proposed
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
 - Date: 2026-10-15
 - Related: ADR-008 (builtins by overload id), ADR-010 (value model), ADR-015 (version-tagged catalog), review
   `docs/reviews/2026-10-compile-ir-review.md` (R5, section 5.2)

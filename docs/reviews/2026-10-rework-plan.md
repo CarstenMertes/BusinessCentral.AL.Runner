@@ -164,3 +164,19 @@ The where-condition parser merge needs no ADR either, but it waits for the split
   shrinking exception list. Recommended: (b).
 - **D8 Scope of the pause.** (a) No feature work at all. (b) Fixes allowed outside `al-sema`, `al-vm/src/lib.rs`
   and the files a lane owns. Recommended: (b), checked against the lane table.
+
+## 6. Decisions taken (2026-10-15)
+
+The owner delegated the internal design: "I would rather have a better more future proof solution now before we
+continue even if it costs time." The orchestrator decided, preferring the more durable option where they differ:
+
+- **D1:** (a) `(kind, id)` where an id exists, else the qualified name.
+- **D2:** (b) name plus parameter-type signature.
+- **D3:** keep layers now; measure after `link-4-6`, then decide.
+- **D4:** decided after `profile-suites`, from the measured split. Bytecode is preferred if the profile shows dispatch
+  is the main cost; closures otherwise.
+- **D5:** dual run on every merge for the corpus; nightly for the buckets.
+- **D6:** (a) build the bound tree fully, ordered after the link step (steps 1-2 first, as in the plan).
+- **D7:** (b) warn at 2,000 lines, fail at 3,000, with a shrinking exception list.
+- **D8:** (a) no feature work during the rework. The laptop corpus writer and the corpus publishing continue; a fix for
+  a red CI is allowed.

@@ -1,6 +1,6 @@
 # ADR-037: Code structure rules
 
-- Status: Proposed
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
 - Date: 2026-10-15
 - Related: ADR-001 (Engine and Session), review `docs/reviews/2026-10-compile-ir-review.md` (section 5, R9)
 

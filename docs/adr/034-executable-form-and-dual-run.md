@@ -1,6 +1,6 @@
 # ADR-034: Executable form, checked against the current interpreter
 
-- Status: Proposed
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
 - Date: 2026-10-15
 - Related: ADR-011 decision 4 (tree walker until a budget needs more; superseded in part), ADR-031 (VM budget),
   ADR-032 (typed ids), ADR-033 (link step), ADR-009, review `docs/reviews/2026-10-compile-ir-review.md` (R2, R6)

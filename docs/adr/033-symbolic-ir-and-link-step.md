@@ -1,6 +1,6 @@
 # ADR-033: Symbolic IR and the link step
 
-- Status: Proposed
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
 - Date: 2026-10-15
 - Related: ADR-011 decision 3 (link, never built), ADR-022 (compile cache, findings 1 to 3 of section 7), ADR-026
   (incremental compile analysis), ADR-029 (incremental compile of code changes), ADR-032 (typed ids), review

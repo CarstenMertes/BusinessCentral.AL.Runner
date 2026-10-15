@@ -1,6 +1,6 @@
 # ADR-035: Store keys and rows
 
-- Status: Proposed
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
 - Date: 2026-10-15
 - Related: ADR-003 (AL-shaped store trait), ADR-004 (snapshots), ADR-005 (company in every table identity), ADR-009,
   ADR-032 (company ids), review `docs/reviews/2026-10-compile-ir-review.md` (R7)

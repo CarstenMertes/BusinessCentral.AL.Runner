@@ -354,7 +354,7 @@ impl Lowerer<'_> {
                 }
                 let r = self.operand(&kids[1], operand_use)?;
                 let dotnet =
-                    matches!(self.ty_of(&kids[0]), Ty::DotNet(_)) || matches!(self.ty_of(&kids[1]), Ty::DotNet(_));
+                    matches!(self.ty_ref(&kids[0]), Ty::DotNet(_)) || matches!(self.ty_ref(&kids[1]), Ty::DotNet(_));
                 let op = match op.as_str() {
                     "=" if dotnet => ir::BinOp::DotNetEq,
                     "<>" if dotnet => ir::BinOp::DotNetNe,
@@ -377,13 +377,13 @@ impl Lowerer<'_> {
                 };
                 Ok(ir::Expr::Binary(op, Box::new(l), Box::new(r)))
             }
-            TernaryExpr if kids.iter().any(|k| matches!(self.ty_of(k), Ty::DotNet(_))) => {
+            TernaryExpr if kids.iter().any(|k| matches!(self.ty_ref(k), Ty::DotNet(_))) => {
                 Err("a DotNet value in a conditional expression: its type is only known at run time".into())
             }
             // `Text[i]` read: the character at i. The base is any text, a call result included
             // (corpus json/TestJsonXmlDeepContracts.al:71 `Format(10, 0, '<Integer>')[1]`).
             IndexExpr
-                if matches!(kids.first().map(|k| self.ty_of(k)), Some(Ty::Text(_) | Ty::Code(_)))
+                if matches!(kids.first().map(|k| self.ty_ref(k)), Some(Ty::Text(_) | Ty::Code(_)))
                     && kids.len() == 2 =>
             {
                 Ok(ir::Expr::CharAt(
@@ -391,7 +391,7 @@ impl Lowerer<'_> {
                     Box::new(self.operand(&kids[1], ir::OperandUse::Value)?),
                 ))
             }
-            IndexExpr if matches!(kids.first().map(|k| self.ty_of(k)), Some(Ty::DotNet(_))) => {
+            IndexExpr if matches!(kids.first().map(|k| self.ty_ref(k)), Some(Ty::DotNet(_))) => {
                 Err("indexing a DotNet value is not lowered yet (call get_Item / GetValue instead)".into())
             }
             TernaryExpr => Ok(ir::Expr::Ternary(
@@ -548,12 +548,12 @@ impl Lowerer<'_> {
     /// `TP.Ctl`: a member access on a test page or part that names a control.
     pub(crate) fn is_control_access(&self, n: &SyntaxNode) -> bool {
         let Some(recv) = n.children().next() else { return false };
-        let request = matches!(self.ty_of(&recv), Ty::TestRequestPage(_));
-        (matches!(self.ty_of(&recv), Ty::TestPage(_) | Ty::TestPart(_)) || request)
-            && (matches!(self.ty_of(n), Ty::TestPart(_))
-                || matches!(self.ty_of(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction")
+        let request = matches!(self.ty_ref(&recv), Ty::TestRequestPage(_));
+        (matches!(self.ty_ref(&recv), Ty::TestPage(_) | Ty::TestPart(_)) || request)
+            && (matches!(self.ty_ref(n), Ty::TestPart(_))
+                || matches!(self.ty_ref(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction")
                 // A data item of a request page.
-                || (request && matches!(self.ty_of(n), Ty::TestFilter(_))))
+                || (request && matches!(self.ty_ref(n), Ty::TestFilter(_))))
     }
 
     /// `CurrPage.<Part>.Page`
@@ -572,12 +572,12 @@ impl Lowerer<'_> {
             })
             .is_some_and(|t| ast::ident_text(&t).eq_ignore_ascii_case("Page"));
         last_is_page
-            && matches!(self.ty_of(&part), Ty::TestPart(_))
+            && matches!(self.ty_ref(&part), Ty::TestPart(_))
             && part.kind() == SyntaxKind::MemberExpr
             && part
                 .children()
                 .next()
-                .is_some_and(|r| matches!(self.ty_of(&r), Ty::Object(ObjKind::Page, _)))
+                .is_some_and(|r| matches!(self.ty_ref(&r), Ty::Object(ObjKind::Page, _)))
     }
 
     pub(crate) fn control(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
@@ -602,7 +602,7 @@ impl Lowerer<'_> {
         else {
             return Err("control of a non-page".into());
         };
-        let kind = if matches!(self.ty_of(recv), Ty::TestRequestPage(_)) {
+        let kind = if matches!(self.ty_ref(recv), Ty::TestRequestPage(_)) {
             ObjKind::Report
         } else {
             ObjKind::Page
@@ -615,7 +615,7 @@ impl Lowerer<'_> {
             .iter()
             .position(|c| c.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| format!("control `{name}` is not in the page layout"))?;
-        let runtime = matches!(self.ty_of(recv), Ty::Object(ObjKind::Page, _));
+        let runtime = matches!(self.ty_ref(recv), Ty::Object(ObjKind::Page, _));
         let control = self.control_ref(page, &layout.controls[control].name, control);
         Ok(ir::Expr::Control {
             page: Box::new(self.expr(recv)?),

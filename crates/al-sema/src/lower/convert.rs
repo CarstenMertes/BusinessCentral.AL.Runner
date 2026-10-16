@@ -1,9 +1,16 @@
 //! Name resolution helpers, runtime types and the conversion of a value to a target type.
 use super::*;
 
-impl Lowerer<'_> {
+impl<'a> Lowerer<'a> {
     pub(crate) fn res(&self, n: &SyntaxNode) -> Option<&Res> {
         self.checked.resolutions.get(&key(self.file, n))
+    }
+
+    /// [`ty_of`](Self::ty_of) without the copy.
+    pub(crate) fn ty_ref(&self, n: &SyntaxNode) -> &'a Ty {
+        static UNKNOWN: Ty = Ty::Unknown;
+        let checked: &'a CheckResult = self.checked;
+        checked.types.get(&key(self.file, n)).unwrap_or(&UNKNOWN)
     }
 
     pub(crate) fn ty_of(&self, n: &SyntaxNode) -> Ty {
@@ -315,7 +322,7 @@ impl Lowerer<'_> {
     /// implementing codeunits are known here, so the test is a set of object indexes.
     pub(crate) fn interface_test(&mut self, n: &SyntaxNode, kids: &[SyntaxNode]) -> L<ir::Expr> {
         let is = sig_tokens(n)[0].text().eq_ignore_ascii_case("is");
-        if !matches!(self.ty_of(&kids[0]), Ty::Object(ObjKind::Interface, _)) {
+        if !matches!(self.ty_ref(&kids[0]), Ty::Object(ObjKind::Interface, _)) {
             return Err("`is` and `as` on a value that is not an interface variable are not lowered yet".into());
         }
         let name = crate::check::type_name_text(&kids[1]);
@@ -345,7 +352,7 @@ impl Lowerer<'_> {
         let Some(receiver) = receiver else {
             return Err("an interface procedure called without a receiver is not lowered yet".into());
         };
-        if !matches!(self.ty_of(receiver), Ty::Object(ObjKind::Interface, _)) {
+        if !matches!(self.ty_ref(receiver), Ty::Object(ObjKind::Interface, _)) {
             return Err("an interface procedure called on something that is not an interface variable".into());
         }
         let sig = self.members[iface]
@@ -393,7 +400,7 @@ impl Lowerer<'_> {
                 out.push(ir::Arg::Ref(self.place(a)?));
             } else {
                 let value = self.expr(a)?;
-                out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
+                out.push(ir::Arg::Value(self.convert_to(&p.ty, self.ty_ref(a), value)?));
             }
         }
         let params = {

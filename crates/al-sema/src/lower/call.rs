@@ -75,7 +75,7 @@ impl Lowerer<'_> {
                         out.push(self.by_var_arg(a)?);
                     } else {
                         let value = self.expr(a)?;
-                        out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
+                        out.push(ir::Arg::Value(self.convert_to(&p.ty, self.ty_ref(a), value)?));
                     }
                 }
                 self.calls.push((object, routine));
@@ -211,7 +211,7 @@ impl Lowerer<'_> {
                         .ok_or("too many arguments")?;
                     // `Clear(X)` of a declared DotNet variable goes by place like any other variable.
                     let clears_dotnet =
-                        id == "System.Clear#1" && matches!(self.ty_of(a), Ty::DotNet(ref al) if !al.is_empty());
+                        id == "System.Clear#1" && matches!(self.ty_ref(a), Ty::DotNet(al) if !al.is_empty());
                     if let (false, Ty::DotNet(alias)) = (clears_dotnet, self.ty_of(a)) {
                         // `IsNull(DotNet)` takes the value as it is. A `Variant` parameter takes a
                         // primitive, an object or an enum as it is (`Format` of an object is its
@@ -261,7 +261,7 @@ impl Lowerer<'_> {
                     // A bare control name in a field position of a test page method.
                     if a.kind() == SyntaxKind::NameRef
                         && self.res(a).is_none()
-                        && matches!(self.ty_of(a), Ty::Builtin(ref b) if b == "TestField")
+                        && matches!(self.ty_ref(a), Ty::Builtin(b) if b == "TestField")
                         && receiver_node.as_ref().is_some_and(|r| {
                             matches!(
                                 self.ty_of(r),

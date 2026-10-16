@@ -236,14 +236,11 @@ pub(crate) struct FileLines {
 
 impl FileLines {
     fn new(ws: &Workspace, file: usize) -> FileLines {
-        let text = ws.text(file).as_bytes();
-        let mut starts = vec![0u32];
-        starts.extend(
-            text.iter()
-                .enumerate()
-                .filter(|(_, b)| **b == b'\n')
-                .map(|(i, _)| i as u32 + 1),
-        );
+        let text = ws.text(file);
+        let mut starts = Vec::with_capacity(text.len() / 32 + 1);
+        starts.push(0u32);
+        // `match_indices` with a char searches by memchr.
+        starts.extend(text.match_indices('\n').map(|(i, _)| i as u32 + 1));
         FileLines {
             file: file as u32,
             starts,

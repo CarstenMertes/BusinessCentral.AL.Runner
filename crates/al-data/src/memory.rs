@@ -93,6 +93,8 @@ pub trait Backing {
 struct OrderEntry {
     shape: u64,
     rows: usize,
+    /// The fields of the key the order is of: an ad-hoc key can take the slot of an earlier one.
+    fields: Vec<usize>,
     order: std::rc::Rc<Vec<Key>>,
 }
 
@@ -586,7 +588,7 @@ impl MemStore {
         let shape = self.shapes.get(slot).copied().unwrap_or(0);
         let ck = (slot.clone(), key);
         if let Some(e) = self.order_cache.borrow().get(&ck) {
-            if e.shape == shape && e.rows == table.len() {
+            if e.shape == shape && e.rows == table.len() && e.fields == t.keys[key] {
                 return e.order.clone();
             }
         }
@@ -598,6 +600,7 @@ impl MemStore {
             OrderEntry {
                 shape,
                 rows: table.len(),
+                fields: t.keys[key].clone(),
                 order: order.clone(),
             },
         );
@@ -1018,6 +1021,36 @@ mod tests {
             looked() - before <= 5,
             "other key: {} rows looked at",
             looked() - before
+        );
+    }
+
+    #[test]
+    fn a_key_slot_that_names_another_key_later_is_ordered_again() {
+        // An ad-hoc key (SetCurrentKey on other fields) takes a slot of the key list; the same slot number then
+        // stands for different fields, and the cached order of the first has to be left (found in Tests-ERM,
+        // codeunit 138025: a seek on a stale order found no Value Entry).
+        let by_b = seek_table(vec![vec![0], vec![1, 0]]);
+        let by_d = seek_table(vec![vec![0], vec![3, 0]]);
+        let mut s = MemStore::default();
+        for a in 0..100 {
+            let row = vec![
+                Value::Integer(a),
+                Value::Integer(a % 10),
+                Value::Code("X".into()),
+                Value::Integer(99 - a),
+            ];
+            s.insert(&cx(), &by_b, row).unwrap();
+        }
+        let f = [range(3, Some(Value::Integer(5)), Some(Value::Integer(5)))];
+        assert_eq!(scan_all(&s, &by_b, 1, &[], true).len(), 100);
+        assert_eq!(
+            format!("{:?}", scan_all(&s, &by_d, 1, &f, true)),
+            format!("{:?}", reference(&s, &by_d, 1, &f, true))
+        );
+        assert_eq!(scan_all(&s, &by_d, 1, &f, true).len(), 1);
+        assert_eq!(
+            format!("{:?}", scan_all(&s, &by_d, 1, &f, false)),
+            format!("{:?}", reference(&s, &by_d, 1, &f, false))
         );
     }
 

@@ -12591,18 +12591,18 @@
       "dimension": "syntax",
       "items": [
         {
-          "corpus_uses": 417566,
+          "corpus_uses": 417608,
           "group": "expression",
-          "ms_uses": 1797674,
+          "ms_uses": 1808040,
           "name": "NameRef",
           "pinned": true,
           "runtime_reads": true,
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 157857,
+          "corpus_uses": 157869,
           "group": "expression",
-          "ms_uses": 473562,
+          "ms_uses": 474879,
           "name": "MemberExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -12627,18 +12627,18 @@
           "site": "ALTCallstackModuleInfos.al:26"
         },
         {
-          "corpus_uses": 19845,
+          "corpus_uses": 19860,
           "group": "statement",
-          "ms_uses": 183133,
+          "ms_uses": 187658,
           "name": "Block",
           "pinned": true,
           "runtime_reads": true,
           "site": "ALTCallstackModuleInfos.al:8"
         },
         {
-          "corpus_uses": 20474,
+          "corpus_uses": 20489,
           "group": "statement",
-          "ms_uses": 135336,
+          "ms_uses": 139861,
           "name": "AssignStmt",
           "pinned": true,
           "runtime_reads": false,
@@ -12663,9 +12663,9 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 29899,
+          "corpus_uses": 29902,
           "group": "expression",
-          "ms_uses": 74243,
+          "ms_uses": 77686,
           "name": "Literal:Integer",
           "pinned": true,
           "runtime_reads": true,
@@ -12728,7 +12728,7 @@
         {
           "corpus_uses": 2513,
           "group": "expression",
-          "ms_uses": 23438,
+          "ms_uses": 23439,
           "name": "Literal:true",
           "pinned": true,
           "runtime_reads": true,
@@ -12744,9 +12744,9 @@
           "site": "_fixtures/Assert.al:167"
         },
         {
-          "corpus_uses": 753,
+          "corpus_uses": 756,
           "group": "expression",
-          "ms_uses": 18099,
+          "ms_uses": 21542,
           "name": "IndexExpr",
           "pinned": true,
           "runtime_reads": true,

@@ -924,24 +924,28 @@ fn str_menu(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     )?))
 }
 
-/// `%1`..`%9` replaced by `Format(arg)`. A placeholder without an argument
-/// and `#n` fields are not pinned by the corpus yet: unsupported.
+/// `%n` replaced by `Format(arg n)`. A placeholder without an argument stays as written, `%0`, `%10` of one argument and a
+/// `%` at the end of the text too; an argument is not scanned again (types/lt-variant/VaTTextConst.al:TextConst_StrSubstNo
+/// `one_arg_only`, `no_args`, `pct10`, `pct0`, `pct5_not_given`, `pct_end`, `arg_has_percent`;
+/// text/TestTextProcessingContracts.al:StrSubstNo_FewerArgsThanPlaceholders_NoError). `#n` fields are not pinned.
 pub fn substitute(template: &str, args: &[Value], ctx: &dyn FormatCtx) -> Result<String, Signal> {
     let mut out = String::new();
-    let mut chars = template.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            if let Some(d) = chars.peek().and_then(|d| d.to_digit(10)).filter(|d| *d >= 1) {
-                chars.next();
-                match args.get(d as usize - 1) {
-                    Some(v) => out.push_str(&try_format(v, 0, 0, ctx).map_err(Signal::Unsupported)?),
-                    None => return unsupported("StrSubstNo placeholder without an argument"),
-                }
-                continue;
+    let mut rest = template;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at + 1..];
+        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        let n: usize = rest[..digits].parse().unwrap_or(0);
+        match args.get(n.wrapping_sub(1)).filter(|_| digits > 0 && n >= 1) {
+            Some(v) => out.push_str(&try_format(v, 0, 0, ctx).map_err(Signal::Unsupported)?),
+            None => {
+                out.push('%');
+                out.push_str(&rest[..digits]);
             }
         }
-        out.push(c);
+        rest = &rest[digits..];
     }
+    out.push_str(rest);
     Ok(out)
 }
 

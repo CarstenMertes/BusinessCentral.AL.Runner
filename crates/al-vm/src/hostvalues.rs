@@ -95,6 +95,16 @@ impl Session {
                     other = other.describe()
                 )),
             },
+            // No session is started in a test run, so no id but the running session's is a session: StopSession answers false for
+            // 0, a negative id, a huge id and the id a refused StartSession left (platform/lt-xmlport-session-navapp-cookie/
+            // P94Session.al:Stop_*). The running session's own id is never stopped there and is not pinned: refused.
+            ids::SESSION_STOPSESSION_1 => match args.first() {
+                Some(Value::Integer(n)) if *n != self.host.identity.session_id() => Ok(Value::Boolean(false)),
+                other => unsupported(format!(
+                    "Session.StopSession({other}): only an id other than the running session's is pinned",
+                    other = other.describe()
+                )),
+            },
             ids::DATABASE_SERVICEINSTANCEID_1 => Ok(Value::Integer(self.host.identity.service_instance_id())),
             ids::DATABASE_TENANTID_1 => Ok(Value::Text(self.host.identity.tenant_id().into())),
             ids::SYSTEM_GUIALLOWED_1 => Ok(Value::Boolean(self.host.identity.gui_allowed())),

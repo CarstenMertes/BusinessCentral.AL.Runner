@@ -669,7 +669,7 @@ fn string_of(r: Option<&mut Value>) -> Result<Rc<RefCell<LibraryValue>>, Signal>
             if matches!(&*h.borrow(), LibraryValue::Empty) {
                 *h.borrow_mut() = LibraryValue::Text(String::new());
             }
-            if matches!(&*h.borrow(), LibraryValue::Text(_)) {
+            if matches!(&*h.borrow(), LibraryValue::Text(_) | LibraryValue::TextCap(..)) {
                 Ok(h.clone())
             } else {
                 unsupported("TextBuilder or BigText method on something else")
@@ -681,7 +681,7 @@ fn string_of(r: Option<&mut Value>) -> Result<Rc<RefCell<LibraryValue>>, Signal>
 
 fn with_string<T>(h: &Rc<RefCell<LibraryValue>>, f: impl FnOnce(&mut String) -> T) -> T {
     match &mut *h.borrow_mut() {
-        LibraryValue::Text(s) => f(s),
+        LibraryValue::Text(s) | LibraryValue::TextCap(s, _) => f(s),
         _ => unreachable!("checked by string_of"),
     }
 }
@@ -732,8 +732,42 @@ fn tb_length(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
 
 fn tb_clear(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = string_of(r)?;
-    with_string(&h, String::clear);
+    // Clear keeps the capacity (text/lt-label-textbuilder/TxCTextBuilderBasics.al:Clear_Basics `capKept`).
+    let cap = capacity_of(&h);
+    *h.borrow_mut() = LibraryValue::TextCap(String::new(), cap);
     Ok(Value::Null)
+}
+
+/// The capacity of a TextBuilder: 16 until it is set (TxCTextBuilderBasics.al:Capacity_Defaults, also after `Append('abc')`),
+/// then the set value; it grows by doubling when the text outgrows it (only "at least the length" is pinned:
+/// Capacity_GrowsWithAppend, Length_Larger_Than_Capacity; docs/probes-needed.md "TextBuilder.Capacity").
+fn capacity_of(h: &Rc<RefCell<LibraryValue>>) -> i32 {
+    let (len, mut cap) = match &*h.borrow() {
+        LibraryValue::Text(s) => (Value::text_len(s), 16),
+        LibraryValue::TextCap(s, c) => (Value::text_len(s), *c),
+        _ => (0, 16),
+    };
+    while (cap as usize) < len && cap < i32::MAX / 2 {
+        cap = cap.max(1) * 2;
+    }
+    cap
+}
+
+/// `Capacity()` reads and `Capacity(N)` sets the capacity (TxCTextBuilderBasics.al:Capacity_Setter: `Capacity(100)` reads 100;
+/// `Capacity(6)` on six characters reads 6). A capacity below the length is not pinned.
+fn tb_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    if a.is_empty() {
+        return Ok(Value::Integer(capacity_of(&h)));
+    }
+    let n = int(a, 0)?;
+    let len = with_string(&h, |s| Value::text_len(s)) as i64;
+    if n < len || n > i64::from(i32::MAX) {
+        return unsupported("TextBuilder.Capacity set below the length or above the maximum (not pinned)");
+    }
+    let s = with_string(&h, std::mem::take);
+    *h.borrow_mut() = LibraryValue::TextCap(s, n as i32);
+    Ok(Value::Integer(n as i32))
 }
 
 /// `Insert(Position, Text)` puts the text before 1-based `Position` (TestTextBuilder.al
@@ -774,8 +808,18 @@ fn tb_remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(true))
 }
 
-fn tb_ensure_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    string_of(r)?;
+/// `EnsureCapacity(N)` makes the capacity at least N and answers true; N above the maximum is an overflow; zero and a negative N
+/// change nothing (TxCTextBuilderBasics.al:EnsureCapacity_Basics).
+fn tb_ensure_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    let n = int(a, 0)?;
+    if n > i64::from(i32::MAX) {
+        return crate::native::raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+    }
+    if n > i64::from(capacity_of(&h)) {
+        let s = with_string(&h, std::mem::take);
+        *h.borrow_mut() = LibraryValue::TextCap(s, n as i32);
+    }
     Ok(Value::Boolean(true))
 }
 
@@ -881,6 +925,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("TextBuilder", "ToText", _) => tb_to_text,
         ("TextBuilder", "Length", _) => tb_length,
         ("TextBuilder", "Clear", []) => tb_clear,
+        ("TextBuilder", "Capacity", _) => tb_capacity,
         ("TextBuilder", "Insert", [_, _]) => tb_insert,
         ("TextBuilder", "Remove", [_, _]) => tb_remove,
         ("TextBuilder", "EnsureCapacity", [_]) => tb_ensure_capacity,

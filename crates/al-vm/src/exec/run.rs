@@ -742,6 +742,17 @@ impl Session {
         let Some(native) = site.native else {
             return Err(Signal::Unsupported(format!("builtin {}", site.id)));
         };
+        if site.id == al_builtins::builtin_id::ids::SYSTEM_CLEAR_1 {
+            // `Clear` of a Variant empties it, whatever it holds (types/lt-variant/VaTIs*.al:Is_Empty_Variant `V := 5; Clear(V)`
+            // has no type flag left); the native clears a value to the default of its own kind.
+            if let Some(ir::Arg::Ref(p)) = site.args.first() {
+                if matches!(self.place_type(p, f), al_builtins::value::RtType::Variant) {
+                    drop(values);
+                    self.write(p, Value::Null, f)?;
+                    return Ok(Value::Null);
+                }
+            }
+        }
         self.run_native(
             native,
             site.class,

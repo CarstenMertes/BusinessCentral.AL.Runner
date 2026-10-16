@@ -1039,6 +1039,13 @@ impl Writer {
         self.text_end = self.out.len();
     }
 
+    /// White space between the nodes of a document (outside the root): written as it is and not content of any element, so
+    /// it does not make the root's content mixed (xml/TestXmlRuntimeContracts.al:XmlDocument_ReadFrom_KeepsWhiteSpaceInsideAndOutsideTheRoot).
+    fn document_text(&mut self, s: &str) {
+        self.out.push_str(s);
+        self.text_end = self.out.len();
+    }
+
     fn markup(&mut self, s: &str) {
         self.break_line();
         self.out.push_str(s);
@@ -1181,8 +1188,9 @@ impl Writer {
         }
         self.break_line();
         self.level += 1;
+        // An element inside mixed content is written inline with everything it holds, as .NET's indenting writer does (the
+        // mixed-content bit is inherited, then restored at the end tag): P90CDataEdit.al:AfterSelf_Attached_ExistingNodes `k12`.
         self.saved.push(self.mixed);
-        self.mixed = false;
         self.out.push('<');
         self.out.push_str(&qname(prefix, local));
         self.out.push_str(&extra);
@@ -1281,7 +1289,17 @@ fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
             ));
         }
         for c in kids {
-            w.node(&c)?;
+            match with(&c, |d| match d {
+                XData::Text(s) => Some(s.clone()),
+                _ => None,
+            }) {
+                Some(s) => {
+                    let mut esc = String::new();
+                    escape_text(&s, &mut esc);
+                    w.document_text(&esc);
+                }
+                None => w.node(&c)?,
+            }
         }
     } else {
         w.node(h)?;
@@ -1380,6 +1398,8 @@ fn check_fits(container: &Handle, node: &Handle, removed: &[Handle], at: Option<
             true
         }
         ("XmlElement", "XmlDocumentType") => return Err(nav_argument()),
+        // An XML declaration added to an element becomes its text (P90CDataEdit.al:AfterSelf_Attached_InvalidKinds `k7`).
+        ("XmlElement", "XmlDeclaration") => true,
         ("XmlDocument", "XmlElement") => {
             let has_root = children_of(container)
                 .iter()
@@ -1414,6 +1434,28 @@ fn insert(container: &Handle, at: Option<usize>, nodes: Vec<Handle>) -> Result<(
     for n in &nodes {
         check_fits(container, n, &[], at)?;
     }
+    // An XML declaration added to an element is written as text: its markup (escaped on output, P90CDataEdit.al `k7`).
+    let nodes: Vec<Handle> = if kind(container) == "XmlElement" {
+        nodes
+            .into_iter()
+            .map(|n| {
+                match with(&n, |d| match d {
+                    XData::Declaration {
+                        version,
+                        encoding,
+                        standalone,
+                        explicit,
+                    } => Some(declaration_text(version, encoding, standalone, *explicit)),
+                    _ => None,
+                }) {
+                    Some(markup) => new_node(XData::Text(markup)),
+                    None => n,
+                }
+            })
+            .collect()
+    } else {
+        nodes
+    };
     let mut at = at;
     for n in nodes {
         match kind(&n) {
@@ -1480,8 +1522,26 @@ fn detach(h: &Handle) {
     set_parent(h, None);
 }
 
+/// A text, CDATA, comment, processing instruction or document type without a parent: every sibling operation and `Remove` on it
+/// raises `InvalidOperation` (xml/lt-xml-cdata-comment-pi-text/P90*Edit.al:AfterSelf_Detached_*, BeforeSelf_Detached_*,
+/// ReplaceWith_Detached_*, Remove_Detached_Twice; xml/lt-xml-doctype-declaration/DocTypeNode.al). Other kinds are not pinned.
+fn detached_is_invalid(h: &Handle) -> bool {
+    with(h, |d| {
+        matches!(
+            d,
+            XData::Text(_) | XData::CData(_) | XData::Comment(_) | XData::Pi { .. } | XData::DocType { .. }
+        )
+    })
+}
+
 fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
     let Some(p) = parent_of(h) else {
+        if detached_is_invalid(h) {
+            return Err(error(
+                "The requested operation cannot be performed in this context.",
+                "InvalidOperation",
+            ));
+        }
         return unsupported("a sibling operation on a node without a parent (error text not pinned yet)");
     };
     let pos = children_of(&p).iter().position(|c| Rc::ptr_eq(c, h));
@@ -2933,36 +2993,62 @@ fn add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
                 continue;
             }
         }
-        insert(&h, None, content_nodes(std::slice::from_ref(arg))?)?;
+        let nodes = content_nodes(std::slice::from_ref(arg))?;
+        reject_declaration_in_document(&h, &nodes)?;
+        insert(&h, None, nodes)?;
     }
     Ok(Value::Boolean(true))
 }
 
+/// `Add` of an XML declaration to a document raises (a declaration comes with `Create` or `SetDeclaration`:
+/// misc/lt-probes-needed-1/PnAXmlNodeAdds.al `declaration-into-document`, an Argument error).
+fn reject_declaration_in_document(container: &Handle, nodes: &[Handle]) -> Result<(), Signal> {
+    if kind(container) == "XmlDocument" && nodes.iter().any(|n| kind(n) == "XmlDeclaration") {
+        return Err(nav_argument());
+    }
+    Ok(())
+}
+
+/// An attribute is not a sibling: `AddAfterSelf`, `AddBeforeSelf` and `ReplaceWith` of an attribute raise an Argument error
+/// (xml/lt-xml-cdata-comment-pi-text/P90*Edit.al:AfterSelf_Attached_InvalidKinds `k6`).
+fn reject_attributes(nodes: &[Handle]) -> Result<(), Signal> {
+    if nodes.iter().any(|n| kind(n) == "XmlAttribute") {
+        return Err(nav_argument());
+    }
+    Ok(())
+}
+
 fn add_first(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    insert(&h, Some(0), content_nodes(a)?)?;
+    let nodes = content_nodes(a)?;
+    reject_declaration_in_document(&h, &nodes)?;
+    insert(&h, Some(0), nodes)?;
     Ok(Value::Boolean(true))
 }
 
 fn add_after_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let (p, i) = position_in_parent(&h)?;
-    insert(&p, Some(i + 1), content_nodes(a)?)?;
+    let nodes = content_nodes(a)?;
+    reject_attributes(&nodes)?;
+    insert(&p, Some(i + 1), nodes)?;
     Ok(Value::Boolean(true))
 }
 
 fn add_before_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let (p, i) = position_in_parent(&h)?;
-    insert(&p, Some(i), content_nodes(a)?)?;
+    let nodes = content_nodes(a)?;
+    reject_attributes(&nodes)?;
+    insert(&p, Some(i), nodes)?;
     Ok(Value::Boolean(true))
 }
 
 fn remove(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv_or_uninit(r, "XmlNode")?;
     if parent_of(&h).is_none() {
-        // A document type without a document (DocTypeNode.al:Remove_DetachedDocType, Remove_DocType `remove-twice`).
-        if with(&h, |d| matches!(d, XData::DocType { .. })) && !c.ret_used() {
+        // A node of these kinds without a parent (DocTypeNode.al:Remove_DetachedDocType, P90*Edit.al:Remove_Detached_Twice).
+        if detached_is_invalid(&h) && !c.ret_used() {
             return Err(error(
                 "The requested operation cannot be performed in this context.",
                 "InvalidOperation",
@@ -2989,6 +3075,7 @@ fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     }
     let (p, i) = position_in_parent(&h)?;
     let nodes = content_nodes(a)?;
+    reject_attributes(&nodes)?;
     // A document type that cannot be replaced is removed all the same (DocTypeNode.al:ReplaceWith_Element: the document
     // is `<a />` afterwards).
     if with(&h, |d| matches!(d, XData::DocType { .. })) {
@@ -3318,13 +3405,18 @@ fn select_single_node(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
 }
 
 fn single_result(c: &mut dyn Ctx, found: Option<Vec<Handle>>, a: &mut [Value], slot: usize) -> NResult {
+    let path = arg_text(a, 0)?;
     match found.and_then(|f| f.into_iter().next()) {
         Some(n) => {
             a[slot] = tagged("XmlNode", n);
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("SelectSingleNode without a match, result unused (error text not pinned yet)"),
+        // The statement form raises (xml/lt-xml-cdata-comment-pi-text/P90*Read.al:SelectSingle_Absolute_2 `x2`).
+        None => Err(error(
+            format!("The XPath query '{path}' does not match any nodes."),
+            "InvalidXPathSelection",
+        )),
     }
 }
 

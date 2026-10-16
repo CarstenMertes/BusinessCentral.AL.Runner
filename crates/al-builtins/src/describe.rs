@@ -136,7 +136,7 @@ impl Describe for LibraryValue {
     fn describe(&self) -> String {
         match self {
             LibraryValue::Empty => "an untouched handle".into(),
-            LibraryValue::Text(_) => "a text handle".into(),
+            LibraryValue::Text(_) | LibraryValue::TextCap(..) => "a text handle".into(),
             LibraryValue::RecordRef(_) => "RecordRef".into(),
             LibraryValue::FieldRef(..) | LibraryValue::KeyFieldRef(..) => "FieldRef".into(),
             LibraryValue::KeyRef(..) => "KeyRef".into(),

@@ -374,7 +374,11 @@ mod tests {
         b.last_stamp = session.now_millis() + 6 * 3_600_000;
         session.restore_baseline(&b);
         let stamp = session.stamp_millis();
-        assert!(stamp <= session.now_millis() + 1_000, "stamped {} ms ahead", stamp - session.now_millis());
+        assert!(
+            stamp <= session.now_millis() + 1_000,
+            "stamped {} ms ahead",
+            stamp - session.now_millis()
+        );
         // A baseline stamp in the past still holds: the next stamp is later than it.
         let mut older = sample();
         older.last_stamp = session.now_millis() - 10_000;

@@ -4044,6 +4044,7 @@
 67539 ExtPartOnPrecompiledPage_OwnAreaNotEnabled_IsNotFound
 67539 ModifiedActionOnPrecompiledPage_BaseValueNoLongerApplies_IsNotFound
 67539 ModifiedActionOnPrecompiledPage_ModifyValueEnabled_IsFound
+67541 PrecompiledReport_SaveValues_NextRunShowsTheConfirmedValue
 67541 SourceReport_NoSaveValues_NextRunShowsTheDefault
 67541 SourceReport_SaveValues_NextRunShowsTheConfirmedValue
 67541 SourceReport_SaveValues_ReportVariable_NextRunShowsTheConfirmedValue
@@ -4089,6 +4090,8 @@
 67566 CodeunitRun_TestCodeunitFromTest_Unguarded_Throws
 67566 CodeunitRun_TestCodeunitVariableFromTest_Throws
 67566 InnerRanObserver_Bound_SeesTheInnerEvent
+67569 GetDemandToReserve_HandlerError_ReachesTheTest
+67569 GetDemandToReserve_Run_HandsTheHandlerItsRequestPage
 67575 Page_SetValueByCaption_SelectsThatOption
 67575 Page_ValueReadsTheOptionCaption
 67575 RequestPage_SetValueByCaption_SelectsThatOption
@@ -4187,8 +4190,22 @@
 67719 Run_ChildViewFiltersAnotherField
 67719 Run_LinkFilter_GroupAndLifetime
 67719 Run_SetTableViewFiltersAnotherField
+67722 Break_InOnPostDataItem
+67722 Break_InOnPostReport
+67722 Break_InOnPreDataItem
+67722 Break_InOnPreReport
+67722 Break_InProcedureCalledFromOnAfterGetRecord
 67722 Control_NoMode_FullRun
+67722 Quit_InOnPostDataItem
+67722 Quit_InOnPostReport
+67722 Quit_InOnPreDataItem
 67722 Quit_InOnPreReport
+67722 Quit_InProcedureCalledFromOnAfterGetRecord
+67722 Skip_InOnPostDataItem
+67722 Skip_InOnPostReport
+67722 Skip_InOnPreDataItem
+67722 Skip_InOnPreReport
+67722 Skip_InProcedureCalledFromOnAfterGetRecord
 67726 Execute_Headless_NoRequestPage
 67726 Execute_WriteInOnPostReport_SurvivesARollback
 67726 SaveAs_HandwrittenParameters_FilterAndNoVersionPart
@@ -6365,7 +6382,11 @@
 70200 EvaluateFromCode
 70200 EvaluateFromText
 70200 FromIntegerLackingAndNegative
+70201 ClearEnumField
+70201 ClearEnumFieldWithInitValue
 70201 ClearEnumInstanceAfterFilter
+70201 ClearEnumVariable
+70201 ClearEnumWithoutZeroOrdinal
 70201 ClearRecordWithEnumFields
 70202 GetWithInteger
 70202 GetWithOtherEnum
@@ -6928,6 +6949,7 @@
 71037 TextConst_Message_Error_Text
 71037 TextConst_StrSubstNo
 71037 TextConst_To_Text_Basics
+71042 DefaultValues
 71042 Format_AllValues
 71042 Format_Length
 71042 OrdinalsAndNames_Color
@@ -8150,6 +8172,8 @@
 73825 CurrReport_Members_SaveAs
 73825 Execute_And_SaveAs_Quit
 73825 Plain_Run
+73825 PostReport_Quit
+73825 PreDataItem_Skip_Break_Quit
 73825 PreReport_Quit
 73825 Quit_InAfterGetRecord
 73825 Skip_Break_Quit_InChildItem
@@ -8268,6 +8292,7 @@
 74000 ClearJson
 74001 ClearJsonShared
 74002 ClearCollections2
+74005 ClearEnumOption
 74007 ClearArrays
 74013 ClearRecordField
 74014 ClearParameters

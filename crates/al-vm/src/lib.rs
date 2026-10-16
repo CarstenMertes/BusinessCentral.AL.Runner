@@ -591,6 +591,7 @@ impl Session {
                 report_quit: false,
                 report_trigger: None,
                 report_flow: None,
+                flow_unwind: None,
                 request_only_page: false,
                 report_executed: Vec::new(),
                 report_preview_pinned: Vec::new(),
@@ -1034,6 +1035,10 @@ impl Session {
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
             Ok(()) => None,
+            // A report flow call (Skip, Break, Quit) leaves every procedure between the report trigger and the call.
+            Err(Signal::Exit(_)) if self.report.flow_unwind.is_some_and(|d| self.depth > d) => {
+                return Err(Signal::Exit(None));
+            }
             Err(Signal::Exit(v)) => v,
             Err(Signal::Break | Signal::Continue) => None,
             Err(e) => {

@@ -35,13 +35,24 @@ pub(crate) enum Flow {
 }
 
 /// Which kind of report trigger is running: what `CurrReport.Skip`, `Break` and `Quit` may do there.
+///
+/// Pinned by handlers/TestReportRuntimeContracts.al:322-368 (a data item's `OnAfterGetRecord`) and
+/// report/W3ReportSkipBreakQuit.al (the others, also from a procedure the trigger calls):
+///
+/// | trigger | Skip | Break | Quit |
+/// |---|---|---|---|
+/// | OnAfterGetRecord | skips the row | ends the rows | ends the run |
+/// | OnPreReport | no effect | no effect | ends the run |
+/// | OnPreDataItem | no effect | no rows, OnPostDataItem still runs | ends the run |
+/// | OnPostDataItem | no effect | no effect | ends the run |
+/// | OnPostReport | no effect | no effect | no effect |
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TrigKind {
-    /// A data item's `OnAfterGetRecord`: Skip, Break and Quit are pinned
-    /// (handlers/TestReportRuntimeContracts.al:322-368).
     Row,
-    /// `OnPreReport`: Quit is pinned (:355-358).
     Pre,
+    PreItem,
+    PostItem,
+    PostReport,
     /// Every other trigger: what the calls do there is not pinned.
     Other,
 }
@@ -568,11 +579,10 @@ impl Session {
             let o = &self.engine.program.objects[object];
             o.is_kind(al_ir::ObjKind::Report) || o.is_kind(al_ir::ObjKind::ReportExtension)
         };
+        // From the trigger itself or from a procedure it calls (report/W3ReportSkipBreakQuit.al:
+        // *_InProcedureCalledFromOnAfterGetRecord); every other trigger kind is not pinned.
         let allowed = match self.report.report_trigger {
-            Some((depth, kind)) if on_report && depth == self.depth => match flow {
-                Flow::Skip | Flow::Break => kind == TrigKind::Row,
-                Flow::Quit => kind != TrigKind::Other,
-            },
+            Some((depth, kind)) if on_report && self.depth >= depth => kind != TrigKind::Other,
             _ => false,
         };
         if !allowed {
@@ -581,6 +591,10 @@ impl Session {
             ));
         }
         self.report.report_flow = Some(flow);
+        // The trigger ends, and the procedures between it and the call end with it (`call_inner`).
+        if let Some((depth, _)) = self.report.report_trigger {
+            self.report.flow_unwind = Some(depth);
+        }
         Err(Signal::Exit(None))
     }
 
@@ -596,6 +610,7 @@ impl Session {
         self.report.report_flow = None;
         let r = self.call(object, routine, inst, Vec::new());
         self.report.report_trigger = saved;
+        self.report.flow_unwind = None;
         let flow = self.report.report_flow.take();
         r?;
         Ok(flow)
@@ -986,7 +1001,7 @@ impl Session {
             }
         }
         if let Some(r) = report.on_post {
-            self.call(run.object, r, run.base.clone(), Vec::new())?;
+            self.report_trigger_call(run.object, r, run.base.clone(), TrigKind::PostReport)?;
         }
         for k in 0..run.exts.len() {
             let (ext_inst, e) = &run.exts[k];
@@ -1076,8 +1091,13 @@ impl Session {
                 self.call(*e, t, ext_inst.clone(), Vec::new())?;
             }
         }
+        let mut no_rows = false;
         if let Some(t) = item.on_pre {
-            self.call(object, t, owner.clone(), Vec::new())?;
+            match self.report_trigger_call(object, t, owner.clone(), TrigKind::PreItem)? {
+                Some(Flow::Quit) => return Ok(true),
+                Some(Flow::Break) => no_rows = true,
+                _ => {}
+            }
         }
         for &(k, m) in &modifies {
             if let Some(t) = m.after_pre {
@@ -1086,7 +1106,7 @@ impl Session {
             }
         }
         self.ret_used = true;
-        let mut more = matches!(self.record_op(RecordOp::FindSet, &rec, &mut [])?, Value::Boolean(true));
+        let mut more = !no_rows && matches!(self.record_op(RecordOp::FindSet, &rec, &mut [])?, Value::Boolean(true));
         'rows: while more {
             if run.dataset {
                 self.dataset_autocalc(run, r, &rec)?;
@@ -1139,7 +1159,9 @@ impl Session {
             }
         }
         if let Some(t) = item.on_post {
-            self.call(object, t, owner.clone(), Vec::new())?;
+            if self.report_trigger_call(object, t, owner.clone(), TrigKind::PostItem)? == Some(Flow::Quit) {
+                return Ok(true);
+            }
         }
         for &(k, m) in &modifies {
             if let Some(t) = m.after_post {

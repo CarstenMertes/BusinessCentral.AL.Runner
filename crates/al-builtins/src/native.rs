@@ -1406,6 +1406,20 @@ fn value_kind(v: &Value) -> String {
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
 }
 
+/// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
+fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<Value, Signal> {
+    match r.as_deref() {
+        Some(v @ (Value::Date(..) | Value::Boolean(_))) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
+            match crate::format::try_format(v, 0, 0, &*c) {
+                Ok(t) => Ok(Value::Text(t.into())),
+                Err(e) => Err(Signal::Unsupported(e)),
+            }
+        }
+        other => Err(Signal::Unsupported(format!("{what}.ToText on {}", other.describe()))),
+    }
+}
+
 #[cfg(test)]
 pub(crate) mod tests {
     use super::*;
@@ -1780,19 +1794,5 @@ pub(crate) mod tests {
             f(&mut TestCtx::default(), Some(&mut v), &mut []),
             Ok(Value::Boolean(true))
         ));
-    }
-}
-
-/// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
-fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<Value, Signal> {
-    match r.as_deref() {
-        Some(v @ (Value::Date(..) | Value::Boolean(_))) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
-            match crate::format::try_format(v, 0, 0, &*c) {
-                Ok(t) => Ok(Value::Text(t.into())),
-                Err(e) => Err(Signal::Unsupported(e)),
-            }
-        }
-        other => Err(Signal::Unsupported(format!("{what}.ToText on {}", other.describe()))),
     }
 }

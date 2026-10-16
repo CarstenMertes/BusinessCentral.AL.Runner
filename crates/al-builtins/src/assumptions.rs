@@ -331,6 +331,12 @@ registry! {
         tests: "Report Selections.CopyFilters (SetFilter(Usage, GetFilter(Usage))): Report Selections Tests SalesQuoteSendByEmailWhenArchivingIsOn and 41 Object Selection tests of Tests-Misc.",
         probe: "An enum with a member whose caption differs from its name; SetFilter(F, Format(Member)) and SetFilter(F, 'caption'), then Count; a caption equal to another member's name.",
     },
+    RecordRefVariantToRecord => {
+        id: "recordref-variant-to-record",
+        assumed: "A Record variable assigned a Variant that holds a RecordRef of the same table takes a copy of the RecordRef's current record. A RecordRef of another table is refused.",
+        tests: "Electronic Document Format.GetDocumentNo (SalesInvoiceHeader := DocumentVariant): 43 tests of Tests-Misc, for example PEPPOL BIS BillingTests.ExportXmlToVerifyFileName.",
+        probe: "Rec := V where V is a Variant holding a RecordRef of the same table after FindFirst; the same for a RecordRef of another table, and for a RecordRef that is not open.",
+    },
     ReportThisPassedOn => {
         id: "report-this-passed-on",
         assumed: "`this` in a report can be passed on (to a var parameter of the report's type, in an event for example) and is the running report: its procedures, and those of the report extensions, work on it.",

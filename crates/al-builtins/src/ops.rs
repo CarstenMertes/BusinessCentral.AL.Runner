@@ -68,6 +68,20 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         (v @ Value::Codeunit(_), T::Codeunit(_) | T::Interface(_)) | (v @ Value::Library(..), T::Library(_)) => v,
         (v @ Value::Record(_), T::Record(..)) => v,
+        // A RecordRef (held by a Variant) assigned to a Record of the same table is its current record, which the
+        // assignment then copies (Microsoft's Electronic Document Format.GetDocumentNo: `SalesInvoiceHeader :=
+        // DocumentVariant` after `DocumentVariant.IsRecordRef`; Tests-Misc, "PEPPOL BIS BillingTests".
+        // ExportXmlToVerifyFileName; no corpus pin, assumption `recordref-variant-to-record`). Another table stays refused.
+        (Value::Library(_, cell), T::Record(table, _))
+            if matches!(&*cell.borrow(), LibraryValue::RecordRef(_)) =>
+        {
+            let LibraryValue::RecordRef(rec) = &*cell.borrow() else { unreachable!() };
+            if rec.borrow().table != *table {
+                return unsupported("conversion of RecordRef to Record of another table".to_string());
+            }
+            crate::assumptions::assume(crate::assumptions::Assumption::RecordRefVariantToRecord);
+            Value::Record(rec.clone())
+        }
         // A query handed on keeps its state: the callee works on the caller's query.
         (v @ Value::Query(_), T::Query(_)) => v,
         // A DotNet variable shares the object it is assigned (ADR-014; probe pending).

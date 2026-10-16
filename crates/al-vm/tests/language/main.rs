@@ -29,5 +29,6 @@ mod text_methods;
 mod text_scans;
 mod tree_free;
 mod typed_ops;
+mod variant_recordref_to_record;
 mod version_gates;
 mod xml_doctype;

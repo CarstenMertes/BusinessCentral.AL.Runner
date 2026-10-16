@@ -116,7 +116,7 @@ fn element(out: &mut String, indent: usize, name: &str, value: &str) -> Result<(
     // An empty value is `<Name></Name>` on one line: the probe lists `ReportHelpLink`, `TenantEntraId`
     // and others among the elements with a value although a test run states none.
     out.push_str(&" ".repeat(indent));
-    out.push_str(&format!("<{name}>{}</{name}>\n", escape(value)?));
+    out.push_str(&format!("<{name}>{}</{name}>\r\n", escape(value)?));
     Ok(())
 }
 
@@ -127,14 +127,14 @@ impl Header {
     /// How the other elements are grouped is not pinned: they follow `ReportMetadata` in the
     /// order the probe lists them, directly under `BCReportInformation`.
     fn write(&self, out: &mut String) -> Result<(), Signal> {
-        out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\n");
+        out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\r\n");
         out.push_str(&format!(
-            "<ReportDataSet name=\"{}\" id=\"{}\" language=\"{LANGUAGE}\" formatRegion=\"{LANGUAGE}\">\n",
+            "<ReportDataSet name=\"{}\" id=\"{}\" language=\"{LANGUAGE}\" formatRegion=\"{LANGUAGE}\">\r\n",
             escape_as(&self.report_name, true)?,
             escape_as(&self.report_id, true)?
         ));
-        out.push_str("  <BCReportInformation>\n");
-        out.push_str("    <ReportMetadata>\n");
+        out.push_str("  <BCReportInformation>\r\n");
+        out.push_str("    <ReportMetadata>\r\n");
         element(out, 6, "ExtensionId", &self.extension_id)?;
         element(out, 6, "ExtensionName", &self.extension_name)?;
         element(out, 6, "ExtensionPublisher", &self.extension_publisher)?;
@@ -147,7 +147,7 @@ impl Header {
         element(out, 6, "AboutThisReportTitle", &self.about_title)?;
         element(out, 6, "AboutThisReportText", &self.about_text)?;
         element(out, 6, "ReportHelpLink", &self.help_link)?;
-        out.push_str("    </ReportMetadata>\n");
+        out.push_str("    </ReportMetadata>\r\n");
         // Tenant and environment: nothing in the corpus says what a test run reports.
         element(out, 4, "TenantEntraId", "")?;
         element(out, 4, "EnvironmentName", "")?;
@@ -199,7 +199,7 @@ impl Header {
                 }
             }
         }
-        out.push_str("  </BCReportInformation>\n");
+        out.push_str("  </BCReportInformation>\r\n");
         Ok(())
     }
 }
@@ -243,7 +243,7 @@ pub(crate) fn decimal_formatter(places: Option<&str>) -> Result<String, Signal> 
     }
 }
 
-/// A Time as the dataset writes it: `h:mm:ss`, a narrow no-break space (U+202F), `AM` or `PM`
+/// A Time as the dataset writes it: `h:mm:ss`, a plain space, `AM` or `PM`
 /// (handlers/TestReportSaveAsColumnTypesContracts.al:12-14, 12:34:56 PM). The hour is not padded
 /// (the culture's pattern; no single-digit hour is measured) and milliseconds are refused.
 pub(crate) fn time_text(ms_of_day: i64) -> Result<String, Signal> {
@@ -252,10 +252,7 @@ pub(crate) fn time_text(ms_of_day: i64) -> Result<String, Signal> {
     }
     let (h, m, s) = (ms_of_day / 3_600_000, ms_of_day / 60_000 % 60, ms_of_day / 1000 % 60);
     let h12 = if h % 12 == 0 { 12 } else { h % 12 };
-    Ok(format!(
-        "{h12}:{m:02}:{s:02}\u{202F}{}",
-        if h < 12 { "AM" } else { "PM" }
-    ))
+    Ok(format!("{h12}:{m:02}:{s:02} {}", if h < 12 { "AM" } else { "PM" }))
 }
 
 /// A Date as the dataset writes it: `m/d/yyyy` (the same file, `3/5/2024`).
@@ -335,12 +332,12 @@ impl Dataset {
         if depth == 0 {
             if !self.root {
                 self.root = true;
-                self.body.push_str("  <DataItems>\n");
+                self.body.push_str("  <DataItems>\r\n");
             }
         } else if !*self.open.last().expect("depth > 0") {
             *self.open.last_mut().expect("depth > 0") = true;
             self.pad(2 + 4 * depth);
-            self.body.push_str("<DataItems>\n");
+            self.body.push_str("<DataItems>\r\n");
         }
         let at = 4 + 4 * depth;
         self.pad(at);
@@ -354,19 +351,19 @@ impl Dataset {
         if let Some((table, guid)) = identity {
             self.body.push_str(&format!(" tableId=\"{table}\" systemId=\"{guid}\""));
         }
-        self.body.push_str(">\n");
+        self.body.push_str(">\r\n");
         self.pad(at + 2);
-        self.body.push_str("<Columns>\n");
+        self.body.push_str("<Columns>\r\n");
         for c in columns {
             self.pad(at + 4);
             self.body.push_str(&format!("<Column name=\"{}\"", c.name));
             if let Some((k, v)) = &c.attribute {
                 self.body.push_str(&format!(" {k}=\"{v}\""));
             }
-            self.body.push_str(&format!(">{}</Column>\n", c.text));
+            self.body.push_str(&format!(">{}</Column>\r\n", c.text));
         }
         self.pad(at + 2);
-        self.body.push_str("</Columns>\n");
+        self.body.push_str("</Columns>\r\n");
         self.open.push(false);
         self.declares.push(declares_children);
         self.rows += 1;
@@ -379,13 +376,13 @@ impl Dataset {
         let at = 4 + 4 * self.open.len();
         if items_open {
             self.pad(at + 2);
-            self.body.push_str("</DataItems>\n");
+            self.body.push_str("</DataItems>\r\n");
         } else if declares {
             self.pad(at + 2);
-            self.body.push_str("<DataItems />\n");
+            self.body.push_str("<DataItems />\r\n");
         }
         self.pad(at);
-        self.body.push_str("</DataItem>\n");
+        self.body.push_str("</DataItem>\r\n");
     }
 
     /// The bytes of the .NET DataSet `TestRequestPage.SaveAsXml` writes: the schema of the rows (one
@@ -400,11 +397,11 @@ impl Dataset {
             );
         }
         let mut out = String::new();
-        out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\n<DataSet>\n");
-        out.push_str("  <xs:schema id=\"NewDataSet\" xmlns=\"\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:msdata=\"urn:schemas-microsoft-com:xml-msdata\">\n");
-        out.push_str("    <xs:element name=\"NewDataSet\" msdata:IsDataSet=\"true\" msdata:MainDataTable=\"Result\" msdata:Locale=\"en-US\">\n");
-        out.push_str("      <xs:complexType>\n        <xs:choice minOccurs=\"0\" maxOccurs=\"unbounded\">\n");
-        out.push_str("          <xs:element name=\"Result\" msdata:Locale=\"en-US\">\n            <xs:complexType>\n              <xs:sequence>\n");
+        out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\r\n<DataSet>\r\n");
+        out.push_str("  <xs:schema id=\"NewDataSet\" xmlns=\"\" xmlns:xs=\"http://www.w3.org/2001/XMLSchema\" xmlns:msdata=\"urn:schemas-microsoft-com:xml-msdata\">\r\n");
+        out.push_str("    <xs:element name=\"NewDataSet\" msdata:IsDataSet=\"true\" msdata:MainDataTable=\"Result\" msdata:Locale=\"en-US\">\r\n");
+        out.push_str("      <xs:complexType>\r\n        <xs:choice minOccurs=\"0\" maxOccurs=\"unbounded\">\r\n");
+        out.push_str("          <xs:element name=\"Result\" msdata:Locale=\"en-US\">\r\n            <xs:complexType>\r\n              <xs:sequence>\r\n");
         for (name, ty, _) in &self.flat[0] {
             let Some(ty) = ty else {
                 return unsupported(format!(
@@ -412,13 +409,13 @@ impl Dataset {
                 ));
             };
             out.push_str(&format!(
-                "                <xs:element name=\"{name}\" type=\"{ty}\" minOccurs=\"0\" />\n"
+                "                <xs:element name=\"{name}\" type=\"{ty}\" minOccurs=\"0\" />\r\n"
             ));
         }
-        out.push_str("              </xs:sequence>\n            </xs:complexType>\n          </xs:element>\n");
-        out.push_str("        </xs:choice>\n      </xs:complexType>\n    </xs:element>\n  </xs:schema>\n");
+        out.push_str("              </xs:sequence>\r\n            </xs:complexType>\r\n          </xs:element>\r\n");
+        out.push_str("        </xs:choice>\r\n      </xs:complexType>\r\n    </xs:element>\r\n  </xs:schema>\r\n");
         for row in &self.flat {
-            out.push_str("  <Result>\n");
+            out.push_str("  <Result>\r\n");
             for (name, _, text) in row {
                 // An empty value is no element in a DataSet; the probe has none, so it is refused.
                 if text.is_empty() {
@@ -426,11 +423,11 @@ impl Dataset {
                         "an empty value of column {name} in a SaveAsXml data file (not pinned)"
                     ));
                 }
-                out.push_str(&format!("    <{name}>{text}</{name}>\n"));
+                out.push_str(&format!("    <{name}>{text}</{name}>\r\n"));
             }
-            out.push_str("  </Result>\n");
+            out.push_str("  </Result>\r\n");
         }
-        out.push_str("</DataSet>\n");
+        out.push_str("</DataSet>\r\n");
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
         bytes.extend_from_slice(out.as_bytes());
         Ok(bytes)
@@ -444,25 +441,25 @@ impl Dataset {
         // handlers/TestReportSaveAsColumnTypesContracts.al:222-229: between the information block and
         // the data items.
         if !self.labels.is_empty() {
-            out.push_str("  <Labels>\n");
+            out.push_str("  <Labels>\r\n");
             for (name, text) in &self.labels {
                 out.push_str(&format!(
-                    "    <Label name=\"{}\">{}</Label>\n",
+                    "    <Label name=\"{}\">{}</Label>\r\n",
                     escape_as(name, true)?,
                     escape(text)?
                 ));
             }
-            out.push_str("  </Labels>\n");
+            out.push_str("  </Labels>\r\n");
         }
         out.push_str(&self.body);
         if self.root {
-            out.push_str("  </DataItems>\n");
+            out.push_str("  </DataItems>\r\n");
         } else if self.body.is_empty() {
             // A report with no row at all still writes the element (handlers/PWReportSaveAsColumns.al:
             // Labels_NoRowAtAll keeps every line that starts with `<DataItems` and sees one). Only that
             // prefix is pinned; the XmlWriter's short form is assumed (docs/probes-needed.md).
             al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DataItemsEmptyElement);
-            out.push_str("  <DataItems />\n");
+            out.push_str("  <DataItems />\r\n");
         }
         out.push_str("</ReportDataSet>");
         let mut bytes = vec![0xEF, 0xBB, 0xBF];
@@ -497,8 +494,8 @@ mod tests {
 
     #[test]
     fn time_and_date_follow_the_en_us_pattern() {
-        assert_eq!(time_text(45_296_000).unwrap(), "12:34:56\u{202F}PM");
-        assert_eq!(time_text(0).unwrap(), "12:00:00\u{202F}AM");
+        assert_eq!(time_text(45_296_000).unwrap(), "12:34:56 PM");
+        assert_eq!(time_text(0).unwrap(), "12:00:00 AM");
         assert!(time_text(1).is_err());
     }
 

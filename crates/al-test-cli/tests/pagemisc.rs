@@ -143,6 +143,32 @@ page 62096 "PM Close List"
     layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } }
     trigger OnQueryClosePage(CloseAction: Action): Boolean var P: Codeunit "PM Probe"; begin P.Note('List ' + Format(CloseAction) + ';'); exit(true); end;
 }
+page 62099 "PM Event Card"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout { area(Content) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { trigger OnValidate() var P: Codeunit "PM Probe"; begin P.Note('V;'); end; } } }
+}
+codeunit 62097 "PM Event Subs"
+{
+    [EventSubscriber(ObjectType::Page, Page::"PM Event Card", 'OnBeforeValidateEvent', 'Descr', false, false)]
+    local procedure Before(var Rec: Record "PM Row") var P: Codeunit "PM Probe"; begin P.Note('B(' + Rec.Descr + ');'); end;
+    [EventSubscriber(ObjectType::Page, Page::"PM Event Card", 'OnAfterValidateEvent', 'Descr', false, false)]
+    local procedure After(var Rec: Record "PM Row") var P: Codeunit "PM Probe"; begin P.Note('A(' + Rec.Descr + ');'); end;
+}
+page 62191 "PM SetRec List"
+{
+    PageType = List; SourceTable = "PM Row";
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+    trigger OnOpenPage() var P: Codeunit "PM Probe"; begin P.Note('open=' + Rec."No." + ';'); end;
+}
+page 62098 "PM Find Card"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout { area(Content) { field("No."; Rec."No.") { } } }
+    actions { area(Processing) { action(Refresh) { trigger OnAction() begin CurrPage.Update(false); end; } } }
+    trigger OnFindRecord(Which: Text): Boolean var P: Codeunit "PM Probe"; begin P.Note('F' + Which + ';'); exit(Rec.Find(Which)); end;
+    trigger OnAfterGetCurrRecord() var P: Codeunit "PM Probe"; begin P.Note('G;'); end;
+}
 page 62097 "PM Close Document"
 {
     PageType = Document; SourceTable = "PM Row";
@@ -687,18 +713,95 @@ fn test_page_close_reports_ok_for_list_and_document_pages() {
 
 // Issue 33: Base Application's Tests-ERM declare `[ModalPageHandler] procedure H(var P: Page "X"; var
 // Response: Action)` (22 tests). No corpus test has a handler whose parameter is a Page rather than a
-// TestPage, so what BC gives it is not pinned: the refusal says that, and does not call the shape wrong.
+// TestPage, and none has a page with triggers. Microsoft's `PaymentToleranceWarning` handler (page 591, whose OnOpenPage and
+// OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: assumed
+// (typed-modal-handler-skips-page-triggers, docs/probes-needed.md).
 #[test]
-fn a_modal_page_handler_with_a_page_parameter_is_refused_as_not_pinned() {
-    let o = outcomes(&format!(
+fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_none_of_its_triggers() {
+    passes(&format!(
         "{HELPERS}
         [Test] [HandlerFunctions('PageHandler')]
-        procedure WithPage() var W: Page \"PM Wizard\"; begin W.RunModal(); end;
+        procedure WithPage() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.RunModal(); Check('', P.Trace()); end;
         [ModalPageHandler] procedure PageHandler(var P: Page \"PM Wizard\"; var Response: Action) begin Response := Action::OK; end;"
     ));
-    assert!(
-        matches!(&o[0].1, Outcome::NotRun(why)
-            if why.contains("Page") && why.contains("not pinned") && !why.contains("not shaped like")),
-        "{o:?}"
+}
+
+// Base Application's Financial Report sets `RequestOptionsPage.Caption := Description` while its request page opens
+// (86 Tests-ERM tests were refused with "is not assignable"). The corpus pins `CurrPage.Caption := x` on a page
+// (handlers/TestPageCaption_Page.al:44); for a request page the assignment is accepted and not shown to the handler
+// (request-page-caption-set, docs/probes-needed.md).
+#[test]
+fn a_request_page_caption_can_be_set_from_the_code_of_the_report() {
+    let src = format!(
+        "{OBJECTS}
+report 62200 \"PM Req Report\"
+{{
+    ProcessingOnly = true;
+    requestpage
+    {{
+        layout {{ area(Content) {{ field(Dummy; DummyValue) {{ ApplicationArea = All; }} }} }}
+        trigger OnOpenPage() begin SetCaption(); end;
+    }}
+    var DummyValue: Integer;
+    local procedure SetCaption() begin RequestOptionsPage.Caption := 'Custom caption'; end;
+}}
+codeunit 62201 T {{ Subtype = Test;
+    [Test] [HandlerFunctions('Handler')]
+    procedure CaptionIsSet() begin Report.Run(Report::\"PM Req Report\"); end;
+    [RequestPageHandler] procedure Handler(var R: TestRequestPage \"PM Req Report\") begin
+        R.Cancel().Invoke(); end;
+}}"
     );
+    let o = al_testkit::outcomes_in(&src, "T");
+    assert_eq!(o.len(), 1, "{o:?}");
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+}
+
+// Base Application's document pages declare OnFindRecord and OnAfterGetCurrRecord and call CurrPage.Update (88 Tests-ERM tests
+// were refused). The corpus pins the Which strings only for a deleted row (pageupdate/TestPageUpdateGoneRow.al:390); that
+// the refresh asks OnFindRecord for the current row with `=` and then raises the row triggers is assumed
+// (update-refresh-onfindrecord, docs/probes-needed.md).
+#[test]
+fn current_page_update_on_a_page_with_on_find_record_and_row_triggers_finds_the_current_row_again() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Refreshes() var C: TestPage \"PM Find Card\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'F1'; R.Insert();
+            C.OpenEdit(); C.GoToRecord(R); P.Reset(); C.Refresh.Invoke();
+            Check('F=;G;', P.Trace()); Check('F1', C.\"No.\".Value); C.Close(); end;"
+    ));
+}
+
+// record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al: SetValue on a control raises the page's
+// OnBeforeValidateEvent and OnAfterValidateEvent for that control around the control's own OnValidate (80 Tests-ERM tests
+// were refused).
+#[test]
+fn set_value_raises_the_page_validate_events_around_the_control_trigger() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Events() var C: TestPage \"PM Event Card\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'E1'; R.Insert();
+            C.OpenEdit(); C.GoToRecord(R); P.Reset(); C.Descr.SetValue('hello');
+            Check('B(hello);V;A(hello);', P.Trace()); C.Close(); end;"
+    ));
+}
+
+// Base Application's VendEntry-Apply Posted Entries hands "Apply Vendor Entries" `SetRecord(Entry)` and then `SetTableView(Entry)`;
+// the page reads `Rec."Vendor No."` in OnOpenPage (39 Tests-ERM tests failed with "The Vendor does not exist ... No.=''").
+// SetRecord gives the position and SetTableView the filters, so the second does not blank the record of the first
+// (handlers/TestPageModalNewRowLine_Tests.al pins SetTableView alone: no position; docs/probes-needed.md for the pair).
+#[test]
+fn set_table_view_after_set_record_keeps_the_record_the_page_opens_on() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Pair() var R: Record \"PM Row\"; V: Record \"PM Row\"; W: Page \"PM SetRec List\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'S1'; R.Descr := 'x'; R.Insert(); R.\"No.\" := 'S2'; R.Descr := 'y'; R.Insert();
+            V.SetRange(Descr, 'y'); V.FindFirst(); P.Reset();
+            W.SetRecord(V); W.SetTableView(V); W.RunModal();
+            Check('open=S2;', P.Trace()); end;
+        [ModalPageHandler] procedure H(var T: TestPage \"PM SetRec List\") begin end;"
+    ));
 }

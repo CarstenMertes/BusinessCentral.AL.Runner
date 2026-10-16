@@ -73,11 +73,11 @@ pub fn parse(text: &str) -> Result<Elem, ReadFailure> {
     }
 }
 
-/// The document text as an export writes it: the declaration, a line feed, then the root with
+/// The document text as an export writes it: the declaration, a carriage return and a line feed, then the root with
 /// two spaces of indentation per level. An element without content is `<X />`; an element with
-/// text only is on one line (xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText).
+/// text only is on one line (xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText reads it line by line, which drops the CR; the lengths in xmlport/lt-xmlport-query-datatransfer/XpTExportBasic.al count it).
 pub fn serialize(root: &Elem) -> String {
-    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\n");
+    let mut out = String::from("<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\r\n");
     write_elem(root, 0, &mut out);
     out
 }
@@ -101,12 +101,12 @@ fn write_elem(e: &Elem, level: usize, out: &mut String) {
     }
     out.push('>');
     if e.children.iter().any(|c| matches!(c, Node::Elem(_))) {
-        out.push('\n');
+        out.push_str("\r\n");
         for c in &e.children {
             match c {
                 Node::Elem(c) => {
                     write_elem(c, level + 1, out);
-                    out.push('\n');
+                    out.push_str("\r\n");
                 }
                 Node::Text(t) => crate::xml::escape_text(t, out),
             }
@@ -224,7 +224,7 @@ mod tests {
         // xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText
         assert_eq!(
             serialize(&root),
-            "<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\n<Root>\n  <U Attr=\"a&quot;b&amp;&lt;c&gt;\">\n    <EntryNo>1</EntryNo>\n    <Txt />\n  </U>\n</Root>"
+            "<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\r\n<Root>\r\n  <U Attr=\"a&quot;b&amp;&lt;c&gt;\">\r\n    <EntryNo>1</EntryNo>\r\n    <Txt />\r\n  </U>\r\n</Root>"
         );
     }
 

@@ -361,6 +361,12 @@ fn fail(f: crate::format::FormatFail) -> String {
 }
 
 fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -> Result<String, String> {
+    // `<C,GBP>`: the currency code Base Application's Amount Auto Format puts in front of a format string. Format accepts it
+    // and writes nothing for it (assumption `format-currency-prefix`).
+    if code.starts_with("C,") && code.len() > 2 {
+        crate::assumptions::assume(crate::assumptions::Assumption::FormatCurrencyPrefix);
+        return Ok(String::new());
+    }
     if let Some(n) = numeric {
         return numeric_code(n, code, v, ctx);
     }
@@ -461,6 +467,20 @@ mod tests {
 
     fn fmt(v: Value, template: &str) -> Result<Value, Signal> {
         call("System.Format#2", vec![v, Value::Integer(0), t(template)])
+    }
+
+    // Microsoft's Remittance Advice and Finance Charge Memo reports: Format(Amount, 0, AutoFormat.ResolveAutoFormat(.., 'GBP')) =
+    // `<C,GBP><Precision,2:2><Standard Format,0>` (28 Tests-ERM tests raised the invalid-format error).
+    #[test]
+    fn the_currency_prefix_of_an_auto_format_string_writes_nothing() {
+        let out = fmt(
+            Value::Decimal(rust_decimal::Decimal::new(12345, 2)),
+            "<C,GBP><Precision,2:2><Standard Format,0>",
+        );
+        assert!(
+            matches!(out, Ok(Value::Text(ref s)) if s.as_str() == "123.45"),
+            "{out:?}"
+        );
     }
     fn text(r: Result<Value, Signal>) -> String {
         match r {

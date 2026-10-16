@@ -57,6 +57,17 @@ fn real_main() -> ExitCode {
             print!("{}", al_testrun::flagged::list(&root));
             ExitCode::SUCCESS
         }
+        Command::CacheClear(dir) => {
+            let folder =
+                al_testrun::compile_cache::CompileCache::under(&al_deps::cache::cache_root_from_env(dir.as_deref()));
+            let (files, bytes) = al_testrun::compile_cache::clear(&folder);
+            println!(
+                "compile cache {}: removed {files} file(s), {:.1} MB",
+                folder.display(),
+                bytes as f64 / 1e6
+            );
+            ExitCode::SUCCESS
+        }
         Command::Warm(a) => match run::warm(&a) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {

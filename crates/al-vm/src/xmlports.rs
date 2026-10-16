@@ -583,6 +583,20 @@ impl Session {
         }
         let rest = bytes.strip_prefix(&[0xEF, 0xBB, 0xBF]).unwrap_or(&bytes);
         match std::str::from_utf8(rest) {
+            // A document that declares utf-16 in bytes without a UTF-16 byte order mark cannot be read
+            // (xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:Import_PrologUtf16Declared).
+            Ok(t)
+                if t.starts_with("<?xml")
+                    && t.split_once("?>").is_some_and(|(decl, _)| {
+                        let d = decl.to_ascii_lowercase();
+                        d.contains("encoding=\"utf-16\"") || d.contains("encoding='utf-16'")
+                    }) =>
+            {
+                Err(xerr(
+                    "There is no Unicode byte order mark. Cannot switch to Unicode.",
+                    "XmlPortImport:Xml",
+                ))
+            }
             Ok(t) => Ok(t.to_string()),
             Err(_) => unsupported("XmlPort import of a source that is not UTF-8 or UTF-16 (not pinned)"),
         }
@@ -755,6 +769,17 @@ impl Session {
                 }
             };
             self.xp_value_xml(text, &ty, members.map(|(_, m)| m))?
+        } else if !schema.xp().format_evaluate_declared {
+            // Without a FormatEvaluate the display text is read and, when that is no value, the XML form.
+            match self.xp_value(text, &ty, false) {
+                Ok(v) => v,
+                Err(Signal::Error(first)) => match self.xp_value_xml(text, &ty, None) {
+                    Ok(v) => v,
+                    Err(Signal::Error(_)) => return Err(Signal::Error(first)),
+                    Err(other) => return Err(other),
+                },
+                Err(other) => return Err(other),
+            }
         } else {
             self.xp_value(text, &ty, false)?
         };
@@ -955,7 +980,10 @@ impl Session {
                 }
             }
             RtType::Text(_) | RtType::Code(_) | RtType::Integer | RtType::BigInteger => self.xp_value(text, ty, false),
-            RtType::Date | RtType::DateTime | RtType::Decimal if text.is_empty() => Ok(self.default_value(ty)),
+            // An empty element is the type's default, a Boolean's too (XpTImportBasic.al:Import_EmptyValuesExplicit).
+            RtType::Date | RtType::DateTime | RtType::Decimal | RtType::Boolean if text.is_empty() => {
+                Ok(self.default_value(ty))
+            }
             RtType::Date => {
                 match al_builtins::iso::parse_date(text).filter(|_| text.as_bytes().get(4) == Some(&b'-')) {
                     Some(d) => Ok(Value::Date(d, false)),

@@ -104,7 +104,10 @@ fn special(id: al_builtins::builtin_id::BuiltinId) -> bool {
 fn vm_class(id: al_builtins::builtin_id::BuiltinId) -> bool {
     let class = id.class();
     class != Class::Other && class != Class::InStreamRead
-        || matches!(id, ids::REQUESTPAGE_UPDATE_1 | ids::DATABASE_ISINWRITETRANSACTION_1)
+        || matches!(
+            id,
+            ids::REQUESTPAGE_UPDATE_1 | ids::REQUESTPAGE_CAPTION_1 | ids::DATABASE_ISINWRITETRANSACTION_1
+        )
 }
 
 /// An expression that cannot fail and writes nothing.

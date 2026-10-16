@@ -401,9 +401,10 @@ pub(crate) fn property_view(raw: &str) -> String {
     property_view_with(raw, true)
 }
 
-/// [`property_view`] for a part control's `SubPageView`: a quoted filter stays as written, so a view like
-/// `filter('>10')` is still refused. Opening a page with six such parts logs one more OnAfterGetRecord per part than BC
-/// (misc/lt-probes-needed-7/PnGPartTriggers.al:OpenOrderOfHostWithSixParts, the same gap as OpenOrderOfHostAndPart).
+/// [`property_view`] for a part control's `SubPageView`: a quoted filter stays as written, so a view like `filter('>10')` is
+/// refused. Opening the page "LT PnG Doc Parts" with it logs one more OnAfterGetRecord for the part that views the linked field than
+/// BC does (misc/lt-probes-needed-7/PnGPartTriggers.al:OpenOrderOfHostWithSixParts, 17 reads where this reads 18), and why is not
+/// pinned.
 pub(crate) fn sub_page_view_text(raw: &str) -> String {
     property_view_with(raw, false)
 }

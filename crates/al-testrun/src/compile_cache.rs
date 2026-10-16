@@ -17,6 +17,9 @@ pub struct CompileCache {
     pub dir: PathBuf,
     /// A miss is an error (CI: the measured run must be a hit).
     pub require: bool,
+    /// `--rebuild-compile-cache`: no entry is read, every one this run needs is built and written anew (the
+    /// layers, the source index and the install baseline). Other entries in the folder stay.
+    pub rebuild: bool,
 }
 
 impl CompileCache {
@@ -109,12 +112,32 @@ pub fn runtime_build() -> [u8; 32] {
     *HASH.get_or_init(|| {
         let bytes = std::env::current_exe().and_then(std::fs::read);
         match bytes {
-            Ok(b) => Sha256::digest(&b).into(),
+            Ok(b) => hash_build_bytes(&b),
             // Without the executable the key cannot say which compiler made an entry: a hash of
             // the time would only ever miss. Use a value no file can match.
             Err(e) => Sha256::digest(format!("no executable: {e}").as_bytes()).into(),
         }
     })
+}
+
+/// The chunk size of [`hash_build_bytes`].
+pub const BUILD_HASH_CHUNK: usize = 1 << 20;
+
+/// A hash of the bytes of an executable: SHA-256 over the length and the SHA-256 of each chunk, in
+/// order. The chunks are hashed in parallel (one SHA-256 over the whole executable runs on a single core while the
+/// others wait). It only has to change with every byte, the length and the
+/// chunk order; it is a cache key, not a published digest.
+pub fn hash_build_bytes(bytes: &[u8]) -> [u8; 32] {
+    let per_chunk: Vec<[u8; 32]> = bytes
+        .par_chunks(BUILD_HASH_CHUNK)
+        .map(|c| Sha256::digest(c).into())
+        .collect();
+    let mut h = Sha256::new();
+    h.update((bytes.len() as u64).to_le_bytes());
+    for c in &per_chunk {
+        h.update(c);
+    }
+    h.finalize().into()
 }
 
 /// A hash of the source of an app: every path and every byte.
@@ -428,7 +451,10 @@ pub fn prune(dir: &Path, keep: &[PathBuf]) -> Vec<PathBuf> {
         .flatten()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "alci"));
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|x| x == "alci" || x == crate::baseline_cache::EXTENSION)
+        });
     for path in list(dir).into_iter().map(|(p, _)| p).chain(indexes) {
         if keep.contains(&path) {
             continue;
@@ -443,6 +469,32 @@ pub fn prune(dir: &Path, keep: &[PathBuf]) -> Vec<PathBuf> {
         }
     }
     removed
+}
+
+/// Removes every entry of the compile cache in `dir`: the layers (`alcc`), the source indexes (`alci`), the install
+/// baselines (`albr`) and the temporary files of a write that did not finish. Returns how many files went and
+/// how many bytes they held. Other files in the folder stay.
+pub fn clear(dir: &Path) -> (usize, u64) {
+    let (mut files, mut bytes) = (0, 0);
+    for e in std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok()) {
+        let path = e.path();
+        let ours = path.extension().is_some_and(|x| {
+            x == "alcc"
+                || x == "alci"
+                || x == crate::baseline_cache::EXTENSION
+                || x.to_string_lossy().starts_with("tmp")
+        }) || path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.') && n.to_string_lossy().contains(".tmp-"));
+        if ours {
+            let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(&path).is_ok() {
+                files += 1;
+                bytes += len;
+            }
+        }
+    }
+    (files, bytes)
 }
 
 /// The entry files in `dir` and their sizes.
@@ -498,7 +550,8 @@ pub fn open_or_build_with(
     let mut entries: Vec<Option<Entry>> = Vec::new();
     for (range, key) in &planned {
         let file = cc.dir.join(key.file_name());
-        let found = match read_entry(&cc.dir, key) {
+        // `--rebuild-compile-cache`: nothing is read; the layers are built and written again.
+        let found = match if cc.rebuild { Ok(None) } else { read_entry(&cc.dir, key) } {
             Ok(Some((e, _))) => Some(e),
             Ok(None) => None,
             Err(note) => {

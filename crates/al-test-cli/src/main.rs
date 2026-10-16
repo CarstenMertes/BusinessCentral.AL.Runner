@@ -447,6 +447,7 @@ fn run_version(
             args.cache_dir.as_deref(),
         )),
         require: args.require_compile_cache,
+        rebuild: false,
     });
     if args.build_compile_cache {
         let cc = compile_cache
@@ -573,6 +574,8 @@ fn run_version(
         &runs,
         &opts,
     )?;
+    // Nothing waits for the drop of the runtime after the report is written.
+    let rt = runtime::Retiring::new(rt);
     let p = &rt.phases;
     let sidecar_stats = sidecar_host.stats();
     sidecar_host.shutdown();

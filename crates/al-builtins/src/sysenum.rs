@@ -273,3 +273,21 @@ pub fn is_platform(members: &[String]) -> bool {
             members.len() == members_static(name).len() && members.iter().zip(members_static(name)).all(|(a, b)| a == b)
         })
 }
+
+/// The ordinal the platform gives member `position` of a platform option whose ordinals are not its positions, shown by
+/// `Format(x, 0, 2)`: Verbosity and TelemetryScope count from 1, the web service result codes are the HTTP codes
+/// (misc/lt-probes-needed-2/PnBErrorsCollections.al:VerbosityAndDataClassification_Ordinals,
+/// WebServiceActionContext_Ordinals_AndDuplicateKey; session/TestLogMessage... `enum_ints`).
+pub fn platform_ordinal(members: &[String], position: i32) -> Option<i32> {
+    let same = |name: &str| {
+        let known = members_static(name);
+        members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
+    };
+    if same("verbosity") || same("telemetryscope") {
+        return Some(position + 1);
+    }
+    if same("webserviceactionresultcode") {
+        return [0, 200, 201, 200, 204].get(usize::try_from(position).ok()?).copied();
+    }
+    None
+}

@@ -269,7 +269,7 @@ impl Session {
                 return Ok(());
             }
             self.load_first_row(st, mode, record.is_some())?;
-            self.sync_parts(st)
+            self.sync_parts_at_open(st)
         })();
         if let Err(e) = result {
             // The open raises the error itself and leaves the variable closed

@@ -149,6 +149,11 @@ pub trait TableProvider: Send + Sync {
     fn cost(&self) -> Option<String> {
         None
     }
+    /// What the rows are, for a key of something computed from them (the install baseline in the compile cache):
+    /// the same text means the same rows. `None`: the source cannot say, and nothing is kept for it.
+    fn identity(&self) -> Option<String> {
+        None
+    }
     /// The number sequences of the restored database (a company's own and the global ones). Additive: a
     /// provider without any answers none.
     fn sequences(&self) -> Vec<TestSequence> {

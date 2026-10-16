@@ -68,6 +68,10 @@ pub trait Ctx: FormatCtx {
 
     fn last_error(&self) -> AlError;
     fn set_last_error(&mut self, e: AlError);
+    /// Whether the run has the newer behaviour of `gate` (ADR-015 3.4); a context with no target has every gate.
+    fn gate(&self, _gate: al_version::Gate) -> bool {
+        true
+    }
     /// Record methods (`Record.Insert`, ...) need the store, triggers and
     /// table metadata: the VM implements them. `method` is the catalog name.
     fn record(
@@ -470,6 +474,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Report.ObjectId#1", vm_only),
     ("Report.Preview#1", vm_only),
     ("RequestPage.Update#1", vm_only),
+    ("RequestPage.Caption#1", vm_only),
     ("Report.Language#1", vm_only),
     ("Report.FormatRegion#1", vm_only),
     // SaveAs with a stream runs the report and writes its dataset (al-vm reports.rs); SaveAs to a file
@@ -734,6 +739,8 @@ fn int_arg(args: &[Value], i: usize) -> Option<i64> {
         Value::BigInteger(n) => Some(*n),
         Value::Byte(n) => Some(i64::from(*n)),
         Value::Char(n) => Some(i64::from(*n)),
+        // An Option takes the place of an Integer (record/lt-record-conversion-assumptions/OptCopyStr_risky.al: CopyStr('abcdef', Opt)).
+        Value::Option(n, _) => Some(i64::from(*n)),
         _ => None,
     }
 }
@@ -827,6 +834,15 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
             return r.map(|s| Value::Text(s.into()));
         }
     }
+    // The first day of the calendar (00010101D) is not a valid date to format with the numbers 0, 1, 4 and 9 (types/lt-datetime/
+    // Format.al:Date_Format_0D_And_Bounds); the keys and messages the runtime builds itself format it all the same.
+    if matches!(&args[0], Value::Date(1, _)) && matches!(std, 0 | 1 | 4 | 9) {
+        return Err(Signal::Error(Box::new(AlError {
+            message: "The date is not valid.".into(),
+            code: "DateInvalid".into(),
+            call_stack: String::new(),
+        })));
+    }
     // A record as a whole, a RecordRef and a FieldRef need the table's schema.
     let composite = matches!(&args[0], Value::Record(_))
         || matches!(
@@ -862,7 +878,7 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
         .map_err(|e| match e.strip_prefix(crate::formatstr::INVALID_FORMAT_MARK) {
             Some(template) => Signal::Error(Box::new(AlError {
                 message: format!(
-                    "An invalid field or attribute has been specified for the 'Format' property.\r\\\r\\{template}"
+                    "An invalid field or attribute has been specified for the 'Format' property.\\\\{template}"
                 ),
                 code: "InvalidFormatString".into(),
                 call_stack: String::new(),

@@ -915,7 +915,10 @@ impl Session {
         record: Option<Rec>,
         handler: Handler,
     ) -> Result<Value, Signal> {
-        for t in [
+        // Whether the page's own triggers run is not pinned. They are assumed not to: Microsoft's Payment Tolerance Warning
+        // (Tests-ERM `PaymentToleranceWarning` handler, `InitializeOption(OptionValue)`) sets the page's result in the
+        // handler, and its OnOpenPage and OnQueryClosePage would overwrite that result if they ran.
+        if [
             "oninit",
             "onopenpage",
             "onclosepage",
@@ -924,12 +927,11 @@ impl Session {
             "onaftergetcurrrecord",
             "onfindrecord",
             "onnextrecord",
-        ] {
-            if self.declares(st, t) {
-                return unsupported(format!(
-                    "a Page-typed ModalPageHandler for a page that declares {t} (whether its triggers run is not pinned)"
-                ));
-            }
+        ]
+        .iter()
+        .any(|t| self.declares(st, t))
+        {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TypedModalHandlerSkipsPageTriggers);
         }
         self.page_instance(st)?;
         if self.has_source(st) {

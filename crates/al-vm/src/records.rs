@@ -19,7 +19,7 @@ use std::sync::Arc;
 pub(crate) type Rec = Rc<RefCell<RecordState>>;
 
 /// BC's line break inside error texts: a carriage return and a backslash.
-pub(crate) const BR: &str = "\r\\";
+pub(crate) const BR: &str = "\\";
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
@@ -279,7 +279,11 @@ impl Session {
             }
             // CurrFieldNo is 0 for a Validate called from code (the field's own OnValidate
             // sees 0: handlers/TestPageCurrFieldNo_Tests.al); docs/probes-needed.md for the event.
-            "onbeforevalidateevent" | "onaftervalidateevent" => (&["Rec", "xRec", "CurrFieldNo"], Value::Integer(0)),
+            // Through a TestPage write it is the field's number (record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al:
+            // `cur=2`).
+            "onbeforevalidateevent" | "onaftervalidateevent" => {
+                (&["Rec", "xRec", "CurrFieldNo"], Value::Integer(self.curr_field_of(rec)))
+            }
             other => return unsupported(format!("table event {other}")),
         };
         let mut args = vec![Value::Record(rec.clone())];
@@ -924,10 +928,15 @@ impl Session {
             });
             r.load.partial = false;
         }
-        let pk = self.table(rec).map(|t| t.primary_key(&row))?;
+        let t = self.table(rec)?;
+        let pk = t.primary_key(&row);
+        // The record remembers the row as its own only when the row passed its filters when it was read; a filter set later forgets it
+        // (record/TestFindSetSortKeyModify.al:OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow against misc/lt-probes-needed-3/
+        // PnC02Filters.al:FindEqual_OutsideFilter and record/lt-record-read/RcAMisc.al:MarkedOnly_With_Find_Get_And_Order).
+        let passes = self.row_passes(rec, &t, &row)?;
         {
             let mut r = rec.borrow_mut();
-            r.position = Some(pk);
+            r.position = passes.then_some(pk);
             r.fields = row;
         }
         self.auto_calculate(rec)
@@ -1666,7 +1675,7 @@ impl Session {
                 if !valid {
                     return Err(Signal::Error(Box::new(AlError {
                         message: format!(
-                            "There is an invalid character in the Find expression '{which}'.\\r\\\\r\\In Find expressions, you can use =, >, and < in combinations, where each sign can only appear once, or you can use - or +."
+                            "There is an invalid character in the Find expression '{which}'.\\\\In Find expressions, you can use =, >, and < in combinations, where each sign can only appear once, or you can use - or +."
                         ),
                         code: "DB:BadSearchMethod".into(),
                         call_stack: String::new(),
@@ -1826,6 +1835,7 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let mut r = rec.borrow_mut();
+                r.position = None;
                 let group = r.filter_group;
                 r.filters.retain(|f| !(f.field == pos && f.group == group));
                 if let Some(from) = args.get(1) {
@@ -1844,6 +1854,7 @@ impl Session {
             }
             RecordOp::SetFilter => {
                 let pos = arg_pos(args, 0)?;
+                rec.borrow_mut().position = None;
                 let ty = t.fields[pos].ty.clone();
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
                 // An empty filter text removes the field's filter: a Query column does so
@@ -1896,6 +1907,11 @@ impl Session {
                 // SetAutoCalcFields_SurvivesResetAndClear).
                 let mut r = rec.borrow_mut();
                 r.filters.clear();
+                // The filter group goes back to 0 (misc/lt-probes-needed-5/PnE08RecordMisc.al:RecordRef_FilterGroup `afterReset`).
+                r.filter_group = 0;
+                // Reset drops the marks too (record/lt-record-read/RcAMisc.al:ClearMarks_And_Reset `markAfterReset`).
+                r.marks.clear();
+                r.marked_only = false;
                 r.key = 0;
                 r.adhoc = None;
                 r.ascending = true;

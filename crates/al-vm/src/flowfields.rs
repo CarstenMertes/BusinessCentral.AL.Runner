@@ -68,7 +68,7 @@ fn error_code<T>(message: String, code: &str) -> Result<T, Signal> {
 }
 
 /// BC's line break inside error texts: a carriage return and a backslash.
-const BR: &str = "\r\\";
+const BR: &str = "\\";
 
 /// How BC names a field type in the "must have the same type" message.
 fn type_name(t: &RtType) -> String {

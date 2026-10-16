@@ -199,6 +199,7 @@ fn opts(dir: &std::path::Path) -> RunOptions {
         compile_cache: Some(CompileCache {
             dir: dir.to_path_buf(),
             require: false,
+            rebuild: false,
         }),
         only: SELECTION.with(|s| s.borrow().clone()),
         ..Default::default()

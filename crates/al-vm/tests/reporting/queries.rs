@@ -481,6 +481,17 @@ query 60271 "QFF Header Dated"
         }
     }
 }
+query 60272 "QFF Header Sum"
+{
+    QueryType = Normal;
+    elements
+    {
+        dataitem(QffHeader; "QFF Header")
+        {
+            column(Total; "Total Amount") { Method = Sum; }
+        }
+    }
+}
 query 68532 "QRW Amounts"
 {
     QueryType = Normal;
@@ -1251,6 +1262,26 @@ fn flow_field_column_is_calculated_with_the_flow_filter_of_the_query() {
         end;",
     ));
     assert_eq!(text(r), "15;14;");
+}
+
+// Base Application's query "Cust. Ledg. Entry Remain. Amt." sums the FlowField "Remaining Amt. (LCY)" (426 Tests-ERM tests):
+// Method = Sum over a FlowField adds the value calculated for each row. Not pinned by the corpus (docs/probes-needed.md).
+#[test]
+fn sum_over_a_flow_field_adds_the_value_calculated_per_row() {
+    let r = run(&with(
+        "",
+        "procedure F(): Text
+        var Q: Query \"QFF Header Sum\"; H: Record \"QFF Header\"; L: Record \"QFF Line\"; Seen: Text;
+        begin
+            H.\"No.\" := 'H1'; H.Insert(); H.\"No.\" := 'H2'; H.Insert();
+            L.\"Entry No.\" := 1; L.\"Header No.\" := 'H1'; L.Amount := 10; L.Insert();
+            L.\"Entry No.\" := 2; L.\"Header No.\" := 'H1'; L.Amount := 4; L.Insert();
+            L.\"Entry No.\" := 3; L.\"Header No.\" := 'H2'; L.Amount := 1; L.Insert();
+            Q.Open(); while Q.Read() do Seen += Format(Q.Total) + ';'; Q.Close();
+            exit(Seen);
+        end;",
+    ));
+    assert_eq!(text(r), "15;");
 }
 
 // query/TestQueryOuterJoinDescendingSaveAsContracts.al: rows that tie under a descending OrderBy

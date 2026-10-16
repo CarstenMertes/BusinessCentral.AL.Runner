@@ -498,7 +498,7 @@ fn calcfields_refuses_what_is_not_a_calculable_flow_field() {
         ),
         (
             "BadAvg",
-            "The following fields must have the same type:\r\\\r\\Field: BadAvg <-- Qty\r\\Table: FF Head <-- FF Line\r\\Type: Decimal <-- Integer",
+            "The following fields must have the same type:\\\\Field: BadAvg <-- Qty\\Table: FF Head <-- FF Line\\Type: Decimal <-- Integer",
         ),
     ] {
         let r = run_lines(&format!(
@@ -820,7 +820,7 @@ fn renaming_the_auto_increment_value_is_refused_but_the_rest_of_the_key_is_not()
     );
     assert_eq!(
         text(r),
-        "BYesNo|You cannot change the value of an AutoIncrement field.\r\\\r\\Field: Entry No.\r\\Table: AI Composite\r\\\r\\Identification fields and values:\r\\Entry No.='51',Code='B'"
+        "BYesNo|You cannot change the value of an AutoIncrement field.\\\\Field: Entry No.\\Table: AI Composite\\\\Identification fields and values:\\Entry No.='51',Code='B'"
     );
 }
 

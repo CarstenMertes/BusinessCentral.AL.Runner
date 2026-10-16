@@ -16,7 +16,7 @@ fn a_document_type_is_made_read_written_and_added_to_a_document() {
         run("Dt := XmlDocumentType.Create('a', 'p', 's.dtd', '<!ELEMENT a EMPTY>'); Dt.GetName(S); Dt.GetSystemId(T); S += '|' + T;
              Doc := XmlDocument.Create(Dt); Doc.Add(XmlElement.Create('a')); Doc.WriteTo(T);
              exit(S + '|' + T + '|' + Format(Doc.GetChildNodes().Count()));"),
-        "a|s.dtd|<?xml version=\"1.0\" encoding=\"utf-16\"?>\n<!DOCTYPE a PUBLIC \"p\" \"s.dtd\"[<!ELEMENT a EMPTY>]>\n<a />|2"
+        "a|s.dtd|<?xml version=\"1.0\" encoding=\"utf-16\"?>\r\n<!DOCTYPE a PUBLIC \"p\" \"s.dtd\"[<!ELEMENT a EMPTY>]>\r\n<a />|2"
     );
 }
 
@@ -80,6 +80,6 @@ fn xml_sibling_and_content_rules_of_the_p90_families() {
         X.AddAfterSelf(R.AsXmlNode()); Doc.WriteTo(T); exit(S + '|' + T); end; }";
     assert_eq!(
         al_testkit::text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
-        "Argument|Argument|<?xml version=\"1.0\" encoding=\"utf-16\"?>\n<r>\n  <a /><![CDATA[x]]><r><a /><![CDATA[x]]></r></r>"
+        "Argument|Argument|<?xml version=\"1.0\" encoding=\"utf-16\"?>\r\n<r>\r\n  <a /><![CDATA[x]]><r><a /><![CDATA[x]]></r></r>"
     );
 }

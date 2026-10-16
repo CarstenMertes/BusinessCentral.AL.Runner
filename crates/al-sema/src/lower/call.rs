@@ -361,6 +361,9 @@ impl Lowerer<'_> {
                         ir::Arg::Ref(self.place(a)?)
                     } else if let Some(el) = elem {
                         ir::Arg::Value(ir::Expr::Convert(self.rt(&el)?, Box::new(self.expr(a)?)))
+                    // A Variant argument with a standard format number 3 to 8 raises an error that names the type
+                    // 'Variant' (corpus types/lt-scalars/ScT70052.al): `System.FormatVariant#1` checks the number when it runs,
+                    // a literal, a variable or an expression alike.
                     } else if id.starts_with("System.Format#") && i == 0 {
                         ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
                     // The substituted values of StrSubstNo, Message and Error are `Format`ted: an Option

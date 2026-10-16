@@ -260,6 +260,8 @@ impl Session {
                 }
                 // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; the full
                 // text and the code AL:MetadataNotFound: recordref/TestRecordRefRuntimeContracts.al:30.
+                // Table 0 opens nothing and raises nothing (recordref/lt-refs/RfTOpen.al:Open_InvalidTableNumbers `zero`).
+                0 => Ok(Value::Null),
                 n => Err(self.missing_object("Table", n)),
             };
         };
@@ -308,8 +310,19 @@ impl Session {
             // (recordref/TestRecordRefGetSetTableContracts.al:30-60).
             // A ref that was never opened takes its table from the record (Assert.RecordIsEmpty does this).
             "GetTable" => {
-                let Some(Value::Record(src)) = args.first() else {
-                    return unsupported(format!("RecordRef.GetTable of {}", args.first().describe()));
+                let src = match args.first() {
+                    Some(Value::Record(src)) => src.clone(),
+                    // A RecordRef as the source (Microsoft's Gen. Jnl.-Post Preview): the same copy of its record.
+                    Some(Value::Library(_, other)) => match &*other.borrow() {
+                        LibraryValue::RecordRef(r) => {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::RecordRefGetTableOfRecordRef,
+                            );
+                            r.clone()
+                        }
+                        _ => return unsupported("RecordRef.GetTable of a RecordRef that is not open"),
+                    },
+                    other => return unsupported(format!("RecordRef.GetTable of {}", other.describe())),
                 };
                 let copy = src.borrow().clone();
                 *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));

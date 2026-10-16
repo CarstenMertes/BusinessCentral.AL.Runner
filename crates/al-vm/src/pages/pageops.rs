@@ -113,6 +113,27 @@ impl Session {
                 if method == PageOp::PageRunModalStatic {
                     st.borrow_mut().lookup = true;
                 }
+                // A record of another table than the page's is refused before anything opens, and so is a field number the table
+                // lacks (a negative one or 0 goes on; pages/lt-page-run-overloads-testpart/P106RunErrors.al: Err_WrongTableRecord,
+                // Err_FieldNoNotExisting).
+                if let (Some(r), true) = (&record, self.has_source(&st)) {
+                    self.page_instance(&st)?;
+                    if self.page_rec(&st).borrow().table != r.borrow().table {
+                        return Err(error_code("The table IDs do not match.", "TableIdMismatch"));
+                    }
+                    if let Some(Value::Integer(no)) = args.get(2) {
+                        let table = self.table(r)?;
+                        if *no > 0 && !table.fields.iter().any(|f| i64::from(f.id) == i64::from(*no)) {
+                            return Err(error_code(
+                                format!(
+                                    "The supplied field number '{no}' cannot be found in the '{}' table.",
+                                    self.caption(&table)
+                                ),
+                                "FieldNotFound",
+                            ));
+                        }
+                    }
+                }
                 self.run_page_ui_with(&st, record, method == PageOp::PageRunModalStatic, field)
             }
             Some(Value::TestPage(st)) => {
@@ -462,8 +483,20 @@ impl Session {
                 Some(Value::Record(r)) => {
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
                     let table = copy.borrow().table as usize;
-                    let blank = self.initial_fields(table);
-                    copy.borrow_mut().fields = blank;
+                    // A record SetRecord handed the page earlier stays the position the page opens on: SetRecord gives the
+                    // position and SetTableView the filters (Microsoft's VendEntry-Apply Posted Entries calls both with the
+                    // same record and its page reads Rec in OnOpenPage; not pinned, docs/probes-needed.md).
+                    let kept = st.borrow().set_record.as_ref().map(|p| p.borrow().fields.clone());
+                    let fields = match kept {
+                        Some(f) if f.len() == copy.borrow().fields.len() => {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::SetTableViewKeepsSetRecordPosition,
+                            );
+                            f
+                        }
+                        _ => self.initial_fields(table),
+                    };
+                    copy.borrow_mut().fields = fields;
                     st.borrow_mut().set_record = Some(copy);
                     Ok(Value::Null)
                 }

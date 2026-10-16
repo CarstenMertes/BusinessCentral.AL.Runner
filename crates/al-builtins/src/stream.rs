@@ -103,17 +103,47 @@ pub fn write_bytes(b: &BlobRef, bytes: &[u8]) {
     buf.persisted = false;
 }
 
-/// How text becomes bytes in a stream. Windows is cp1252 and the default; MSDos gives the same
-/// bytes as Windows; UTF16 is little endian without a byte order mark
-/// (streams/TestStreamsRuntimeContracts.al:WriteText_ExplicitEncodings_Bytes).
+/// How text becomes bytes in a stream. MSDos is code page 437 and the default (streams/TestStreamsRuntimeContracts.al:
+/// WriteText_DefaultEncodingIsWindows1252_NotUtf8: 'é' is 82, WriteText_ExplicitEncodings_Bytes); Windows is cp1252;
+/// UTF16 is little endian without a byte order mark.
 #[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
 pub enum Encoding {
     Utf8,
-    #[default]
     Windows,
+    #[default]
     MsDos,
     Utf16,
 }
+
+/// Unicode of the code page 437 bytes 0x80..=0xFF.
+const CP437_HIGH: [char; 128] = [
+    'Ç', 'ü', 'é', 'â', 'ä', 'à', 'å', 'ç', 'ê', 'ë', 'è', 'ï', 'î', 'ì', 'Ä', 'Å', 'É', 'æ', 'Æ', 'ô', 'ö', 'ò', 'û',
+    'ù', 'ÿ', 'Ö', 'Ü', '¢', '£', '¥', '₧', 'ƒ', 'á', 'í', 'ó', 'ú', 'ñ', 'Ñ', 'ª', 'º', '¿', '⌐', '¬', '½', '¼', '¡',
+    '«', '»', '░', '▒', '▓', '│', '┤', '╡', '╢', '╖', '╕', '╣', '║', '╗', '╝', '╜', '╛', '┐', '└', '┴', '┬', '├', '─',
+    '┼', '╞', '╟', '╚', '╔', '╩', '╦', '╠', '═', '╬', '╧', '╨', '╤', '╥', '╙', '╘', '╒', '╓', '╫', '╪', '┘', '┌', '█',
+    '▄', '▌', '▐', '▀', 'α', 'ß', 'Γ', 'π', 'Σ', 'σ', 'µ', 'τ', 'Φ', 'Θ', 'Ω', 'δ', '∞', 'φ', 'ε', '∩', '≡', '±', '≥',
+    '≤', '⌠', '⌡', '÷', '≈', '°', '∙', '·', '√', 'ⁿ', '²', '■', '\u{a0}',
+];
+
+/// What the Windows tier reads for the code page 437 bytes whose character code page 1252 does not have (corpus
+/// streams/StTEncodings.al:CrossEncodingUtf8ToOthers and CrossEncodingWindowsToOthers, streams/W7StreamRead.al:
+/// ReadTextWithLength_Utf8Sequences, types/PEOptionEnumBigText.al): and al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:FileText (EF BB BF): and streams/StTEncodings.al:RoundTripSameEncoding (B1 is the euro sign): XmlPort byte order mark FF FE (xmlport/lt-xmlport-query-datatransfer, misc/lt-probes-needed-3/PnC19XmlPort.al): only these fourteen bytes are pinned.
+const CP437_AS_READ: [(u8, char); 14] = [
+    (0xFE, '\u{FE}'),
+    (0xB1, '\u{20AC}'),
+    (0xBB, '\u{2039}'),
+    (0xBF, '\u{8F}'),
+    (0xEF, '\u{D9}'),
+    (0xA9, '\u{14}'),
+    (0xB6, '\u{2020}'),
+    (0xBC, '\u{152}'),
+    (0xC3, '\u{201C}'),
+    (0xDF, '\u{C8}'),
+    (0xE2, '\u{CB}'),
+    (0xE4, '\u{CD}'),
+    (0xE9, '\u{D2}'),
+    (0xFC, '\u{FD}'),
+];
 
 /// Unicode of cp1252 bytes 0x80..=0x9F (the undefined ones map to themselves, as .NET does).
 const CP1252_HIGH: [u16; 32] = [
@@ -127,7 +157,17 @@ impl Encoding {
         match self {
             Encoding::Utf8 => s.as_bytes().to_vec(),
             Encoding::Utf16 => s.encode_utf16().flat_map(u16::to_le_bytes).collect(),
-            Encoding::Windows | Encoding::MsDos => s
+            Encoding::MsDos => s
+                .chars()
+                .map(|c| match c {
+                    c if (c as u32) < 0x80 => c as u8,
+                    // The euro sign is written as 0xB1 (streams/TestStreamsRuntimeContracts.al:
+                    // WriteText_ExplicitEncodings_Bytes, streams/TestProbeStreamContracts.al `61 84 94 B1 00`).
+                    '€' => 0xB1,
+                    c => CP437_HIGH.iter().position(|u| *u == c).map_or(b'?', |i| 0x80 + i as u8),
+                })
+                .collect(),
+            Encoding::Windows => s
                 .chars()
                 .map(|c| {
                     let cp = c as u32;
@@ -151,7 +191,17 @@ impl Encoding {
                 let units: Vec<u16> = b.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
                 String::from_utf16_lossy(&units)
             }
-            Encoding::Windows | Encoding::MsDos => b
+            Encoding::MsDos => b
+                .iter()
+                .map(|&x| match x {
+                    0..=0x7F => char::from(x),
+                    x => CP437_AS_READ
+                        .iter()
+                        .find(|(b, _)| *b == x)
+                        .map_or(CP437_HIGH[usize::from(x - 0x80)], |(_, c)| *c),
+                })
+                .collect(),
+            Encoding::Windows => b
                 .iter()
                 .map(|&x| match x {
                     0x80..=0x9F => char::from_u32(u32::from(CP1252_HIGH[usize::from(x - 0x80)])).unwrap_or('?'),
@@ -159,6 +209,29 @@ impl Encoding {
                 })
                 .collect(),
         }
+    }
+
+    /// Whether `decode` of `b` gives what the Windows tier gives: every code page 437 byte whose character is also in
+    /// code page 1252 reads as that character, and the fourteen bytes of `CP437_AS_READ` as pinned; the rest is not pinned.
+    pub fn decode_pinned(self, b: &[u8]) -> bool {
+        self != Encoding::MsDos
+            || b.iter().all(|&x| {
+                x < 0x80 || CP437_AS_READ.iter().any(|(p, _)| *p == x) || {
+                    let c = CP437_HIGH[usize::from(x - 0x80)] as u32;
+                    c <= 0xFF || u16::try_from(c).is_ok_and(|u| CP1252_HIGH.contains(&u))
+                }
+            })
+    }
+
+    /// Whether `encode` of `t` is pinned: ASCII, the characters code page 1252 has for a Windows stream, and for an MS-DOS
+    /// stream the characters of code page 437 and the euro sign.
+    pub fn encode_pinned(self, t: &str) -> bool {
+        t.is_ascii()
+            || match self {
+                Encoding::Windows => self.decode(&self.encode(t)) == *t,
+                Encoding::MsDos => t.chars().all(|c| c.is_ascii() || c == '€' || CP437_HIGH.contains(&c)),
+                _ => false,
+            }
     }
 
     /// Bytes per code unit of the line terminator search.
@@ -195,6 +268,9 @@ pub struct InState {
     source: Source,
     pub pos: usize,
     pub enc: Encoding,
+    /// A read already found the stream at its end: the next typed read there raises (streams/StTStreams.al:ReadPastEnd against
+    /// streams/lt-stream-read-write-media/P102ReadTyped.al `pastend`: the first one answers 0).
+    pub hit_end: bool,
 }
 
 impl InState {
@@ -203,6 +279,7 @@ impl InState {
             source: Source::Snapshot(data),
             pos: 0,
             enc,
+            hit_end: false,
         }
     }
 
@@ -211,6 +288,7 @@ impl InState {
             source: Source::Live(blob),
             pos: 0,
             enc,
+            hit_end: false,
         }
     }
 
@@ -352,14 +430,11 @@ fn with_in<T>(r: Option<&mut Value>, f: impl FnOnce(&mut InState) -> Result<T, S
 /// `BigText.Read(InStream)`: the rest of the stream as text, in the stream's encoding, and the stream
 /// is drained (corpus types/PEOptionEnumBigText.al:336-512, probed on BC 27.5). A UTF-8 stream drops a
 /// byte order mark (EF BB BF), a UTF-16 stream is little endian and drops FF FE, a Windows stream, and
-/// a stream created without an encoding, read the bytes as Windows-1252 and keep a mark as characters.
-/// MS-DOS, a stream read part way, invalid UTF-8 and an odd UTF-16 length are not pinned.
+/// a stream created without an encoding (MS-DOS, code page 437) keep a mark as characters.
+/// A stream read part way, invalid UTF-8 and an odd UTF-16 length are not pinned.
 pub(crate) fn read_all_text(stream: &mut Value) -> Result<String, Signal> {
     with_in(Some(stream), |s| {
         let (enc, pos, len) = (s.enc, s.pos, s.len());
-        if enc == Encoding::MsDos {
-            return unsupported("BigText.Read of an MS-DOS stream (not pinned)");
-        }
         if pos != 0 && pos < len {
             return unsupported("BigText.Read of a stream that was read part way (not pinned)");
         }
@@ -376,6 +451,7 @@ pub(crate) fn read_all_text(stream: &mut Value) -> Result<String, Signal> {
             Encoding::Utf16 if body.len() % 2 != 0 => {
                 unsupported("BigText.Read of a UTF-16 stream with an odd number of bytes (not pinned)")
             }
+            _ if !enc.decode_pinned(body) => unsupported("BigText.Read of MS-DOS bytes whose character is not pinned"),
             _ => Ok(enc.decode(body)),
         }
     })
@@ -462,7 +538,9 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         if s.pos == 0 {
             let utf8 = s.enc == Encoding::Utf8;
             let bom = s.with_data(|d| {
-                if d.starts_with(&[0xFF, 0xFE]) {
+                // A stream created as UTF-8 does not take a UTF-16 mark: it reads the bytes as UTF-8 and fails on them (xmlport/
+                // lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_ThreeRows).
+                if !utf8 && d.starts_with(&[0xFF, 0xFE]) {
                     Some((Encoding::Utf16, 2))
                 } else if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
                     Some((Encoding::Utf8, 3))
@@ -476,8 +554,11 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             }
         }
         let (enc, pos) = (s.enc, s.pos);
+        if !s.is_empty() && pos >= s.len() {
+            s.hit_end = true;
+        }
         let unit = enc.unit();
-        let (text, consumed) = s.with_data(|data| {
+        let text = s.with_data(|data| {
             let rest = &data[pos.min(data.len())..];
             let mut end = 0;
             while end + unit <= rest.len() && end / unit < max_chars && !is_unit(&rest[end..end + unit], b'\n') {
@@ -496,8 +577,26 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             } else {
                 end
             };
-            (enc.decode(&line), consumed)
+            // Bytes that are no UTF-8 cannot be read from a stream created as UTF-8 (xmlport/lt-xmlport-query-datatransfer/
+            // XpTExportBasic.al:Export_ThreeRows: the UTF-16 bytes of an export).
+            let invalid_utf8 = enc == Encoding::Utf8 && std::str::from_utf8(&line).is_err();
+            (
+                (!invalid_utf8 && enc.decode_pinned(&line)).then(|| enc.decode(&line)),
+                consumed,
+                invalid_utf8,
+            )
         });
+        let (text, consumed, invalid_utf8) = (text.0, text.1, text.2);
+        if invalid_utf8 {
+            return Err(Signal::Error(Box::new(crate::native::AlError {
+                message: "Invalid data encountered in stream, unable to read text.".into(),
+                code: "InvalidStreamData".into(),
+                call_stack: String::new(),
+            })));
+        }
+        let Some(text) = text else {
+            return unsupported("InStream.ReadText of MS-DOS bytes whose character is not pinned");
+        };
         s.pos = pos + consumed;
         enc_used = enc;
         Ok(text)
@@ -520,7 +619,7 @@ fn is_unit(u: &[u8], c: u8) -> bool {
 /// `Read` into an Integer (4 bytes, little endian: streams/TestInOutStream.al
 /// InOutStream_Write_Integer_ReadInteger) or a Byte (one byte: the HexOf helper of
 /// streams/TestStreamsRuntimeContracts.al reads a stream byte by byte). Other types are not pinned.
-fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     // `Read(Text, Length)` on a single-byte stream takes Length bytes as one character each
     // (xml/TestXmlDocumentWriteToOutStreamContracts.al:LeadingBytes reads the bytes 239 187 191 of a
     // byte order mark into a Text[3]); bytes 128 to 159, other encodings and a used result are not pinned.
@@ -530,16 +629,21 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             return unsupported("the result of InStream.Read(Text, Length) (not pinned)");
         }
         let text = with_in(r, |s| {
-            if s.enc != Encoding::Windows {
-                return unsupported("InStream.Read(Text, Length) on a stream that is not Windows-encoded (not pinned)");
+            if !matches!(s.enc, Encoding::Windows | Encoding::MsDos) {
+                return unsupported(
+                    "InStream.Read(Text, Length) on a stream that is neither Windows nor MS-DOS encoded (not pinned)",
+                );
             }
             let rest = s.rest();
             let taken = &rest[..n.min(rest.len())];
-            if taken.iter().any(|b| (0x80..0xA0).contains(b)) {
+            if s.enc == Encoding::Windows && taken.iter().any(|b| (0x80..0xA0).contains(b)) {
                 return unsupported("InStream.Read(Text, Length) of bytes 128 to 159 (not pinned)");
             }
+            if !s.enc.decode_pinned(taken) {
+                return unsupported("InStream.Read(Text, Length) of MS-DOS bytes whose character is not pinned");
+            }
             s.pos += taken.len();
-            Ok(taken.iter().map(|b| char::from(*b)).collect::<String>())
+            Ok(s.enc.decode(taken))
         })?;
         a[0] = Value::Text(text.into());
         return Ok(Value::Null);
@@ -573,7 +677,9 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
                 None => (rest.len(), rest.len()),
             };
             let body = &rest[..body_len];
-            if !s.enc.decode(body).is_ascii() && s.enc != Encoding::Windows {
+            if !s.enc.decode_pinned(body)
+                || (!s.enc.decode(body).is_ascii() && !matches!(s.enc, Encoding::Windows | Encoding::MsDos))
+            {
                 return unsupported(
                     "InStream.Read into a Text of non-ASCII characters on a stream that is not Windows-encoded (not pinned)",
                 );
@@ -601,6 +707,30 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             ));
         }
     };
+    // At the end of a stream that holds data nothing is read: the result is 0 and the variable takes its default value
+    // (streams/lt-stream-read-write-media/P102ReadTyped.al: every `pastend_*`). A stream without any data keeps the error below.
+    let at_end = with_in(r.as_deref_mut(), |s| {
+        let at = !s.is_empty() && s.pos >= s.len();
+        // The first read at the end answers 0; one after another read already hit the end raises.
+        let first = at && !s.hit_end;
+        if at {
+            s.hit_end = true;
+        }
+        Ok(first)
+    })?;
+    if at_end {
+        a[0] = Value::default_for(&match &a[0] {
+            Value::Integer(_) => crate::value::RtType::Integer,
+            Value::Boolean(_) => crate::value::RtType::Boolean,
+            Value::Date(..) => crate::value::RtType::Date,
+            Value::Byte(_) => crate::value::RtType::Byte,
+            Value::Char(_) => crate::value::RtType::Char,
+            Value::BigInteger(_) => crate::value::RtType::BigInteger,
+            Value::Guid(_) => crate::value::RtType::Guid,
+            _ => crate::value::RtType::Decimal,
+        });
+        return Ok(Value::Integer(0));
+    }
     let bytes = with_in(r, |s| {
         let pos = s.pos;
         // Fewer bytes than the type needs, also none at all: the stream data error (streams/TestProbeStreamContracts.al:
@@ -636,7 +766,16 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
                 Value::Date(0, false)
             } else {
                 let closing = (n - 731) % 2 != 0;
-                Value::Date((n - 731 - i32::from(closing)) / 2, closing)
+                let day = (n - 731 - i32::from(closing)) / 2;
+                // Bytes that are no date raise (misc/lt-probes-needed-1/PnAStreamReadMisc.al:Read_Types_A `op5`).
+                if !(1..=3_652_059).contains(&day) {
+                    return Err(Signal::Error(Box::new(crate::native::AlError {
+                        message: "The date is not valid.".into(),
+                        code: "DateInvalid".into(),
+                        call_stack: String::new(),
+                    })));
+                }
+                Value::Date(day, closing)
             }
         }
         Value::Decimal(_) => Value::Decimal(decimal_from_bytes(&bytes)?),
@@ -791,7 +930,14 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
                 "OutStream.Write with a length of something else than a Text and an Integer (not pinned)",
             );
         };
-        let cut: String = t.chars().take(usize::try_from(*n).unwrap_or(0)).collect();
+        // A negative length writes the whole text (streams/lt-stream-read-write-media/P102WriteTextLike.al:P102_Text `lenneg_ret`).
+        // A Code ignores the length and writes the whole text (:P102_Code `len2_ret` is 5).
+        let take = if *n < 0 || matches!(a[0], Value::Code(_)) {
+            usize::MAX
+        } else {
+            usize::try_from(*n).unwrap_or(0)
+        };
+        let cut: String = t.chars().take(take).collect();
         if !cut.is_ascii() {
             return unsupported("OutStream.Write(Text, Length) of non-ASCII characters (not pinned)");
         }
@@ -804,8 +950,13 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         return unsupported("OutStream.Write with more arguments (not pinned)");
     }
     let bytes: Vec<u8> = match &a[0] {
-        // A Char is one byte (streams/TestProbeStreamContracts.al:WriteText_NonAscii_Char_Byte_Length: 65 is 41, 228 is E4).
-        Value::Char(c) if *c < 256 => vec![*c as u8],
+        // A Char is one byte in the stream's encoding (streams/TestProbeStreamContracts.al:WriteText_NonAscii_Char_Byte_Length:
+        // 65 is 41, 228 is 84 on a default stream).
+        Value::Char(c)
+            if *c < 256 && char::from_u32(u32::from(*c)).is_some_and(|ch| enc.encode_pinned(&ch.to_string())) =>
+        {
+            enc.encode(&char::from_u32(u32::from(*c)).expect("checked").to_string())
+        }
         // A Guid is written as .NET writes it: the first three groups little endian
         // (streams/TestProbeStreamContracts.al:WriteBooleanGuidBigIntegerOthers).
         Value::Guid(g) => {
@@ -830,11 +981,9 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         // Non-ASCII characters are pinned only for a Windows stream, as one cp1252 byte each
         // (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_AfterWriteTextAndAfterWriteText_NonAscii:
         // 'wörld' is 77 F6 72 6C 64 00).
-        Value::Text(t) | Value::Code(t)
-            if t.is_ascii()
-                || (matches!(enc, Encoding::Windows | Encoding::MsDos) && enc.decode(&enc.encode(t)) == *t) =>
-        {
-            let mut v = enc.encode(t);
+        // The text ends at its first NUL character (types/lt-variant-is-text-streams/LTP89StreamText.al:Text_BytesWritten `nul_char`).
+        Value::Text(t) | Value::Code(t) if enc.encode_pinned(t.split('\0').next().unwrap_or_default()) => {
+            let mut v = enc.encode(t.split('\0').next().unwrap_or_default());
             v.extend(std::iter::repeat_n(0, enc.unit()));
             v
         }
@@ -988,5 +1137,23 @@ mod blob_cell_tests {
         });
         assert_eq!(copies, vec![b"abc".to_vec(), b"abc".to_vec()]);
         assert!(Value::Blob(b).is_plain());
+    }
+
+    // streams/TestStreamsRuntimeContracts.al:WriteText_ExplicitEncodings_Bytes, streams/StTEncodings.al:RoundTripSameEncoding and
+    // CrossEncodingUtf8ToOthers: the default encoding is code page 437.
+    #[test]
+    fn the_default_encoding_is_code_page_437() {
+        assert_eq!(Encoding::default(), Encoding::MsDos);
+        assert_eq!(Encoding::MsDos.encode("hé€Ж"), vec![0x68, 0x82, 0xB1, 0x3F]);
+        assert_eq!(Encoding::Windows.encode("hé"), vec![0x68, 0xE9]);
+        // The euro sign comes back from its byte; the bytes whose character the Windows tier changes read as pinned.
+        assert_eq!(Encoding::MsDos.decode(&[0xB1]), "€");
+        assert_eq!(
+            Encoding::MsDos.decode(&[0x61, 0xC3, 0xA4, 0xE2, 0x82]),
+            "a\u{201C}ñË\u{e9}"
+        );
+        assert!(Encoding::MsDos.decode_pinned(&[0x82, 0xA4, 0xC3]));
+        // A box-drawing byte nothing pins is not decoded.
+        assert!(!Encoding::MsDos.decode_pinned(&[0xC4]));
     }
 }

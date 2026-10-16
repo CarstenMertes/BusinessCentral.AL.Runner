@@ -133,6 +133,12 @@ registry! {
         tests: "Incoming Document.FindFromIncomingDocumentEntryNo (`Get(Format(FieldRef.Value))`): about 400 Tests-ERM tests behind the Incoming Doc. Attach. FactBox.",
         probe: "Rec.Get(Format(5)) on an Integer key; Get('5'); Get('x'); Get('') and Get(' 5 ') on an Integer and a BigInteger key.",
     },
+    CustomLayoutMerger => {
+        id: "custom-layout-merger",
+        assumed: "A SaveAs of a report whose selected rendering layout has Type = Custom raises the platform's CustomDocumentMergerEx with ObjectID, a ReportAction named after the format (SaveAsPdf, SaveAsWord, SaveAsExcel, SaveAsHtml), an EMPTY ObjectPayload, XmlData holding the Xml dataset SaveAs writes, LayoutData holding the layout file (read as UTF-8) and DocumentStream on the stream SaveAs was given (UTF-8); a subscriber that sets Success/IsHandled makes SaveAs answer true. A SaveAs no subscriber handles is refused.",
+        tests: "handlers/TestReportLayoutByNameMergerCapture.al pins the subscriber's signature and the layout text; Pageworks (about 50 tests whose first refusal is SaveAs as Pdf).",
+        probe: "A custom layout report saved as Pdf, Word, Excel and Html with a Base Application subscriber that records every argument: the ReportAction ordinals, the keys of ObjectPayload (layoutmimetype, layoutname, ...), the form of XmlData, the encoding of the streams, and SaveAs with no subscriber.",
+    },
     CookieSetterResult => {
         id: "cookie-setter-result",
         assumed: "Cookie.Name(NewName) and Cookie.Value(NewValue), with the result used, answer the new text.",
@@ -541,6 +547,12 @@ registry! {
         assumed: "CalcSums on a record with a filter on a FlowField sums the stored field over the rows whose calculated FlowField value passes the filter. (CalcSums over stored-field filters is pinned by record/TestRecordFlowField.al:109-160.)",
         tests: "Bank Acc. Recon. Test.GetTotalOutstanding (SetRange/SetFilter on the Check Ledger Entries FlowField of the Bank Account Ledger Entry), reached by posting a bank reconciliation: about 200 Tests-Bank tests.",
         probe: "SetFilter(FlowField, '<>0') then CalcSums(StoredField), with rows whose FlowField is zero and non-zero, and a SetRange(FlowField, 0).",
+    },
+    ReportRenderDiscarded => {
+        id: "report-render-discarded",
+        assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",
+        tests: "Post Inventory Cost to G/L through Library - Costing and Library - Assembly PostInvtCostToGL (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch); Check.SaveAsPdf (ERM Cash Manager, Match Bank Rec. Scenarios).",
+        probe: "A report on the list saved to a temp file and to a stream on a Windows tier: the answer, the order of the triggers, File.Exists and TempBlob.Length afterwards.",
     },
 }
 

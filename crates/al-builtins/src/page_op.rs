@@ -73,6 +73,8 @@ pub enum PageMethod {
     RunPageBackgroundTask,
     RunStatic,
     SaveAsXml,
+    SaveAsPdf,
+    SaveAsExcel,
     SaveRecord,
     SetBackgroundTaskResult,
     SetCurrentKey,
@@ -152,6 +154,8 @@ impl PageMethod {
             PageMethod::RunPageBackgroundTask => "RunPageBackgroundTask",
             PageMethod::RunStatic => "RunStatic",
             PageMethod::SaveAsXml => "SaveAsXml",
+            PageMethod::SaveAsPdf => "SaveAsPdf",
+            PageMethod::SaveAsExcel => "SaveAsExcel",
             PageMethod::SaveRecord => "SaveRecord",
             PageMethod::SetBackgroundTaskResult => "SetBackgroundTaskResult",
             PageMethod::SetCurrentKey => "SetCurrentKey",
@@ -283,10 +287,12 @@ pub enum PageOp {
     TestPartValidationErrorCount,
     TestPartVisible,
     TestRequestPageSaveAsXml,
+    TestRequestPageSaveAsPdf,
+    TestRequestPageSaveAsExcel,
 }
 
 impl PageOp {
-    pub const ALL: [PageOp; 102] = [
+    pub const ALL: [PageOp; 104] = [
         PageOp::PageCancelBackgroundTask,
         PageOp::PageCaption,
         PageOp::PageClose,
@@ -389,6 +395,8 @@ impl PageOp {
         PageOp::TestPartValidationErrorCount,
         PageOp::TestPartVisible,
         PageOp::TestRequestPageSaveAsXml,
+        PageOp::TestRequestPageSaveAsPdf,
+        PageOp::TestRequestPageSaveAsExcel,
     ];
 
     pub fn recv(self) -> PageRecv {
@@ -495,6 +503,8 @@ impl PageOp {
             PageOp::TestPartValidationErrorCount => PageRecv::TestPart,
             PageOp::TestPartVisible => PageRecv::TestPart,
             PageOp::TestRequestPageSaveAsXml => PageRecv::TestRequestPage,
+            PageOp::TestRequestPageSaveAsPdf => PageRecv::TestRequestPage,
+            PageOp::TestRequestPageSaveAsExcel => PageRecv::TestRequestPage,
         }
     }
 
@@ -602,6 +612,8 @@ impl PageOp {
             PageOp::TestPartValidationErrorCount => PageMethod::ValidationErrorCount,
             PageOp::TestPartVisible => PageMethod::Visible,
             PageOp::TestRequestPageSaveAsXml => PageMethod::SaveAsXml,
+            PageOp::TestRequestPageSaveAsPdf => PageMethod::SaveAsPdf,
+            PageOp::TestRequestPageSaveAsExcel => PageMethod::SaveAsExcel,
         }
     }
 
@@ -710,6 +722,8 @@ impl PageOp {
             PageOp::TestPartValidationErrorCount => "TestPart.ValidationErrorCount",
             PageOp::TestPartVisible => "TestPart.Visible",
             PageOp::TestRequestPageSaveAsXml => "TestRequestPage.SaveAsXml",
+            PageOp::TestRequestPageSaveAsPdf => "TestRequestPage.SaveAsPdf",
+            PageOp::TestRequestPageSaveAsExcel => "TestRequestPage.SaveAsExcel",
         }
     }
 

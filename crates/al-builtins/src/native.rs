@@ -514,6 +514,16 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // name (SaveAsXml, SaveAsPdf, ...) writes a file no corpus test pins and stays refused.
     ("Report.SaveAs#1", vm_only),
     ("Report.SaveAs#2", vm_only),
+    // The rendering saves with a file name run only for the reports on the allow-list of ADR-040 and are refused for the
+    // others when they run. SaveAsXml with a file name stays refused in lowering.
+    ("Report.SaveAsPdf#1", vm_only),
+    ("Report.SaveAsPdf#2", vm_only),
+    ("Report.SaveAsExcel#1", vm_only),
+    ("Report.SaveAsExcel#2", vm_only),
+    ("Report.SaveAsWord#1", vm_only),
+    ("Report.SaveAsWord#2", vm_only),
+    ("Report.SaveAsHtml#1", vm_only),
+    ("Report.SaveAsHtml#2", vm_only),
     ("Report.Quit#1", vm_only),
     ("Report.Skip#1", vm_only),
     ("Report.Break#1", vm_only),

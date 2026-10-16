@@ -1935,7 +1935,7 @@
           "ms_uses": 807,
           "name": "NotBlank",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "record/lt-record-write/RcBInit.al:93"
         },
         {
@@ -2851,19 +2851,19 @@
           "corpus_uses": 28,
           "group": "report/layout",
           "ms_uses": 120,
-          "name": "Type",
+          "name": "LayoutFile",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/PWReportSaveAsColumns.al:65"
+          "site": "handlers/PWReportSaveAsColumns.al:66"
         },
         {
           "corpus_uses": 28,
           "group": "report/layout",
           "ms_uses": 120,
-          "name": "LayoutFile",
+          "name": "Type",
           "pinned": true,
-          "runtime_reads": false,
-          "site": "handlers/PWReportSaveAsColumns.al:66"
+          "runtime_reads": true,
+          "site": "handlers/PWReportSaveAsColumns.al:65"
         },
         {
           "corpus_uses": 11,
@@ -3177,7 +3177,7 @@
           "ms_uses": 82,
           "name": "NotBlank",
           "pinned": false,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": null
         },
         {
@@ -3681,7 +3681,7 @@
           "ms_uses": 39,
           "name": "NotBlank",
           "pinned": false,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": null
         },
         {
@@ -11246,12 +11246,30 @@
         },
         {
           "corpus_uses": 1,
+          "group": "report/layout",
+          "ms_uses": 0,
+          "name": "MimeType",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "handlers/TestReportLayoutByNameReport.al:47"
+        },
+        {
+          "corpus_uses": 1,
           "group": "report/requestpage",
           "ms_uses": 0,
           "name": "Editable",
           "pinned": true,
           "runtime_reads": true,
           "site": "handlers/PSRequestPageEditable.al:120"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "reportextension/layout",
+          "ms_uses": 0,
+          "name": "LayoutFile",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/TestEventSubscriptionColumnsReportLayoutListContracts.al:89"
         },
         {
           "corpus_uses": 1,
@@ -11435,30 +11453,12 @@
         },
         {
           "corpus_uses": 1,
-          "group": "report/layout",
-          "ms_uses": 0,
-          "name": "MimeType",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "handlers/TestReportLayoutByNameReport.al:47"
-        },
-        {
-          "corpus_uses": 1,
           "group": "reportextension/labels",
           "ms_uses": 0,
           "name": "ExtLabel",
           "pinned": true,
           "runtime_reads": false,
           "site": "report/PZReportLabels.al:67"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "reportextension/layout",
-          "ms_uses": 0,
-          "name": "LayoutFile",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "record/TestEventSubscriptionColumnsReportLayoutListContracts.al:89"
         },
         {
           "corpus_uses": 1,
@@ -11750,6 +11750,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "CustomDocumentMergerEx",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "GetDatabaseTableTriggerSetup",
           "pinned": false,
           "runtime_reads": true,
@@ -11841,15 +11850,6 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "ConfirmPrivacyNoticeApproval",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "CustomDocumentMergerEx",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -13212,7 +13212,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 404,
+        "line": 407,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13221,7 +13221,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 564,
+        "line": 609,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -13230,7 +13230,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 607,
+        "line": 652,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
@@ -13239,7 +13239,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 642,
+        "line": 687,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13248,7 +13248,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 668,
+        "line": 713,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13257,7 +13257,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 673,
+        "line": 718,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13266,7 +13266,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 597,
+        "line": 675,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -13275,7 +13275,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 748,
+        "line": 826,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -13284,7 +13284,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 780,
+        "line": 858,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
         "template": "The date is not valid."
@@ -13383,7 +13383,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 868,
+        "line": 896,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -13401,7 +13401,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 1528,
+        "line": 1533,
         "pinned": true,
         "site": "record/TestPlatformTablesWritableContracts.al:107",
         "template": "It is not possible to delete any record in the Tenant License State table."
@@ -13509,7 +13509,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 367,
+        "line": 380,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"

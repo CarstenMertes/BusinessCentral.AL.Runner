@@ -135,7 +135,7 @@ impl Session {
                 Ok((RequestClosed::Ok, parameters))
             }
             Some("Cancel") => Ok((RequestClosed::Cancel, None)),
-            Some("SaveAsXml") => Ok((RequestClosed::SavedAsXml, None)),
+            Some("SaveAsXml" | "SaveAsPdf" | "SaveAsExcel") => Ok((RequestClosed::SavedAsXml, None)),
             other => unsupported(format!("a request page closed with {} (not pinned)", other.describe())),
         }
     }
@@ -164,6 +164,82 @@ impl Session {
         if schema.report().transaction_type.is_some() {
             return unsupported("SaveAsXml of a report that declares a TransactionType (not pinned)");
         }
+        let written = self.request_page_report_run(st, object, &inst, &schema)?;
+        let data = written.finish_data_set()?;
+        let parameters = self.save_as_xml_parameters();
+        self.host
+            .files
+            .write(&parameters_file, &parameters)
+            .map_err(Signal::Unsupported)?;
+        self.host.files.write(&data_file, &data).map_err(Signal::Unsupported)?;
+        st.borrow_mut().result = Some("SaveAsXml".into());
+        self.mark_closed(st);
+        Ok(Value::Null)
+    }
+
+    /// `TestRequestPage.SaveAsPdf(FileName)` and `SaveAsExcel(FileName)` from a request page handler (ADR-040): for a
+    /// report on the allow-list the report runs there and then with the page's values, no output is written, the file
+    /// name is marked as pending, and the page is closed as after `SaveAsXml`. Any other report stays refused.
+    pub(super) fn request_save_as_render(
+        &mut self,
+        st: &St,
+        args: &[Value],
+        format: &'static str,
+    ) -> Result<Value, Signal> {
+        self.require_open(st)?;
+        if !self.is_request_page(st) {
+            return unsupported(format!("SaveAs{format} on a page that is not a request page"));
+        }
+        let name = match args.first() {
+            Some(Value::Text(t) | Value::Code(t)) => t.to_string(),
+            _ => return unsupported(format!("SaveAs{format} with a file name that is not Text")),
+        };
+        let object = st.borrow().object as usize;
+        let inst = st.borrow().instance.clone().expect("open page");
+        let schema = self.report_schema_of(&inst)?;
+        if !self.output_is_ignored(&schema) {
+            return unsupported(format!(
+                "SaveAs{format} of \"{}\": only the Xml dataset is produced (a rendered format needs a layout renderer, \
+                 and the Linux tier the corpus was measured on does not render them either)",
+                schema.name()
+            ));
+        }
+        // What the handler sees of a layout without a file, or of a processing-only report, is not pinned here.
+        let report = schema.report();
+        if report.layout_file_missing || report.processing_only {
+            return unsupported(format!(
+                "SaveAs{format} of \"{}\", which has no layout file or is processing-only (what the handler sees is not pinned)",
+                schema.name()
+            ));
+        }
+        if let Some(why) = report.dataset_unsupported.first() {
+            return unsupported(format!("SaveAs{format} of \"{}\": {why}", schema.name()));
+        }
+        if report.transaction_type.is_some() {
+            return unsupported(format!(
+                "SaveAs{format} of a report that declares a TransactionType (not pinned)"
+            ));
+        }
+        let written = self.request_page_report_run(st, object, &inst, &schema)?;
+        // The dataset is built to run the triggers and dropped; the file is never written.
+        drop(written);
+        self.render_pending_files
+            .insert(crate::ctx::pending_key(&name), schema.name().into());
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportRenderDiscarded);
+        st.borrow_mut().result = Some(format!("SaveAs{format}"));
+        self.mark_closed(st);
+        Ok(Value::Null)
+    }
+
+    /// Runs the report of the open request page there and then, with the page's values: the part of `SaveAsXml`,
+    /// `SaveAsPdf` and `SaveAsExcel` they share. Gives the dataset the run wrote.
+    fn request_page_report_run(
+        &mut self,
+        st: &St,
+        object: usize,
+        inst: &Inst,
+        schema: &crate::reports::Schema,
+    ) -> Result<crate::dataset::Dataset, Signal> {
         let ext: Vec<(Inst, usize)> = {
             let state = st.borrow();
             schema
@@ -179,9 +255,9 @@ impl Session {
                 })
                 .collect()
         };
-        let run = self.report_run_for(object, &inst, ext, true);
+        let run = self.report_run_for(object, inst, ext, true);
         let outer = self.report.dataset.replace(crate::dataset::Dataset::default());
-        let ran = self.report_after_page(&run, &schema);
+        let ran = self.report_after_page(&run, schema);
         let written = std::mem::replace(&mut self.report.dataset, outer);
         match ran {
             Ok(true) => {}
@@ -194,16 +270,7 @@ impl Session {
             }
             Err(other) => return Err(other),
         }
-        let data = written.expect("a SaveAsXml run has a dataset").finish_data_set()?;
-        let parameters = self.save_as_xml_parameters();
-        self.host
-            .files
-            .write(&parameters_file, &parameters)
-            .map_err(Signal::Unsupported)?;
-        self.host.files.write(&data_file, &data).map_err(Signal::Unsupported)?;
-        st.borrow_mut().result = Some("SaveAsXml".into());
-        self.mark_closed(st);
-        Ok(Value::Null)
+        Ok(written.expect("a request page run has a dataset"))
     }
 
     /// The parameters file of `SaveAsXml`: a byte order mark, then `ArrayOfReportParameter` with the user id

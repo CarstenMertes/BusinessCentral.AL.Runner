@@ -22,6 +22,8 @@ pub type Handle = Rc<RefCell<LibraryValue>>;
 pub struct JsonCell {
     pub node: JsonNode,
     pub parent: Option<Weak<RefCell<LibraryValue>>>,
+    /// A value whose content is not pinned: any use of it is refused with this text.
+    pub unpinned: Option<&'static str>,
 }
 
 #[derive(Debug)]
@@ -63,8 +65,22 @@ fn conversion(from: &str, to: &str) -> Signal {
 
 const NAV_JSON_VALUE: &str = "Microsoft.Dynamics.Nav.Runtime.NavJsonValue";
 
+/// A JsonObject whose content is not pinned: every method on it, and its `Format`, is refused with `why`.
+pub fn unpinned_object(why: &'static str) -> Value {
+    let h = Rc::new(RefCell::new(LibraryValue::Json(JsonCell {
+        node: JsonNode::Object(Vec::new()),
+        parent: None,
+        unpinned: Some(why),
+    })));
+    Value::Library("JsonObject".into(), h)
+}
+
 fn new_handle(node: JsonNode) -> Handle {
-    Rc::new(RefCell::new(LibraryValue::Json(JsonCell { node, parent: None })))
+    Rc::new(RefCell::new(LibraryValue::Json(JsonCell {
+        node,
+        parent: None,
+        unpinned: None,
+    })))
 }
 
 /// The handle of a JSON-family value, giving a never-used JsonObject / JsonArray /
@@ -84,9 +100,16 @@ fn handle_of(v: &Value) -> Result<Handle, Signal> {
             "jsontoken" => JsonNode::Scalar(Scalar::Null),
             other => return unsupported(format!("use of an unassigned {other}")),
         };
-        *h.borrow_mut() = LibraryValue::Json(JsonCell { node, parent: None });
+        *h.borrow_mut() = LibraryValue::Json(JsonCell {
+            node,
+            parent: None,
+            unpinned: None,
+        });
     }
     match &*h.borrow() {
+        LibraryValue::Json(JsonCell {
+            unpinned: Some(why), ..
+        }) => unsupported(*why),
         LibraryValue::Json(_) => Ok(h.clone()),
         other => unsupported(format!("{name} handle holding {}", other.describe())),
     }
@@ -1286,7 +1309,11 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
         unreachable!("parse builds JSON nodes")
     };
     let parent = parent_link(&h);
-    *h.borrow_mut() = LibraryValue::Json(JsonCell { node, parent });
+    *h.borrow_mut() = LibraryValue::Json(JsonCell {
+        node,
+        parent,
+        unpinned: None,
+    });
     // The children were adopted by the temporary root; re-point them at the receiver.
     adopt_children(&h);
     Ok(Value::Boolean(true))

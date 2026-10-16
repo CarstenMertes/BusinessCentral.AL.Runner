@@ -542,6 +542,8 @@ pub(crate) struct Checker<'a> {
     resolved: std::cell::RefCell<Resolved>,
     /// Checks that panicked (see [`CheckResult::panicked`]).
     panicked: HashMap<(usize, usize), String>,
+    /// The result type of the routine being checked (`None`: a trigger or a procedure without a result).
+    cur_ret: Option<Ty>,
 }
 
 /// Names resolved so far, by (file, kind) and then name; see [`Checker::resolved`].

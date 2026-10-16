@@ -33,7 +33,7 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ),
     (
         "AL0124",
-        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1 and 17.0; the property OrderBy on a query data item",
+        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1 and 17.0; the property OrderBy on a query data item; a property the object type does not have (any outside the 16 codeunit properties, SourceTable and others on a table, Editable on a report, TableNo on a page, ...); InitValue on a page field",
     ),
     (
         "AL0132",
@@ -43,7 +43,10 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
         "AL0161",
         "a page extension names a non-protected variable or a local procedure of its base page, or a report extension does; a Cloud app names an internal agent table of the platform",
     ),
-    ("AL0162", "OnInit, OnFindRecord and OnNextRecord in a page extension"),
+    (
+        "AL0162",
+        "OnInit, OnFindRecord and OnNextRecord in a page extension; a trigger the object type does not have (any but OnRun in a codeunit; page, table and report triggers of another object type)",
+    ),
     ("AL0197", "two objects of one type and name in one app"),
     (
         "AL0296",
@@ -366,6 +369,8 @@ pub fn check_workspace(ws: &Workspace) -> Vec<Diagnostic> {
         }
         let obj = ws.object_ast(oi);
         subscriber_publishers(ws, oi, &obj, &mut out);
+        object_properties(ws, oi, &obj, &mut out);
+        object_triggers(ws, oi, &obj, &mut out);
         match o.kind {
             ObjKind::PageExtension => {
                 page_extension_triggers(ws, oi, &obj, &mut out);
@@ -498,6 +503,141 @@ fn page_extension_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &m
                 t.keyword_offset().unwrap_or_else(|| offset_of(t.syntax())),
                 "AL0162",
                 format!("'{name}' is not a valid trigger"),
+            );
+        }
+    }
+}
+
+/// The properties of a codeunit (docs: Codeunit object properties). A name outside the list is AL0124
+/// (corpus must-not-compile 0305, 0310, 0312, over the 3,500 codeunit properties of the corpus: none else occurs).
+const CODEUNIT_PROPERTIES: &[&str] = &[
+    "Access",
+    "Description",
+    "EventSubscriberInstance",
+    "InherentEntitlements",
+    "InherentPermissions",
+    "ObsoleteReason",
+    "ObsoleteState",
+    "ObsoleteTag",
+    "Permissions",
+    "RequiredTestIsolation",
+    "SingleInstance",
+    "Subtype",
+    "TableNo",
+    "TestHttpRequestPolicy",
+    "TestIsolation",
+    "TestPermissions",
+];
+
+/// Properties that belong to another object type, per object type (corpus 0306 to 0309). Only pinned
+/// pairs and their plain siblings are listed; other pairs are not judged.
+fn foreign_properties(kind: ObjKind) -> &'static [&'static str] {
+    match kind {
+        ObjKind::Table => &["ApplicationArea", "PageType", "SourceTable", "TableNo", "Editable"],
+        ObjKind::Report => &["Editable", "PageType", "TableNo", "DataPerCompany"],
+        ObjKind::Page => &["TableNo", "DataPerCompany"],
+        _ => &[],
+    }
+}
+
+/// AL0124 for an object property the object type does not have (corpus must-not-compile 0305 to 0310,
+/// 0312) and for `InitValue` on a page field (0315, a property of table fields).
+fn object_properties(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let kind = ws.objects[oi].kind;
+    let file = ws.objects[oi].file;
+    let message = |name: &str| {
+        format!(
+            "The property '{name}' cannot be used in this context. Verify the property is available for the current object type."
+        )
+    };
+    for p in obj.properties() {
+        let name = p.name();
+        let bad = match kind {
+            ObjKind::Codeunit => !CODEUNIT_PROPERTIES.iter().any(|c| c.eq_ignore_ascii_case(&name)),
+            k => foreign_properties(k).iter().any(|c| c.eq_ignore_ascii_case(&name)),
+        };
+        if bad {
+            push(out, ws, file, offset_of(p.syntax()), "AL0124", message(&name));
+        }
+    }
+    if matches!(kind, ObjKind::Page | ObjKind::PageExtension) {
+        for sec in ast::sections_in(obj.syntax()) {
+            if sec.name().eq_ignore_ascii_case("field") {
+                if let Some(p) = sec.properties().find(|p| p.name().eq_ignore_ascii_case("InitValue")) {
+                    push(out, ws, file, offset_of(p.syntax()), "AL0124", message(&p.name()));
+                }
+            }
+        }
+    }
+}
+
+/// Triggers an object type does not have (corpus must-not-compile 0316 to 0321). A codeunit has OnRun only;
+/// for the other types the triggers of the other object types are listed.
+fn foreign_triggers(kind: ObjKind) -> &'static [&'static str] {
+    match kind {
+        ObjKind::Page => &[
+            "OnInsert",
+            "OnModify",
+            "OnDelete",
+            "OnRename",
+            "OnRun",
+            "OnInitReport",
+            "OnPreReport",
+            "OnPostReport",
+            "OnPreXmlPort",
+            "OnPostXmlPort",
+        ],
+        ObjKind::Table => &[
+            "OnRun",
+            "OnOpenPage",
+            "OnClosePage",
+            "OnInitReport",
+            "OnPreReport",
+            "OnPostReport",
+            "OnPreXmlPort",
+            "OnPostXmlPort",
+        ],
+        ObjKind::Report => &[
+            "OnPreXmlPort",
+            "OnPostXmlPort",
+            "OnRun",
+            "OnInsert",
+            "OnModify",
+            "OnDelete",
+            "OnRename",
+        ],
+        _ => &[],
+    }
+}
+
+/// AL0162 for a trigger the object type does not have (corpus must-not-compile 0316 to 0321).
+fn object_triggers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let kind = ws.objects[oi].kind;
+    // An install or upgrade codeunit has its own triggers (corpus install/TestInstallSeeder.al); they are not judged.
+    let install_or_upgrade = obj.properties().any(|p| {
+        p.name().eq_ignore_ascii_case("Subtype")
+            && matches!(
+                p.value_text().trim_matches('"').to_ascii_lowercase().as_str(),
+                "install" | "upgrade"
+            )
+    });
+    for t in obj.triggers() {
+        let name = t.name();
+        let bad = if kind == ObjKind::Codeunit {
+            !install_or_upgrade && !name.eq_ignore_ascii_case("OnRun")
+        } else {
+            foreign_triggers(kind).iter().any(|f| f.eq_ignore_ascii_case(&name))
+        };
+        if bad {
+            push(
+                out,
+                ws,
+                ws.objects[oi].file,
+                t.keyword_offset().unwrap_or_else(|| offset_of(t.syntax())),
+                "AL0162",
+                format!(
+                    "'{name}' is not a valid trigger for this object type. Check the object documentation for supported triggers."
+                ),
             );
         }
     }
@@ -1506,7 +1646,6 @@ mod tests {
             "B: Date; V: Date",
             "B: Decimal; V: Integer",
             "B: Variant; V: Date",
-            "B: Date; V: DateTime",
         ];
         for vars in ok {
             let cu = format!("{defs} codeunit 50001 C {{ procedure Run1() var {vars}; begin B := V; end; }}");
@@ -1514,5 +1653,227 @@ mod tests {
         }
         let text = format!("{defs} codeunit 50001 C {{ procedure Run1() var B: Text; begin B := 'A'; end; }}");
         assert!(codes(&[&text]).is_empty());
+    }
+
+    // must-not-compile 0269 to 0273, 0285, 0286: the scalar pairs, a condition that is no Boolean.
+    #[test]
+    fn al0122_more_scalar_pairs_and_conditions() {
+        let cases = [
+            ("D: Date; M: DateTime", "D := M", "DateTime", "Date"),
+            ("B: Boolean", "B := 'true'", "Text", "Boolean"),
+            ("I: Integer; M: Time", "I := M", "Time", "Integer"),
+            ("J: JsonObject; K: JsonToken", "J := K", "JsonToken", "JsonObject"),
+            ("I: Integer", "if I then I := 0", "Integer", "Boolean"),
+            ("T: Text", "while T do T := ''", "Text", "Boolean"),
+        ];
+        for (vars, stmt, from, to) in cases {
+            let cu = format!("codeunit 50001 C {{ procedure Run1() var {vars}; begin {stmt}; end; }}");
+            assert_eq!(
+                messages(&cu),
+                vec![format!("AL0122 Cannot implicitly convert type '{from}' to '{to}'")],
+                "{vars}: {stmt}"
+            );
+        }
+        let ok = [
+            "B: Boolean; V: Boolean; if V then B := false",
+            "T: Text; V: Boolean; while V do T := ''",
+            "J: JsonToken; K: JsonObject; J := K",
+            "B: Boolean; V: Text; B := V = 'x'",
+            "B: Boolean; T: Text; B := T = ''",
+        ];
+        for stmt in ok {
+            let (vars, body) = stmt.rsplit_once("; ").unwrap();
+            let cu = format!("codeunit 50001 C {{ procedure Run1() var {vars}; begin {body}; end; }}");
+            assert!(codes(&[&cu]).is_empty(), "{stmt}: {:?}", messages(&cu));
+        }
+    }
+
+    // must-not-compile 0274 and 0275.
+    #[test]
+    fn al0122_exit_value_and_a_procedure_without_a_result() {
+        let exit = "codeunit 50001 C { procedure Run1(): Integer begin exit('abc'); end; }";
+        assert_eq!(
+            messages(exit),
+            vec!["AL0122 Cannot implicitly convert type 'Text' to 'Integer'"]
+        );
+        let none = "codeunit 50001 C { local procedure Nothing() begin end; procedure Run1() var I: Integer; begin I := Nothing(); end; }";
+        assert_eq!(
+            messages(none),
+            vec!["AL0122 Cannot implicitly convert type 'None' to 'Integer'"]
+        );
+        let ok = "codeunit 50001 C { local procedure One(): Integer begin exit(1); end; procedure Run1(): Text var I: Integer; begin I := One(); exit('a'); end; procedure Run2(): Integer begin exit(One()); end; }";
+        assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
+        // A TryFunction returns a Boolean without declaring one (corpus errors/lt-error-handling/ErTTryBasics.al:81).
+        let try_fn = "codeunit 50001 C { [TryFunction] local procedure TryOk() begin end; procedure Run1() var Ok: Boolean; begin Ok := TryOk(); end; }";
+        assert!(codes(&[try_fn]).is_empty(), "{:?}", messages(try_fn));
+    }
+
+    // must-not-compile 0305 to 0310, 0312, 0315: a property the object type does not have.
+    #[test]
+    fn al0124_a_property_the_object_does_not_have() {
+        let table = "table 50120 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { Clustered = true; } } }";
+        let cases = [
+            (
+                format!("{table} codeunit 50121 C {{ SourceTable = T; }}"),
+                "SourceTable",
+            ),
+            (
+                "table 50122 T { ApplicationArea = All; fields { field(1; Id; Integer) { } } }".to_string(),
+                "ApplicationArea",
+            ),
+            ("report 50123 R { Editable = false; }".to_string(), "Editable"),
+            (
+                "table 50124 T { PageType = List; fields { field(1; Id; Integer) { } } }".to_string(),
+                "PageType",
+            ),
+            ("page 50125 P { TableNo = 18; }".to_string(), "TableNo"),
+            (
+                "codeunit 50126 C { DataPerCompany = false; }".to_string(),
+                "DataPerCompany",
+            ),
+            (
+                "codeunit 50128 C { NoSuchProperty = true; }".to_string(),
+                "NoSuchProperty",
+            ),
+            (
+                format!(
+                    "{table} page 50132 P {{ PageType = List; SourceTable = T; layout {{ area(Content) {{ repeater(Rep) {{ field(Id; Rec.Id) {{ ApplicationArea = All; InitValue = 5; }} }} }} }} }}"
+                ),
+                "InitValue",
+            ),
+        ];
+        for (src, prop) in cases {
+            assert_eq!(
+                messages(&src),
+                vec![format!(
+                    "AL0124 The property '{prop}' cannot be used in this context. Verify the property is available for the current object type."
+                )],
+                "{src}"
+            );
+        }
+        let ok = [
+            "codeunit 50001 C { Subtype = Test; TestPermissions = Disabled; SingleInstance = true; TableNo = 18; Permissions = tabledata T = r; Access = Internal; Description = 'x'; EventSubscriberInstance = Manual; }",
+            "table 50001 T { DataPerCompany = false; Caption = 'x'; LookupPageId = 5; fields { field(1; Id; Integer) { InitValue = 5; } } }",
+            "page 50001 P { PageType = List; ApplicationArea = All; Editable = false; UsageCategory = Lists; SourceTable = T; }",
+            "report 50001 R { ApplicationArea = All; UsageCategory = Lists; ProcessingOnly = true; }",
+        ];
+        for src in ok {
+            let full = format!("table 50000 T {{ fields {{ field(1; Id; Integer) {{ }} }} }} {src}")
+                .replace("table 50001 T", "table 50002 T2");
+            assert!(codes(&[&full]).is_empty(), "{src}: {:?}", messages(&full));
+        }
+    }
+
+    // must-not-compile 0316 to 0321: a trigger the object type does not have.
+    #[test]
+    fn al0162_a_trigger_the_object_does_not_have() {
+        let cases = [
+            ("codeunit 50001 C", "OnOpenPage"),
+            ("page 50001 P { PageType = Card; }", "OnInsert"),
+            ("table 50001 T { fields { field(1; Id; Integer) { } } }", "OnRun"),
+            ("codeunit 50001 C", "OnPreReport"),
+            ("table 50001 T { fields { field(1; Id; Integer) { } } }", "OnOpenPage"),
+            ("report 50001 R", "OnPreXmlPort"),
+        ];
+        for (head, trg) in cases {
+            let head = head.strip_suffix('}').map_or(format!("{head} {{"), |h| format!("{h} "));
+            let src = format!("{head} trigger {trg}() begin end; }}");
+            assert_eq!(
+                messages(&src),
+                vec![format!(
+                    "AL0162 '{trg}' is not a valid trigger for this object type. Check the object documentation for supported triggers."
+                )],
+                "{src}"
+            );
+        }
+        let ok = [
+            "codeunit 50001 C { trigger OnRun() begin end; }",
+            // The install and upgrade triggers (corpus install/TestInstallSeeder.al).
+            "codeunit 50001 C { Subtype = Install; trigger OnInstallAppPerCompany() begin end; trigger OnInstallAppPerDatabase() begin end; }",
+            "codeunit 50001 C { Subtype = \"Install\"; trigger OnInstallAppPerCompany() begin end; }",
+            "codeunit 50001 C { Subtype = Upgrade; trigger OnUpgradePerCompany() begin end; trigger OnValidateUpgradePerDatabase() begin end; }",
+            "table 50001 T { fields { field(1; Id; Integer) { } } trigger OnInsert() begin end; trigger OnModify() begin end; trigger OnDelete() begin end; trigger OnRename() begin end; }",
+            "page 50001 P { PageType = Card; trigger OnOpenPage() begin end; trigger OnInit() begin end; trigger OnNewRecord(BelowxRec: Boolean) begin end; }",
+            "report 50001 R { trigger OnPreReport() begin end; trigger OnPostReport() begin end; trigger OnInitReport() begin end; }",
+        ];
+        for src in ok {
+            assert!(codes(&[src]).is_empty(), "{src}: {:?}", messages(src));
+        }
+    }
+
+    // must-not-compile 0324.
+    #[test]
+    fn al0122_a_codeunit_that_does_not_implement_the_interface() {
+        let head = "interface I { procedure Calc(A: Integer): Integer; } codeunit 50001 C { }";
+        let user = "codeunit 50002 D { procedure Run1() var I: Interface I; C: Codeunit C; begin I := C; end; }";
+        assert_eq!(
+            messages(&format!("{head} {user}")),
+            vec!["AL0122 Cannot implicitly convert type 'Codeunit \"C\"' to 'Interface \"I\"'"]
+        );
+        let ok = "interface I { procedure Calc(A: Integer): Integer; } interface J extends I { } \
+            codeunit 50001 C implements I { procedure Calc(A: Integer): Integer begin end; } \
+            codeunit 50003 C2 implements J { procedure Calc(A: Integer): Integer begin end; } \
+            codeunit 50002 D { procedure Run1() var I: Interface I; C: Codeunit C; C2: Codeunit C2; begin I := C; I := C2; end; }";
+        assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
+    }
+
+    // must-not-compile 0351 to 0355: system variables an object type does not have.
+    #[test]
+    fn al0118_system_variables_the_object_does_not_have() {
+        let cases = [
+            (
+                "codeunit 50001 C { procedure Run1() begin CurrPage.Update(); end; }",
+                "CurrPage",
+            ),
+            (
+                "codeunit 50001 C { procedure Run1() begin CurrReport.Skip(); end; }",
+                "CurrReport",
+            ),
+            ("codeunit 50001 C { procedure Run1() begin xRec.Init(); end; }", "xRec"),
+            (
+                "table 50001 T { fields { field(1; Id; Integer) { } } trigger OnInsert() begin CurrPage.Update(); end; }",
+                "CurrPage",
+            ),
+            ("report 50001 R { trigger OnPreReport() begin Rec.Init(); end; }", "Rec"),
+        ];
+        for (src, name) in cases {
+            assert_eq!(
+                messages(src),
+                vec![format!(
+                    "AL0118 The name '{name}' does not exist in the current context."
+                )],
+                "{src}"
+            );
+        }
+        let ok = [
+            "table 50000 T { fields { field(1; Id; Integer) { } } } codeunit 50001 C { TableNo = T; procedure Run1() begin xRec.Init(); Rec.Init(); end; }",
+            "table 50001 T { fields { field(1; Id; Integer) { } } trigger OnInsert() begin Rec.Init(); xRec.Init(); end; }",
+            "report 50001 R { trigger OnPreReport() begin CurrReport.Skip(); end; }",
+            "page 50001 P { trigger OnOpenPage() begin CurrPage.Update(); end; }",
+        ];
+        for src in ok {
+            assert!(codes(&[src]).is_empty(), "{src}: {:?}", messages(src));
+        }
+    }
+
+    // must-not-compile 0356 and 0358: a local procedure and a global variable of another codeunit.
+    #[test]
+    fn al0161_a_local_procedure_or_a_variable_of_another_codeunit() {
+        let local = "codeunit 50001 C { local procedure Secret() begin end; } \
+            codeunit 50002 D { procedure Run1() var C: Codeunit C; begin C.Secret(); end; }";
+        assert_eq!(
+            messages(local),
+            vec!["AL0161 'Secret()' is inaccessible due to its protection level"]
+        );
+        let var = "codeunit 50001 C { var Shown: Integer; } \
+            codeunit 50002 D { procedure Run1() var C: Codeunit C; I: Integer; begin I := C.Shown; end; }";
+        assert_eq!(
+            messages(var),
+            vec!["AL0161 'Shown' is inaccessible due to its protection level"]
+        );
+        let ok = "codeunit 50001 C { var Shown: Integer; procedure Open() begin end; local procedure Secret() begin end; \
+            procedure Self() var Me: Codeunit C; begin Me.Secret(); end; } \
+            codeunit 50002 D { procedure Run1() var C: Codeunit C; begin C.Open(); C.Run(); end; }";
+        assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
     }
 }

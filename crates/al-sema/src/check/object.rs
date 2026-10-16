@@ -24,6 +24,7 @@ impl<'a> Checker<'a> {
             prefetch: None,
             resolved: Default::default(),
             panicked: HashMap::default(),
+            cur_ret: None,
         }
     }
 
@@ -584,6 +585,7 @@ impl<'a> Checker<'a> {
             }
             sc.vars.push(locals);
             let before = self.diags.len();
+            self.cur_ret = r.return_type().map(|t| Ty::from_type_ref(&t));
             if let Some(body) = r.body() {
                 self.walk(&mut sc, &body);
             }
@@ -616,6 +618,37 @@ impl<'a> Checker<'a> {
                     self.al_enum_assignment(sc, rhs, target, source);
                     self.al_integer_text_assignment(sc, rhs, target, source);
                     self.al_scalar_assignment(sc, rhs, target, source);
+                    self.al_no_result_assignment(sc, rhs, target, source);
+                    self.al_interface_assignment(sc, rhs, target, source);
+                }
+            }
+            return;
+        }
+        // AL0122 (corpus must-not-compile 0285, 0286): the condition of `if` and `while` is no Boolean.
+        if matches!(node.kind(), SyntaxKind::IfStmt | SyntaxKind::WhileStmt) {
+            let mut first = true;
+            for child in node.children() {
+                if first && is_expr(child.kind()) {
+                    first = false;
+                    let t = self.ty(sc, &child);
+                    self.al_condition(sc, &child, &t);
+                } else {
+                    self.walk(sc, &child);
+                }
+            }
+            return;
+        }
+        // AL0122 (corpus must-not-compile 0274): `exit(value)` of the wrong type.
+        if node.kind() == SyntaxKind::ExitStmt {
+            for child in node.children() {
+                if is_expr(child.kind()) {
+                    let t = self.ty(sc, &child);
+                    if let Some(ret) = self.cur_ret.clone() {
+                        self.al_integer_text_assignment(sc, &child, &ret, &t);
+                        self.al_scalar_assignment(sc, &child, &ret, &t);
+                    }
+                } else {
+                    self.walk(sc, &child);
                 }
             }
             return;

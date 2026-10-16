@@ -3,7 +3,7 @@
 //! database gives them. The provider here is a fake with a handful of rows; the backup reader is
 //! tested where it lives (`al-bcdb-std`).
 
-use al_host::testdata::{Cell, TableError, TableProvider, TableRequest, TableRows, TestData};
+use al_host::testdata::{Cell, TableError, TableProvider, TableRequest, TableRows, TestData, TestSequence};
 use al_sema::workspace::AppSource;
 use al_testrun::runtime::{CorpusRuntime, RunOptions, SuiteRun};
 use al_testrun::{CaseId, Outcome};
@@ -17,6 +17,7 @@ struct Fake {
     company: String,
     tables: HashMap<String, TableRows>,
     asked: Mutex<Vec<String>>,
+    sequences: Vec<TestSequence>,
 }
 
 impl Fake {
@@ -25,7 +26,19 @@ impl Fake {
             company: company.into(),
             tables: HashMap::new(),
             asked: Mutex::new(Vec::new()),
+            sequences: Vec::new(),
         }
+    }
+
+    fn sequence(mut self, name: &str, company_specific: bool, start: i64, current: i64) -> Fake {
+        self.sequences.push(TestSequence {
+            name: name.into(),
+            company_specific,
+            start,
+            increment: 1,
+            current,
+        });
+        self
     }
 
     fn table(mut self, name: &str, columns: &[&str], rows: Vec<Vec<Cell>>) -> Fake {
@@ -46,6 +59,9 @@ impl TableProvider for Fake {
     }
     fn source(&self) -> String {
         "fake.bak".into()
+    }
+    fn sequences(&self) -> Vec<TestSequence> {
+        self.sequences.clone()
     }
     fn read(&self, t: &TableRequest) -> Result<Arc<TableRows>, TableError> {
         self.asked.lock().unwrap().push(t.name.clone());
@@ -480,5 +496,43 @@ codeunit 2 "Company-Initialize" {{ trigger OnRun() var S: Record "Setup"; begin
             "{name}: {:?}",
             outcome(&rt, 50001, name)
         );
+    }
+}
+
+/// BC 29 keeps the number series of a restored database as SQL sequences (No. Series lines with the Sequence
+/// implementation). A run on the backup must continue where the backup left them: the next contact number is the one
+/// after the last contact (Tests-Marketing, Test Contact Lookup, CheckBillToContactWhenUpdateBillToContactToAnotherContact
+/// failed with "The record in table Contact already exists. No.='CT000001'").
+#[test]
+fn number_sequences_of_the_backup_continue_where_it_left_them() {
+    let fake = Arc::new(
+        customers()
+            .sequence("SEQ-A", true, 0, 24)
+            .sequence("SEQ-UNUSED", true, 5, 5)
+            .sequence("SEQ-GLOBAL", false, 0, 7),
+    );
+    let (rt, _) = run(
+        r#"codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Continues() begin
+    if not NumberSequence.Exists('SEQ-A') then Error('exists');
+    if NumberSequence.Current('SEQ-A') <> 24 then Error('current %1', NumberSequence.Current('SEQ-A'));
+    if NumberSequence.Next('SEQ-A') <> 25 then Error('next');
+  end;
+  [Test] procedure Unused() begin
+    if NumberSequence.Next('SEQ-UNUSED') <> 5 then Error('first value is the start');
+  end;
+  [Test] procedure Global() begin
+    if not NumberSequence.Exists('SEQ-GLOBAL', false) then Error('global exists');
+    if NumberSequence.Exists('SEQ-GLOBAL') then Error('not company specific');
+    if NumberSequence.Next('SEQ-GLOBAL', false) <> 8 then Error('global next');
+  end;
+  [Test] procedure Missing() begin
+    if NumberSequence.Exists('NOPE') then Error('exists');
+  end; }"#,
+        DEP,
+        Some(&fake),
+    );
+    for t in ["Continues", "Unused", "Global", "Missing"] {
+        assert_eq!(counted(&rt, 50001, t), Outcome::Pass, "{t}");
     }
 }

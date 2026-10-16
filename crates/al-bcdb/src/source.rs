@@ -46,6 +46,11 @@ pub trait BcSource: Send + Sync {
         sink: &mut dyn FnMut(&[Value]) -> Result<bool>,
     ) -> Result<()>;
 
+    /// The database's SQL sequences (a `.bak`; a `.bacpac` holds no state of them).
+    fn sequences(&self) -> Result<Vec<crate::catalog::SqlSequence>> {
+        Ok(Vec::new())
+    }
+
     /// One line about what was opened, for the `tables` command's stderr note.
     fn banner(&self) -> Result<String>;
 }

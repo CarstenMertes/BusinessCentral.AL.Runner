@@ -13,7 +13,7 @@ use al_bcdb::query::{self, BcTable, ReadRequest, plan_read_table_in};
 use al_bcdb::source::BcSource;
 use al_bcdb::symbols::{eq_ci, normalize_sql_name};
 use al_bcdb::value::Value;
-use al_host::testdata::{Cell, TableError, TableProvider, TableRequest, TableRows};
+use al_host::testdata::{Cell, TableError, TableProvider, TableRequest, TableRows, TestSequence};
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -351,6 +351,13 @@ impl TableProvider for BackupProvider {
         ))
     }
 
+    fn sequences(&self) -> Vec<TestSequence> {
+        match self.src.sequences() {
+            Ok(all) => all.iter().filter_map(|s| sequence_of(s, &self.sql_company)).collect(),
+            Err(_) => Vec::new(),
+        }
+    }
+
     fn read(&self, req: &TableRequest) -> Result<Arc<TableRows>, TableError> {
         let started = std::time::Instant::now();
         let r = self.read_table(req);
@@ -455,5 +462,52 @@ pub fn default_backup_in(root: &Path, builds: &[String], major: u16, minor: Opti
         Ok(bak)
     } else {
         Err(format!("{} has no BusinessCentral-{name}.bak", country.display()))
+    }
+}
+
+/// The AL number sequence behind a SQL sequence of the database, if it is one of the company `sql_company` or of none.
+/// BC names them `$SEQ$NumberSequence$<name>$<company>` (company specific) and `$SEQ$NumberSequence$<name>`.
+fn sequence_of(s: &al_bcdb::catalog::SqlSequence, sql_company: &str) -> Option<TestSequence> {
+    let rest = s.name.strip_prefix("$SEQ$NumberSequence$")?;
+    let (name, company_specific) = match rest.rsplit_once('$') {
+        Some((name, company)) if company == sql_company => (name, true),
+        Some(_) => return None,
+        None => (rest, false),
+    };
+    Some(TestSequence {
+        name: name.to_string(),
+        company_specific,
+        start: s.start,
+        increment: s.increment,
+        current: s.current,
+    })
+}
+
+#[cfg(test)]
+mod sequence_tests {
+    use super::*;
+    use al_bcdb::catalog::SqlSequence;
+
+    fn sql(name: &str) -> SqlSequence {
+        SqlSequence {
+            name: name.into(),
+            start: 0,
+            increment: 1,
+            current: 24,
+        }
+    }
+
+    #[test]
+    fn a_sequence_belongs_to_the_company_in_its_name_or_to_none() {
+        let c = "CRONUS International Ltd_";
+        let own = sequence_of(&sql("$SEQ$NumberSequence$28ABF101$CRONUS International Ltd_"), c).unwrap();
+        assert_eq!(
+            (own.name.as_str(), own.company_specific, own.current),
+            ("28ABF101", true, 24)
+        );
+        let global = sequence_of(&sql("$SEQ$NumberSequence$GlobalOne"), c).unwrap();
+        assert_eq!((global.name.as_str(), global.company_specific), ("GlobalOne", false));
+        assert!(sequence_of(&sql("$SEQ$NumberSequence$X$My Company"), c).is_none());
+        assert!(sequence_of(&sql("$ndo$recordactivity$seq"), c).is_none());
     }
 }

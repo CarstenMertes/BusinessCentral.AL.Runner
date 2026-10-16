@@ -429,6 +429,34 @@ pub struct Session {
 /// (session/TestProbeSessionMiscContracts.al:CallDepth_990, CallDepth_1000, CallDepth_1001).
 pub const MAX_CALL_DEPTH: usize = 992;
 
+/// The number sequences of the restored database, as a new session starts with them: the company's own under its
+/// name, the others under none. A sequence that is not known to have handed out a value (its current value is its
+/// start) hands out the start first.
+fn restored_sequences(
+    engine: &Engine,
+    company: &str,
+) -> std::collections::HashMap<(String, String), sessionops::Sequence> {
+    let mut out = std::collections::HashMap::new();
+    if let Some(td) = &engine.test_data {
+        for s in td.provider.sequences() {
+            let scope = if s.company_specific {
+                company.to_string()
+            } else {
+                String::new()
+            };
+            out.insert(
+                (scope, s.name),
+                sessionops::Sequence {
+                    increment: s.increment,
+                    seed: s.start,
+                    last: (s.current != s.start).then_some(s.current),
+                },
+            );
+        }
+    }
+    out
+}
+
 impl Session {
     /// A session on the deterministic test host: a frozen clock and AL Runner's identity.
     pub fn new(engine: Arc<Engine>) -> Session {
@@ -462,6 +490,7 @@ impl Session {
         if let Some(td) = &engine.test_data {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
         }
+        let sequences = restored_sequences(&engine, &company);
         let mut session = Session {
             global_language: host.identity.global_language(),
             host,
@@ -501,7 +530,7 @@ impl Session {
             isolated_storage: Default::default(),
             isolated_committed: Default::default(),
             install_scope: false,
-            sequences: Default::default(),
+            sequences,
             table_connections: Default::default(),
             default_table_connection: Default::default(),
             tx_model: TxModel::default(),

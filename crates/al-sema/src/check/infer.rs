@@ -84,10 +84,37 @@ impl<'a> Checker<'a> {
                         | (Ty::Date, Ty::Boolean | Ty::Text(_) | Ty::Decimal | Ty::DateTime)
                         | (Ty::Enum(_), Ty::Variant)
                         | (Ty::Integer, Ty::Record { .. } | Ty::Time)
+                        // Corpus must-not-compile 0430, 0435, 0445, 0438, 0448 (to a Boolean), 0433, 0434, 0436, 0407
+                        // (from a Boolean or a Text), 0401, 0403 (from an enum), 0412 to 0419 (to an enum). The
+                        // enum pairs hold whatever `AssignmentCompatibility` says (0401, 0403: enum A states it).
+                        | (Ty::Boolean, Ty::BigInteger | Ty::Option(_) | Ty::Enum(_))
+                        | (Ty::Integer | Ty::BigInteger, Ty::Boolean)
+                        | (Ty::Option(_), Ty::Boolean | Ty::Text(None))
+                        | (Ty::Text(_) | Ty::Code(_), Ty::Enum(_))
+                        | (
+                            Ty::Enum(_),
+                            Ty::Decimal | Ty::Code(_) | Ty::Text(_) | Ty::Boolean | Ty::Date | Ty::Char
+                        )
                 ) || (json(target, "JsonObject") && json(source, "JsonToken"));
                 pinned.then(|| source.to_string())
             }
             SyntaxKind::Literal => {
+                // An integer literal to a Boolean (corpus must-not-compile 0432).
+                if matches!(target, Ty::Boolean)
+                    && rhs
+                        .children_with_tokens()
+                        .filter_map(|e| e.into_token())
+                        .any(|t| t.kind() == SyntaxKind::Integer)
+                {
+                    let from = "Integer".to_string();
+                    self.diag(
+                        sc,
+                        rhs,
+                        "AL0122",
+                        format!("Cannot implicitly convert type '{from}' to '{target}'"),
+                    );
+                    return;
+                }
                 let chars = rhs
                     .children_with_tokens()
                     .filter_map(|e| e.into_token())
@@ -206,9 +233,36 @@ impl<'a> Checker<'a> {
         );
     }
 
-    /// AL0161 (corpus must-not-compile 0356, 0358): `C.Name` on a codeunit variable of another codeunit, where `Name`
+    /// AL0161 (corpus must-not-compile 0356, 0358, 0359): `C.Name` on a codeunit variable of another codeunit, where `Name`
     /// is only declared `local` or is a global variable (never reachable through a variable).
     pub(crate) fn al_codeunit_access(&mut self, sc: &Scope, node: &SyntaxNode, base: &Ty, name: &str) {
+        // A local procedure of a table, called through a record of it (corpus must-not-compile 0359). Judged on the
+        // table's own source, so a procedure of a table extension is never taken for it.
+        if let Ty::Record { table, .. } = base {
+            if self.ws.is_dependency(sc.oi) {
+                return;
+            }
+            let Some(ti) = self.resolve(sc, ObjKind::Table, table) else {
+                return;
+            };
+            if ti == sc.oi || ti == sc.self_obj || self.ws.is_dependency(ti) {
+                return;
+            }
+            let ast = self.ws.object_ast(ti);
+            let mut named = ast
+                .routines()
+                .filter(|r| r.name().eq_ignore_ascii_case(name))
+                .peekable();
+            if named.peek().is_some() && named.all(|r| r.is_local()) {
+                self.diag(
+                    sc,
+                    node,
+                    "AL0161",
+                    format!("'{name}()' is inaccessible due to its protection level"),
+                );
+            }
+            return;
+        }
         let Ty::Object(ObjKind::Codeunit, cname) = base else {
             return;
         };

@@ -644,6 +644,8 @@ impl<'a> Checker<'a> {
                 if is_expr(child.kind()) {
                     let t = self.ty(sc, &child);
                     if let Some(ret) = self.cur_ret.clone() {
+                        // exit(value) of an enum of another type (corpus must-not-compile 0405).
+                        self.al_enum_assignment(sc, &child, &ret, &t);
                         self.al_integer_text_assignment(sc, &child, &ret, &t);
                         self.al_scalar_assignment(sc, &child, &ret, &t);
                     }

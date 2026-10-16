@@ -891,7 +891,7 @@ pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagno
         }
     }
     // AL0296 (corpus 0110, 0112, 0113): a Cloud app calls a method that has scope OnPrem: GetLastErrorObject, the
-    // Unwrap of a SecretText, the Open of a File. Only these three shapes are pinned.
+    // Unwrap of a SecretText, the Open of a File, and the static File.Exists, Erase and Copy (0361 to 0363). Only these shapes are pinned.
     if ctx.target == AppTarget::Cloud {
         for (fi, f) in ws.files.iter().enumerate() {
             if f.app != app {
@@ -947,6 +947,14 @@ fn onprem_method_calls(ws: &Workspace, file: usize, obj: &ast::Object, out: &mut
                         .map(|(_, t)| t.as_str());
                     match (ty, method.to_ascii_lowercase().as_str()) {
                         (Some("secrettext"), "unwrap") | (Some("file"), "open") => Some(method),
+                        // The static File methods (corpus must-not-compile 0361 to 0363): `File` names the type when no
+                        // variable, and no object of the workspace, is called File.
+                        (None, "exists" | "erase" | "copy")
+                            if recv_name == "file"
+                                && !ws.objects.iter().any(|o| o.name.eq_ignore_ascii_case("file")) =>
+                        {
+                            Some(method)
+                        }
                         _ => None,
                     }
                 }
@@ -1875,5 +1883,95 @@ mod tests {
             procedure Self() var Me: Codeunit C; begin Me.Secret(); end; } \
             codeunit 50002 D { procedure Run1() var C: Codeunit C; begin C.Open(); C.Run(); end; }";
         assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
+    }
+
+    // must-not-compile 0401, 0403, 0405, 0407, 0412 to 0419, 0430 to 0438, 0445, 0448: more scalar, option and enum pairs.
+    #[test]
+    fn al0122_enum_option_and_boolean_pairs() {
+        let e = "enum 50010 E { Extensible = true; AssignmentCompatibility = true; value(0; None) { } value(1; One) { } } \
+            table 50011 T { fields { field(1; Id; Integer) { } field(2; Kind; Enum E) { } } } ";
+        let cases = [
+            ("C: Code[20]; T: Enum E", "C := T", "Enum \"E\"", "Code[20]"),
+            ("X: Text; T: Enum E", "X := T", "Enum \"E\"", "Text"),
+            ("X: Text; O: Option A,B,C", "O := X", "Text", "Option"),
+            ("D: Decimal; T: Enum E", "T := D", "Decimal", "Enum \"E\""),
+            ("C: Code[20]; T: Enum E", "T := C", "Code[20]", "Enum \"E\""),
+            ("X: Text; T: Enum E", "T := X", "Text", "Enum \"E\""),
+            ("D: Decimal; R: Record T", "R.Kind := D", "Decimal", "Enum \"E\""),
+            ("X: Text; R: Record T", "R.Kind := X", "Text", "Enum \"E\""),
+            ("B: Boolean; T: Enum E", "T := B", "Boolean", "Enum \"E\""),
+            ("D: Date; T: Enum E", "T := D", "Date", "Enum \"E\""),
+            ("C: Char; T: Enum E", "T := C", "Char", "Enum \"E\""),
+            ("B: Boolean; G: BigInteger", "B := G", "BigInteger", "Boolean"),
+            ("B: Boolean", "B := 1", "Integer", "Boolean"),
+            ("B: Boolean; I: Integer", "I := B", "Boolean", "Integer"),
+            ("B: Boolean; G: BigInteger", "G := B", "Boolean", "BigInteger"),
+            ("B: Boolean; O: Option A,B,C", "B := O", "Option", "Boolean"),
+            ("B: Boolean; O: Option A,B,C", "O := B", "Boolean", "Option"),
+            ("G: BigInteger", "if G then G := 0", "BigInteger", "Boolean"),
+            ("O: Option A,B,C", "if O then O := O", "Option", "Boolean"),
+            ("B: Boolean; T: Enum E", "B := T", "Enum \"E\"", "Boolean"),
+        ];
+        for (vars, stmt, from, to) in cases {
+            let cu = format!("{e} codeunit 50001 C {{ procedure Run1() var {vars}; begin {stmt}; end; }}");
+            assert_eq!(
+                messages(&cu),
+                vec![format!("AL0122 Cannot implicitly convert type '{from}' to '{to}'")],
+                "{vars}: {stmt}"
+            );
+        }
+        let ok = [
+            "B: Boolean; V: Boolean; B := V",
+            "I: Integer; O: Option A,B; I := O",
+            "O: Option A,B; I: Integer; O := I",
+            "T: Enum E; I: Integer; I := T.AsInteger()",
+            "T: Enum E; X: Text; X := Format(T)",
+            "T: Enum E; U: Enum E; T := U",
+            "B: Boolean; O: Option A,B; B := O = O::A",
+            "G: BigInteger; I: Integer; G := I",
+            "G: BigInteger; I: Integer; I := G",
+        ];
+        for stmt in ok {
+            let (vars, body) = stmt.rsplit_once("; ").unwrap();
+            let cu = format!("{e} codeunit 50001 C {{ procedure Run1() var {vars}; begin {body}; end; }}");
+            assert!(codes(&[&cu]).is_empty(), "{stmt}: {:?}", messages(&cu));
+        }
+        // exit(value) of an enum into a procedure whose enum does not state AssignmentCompatibility (0405).
+        let exit = "enum 50020 A { Extensible = true; value(0; None) { } } enum 50021 B { Extensible = true; value(0; None) { } } \
+            codeunit 50001 C { procedure Run1(): Enum B var S: Enum A; begin exit(S); end; }";
+        assert_eq!(
+            messages(exit),
+            vec!["AL0122 Cannot implicitly convert type 'Enum \"A\"' to 'Enum \"B\"'"]
+        );
+    }
+
+    // must-not-compile 0359: a local procedure of a table, called through a record.
+    #[test]
+    fn al0161_a_local_procedure_of_a_table_through_a_record() {
+        let t = "table 50000 T { fields { field(1; Id; Integer) { } } local procedure Secret() begin end; procedure Open() begin end; \
+            procedure Self() var R: Record T; begin R.Secret(); end; } ";
+        let bad = format!("{t} codeunit 50001 C {{ procedure Run1() var R: Record T; begin R.Secret(); end; }}");
+        assert_eq!(
+            messages(&bad),
+            vec!["AL0161 'Secret()' is inaccessible due to its protection level"]
+        );
+        let ok = format!("{t} codeunit 50001 C {{ procedure Run1() var R: Record T; begin R.Open(); end; }}");
+        assert!(codes(&[&ok]).is_empty(), "{:?}", messages(&ok));
+    }
+
+    // must-not-compile 0361 to 0363: File.Exists, File.Erase and File.Copy have scope OnPrem.
+    #[test]
+    fn al0296_static_file_methods_in_a_cloud_app() {
+        for call in ["B := File.Exists('x')", "File.Erase('x')", "File.Copy('a', 'b')"] {
+            let src = format!("codeunit 50000 C {{ procedure P() var B: Boolean; begin {call}; end; }}");
+            assert_eq!(ctx_codes(&src, &cloud()), vec!["AL0296"], "{call}");
+            let onprem = AppContext {
+                target: AppTarget::OnPrem,
+                ..cloud()
+            };
+            assert!(ctx_codes(&src, &onprem).is_empty(), "{call}");
+        }
+        let var = "codeunit 50000 C { procedure P() var File: Codeunit D; begin File.Exists('x'); end; } codeunit 50001 D { procedure Exists(S: Text) begin end; }";
+        assert!(ctx_codes(var, &cloud()).is_empty());
     }
 }

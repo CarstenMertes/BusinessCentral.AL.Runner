@@ -175,6 +175,12 @@ registry! {
         tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests.",
         probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G).",
     },
+    ProcedureAssignIsCall => {
+        id: "procedure-assign-is-call",
+        assumed: "`Proc := value` for a procedure with one value parameter is the call `Proc(value)`.",
+        tests: "Service Line (`SetHideWarrantyWarning := true` in OnValidate of Fault Reason Code): T204_PostedServiceInvoiceContainsPriceCalcMethod and 178 more Tests-ERM tests.",
+        probe: "A codeunit procedure P(V: Boolean) and `P := true;`: does it compile and run P? The same with a var parameter, two parameters, a return value.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

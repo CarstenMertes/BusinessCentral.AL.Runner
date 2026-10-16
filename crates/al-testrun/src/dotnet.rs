@@ -601,6 +601,9 @@ struct SidecarSession {
     /// Why every further call is refused: the process died, timed out or never started.
     dead: Option<String>,
     next_id: u64,
+    /// Ids of `release` requests sent without waiting. The sidecar answers in order, so their replies come first and are
+    /// dropped by the next request that waits for its own.
+    unacked: std::collections::VecDeque<u64>,
 }
 
 fn read_frame(r: &mut impl Read) -> Option<Vec<u8>> {
@@ -621,6 +624,7 @@ impl SidecarSession {
             proc: None,
             dead: None,
             next_id: 1,
+            unacked: std::collections::VecDeque::new(),
         }
     }
 
@@ -779,7 +783,21 @@ impl SidecarSession {
             return Err(self.died("the pipe to the sidecar is closed"));
         }
         let p = self.proc.as_mut().expect("started");
-        match p.replies.recv_timeout(timeout) {
+        let mut answer = p.replies.recv_timeout(timeout);
+        // The replies to releases sent without waiting come first, in order: drop them.
+        while let Ok(Some(bytes)) = &answer {
+            let Some(front) = self.unacked.front().copied() else {
+                break;
+            };
+            let is_front = serde_json::from_slice::<Value>(bytes).is_ok_and(|v| v["id"] == json!(front));
+            if !is_front {
+                break;
+            }
+            self.unacked.pop_front();
+            let p = self.proc.as_mut().expect("started");
+            answer = p.replies.recv_timeout(timeout);
+        }
+        match answer {
             Ok(Some(bytes)) => {
                 let v: Value = serde_json::from_slice(&bytes)
                     .map_err(|e| DotNetFailure::Refused(format!("the sidecar wrote invalid JSON: {e}")))?;
@@ -975,7 +993,19 @@ impl DotNetSession for SidecarSession {
     }
     fn release(&mut self, handles: &[DotNetHandle]) {
         if self.proc.is_some() && self.dead.is_none() {
-            let _ = self.request(json!({"op":"release","handles":handles}));
+            // Nothing waits for a release: send it and let the next request that waits drop its reply.
+            let mut req = json!({"op":"release","handles":handles});
+            let id = self.next_id;
+            self.next_id += 1;
+            req["id"] = json!(id);
+            let body = req.to_string().into_bytes();
+            let mut frame = (body.len() as u32).to_le_bytes().to_vec();
+            frame.extend_from_slice(&body);
+            let p = self.proc.as_mut().expect("started");
+            if p.stdin.write_all(&frame).and_then(|_| p.stdin.flush()).is_ok() {
+                self.unacked.push_back(id);
+                lock(&self.shared.stats).calls += 1;
+            }
         }
     }
     fn close(mut self: Box<Self>) {

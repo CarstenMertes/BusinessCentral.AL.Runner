@@ -510,6 +510,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Date.ToText#1", |c, r, _| primitive_to_text(c, r, "Date")),
     ("Boolean.ToText#1", |c, r, _| primitive_to_text(c, r, "Boolean")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
+    // A Char is also a wide char; nothing else is (types/lt-variant-is-text-streams/LTP89IsMisc.al:WideChar_Variants: Char values
+    // `WideChar,Char,`, a Byte, an Integer, a BigInteger, a Text and a two-character literal not).
+    ("Variant.IsWideChar#1", |_, r, _| is(r, "Char")),
+    ("Variant.IsFilterPageBuilder#1", |_, r, _| is(r, "FilterPageBuilder")),
     ("Variant.IsInStream#1", |_, r, _| is(r, "InStream")),
     ("Variant.IsOutStream#1", |_, r, _| is(r, "OutStream")),
     // `IsBinary` is No for every value the corpus puts in a Variant: numbers, text, a record, a Blob field's value, an InStream,
@@ -823,8 +827,16 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
 fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     Ok(match &args[0] {
         Value::Decimal(d) => Value::Decimal(d.abs()),
-        Value::Integer(i) => Value::Decimal(i.unsigned_abs().into()),
-        Value::BigInteger(i) => Value::Decimal(i.unsigned_abs().into()),
+        // Abs keeps the type of its argument: `V := Abs(I)` holds an Integer and `Abs(Bi)` a BigInteger
+        // (types/lt-variant-is-text-streams/LTP89IsMisc.al:NearTypes_TextVsCode_IntegerVsBigInteger `abs_int`, `abs_bigint`).
+        Value::Integer(i) => match i.checked_abs() {
+            Some(n) => Value::Integer(n),
+            None => return unsupported("Abs of the smallest Integer (the overflow error is not pinned)"),
+        },
+        Value::BigInteger(i) => match i.checked_abs() {
+            Some(n) => Value::BigInteger(n),
+            None => return unsupported("Abs of the smallest BigInteger (the overflow error is not pinned)"),
+        },
         other => return unsupported(&format!("Abs of {}", other.describe())),
     })
 }
@@ -1058,7 +1070,7 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
         return Err(Signal::Error(Box::new(AlError {
             message: "Sessions can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled."
                 .into(),
-            code: String::new(),
+            code: "TestStartSessionNotAllowed".into(),
             call_stack: String::new(),
         })));
     }

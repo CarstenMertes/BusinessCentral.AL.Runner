@@ -367,6 +367,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
             )
             | ("HttpClient", "Timeout")
             | ("File", "TextMode" | "WriteMode")
+            | ("DataTransfer", "UpdateAuditFields")
     )
 }
 

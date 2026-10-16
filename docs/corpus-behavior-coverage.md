@@ -9,10 +9,10 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
 | Triggers per object kind | 164 | 108 | 128 | 52 | 44 |
-| Object properties per object kind | 1110 | 261 | 1074 | 849 | 635 |
+| Object properties per object kind | 1110 | 261 | 1074 | 849 | 634 |
 | Platform and system events | 122 | 12 | 28 | 16 | 15 |
 | Statements and expressions | 59 | 54 | 53 | 0 | 0 |
-| Runtime error sites (text pinned) | 39 | 36 | - | 3 | - |
+| Runtime error sites (text pinned) | 40 | 37 | - | 3 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -459,7 +459,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | statement | `EmptyStmt` | 0 | no | 0 |
 | statement | `WithStmt` | 0 | no | 0 |
 
-## Runtime error sites without a corpus test (3 of 39; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (3 of 40; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 

@@ -191,6 +191,14 @@ impl<'a> Lowerer<'a> {
     /// that implements it (types/TestEnumDefaultImplTests.Codeunit.al:30-42); everything else
     /// is refused.
     pub(crate) fn convert_to(&mut self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
+        // A text literal of one character is a Char once it goes into a Variant (types/lt-variant/VaTIs*.al:Is_Text_Code_Char_Byte
+        // `V := 'a'` is IsChar and not IsText; `V := 'ab'` and `V := ''` are Text; a Text variable holding 'a' stays Text).
+        if matches!(self.rt(target), Ok(RtType::Variant))
+            && matches!(&value, ir::Expr::Const(ir::Const::Text(s)) if s.encode_utf16().count() == 1)
+        {
+            let ch = self.convert_to(&Ty::Char, src, value)?;
+            return self.convert_to(target, &Ty::Char, ch);
+        }
         if !self.tys_on {
             return self.convert_raw(target, src, value);
         }

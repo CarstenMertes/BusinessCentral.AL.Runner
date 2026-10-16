@@ -50,9 +50,13 @@ impl Session {
                     None => None,
                     other => return unsupported(format!("Page.Run with {} as the record", other.describe())),
                 };
-                if args.len() > 2 {
-                    return unsupported("Page.Run with a field argument");
-                }
+                // A third argument is a field of the record (`Page.RunModal(Id, Rec, Rec.Field)`), arriving as its value;
+                // the pinned case is the page with no handler (see `run_page_ui_with`).
+                let field = match args.len() {
+                    0..=2 => false,
+                    3 => true,
+                    _ => return unsupported("Page.Run with more than three arguments"),
+                };
                 // Id 0 with a record resolves the page from the record's table LookupPageId; a
                 // table without one refuses like any unknown id (corpus
                 // handlers/TestPageRunModalLookupPageId_Tests.al).
@@ -98,7 +102,7 @@ impl Session {
                             "page {n} belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
                         ));
                     }
-                    return Err(error(format!("You tried to invoke the Page object with the ID {n}")));
+                    return Err(self.missing_object("Page", i64::from(n)));
                 };
                 let st = Rc::new(RefCell::new(PageState::closed(object as u32)));
                 // The static RunModal reports the lookup values, with or without a record: OK reads
@@ -109,7 +113,7 @@ impl Session {
                 if method == PageOp::PageRunModalStatic {
                     st.borrow_mut().lookup = true;
                 }
-                self.run_page_ui(&st, record, method == PageOp::PageRunModalStatic)
+                self.run_page_ui_with(&st, record, method == PageOp::PageRunModalStatic, field)
             }
             Some(Value::TestPage(st)) => {
                 let st = st.clone();

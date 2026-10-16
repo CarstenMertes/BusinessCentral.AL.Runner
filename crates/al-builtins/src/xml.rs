@@ -1651,7 +1651,12 @@ fn detached_is_invalid(h: &Handle) -> bool {
     with(h, |d| {
         matches!(
             d,
-            XData::Text(_) | XData::CData(_) | XData::Comment(_) | XData::Pi { .. } | XData::DocType { .. }
+            XData::Text(_)
+                | XData::CData(_)
+                | XData::Comment(_)
+                | XData::Pi { .. }
+                | XData::DocType { .. }
+                | XData::Declaration { .. }
         )
     })
 }
@@ -1669,6 +1674,11 @@ fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
     let pos = children_of(&p).iter().position(|c| Rc::ptr_eq(c, h));
     match pos {
         Some(i) => Ok((p, i)),
+        // A declaration is no child of its document (xml/lt-xml-remaining-node-methods/P104TreeBDecl.al:P104_ReplaceWith_*).
+        None if with(h, |d| matches!(d, XData::Declaration { .. })) => Err(error(
+            "The requested operation cannot be performed in this context.",
+            "InvalidOperation",
+        )),
         None => unsupported("a sibling operation on an attribute or declaration"),
     }
 }
@@ -3380,7 +3390,7 @@ fn get_document_type(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
 }
 
 fn get_document(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let h = recv(r)?;
+    let h = recv_or_uninit(r, "XmlNode")?;
     let root = root_of(&h);
     // A declaration belongs to no document as far as GetDocument goes (xml/lt-xml-remaining-node-methods/P104TreeBDecl.al:
     // P104_Remove_InDoc `document1`).
@@ -3396,7 +3406,7 @@ fn get_document(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
 }
 
 fn get_parent(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let h = recv(r)?;
+    let h = recv_or_uninit(r, "XmlNode")?;
     match parent_of(&h).filter(|p| with(p, |d| matches!(d, XData::Element { .. }))) {
         Some(p) => {
             a[0] = tagged("XmlElement", p);

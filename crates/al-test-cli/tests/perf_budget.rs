@@ -141,8 +141,9 @@ const WITH_APPS_LIMIT_INSTRUCTIONS: u64 = 144_000_000_000;
 /// Where the kernel gives no instruction counter (a GitHub runner), the cost is the CPU time of the child process (user and
 /// system, `getrusage(RUSAGE_CHILDREN)`: the helper processes it waited for count too), not the wall time: the seconds of
 /// the runtime phases moved with the load of a shared runner (13.6 s against 12 s on main with the same code), CPU time
-/// moves much less. Main CI (run of 53fcf0cc) measured 25.8 s of child CPU; the limit is that plus about 25 %.
-const WITH_APPS_LIMIT_CPU_NS: u64 = 32_500_000_000;
+/// moves much less, but still varies between runners: main CI measured 25.8 s (53fcf0cc) and 34.7 s (4342a744). The
+/// limit catches a run several times slower or one that never ends, not a few percent: the instruction limit does that.
+const WITH_APPS_LIMIT_CPU_NS: u64 = 45_000_000_000;
 const WITH_APPS_RUNS: usize = 3;
 /// No single test codeunit may take longer: one codeunit that walked 2.9 million computed Date
 /// rows took 5 s of the run before.

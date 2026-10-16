@@ -7,8 +7,11 @@
 //! it unchanged.
 //!
 //! Core crate: no OS access (ADR-006).
-use al_ir::sym::{Contribution, ControlKey, FieldKey, FxMap, ListKind, LocalKey, ObjKey, RoutineKey, SymObject};
-use al_ir::walk::{RefVisitor, TableOf, walk_object, walk_table_contribution};
+use al_ir::sym::{
+    Contribution, ControlKey, EnumImplDecl, Expansion, FieldKey, FxMap, ImplSlot, ListKind, LocalKey, ObjKey,
+    RoutineKey, SubscriberTarget, SymObject,
+};
+use al_ir::walk::{ExpansionSite, RefVisitor, TableOf, walk_object, walk_table_contribution};
 use al_ir::{Object, Program, SrcPos};
 use std::sync::OnceLock;
 
@@ -18,6 +21,11 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, PartialEq)]
 pub struct DenseObject {
     pub key: ObjKey,
+    /// For an enum or enum extension: the implementations it declares and the ordinals of its values.
+    pub enum_impls: Vec<EnumImplDecl>,
+    pub enum_ordinals: Vec<u32>,
+    /// For a codeunit: the interfaces it implements, those it lists and the ones they extend.
+    pub implements: Vec<ObjKey>,
     /// For a table: the number of each field, in the order of its field list. Used where `object`
     /// is only a placeholder (a layer build marks the objects of the layers below as supplied and
     /// never reads their lowered form).
@@ -70,6 +78,12 @@ pub enum LinkError {
     UnknownObject { from: ObjKey, to: ObjKey },
     /// An object refers to a routine that the target object does not have.
     UnknownRoutine { from: ObjKey, to: RoutineKey },
+    /// A codeunit that implements an interface has no procedure of the shape of the one called.
+    NoImplementation {
+        from: ObjKey,
+        codeunit: ObjKey,
+        name: String,
+    },
     /// An object refers to a control that the target page does not have.
     UnknownControl { from: ObjKey, to: ControlKey },
     /// An object refers to a field that the target table does not have.
@@ -92,6 +106,12 @@ impl std::fmt::Display for LinkError {
             LinkError::UnknownObject { from, to } => write!(f, "{from} refers to {to}, which is not linked"),
             LinkError::UnknownRoutine { from, to } => {
                 write!(f, "{from} refers to routine {} of {}, which has none", to.local, to.obj)
+            }
+            LinkError::NoImplementation { from, codeunit, name } => {
+                write!(
+                    f,
+                    "{from} calls `{name}` through an interface, which {codeunit} does not implement"
+                )
             }
             LinkError::UnknownControl { from, to } => {
                 write!(f, "{from} refers to control {} of {}, which has none", to.name, to.page)
@@ -134,6 +154,21 @@ trait Space {
     fn control_names(&self, _i: usize) -> Option<&[String]> {
         None
     }
+    /// The interfaces codeunit `i` implements.
+    fn implemented(&self, _i: usize) -> &[ObjKey] {
+        &[]
+    }
+    /// The implementations enum (or enum extension) `i` declares, the ordinals of its values, and the
+    /// enum extensions of an enum, in program order.
+    fn enum_impls(&self, _i: usize) -> &[EnumImplDecl] {
+        &[]
+    }
+    fn enum_ordinals(&self, _i: usize) -> &[u32] {
+        &[]
+    }
+    fn enum_extensions(&self, _i: usize) -> &[usize] {
+        &[]
+    }
     /// The numbers of the fields that table extensions add to table `i`, in order.
     fn extra_field_numbers(&self, _i: usize) -> &[u32] {
         &[]
@@ -145,6 +180,8 @@ struct UnitSpace<'u, 'k> {
     units: &'u [Unit],
     /// Per table: the numbers of the fields its extensions add.
     extras: FxMap<usize, Vec<u32>>,
+    /// Per enum: its extensions, in program order.
+    enum_exts: FxMap<usize, Vec<usize>>,
     routines: &'k (dyn Fn(usize) -> &'k [LocalKey] + Sync),
 }
 
@@ -177,6 +214,43 @@ impl Space for UnitSpace<'_, '_> {
     fn extra_field_numbers(&self, i: usize) -> &[u32] {
         self.extras.get(&i).map_or(&[], |v| v.as_slice())
     }
+    fn implemented(&self, i: usize) -> &[ObjKey] {
+        match &self.units[i] {
+            Unit::Sym(s) => &s.implements,
+            Unit::Dense(d) => &d.implements,
+        }
+    }
+    fn enum_impls(&self, i: usize) -> &[EnumImplDecl] {
+        match &self.units[i] {
+            Unit::Sym(s) => &s.enum_impls,
+            Unit::Dense(d) => &d.enum_impls,
+        }
+    }
+    fn enum_ordinals(&self, i: usize) -> &[u32] {
+        match &self.units[i] {
+            Unit::Sym(s) => &s.enum_ordinals,
+            Unit::Dense(d) => &d.enum_ordinals,
+        }
+    }
+    fn enum_extensions(&self, i: usize) -> &[usize] {
+        self.enum_exts.get(&i).map_or(&[], |v| v.as_slice())
+    }
+}
+
+/// The enum extensions of each enum, in program order.
+fn enum_extensions(units: &[Unit]) -> FxMap<usize, Vec<usize>> {
+    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (u.key(), i)).collect();
+    let mut out: FxMap<usize, Vec<usize>> = FxMap::default();
+    for (i, u) in units.iter().enumerate() {
+        if let Unit::Sym(s) = u {
+            if s.object.kind == al_ir::ObjKind::EnumExtension {
+                if let Some(base) = s.extends.as_ref().and_then(|k| at.get(k)).copied() {
+                    out.entry(base).or_default().push(i);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The numbers of the fields the table extensions of each table add, in program order.
@@ -203,6 +277,8 @@ struct Tables<'a, S: Space + ?Sized> {
     routine_at: Vec<OnceLock<FxMap<&'a LocalKey, usize>>>,
     field_at: Vec<OnceLock<FxMap<u32, usize>>>,
     control_at: Vec<OnceLock<FxMap<String, usize>>>,
+    /// Per interface: the codeunits that implement it, in program order.
+    implementers: OnceLock<FxMap<usize, Vec<usize>>>,
 }
 
 impl<'a, S: Space + ?Sized> Tables<'a, S> {
@@ -220,6 +296,7 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
             routine_at: (0..n).map(|_| OnceLock::new()).collect(),
             field_at: (0..n).map(|_| OnceLock::new()).collect(),
             control_at: (0..n).map(|_| OnceLock::new()).collect(),
+            implementers: OnceLock::new(),
         })
     }
 
@@ -285,6 +362,102 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
         })
     }
 
+    /// The codeunits that implement interface `iface`, in program order.
+    fn implementers(&self, iface: usize) -> &[usize] {
+        let all = self.implementers.get_or_init(|| {
+            let mut m: FxMap<usize, Vec<usize>> = FxMap::default();
+            for i in 0..self.space.len() {
+                for k in self.space.implemented(i) {
+                    if let Some(&j) = self.at.get(k) {
+                        m.entry(j).or_default().push(i);
+                    }
+                }
+            }
+            m
+        });
+        all.get(&iface).map_or(&[], |v| v.as_slice())
+    }
+
+    /// The set an expansion stands for.
+    fn expand(&self, from: &ObjKey, e: &Expansion) -> Result<Expanded, Box<LinkError>> {
+        match e {
+            Expansion::InterfaceTest { interface } => {
+                let i = self.object(from, interface)?;
+                Ok(Expanded::Test(self.implementers(i).iter().map(|&c| c as u32).collect()))
+            }
+            Expansion::InterfaceCall {
+                interface,
+                name,
+                params,
+            } => {
+                let i = self.object(from, interface)?;
+                let mut targets = Vec::new();
+                for &cu in self.implementers(i) {
+                    let shape = |k: &LocalKey| {
+                        !k.local
+                            && !k.trigger
+                            && k.name == *name
+                            && k.params.len() == params.len()
+                            && k.params
+                                .iter()
+                                .zip(params)
+                                .all(|(a, b)| a.starts_with("var ") == b.starts_with("var "))
+                    };
+                    let keys = self.space.routines(cu);
+                    let same: Vec<usize> = (0..keys.len()).filter(|&r| shape(&keys[r])).collect();
+                    let exact = same.iter().copied().find(|&r| keys[r].params == *params);
+                    let Some(r) = exact.or(same.first().copied()) else {
+                        return Err(Box::new(LinkError::NoImplementation {
+                            from: from.clone(),
+                            codeunit: self.space.key(cu).clone(),
+                            name: name.clone(),
+                        }));
+                    };
+                    targets.push((cu, r));
+                }
+                Ok(Expanded::Call(targets))
+            }
+            Expansion::EnumImpl { enum_, interface } => {
+                let e = self.object(from, enum_)?;
+                let order: Vec<usize> = std::iter::once(e)
+                    .chain(self.space.enum_extensions(e).iter().copied())
+                    .collect();
+                let decls: Vec<&EnumImplDecl> = order.iter().flat_map(|&o| self.space.enum_impls(o)).collect();
+                let missing = |_: &str| {
+                    Box::new(LinkError::BadReference {
+                        object: from.clone(),
+                        class: "enum implementation",
+                        index: 0,
+                    })
+                };
+                let find = |slot: ImplSlot| -> Result<Option<usize>, Box<LinkError>> {
+                    for d in decls.iter().filter(|d| d.slot == slot) {
+                        if d.interface.as_ref() != Some(interface) {
+                            continue;
+                        }
+                        return match d.codeunit.as_ref().and_then(|k| self.at.get(k)) {
+                            Some(&c) => Ok(Some(c)),
+                            None => Err(missing("codeunit")),
+                        };
+                    }
+                    Ok(None)
+                };
+                let default = find(ImplSlot::Default)?;
+                let unknown = find(ImplSlot::Unknown)?;
+                let mut by_ordinal = Vec::new();
+                for &o in &order {
+                    for &ordinal in self.space.enum_ordinals(o) {
+                        match find(ImplSlot::Value(ordinal))?.or(default) {
+                            Some(c) => by_ordinal.push((ordinal as i32, c)),
+                            None => return Err(missing("value")),
+                        }
+                    }
+                }
+                Ok(Expanded::Enum { by_ordinal, unknown })
+            }
+        }
+    }
+
     /// What the tables of symbolic object `s` mean here: the position of every key.
     fn resolve(&self, s: &SymObject) -> Result<Resolved, Box<LinkError>> {
         let mut objects = Vec::with_capacity(s.refs.objects.len());
@@ -328,11 +501,16 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
                 })
             })?);
         }
+        let mut expanded = Vec::with_capacity(s.refs.expansions.len());
+        for e in &s.refs.expansions {
+            expanded.push(self.expand(&s.key, e)?);
+        }
         Ok(Resolved {
             objects,
             routines,
             fields,
             controls,
+            expanded,
         })
     }
 }
@@ -367,14 +545,17 @@ pub fn link<'k>(
     debug_assert!(base.objects.is_empty() && base.positions.is_empty());
     // What each symbolic object's tables mean in the program: the position of every key.
     let merges;
+    let subscribers;
     let resolved: Vec<Option<Resolved>> = {
         let space = UnitSpace {
             units: &units,
             extras: extra_fields(&units),
+            enum_exts: enum_extensions(&units),
             routines,
         };
         let tables = Tables::new(&space)?;
         merges = Merges::collect(&units, &tables);
+        subscribers = uncompiled_subscribers(&units, &tables)?;
         par_map(units.iter().collect(), workers, |_, u| match u {
             Unit::Sym(s) => tables.resolve(s).map(Some),
             Unit::Dense(_) => Ok(None),
@@ -447,6 +628,9 @@ pub fn link<'k>(
         contributions.push(contribution);
     }
     merges.apply(&mut base.objects, &mut contributions);
+    if !subscribers.is_empty() {
+        base.uncompiled_subscribers = subscribers;
+    }
     Ok(Linked {
         program: base,
         pos_ranges,
@@ -501,6 +685,45 @@ pub fn par_map<T: Send, R: Send>(items: Vec<T>, workers: usize, f: impl Fn(usize
     out.into_iter()
         .map(|m| m.into_inner().expect("a worker panicked").expect("every item is done"))
         .collect()
+}
+
+/// The event subscribers of the objects that were not compiled, as the program lists them: those of an object's
+/// events in the order of the objects, then those of the platform's codeunits; each group in the order of the
+/// subscribing objects.
+fn uncompiled_subscribers<S: Space + ?Sized>(
+    units: &[Unit],
+    tables: &Tables<'_, S>,
+) -> Result<Vec<al_ir::UncompiledSubscriber>, Box<LinkError>> {
+    use al_ir::PlatformPublisher as P;
+    let mut found: Vec<(u8, usize, usize, u32, al_ir::UncompiledSubscriber)> = Vec::new();
+    for (i, u) in units.iter().enumerate() {
+        let Unit::Sym(s) = u else { continue };
+        for d in &s.subscribers {
+            let (group, publisher, platform) = match &d.target {
+                SubscriberTarget::Object(k) => {
+                    let p = tables.object(&s.key, k)?;
+                    (0, p, P::None)
+                }
+                SubscriberTarget::GlobalTriggers => (1, 0, P::GlobalTriggers),
+                SubscriberTarget::CaptionClass => (2, 0, P::CaptionClass),
+            };
+            found.push((
+                group,
+                publisher,
+                i,
+                d.index,
+                al_ir::UncompiledSubscriber {
+                    publisher: (group == 0).then_some(publisher as u32),
+                    platform,
+                    event: d.event.clone(),
+                    element: d.element.clone(),
+                    subscriber: d.subscriber.clone(),
+                },
+            ));
+        }
+    }
+    found.sort_by_key(|f| (f.0, f.1, f.2, f.3));
+    Ok(found.into_iter().map(|f| f.4).collect())
 }
 
 /// What the extension objects add to their bases (ADR-033 decision 3), found before the objects are
@@ -750,6 +973,17 @@ struct Resolved {
     routines: Vec<usize>,
     fields: Vec<usize>,
     controls: Vec<usize>,
+    expanded: Vec<Expanded>,
+}
+
+/// A set that an expansion stood for.
+enum Expanded {
+    Call(Vec<(usize, usize)>),
+    Test(Vec<u32>),
+    Enum {
+        by_ordinal: Vec<(i32, usize)>,
+        unknown: Option<usize>,
+    },
 }
 
 struct Rewrite<'a> {
@@ -776,6 +1010,24 @@ impl RefVisitor for Rewrite<'_> {
         match self.res.fields.get(*r) {
             Some(&p) => *r = p,
             None => self.bad = self.bad.or(Some(("field", *r))),
+        }
+    }
+
+    fn expansion(&mut self, index: usize, site: ExpansionSite<'_>) {
+        match (self.res.expanded.get(index), site) {
+            (Some(Expanded::Call(t)), ExpansionSite::InterfaceCall { targets }) => *targets = t.clone(),
+            (Some(Expanded::Test(o)), ExpansionSite::InterfaceTest { objects }) => *objects = o.clone(),
+            (
+                Some(Expanded::Enum { by_ordinal, unknown }),
+                ExpansionSite::EnumImpl {
+                    by_ordinal: b,
+                    unknown: u,
+                },
+            ) => {
+                *b = by_ordinal.clone();
+                *u = *unknown;
+            }
+            _ => self.bad = self.bad.or(Some(("expansion", index))),
         }
     }
 
@@ -899,7 +1151,9 @@ mod tests {
         LocalKey {
             name: name.into(),
             section: String::new(),
-            sig: String::new(),
+            params: Vec::new(),
+            local: false,
+            trigger: false,
             ordinal,
         }
     }
@@ -995,6 +1249,9 @@ mod tests {
     fn a_dependency_object_placed_as_it_is_can_still_be_called_by_key() {
         let dense = DenseObject {
             key: key(2),
+            enum_impls: vec![],
+            enum_ordinals: vec![],
+            implements: vec![],
             fields: vec![],
             controls: vec![],
             object: object(2, vec![routine("First", vec![]), routine("Second", vec![])]),

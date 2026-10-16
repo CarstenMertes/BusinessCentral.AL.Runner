@@ -308,6 +308,28 @@ impl Lowerer<'_> {
         out
     }
 
+    /// What a field's `TableRelation` gives the runtime: the arms, the arms of a relation with filter
+    /// conditions, and the metadata of a relation the runtime does not understand. They read the properties of the
+    /// field as the table and its extensions leave them (a `modify` block can change `TableRelation`).
+    pub(crate) fn field_relations(
+        &self,
+        oi: usize,
+        f: &crate::members::FieldInfo,
+    ) -> (Vec<ir::RelationArm>, Vec<ir::RelationArm>, Vec<ir::MetaRelationArm>) {
+        let arms = self.relation_arms(oi, f, false);
+        let runtime = if arms.is_empty() && f.table_relation {
+            self.relation_arms(oi, f, true)
+        } else {
+            Vec::new()
+        };
+        let meta = if arms.is_empty() && f.table_relation {
+            self.relation_meta(oi, f)
+        } else {
+            Vec::new()
+        };
+        (arms, runtime, meta)
+    }
+
     pub(crate) fn table_schema(
         &self,
         oi: usize,
@@ -329,11 +351,10 @@ impl Lowerer<'_> {
                     }
                     _ => (None, None),
                 };
-                let arms = self.relation_arms(oi, f, false);
-                let runtime_arms = if arms.is_empty() && f.table_relation {
-                    self.relation_arms(oi, f, true)
+                let (arms, runtime_arms, meta) = if self.early_relations {
+                    self.field_relations(oi, f)
                 } else {
-                    Vec::new()
+                    (Vec::new(), Vec::new(), Vec::new())
                 };
                 ir::Field {
                     id: f.id,
@@ -357,13 +378,9 @@ impl Lowerer<'_> {
                     relation_table: f.relation_table.clone(),
                     relation_tables: f.relation_tables.clone(),
                     properties: f.properties.clone(),
-                    relation_arms: arms.clone(),
+                    relation_arms: arms,
                     relation_runtime: runtime_arms,
-                    relation_meta: if arms.is_empty() && f.table_relation {
-                        self.relation_meta(oi, f)
-                    } else {
-                        Vec::new()
-                    },
+                    relation_meta: meta,
                     on_validate: match (f.declared_in, f.on_validate) {
                         (Some(o), Some(off)) => routine_at.get(&(o, off)).map(|r| (o, r)),
                         _ => None,

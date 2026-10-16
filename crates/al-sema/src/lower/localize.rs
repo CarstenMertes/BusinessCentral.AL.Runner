@@ -17,22 +17,68 @@ use std::collections::HashMap;
 
 /// The routine keys of an object, one per routine node in the order the object numbers them.
 pub(crate) fn routine_keys(nodes: &[ast::Routine]) -> Vec<LocalKey> {
-    let mut seen: HashMap<(String, String, String), u32> = HashMap::new();
+    let mut seen: HashMap<(String, String, Vec<String>), u32> = HashMap::new();
     nodes
         .iter()
         .map(|r| {
             let name = r.name().to_lowercase();
             let section = section_of(r);
-            let sig = signature_of(r);
-            let slot = seen.entry((name.clone(), section.clone(), sig.clone())).or_insert(0);
+            let params = parameters_of(r);
+            let slot = seen.entry((name.clone(), section.clone(), params.clone())).or_insert(0);
             let ordinal = *slot;
             *slot += 1;
             LocalKey {
                 name,
                 section,
-                sig,
+                params,
+                local: r.is_local(),
+                trigger: r.is_trigger(),
                 ordinal,
             }
+        })
+        .collect()
+}
+
+/// The nearest enclosing section of a trigger (`field 7`, `action Post`), as
+/// `ir::Routine::container` holds it, in lower case. Empty for a procedure or a trigger of the
+/// object itself.
+fn section_of(r: &ast::Routine) -> String {
+    match r.syntax().ancestors().find_map(ast::Section::cast) {
+        Some(sec) => {
+            let arg = sec.args().first().cloned().unwrap_or_default();
+            format!(
+                "{} {}",
+                sec.name().to_ascii_lowercase(),
+                arg.trim().trim_matches('"').to_lowercase()
+            )
+        }
+        None => String::new(),
+    }
+}
+
+/// The parameters as written: the type in lower case without spaces or quotes, after `var ` for a
+/// parameter passed by reference.
+pub(crate) fn parameters_of(r: &ast::Routine) -> Vec<String> {
+    r.params()
+        .map(|p| {
+            let mut out = String::new();
+            if p.is_var() {
+                out.push_str("var ");
+            }
+            if let Some(t) = p.type_ref() {
+                t.syntax().text().for_each_chunk(|chunk| {
+                    for c in chunk.chars() {
+                        if !c.is_whitespace() && c != '"' {
+                            if c.is_ascii() {
+                                out.push(c.to_ascii_lowercase());
+                            } else {
+                                out.extend(c.to_lowercase());
+                            }
+                        }
+                    }
+                });
+            }
+            out
         })
         .collect()
 }
@@ -69,54 +115,13 @@ impl<'a> RoutineKeys<'a> {
             return k;
         }
         self.cells[i].get_or_init(|| {
-            if self.compiled[i] {
+            if self.compiled[i] || self.ws.usable(i) {
                 routine_keys(&ast::routines_in(self.ws.object_ast(i).syntax()))
             } else {
                 Vec::new()
             }
         })
     }
-}
-
-/// The nearest enclosing section of a trigger (`field 7`, `action Post`), as
-/// `ir::Routine::container` holds it, in lower case. Empty for a procedure or a trigger of the
-/// object itself.
-fn section_of(r: &ast::Routine) -> String {
-    match r.syntax().ancestors().find_map(ast::Section::cast) {
-        Some(sec) => {
-            let arg = sec.args().first().cloned().unwrap_or_default();
-            format!(
-                "{} {}",
-                sec.name().to_ascii_lowercase(),
-                arg.trim().trim_matches('"').to_lowercase()
-            )
-        }
-        None => String::new(),
-    }
-}
-
-/// The parameter types as written, lower case, without spaces, joined by `,`.
-fn signature_of(r: &ast::Routine) -> String {
-    let mut out = String::new();
-    for (i, p) in r.params().enumerate() {
-        if i > 0 {
-            out.push(',');
-        }
-        if let Some(t) = p.type_ref() {
-            t.syntax().text().for_each_chunk(|chunk| {
-                for c in chunk.chars() {
-                    if !c.is_whitespace() {
-                        if c.is_ascii() {
-                            out.push(c.to_ascii_lowercase());
-                        } else {
-                            out.extend(c.to_lowercase());
-                        }
-                    }
-                }
-            });
-        }
-    }
-    out
 }
 
 /// The fields the expressions of an object name, as (table, field number), in the order lowering
@@ -160,6 +165,85 @@ impl ControlRefs {
 use al_ir::ObjKind;
 use al_ir::sym::FxMap;
 
+/// A set that lowering worked out for a site and the symbolic form leaves to link: the answer it found
+/// (positions, for the check and for the cache) and what it asked.
+pub(crate) enum Expanded {
+    InterfaceCall {
+        interface: usize,
+        name: String,
+        params: Vec<String>,
+        targets: Vec<(usize, usize)>,
+    },
+    InterfaceTest {
+        interface: usize,
+        objects: Vec<u32>,
+    },
+    EnumImpl {
+        enum_: usize,
+        interface: usize,
+        by_ordinal: Vec<(i32, usize)>,
+        unknown: Option<usize>,
+    },
+}
+
+impl Expanded {
+    /// The entry of `Refs::expansions` for it.
+    pub(crate) fn symbolic(&self, keys: &[ObjKey]) -> al_ir::sym::Expansion {
+        use al_ir::sym::Expansion;
+        match self {
+            Expanded::InterfaceCall {
+                interface,
+                name,
+                params,
+                ..
+            } => Expansion::InterfaceCall {
+                interface: keys[*interface].clone(),
+                name: name.clone(),
+                params: params.clone(),
+            },
+            Expanded::InterfaceTest { interface, .. } => Expansion::InterfaceTest {
+                interface: keys[*interface].clone(),
+            },
+            Expanded::EnumImpl { enum_, interface, .. } => Expansion::EnumImpl {
+                enum_: keys[*enum_].clone(),
+                interface: keys[*interface].clone(),
+            },
+        }
+    }
+
+    /// The answer, written where the marker is (what lowering used to write).
+    pub(crate) fn fill(&self, site: al_ir::walk::ExpansionSite<'_>) {
+        use al_ir::walk::ExpansionSite as S;
+        match (self, site) {
+            (Expanded::InterfaceCall { targets, .. }, S::InterfaceCall { targets: t }) => *t = targets.clone(),
+            (Expanded::InterfaceTest { objects, .. }, S::InterfaceTest { objects: o }) => *o = objects.clone(),
+            (
+                Expanded::EnumImpl {
+                    by_ordinal, unknown, ..
+                },
+                S::EnumImpl {
+                    by_ordinal: b,
+                    unknown: u,
+                },
+            ) => {
+                *b = by_ordinal.clone();
+                *u = *unknown;
+            }
+            _ => unreachable!("the marker and its entry are of one kind"),
+        }
+    }
+}
+
+/// The sites that stand for sets: lowering writes a marker and the index of the entry.
+#[derive(Default)]
+pub(crate) struct Expansions {
+    pub(crate) list: Vec<Expanded>,
+}
+
+/// The implementations an enum or enum extension declares (slot, interface, codeunit, in workspace numbering) and
+/// the ordinals of its values.
+pub(crate) type EnumInfo = (Vec<(al_ir::sym::ImplSlot, Option<usize>, Option<usize>)>, Vec<u32>);
+
 /// The values and the captions an enum declares.
 pub(crate) type EnumOwn = (Vec<(i32, String)>, Vec<(i32, String)>);
 
@@ -176,6 +260,10 @@ pub(crate) struct Keys<'a> {
     pub table_of: &'a [Option<usize>],
     /// The number of field `pos` of table `table`.
     pub field_no: &'a (dyn Fn(usize, usize) -> Option<u32> + Sync),
+    /// The implementations and value ordinals an enum or enum extension declares itself.
+    pub enum_info: &'a (dyn Fn(usize) -> EnumInfo + Sync),
+    /// The interfaces codeunit `i` implements (those it lists and the ones they extend), in workspace numbering.
+    pub implements: &'a (dyn Fn(usize) -> Vec<usize> + Sync),
     /// The object an extension object extends, when it is in the program.
     pub extends: &'a (dyn Fn(usize) -> Option<usize> + Sync),
     /// Where an extension object is in the order of the list of its base.
@@ -191,6 +279,9 @@ pub(crate) struct Extras<'a> {
     /// The lists of its base that the object is in: (list, base).
     pub joins: &'a [(ListKind, usize)],
     pub table_contribution: Option<TableContribution>,
+    pub expansions: &'a [Expanded],
+    /// The uncompiled subscribers this object declares.
+    pub subscribers: Vec<al_ir::sym::SubscriberDecl>,
 }
 
 /// Makes the symbolic object of a lowered one. `Err` names a reference that points outside the
@@ -207,7 +298,27 @@ pub(crate) fn localize(
     let Extras {
         joins,
         table_contribution,
+        expansions,
+        subscribers,
     } = extras;
+    let object_kind = object.kind;
+    let (enum_impls, enum_ordinals) = if matches!(object_kind, ObjKind::Enum | ObjKind::EnumExtension) {
+        let (decls, ordinals) = (keys.enum_info)(own);
+        let key = |i: Option<usize>| i.map(|i| keys.objects[i].clone());
+        (
+            decls
+                .into_iter()
+                .map(|(slot, interface, codeunit)| al_ir::sym::EnumImplDecl {
+                    slot,
+                    interface: key(interface),
+                    codeunit: key(codeunit),
+                })
+                .collect(),
+            ordinals,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     // What other objects add to this one is not part of it: link merges it again.
     match object.kind {
         ObjKind::Enum if !object.uncompiled => {
@@ -237,7 +348,10 @@ pub(crate) fn localize(
     contribution.table = table_contribution;
     let extends = (keys.extends)(own).map(|t| keys.objects[t].clone());
     // The expressions' own references come first: they are already indices into this list.
-    let mut refs = Refs::default();
+    let mut refs = Refs {
+        expansions: expansions.iter().map(|e| e.symbolic(keys.objects)).collect(),
+        ..Default::default()
+    };
     let mut fields: FxMap<(usize, u32), usize> = FxMap::default();
     for &(table, id) in field_refs {
         fields.entry((table, id)).or_insert(refs.fields.len());
@@ -272,6 +386,17 @@ pub(crate) fn localize(
         key: keys.objects[own].clone(),
         routines: Vec::new(),
         refs: v.refs,
+        implements: if object_kind == ObjKind::Codeunit {
+            (keys.implements)(own)
+                .into_iter()
+                .map(|i| keys.objects[i].clone())
+                .collect()
+        } else {
+            Vec::new()
+        },
+        subscribers,
+        enum_impls,
+        enum_ordinals,
         extends,
         joins: joins
             .iter()
@@ -344,6 +469,13 @@ impl RefVisitor for Localize<'_, '_> {
             });
             refs.routines.len() - 1
         });
+    }
+
+    fn expansion(&mut self, index: usize, _: al_ir::walk::ExpansionSite<'_>) {
+        if index >= self.refs.expansions.len() {
+            self.bad
+                .get_or_insert_with(|| format!("expansion {index} is outside the object's list"));
+        }
     }
 
     fn control(&mut self, r: &mut usize) {

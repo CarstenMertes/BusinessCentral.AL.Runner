@@ -53,6 +53,11 @@ pub struct DepFacts {
     /// For a page (or a report with a request page): the name of each control in lower case, in the
     /// order of the page's control list (ADR-033).
     pub controls: Vec<String>,
+    /// For an enum or enum extension: the implementations it declares and the ordinals of its values (ADR-033).
+    pub enum_impls: Vec<ir::sym::EnumImplDecl>,
+    pub enum_ordinals: Vec<u32>,
+    /// For a codeunit: the interfaces it implements, those it lists and the ones they extend (ADR-033).
+    pub implements: Vec<ir::sym::ObjKey>,
     /// The key of every routine, in the same order (ADR-033): what the symbolic form of other
     /// objects names a routine of this one by.
     pub routine_keys: Vec<ir::sym::LocalKey>,

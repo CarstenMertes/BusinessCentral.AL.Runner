@@ -1254,6 +1254,34 @@ fn worker(
 /// Manual subscribers are left out: they fire only on an instance somebody bound, and that
 /// instance is a compiled codeunit.
 pub fn uncompiled_subscribers(ws: &Workspace, active: &dyn Fn(usize) -> bool) -> Vec<ir::UncompiledSubscriber> {
+    uncompiled_subscriber_sites(ws, active)
+        .into_iter()
+        .map(|s| {
+            let o = &ws.objects[s.object];
+            let sub = &o.subscribers[s.index];
+            ir::UncompiledSubscriber {
+                publisher: s.publisher.map(|p| p as u32),
+                platform: s.platform,
+                event: sub.event.to_lowercase(),
+                element: sub.element.clone(),
+                subscriber: format!("{} \"{}\"", o.kind.label(), o.name),
+            }
+        })
+        .collect()
+}
+
+/// One uncompiled subscriber: object `object` declares subscriber `index`, for an event of `publisher` (or of a
+/// platform codeunit).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct SubscriberSite {
+    pub publisher: Option<usize>,
+    pub platform: ir::PlatformPublisher,
+    pub object: usize,
+    pub index: usize,
+}
+
+/// The sites [`uncompiled_subscribers`] describes, in its order.
+pub fn uncompiled_subscriber_sites(ws: &Workspace, active: &dyn Fn(usize) -> bool) -> Vec<SubscriberSite> {
     let mut out = Vec::new();
     let mut seen = HashSet::new();
     let mut add = |publisher: Option<usize>, platform: ir::PlatformPublisher, so: usize, si: usize| {
@@ -1264,13 +1292,11 @@ pub fn uncompiled_subscribers(ws: &Workspace, active: &dyn Fn(usize) -> bool) ->
         if !seen.insert((publisher, platform as u8, so, si)) {
             return;
         }
-        let s = &o.subscribers[si];
-        out.push(ir::UncompiledSubscriber {
-            publisher: publisher.map(|p| p as u32),
+        out.push(SubscriberSite {
+            publisher,
             platform,
-            event: s.event.to_lowercase(),
-            element: s.element.clone(),
-            subscriber: format!("{} \"{}\"", o.kind.label(), o.name),
+            object: so,
+            index: si,
         });
     };
     for oi in 0..ws.objects.len() {

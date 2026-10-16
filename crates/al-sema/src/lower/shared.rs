@@ -11,6 +11,8 @@ pub(crate) struct Shared<'a> {
     pub(crate) demand: Option<&'a crate::check::demand::Demand>,
     /// Statements carry source positions (`lower_with_positions`).
     pub(crate) positions: bool,
+    /// See `Lowerer::early_relations`.
+    pub(crate) early_relations: bool,
     /// Per object: it is part of the compile (see `Workspace::restrict_to`).
     pub(crate) active: Vec<bool>,
     /// The table whose record is the implicit `Rec` of each object.
@@ -200,6 +202,8 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         embeds: Default::default(),
         field_refs: Default::default(),
         control_refs: Default::default(),
+        expansions: Default::default(),
+        early_relations: sh.early_relations,
         positions: Vec::new(),
         lines: None,
         emit_pos: false,
@@ -278,6 +282,10 @@ pub(crate) fn lower_object<'a>(
             key: None,
             field_refs: Vec::new(),
             control_refs: Vec::new(),
+            expansions: Vec::new(),
+            implements: Vec::new(),
+            enum_impls: Vec::new(),
+            enum_ordinals: Vec::new(),
             key_owners: Vec::new(),
             fields: Vec::new(),
             controls: Vec::new(),
@@ -617,6 +625,10 @@ pub(crate) fn lower_object<'a>(
         key: None,
         field_refs: lw.field_refs.take().list,
         control_refs: lw.control_refs.take().list,
+        expansions: lw.expansions.take().list,
+        enum_impls: Vec::new(),
+        enum_ordinals: Vec::new(),
+        implements: Vec::new(),
         key_owners,
         fields: Vec::new(),
         controls: Vec::new(),

@@ -18,6 +18,10 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     "permissions",
     "transactiontype",
     "usedefaultnamespace",
+    // Metadata for the compiler (Base Application's PEPPOL xmlports are ObsoleteState = Pending).
+    "obsoletestate",
+    "obsoletereason",
+    "obsoletetag",
 ];
 
 /// A schema element before its names are resolved.

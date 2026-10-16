@@ -10,4 +10,5 @@ mod reportext_calls;
 mod reportext_currreport;
 mod reportext_this;
 mod reports;
+mod xmlport_obsolete;
 mod xmlports;

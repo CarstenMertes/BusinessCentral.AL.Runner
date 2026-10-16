@@ -527,16 +527,12 @@ impl Session {
         // Close() and a platform close store too, docs/probes-needed.md).
         if !(via_action && matches!(action, "Cancel" | "LookupCancel" | "No")) {
             self.store_page_values(st);
-            // A lookup page closed with OK on a stored row hands that row to the caller's record variable (not on the blank
-            // new-line row: corpus misc/lt-page-run-overloads RunModal_NonTempRecord_ShowsDbRows keeps `Row.Code` = D1).
-            let on_row = {
-                let s = st.borrow();
-                s.lookup && s.cursor == Cursor::Row && !s.draft
-            };
-            if on_row && self.has_source(st) {
-                let fields = self.page_rec(st).borrow().fields.clone();
-                st.borrow_mut().lookup_pick = Some(fields);
-            }
+        }
+        // Not on the blank new-line row of a page: corpus misc/lt-page-run-overloads RunModal_NonTempRecord_ShowsDbRows keeps
+        // `Row.Code` = D1 after a handler that read the page down to its new line and pressed OK.
+        if action == "LookupOK" && self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {
+            let fields = self.page_rec(st).borrow().fields.clone();
+            st.borrow_mut().selection = Some(fields);
         }
         self.mark_closed(st);
         st.borrow_mut().result = Some(action.to_string());
@@ -695,7 +691,20 @@ impl Session {
         // handlers/TestPagePartOnNewRecordCount.al). A top-level list does the same, and both then
         // run OnAfterGetCurrRecord on the blank row (corpus testpart/TestPartTriggerOrderAndRefresh.al:
         // 258-273 TopLevelList_BlankLine_RunsOnNewRecord, Part_BlankLine_RunsOnNewRecord).
-        self.stamp_from_filters(st, true)?;
+        // A part whose host record is not saved yet (a card opened with OpenNew whose key was just typed) copies the link
+        // values without validating them: the host row they point to does not exist yet (Microsoft's Allocation Account
+        // page, 34 Tests-ERM tests failed on the table relation of "Allocation Account No."). Assumed, see
+        // Assumption::PartLinkNotValidatedForUnsavedHost.
+        let host_unsaved = st
+            .borrow()
+            .host
+            .as_ref()
+            .and_then(|(h, _)| h.upgrade())
+            .is_some_and(|h| h.borrow().draft);
+        if host_unsaved {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartLinkNotValidatedForUnsavedHost);
+        }
+        self.stamp_from_filters(st, !host_unsaved)?;
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;

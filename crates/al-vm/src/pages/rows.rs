@@ -833,6 +833,21 @@ impl Session {
         self.run_page_ui_with(st, record, modal, false)
     }
 
+    /// `Page.RunModal(Id, Rec)` leaves the row the lookup was closed on in `Rec` (Gen. Journal Management's template
+    /// selection reads it). Assumed, see Assumption::PageRunModalRecordTakesSelection.
+    fn hand_back_selection(&mut self, st: &St, handed: &Option<Rec>, answer: &Value) {
+        let lookup_ok = matches!(answer, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK"));
+        let picked = st.borrow_mut().selection.take();
+        if let (true, Some(r), Some(fields)) = (lookup_ok, handed, picked) {
+            if r.borrow().fields.len() == fields.len() {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::PageRunModalRecordTakesSelection,
+                );
+                r.borrow_mut().fields = fields;
+            }
+        }
+    }
+
     /// [`run_page_ui`](Self::run_page_ui); `field`: the call had a field argument (`Page.RunModal(Id, Rec, Rec.Field)`).
     /// With no handler for the page the field changes nothing: the unhandled-UI error is the same as without it
     /// (corpus errors/lt-last-error-and-events/P70_06RunModalField.al). What a handler sees and what the field
@@ -844,6 +859,7 @@ impl Session {
         modal: bool,
         field: bool,
     ) -> Result<Value, Signal> {
+        let handed = record.clone();
         let object = st.borrow().object;
         let mut st = st.clone();
         let mut trapped = false;
@@ -886,21 +902,7 @@ impl Session {
             return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
         }
         let answer = self.answer_page(&st, handler, modal)?;
-        // A lookup page closed with LookupOK hands the record it ended on back to the caller's record variable
-        // (`if Page.RunModal(Page::"X List", Rec) = Action::LookupOK then ...Rec...`). Not pinned by a corpus test;
-        // Base Application's Req. Jnl. Management WkshTemplateSelection reads the chosen template this way
-        // (Tests-SCM-Planning OpenPlanningWorksheetOnRequisitionLine); assumption lookup-run-modal-returns-record.
-        if let (true, Some(r), Value::Option(o, _)) = (modal, &record, &answer) {
-            let ok = usize::try_from(*o)
-                .ok()
-                .and_then(|i| al_builtins::value::ACTION_MEMBERS.get(i))
-                .is_some_and(|m| *m == "LookupOK");
-            let picked = st.borrow_mut().lookup_pick.take();
-            if let (true, Some(selected)) = (ok, picked) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::LookupRunModalReturnsRecord);
-                r.borrow_mut().fields = selected;
-            }
-        }
+        self.hand_back_selection(&st, &handed, &answer);
         Ok(answer)
     }
 

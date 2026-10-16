@@ -287,6 +287,8 @@ pub struct PageState {
     pub refused: bool,
     /// The last close was refused because OnQueryClosePage raised an error (shown as a message).
     pub close_error: bool,
+    /// The row the page was left on when it closed with LookupOK (`Page.RunModal(Id, Rec)` hands it back to `Rec`).
+    pub selection: Option<Vec<Value>>,
     pub pending: Option<Vec<Value>>,
     /// Opened by AL code (`Page.RunModal`, `Page.Run`) and answered by a handler, not by the test.
     pub modal: bool,
@@ -345,8 +347,6 @@ pub struct PageState {
     pub stale: bool,
     /// `LookupMode(true)` was called on this variable (`Page.RunModal(id, Rec)` is a lookup too but is not).
     pub lookup_set: bool,
-    /// The record a lookup page was on when it closed with OK: handed back to the caller's record variable (`Page.RunModal(Id, Rec)`).
-    pub lookup_pick: Option<Vec<Value>>,
     /// Page background tasks the page enqueued and the client has not run yet: (task id, codeunit id,
     /// parameters), and the next task id.
     pub bg_tasks: std::collections::VecDeque<(i32, i32, Value)>,
@@ -385,6 +385,7 @@ impl PageState {
             errors: Vec::new(),
             refused: false,
             close_error: false,
+            selection: None,
             pending: None,
             modal: false,
             lookup: false,
@@ -409,7 +410,6 @@ impl PageState {
             inited: false,
             stale: false,
             lookup_set: false,
-            lookup_pick: None,
             bg_tasks: Default::default(),
             bg_next_id: 1,
         }

@@ -126,3 +126,27 @@ Lower priority or unclear:
   incremental compile of the workspace (ADR-029, built for codeunits and tables), value capture (ALchemist).
 - **Agents:** the same warm loop serves AI agents: edit a file, get the affected test results in a
   fraction of a second instead of a cold run.
+
+## Vision: faster than BC at raw computation (owner, 2026-10-16)
+
+Not a goal for now, a direction for later. BC's runtime grew over 30 years (AL to C# to .NET IL to JIT, with
+SQL behind every record operation). v3 has no database in the loop, so every test, Base Application's included,
+is bound by computation alone: every gain in the interpreter and the record store reaches every test directly.
+The owner's vision is that v3 overtakes BC not only end to end (already true) but also on pure computation.
+
+Where v3 stands (2026-10-16, Pageworks): codeunits that ran fully take 13.7 s against BC's 13.3 s; pure compute
+is still 2 to 3 times slower than BC's JIT-compiled code (QR encoder 2.2x, font embedding 3.2x).
+
+The path, in order, each step checked by the dual run (ADR-034):
+1. Typed instructions: AL is statically typed, so the bytecode compiler can emit "add two Integers" instead of a
+   generic add that checks types at run time.
+2. Inline caches: an instruction remembers its resolved call target, field position or builtin, so a repeated
+   lookup costs nothing.
+3. Superinstructions: frequent instruction pairs (compare and jump, load field and compare) become one.
+4. Ahead-of-time native code with Cranelift (a Rust code generator, about 10x faster to compile than LLVM):
+   machine code built once per compile-cache layer (Microsoft's apps once per BC build, like the cache today),
+   stored per platform; the workspace stays on bytecode or gets a quick Cranelift compile. No JIT warm-up at test
+   time. Needs a new ADR (ADR-034 says "no JIT"); costs: a second back end to keep equal (the dual run is the
+   check), per-platform cache files, and debugger/capture/coverage hooks in native code.
+5. The record store as computation: with no SQL, key comparison, row copies and filter matching are the store's
+   cost; ADR-035 steps 2 and 3 (shared rows, encoded keys), deferred today, come back when they are the top item.

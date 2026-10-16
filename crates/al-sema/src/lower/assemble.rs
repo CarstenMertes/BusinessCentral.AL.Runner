@@ -1301,7 +1301,16 @@ fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync)
         }
         let owners = std::mem::take(&mut staged[b].key_owners);
         let mut table = staged[b].object.table.take().expect("checked");
-        let own_props = (lookups.own_field_properties)(b);
+        // The properties the table declares itself differ from the merged ones only where an extension has a
+        // `modify` block for a field of the table.
+        let modified = exts_of
+            .get(&b)
+            .is_some_and(|es| es.iter().any(|&e| !(lookups.modify_properties)(e).is_empty()));
+        let own_props = if modified {
+            (lookups.own_field_properties)(b)
+        } else {
+            Vec::new()
+        };
         // Fields: the table's own and system fields stay.
         let all = std::mem::take(&mut table.fields);
         let mut kept = Vec::new();
@@ -1346,7 +1355,7 @@ fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync)
                 },
             }
         }
-        if own_props.len() == kept.len() {
+        if modified && own_props.len() == kept.len() {
             for (f, props) in kept.iter_mut().zip(own_props) {
                 f.properties = props;
             }

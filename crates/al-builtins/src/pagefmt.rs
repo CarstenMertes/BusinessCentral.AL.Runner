@@ -418,7 +418,7 @@ fn parse_typed(
 
 /// `2:30:00 PM` / `2:30 PM` as milliseconds since midnight.
 fn parse_time(t: &str) -> Option<i64> {
-    let (hms, ap) = t.rsplit_once(' ')?;
+    let (hms, ap) = t.rsplit_once([' ', '\u{202f}'])?;
     let pm = match ap.to_ascii_uppercase().as_str() {
         "AM" => false,
         "PM" => true,

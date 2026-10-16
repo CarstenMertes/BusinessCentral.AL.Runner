@@ -28,6 +28,20 @@ const MONTHS: [&str; 12] = [
     "November",
     "December",
 ];
+const MONTHS_DE: [&str; 12] = [
+    "Januar",
+    "Februar",
+    "März",
+    "April",
+    "Mai",
+    "Juni",
+    "Juli",
+    "August",
+    "September",
+    "Oktober",
+    "November",
+    "Dezember",
+];
 const WEEKDAYS: [&str; 7] = [
     "Monday",
     "Tuesday",
@@ -412,7 +426,7 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
     if let Some((base, width)) = code.split_once(',') {
         if matches!(base, "Month Text" | "Weekday Text") {
             if let (Ok(w), Some(_)) = (width.trim().parse::<usize>(), date) {
-                let name = code_name(base, date, day_no);
+                let name = code_name(base, date, day_no, ctx.language())?;
                 let cut: String = name.chars().take(w).collect();
                 if cut.chars().count() < w {
                     crate::assumptions::assume(crate::assumptions::Assumption::FormatTextCodeWidthPads);
@@ -431,10 +445,10 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         ("Year,2", Some((y, _, _)), _) => format!("{:02}", y.rem_euclid(100)),
         ("Month", Some((_, m, _)), _) => format!("{m}"),
         ("Month,2", Some((_, m, _)), _) => format!("{m:02}"),
-        ("Month Text", Some((_, m, _)), _) => MONTHS[m as usize - 1].to_string(),
+        ("Month Text", Some(_), _) => code_name("Month Text", date, day_no, ctx.language())?,
         ("Day", Some((_, _, d)), _) => format!("{d}"),
         ("Day,2", Some((_, _, d)), _) => format!("{d:02}"),
-        ("Weekday Text", Some(_), _) => WEEKDAYS[((day_no.unwrap_or(1) - 1).rem_euclid(7)) as usize].to_string(),
+        ("Weekday Text", Some(_), _) => code_name("Weekday Text", date, day_no, ctx.language())?,
         ("Hours24,2", _, Some(ms)) => format!("{:02}", ms / 3_600_000),
         ("Hours24", _, Some(ms)) => format!("{}", ms / 3_600_000),
         // A minute below 10 without a width is not measured (Dates_CreateDateTimeRoundTrip shows 30).
@@ -450,12 +464,18 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
 }
 
 /// The name `<Month Text>` or `<Weekday Text>` shows.
-fn code_name(base: &str, date: Option<(i32, u32, u32)>, day_no: Option<i32>) -> String {
-    match (base, date) {
+fn code_name(base: &str, date: Option<(i32, u32, u32)>, day_no: Option<i32>, language: i32) -> Result<String, String> {
+    // The month names follow `GlobalLanguage`: German is pinned (platform/lt-platform-members/PlTSession.al:
+    // GlobalLanguage_SetAndRestore, `März`); another language than English and German is not.
+    if language != 1033 && !(language == 1031 && base == "Month Text") {
+        return Err(format!("{base} in the language {language} (not pinned)"));
+    }
+    Ok(match (base, date) {
+        ("Month Text", Some((_, m, _))) if language == 1031 => MONTHS_DE[m as usize - 1].to_string(),
         ("Month Text", Some((_, m, _))) => MONTHS[m as usize - 1].to_string(),
         (_, Some(_)) => WEEKDAYS[((day_no.unwrap_or(1) - 1).rem_euclid(7)) as usize].to_string(),
         _ => String::new(),
-    }
+    })
 }
 
 #[cfg(test)]

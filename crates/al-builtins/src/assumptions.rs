@@ -133,12 +133,6 @@ registry! {
         tests: "Incoming Document.FindFromIncomingDocumentEntryNo (`Get(Format(FieldRef.Value))`): about 400 Tests-ERM tests behind the Incoming Doc. Attach. FactBox.",
         probe: "Rec.Get(Format(5)) on an Integer key; Get('5'); Get('x'); Get('') and Get(' 5 ') on an Integer and a BigInteger key.",
     },
-    RecordRefGetUnopened => {
-        id: "recordref-get-unopened",
-        assumed: "RecordRef.Get(RecordId) on a RecordRef that was never opened, with the result used, answers false and leaves the ref closed.",
-        tests: "System Application Data Type Management (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`): about 260 Tests-ERM tests (CheckICPartner).",
-        probe: "RecordRef.Get(Rec.RecordId()) on a fresh RecordRef: the Boolean, then Number() and an Open on the same ref; with the result unused (PnE08RecordMisc.al asks the same row).",
-    },
     CookieSetterResult => {
         id: "cookie-setter-result",
         assumed: "Cookie.Name(NewName) and Cookie.Value(NewValue), with the result used, answer the new text.",
@@ -273,7 +267,7 @@ registry! {
     },
     InvisiblePartForPageCode => {
         id: "invisible-part-for-page-code",
-        assumed: "CurrPage.<Part>.Page in the page's own code reaches a part whose Visible came out false, whose Visible is the literal false or whose ApplicationArea is not enabled (its page is created and opened on the first reach).",
+        assumed: "CurrPage.<Part>.Page in the page's own code reaches a part whose Visible came out false, whose Visible is the literal false or whose ApplicationArea is not enabled (its page is created on the first reach, initialised and not opened).",
         tests: "Cash Receipt Journal OnAfterGetCurrRecord (WorkflowStatusBatch, Visible = variable); 7 Tests-General Journal tests; Sales Credit Memo and other document pages (IncomingDocAttachFactBox), about 230 Tests-ERM tests.",
         probe: "A page with part(P; ...) { Visible = Flag } where Flag is false at open and OnAfterGetCurrRecord calls CurrPage.P.Page.Method().",
     },

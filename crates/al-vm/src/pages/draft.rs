@@ -238,6 +238,21 @@ impl Session {
         // A row added in the middle is not pinned; it is given the same Yes as OnNewRecord gets.
         let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(true)])?;
         if go == Some(false) {
+            // A trigger that inserted the row itself and answered false leaves the page on a stored row: its next edit is
+            // a modify (as for a template step in `start_draft`). Not pinned for this answer: Base Application's Item
+            // Tracking Lines inserts into its temporary source this way (assumption page-oninsertrecord-false-after-code-insert).
+            if !st.borrow().draft_stored && self.stored_row(&rec)?.is_some() {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::PageOnInsertRecordFalseAfterCodeInsert,
+                );
+                {
+                    let mut s = st.borrow_mut();
+                    s.draft = false;
+                    s.dirty = false;
+                    s.cursor = Cursor::Row;
+                }
+                self.set_xrec(st);
+            }
             return Ok(());
         }
         if !self.page_event(st, "oninsertrecordevent", Some(true), Some(true))? {

@@ -140,6 +140,14 @@ impl Lowerer<'_> {
                     None => Err("ArrayLen with a dimension outside the array (error text not pinned)".into()),
                 }
             }
+            // Refused when it runs, so code that never reaches it still runs: Base Application's Item Picture page exports in an
+            // action's trigger, which a test that only opens an Item Card never invokes. What the call writes is not pinned (the
+            // corpus skips it: streams/lt-stream-read-write-media/P102Media.al line 5).
+            Some(Res::Builtin(id)) if matches!(id.as_str(), "Media.ExportFile#1" | "MediaSet.ExportFile#1") => {
+                Ok(ir::Expr::Refused(format!(
+                    "builtin {id}: what a media export writes to the server's file system is not pinned (docs/probes-needed.md)"
+                )))
+            }
             Some(Res::Builtin(id)) => {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(match al_builtins::native::refusal(&id) {

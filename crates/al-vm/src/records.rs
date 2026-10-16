@@ -1759,7 +1759,11 @@ impl Session {
                             found = match c {
                                 // Another current key looks for the neighbour by that key's fields
                                 // (events/TestProbeEventContracts.al:Find_NeighbourSearch_WithFilterAndOtherKey, key Name).
-                                '=' if key != 0 => None,
+                                // The row itself is the one with the record's primary key whose fields of that key still
+                                // hold the record's values and that passes the filters. Not pinned for a row that exists
+                                // (the corpus names only keys whose values no row holds); Base Application's Req. Wksh.-Make
+                                // Order `Code` needs it for the Requisition Line the Carry Out Action Msg. report read by its
+                                // own sorting (docs/probes-needed.md, find-equal-on-another-key).
                                 '=' => {
                                     let pk = t.primary_key(&rec.borrow().fields);
                                     let exact = self
@@ -1767,7 +1771,18 @@ impl Session {
                                         .get(&cx, &t, &pk)
                                         .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                                     match exact {
-                                        Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
+                                        Some(row) if self.row_passes(rec, &t, &row)? => {
+                                            if key == 0 {
+                                                Some(row)
+                                            } else if format!("{:?}", position(&t, key, &row)) == format!("{pos:?}") {
+                                                al_builtins::assumptions::assume(
+                                                    al_builtins::assumptions::Assumption::FindEqualOnAnotherKey,
+                                                );
+                                                Some(row)
+                                            } else {
+                                                None
+                                            }
+                                        }
                                         _ => None,
                                     }
                                 }

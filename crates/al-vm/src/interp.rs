@@ -185,6 +185,18 @@ impl Session {
         let mut inst = f.instance.borrow_mut();
         for (i, v) in fresh.into_iter().enumerate() {
             if !keep.contains(&i) {
+                // A global temporary record keeps its rows, as Clear leaves them
+                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount); that ClearAll does the same
+                // is not pinned: Base Application's Purch.-Post ClearAllVariables relies on it.
+                if let (Value::Record(old), Value::Record(new)) = (&inst.globals[i], &v) {
+                    let id = old.borrow().temp_id.clone();
+                    if id.is_some() && old.borrow().temporary {
+                        new.borrow_mut().temp_id = id;
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::ClearAllKeepsTemporaryRows,
+                        );
+                    }
+                }
                 inst.globals[i] = v;
             }
         }

@@ -572,7 +572,11 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             // Bytes that are no UTF-8 cannot be read from a stream created as UTF-8 (xmlport/lt-xmlport-query-datatransfer/
             // XpTExportBasic.al:Export_ThreeRows: the UTF-16 bytes of an export).
             let invalid_utf8 = enc == Encoding::Utf8 && std::str::from_utf8(&line).is_err();
-            ((!invalid_utf8 && enc.decode_pinned(&line)).then(|| enc.decode(&line)), consumed, invalid_utf8)
+            (
+                (!invalid_utf8 && enc.decode_pinned(&line)).then(|| enc.decode(&line)),
+                consumed,
+                invalid_utf8,
+            )
         });
         let (text, consumed, invalid_utf8) = (text.0, text.1, text.2);
         if invalid_utf8 {
@@ -746,7 +750,16 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                 Value::Date(0, false)
             } else {
                 let closing = (n - 731) % 2 != 0;
-                Value::Date((n - 731 - i32::from(closing)) / 2, closing)
+                let day = (n - 731 - i32::from(closing)) / 2;
+                // Bytes that are no date raise (misc/lt-probes-needed-1/PnAStreamReadMisc.al:Read_Types_A `op5`).
+                if !(1..=3_652_059).contains(&day) {
+                    return Err(Signal::Error(Box::new(crate::native::AlError {
+                        message: "The date is not valid.".into(),
+                        code: "DateInvalid".into(),
+                        call_stack: String::new(),
+                    })));
+                }
+                Value::Date(day, closing)
             }
         }
         Value::Decimal(_) => Value::Decimal(decimal_from_bytes(&bytes)?),

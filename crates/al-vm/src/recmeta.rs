@@ -285,7 +285,9 @@ impl Session {
             RecordOp::MarkedOnly => match args.first() {
                 None => Ok(Value::Boolean(rec.borrow().marked_only)),
                 Some(v) => {
-                    rec.borrow_mut().marked_only = ops::truthy(v)?;
+                    let mut r = rec.borrow_mut();
+                    r.marked_only = ops::truthy(v)?;
+                    r.position = None;
                     Ok(Value::Null)
                 }
             },
@@ -711,6 +713,16 @@ impl Session {
                 // field's type: a Code field is not upper-cased or trimmed, a Text longer than the field raises no overflow, a Decimal
                 // against an Integer field is not an overflow (record/lt-testfield-fielderror-typed/P96Text.al, P96LongText.al,
                 // P96Numbers.al). The message shows the value as given.
+                // A one-character text that came through a Variant is a Char: it is compared as the text it is (P96Text.al
+                // `ref_empty_cd_blank`).
+                let want_owned;
+                let want = match want {
+                    Value::Char(c) if matches!(current, Value::Text(_) | Value::Code(_)) => {
+                        want_owned = Value::Text(char::from_u32(u32::from(*c)).unwrap_or(' ').to_string().into());
+                        &want_owned
+                    }
+                    other => other,
+                };
                 let text_pair = matches!(
                     (&current, want),
                     (Value::Text(_) | Value::Code(_), Value::Text(_) | Value::Code(_))

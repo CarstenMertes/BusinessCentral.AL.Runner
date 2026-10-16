@@ -585,11 +585,12 @@ impl Session {
         match std::str::from_utf8(rest) {
             // A document that declares utf-16 in bytes without a UTF-16 byte order mark cannot be read
             // (xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:Import_PrologUtf16Declared).
-            Ok(t) if t.starts_with("<?xml")
-                && t.split_once("?>").is_some_and(|(decl, _)| {
-                    let d = decl.to_ascii_lowercase();
-                    d.contains("encoding=\"utf-16\"") || d.contains("encoding='utf-16'")
-                }) =>
+            Ok(t)
+                if t.starts_with("<?xml")
+                    && t.split_once("?>").is_some_and(|(decl, _)| {
+                        let d = decl.to_ascii_lowercase();
+                        d.contains("encoding=\"utf-16\"") || d.contains("encoding='utf-16'")
+                    }) =>
             {
                 Err(xerr(
                     "There is no Unicode byte order mark. Cannot switch to Unicode.",

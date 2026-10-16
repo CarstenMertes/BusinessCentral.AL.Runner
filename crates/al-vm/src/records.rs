@@ -928,10 +928,15 @@ impl Session {
             });
             r.load.partial = false;
         }
-        let pk = self.table(rec).map(|t| t.primary_key(&row))?;
+        let t = self.table(rec)?;
+        let pk = t.primary_key(&row);
+        // The record remembers the row as its own only when the row passed its filters when it was read; a filter set later forgets it
+        // (record/TestFindSetSortKeyModify.al:OwnFilter_ModifiedOutOfIt_FindStillFindsTheRow against misc/lt-probes-needed-3/
+        // PnC02Filters.al:FindEqual_OutsideFilter and record/lt-record-read/RcAMisc.al:MarkedOnly_With_Find_Get_And_Order).
+        let passes = self.row_passes(rec, &t, &row)?;
         {
             let mut r = rec.borrow_mut();
-            r.position = Some(pk);
+            r.position = passes.then_some(pk);
             r.fields = row;
         }
         self.auto_calculate(rec)
@@ -1830,6 +1835,7 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let ty = t.fields[pos].ty.clone();
                 let mut r = rec.borrow_mut();
+                r.position = None;
                 let group = r.filter_group;
                 r.filters.retain(|f| !(f.field == pos && f.group == group));
                 if let Some(from) = args.get(1) {
@@ -1848,6 +1854,7 @@ impl Session {
             }
             RecordOp::SetFilter => {
                 let pos = arg_pos(args, 0)?;
+                rec.borrow_mut().position = None;
                 let ty = t.fields[pos].ty.clone();
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
                 // An empty filter text removes the field's filter: a Query column does so

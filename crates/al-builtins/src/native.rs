@@ -288,6 +288,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
+    (
+        "System.GetLastErrorText#2",
+        get_last_error_text_without_customer_content,
+    ),
     ("System.GetLastErrorCode#1", get_last_error_code),
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
@@ -604,9 +608,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
-        "System.GetLastErrorText#2" => {
-            "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
-        }
         _ => return None,
     })
 }
@@ -920,6 +921,27 @@ fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
         return unsupported("GetLastErrorText of an error whose text is not pinned");
     }
     Ok(Value::Text(e.message.into()))
+}
+
+/// `GetLastErrorText(true)`: the text without customer content. A text that holds none is the same text (assumption
+/// `get-last-error-text-exclude-customer-content`, Microsoft's Marketing and Misc tests); the identification values of a record
+/// are customer content and what replaces them is not pinned, so such a text is refused.
+fn get_last_error_text_without_customer_content(
+    ctx: &mut dyn Ctx,
+    r: Option<&mut Value>,
+    a: &mut [Value],
+) -> Result<Value, Signal> {
+    if matches!(a.first(), Some(Value::Boolean(false))) {
+        return get_last_error_text(ctx, r, &mut []);
+    }
+    let e = ctx.last_error();
+    if e.message.contains("Identification fields and values") {
+        return unsupported(
+            "GetLastErrorText(true) of an error that shows the values of a record (customer content): what the flag removes is not pinned",
+        );
+    }
+    crate::assumptions::assume(crate::assumptions::Assumption::GetLastErrorTextExcludeCustomerContent);
+    get_last_error_text(ctx, r, &mut [])
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

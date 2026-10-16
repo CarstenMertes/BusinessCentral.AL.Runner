@@ -17,6 +17,7 @@ mod exec;
 mod format_variant_number;
 mod in_precedence;
 mod interfaces;
+mod last_error_exclude;
 mod moved_fields;
 mod pageworks_probes;
 mod proc_assign;

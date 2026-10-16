@@ -10,6 +10,16 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-vm/src/exec/compile.rs",
+        r#"eprintln!("  {i:3} {op:?}");"#,
+        "the bytecode listing of AL_EXEC_DUMP, for the developers of the VM",
+    ),
+    (
+        "al-vm/src/exec/compile.rs",
+        r#"other => unreachable!("not a jump: {other:?}"),"#,
+        "an internal error of the bytecode compiler, never shown to an AL user",
+    ),
+    (
         "al-testrun/src/runtime/compiled.rs",
         r#""the program differs (first object that differs: {:?}; positions equal: {}; counts {} and {})","#,
         "the report of a defect of the incremental update (ALRUNNER_CHECK_INCREMENTAL, tests): for the developers of the compiler",

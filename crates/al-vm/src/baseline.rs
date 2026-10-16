@@ -363,4 +363,26 @@ mod tests {
         let back = Baseline::from_bytes(&bytes).unwrap();
         assert_eq!(summary(&back), summary(&b));
     }
+
+    // corpus record/TestSystemFieldStampsContracts.al:Insert_StampsBothFieldsWithTheUtcClock_SystemIdIsSetBeforeOnInsert:
+    // the install ran on a clock its Sleep calls had moved forward; a session restored from its baseline stamps on the real clock.
+    #[test]
+    fn a_restored_session_does_not_stamp_ahead_of_the_clock() {
+        let engine = crate::Engine::new(al_ir::Program::default(), Vec::new());
+        let mut session = Session::new(engine);
+        let mut b = sample();
+        b.last_stamp = session.now_millis() + 6 * 3_600_000;
+        session.restore_baseline(&b);
+        let stamp = session.stamp_millis();
+        assert!(
+            stamp <= session.now_millis() + 1_000,
+            "stamped {} ms ahead",
+            stamp - session.now_millis()
+        );
+        // A baseline stamp in the past still holds: the next stamp is later than it.
+        let mut older = sample();
+        older.last_stamp = session.now_millis() - 10_000;
+        session.restore_baseline(&older);
+        assert!(session.stamp_millis() > older.last_stamp);
+    }
 }

@@ -35,7 +35,7 @@ impl Default for ObjName {
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub struct ObjKey {
     /// The id of the declaring app (`AppInfo::id`).
-    pub app: String,
+    pub app: std::sync::Arc<str>,
     pub kind: ObjKind,
     pub name: ObjName,
 }
@@ -51,7 +51,7 @@ impl ObjKey {
             }),
         };
         ObjKey {
-            app: app.to_string(),
+            app: app.into(),
             kind,
             name,
         }
@@ -144,7 +144,8 @@ impl Refs {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct SymObject {
     pub key: ObjKey,
-    /// The key of each routine of `object`, in the order of `object.routines`.
+    /// The key of each routine of `object`, in the order of `object.routines`. Lowering leaves it
+    /// empty (link asks for the keys of the objects that are called); a stored object fills it.
     pub routines: Vec<LocalKey>,
     pub refs: Refs,
     /// For a table whose IR carries no field list (a dependency table that was not compiled) but
@@ -158,3 +159,41 @@ pub struct SymObject {
     /// in `Program::positions`. Their `object` and `routine` are the object's own.
     pub positions: Vec<SrcPos>,
 }
+
+/// A fast hash for the interning tables of lowering and link, whose keys are small integers and short
+/// names (the std hash is built to resist attacks, which these keys do not need).
+#[derive(Default, Clone, Copy)]
+pub struct Fx(u64);
+
+impl std::hash::Hasher for Fx {
+    fn finish(&self) -> u64 {
+        self.0
+    }
+    fn write(&mut self, bytes: &[u8]) {
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.write_u64(u64::from_le_bytes(c.try_into().expect("eight bytes")));
+        }
+        let rest = chunks.remainder();
+        if !rest.is_empty() {
+            let mut last = [0u8; 8];
+            last[..rest.len()].copy_from_slice(rest);
+            self.write_u64(u64::from_le_bytes(last) ^ ((rest.len() as u64) << 56));
+        }
+    }
+    fn write_u8(&mut self, i: u8) {
+        self.write_u64(u64::from(i));
+    }
+    fn write_u32(&mut self, i: u32) {
+        self.write_u64(u64::from(i));
+    }
+    fn write_usize(&mut self, i: usize) {
+        self.write_u64(i as u64);
+    }
+    fn write_u64(&mut self, i: u64) {
+        self.0 = (self.0.rotate_left(5) ^ i).wrapping_mul(0x517c_c1b7_2722_0a95);
+    }
+}
+
+/// A `HashMap` with the [`Fx`] hash.
+pub type FxMap<K, V> = std::collections::HashMap<K, V, std::hash::BuildHasherDefault<Fx>>;

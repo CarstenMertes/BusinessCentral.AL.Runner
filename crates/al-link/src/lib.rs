@@ -8,10 +8,9 @@
 //!
 //! Core crate: no OS access (ADR-006).
 
-use al_ir::sym::{ControlKey, FieldKey, LocalKey, ObjKey, RoutineKey, SymObject};
+use al_ir::sym::{ControlKey, FieldKey, FxMap, LocalKey, ObjKey, RoutineKey, SymObject};
 use al_ir::walk::{RefVisitor, TableOf, walk_object};
 use al_ir::{Object, Program, SrcPos};
-use std::collections::HashMap;
 use std::sync::OnceLock;
 
 /// An object whose references are already positions in the program it goes into (a dependency
@@ -20,8 +19,6 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, PartialEq)]
 pub struct DenseObject {
     pub key: ObjKey,
-    /// The key of each routine of `object`, in order.
-    pub routines: Vec<LocalKey>,
     /// For a table: the number of each field, in the order of its field list. Used where `object`
     /// is only a placeholder (a layer build marks the objects of the layers below as supplied and
     /// never reads their lowered form).
@@ -45,13 +42,6 @@ impl Unit {
         match self {
             Unit::Sym(s) => &s.key,
             Unit::Dense(d) => &d.key,
-        }
-    }
-
-    fn routines(&self) -> &[LocalKey] {
-        match self {
-            Unit::Sym(s) => &s.routines,
-            Unit::Dense(d) => &d.routines,
         }
     }
 
@@ -145,28 +135,34 @@ trait Space {
     }
 }
 
-impl Space for [Unit] {
+/// The units to link, with the keys of their routines.
+struct UnitSpace<'u, 'k> {
+    units: &'u [Unit],
+    routines: &'k (dyn Fn(usize) -> &'k [LocalKey] + Sync),
+}
+
+impl Space for UnitSpace<'_, '_> {
     fn len(&self) -> usize {
-        <[Unit]>::len(self)
+        self.units.len()
     }
     fn key(&self, i: usize) -> &ObjKey {
-        self[i].key()
+        self.units[i].key()
     }
     fn routines(&self, i: usize) -> &[LocalKey] {
-        self[i].routines()
+        (self.routines)(i)
     }
     fn object(&self, i: usize) -> &Object {
-        self[i].object()
+        self.units[i].object()
     }
     fn field_numbers(&self, i: usize) -> Option<&[u32]> {
-        match &self[i] {
+        match &self.units[i] {
             Unit::Dense(d) if !d.fields.is_empty() => Some(&d.fields),
             Unit::Sym(s) if !s.field_numbers.is_empty() => Some(&s.field_numbers),
             _ => None,
         }
     }
     fn control_names(&self, i: usize) -> Option<&[String]> {
-        match &self[i] {
+        match &self.units[i] {
             Unit::Dense(d) if !d.controls.is_empty() => Some(&d.controls),
             _ => None,
         }
@@ -176,16 +172,16 @@ impl Space for [Unit] {
 /// The positions of keys in a [`Space`], found when first asked for.
 struct Tables<'a, S: Space + ?Sized> {
     space: &'a S,
-    at: HashMap<&'a ObjKey, usize>,
-    routine_at: Vec<OnceLock<HashMap<&'a LocalKey, usize>>>,
-    field_at: Vec<OnceLock<HashMap<u32, usize>>>,
-    control_at: Vec<OnceLock<HashMap<String, usize>>>,
+    at: FxMap<&'a ObjKey, usize>,
+    routine_at: Vec<OnceLock<FxMap<&'a LocalKey, usize>>>,
+    field_at: Vec<OnceLock<FxMap<u32, usize>>>,
+    control_at: Vec<OnceLock<FxMap<String, usize>>>,
 }
 
 impl<'a, S: Space + ?Sized> Tables<'a, S> {
     fn new(space: &'a S) -> Result<Tables<'a, S>, Box<LinkError>> {
         let n = space.len();
-        let mut at: HashMap<&ObjKey, usize> = HashMap::with_capacity(n);
+        let mut at: FxMap<&ObjKey, usize> = FxMap::with_capacity_and_hasher(n, Default::default());
         for i in 0..n {
             if at.insert(space.key(i), i).is_some() {
                 return Err(Box::new(LinkError::DuplicateObject(space.key(i).clone())));
@@ -209,12 +205,12 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
         })
     }
 
-    fn routine_table(&self, i: usize) -> Result<&HashMap<&'a LocalKey, usize>, Box<LinkError>> {
+    fn routine_table(&self, i: usize) -> Result<&FxMap<&'a LocalKey, usize>, Box<LinkError>> {
         if let Some(t) = self.routine_at[i].get() {
             return Ok(t);
         }
         let keys = self.space.routines(i);
-        let mut t = HashMap::with_capacity(keys.len());
+        let mut t = FxMap::with_capacity_and_hasher(keys.len(), Default::default());
         for (r, k) in keys.iter().enumerate() {
             if t.insert(k, r).is_some() {
                 return Err(Box::new(LinkError::DuplicateRoutine {
@@ -227,23 +223,23 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
     }
 
     /// The position of each field number in a table: its place in the table's merged field list.
-    fn field_table(&self, i: usize) -> &HashMap<u32, usize> {
+    fn field_table(&self, i: usize) -> &FxMap<u32, usize> {
         self.field_at[i].get_or_init(|| {
             if let Some(f) = self.space.field_numbers(i) {
                 return first_of(f.iter().copied());
             }
             match &self.space.object(i).table {
                 Some(t) => first_of(t.fields.iter().map(|f| f.id)),
-                None => HashMap::new(),
+                None => FxMap::default(),
             }
         })
     }
 
     /// The position of each control name in a page's control list: the first of a name, as
     /// lowering took it, compared without case.
-    fn control_table(&self, i: usize) -> &HashMap<String, usize> {
+    fn control_table(&self, i: usize) -> &FxMap<String, usize> {
         self.control_at[i].get_or_init(|| {
-            let mut at = HashMap::new();
+            let mut at = FxMap::default();
             if let Some(names) = self.space.control_names(i) {
                 for (pos, c) in names.iter().enumerate() {
                     at.entry(c.clone()).or_insert(pos);
@@ -327,11 +323,23 @@ fn rewrite(object: &mut Object, res: &Resolved, key: &ObjKey) -> Result<(), Box<
 /// Links `units` into `base`, which holds everything that is not an object (`apps`, `dotnet_types`,
 /// `sources`, `uncompiled_subscribers`; its `objects` and `positions` are empty). The objects come
 /// out in the order of `units`.
-pub fn link(units: Vec<Unit>, mut base: Program, workers: usize) -> Result<Linked, Box<LinkError>> {
+///
+/// `routines` gives the keys of the routines of object `i`, asked for the objects that other objects
+/// call.
+pub fn link<'k>(
+    units: Vec<Unit>,
+    mut base: Program,
+    workers: usize,
+    routines: &'k (dyn Fn(usize) -> &'k [LocalKey] + Sync),
+) -> Result<Linked, Box<LinkError>> {
     debug_assert!(base.objects.is_empty() && base.positions.is_empty());
     // What each symbolic object's tables mean in the program: the position of every key.
     let resolved: Vec<Option<Resolved>> = {
-        let tables = Tables::new(&units[..])?;
+        let space = UnitSpace {
+            units: &units,
+            routines,
+        };
+        let tables = Tables::new(&space)?;
         par_map(units.iter().collect(), workers, |_, u| match u {
             Unit::Sym(s) => tables.resolve(s).map(Some),
             Unit::Dense(_) => Ok(None),
@@ -570,8 +578,8 @@ impl RefVisitor for Rewrite<'_> {
 
 /// The position of each field number. A merged field list can hold a number twice (an app that
 /// extends a table redeclares a field); the lowering took the first, so a key does too.
-fn first_of(ids: impl Iterator<Item = u32>) -> HashMap<u32, usize> {
-    let mut at = HashMap::new();
+fn first_of(ids: impl Iterator<Item = u32>) -> FxMap<u32, usize> {
+    let mut at = FxMap::default();
     for (p, id) in ids.enumerate() {
         at.entry(id).or_insert(p);
     }
@@ -659,6 +667,23 @@ mod tests {
         }
     }
 
+    fn keys_of(units: &[Unit]) -> Vec<Vec<LocalKey>> {
+        units
+            .iter()
+            .map(|u| match u {
+                Unit::Sym(s) => s.routines.clone(),
+                Unit::Dense(_) => vec![local("first", 0), local("second", 0)],
+            })
+            .collect()
+    }
+
+    /// `link` with the routine keys the symbolic objects carry (a dense unit in these tests has `first` and `second`).
+    fn link_all(units: Vec<Unit>, workers: usize) -> Result<Linked, Box<LinkError>> {
+        let keys = keys_of(&units);
+        let routines = |i: usize| keys[i].as_slice();
+        link(units, Program::default(), workers, &routines)
+    }
+
     fn local(name: &str, ordinal: u32) -> LocalKey {
         LocalKey {
             name: name.into(),
@@ -743,16 +768,10 @@ mod tests {
 
     #[test]
     fn a_call_finds_its_target_wherever_the_target_is() {
-        let a = link(
-            vec![Unit::Sym(caller(1, 2)), Unit::Sym(callee(2))],
-            Program::default(),
-            1,
-        )
-        .unwrap();
+        let a = link_all(vec![Unit::Sym(caller(1, 2)), Unit::Sym(callee(2))], 1).unwrap();
         assert_eq!(call_of(&a.program, 0), (1, 1));
-        let b = link(
+        let b = link_all(
             vec![Unit::Sym(callee(2)), Unit::Sym(callee(3)), Unit::Sym(caller(1, 2))],
-            Program::default(),
             1,
         )
         .unwrap();
@@ -763,21 +782,18 @@ mod tests {
     fn a_dependency_object_placed_as_it_is_can_still_be_called_by_key() {
         let dense = DenseObject {
             key: key(2),
-            routines: vec![local("first", 0), local("second", 0)],
             fields: vec![],
             controls: vec![],
             object: object(2, vec![routine("First", vec![]), routine("Second", vec![])]),
             positions: vec![],
         };
-        let linked = link(vec![Unit::Dense(dense), Unit::Sym(caller(1, 2))], Program::default(), 1).unwrap();
+        let linked = link_all(vec![Unit::Dense(dense), Unit::Sym(caller(1, 2))], 1).unwrap();
         assert_eq!(call_of(&linked.program, 1), (0, 1));
     }
 
     #[test]
     fn a_missing_target_is_an_error_that_names_it() {
-        let e = link(vec![Unit::Sym(caller(1, 2))], Program::default(), 1)
-            .err()
-            .unwrap();
+        let e = link_all(vec![Unit::Sym(caller(1, 2))], 1).err().unwrap();
         assert_eq!(
             *e,
             LinkError::UnknownObject {
@@ -788,15 +804,13 @@ mod tests {
         let mut c = callee(2);
         c.routines.truncate(1);
         c.object.routines.truncate(1);
-        let e = link(vec![Unit::Sym(caller(1, 2)), Unit::Sym(c)], Program::default(), 1)
-            .err()
-            .unwrap();
+        let e = link_all(vec![Unit::Sym(caller(1, 2)), Unit::Sym(c)], 1).err().unwrap();
         assert!(matches!(*e, LinkError::UnknownRoutine { .. }), "{e:?}");
     }
 
     #[test]
     fn two_objects_with_one_key_do_not_link() {
-        let e = link(vec![Unit::Sym(callee(2)), Unit::Sym(callee(2))], Program::default(), 1)
+        let e = link_all(vec![Unit::Sym(callee(2)), Unit::Sym(callee(2))], 1)
             .err()
             .unwrap();
         assert_eq!(*e, LinkError::DuplicateObject(key(2)));
@@ -806,9 +820,7 @@ mod tests {
     fn a_reference_outside_the_table_is_an_error() {
         let mut c = caller(1, 2);
         c.refs.objects.clear();
-        let e = link(vec![Unit::Sym(c), Unit::Sym(callee(2))], Program::default(), 1)
-            .err()
-            .unwrap();
+        let e = link_all(vec![Unit::Sym(c), Unit::Sym(callee(2))], 1).err().unwrap();
         assert!(matches!(*e, LinkError::BadReference { class: "object", .. }), "{e:?}");
     }
 
@@ -842,7 +854,7 @@ mod tests {
         let mut b = callee(2);
         b.positions = vec![pos(7)];
         b.object.routines[1].pos = 0;
-        let linked = link(vec![Unit::Sym(a), Unit::Sym(b)], Program::default(), 1).unwrap();
+        let linked = link_all(vec![Unit::Sym(a), Unit::Sym(b)], 1).unwrap();
         assert_eq!(linked.pos_ranges, vec![(0, 2), (2, 1)]);
         assert_eq!(linked.program.objects[1].routines[1].pos, 2);
         assert_eq!(linked.program.positions[2].line, 7);

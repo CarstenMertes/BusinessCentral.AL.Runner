@@ -34,6 +34,47 @@ pub(crate) fn routine_keys(nodes: &[ast::Routine]) -> Vec<LocalKey> {
         .collect()
 }
 
+/// The routine keys of the objects of a program, made from the syntax of an object when another
+/// object first asks for them. An object a compile cache supplies has its keys in the cache.
+pub(crate) struct RoutineKeys<'a> {
+    ws: &'a crate::workspace::Workspace,
+    /// Per object: the keys the cache supplies.
+    supplied: Vec<Option<&'a [LocalKey]>>,
+    /// Per object: whether it is compiled (a shell has no routines).
+    compiled: Vec<bool>,
+    cells: Vec<std::sync::OnceLock<Vec<LocalKey>>>,
+}
+
+impl<'a> RoutineKeys<'a> {
+    pub(crate) fn new(
+        ws: &'a crate::workspace::Workspace,
+        supplied: Vec<Option<&'a [LocalKey]>>,
+        compiled: Vec<bool>,
+    ) -> RoutineKeys<'a> {
+        let n = compiled.len();
+        RoutineKeys {
+            ws,
+            supplied,
+            compiled,
+            cells: (0..n).map(|_| std::sync::OnceLock::new()).collect(),
+        }
+    }
+
+    /// The keys of the routines of object `i`, in the order the object numbers them.
+    pub(crate) fn of(&self, i: usize) -> &[LocalKey] {
+        if let Some(k) = self.supplied[i] {
+            return k;
+        }
+        self.cells[i].get_or_init(|| {
+            if self.compiled[i] {
+                routine_keys(&ast::routines_in(self.ws.object_ast(i).syntax()))
+            } else {
+                Vec::new()
+            }
+        })
+    }
+}
+
 /// The nearest enclosing section of a trigger (`field 7`, `action Post`), as
 /// `ir::Routine::container` holds it, in lower case. Empty for a procedure or a trigger of the
 /// object itself.
@@ -59,11 +100,17 @@ fn signature_of(r: &ast::Routine) -> String {
             out.push(',');
         }
         if let Some(t) = p.type_ref() {
-            for c in t.syntax().text().to_string().chars() {
-                if !c.is_whitespace() {
-                    out.extend(c.to_lowercase());
+            t.syntax().text().for_each_chunk(|chunk| {
+                for c in chunk.chars() {
+                    if !c.is_whitespace() {
+                        if c.is_ascii() {
+                            out.push(c.to_ascii_lowercase());
+                        } else {
+                            out.extend(c.to_lowercase());
+                        }
+                    }
                 }
-            }
+            });
         }
     }
     out
@@ -74,7 +121,7 @@ fn signature_of(r: &ast::Routine) -> String {
 #[derive(Default)]
 pub(crate) struct FieldRefs {
     pub(crate) list: Vec<(usize, u32)>,
-    ix: HashMap<(usize, u32), usize>,
+    ix: FxMap<(usize, u32), usize>,
 }
 
 impl FieldRefs {
@@ -93,7 +140,7 @@ impl FieldRefs {
 #[derive(Default)]
 pub(crate) struct ControlRefs {
     pub(crate) list: Vec<(usize, String, usize)>,
-    ix: HashMap<(usize, String), usize>,
+    ix: FxMap<(usize, String), usize>,
 }
 
 impl ControlRefs {
@@ -106,6 +153,8 @@ impl ControlRefs {
         })
     }
 }
+
+use al_ir::sym::FxMap;
 
 /// What the symbolic form of each object is made from: the key of every object and of its routines,
 /// in program order, and what the lowering knew about tables.
@@ -133,14 +182,13 @@ pub(crate) fn localize(
 ) -> Result<SymObject, String> {
     // The expressions' own references come first: they are already indices into this list.
     let mut refs = Refs::default();
-    let mut fields: HashMap<FieldKey, usize> = HashMap::new();
+    let mut fields: FxMap<(usize, u32), usize> = FxMap::default();
     for &(table, id) in field_refs {
-        let key = FieldKey {
+        fields.entry((table, id)).or_insert(refs.fields.len());
+        refs.fields.push(FieldKey {
             table: keys.objects[table].clone(),
             no: id,
-        };
-        fields.entry(key.clone()).or_insert(refs.fields.len());
-        refs.fields.push(key);
+        });
     }
     for (page, name, _) in control_refs {
         refs.controls.push(ControlKey {
@@ -152,8 +200,8 @@ pub(crate) fn localize(
         keys,
         own,
         refs,
-        objects: HashMap::new(),
-        routines: HashMap::new(),
+        objects: FxMap::default(),
+        routines: FxMap::default(),
         fields,
         bad: None,
     };
@@ -163,7 +211,7 @@ pub(crate) fn localize(
     }
     Ok(SymObject {
         key: keys.objects[own].clone(),
-        routines: (keys.routines)(own).to_vec(),
+        routines: Vec::new(),
         refs: v.refs,
         field_numbers: Vec::new(),
         object,
@@ -175,9 +223,9 @@ struct Localize<'a, 'k> {
     keys: &'a Keys<'k>,
     own: usize,
     refs: Refs,
-    objects: HashMap<usize, usize>,
-    routines: HashMap<(usize, usize), usize>,
-    fields: HashMap<FieldKey, usize>,
+    objects: FxMap<usize, usize>,
+    routines: FxMap<(usize, usize), usize>,
+    fields: FxMap<(usize, u32), usize>,
     bad: Option<String>,
 }
 
@@ -254,13 +302,13 @@ impl RefVisitor for Localize<'_, '_> {
                 .get_or_insert_with(|| format!("field position {} is not a field of object {t}", *r));
             return;
         };
-        let key = FieldKey {
-            table: self.keys.objects[t].clone(),
-            no,
-        };
         let refs = &mut self.refs;
-        *r = *self.fields.entry(key.clone()).or_insert_with(|| {
-            refs.fields.push(key);
+        let keys = self.keys;
+        *r = *self.fields.entry((t, no)).or_insert_with(|| {
+            refs.fields.push(FieldKey {
+                table: keys.objects[t].clone(),
+                no,
+            });
             refs.fields.len() - 1
         });
     }

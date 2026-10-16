@@ -913,7 +913,6 @@ pub(crate) fn lower_core(
                         .collect(),
                     direct: Vec::new(),
                     embeds: Vec::new(),
-                    routine_keys: src.map_or_else(Vec::new, |s| s.facts(oi).routine_keys.clone()),
                     field_refs: Vec::new(),
                     control_refs: Vec::new(),
                     fields: src.map_or_else(Vec::new, |s| s.facts(oi).fields.clone()),
@@ -931,6 +930,13 @@ pub(crate) fn lower_core(
             pieces[oi] = Some(lower_object(&shared, &local, &seq, oi, &mut line_cache));
         }
     }
+    let routine_keys = super::localize::RoutineKeys::new(
+        ws,
+        (0..n)
+            .map(|oi| src.filter(|_| prov(oi)).map(|s| s.facts(oi).routine_keys.as_slice()))
+            .collect(),
+        shared.active.clone(),
+    );
     let mut exported = export.then(crate::provided::DepSet::default);
     let kinds: Vec<ObjKind> = ws.objects.iter().map(|o| o.kind).collect();
     let field_pos = |t: usize, id: u32| members.get(t).fields.iter().position(|f| f.id == id);
@@ -1000,7 +1006,7 @@ pub(crate) fn lower_core(
                 controls: piece.object.page.as_ref().map_or_else(Vec::new, |p| {
                     p.controls.iter().map(|c| c.name.to_ascii_lowercase()).collect()
                 }),
-                routine_keys: piece.routine_keys.clone(),
+                routine_keys: routine_keys.of(oi).to_vec(),
                 xml_reason: shared.xml_reasons[oi].clone(),
                 report_reason: shared.report_reasons[oi].clone(),
                 report_extensions: shared.driven.report_extension[oi].iter().map(|&e| e as u32).collect(),
@@ -1012,7 +1018,6 @@ pub(crate) fn lower_core(
         staged.push(Staged {
             object: piece.object,
             positions: piece.positions,
-            routine_keys: piece.routine_keys,
             key: piece.key,
             field_refs: piece.field_refs,
             control_refs: piece.control_refs,
@@ -1038,7 +1043,7 @@ pub(crate) fn lower_core(
         field_numbers: &field_numbers,
         report_item_table: &report_item_table,
     };
-    let linked = link_pieces(staged, program, &prov, &lookups, check)?;
+    let linked = link_pieces(staged, program, &prov, &routine_keys, &lookups, check)?;
     out.pos_ranges = linked.pos_ranges;
     let program = linked.program;
     out.exported = exported;
@@ -1098,7 +1103,6 @@ impl al_ir::walk::RefVisitor for Unembed<'_> {
 struct Staged {
     object: ir::Object,
     positions: Vec<ir::SrcPos>,
-    routine_keys: Vec<al_ir::sym::LocalKey>,
     key: Option<al_ir::sym::ObjKey>,
     field_refs: Vec<(usize, u32)>,
     control_refs: Vec<(usize, String, usize)>,
@@ -1114,9 +1118,10 @@ struct Staged {
 /// With `check`, the program is also built the way lowering used to build it, and a difference
 /// is an error (`AL_CHECK_LINK=1`).
 fn link_pieces(
-    mut staged: Vec<Staged>,
+    staged: Vec<Staged>,
     base: ir::Program,
     provided: &(dyn Fn(usize) -> bool + Sync),
+    routine_keys: &super::localize::RoutineKeys<'_>,
     lookups: &Lookups<'_>,
     check: bool,
 ) -> Result<al_link::Linked, String> {
@@ -1152,9 +1157,7 @@ fn link_pieces(
         }
         (p, ranges)
     });
-    let routine_keys: Vec<Vec<al_ir::sym::LocalKey>> =
-        staged.iter_mut().map(|s| std::mem::take(&mut s.routine_keys)).collect();
-    let routines_of = |i: usize| routine_keys[i].as_slice();
+    let routines_of = |i: usize| routine_keys.of(i);
     let tables = super::localize::Keys {
         objects: &keys,
         routines: &routines_of,
@@ -1167,7 +1170,6 @@ fn link_pieces(
         if provided(oi) {
             Ok(al_link::Unit::Dense(al_link::DenseObject {
                 key: keys[oi].clone(),
-                routines: routine_keys[oi].clone(),
                 fields: s.fields,
                 controls: s.controls,
                 object: s.object,
@@ -1206,7 +1208,7 @@ fn link_pieces(
             }
         }
     }
-    let linked = al_link::link(units, base, workers).map_err(|e| format!("link: {e}"))?;
+    let linked = al_link::link(units, base, workers, &routines_of).map_err(|e| format!("link: {e}"))?;
     if let Some((p, ranges)) = expected {
         if let Some(d) = al_link::first_difference(&p, &linked.program) {
             return Err(format!(
@@ -1286,23 +1288,15 @@ pub fn relower_objects(
         .iter()
         .map(|o| al_ir::sym::ObjKey::of(o, &program.apps))
         .collect();
-    let routine_keys: Vec<std::sync::OnceLock<Vec<al_ir::sym::LocalKey>>> =
-        (0..n).map(|_| std::sync::OnceLock::new()).collect();
-    let provided = &old.provided;
     let compiled: Vec<bool> = program.objects.iter().map(|o| !o.uncompiled).collect();
-    let routines_of = |i: usize| -> &[al_ir::sym::LocalKey] {
-        routine_keys[i]
-            .get_or_init(|| {
-                if provided[i] {
-                    src.facts(i).routine_keys.clone()
-                } else if compiled[i] {
-                    super::localize::routine_keys(&ast::routines_in(ws.object_ast(i).syntax()))
-                } else {
-                    Vec::new()
-                }
-            })
-            .as_slice()
-    };
+    let routine_keys = super::localize::RoutineKeys::new(
+        ws,
+        (0..n)
+            .map(|i| old.provided[i].then(|| src.facts(i).routine_keys.as_slice()))
+            .collect(),
+        compiled,
+    );
+    let routines_of = |i: usize| routine_keys.of(i);
     let field_no = |t: usize, pos: usize| members.get(t).fields.get(pos).map(|f| f.id);
     let report_item_table = |r: usize, item: usize| {
         shared
@@ -1382,8 +1376,6 @@ pub(crate) struct Piece {
     pub(crate) direct: Vec<Vec<(usize, usize)>>,
     /// The objects whose extensions or implementers the lowering read (see `provided.rs`).
     pub(crate) embeds: Vec<usize>,
-    /// The key of each routine, in the order of `object.routines` (`localize.rs`).
-    pub(crate) routine_keys: Vec<al_ir::sym::LocalKey>,
     /// With a compile cache: the key the cache recorded for the object (a layer build's placeholder has no object to take it from).
     pub(crate) key: Option<al_ir::sym::ObjKey>,
     /// The fields the object's expressions name: (table, field number) (`localize.rs`).

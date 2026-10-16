@@ -9,6 +9,10 @@ use crate::value::Value;
 pub trait FormatCtx {
     /// Member name of enum `id` at `ordinal`.
     fn enum_name(&self, id: u32, ordinal: i32) -> String;
+    /// The language `GlobalLanguage` names (1033 until set).
+    fn language(&self) -> i32 {
+        1033
+    }
 }
 
 /// Why a format did not produce a text.

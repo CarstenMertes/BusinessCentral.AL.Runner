@@ -9,6 +9,10 @@ use crate::value::Value;
 pub trait FormatCtx {
     /// Member name of enum `id` at `ordinal`.
     fn enum_name(&self, id: u32, ordinal: i32) -> String;
+    /// The language `GlobalLanguage` names (1033 until set).
+    fn language(&self) -> i32 {
+        1033
+    }
 }
 
 /// Why a format did not produce a text.
@@ -56,6 +60,12 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::BigInteger(i) => i.to_string(),
         // A Byte formats as the character of that code (streams/TestProbeStreamContracts.al:Read_IntoTypes,
         // `integer_into_byte`: 2 is `\u0002`).
+        // A byte from 0x80 up reads as the default (code page 437) stream encoding reads it: the bytes of a UTF-8 text
+        // `C3 A9 E2 82 AC` format as the characters `\u201C \u0014 \u00CB \u00E9 \u00BC` (misc/lt-probes-needed-3/
+        // PnC20JsonStreams.al:WriteTo_NonAscii_PerEncoding).
+        Value::Byte(b) if *b >= 0x80 && crate::stream::Encoding::MsDos.decode_pinned(&[*b]) => {
+            crate::stream::Encoding::MsDos.decode(&[*b])
+        }
         Value::Byte(b) => char::from(*b).to_string(),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         Value::Decimal(d) => format_decimal(d, standard)?,
@@ -254,6 +264,8 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             | Value::Date(..)
             | Value::Time(_)
             | Value::DateTime(_)
+            // types/lt-implicit-conversions/P79RecordId.al:RecordId_InLongerTexts `comp-subst-width`.
+            | Value::Library(crate::library_kind::LibraryKind::RecordId, _)
     ) && length > 0
         && s.chars().count() > length as usize
     {

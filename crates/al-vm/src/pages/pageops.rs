@@ -253,7 +253,11 @@ impl Session {
             m @ (PageMethod::OK | PageMethod::Cancel | PageMethod::Yes | PageMethod::No) => {
                 self.require_open(st)?;
                 if !self.builtin_offered(st, m.name()) {
-                    return Err(error(format!("The built-in action = {m} is not found on the page.")));
+                    // Code TestActionNotFound (pages/lt-page-run-overloads-testpart/P106RunInstance.al:P106_Inst_RunModal_List `af100`).
+                    return Err(error_code(
+                        format!("The built-in action = {m} is not found on the page."),
+                        "TestActionNotFound",
+                    ));
                 }
                 Ok(Value::TestControl(Rc::new(ControlRef {
                     page: st.clone(),

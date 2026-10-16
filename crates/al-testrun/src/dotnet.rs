@@ -992,20 +992,21 @@ impl DotNetSession for SidecarSession {
         }
     }
     fn release(&mut self, handles: &[DotNetHandle]) {
-        if self.proc.is_some() && self.dead.is_none() {
-            // Nothing waits for a release: send it and let the next request that waits drop its reply.
-            let mut req = json!({"op":"release","handles":handles});
-            let id = self.next_id;
-            self.next_id += 1;
-            req["id"] = json!(id);
-            let body = req.to_string().into_bytes();
-            let mut frame = (body.len() as u32).to_le_bytes().to_vec();
-            frame.extend_from_slice(&body);
-            let p = self.proc.as_mut().expect("started");
-            if p.stdin.write_all(&frame).and_then(|_| p.stdin.flush()).is_ok() {
-                self.unacked.push_back(id);
-                lock(&self.shared.stats).calls += 1;
-            }
+        if self.dead.is_some() {
+            return;
+        }
+        let Some(p) = self.proc.as_mut() else { return };
+        // Nothing waits for a release: send it and let the next request that waits drop its reply.
+        let mut req = json!({"op":"release","handles":handles});
+        let id = self.next_id;
+        self.next_id += 1;
+        req["id"] = json!(id);
+        let body = req.to_string().into_bytes();
+        let mut frame = (body.len() as u32).to_le_bytes().to_vec();
+        frame.extend_from_slice(&body);
+        if p.stdin.write_all(&frame).and_then(|_| p.stdin.flush()).is_ok() {
+            self.unacked.push_back(id);
+            lock(&self.shared.stats).calls += 1;
         }
     }
     fn close(mut self: Box<Self>) {

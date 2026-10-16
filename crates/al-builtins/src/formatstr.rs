@@ -262,6 +262,22 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
             ms / 3_600_000 % 12
         }
     };
+    // `<Month Text,N>` and `<Weekday Text,N>`: the name cut to N characters (misc/lt-system-functions/RandomFormat.al:
+    // `<Month Text,3>` gives 'Mar'), and padded with spaces to N when it is shorter: not pinned (Accounting Period
+    // names are made with `<Month Text,10>`, Tests-ERM DefaultAccountingPeriodUT and 37 more), assumption
+    // format-text-code-width-pads.
+    if let Some((base, width)) = code.split_once(',') {
+        if matches!(base, "Month Text" | "Weekday Text") {
+            if let (Ok(w), Some(_)) = (width.trim().parse::<usize>(), date) {
+                let name = code_name(base, date, day_no);
+                let cut: String = name.chars().take(w).collect();
+                if cut.chars().count() < w {
+                    crate::assumptions::assume(crate::assumptions::Assumption::FormatTextCodeWidthPads);
+                }
+                return Ok(format!("{cut:<w$}"));
+            }
+        }
+    }
     let part = match (code, date, clock) {
         ("Year4", Some((y, _, _)), _) => format!("{y:04}"),
         // A two-digit year below 10 would print as one digit or two: not measured.
@@ -290,6 +306,15 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
     Ok(part)
 }
 
+/// The name `<Month Text>` or `<Weekday Text>` shows.
+fn code_name(base: &str, date: Option<(i32, u32, u32)>, day_no: Option<i32>) -> String {
+    match (base, date) {
+        ("Month Text", Some((_, m, _))) => MONTHS[m as usize - 1].to_string(),
+        (_, Some(_)) => WEEKDAYS[((day_no.unwrap_or(1) - 1).rem_euclid(7)) as usize].to_string(),
+        _ => String::new(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use crate::format::day_from_civil;
@@ -312,6 +337,14 @@ mod tests {
         // types/TestFormatBooleanContracts.al:36,44.
         assert_eq!(text(fmt(Value::Boolean(true), "<Standard Format,2>")), "1");
         assert_eq!(text(fmt(Value::Boolean(false), "<Standard Format,2>")), "0");
+    }
+
+    #[test]
+    fn text_codes_with_a_width() {
+        let day = day_from_civil(2024, 3, 5);
+        assert_eq!(text(fmt(Value::Date(day, false), "<Month Text,3>")), "Mar");
+        assert_eq!(text(fmt(Value::Date(day, false), "<Month Text,10>")), "March     ");
+        assert_eq!(text(fmt(Value::Date(day, false), "<Weekday Text,3>")), "Tue");
     }
 
     #[test]

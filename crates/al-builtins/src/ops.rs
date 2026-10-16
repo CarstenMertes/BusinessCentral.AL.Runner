@@ -681,6 +681,15 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if !a.has_marker() && !b.has_marker() => {
             return Ok(a.cmp(b));
         }
+        // A call stack with an untracked frame holds the marker U+E000, so it is not empty: against the empty text the
+        // answer is exact (Assert.ExpectedError: `GetLastErrorCallstack = ''`; Tests-ERM, 92 tests). Against any other
+        // text it stays refused.
+        (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if (a.has_marker() && b.as_str().is_empty()) => {
+            return Ok(Ordering::Greater);
+        }
+        (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if (b.has_marker() && a.as_str().is_empty()) => {
+            return Ok(Ordering::Less);
+        }
         _ => {}
     }
     compare_general(l, r)
@@ -778,6 +787,15 @@ pub fn truthy(v: &Value) -> Result<bool, Signal> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_text_with_the_call_stack_marker_is_not_equal_to_the_empty_text() {
+        let marked = Value::Text("a\u{E000}b".into());
+        let empty = Value::Text("".into());
+        assert_eq!(compare(&marked, &empty).unwrap(), Ordering::Greater);
+        assert_eq!(compare(&empty, &marked).unwrap(), Ordering::Less);
+        assert!(compare(&marked, &Value::Text("x".into())).is_err());
+    }
 
     // Base Application's Incoming Document `Get(Format(FieldRef.Value))` hands a Text to an Integer key (Tests-ERM,
     // about 400 tests behind the Incoming Doc. Attach. FactBox). A text of digits is the number; other text stays refused.

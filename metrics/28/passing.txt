@@ -3026,6 +3026,7 @@
 60773 SecondControlOverAGlobalRecordField_ShowsTheSameValue
 60773 SecondControlOverAPageGlobal_ShowsTheSameValue
 60773 WriteThroughAPageGlobalControl_LeavesTheRowAlone
+60773 WriteThroughOneControlOverAGlobalRecordField_IsSeenByTheOther
 60773 WriteThroughTheFirstControlOverAPageGlobal_IsSeenByTheSecond
 60773 WriteThroughTheSecondControlOverAPageGlobal_IsSeenByTheFirst
 60775 PartialLoad_AreFieldsLoaded_BeforeFetch_ReturnsFalse
@@ -6299,7 +6300,9 @@
 70170 PristineReadsEqualRunningSession
 70170 PristineReadsWithoutInit
 70170 ReadsAfterInit
+70171 CueFieldAssertEquals
 70171 CueGroupFieldsAndSetValue
+70172 AssertEqualsThroughTheControls
 70172 ReadsThroughTheControls
 70173 ShowFilterFalseCancelled
 70173 ShowFilterFalseParameters
@@ -7123,6 +7126,7 @@
 71202 SetSelectionFilter_OnTheCurrentRow
 71202 SetSelectionFilter_WithPageFilter
 71202 Update_PicksUpRowChangedBehindThePage
+71203 AssertEquals_Passing_Overloads
 71203 Caption_Of_Controls
 71203 Properties_ViewMode_Editable
 71203 SetValue_Overloads
@@ -8181,6 +8185,7 @@
 73838 SetTableView_AddsToDataItemTableView
 73838 SetTableView_CalledTwice_LastWins
 73838 SetTableView_SameFieldAsTableView
+73850 AssertEquals_PassAndFail
 73850 Cancel_TriggersOrder
 73850 NoHandler_VariableRunModal_Error
 73850 OK_TriggersOrder

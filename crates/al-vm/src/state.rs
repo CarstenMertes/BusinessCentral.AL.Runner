@@ -46,10 +46,11 @@ pub(crate) struct UiState {
 
 /// What the TestPage client keeps between calls.
 pub(crate) struct PageClients {
-    /// The TestPage variable whose `Trap()` waits for the next plain `Page.Run` (ADR-012).
+    /// The TestPage variables whose `Trap()` waits for the next plain `Page.Run` of their page (ADR-012). Several wait at
+    /// once, one per page: a test traps the preview page and, inside it, the entries page its action opens.
     /// The variable-bound control values each SaveValues page stored when it closed.
     pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
-    pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
+    pub(crate) traps: Vec<Rc<RefCell<al_builtins::value::PageState>>>,
     /// A page background task worker is running: its parameters and the result it set.
     pub(crate) bg_worker: Option<pages::BgWorker>,
     /// The xRec fields the next `Modify` hands the table's triggers instead of the stored row: a

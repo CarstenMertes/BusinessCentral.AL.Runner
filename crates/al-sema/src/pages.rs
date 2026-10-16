@@ -107,6 +107,58 @@ pub fn classify_source(text: &str, globals: &BTreeSet<String>) -> Source {
     Source::Expr
 }
 
+/// Whether `text` names a place AL can assign to: names (plain or quoted) joined by dots, each with indices of digits or
+/// names (`Totals[1]."Inv. Discount Amount"`); no call, no operator, no literal.
+pub fn assignable_path(text: &str) -> bool {
+    let b: Vec<char> = text.trim().chars().collect();
+    let mut i = 0;
+    let name = |i: &mut usize| -> bool {
+        if *i < b.len() && b[*i] == '"' {
+            let start = *i + 1;
+            let mut j = start;
+            while j < b.len() && b[j] != '"' {
+                j += 1;
+            }
+            if j >= b.len() || j == start {
+                return false;
+            }
+            *i = j + 1;
+            return true;
+        }
+        let start = *i;
+        while *i < b.len() && (b[*i].is_alphanumeric() || b[*i] == '_') {
+            *i += 1;
+        }
+        *i > start && !b[start].is_ascii_digit()
+    };
+    loop {
+        if !name(&mut i) {
+            return false;
+        }
+        while i < b.len() && b[i] == '[' {
+            i += 1;
+            let start = i;
+            while i < b.len() && b[i] != ']' {
+                if !(b[i].is_alphanumeric() || b[i] == '_') {
+                    return false;
+                }
+                i += 1;
+            }
+            if i >= b.len() || i == start {
+                return false;
+            }
+            i += 1;
+        }
+        if i == b.len() {
+            return true;
+        }
+        if b[i] != '.' {
+            return false;
+        }
+        i += 1;
+    }
+}
+
 /// Whether `text` is one bare name, quoted or not (`ProdOrderNo`, `"Prod. Order No."`): the only form in which
 /// a control of an extension can name a `protected var` of its base object.
 pub fn plain_name(text: &str) -> Option<String> {
@@ -217,6 +269,15 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
                     ty.al(),
                     expr
                 ));
+                // A source that is a path to a place (`TotalPurchLine[1]."Inv. Discount Amount"`) can be written:
+                // TestPage.SetValue on the control assigns it through this routine.
+                if prop == "source" && assignable_path(&expr) {
+                    text.push_str(&format!(
+                        "\nprocedure {}(NewValue: Variant) begin {} := NewValue; end;",
+                        synthetic_name("sourceset", offset),
+                        expr
+                    ));
+                }
             }
         }
         if !text.is_empty() {

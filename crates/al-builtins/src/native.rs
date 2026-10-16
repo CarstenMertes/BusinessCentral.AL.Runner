@@ -931,7 +931,11 @@ fn str_menu(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
 pub fn substitute(template: &str, args: &[Value], ctx: &dyn FormatCtx) -> Result<String, Signal> {
     // `#1####` is a field of fixed width in BC (types/.../P86StrSubstNo.al:Sub_FieldWidth, text/SubstNoHash): not implemented, so
     // refused rather than written as text.
-    if template.as_bytes().windows(2).any(|w| w[0] == b'#' && w[1].is_ascii_digit()) {
+    if template
+        .as_bytes()
+        .windows(2)
+        .any(|w| w[0] == b'#' && w[1].is_ascii_digit())
+    {
         return unsupported("StrSubstNo with a #n field (pinned by the corpus, not implemented)");
     }
     let mut out = String::new();

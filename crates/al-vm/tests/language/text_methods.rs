@@ -14,7 +14,9 @@ fn run(body: &str) -> String {
 fn a_label_has_the_text_methods() {
     // LTP89TextConst.al:Search_1, Edit_1, Edit_2, Trim_Family: a Label answers as the Text it holds.
     assert_eq!(
-        run("exit(Format(Src.Contains('World')) + '|' + Format(Src.LastIndexOf('o')) + '|' + Src.ToUpper() + '|' + Src.PadLeft(14, '*') + '|' + Src.Replace('l', 'L') + '|' + Src.Substring(8, 3) + '|' + Src.ToLower());"),
+        run(
+            "exit(Format(Src.Contains('World')) + '|' + Format(Src.LastIndexOf('o')) + '|' + Src.ToUpper() + '|' + Src.PadLeft(14, '*') + '|' + Src.Replace('l', 'L') + '|' + Src.Substring(8, 3) + '|' + Src.ToLower());"
+        ),
         "Yes|9|HELLO, WORLD|**Hello, World|HeLLo, WorLd|Wor|hello, world"
     );
 }
@@ -22,14 +24,19 @@ fn a_label_has_the_text_methods() {
 #[test]
 fn text_remove_is_one_based_with_an_optional_count() {
     // LTP89TextConst.al:Edit_1: remove_t `Hello`, remove_count_t `Helloorld`.
-    assert_eq!(run("exit(T.Remove(6) + '|' + T.Remove(6, 3) + '|' + Src.Remove(6, 3));"), "Hello|Helloorld|Helloorld");
+    assert_eq!(
+        run("exit(T.Remove(6) + '|' + T.Remove(6, 3) + '|' + Src.Remove(6, 3));"),
+        "Hello|Helloorld|Helloorld"
+    );
 }
 
 #[test]
 fn index_of_any_takes_a_one_based_start_index() {
     // LTP89TextConst.al:IndexOfAny_Overloads: `[o, ,]` finds 5 from the start and 6 from position 6.
     assert_eq!(
-        run("Chars.Add('o'); Chars.Add(','); exit(Format(T.IndexOfAny(Chars)) + '|' + Format(Src.IndexOfAny(Chars, 6)) + '|' + Format(T.IndexOfAny(Chars, 7)));"),
+        run(
+            "Chars.Add('o'); Chars.Add(','); exit(Format(T.IndexOfAny(Chars)) + '|' + Format(Src.IndexOfAny(Chars, 6)) + '|' + Format(T.IndexOfAny(Chars, 7)));"
+        ),
         "5|6|9"
     );
 }
@@ -45,7 +52,10 @@ fn variant_knows_in_streams_out_streams_and_never_binary() {
           V := Outs; S += Format(V.IsInStream()) + Format(V.IsOutStream()) + Format(V.IsBinary()) + '|';
           V := 5; S += Format(V.IsInStream()) + Format(V.IsOutStream()) + Format(V.IsBinary());
           exit(S); end; }";
-    assert_eq!(text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)), "YesNoNo|NoYesNo|NoNoNo");
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "YesNoNo|NoYesNo|NoNoNo"
+    );
 }
 
 #[test]

@@ -1367,19 +1367,19 @@ fn yaml_members(kids: &[(String, Handle)], indent: usize, out: &mut String) -> R
         });
         match kind {
             Kind::Obj(inner) => {
-                out.push_str(&format!("{pad}{k}:\n"));
+                out.push_str(&format!("{pad}{k}:\r\n"));
                 yaml_members(&inner, indent + 2, out)?;
             }
             Kind::Arr(items) => {
-                out.push_str(&format!("{pad}{k}:\n"));
+                out.push_str(&format!("{pad}{k}:\r\n"));
                 for item in items {
                     if with_node(&item, |n| !matches!(n, JsonNode::Scalar(_))) {
                         return unsupported("WriteToYaml of an object or an array inside an array (not pinned)");
                     }
-                    out.push_str(&format!("{pad}- {}\n", yaml_scalar(&item)?));
+                    out.push_str(&format!("{pad}- {}\r\n", yaml_scalar(&item)?));
                 }
             }
-            Kind::Other => out.push_str(&format!("{pad}{k}: {}\n", yaml_scalar(c)?)),
+            Kind::Other => out.push_str(&format!("{pad}{k}: {}\r\n", yaml_scalar(c)?)),
         }
     }
     Ok(())

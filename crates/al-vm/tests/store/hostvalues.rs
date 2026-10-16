@@ -489,7 +489,7 @@ fn after_a_write_a_set_is_ignored_or_refused() {
     );
     assert_eq!(
         out,
-        "UpdateNoLocks|UpdateNoLocks|DB:CannotChangeTransactionType|The transaction type cannot be changed after a transaction has started.\r\\\r\\A transaction starts when the first database operation, such as FIND, NEXT, INSERT, DELETE, MODIFY, SUM, or COUNT, is run.\r\\\r\\The error occurred because the transaction type was changed from UpdateNoLocks to Update.|UpdateNoLocks"
+        "UpdateNoLocks|UpdateNoLocks|DB:CannotChangeTransactionType|The transaction type cannot be changed after a transaction has started.\\\\A transaction starts when the first database operation, such as FIND, NEXT, INSERT, DELETE, MODIFY, SUM, or COUNT, is run.\\\\The error occurred because the transaction type was changed from UpdateNoLocks to Update.|UpdateNoLocks"
     );
     // A DeleteAll of no row starts it as well; after a Commit the type is Update and a set to Snapshot is ignored
     // (TestClearAllTransactionTypeContracts.al:245-253).

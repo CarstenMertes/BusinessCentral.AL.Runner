@@ -220,9 +220,9 @@ fn write_text_without_a_text_writes_carriage_return_line_feed() {
 }
 
 #[test]
-fn the_default_encoding_is_windows_1252() {
+fn the_default_encoding_is_code_page_437() {
     // streams/TestStreamsRuntimeContracts.al:WriteText_DefaultEncodingIsWindows1252_NotUtf8 and
-    // :WriteText_ExplicitEncodings_Bytes: e acute is one byte by default, two in UTF8, and UTF16 is
+    // :WriteText_ExplicitEncodings_Bytes: e acute is the one byte 82 by default (code page 437), two in UTF8, and UTF16 is
     // two bytes per character with no byte order mark.
     let vars = base!("V: Byte; N: Integer; H: Text; E: Char;");
     let bytes = |enc: &str| {
@@ -231,10 +231,11 @@ fn the_default_encoding_is_windows_1252() {
              while not I.EOS() do begin I.Read(V); N := V; H += Format(N) + ','; end; exit(H);"
         )
     };
-    assert_eq!(text(vars, &bytes("")), "104,233,");
+    assert_eq!(text(vars, &bytes("")), "104,130,");
     assert_eq!(text(vars, &bytes(", TextEncoding::UTF8")), "104,195,169,");
     assert_eq!(text(vars, &bytes(", TextEncoding::UTF16")), "104,0,233,0,");
-    assert_eq!(text(vars, &bytes(", TextEncoding::MSDos")), "104,233,");
+    assert_eq!(text(vars, &bytes(", TextEncoding::Windows")), "104,233,");
+    assert_eq!(text(vars, &bytes(", TextEncoding::MSDos")), "104,130,");
 }
 
 #[test]

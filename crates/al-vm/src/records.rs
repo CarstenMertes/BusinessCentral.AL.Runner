@@ -19,7 +19,7 @@ use std::sync::Arc;
 pub(crate) type Rec = Rc<RefCell<RecordState>>;
 
 /// BC's line break inside error texts: a carriage return and a backslash.
-pub(crate) const BR: &str = "\r\\";
+pub(crate) const BR: &str = "\\";
 
 fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
@@ -1650,7 +1650,7 @@ impl Session {
                 if !valid {
                     return Err(Signal::Error(Box::new(AlError {
                         message: format!(
-                            "There is an invalid character in the Find expression '{which}'.\\r\\\\r\\In Find expressions, you can use =, >, and < in combinations, where each sign can only appear once, or you can use - or +."
+                            "There is an invalid character in the Find expression '{which}'.\\\\In Find expressions, you can use =, >, and < in combinations, where each sign can only appear once, or you can use - or +."
                         ),
                         code: "DB:BadSearchMethod".into(),
                         call_stack: String::new(),

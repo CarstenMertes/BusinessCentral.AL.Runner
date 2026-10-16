@@ -475,7 +475,7 @@ impl Session {
                 .collect::<Vec<_>>()
                 .join(","),
         );
-        out.push('\n');
+        out.push_str("\r\n");
         for r in rows.iter().take(if top > 0 { top as usize } else { usize::MAX }) {
             let cells: Vec<String> = cols
                 .iter()
@@ -489,7 +489,7 @@ impl Session {
                 })
                 .collect();
             out.push_str(&cells.join(","));
-            out.push('\n');
+            out.push_str("\r\n");
         }
         al_builtins::stream::write_bytes(&blob, out.as_bytes());
         Ok(Value::Boolean(true))

@@ -1738,7 +1738,7 @@ impl Session {
     /// One column of a row: the value of its source, as the dataset writes it
     /// (handlers/TestReportSaveAsColumnTypesContracts.al:12-22 and :167-248, probed on BC 27.5): digits for
     /// Integer, BigInteger and Code, escaped text, `True`/`False`, `m/d/yyyy` for a Date (blank when
-    /// undefined), `h:mm:ss` plus U+202F plus AM/PM for a Time, both for a DateTime, an Option and an Enum
+    /// undefined), `h:mm:ss` plus a space plus AM/PM for a Time, both for a DateTime, an Option and an Enum
     /// as their captions, a Duration as words, a Guid without braces, and a Decimal in full with a
     /// `decimalformatter` attribute from `DecimalPlaces` of the column, else of the field. Every other
     /// type is refused. A column that asks for its caption adds to the Labels block.

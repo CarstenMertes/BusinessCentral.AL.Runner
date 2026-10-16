@@ -18,15 +18,22 @@ impl Session {
             let field_name = self.control_field(st, idx).map(|f| f.name.clone());
             let names: Vec<&str> = std::iter::once(name.as_str()).chain(field_name.as_deref()).collect();
             for ev in ["onbeforevalidateevent", "onaftervalidateevent"] {
-                let compiled = engine
+                // A subscriber of a declared and not compiled app, or one that names the field when the control
+                // has another name, or one for every element, would run in BC and is not reached here.
+                // Only a control bound to a record field is served: its events carry the page's Rec.
+                let record_bound = matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Field(_));
+                let unreached = engine
                     .events
                     .subscribers
                     .get(&(object, ev.to_string()))
                     .is_some_and(|v| {
-                        v.iter()
-                            .any(|s| s.element.is_empty() || names.iter().any(|n| s.element.eq_ignore_ascii_case(n)))
+                        v.iter().any(|s| {
+                            s.element.is_empty()
+                                || (names.iter().any(|n| s.element.eq_ignore_ascii_case(n))
+                                    && (!record_bound || !s.element.eq_ignore_ascii_case(&name)))
+                        })
                     });
-                if compiled
+                if unreached
                     || names
                         .iter()
                         .any(|n| engine.events.missing_for(object, ev, Some(n)).is_some())
@@ -177,8 +184,8 @@ impl Session {
             return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
         }
         // A Text variable given too many characters (handlers/TestPageVariableMinMaxContracts.al:119).
-        // A table field's overlong text is not pinned.
-        if let (RtType::Text(Some(max)), Value::Text(t), false) = (&ty, &parsed, rec_bound) {
+        // A table field's overlong text is a TestValidation error too (P81PageValidateEvents.al:TestPage_SetValue_NameTooLong).
+        if let (RtType::Text(Some(max)), Value::Text(t)) = (&ty, &parsed) {
             let len = Value::text_len(t);
             if len > *max as usize {
                 return Err(refuse_bound(format!(
@@ -303,11 +310,19 @@ impl Session {
             for (e, r) in &ext_before {
                 self.owner_routine(st, Some(*e), *r)?;
             }
+            // The page's events around the control's own trigger (corpus P81PageValidateEvents.al).
+            let element = page_of(&self.engine(), st).controls[idx].name.clone();
+            if rec_bound {
+                self.page_validate_event(st, "onbeforevalidateevent", &element)?;
+            }
             if let Some(r) = ctl.trigger("onvalidate") {
                 self.control_routine(st, idx, r)?;
             }
             for (e, r) in &ext_after {
                 self.owner_routine(st, Some(*e), *r)?;
+            }
+            if rec_bound {
+                self.page_validate_event(st, "onaftervalidateevent", &element)?;
             }
             Ok(())
         })();
@@ -334,7 +349,10 @@ impl Session {
                 if matches!(ctl.binding, ir::Binding::Expr(_)) {
                     return Err(refuse_bound(e.message));
                 }
-                Err(refuse(self, e.message))
+                // An error of the table's validation (its trigger, the length of the text) carries TestValidation
+                // (record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al:TestPage_SetValue_NegativeQty_TableTriggerRaises,
+                // TestPage_SetValue_NameTooLong).
+                Err(refuse_bound(e.message))
             }
             Err(other) => Err(other),
         }

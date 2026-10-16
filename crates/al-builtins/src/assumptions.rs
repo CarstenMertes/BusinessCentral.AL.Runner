@@ -253,6 +253,12 @@ registry! {
         tests: "Library - ERM GetDiscountPaymentTerm (PaymentTerms.SetFilter(Due Date Calculation, not-equal and the empty text)): about 170 Tests-ERM tests.",
         probe: "Payment Terms rows with and without Due Date Calculation; SetFilter on it with the empty text, not-equal and the empty text, then Count.",
     },
+    UpdateRefreshOnFindRecord => {
+        id: "update-refresh-onfindrecord",
+        assumed: "CurrPage.Update on a page with OnFindRecord and OnAfterGetCurrRecord asks OnFindRecord for the current row with Which `=`, then reads the row as after a move: OnAfterGetRecord, OnAfterGetCurrRecord and the parts' reads.",
+        tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
+        probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",
@@ -348,6 +354,12 @@ registry! {
         assumed: "The codes of a Format string are read in any case (`<sign><integer>`) and with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`).",
         tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets) and Base Application's percent texts.",
         probe: "Format of an Integer, a Decimal and a Date with the same codes in capitals, small letters and with a blank after the comma; compare with the canonical spelling.",
+    },
+    TableExtensionBaseVars => {
+        id: "table-extension-base-vars",
+        assumed: "A table extension reads and writes the `protected var` variables of its base table, on the same per-record globals the base table's own code uses (a procedure of the extension sees what a trigger of the base set).",
+        tests: "tableextension 906 \"Asm. Requisition Line\" (Assembly) uses Requisition Line's Item, TempPlanningErrorLog, PlanningResiliency and MissingFieldValueErr; about 600 tests of the Tests-SCM-Planning bucket.",
+        probe: "A table with a protected var, a table extension procedure that reads and writes it, and a base trigger that reads it back; on one record variable and on a second one; with a Record and a Codeunit protected var.",
     },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",

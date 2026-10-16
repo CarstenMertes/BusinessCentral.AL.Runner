@@ -16,14 +16,35 @@ impl Lowerer<'_> {
     /// Variable `name` (lower case) of the base object, seen from the extension being lowered
     /// (ADR-023): its slot among the base object's globals, and its type. Refused until the probes
     /// of ADR-023 pin the access.
+    /// Notes the assumption a table extension's use of a base table variable rests on.
+    pub(crate) fn note_base_var_use(&mut self) {
+        if self.ws.objects[self.oi].kind == ObjKind::TableExtension {
+            self.assume(al_builtins::assumptions::Assumption::TableExtensionBaseVars);
+        }
+    }
+
     pub(crate) fn base_var(&self, name: &str) -> L<(usize, Ty, Option<String>)> {
-        let (base, noun, report) = self.base_object().ok_or("a base variable outside an extension")?;
+        // A table extension sees the protected variables of its base table, on the globals of the same record
+        // (ADR-021 per-record instances). Not pinned by a corpus test; Microsoft's own tableextension 906 "Asm.
+        // Requisition Line" reads Requisition Line's `protected var` (Item, TempPlanningErrorLog, PlanningResiliency,
+        // MissingFieldValueErr) and about 600 tests of the Planning bucket run it (assumption `table-extension-base-vars`).
+        let table = (self.ws.objects[self.oi].kind == ObjKind::TableExtension)
+            .then(|| self.ws.extension_target(self.oi))
+            .flatten();
+        let (base, noun, report) = match (table, self.base_object()) {
+            (Some(b), None) => (b, "table", false),
+            (_, Some(x)) => x,
+            _ => return Err("a base variable outside an extension".into()),
+        };
+        let is_table = noun == "table";
         let probe = if report { "R1" } else { "P1/P2" };
-        if !(if report {
-            crate::base_access::pinned("R1")
-        } else {
-            crate::base_access::pinned("P1") && crate::base_access::pinned("P2")
-        }) {
+        if !is_table
+            && !(if report {
+                crate::base_access::pinned("R1")
+            } else {
+                crate::base_access::pinned("P1") && crate::base_access::pinned("P2")
+            })
+        {
             return Err(crate::base_access::unpinned_reason(&format!("`{name}`"), probe, noun));
         }
         let ast = self.ws.object_ast(base);
@@ -53,7 +74,7 @@ impl Lowerer<'_> {
                 | Ty::Label
         );
         let kind_probe = if report { "R3" } else { "P5" };
-        if !simple && !crate::base_access::pinned(kind_probe) {
+        if !is_table && !simple && !crate::base_access::pinned(kind_probe) {
             return Err(crate::base_access::unpinned_reason(
                 &format!("`{name}` (a {ty} variable)"),
                 kind_probe,
@@ -61,7 +82,7 @@ impl Lowerer<'_> {
             ));
         }
         // A control's source expression is probe P9.
-        if !report && !crate::base_access::pinned("P9") && self.in_synthetic_routine() {
+        if !report && !is_table && !crate::base_access::pinned("P9") && self.in_synthetic_routine() {
             return Err(crate::base_access::unpinned_reason(
                 &format!("`{name}` in a control's source expression"),
                 "P9",

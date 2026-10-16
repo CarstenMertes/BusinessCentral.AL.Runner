@@ -379,7 +379,21 @@ impl Session {
         let Some(inst) = st.borrow().instance.clone() else {
             return;
         };
+        // A request page's variables that the caller set before the run (`SetParameters`) keep those values: corpus
+        // reportextensiontrigger/TestPrecompiledReportExtensionDataItems.al (Base Application's "Get Demand To Reserve"
+        // has SaveValues and an earlier run confirmed another demand type; the later run still goes by the one
+        // `SetParameters` gave, `All` included). Which one wins in BC is assumed.
+        let caller_set = self.is_request_page(st)
+            && self
+                .report
+                .prepared
+                .iter()
+                .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)));
         for (slot, v) in saved {
+            if caller_set && !matches!(v, Value::Record(_)) {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SaveValuesCallerValueWins);
+                continue;
+            }
             inst.borrow_mut().globals[slot] = v;
         }
     }

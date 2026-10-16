@@ -202,6 +202,26 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         // The untracked call stack marker moves between Text slots unread (see `native::text_of`).
         (Value::Text(s), T::Text(_)) if s.has_marker() => Value::Text(s),
+        // A Date handed to a Text (a Variant from `FieldRef.Value` into a Text parameter: Incoming Document
+        // `FindByDocumentNoAndPostingDate(.., PostingDateFieldRef.Value)` and `Evaluate` of it, 474 Tests-ERM tests) is its
+        // default `Format` text. Not pinned: assumption date-to-text-is-format.
+        (v @ Value::Date(..), T::Text(_) | T::Code(_)) => {
+            struct NoEnums;
+            impl crate::format::FormatCtx for NoEnums {
+                fn enum_name(&self, _: u32, _: i32) -> String {
+                    String::new()
+                }
+            }
+            crate::assumptions::assume(crate::assumptions::Assumption::DateToTextIsFormat);
+            let text = crate::format::try_format(&v, 0, 0, &NoEnums).map_err(Signal::Unsupported)?;
+            match t {
+                T::Text(max) => Value::Text(fit_txt(text.into(), *max)?),
+                _ => {
+                    let T::Code(max) = t else { unreachable!() };
+                    Value::Code(fit(upper_code(text.trim()), *max)?.into())
+                }
+            }
+        }
         // Text-like.
         (v, T::Text(max)) if crate::native::text_of(&v).is_some() => {
             Value::Text(fit_txt(crate::native::text_of(&v).expect("text"), *max)?)
@@ -811,6 +831,21 @@ mod tests {
         assert_eq!(compare(&marked, &empty).unwrap(), Ordering::Greater);
         assert_eq!(compare(&empty, &marked).unwrap(), Ordering::Less);
         assert!(compare(&marked, &Value::Text("x".into())).is_err());
+    }
+
+    #[test]
+    fn a_date_converts_into_a_text_as_its_default_format() {
+        let d = Value::Date(crate::format::day_from_civil(2024, 3, 5), false);
+        let want = crate::format::try_format(&d, 0, 0, &Plain).unwrap();
+        assert!(matches!(convert(d.clone(), &RtType::Text(None)), Ok(Value::Text(t)) if t.as_str() == want));
+        assert!(convert(d, &RtType::Text(Some(3))).is_err());
+    }
+
+    struct Plain;
+    impl crate::format::FormatCtx for Plain {
+        fn enum_name(&self, _: u32, _: i32) -> String {
+            String::new()
+        }
     }
 
     // Base Application's Incoming Document `Get(Format(FieldRef.Value))` hands a Text to an Integer key (Tests-ERM,

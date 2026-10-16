@@ -784,3 +784,15 @@ fn date_and_boolean_to_text_are_the_default_format() {
     assert_eq!(parts[0], parts[2], "{t}");
     assert_eq!(parts[1], "Yes", "{t}");
 }
+
+#[test]
+fn decimal_to_text_is_the_default_format() {
+    // Customer Mgt.CalcLastPaymentInfo: `(-Amount).ToText()` (55 Tests-ERM tests). Unprobed (primitive-totext-is-format).
+    let r = run(
+        "procedure F(): Text var D: Decimal; begin D := -12.5; exit(D.ToText() + '|' + Format(D)); end;",
+        "F",
+    );
+    let t = text(r);
+    let parts: Vec<&str> = t.split('|').collect();
+    assert_eq!(parts[0], parts[1], "{t}");
+}

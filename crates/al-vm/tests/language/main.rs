@@ -18,3 +18,4 @@ mod text_scans;
 mod tree_free;
 mod typed_ops;
 mod version_gates;
+mod xml_doctype;

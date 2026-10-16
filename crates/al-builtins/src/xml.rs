@@ -55,6 +55,15 @@ pub enum XData {
         target: String,
         data: String,
     },
+    /// `XmlDocumentType`. `ready` is false for one made by `Create(Name)` or `Create(Name, Public, System)`: its members raise
+    /// `MemberNotInitialized` (xml/lt-xml-doctype-declaration/DocTypeCreate.al:Create_NameOnly, Create_ThreeArguments).
+    DocType {
+        name: String,
+        public: String,
+        system: String,
+        subset: String,
+        ready: bool,
+    },
     Declaration {
         version: String,
         encoding: String,
@@ -83,6 +92,27 @@ fn error(message: impl Into<String>, code: &str) -> Signal {
         code: code.into(),
         call_stack: String::new(),
     }))
+}
+
+/// `Microsoft.Dynamics.Nav.Runtime.NavXmlDocumentType variable not initialized.` (code NotInitialized): a variable nobody assigned,
+/// used where the type is known (xml/lt-xml-doctype-declaration/DocTypeErrors.al:Uninitialised_*).
+fn uninitialized(nav_type: &str) -> Signal {
+    error(
+        format!("Microsoft.Dynamics.Nav.Runtime.Nav{nav_type} variable not initialized."),
+        "NotInitialized",
+    )
+}
+
+/// The node behind a receiver that may be a variable nobody assigned: the node-level methods (`WriteTo`, `Remove`) name
+/// `XmlNode` in the error, the type's own methods name the type.
+fn recv_or_uninit(r: Option<&mut Value>, nav_type: &str) -> Result<Handle, Signal> {
+    if let Some(Value::Library(name, h)) = r.as_deref() {
+        if matches!(&*h.borrow(), LibraryValue::Empty) && matches!(name.as_str(), "XmlDocumentType" | "XmlDeclaration")
+        {
+            return Err(uninitialized(nav_type));
+        }
+    }
+    recv(r)
 }
 
 fn new_node(data: XData) -> Handle {
@@ -190,6 +220,7 @@ fn kind(h: &Handle) -> &'static str {
         XData::Comment(_) => "XmlComment",
         XData::Pi { .. } => "XmlProcessingInstruction",
         XData::Declaration { .. } => "XmlDeclaration",
+        XData::DocType { .. } => "XmlDocumentType",
     })
 }
 
@@ -242,6 +273,19 @@ fn deep_clone(h: &Handle) -> Handle {
             encoding: encoding.clone(),
             standalone: standalone.clone(),
             explicit: *explicit,
+        },
+        XData::DocType {
+            name,
+            public,
+            system,
+            subset,
+            ready,
+        } => XData::DocType {
+            name: name.clone(),
+            public: public.clone(),
+            system: system.clone(),
+            subset: subset.clone(),
+            ready: *ready,
         },
     });
     new_node(data)
@@ -752,6 +796,42 @@ impl Parser<'_> {
 
     /// `<!DOCTYPE name ... [ internal subset ] >`.
     fn skip_doctype(&mut self) -> PResult<()> {
+        // `<!DOCTYPE name`, then white space and an external id, a `[` or a `>`: the errors are .NET's, with their places
+        // (xml/lt-xml-doctype-declaration/DocTypeRead.al:Read_Malformed).
+        let start = self.i;
+        let after_keyword = start + "<!DOCTYPE".len();
+        let mut at = after_keyword;
+        let bytes = self.s.as_bytes();
+        while at < bytes.len() && matches!(bytes[at], b' ' | b'\t' | b'\n' | b'\r') {
+            at += 1;
+        }
+        if let Some(c) = self.s[at..].chars().next() {
+            if !is_name_start(c) {
+                return self.fail_at(
+                    &format!(
+                        "Name cannot begin with the '{c}' character, hexadecimal value 0x{:02X}.",
+                        u32::from(c)
+                    ),
+                    at,
+                );
+            }
+            let mut end = at;
+            for (n, ch) in self.s[at..].char_indices() {
+                if !(is_name_start(ch) || ch.is_alphanumeric() || matches!(ch, '-' | '.')) {
+                    break;
+                }
+                end = at + n + ch.len_utf8();
+            }
+            let mut next = end;
+            while next < bytes.len() && matches!(bytes[next], b' ' | b'\t' | b'\n' | b'\r') {
+                next += 1;
+            }
+            let c = self.s[next..].chars().next();
+            let named_external = self.s[next..].starts_with("SYSTEM") || self.s[next..].starts_with("PUBLIC");
+            if !(matches!(c, Some('>' | '[')) || named_external) {
+                return self.fail_at("Expecting external ID, '[' or '>'.", end.max(next.min(end + 0)));
+            }
+        }
         let mut depth = 0i32;
         let mut quote: Option<char> = None;
         let rest = self.rest().to_string();
@@ -796,6 +876,20 @@ impl Parser<'_> {
                 children.push(self.comment()?);
             } else if self.starts("<?") {
                 children.push(self.pi()?);
+            } else if self.starts("<!")
+                && self.rest()[2..].len() >= 7
+                && self.rest()[2..9].eq_ignore_ascii_case("DOCTYPE")
+                && !self.starts("<!DOCTYPE")
+            {
+                return self.fail_at(
+                    &format!(
+                        "'{}' is an unexpected token. The expected token is 'DOCTYPE'.",
+                        &self.rest()[2..9]
+                    ),
+                    self.i + 2,
+                );
+            } else if self.starts("<!DOCTYPE") && root_seen {
+                return self.fail_at("DTD must be defined before the document root element.", self.i);
             } else if self.starts("<!DOCTYPE") {
                 // A document type is read and dropped: GetDocumentType answers false and WriteTo writes none
                 // (xml/TestProbeXmlContracts.al:DocumentType_ReadWithDoctype).
@@ -963,6 +1057,7 @@ impl Writer {
             Text(String),
             CData(String),
             Markup(String),
+            Quote,
             Skip,
         }
         let plan = with(h, |d| match d {
@@ -993,11 +1088,34 @@ impl Writer {
             } else {
                 format!("<?{target} {data}?>")
             }),
-            XData::Attribute { .. } | XData::Declaration { .. } | XData::Document { .. } => Plan::Skip,
+            XData::DocType {
+                name,
+                public,
+                system,
+                subset,
+                ready,
+            } => {
+                if !*ready {
+                    Plan::Skip
+                } else if public.contains('"') || system.contains('"') {
+                    // A quote cannot be written inside the quoted identifiers (DocTypeSetters.al:WriteToVariants, af214).
+                    Plan::Quote
+                } else {
+                    Plan::Markup(format!("<!DOCTYPE {name} PUBLIC \"{public}\" \"{system}\"[{subset}]>"))
+                }
+            }
+            XData::Declaration {
+                version,
+                encoding,
+                standalone,
+                explicit,
+            } => Plan::Markup(declaration_text(version, encoding, standalone, *explicit)),
+            XData::Attribute { .. } | XData::Document { .. } => Plan::Skip,
         });
         match plan {
             Plan::Text(s) | Plan::CData(s) => self.text(&s),
             Plan::Markup(s) => self.markup(&s),
+            Plan::Quote => return Err(nav_argument()),
             Plan::Skip => return unsupported(format!("serialising {} as markup", kind(h))),
             Plan::Element {
                 prefix,
@@ -1109,6 +1227,20 @@ impl Writer {
     }
 }
 
+/// An XML declaration as BC writes it: the encoding and standalone attributes are written even when empty for one made by
+/// `Create`.
+fn declaration_text(version: &str, encoding: &str, standalone: &str, explicit: bool) -> String {
+    let mut t = format!("<?xml version=\"{version}\"");
+    if explicit || !encoding.is_empty() {
+        t.push_str(&format!(" encoding=\"{encoding}\""));
+    }
+    if explicit || !standalone.is_empty() {
+        t.push_str(&format!(" standalone=\"{standalone}\""));
+    }
+    t.push_str("?>");
+    t
+}
+
 /// The text of `h` as BC writes it. A document gets its XML declaration first (its own, else
 /// `version="1.0" encoding="utf-16"`). The namespace declarations of `h`'s ancestors do not
 /// matter when a node is written on its own: it declares what it needs.
@@ -1132,23 +1264,23 @@ fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
                     encoding,
                     standalone,
                     explicit,
-                } => {
-                    let mut t = format!("<?xml version=\"{version}\"");
-                    if *explicit || !encoding.is_empty() {
-                        t.push_str(&format!(" encoding=\"{encoding}\""));
-                    }
-                    if *explicit || !standalone.is_empty() {
-                        t.push_str(&format!(" standalone=\"{standalone}\""));
-                    }
-                    t.push_str("?>");
-                    t
-                }
+                } => declaration_text(version, encoding, standalone, *explicit),
                 _ => unreachable!("a declaration slot holds a declaration"),
             }),
             None => "<?xml version=\"1.0\" encoding=\"utf-16\"?>".to_string(),
         };
         w.markup(&text);
-        for c in children_of(h) {
+        let kids = children_of(h);
+        let has = |f: fn(&XData) -> bool| kids.iter().any(|c| with(c, |d| f(d)));
+        if !has(|d| matches!(d, XData::Element { .. })) {
+            // A document without a root element cannot be written (DocTypeInDoc.al:DocumentCreate_WithDocType, af82;
+            // DocTypeRead.al:Read_RootMismatch, af147: the document a failed read left).
+            return Err(error(
+                "The requested operation cannot be performed in this context.",
+                "InvalidOperation",
+            ));
+        }
+        for c in kids {
             w.node(&c)?;
         }
     } else {
@@ -1188,6 +1320,12 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
     let mut out = Vec::new();
     for a in args {
         let h = match a {
+            Value::Library(name, h)
+                if matches!(&*h.borrow(), LibraryValue::Empty)
+                    && matches!(name.as_str(), "XmlDocumentType" | "XmlDeclaration") =>
+            {
+                return Err(uninitialized(name));
+            }
             Value::Library(_, h) if is_xml(h) => h.clone(),
             // Text is accepted as content and becomes a text node
             // (xml/TestXmlRuntimeContracts.al:XmlElement_Add_Text_IsAccepted_AndAdjacentTextsMerge).
@@ -1212,7 +1350,7 @@ fn content_nodes(args: &[Value]) -> Result<Vec<Handle>, Signal> {
 }
 
 /// Whether `node` may be added to `container`. `removed` are children that go first (a replace).
-fn check_fits(container: &Handle, node: &Handle, removed: &[Handle]) -> Result<(), Signal> {
+fn check_fits(container: &Handle, node: &Handle, removed: &[Handle], at: Option<usize>) -> Result<(), Signal> {
     if is_ancestor_or_self(node, container) {
         return unsupported("adding an XML node to itself or its own descendant");
     }
@@ -1220,6 +1358,28 @@ fn check_fits(container: &Handle, node: &Handle, removed: &[Handle]) -> Result<(
     let n_kind = kind(node);
     let ok = match (c_kind, n_kind) {
         ("XmlDocument", "XmlComment" | "XmlProcessingInstruction" | "XmlDeclaration") => true,
+        // One document type, before the root element (xml/lt-xml-doctype-declaration/DocTypeInDoc.al:DocumentAdd_*).
+        ("XmlDocument", "XmlDocumentType") => {
+            let kids: Vec<Handle> = children_of(container);
+            let keep = |c: &&Handle| !removed.iter().any(|r| Rc::ptr_eq(r, c));
+            let has_type = kids
+                .iter()
+                .filter(keep)
+                .any(|c| with(c, |d| matches!(d, XData::DocType { .. })));
+            let before: Vec<&Handle> = match at {
+                Some(i) => kids.iter().take(i).filter(keep).collect(),
+                None => kids.iter().filter(keep).collect(),
+            };
+            let root_before = before.iter().any(|c| with(c, |d| matches!(d, XData::Element { .. })));
+            if has_type || root_before {
+                return Err(error(
+                    "The requested operation cannot be performed in this context.",
+                    "InvalidOperation",
+                ));
+            }
+            true
+        }
+        ("XmlElement", "XmlDocumentType") => return Err(nav_argument()),
         ("XmlDocument", "XmlElement") => {
             let has_root = children_of(container)
                 .iter()
@@ -1252,7 +1412,7 @@ fn check_fits(container: &Handle, node: &Handle, removed: &[Handle]) -> Result<(
 /// Inserts `nodes` into `container` at child position `at` (`None` appends).
 fn insert(container: &Handle, at: Option<usize>, nodes: Vec<Handle>) -> Result<(), Signal> {
     for n in &nodes {
-        check_fits(container, n, &[])?;
+        check_fits(container, n, &[], at)?;
     }
     let mut at = at;
     for n in nodes {
@@ -2431,6 +2591,123 @@ fn comment_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NR
     text_like_create("XmlComment", a)
 }
 
+/// The name of a document type, as `XmlConvert.VerifyName` takes it: an empty name is an argument error, a bad character
+/// the XML exception with its place (xml/lt-xml-doctype-declaration/DocTypeErrors.al:Create_InvalidNames, DocTypeSetters.al:SetName).
+fn verify_name(name: &str) -> Result<(), Signal> {
+    if name.is_empty() {
+        return Err(nav_argument());
+    }
+    let hex = |c: char| format!("0x{:02X}", u32::from(c));
+    for (i, c) in name.chars().enumerate() {
+        let start = c == '_' || c == ':' || c.is_alphabetic();
+        let rest = start || c.is_alphanumeric() || c == '-' || c == '.' || c == '\u{B7}';
+        let message = if i == 0 && !start {
+            format!(
+                "Name cannot begin with the '{c}' character, hexadecimal value {}.",
+                hex(c)
+            )
+        } else if !rest {
+            format!(
+                "The '{c}' character, hexadecimal value {}, cannot be included in a name.",
+                hex(c)
+            )
+        } else {
+            continue;
+        };
+        return Err(error(
+            format!(
+                "The following exception was encountered when processing XML data: '{message}' at line 0 and position {}.",
+                i + 1
+            ),
+            "Xml:Xml",
+        ));
+    }
+    Ok(())
+}
+
+/// `XmlDocumentType.Create(Name, Public, System, Subset)` makes a usable type. `Create(Name)` and `Create(Name, Public,
+/// System)` make one whose members raise `MemberNotInitialized` (DocTypeCreate.al:Create_NameOnly, Create_ThreeArguments);
+/// the two-argument form is not pinned.
+fn doctype_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let name = arg_text(a, 0)?;
+    verify_name(&name)?;
+    let (public, system, subset, ready) = match a.len() {
+        1 => (String::new(), String::new(), String::new(), false),
+        3 => (arg_text(a, 1)?, arg_text(a, 2)?, String::new(), false),
+        4 => (arg_text(a, 1)?, arg_text(a, 2)?, arg_text(a, 3)?, true),
+        n => return unsupported(format!("XmlDocumentType.Create with {n} arguments (not pinned)")),
+    };
+    Ok(tagged(
+        "XmlDocumentType",
+        new_node(XData::DocType {
+            name,
+            public,
+            system,
+            subset,
+            ready,
+        }),
+    ))
+}
+
+/// The type behind a receiver of a document type method; an unassigned variable raises `NotInitialized`.
+fn doctype_recv(r: Option<&mut Value>) -> Result<Handle, Signal> {
+    recv_or_uninit(r, "XmlDocumentType")
+}
+
+macro_rules! doctype_get {
+    ($fname:ident, $field:ident) => {
+        fn $fname(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+            let h = doctype_recv(r)?;
+            let (text, ready) = with(&h, |d| match d {
+                XData::DocType { $field, ready, .. } => ($field.clone(), *ready),
+                _ => (String::new(), true),
+            });
+            if !ready {
+                return Err(error(
+                    "Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLMemberNotInitializedException' was thrown.",
+                    "MemberNotInitialized",
+                ));
+            }
+            a[0] = Value::Text(text.into());
+            Ok(Value::Boolean(true))
+        }
+    };
+}
+doctype_get!(doctype_get_name, name);
+doctype_get!(doctype_get_public, public);
+doctype_get!(doctype_get_system, system);
+doctype_get!(doctype_get_subset, subset);
+
+macro_rules! doctype_set {
+    ($fname:ident, $field:ident, $check:expr) => {
+        fn $fname(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+            let h = doctype_recv(r)?;
+            let v = arg_text(a, 0)?;
+            let check: fn(&str) -> Result<(), Signal> = $check;
+            check(&v)?;
+            let ready = with(&h, |d| match d {
+                XData::DocType { ready, .. } => *ready,
+                _ => true,
+            });
+            if !ready {
+                return unsupported(
+                    "a setter of a document type made by Create(Name) or Create(Name, Public, System) (not pinned)",
+                );
+            }
+            with(&h, |d| {
+                if let XData::DocType { $field, .. } = d {
+                    *$field = v;
+                }
+            });
+            Ok(Value::Boolean(true))
+        }
+    };
+}
+doctype_set!(doctype_set_name, name, verify_name);
+doctype_set!(doctype_set_public, public, |_| Ok(()));
+doctype_set!(doctype_set_system, system, |_| Ok(()));
+doctype_set!(doctype_set_subset, subset, |_| Ok(()));
+
 fn pi_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     Ok(tagged(
         "XmlProcessingInstruction",
@@ -2456,7 +2733,7 @@ fn decl_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResu
 macro_rules! decl_prop {
     ($name:ident, $field:ident) => {
         fn $name(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-            let h = recv(r)?;
+            let h = recv_or_uninit(r, "XmlDeclaration")?;
             if let Some(v) = a.first() {
                 let t = crate::native::text_of(v)
                     .ok_or_else(|| Signal::Unsupported("non-text declaration value".into()))?;
@@ -2682,8 +2959,15 @@ fn add_before_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
 }
 
 fn remove(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    let h = recv(r)?;
+    let h = recv_or_uninit(r, "XmlNode")?;
     if parent_of(&h).is_none() {
+        // A document type without a document (DocTypeNode.al:Remove_DetachedDocType, Remove_DocType `remove-twice`).
+        if with(&h, |d| matches!(d, XData::DocType { .. })) && !c.ret_used() {
+            return Err(error(
+                "The requested operation cannot be performed in this context.",
+                "InvalidOperation",
+            ));
+        }
         return if c.ret_used() {
             Ok(Value::Boolean(false))
         } else {
@@ -2696,10 +2980,27 @@ fn remove(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
 
 fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
+    if parent_of(&h).is_none() && with(&h, |d| matches!(d, XData::DocType { .. })) {
+        // DocTypeNode.al:ReplaceWith_DetachedDocType.
+        return Err(error(
+            "The requested operation cannot be performed in this context.",
+            "InvalidOperation",
+        ));
+    }
     let (p, i) = position_in_parent(&h)?;
     let nodes = content_nodes(a)?;
+    // A document type that cannot be replaced is removed all the same (DocTypeNode.al:ReplaceWith_Element: the document
+    // is `<a />` afterwards).
+    if with(&h, |d| matches!(d, XData::DocType { .. })) {
+        detach(&h);
+        for n in &nodes {
+            check_fits(&p, n, &[], Some(i))?;
+        }
+        insert(&p, Some(i), nodes)?;
+        return Ok(Value::Boolean(true));
+    }
     for n in &nodes {
-        check_fits(&p, n, std::slice::from_ref(&h))?;
+        check_fits(&p, n, std::slice::from_ref(&h), Some(i))?;
     }
     detach(&h);
     insert(&p, Some(i), nodes)?;
@@ -2719,7 +3020,7 @@ fn replace_nodes(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
     let nodes = content_nodes(a)?;
     let old = children_of(&h);
     for n in &nodes {
-        check_fits(&h, n, &old)?;
+        check_fits(&h, n, &old, None)?;
     }
     remove_nodes(c, Some(&mut tagged("XmlElement", h.clone())), &mut [])?;
     insert(&h, None, nodes)?;
@@ -2753,12 +3054,18 @@ fn get_declaration(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("GetDeclaration without a declaration, result unused (error text not pinned yet)"),
+        // DocTypeErrors.al:Uninitialised_DocumentMembers (an unassigned document answers the same).
+        None => Err(error("The XML node is not set.", "XmlNodeNotFound")),
     }
 }
 
 fn set_declaration(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
+    if let Value::Library(_, d) = &a[0] {
+        if matches!(&*d.borrow(), LibraryValue::Empty) {
+            return Err(uninitialized("XmlDeclaration"));
+        }
+    }
     let d = node_of(&a[0])?;
     if kind(&d) != "XmlDeclaration" {
         return unsupported("SetDeclaration with something that is not an XmlDeclaration");
@@ -2779,15 +3086,21 @@ fn set_declaration(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
     Ok(Value::Boolean(true))
 }
 
-/// Document types are not modelled (the parser refuses a DOCTYPE), so a document never has one:
-/// the Boolean form is false and the statement form raises
-/// (xml/TestXmlRuntimeContracts.al:XmlDocument_GetDocumentType_WithoutDoctype).
-fn get_document_type(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    recv(r)?;
-    if c.ret_used() {
-        Ok(Value::Boolean(false))
-    } else {
-        Err(error("The XML node is not set.", "XmlNodeNotFound"))
+/// The document type of a document: the one a program added (reading a document drops its DOCTYPE, so a read document has
+/// none: xml/lt-xml-doctype-declaration/DocTypeRead.al). The Boolean form is false without one and the statement form
+/// raises (xml/TestXmlRuntimeContracts.al:XmlDocument_GetDocumentType_WithoutDoctype, DocTypeInDoc.al:GetDocumentType_Statement).
+fn get_document_type(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = recv(r)?;
+    match children_of(&h)
+        .into_iter()
+        .find(|k| with(k, |d| matches!(d, XData::DocType { .. })))
+    {
+        Some(dt) => {
+            a[0] = tagged("XmlDocumentType", dt);
+            Ok(Value::Boolean(true))
+        }
+        None if c.ret_used() => Ok(Value::Boolean(false)),
+        None => Err(error("The XML node is not set.", "XmlNodeNotFound")),
     }
 }
 
@@ -2822,6 +3135,13 @@ fn as_token(tag: &'static str, r: Option<&mut Value>) -> NResult {
     Ok(tagged(tag, recv(r)?))
 }
 fn as_xml_node(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+    // An unassigned document type or declaration converts to an unassigned node (DocTypeErrors.al:Uninitialised_SettersAndMethods).
+    if let Some(Value::Library(name, h)) = r.as_deref() {
+        if matches!(&*h.borrow(), LibraryValue::Empty) && matches!(name.as_str(), "XmlDocumentType" | "XmlDeclaration")
+        {
+            return Ok(tagged("XmlNode", h.clone()));
+        }
+    }
     as_token("XmlNode", r)
 }
 
@@ -2853,6 +3173,7 @@ node_kind!(is_attribute, as_attribute, "XmlAttribute");
 node_kind!(is_cdata, as_cdata, "XmlCData");
 node_kind!(is_comment, as_comment, "XmlComment");
 node_kind!(is_declaration, as_declaration, "XmlDeclaration");
+node_kind!(is_doctype, as_doctype, "XmlDocumentType");
 node_kind!(is_document, as_document, "XmlDocument");
 node_kind!(is_element, as_element, "XmlElement");
 node_kind!(is_pi, as_pi, "XmlProcessingInstruction");
@@ -3009,6 +3330,11 @@ fn single_result(c: &mut dyn Ctx, found: Option<Vec<Handle>>, a: &mut [Value], s
 
 fn select_nodes(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
+    // A document type has no nodes to select: false and an empty list (DocTypeNode.al:SelectNodes_OnDocType).
+    if with(&h, |d| matches!(d, XData::DocType { .. })) {
+        a[1] = list_of(Vec::new());
+        return Ok(Value::Boolean(false));
+    }
     let found = select(c, &h, &arg_text(a, 0)?, None)?;
     a[1] = list_of(found.clone().unwrap_or_default());
     Ok(Value::Boolean(found.is_some()))
@@ -3107,7 +3433,7 @@ fn manager_has_namespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]
 }
 
 fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let h = recv(r)?;
+    let h = recv_or_uninit(r, "XmlNode")?;
     a[0] = Value::Text(serialize(&h)?.into());
     Ok(Value::Boolean(true))
 }
@@ -3454,6 +3780,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         "XmlComment",
         "XmlProcessingInstruction",
         "XmlDeclaration",
+        "XmlDocumentType",
         "XmlNode",
     ];
     let is_node = node_types.contains(&r);
@@ -3472,6 +3799,15 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlComment", "Create", [_]) => comment_create,
         ("XmlProcessingInstruction", "Create", [_, _]) => pi_create,
         ("XmlDeclaration", "Create", [_, _, _]) => decl_create,
+        ("XmlDocumentType", "Create", _) if !sig.instance => doctype_create,
+        ("XmlDocumentType", "GetName", [_]) => doctype_get_name,
+        ("XmlDocumentType", "GetPublicId", [_]) => doctype_get_public,
+        ("XmlDocumentType", "GetSystemId", [_]) => doctype_get_system,
+        ("XmlDocumentType", "GetInternalSubset", [_]) => doctype_get_subset,
+        ("XmlDocumentType", "SetName", [_]) => doctype_set_name,
+        ("XmlDocumentType", "SetPublicId", [_]) => doctype_set_public,
+        ("XmlDocumentType", "SetSystemId", [_]) => doctype_set_system,
+        ("XmlDocumentType", "SetInternalSubset", [_]) => doctype_set_subset,
         ("XmlDeclaration", "Version", _) => decl_version,
         ("XmlDeclaration", "Encoding", _) => decl_encoding,
         ("XmlDeclaration", "Standalone", _) => decl_standalone,
@@ -3506,6 +3842,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlNode", "AsXmlComment", []) => as_comment,
         ("XmlNode", "AsXmlDeclaration", []) => as_declaration,
         ("XmlNode", "AsXmlDocument", []) => as_document,
+        ("XmlNode", "AsXmlDocumentType", []) => as_doctype,
         ("XmlNode", "AsXmlElement", []) => as_element,
         ("XmlNode", "AsXmlProcessingInstruction", []) => as_pi,
         ("XmlNode", "AsXmlText", []) => as_text,
@@ -3514,6 +3851,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlNode", "IsXmlComment", []) => is_comment,
         ("XmlNode", "IsXmlDeclaration", []) => is_declaration,
         ("XmlNode", "IsXmlDocument", []) => is_document,
+        ("XmlNode", "IsXmlDocumentType", []) => is_doctype,
         ("XmlNode", "IsXmlElement", []) => is_element,
         ("XmlNode", "IsXmlProcessingInstruction", []) => is_pi,
         ("XmlNode", "IsXmlText", []) => is_text,
@@ -3555,4 +3893,14 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         _ => return None,
     };
     Some(f)
+}
+
+/// `Format` of an `XmlDocumentType` or `XmlDeclaration`: its markup. An unassigned variable raises `NotInitialized` naming
+/// `XmlNode` (DocTypeErrors.al:FormatOfUninitialisedAndInitialised).
+pub fn format_node(name: &str, h: &Handle) -> Result<String, Signal> {
+    if matches!(&*h.borrow(), LibraryValue::Empty) {
+        return Err(uninitialized("XmlNode"));
+    }
+    let _ = name;
+    serialize(h)
 }

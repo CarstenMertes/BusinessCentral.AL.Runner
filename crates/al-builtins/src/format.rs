@@ -2,6 +2,7 @@
 //! test or the doc table ("Formatting values, dates, and time") that pins it;
 //! where the two disagree the corpus wins (it runs on real BC).
 
+use crate::native::Signal;
 use crate::value::Value;
 
 /// What formatting needs from the running program.
@@ -124,6 +125,21 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             if name == "TableFilter" && matches!(&*l.borrow(), crate::value::LibraryValue::Empty) =>
         {
             String::new()
+        }
+        // A document type or an XML declaration formats as its markup (xml/lt-xml-doctype-declaration/DocTypeErrors.al:
+        // FormatOfUninitialisedAndInitialised); an unassigned one raises.
+        Value::Library(name, l) if matches!(name.as_str(), "XmlDocumentType" | "XmlDeclaration") => {
+            match crate::xml::format_node(name, l) {
+                Ok(s) => s,
+                Err(Signal::Error(e)) => {
+                    return Err(FormatFail::Error {
+                        message: e.message,
+                        code: e.code,
+                    });
+                }
+                Err(Signal::Unsupported(why)) => return Err(why.into()),
+                Err(other) => return Err(format!("Format of a {name}: {other:?}").into()),
+            }
         }
         // A JSON value formats as its compact text. Pinned: an empty JsonObject is `{}` and a null token `null`
         // (types/ProbeTypeFormsAndFilters.al:Clear_JsonTypes_GiveFreshUnassigned, BC 27.5); an object or array

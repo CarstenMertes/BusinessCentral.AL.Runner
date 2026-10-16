@@ -1480,8 +1480,26 @@ fn detach(h: &Handle) {
     set_parent(h, None);
 }
 
+/// A text, CDATA, comment, processing instruction or document type without a parent: every sibling operation and `Remove` on it
+/// raises `InvalidOperation` (xml/lt-xml-cdata-comment-pi-text/P90*Edit.al:AfterSelf_Detached_*, BeforeSelf_Detached_*,
+/// ReplaceWith_Detached_*, Remove_Detached_Twice; xml/lt-xml-doctype-declaration/DocTypeNode.al). Other kinds are not pinned.
+fn detached_is_invalid(h: &Handle) -> bool {
+    with(h, |d| {
+        matches!(
+            d,
+            XData::Text(_) | XData::CData(_) | XData::Comment(_) | XData::Pi { .. } | XData::DocType { .. }
+        )
+    })
+}
+
 fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
     let Some(p) = parent_of(h) else {
+        if detached_is_invalid(h) {
+            return Err(error(
+                "The requested operation cannot be performed in this context.",
+                "InvalidOperation",
+            ));
+        }
         return unsupported("a sibling operation on a node without a parent (error text not pinned yet)");
     };
     let pos = children_of(&p).iter().position(|c| Rc::ptr_eq(c, h));
@@ -2961,8 +2979,8 @@ fn add_before_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
 fn remove(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv_or_uninit(r, "XmlNode")?;
     if parent_of(&h).is_none() {
-        // A document type without a document (DocTypeNode.al:Remove_DetachedDocType, Remove_DocType `remove-twice`).
-        if with(&h, |d| matches!(d, XData::DocType { .. })) && !c.ret_used() {
+        // A node of these kinds without a parent (DocTypeNode.al:Remove_DetachedDocType, P90*Edit.al:Remove_Detached_Twice).
+        if detached_is_invalid(&h) && !c.ret_used() {
             return Err(error(
                 "The requested operation cannot be performed in this context.",
                 "InvalidOperation",

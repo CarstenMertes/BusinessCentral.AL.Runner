@@ -40,3 +40,17 @@ fn a_type_made_with_a_name_only_has_members_that_are_not_initialized() {
         "Exception of type 'Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLMemberNotInitializedException' was thrown.|Microsoft.Dynamics.Nav.Runtime.NavXmlDocumentType variable not initialized."
     );
 }
+
+#[test]
+fn a_detached_text_cdata_comment_or_pi_raises_invalid_operation_for_sibling_operations_and_remove() {
+    // xml/lt-xml-cdata-comment-pi-text/P90*Edit.al:AfterSelf_Detached_*, BeforeSelf_Detached_*, ReplaceWith_Detached_*,
+    // Remove_Detached_Twice.
+    let msg = "The requested operation cannot be performed in this context.";
+    let r = run(
+        "asserterror XmlCData.Create('x').AddAfterSelf(XmlComment.Create('c')); S := GetLastErrorText();
+         asserterror XmlComment.Create('x').AddBeforeSelf(XmlComment.Create('c')); S += '|' + GetLastErrorText();
+         asserterror XmlText.Create('x').ReplaceWith(XmlComment.Create('c')); S += '|' + GetLastErrorText();
+         asserterror XmlCData.Create('x').Remove(); S += '|' + GetLastErrorText(); exit(S);",
+    );
+    assert_eq!(r, format!("{msg}|{msg}|{msg}|{msg}"));
+}

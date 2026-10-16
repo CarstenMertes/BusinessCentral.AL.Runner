@@ -494,6 +494,12 @@ registry! {
         tests: "Bank Acc. Recon. Test.GetTotalOutstanding (SetRange/SetFilter on the Check Ledger Entries FlowField of the Bank Account Ledger Entry), reached by posting a bank reconciliation: about 200 Tests-Bank tests.",
         probe: "SetFilter(FlowField, '<>0') then CalcSums(StoredField), with rows whose FlowField is zero and non-zero, and a SetRange(FlowField, 0).",
     },
+    HiddenPartUpdateIsNoop => {
+        id: "hidden-part-update-is-noop",
+        assumed: "CurrPage.Update (also with false) in the code of a part page that the host's code created without opening it (a literal Visible = false) does nothing and raises no error.",
+        tests: "Sales Invoice, Purchase Invoice and the other document pages call CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId) in OnAfterGetCurrRecord, which ends in CurrPage.Update(false): about 900 Tests-ERM, Tests-SCM and Tests-Misc tests.",
+        probe: "A host with part(P; ...) { Visible = false } whose OnAfterGetCurrRecord calls CurrPage.P.Page.Ping(), where Ping calls CurrPage.Update(false) and CurrPage.Update(true) and then reads Rec.",
+    },
 }
 
 thread_local! {

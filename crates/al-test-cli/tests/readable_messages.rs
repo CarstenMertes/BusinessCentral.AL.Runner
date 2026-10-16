@@ -10,6 +10,11 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-vm/src/exec/mod.rs",
+        r#"Some(c.code.iter().map(|op| format!("{op:?}")).collect())"#,
+        "the listing of the instructions of a routine (tests of instruction selection): for the developers of the compiler",
+    ),
+    (
         "al-link/src/lib.rs",
         r#""source position {at}: {:?} against {:?} ({} and {} positions)","#,
         "the report of a defect of the link step (AL_CHECK_LINK, tests): for the developers of the compiler",

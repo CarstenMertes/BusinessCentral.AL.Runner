@@ -348,7 +348,7 @@ pub fn int_arith(op: Arith, a: i32, b: i32) -> Result<i32, Signal> {
         Arith::Mod => Some(a.wrapping_rem(b)),
         Arith::Div => return Err(Signal::Unsupported("int_arith of the quotient operator".into())),
     };
-    n.ok_or_else(|| arith_overflow())
+    n.ok_or_else(arith_overflow)
 }
 
 #[cold]

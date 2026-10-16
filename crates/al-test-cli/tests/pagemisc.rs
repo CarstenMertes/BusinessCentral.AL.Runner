@@ -143,6 +143,14 @@ page 62096 "PM Close List"
     layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } }
     trigger OnQueryClosePage(CloseAction: Action): Boolean var P: Codeunit "PM Probe"; begin P.Note('List ' + Format(CloseAction) + ';'); exit(true); end;
 }
+page 62098 "PM Find Card"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout { area(Content) { field("No."; Rec."No.") { } } }
+    actions { area(Processing) { action(Refresh) { trigger OnAction() begin CurrPage.Update(false); end; } } }
+    trigger OnFindRecord(Which: Text): Boolean var P: Codeunit "PM Probe"; begin P.Note('F' + Which + ';'); exit(Rec.Find(Which)); end;
+    trigger OnAfterGetCurrRecord() var P: Codeunit "PM Probe"; begin P.Note('G;'); end;
+}
 page 62097 "PM Close Document"
 {
     PageType = Document; SourceTable = "PM Row";
@@ -729,4 +737,20 @@ codeunit 62201 T {{ Subtype = Test;
     let o = al_testkit::outcomes_in(&src, "T");
     assert_eq!(o.len(), 1, "{o:?}");
     assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+}
+
+// Base Application's document pages declare OnFindRecord and OnAfterGetCurrRecord and call CurrPage.Update (88 Tests-ERM tests
+// were refused). The corpus pins the Which strings only for a deleted row (pageupdate/TestPageUpdateGoneRow.al:390); that
+// the refresh asks OnFindRecord for the current row with `=` and then raises the row triggers is assumed
+// (update-refresh-onfindrecord, docs/probes-needed.md).
+#[test]
+fn current_page_update_on_a_page_with_on_find_record_and_row_triggers_finds_the_current_row_again() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Refreshes() var C: TestPage \"PM Find Card\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'F1'; R.Insert();
+            C.OpenEdit(); C.GoToRecord(R); P.Reset(); C.Refresh.Invoke();
+            Check('F=;G;', P.Trace()); Check('F1', C.\"No.\".Value); C.Close(); end;"
+    ));
 }

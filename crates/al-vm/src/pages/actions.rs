@@ -482,9 +482,26 @@ impl Session {
         // cursor moves, and the page's row triggers must not matter.
         if self.declares(st, "onfindrecord") || self.declares(st, "onnextrecord") {
             if self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord") {
-                return unsupported(
-                    "CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned)",
-                );
+                // The client asks OnFindRecord for the current row (`=`), then reads it as it does after
+                // any move. Assumed (update-refresh-onfindrecord): Base Application's document pages do this
+                // under Microsoft's tests; a page that holds edits or has only OnNextRecord stays refused.
+                if !self.declares(st, "onfindrecord") || st.borrow().dirty {
+                    return unsupported(
+                        "CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned)",
+                    );
+                }
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::UpdateRefreshOnFindRecord);
+                if !self.nav_find(st, "=")? {
+                    return unsupported("OnFindRecord does not find the current row after CurrPage.Update (not pinned)");
+                }
+                let r = (|| {
+                    self.populate_current(st)?;
+                    self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+                    self.page_event(st, "onaftergetcurrrecordevent", None, None)
+                })();
+                self.torn_down_on_error(st, r)?;
+                st.borrow_mut().refresh = false;
+                return self.sync_parts(st);
             }
             st.borrow_mut().stale = true;
             return Ok(());

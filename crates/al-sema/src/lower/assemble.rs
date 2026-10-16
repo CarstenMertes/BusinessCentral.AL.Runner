@@ -700,6 +700,7 @@ pub(crate) fn build_shared<'a>(
         catalog,
         demand,
         positions,
+        early_relations: false,
         active: active_v,
         table_of,
         page_temporary,
@@ -782,9 +783,11 @@ pub(crate) fn lower_core(
         .collect();
     let prov = |oi: usize| flags[oi];
     let Prologue {
-        shared,
+        mut shared,
         uncompiled_subscribers,
     } = build_shared(ws, members, checked, &catalog, positions, src, &flags, export);
+    let check = cfg!(test) || std::env::var_os("AL_CHECK_LINK").is_some();
+    shared.early_relations = export || check;
     let mut program = ir::Program {
         objects: Vec::new(),
         apps: ws
@@ -1088,7 +1091,6 @@ pub(crate) fn lower_core(
             controls: piece.controls,
         });
     }
-    let check = cfg!(test) || std::env::var_os("AL_CHECK_LINK").is_some();
     let field_no = |t: usize, pos: usize| members.get(t).fields.get(pos).map(|f| f.id);
     let field_numbers = |t: usize| members.get(t).fields.iter().map(|f| f.id).collect::<Vec<u32>>();
     let extends = |e: usize| ws.extension_target(e);
@@ -1145,15 +1147,65 @@ pub(crate) fn lower_core(
         own_field_properties: &own_field_properties,
         modify_properties: &modify_properties,
     };
-    let linked = link_pieces(staged, program, &prov, &routine_keys, &lookups, subscriber_decls, check)?;
+    let (linked, expected) = link_pieces(staged, program, &prov, &routine_keys, &lookups, subscriber_decls, check)?;
     out.pos_ranges = linked.pos_ranges;
-    let program = linked.program;
+    let mut program = linked.program;
+    if !shared.early_relations || check {
+        derive_relations(&mut program, &shared, &prov, lower_workers());
+    }
+    if let Some((p, ranges)) = expected {
+        if let Some(d) = al_link::first_difference(&p, &program) {
+            return Err(format!(
+                "AL_CHECK_LINK: the linked program differs from the lowered one: {d}"
+            ));
+        }
+        if ranges != out.pos_ranges {
+            return Err("AL_CHECK_LINK: the source position ranges differ".into());
+        }
+    }
     out.exported = exported;
     if src.is_some() {
         out.driven = Some(shared.driven.clone());
     }
     out.program = std::sync::Arc::new(program);
     Ok(out)
+}
+
+/// Works out what the `TableRelation` of each field gives the runtime, from the properties the table and its
+/// extensions leave (a `modify` block can change `TableRelation`): the arms, the arms of a relation with filter
+/// conditions, and the metadata of a relation the runtime does not understand.
+fn derive_relations(
+    program: &mut ir::Program,
+    shared: &Shared<'_>,
+    provided: &(dyn Fn(usize) -> bool + Sync),
+    workers: usize,
+) {
+    type Relations = Vec<(Vec<ir::RelationArm>, Vec<ir::RelationArm>, Vec<ir::MetaRelationArm>)>;
+    let ws = shared.ws;
+    let tables: Vec<usize> = (0..program.objects.len())
+        .filter(|&oi| !provided(oi) && !program.objects[oi].uncompiled && program.objects[oi].table.is_some())
+        .collect();
+    let done: Vec<(usize, Relations)> = al_link::par_map(tables, workers, |_, oi| {
+        let local = Local::new(Nodes::new(ws, shared.active.clone()));
+        let seq = Seq::new(shared);
+        let lw = make_lowerer(shared, &local, &seq, oi);
+        let relations = shared.members[oi]
+            .fields
+            .iter()
+            .map(|f| lw.field_relations(oi, f))
+            .collect();
+        (oi, relations)
+    });
+    for (oi, relations) in done {
+        let Some(table) = program.objects[oi].table.as_mut() else {
+            continue;
+        };
+        for (f, (arms, runtime, meta)) in table.fields.iter_mut().zip(relations) {
+            f.relation_arms = arms;
+            f.relation_runtime = runtime;
+            f.relation_meta = meta;
+        }
+    }
 }
 
 /// What the lowering knew about tables, which making an object symbolic reads again.
@@ -1248,6 +1300,11 @@ fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync)
         // Changes the extensions make to fields: the triggers they attach, by extension and field name.
         let mut triggers: Vec<ExtTriggers> = Vec::new();
         for mut f in all {
+            // What the relation of a field gives the runtime is worked out after link, from the properties
+            // the extensions leave (`derive_relations`).
+            f.relation_arms.clear();
+            f.relation_runtime.clear();
+            f.relation_meta.clear();
             for (is_before, list) in [
                 (true, std::mem::take(&mut f.ext_before_validate)),
                 (false, std::mem::take(&mut f.ext_after_validate)),
@@ -1414,6 +1471,9 @@ impl al_ir::walk::RefVisitor for FillSets<'_> {
     }
 }
 
+/// The program built the way lowering used to build it, and where each object's source positions are (the check).
+type Expected = (ir::Program, Vec<(u32, u32)>);
+
 /// A lowered object waiting to be linked.
 struct Staged {
     object: ir::Object,
@@ -1448,7 +1508,7 @@ fn link_pieces(
     lookups: &Lookups<'_>,
     subscribers: Vec<Vec<al_ir::sym::SubscriberDecl>>,
     check: bool,
-) -> Result<al_link::Linked, String> {
+) -> Result<(al_link::Linked, Option<Expected>), String> {
     use al_ir::sym::ObjKey;
     let keys: Vec<ObjKey> = staged
         .iter()
@@ -1582,17 +1642,7 @@ fn link_pieces(
     let mut base = base;
     base.uncompiled_subscribers.clear();
     let linked = al_link::link(units, base, workers, &routines_of).map_err(|e| format!("link: {e}"))?;
-    if let Some((p, ranges)) = expected {
-        if let Some(d) = al_link::first_difference(&p, &linked.program) {
-            return Err(format!(
-                "AL_CHECK_LINK: the linked program differs from the lowered one: {d}"
-            ));
-        }
-        if ranges != linked.pos_ranges {
-            return Err("AL_CHECK_LINK: the source position ranges differ".into());
-        }
-    }
-    Ok(linked)
+    Ok((linked, expected))
 }
 
 /// The incremental compile (`incremental.rs`): the objects `dirty` changed in code only (the declarations of
@@ -1632,9 +1682,11 @@ pub fn relower_objects(
     let started = std::time::Instant::now();
     let flags = old.provided.clone();
     let Prologue {
-        shared,
+        mut shared,
         uncompiled_subscribers,
     } = build_shared(ws, &members, &checked, catalog, true, Some(src), &flags, false);
+    // The objects go into the program as they are lowered: nothing works out the relations afterwards.
+    shared.early_relations = true;
     let shared_time = started.elapsed();
     let pieces: Vec<(usize, Piece)> = std::thread::scope(|scope| {
         std::thread::Builder::new()

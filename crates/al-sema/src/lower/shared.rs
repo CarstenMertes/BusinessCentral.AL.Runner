@@ -11,6 +11,8 @@ pub(crate) struct Shared<'a> {
     pub(crate) demand: Option<&'a crate::check::demand::Demand>,
     /// Statements carry source positions (`lower_with_positions`).
     pub(crate) positions: bool,
+    /// See `Lowerer::early_relations`.
+    pub(crate) early_relations: bool,
     /// Per object: it is part of the compile (see `Workspace::restrict_to`).
     pub(crate) active: Vec<bool>,
     /// The table whose record is the implicit `Rec` of each object.
@@ -201,6 +203,7 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         field_refs: Default::default(),
         control_refs: Default::default(),
         expansions: Default::default(),
+        early_relations: sh.early_relations,
         positions: Vec::new(),
         lines: None,
         emit_pos: false,

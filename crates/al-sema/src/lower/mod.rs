@@ -177,6 +177,9 @@ pub(crate) struct Lowerer<'a> {
     field_refs: std::cell::RefCell<localize::FieldRefs>,
     /// The controls the expressions of the object name (`Expr::Control` holds an index into this list).
     control_refs: std::cell::RefCell<localize::ControlRefs>,
+    /// The relations of a table's fields are worked out with the table (the cache build and the checks read them
+    /// there); otherwise `lower_core` works them out after link, from the properties the extensions leave.
+    early_relations: bool,
     /// The sites that stand for sets only the whole program knows (`localize::Expanded`).
     expansions: std::cell::RefCell<localize::Expansions>,
     /// Answers many routines ask for, computed once per program.

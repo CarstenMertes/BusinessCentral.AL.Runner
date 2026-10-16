@@ -556,3 +556,11 @@ fn foreach_runs_over_a_json_array_variable() {
     );
     assert_eq!(int(run(&src, "F", vec![])), 6);
 }
+
+#[test]
+fn foreach_runs_over_the_result_of_a_builtin_method() {
+    let src = cu(
+        "procedure F(): Integer var D: XmlDocument; E: XmlElement; N: XmlNode; C: Integer; begin XmlDocument.ReadFrom('<a><b/><c/><d/></a>', D); D.GetRoot(E); foreach N in E.GetChildNodes() do C += 1; exit(C); end;",
+    );
+    assert_eq!(int(run(&src, "F", vec![])), 3);
+}

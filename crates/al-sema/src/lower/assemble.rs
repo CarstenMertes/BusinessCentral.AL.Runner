@@ -906,7 +906,8 @@ pub(crate) fn lower_core(
         for (oi, slot) in blocks.iter_mut().enumerate() {
             if let Some(b) = slot.take() {
                 pieces[oi] = Some(Piece {
-                    object: b.object,
+                    object: ir::Object::default(),
+                    sym: b.object,
                     positions: Vec::new(),
                     unsupported: b.unsupported,
                     calls: b
@@ -995,37 +996,23 @@ pub(crate) fn lower_core(
         )
     };
     let mut exported = export.then(crate::provided::DepSet::default);
-    let kinds: Vec<ObjKind> = ws.objects.iter().map(|o| o.kind).collect();
-    let field_pos = |t: usize, id: u32| members.get(t).fields.iter().position(|f| f.id == id);
     let mut staged: Vec<Staged> = Vec::with_capacity(n);
+    let mut block_meta: Vec<BlockMeta> = Vec::new();
     let embeds_of_all: Vec<Vec<usize>> = pieces
         .iter()
         .map(|p| p.as_ref().map_or_else(Vec::new, |p| p.embeds.clone()))
         .collect();
     for (oi, piece) in pieces.into_iter().flatten().enumerate() {
         if let Some(set) = exported.as_mut() {
-            set.blocks.push(crate::provided::DepBlock {
-                object: {
-                    // A block holds positions (the objects of a dependency set keep their places in the
-                    // run): the fields the expressions named are resolved here.
-                    let mut object = piece.object.clone();
-                    let mut u = Unembed {
-                        expansions: &piece.expansions,
-                        list: &piece.field_refs,
-                        controls: &piece.control_refs,
-                        kinds: &kinds,
-                        field_pos: &field_pos,
-                    };
-                    al_ir::walk::walk_object(&mut object, &mut u);
-                    object
-                },
-                unsupported: piece.unsupported.clone(),
-                calls: piece
+            // The block itself is made from the symbolic object, after the objects are made symbolic.
+            block_meta.push((
+                piece.unsupported.clone(),
+                piece
                     .direct
                     .iter()
                     .map(|r| r.iter().map(|&(o, r)| (o as u32, r as u32)).collect())
                     .collect(),
-            });
+            ));
             let o = &ws.objects[oi];
             let recorded: std::collections::BTreeSet<usize> = embeds_of_all[oi].iter().copied().collect();
             set.facts.push(crate::provided::DepFacts {
@@ -1034,7 +1021,10 @@ pub(crate) fn lower_core(
                 id: o.id,
                 name: o.name.clone(),
                 app: o.app as u32,
-                embeds: crate::provided::embeds_of(oi, &recorded, &|p| shared.driven.page_parts[p].clone()),
+                reads: crate::provided::embeds_of(oi, &recorded, &|p| shared.driven.page_parts[p].clone())
+                    .into_iter()
+                    .map(|i| piece_keys[i as usize].clone())
+                    .collect(),
                 table_of: shared.table_of[oi].map(|t| t as u32),
                 page_temporary: shared.page_temporary[oi],
                 page_reasons: shared.page_reasons[oi].clone(),
@@ -1084,6 +1074,7 @@ pub(crate) fn lower_core(
             control_refs: piece.control_refs,
             expansions: piece.expansions,
             page_mods: piece.page_mods,
+            sym: piece.sym,
             page_contribution: None,
             implements: piece.implements,
             enum_impls: piece.enum_impls,
@@ -1094,6 +1085,7 @@ pub(crate) fn lower_core(
             controls: piece.controls,
         });
     }
+    let field_pos = |t: usize, id: u32| members.get(t).fields.iter().position(|f| f.id == id);
     let field_no = |t: usize, pos: usize| members.get(t).fields.get(pos).map(|f| f.id);
     let field_numbers = |t: usize| members.get(t).fields.iter().map(|f| f.id).collect::<Vec<u32>>();
     let extends = |e: usize| ws.extension_target(e);
@@ -1150,7 +1142,24 @@ pub(crate) fn lower_core(
         own_field_properties: &own_field_properties,
         modify_properties: &modify_properties,
     };
-    let (linked, expected) = link_pieces(staged, program, &prov, &routine_keys, &lookups, subscriber_decls, check)?;
+    let Linking { linked, expected, syms } = link_pieces(
+        staged,
+        program,
+        &prov,
+        &routine_keys,
+        &lookups,
+        subscriber_decls,
+        LinkOptions { check, export },
+    )?;
+    if let Some(set) = exported.as_mut() {
+        for ((unsupported, calls), object) in block_meta.into_iter().zip(syms) {
+            set.blocks.push(crate::provided::DepBlock {
+                object,
+                unsupported,
+                calls,
+            });
+        }
+    }
     out.pos_ranges = linked.pos_ranges;
     let mut program = linked.program;
     if !shared.early_relations || check {
@@ -1283,7 +1292,12 @@ type ExtTriggers = (usize, String, Vec<(usize, usize)>, Vec<(usize, usize)>);
 
 /// Takes what the table extensions declare out of the tables that hold it: their fields, their keys
 /// and their changes to other fields (`modify`). The table keeps its own; link merges the rest again.
-fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync), lookups: &Lookups<'_>) {
+fn split_tables(
+    staged: &mut [Staged],
+    provided: &(dyn Fn(usize) -> bool + Sync),
+    lookups: &Lookups<'_>,
+    keep_relations: bool,
+) {
     use al_ir::sym::{FieldModify, KeyDecl, TableContribution};
     let n = staged.len();
     let mut contributions: Vec<Option<TableContribution>> = vec![None; n];
@@ -1323,9 +1337,12 @@ fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync)
         for mut f in all {
             // What the relation of a field gives the runtime is worked out after link, from the properties
             // the extensions leave (`derive_relations`).
-            f.relation_arms.clear();
-            f.relation_runtime.clear();
-            f.relation_meta.clear();
+            // (A cache block keeps them: its set has the table and its extensions, so they are right for it.)
+            if !keep_relations {
+                f.relation_arms.clear();
+                f.relation_runtime.clear();
+                f.relation_meta.clear();
+            }
             for (is_before, list) in [
                 (true, std::mem::take(&mut f.ext_before_validate)),
                 (false, std::mem::take(&mut f.ext_after_validate)),
@@ -1670,6 +1687,23 @@ fn split_pages(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync),
     }
 }
 
+/// A cache block's refusals and direct calls, per routine.
+type BlockMeta = (Vec<Vec<String>>, Vec<Vec<(u32, u32)>>);
+
+/// What making the objects symbolic and linking them gave: the program, the program as lowering used to build it
+/// (the check), and the symbolic objects (for a cache).
+struct Linking {
+    linked: al_link::Linked,
+    expected: Option<Expected>,
+    syms: Vec<Option<al_ir::sym::SymObject>>,
+}
+
+/// What `link_pieces` is asked to do besides linking.
+struct LinkOptions {
+    check: bool,
+    export: bool,
+}
+
 /// The program built the way lowering used to build it, and where each object's source positions are (the check).
 type Expected = (ir::Program, Vec<(u32, u32)>);
 
@@ -1682,6 +1716,8 @@ struct Staged {
     control_refs: Vec<(usize, String, usize)>,
     expansions: Vec<super::localize::Expanded>,
     page_mods: super::localize::PageMods,
+    /// A provided object in its symbolic form.
+    sym: Option<al_ir::sym::SymObject>,
     /// What a page extension adds to its page, taken out of the page before the objects are made symbolic.
     page_contribution: Option<al_ir::sym::PageContribution>,
     /// A provided codeunit: the interfaces it implements, from the cache's facts.
@@ -1709,15 +1745,19 @@ fn link_pieces(
     routine_keys: &super::localize::RoutineKeys<'_>,
     lookups: &Lookups<'_>,
     subscribers: Vec<Vec<al_ir::sym::SubscriberDecl>>,
-    check: bool,
-) -> Result<(al_link::Linked, Option<Expected>), String> {
+    options: LinkOptions,
+) -> Result<Linking, String> {
+    let LinkOptions { check, export } = options;
     use al_ir::sym::ObjKey;
     let keys: Vec<ObjKey> = staged
         .iter()
         .map(|s| s.key.clone().unwrap_or_else(|| ObjKey::of(&s.object, &base.apps)))
         .collect();
     // The check builds the program the way lowering used to: every reference a position.
-    let expected = check.then(|| {
+    // (Objects a cache supplies are symbolic already: the cached and the complete compile are compared
+    // as programs by the tests of `provided.rs` instead.)
+    let any_sym = staged.iter().any(|s| s.sym.is_some());
+    let expected = (check && !any_sym).then(|| {
         let mut p = base.clone();
         let mut ranges = Vec::new();
         for (oi, s) in staged.iter().enumerate() {
@@ -1781,11 +1821,13 @@ fn link_pieces(
             }
         }
     }
-    split_tables(&mut staged, provided, lookups);
+    split_tables(&mut staged, provided, lookups, export);
     split_pages(&mut staged, provided, &keys);
     let joins = &joins;
     let mut units: Vec<al_link::Unit> = al_link::par_map(staged, workers, |oi, s| {
-        if provided(oi) {
+        if let Some(sym) = s.sym {
+            Ok(al_link::Unit::Sym(sym))
+        } else if provided(oi) {
             Ok(al_link::Unit::Dense(al_link::DenseObject {
                 key: keys[oi].clone(),
                 enum_impls: s.enum_impls,
@@ -1843,10 +1885,21 @@ fn link_pieces(
             }
         }
     }
+    let syms: Vec<Option<al_ir::sym::SymObject>> = if export {
+        units
+            .iter()
+            .map(|u| match u {
+                al_link::Unit::Sym(s) => Some(s.clone()),
+                al_link::Unit::Dense(_) => None,
+            })
+            .collect()
+    } else {
+        Vec::new()
+    };
     let mut base = base;
     base.uncompiled_subscribers.clear();
     let linked = al_link::link(units, base, workers, &routines_of).map_err(|e| format!("link: {e}"))?;
-    Ok((linked, expected))
+    Ok(Linking { linked, expected, syms })
 }
 
 /// The incremental compile (`incremental.rs`): the objects `dirty` changed in code only (the declarations of
@@ -2035,6 +2088,8 @@ pub(crate) struct Piece {
     pub(crate) expansions: Vec<super::localize::Expanded>,
     /// What the page extensions' `modify` blocks change in the page's controls.
     pub(crate) page_mods: super::localize::PageMods,
+    /// A provided object in its symbolic form (what the cache holds).
+    pub(crate) sym: Option<al_ir::sym::SymObject>,
     /// The object that declares each key of a table (the table or one of its extensions).
     pub(crate) key_owners: Vec<usize>,
     /// A provided codeunit: the interfaces it implements, from the cache's facts.

@@ -37,6 +37,7 @@ fn error(message: impl Into<String>) -> Signal {
         message: message.into(),
         code: String::new(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 
@@ -54,6 +55,7 @@ fn error_code(message: impl Into<String>, code: &str) -> Signal {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 

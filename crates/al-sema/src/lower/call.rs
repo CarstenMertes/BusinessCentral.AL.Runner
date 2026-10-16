@@ -161,6 +161,10 @@ impl Lowerer<'_> {
                             && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
                     }) {
                     "System.EvaluateVariableOption#1".to_string()
+                } else if id == "Dialog.Error#2" && args.first().is_some_and(|a| a.kind() != SyntaxKind::Literal) {
+                    // `Error(Label, ...)` and `Error(Variable, ...)`: only a string literal has its text for
+                    // `GetLastErrorText(true)` pinned (corpus P86LastError.al:PlainError_Exclude).
+                    "Dialog.ErrorNotLiteral#1".to_string()
                 } else if id == "System.Format#1"
                     && args.len() >= 3
                     && args.first().is_some_and(|a| matches!(self.ty_of(a), Ty::Variant))

@@ -25,6 +25,7 @@ fn arg_error(message: String) -> Signal {
         message,
         code: "Argument".into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 
@@ -33,6 +34,7 @@ fn al_error(message: String) -> Signal {
         message,
         code: String::new(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 

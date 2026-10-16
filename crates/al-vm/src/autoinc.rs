@@ -103,6 +103,7 @@ impl Session {
                 message: message.into(),
                 code: String::new(),
                 call_stack: String::new(),
+                ..Default::default()
             })))
         };
         // Texts and code: corpus record/TestCalcFieldsTruncateUniqueContracts.al:Truncate_Refusals_Texts.
@@ -111,6 +112,7 @@ impl Session {
                 message: "Temporary tables does not support truncation.".into(),
                 code: "DB:Ok".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })));
         }
         let has_media = self.engine.program.objects[t.object as usize]
@@ -194,6 +196,7 @@ impl Session {
                 ),
                 code: "DB:ModifyOnIdentityField".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })));
         }
         Ok(())

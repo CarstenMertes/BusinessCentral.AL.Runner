@@ -592,6 +592,7 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
                 message: "Invalid data encountered in stream, unable to read text.".into(),
                 code: "InvalidStreamData".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })));
         }
         let Some(text) = text else {
@@ -742,6 +743,7 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                     message: "Invalid data encountered in stream, unable to read text.".into(),
                     code: "InvalidStreamData".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 }))
             })?;
         s.pos += width;
@@ -773,6 +775,7 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                         message: "The date is not valid.".into(),
                         code: "DateInvalid".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 Value::Date(day, closing)

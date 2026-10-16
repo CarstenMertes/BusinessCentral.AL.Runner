@@ -619,6 +619,7 @@ impl Session {
                             message: message.clone(),
                             code: String::new(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                 }

@@ -12,14 +12,42 @@ pub struct AlError {
     pub message: String,
     pub code: String,
     pub call_stack: String,
+    /// How the error was raised, which `GetLastErrorText(true)` needs.
+    pub origin: ErrorOrigin,
 }
+
+/// How an error was raised, for the text `GetLastErrorText(true)` answers (corpus
+/// types/lt-evaluate-format-lasterror-setview/P86LastError.al, errors/lt-last-error-and-events/P70_02LastErrFlag.al,
+/// misc/lt-probes-needed-6/PnF01LastErrorFlag.al). An origin the corpus does not pin is `Unknown` and refused.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ErrorOrigin {
+    #[default]
+    Unknown,
+    /// The flag leaves the text as it is (a runtime error without customer content: a division by zero, an empty table).
+    SameText,
+    /// The text the flag answers instead (the personal data removed from it).
+    Redacted(String),
+}
+
+/// The text of `Error(ErrorInfo)` for the flag (P86LastError.al:54, :88-104, :121, :145, :169).
+pub const PERSONAL_DATA_REMOVED: &str = "This message had personal data removed. The original may still be in transient telemetry. Find it using the transientTelemetryId.";
+
+/// The text of `Error('literal', args)` for the flag (P86LastError.al:189, PnF01LastErrorFlag.al:85, :103).
+pub const USE_ERROR_WITH_A_TEXT_CONSTANT: &str = "Use ERROR with a text constant to improve telemetry details";
 
 /// Raises an AL error with a pinned text and code.
 pub fn raise<T>(message: impl Into<String>, code: &str) -> Result<T, Signal> {
+    // A division by zero carries no customer content: the flag leaves its text (P86LastError.al:RuntimeError_Other `div_excl`).
+    let origin = if code == "AL:DivideByZero" {
+        ErrorOrigin::SameText
+    } else {
+        ErrorOrigin::Unknown
+    };
     Err(Signal::Error(Box::new(AlError {
         message: message.into(),
         code: code.into(),
-        call_stack: String::new(),
+        origin,
+        ..Default::default()
     })))
 }
 
@@ -288,10 +316,15 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
+    (
+        "System.GetLastErrorText#2",
+        get_last_error_text_without_customer_content,
+    ),
     ("System.GetLastErrorCode#1", get_last_error_code),
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
     ("Dialog.Error#2", error_text),
+    ("Dialog.ErrorNotLiteral#1", error_text_not_literal),
     ("Dialog.Error#1", crate::errorinfo::raise),
     ("Session.GetExecutionContext#1", execution_context),
     ("Session.GetCurrentModuleExecutionContext#1", execution_context),
@@ -604,9 +637,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
-        "System.GetLastErrorText#2" => {
-            "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
-        }
         _ => return None,
     })
 }
@@ -759,6 +789,7 @@ pub fn unpinned_error() -> AlError {
         message: UNPINNED_ERROR.into(),
         code: UNPINNED_ERROR.into(),
         call_stack: String::new(),
+        ..Default::default()
     }
 }
 
@@ -818,6 +849,7 @@ fn format_variant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) 
             message: format!("Standard format number {std} does not exist for the type 'Variant'."),
             code: "InvalidStandardFormat".into(),
             call_stack: String::new(),
+            ..Default::default()
         })));
     }
     format_1(ctx, r, args)
@@ -841,6 +873,7 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
             message: "The date is not valid.".into(),
             code: "DateInvalid".into(),
             call_stack: String::new(),
+            ..Default::default()
         })));
     }
     // A record as a whole, a RecordRef and a FieldRef need the table's schema.
@@ -865,6 +898,7 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
                 message,
                 code,
                 call_stack: String::new(),
+                ..Default::default()
             })),
         })
 }
@@ -882,6 +916,7 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
                 ),
                 code: "InvalidFormatString".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })),
             None => match e
                 .strip_prefix(crate::formatstr::RAISE_MARK)
@@ -891,6 +926,7 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
                     message: message.to_string(),
                     code: code.to_string(),
                     call_stack: String::new(),
+                    ..Default::default()
                 })),
                 None => Signal::Unsupported(e),
             },
@@ -920,6 +956,31 @@ fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
         return unsupported("GetLastErrorText of an error whose text is not pinned");
     }
     Ok(Value::Text(e.message.into()))
+}
+
+/// `GetLastErrorText(true)`: the text with the personal data removed. Which text depends on how the error was raised; the
+/// pinned origins are in [`ErrorOrigin`]. No error pending, or an empty text, answers the empty text (P86LastError.al:60
+/// `cleared_excl`, :192 `empty_excl`, :410 `text_excl`); an origin the corpus does not pin is refused.
+fn get_last_error_text_without_customer_content(
+    ctx: &mut dyn Ctx,
+    r: Option<&mut Value>,
+    a: &mut [Value],
+) -> Result<Value, Signal> {
+    if matches!(a.first(), Some(Value::Boolean(false))) {
+        return get_last_error_text(ctx, r, &mut []);
+    }
+    let e = ctx.last_error();
+    if e.message.is_empty() {
+        return Ok(Value::Text(String::new().into()));
+    }
+    match e.origin {
+        ErrorOrigin::SameText => Ok(Value::Text(e.message.into())),
+        ErrorOrigin::Redacted(t) => Ok(Value::Text(t.into())),
+        ErrorOrigin::Unknown => unsupported(&format!(
+            "GetLastErrorText(true) of an error raised in a way the corpus does not pin for the flag (code {})",
+            e.code
+        )),
+    }
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -964,12 +1025,27 @@ fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -
 /// test libraries and the corpus Assert's DialogTxt use it; no corpus test
 /// pins it directly).
 fn error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    error_text_with(ctx, args, true)
+}
+
+/// `Error(Label, ...)` and any `Error(Text, ...)` that is not a string literal: the flag's text for it is not pinned.
+fn error_text_not_literal(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    error_text_with(ctx, args, false)
+}
+
+fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
     let message = substitute(&template, &args[1..], ctx)?;
+    let origin = if literal {
+        ErrorOrigin::Redacted(USE_ERROR_WITH_A_TEXT_CONSTANT.into())
+    } else {
+        ErrorOrigin::Unknown
+    };
     Err(Signal::Error(Box::new(AlError {
         message,
         code: "Dialog".into(),
-        call_stack: String::new(),
+        origin,
+        ..Default::default()
     })))
 }
 
@@ -1099,6 +1175,7 @@ fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
         message: format!("Unhandled UI: Hyperlink {url}"),
         code: "MissingUIHandler".into(),
         call_stack: String::new(),
+        ..Default::default()
     })))
 }
 
@@ -1144,8 +1221,7 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
             message: "Sessions can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled."
                 .into(),
             code: "TestStartSessionNotAllowed".into(),
-            call_stack: String::new(),
-        })));
+            call_stack: String::new(), ..Default::default() })));
     }
     unsupported("StartSession outside an install trigger and a test run (a second session is not modelled)")
 }
@@ -1680,7 +1756,11 @@ pub(crate) mod tests {
         let cat = crate::catalog::Catalog::load();
         let ids: Vec<String> = cat.signatures.iter().map(|s| cat.id(s)).collect();
         // Ids lowering picks for a call of a catalog overload that needs another implementation (`Evaluate` into an Option variable).
-        let derived = ["System.EvaluateVariableOption#1", "System.FormatVariant#1"];
+        let derived = [
+            "System.EvaluateVariableOption#1",
+            "System.FormatVariant#1",
+            "Dialog.ErrorNotLiteral#1",
+        ];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");
         }
@@ -1749,6 +1829,7 @@ pub(crate) mod tests {
             message: "boom".into(),
             code: "Dialog".into(),
             call_stack: String::new(),
+            ..Default::default()
         });
         let Ok(stack @ Value::Text(_)) = f(&mut ctx, None, &mut []) else {
             panic!("a call stack is returned after an error")
@@ -1863,6 +1944,7 @@ pub(crate) mod tests {
             message: "boom".into(),
             code: "Dialog".into(),
             call_stack: String::new(),
+            ..Default::default()
         });
         let get = lookup("System.GetLastErrorText#1").unwrap();
         assert!(matches!(get(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s == "boom"));

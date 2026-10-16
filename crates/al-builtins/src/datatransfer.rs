@@ -19,6 +19,7 @@ fn error<T>(message: &str) -> Result<T, Signal> {
         // xmlport/lt-xmlport-query-datatransfer/XpTDataTransfer.al, misc/W5DataTransferOutside.al: the code is DB:Ok.
         code: "DB:Ok".into(),
         call_stack: String::new(),
+        ..Default::default()
     })))
 }
 

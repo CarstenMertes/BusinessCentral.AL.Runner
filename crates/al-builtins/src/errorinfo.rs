@@ -260,10 +260,13 @@ pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     if collectible && c.collect_error(info) {
         return Ok(Value::Null);
     }
+    // The flag's text for any classification, the default one, custom dimensions included (P86LastError.al:54, :88-104,
+    // :121, :145, :169).
     Err(Signal::Error(Box::new(crate::native::AlError {
         message,
         code: "Dialog".into(),
-        call_stack: String::new(),
+        origin: crate::native::ErrorOrigin::Redacted(crate::native::PERSONAL_DATA_REMOVED.into()),
+        ..Default::default()
     })))
 }
 

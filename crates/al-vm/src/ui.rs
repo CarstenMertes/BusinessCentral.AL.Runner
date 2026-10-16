@@ -257,6 +257,7 @@ impl Session {
                 message: format!("Unhandled UI: {} {shown}", kind.label()),
                 code: "MissingUIHandler".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })));
         };
         h.fired = true;
@@ -417,6 +418,7 @@ impl Session {
                 message: format!("Unhandled UI: {} {}", kind.label(), shown_id),
                 code: "MissingUIHandler".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })));
         };
         h.fired = true;
@@ -444,6 +446,7 @@ impl Session {
             message: format!("Unhandled UI: {} {}", kind.label(), self.object_id_of(object)),
             code: "MissingUIHandler".into(),
             call_stack: String::new(),
+            ..Default::default()
         }))
     }
 

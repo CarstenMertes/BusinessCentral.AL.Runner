@@ -867,8 +867,7 @@ impl Session {
             return Err(Signal::Error(Box::new(al_builtins::native::AlError {
                 message: "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator.".into(),
                 code: "StackOverflow".into(),
-                call_stack: String::new(),
-            })));
+                call_stack: String::new(), ..Default::default() })));
         }
         self.depth += 1;
         // The builtin being run (a record write that runs triggers and events) keeps its own

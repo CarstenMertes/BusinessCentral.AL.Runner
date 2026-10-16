@@ -62,6 +62,7 @@ fn refuse<T>(message: &str) -> Result<T, Signal> {
         message: message.into(),
         code: String::new(),
         call_stack: String::new(),
+        ..Default::default()
     })))
 }
 
@@ -373,6 +374,7 @@ impl Session {
             message: "There should be at least one enabled 'SUPER' user.".into(),
             code: "Dialog".into(),
             call_stack: String::new(),
+            ..Default::default()
         })))
     }
 

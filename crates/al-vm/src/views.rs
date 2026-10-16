@@ -367,6 +367,7 @@ fn invalid_view(view: &str) -> Signal {
         message: format!("Invalid expression of type: table view.{}{view}", crate::records::BR),
         code: "DB:Ok".into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 

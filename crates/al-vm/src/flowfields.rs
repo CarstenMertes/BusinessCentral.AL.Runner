@@ -64,6 +64,7 @@ fn error_code<T>(message: String, code: &str) -> Result<T, Signal> {
         message,
         code: code.into(),
         call_stack: String::new(),
+        ..Default::default()
     })))
 }
 

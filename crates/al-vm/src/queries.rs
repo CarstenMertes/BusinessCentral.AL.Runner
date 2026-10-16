@@ -261,6 +261,7 @@ impl Session {
                             message: "Top number of rows cannot be negative".into(),
                             code: String::new(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                     if qs.borrow().run.is_some() {
@@ -281,6 +282,7 @@ impl Session {
                                 message: "SECURITYFILTERING cannot be set to \"Validated\" on a Query.".into(),
                                 code: "Argument".into(),
                                 call_stack: String::new(),
+                                ..Default::default()
                             })));
                         }
                         qs.borrow_mut().security_filtering = Some(*i);
@@ -517,6 +519,7 @@ impl Session {
                     ),
                     code: "QueryNoDataSet".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 })))
             }
         }

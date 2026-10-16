@@ -118,11 +118,7 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
         "NAV App Installed App",
         Provider::Virtual(Virtual::NavAppInstalledApp),
     ),
-    (
-        2_000_000_157,
-        "NAV App Extra",
-        Provider::Virtual(Virtual::NavAppExtra),
-    ),
+    (2_000_000_157, "NAV App Extra", Provider::Virtual(Virtual::NavAppExtra)),
     (
         2_000_000_212,
         "Installed Application",

@@ -169,7 +169,10 @@ fn lookup_of_systemrowversion_calculates_on_every_version() {
 fn find_on_an_empty_table_says_the_table_is_empty_and_first_and_last_are_refused_on_bc_27() {
     for bc in [Some("27.5"), Some("28.5"), Some("29.0"), None] {
         let v = ok(run(bc, "EmptySet"));
-        assert!(matches!(&v, Value::Text(t) if &**t == "The VG Line table is empty.|DB:TableIsEmpty"), "BC {bc:?}: {v:?}");
+        assert!(
+            matches!(&v, Value::Text(t) if &**t == "The VG Line table is empty.|DB:TableIsEmpty"),
+            "BC {bc:?}: {v:?}"
+        );
     }
     for routine in ["EmptyFirst", "EmptyLast"] {
         for bc in [Some("28.5"), Some("29.0"), None] {
@@ -179,6 +182,9 @@ fn find_on_an_empty_table_says_the_table_is_empty_and_first_and_last_are_refused
                 "{routine} BC {bc:?}: {v:?}"
             );
         }
-        assert!(matches!(run(Some("27.5"), routine), Err(Signal::Unsupported(_))), "{routine} on 27.5");
+        assert!(
+            matches!(run(Some("27.5"), routine), Err(Signal::Unsupported(_))),
+            "{routine} on 27.5"
+        );
     }
 }

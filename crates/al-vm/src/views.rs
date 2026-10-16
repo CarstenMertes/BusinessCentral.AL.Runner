@@ -41,6 +41,15 @@ impl Session {
     /// `filter_value`; with `iso` a Date reads `yyyy-mm-dd`, as a view writes it (record/lt-record-read/RcAMisc.al:
     /// GetView_Field_Types `date`).
     fn filter_value_with(&self, v: &Value, iso: bool) -> Result<String, Signal> {
+        // A blank date shows as two single quotes, like a blank text (record/lt-record-read/RcAMisc.al:
+        // SetRecFilter_Composite_And_Text_Keys `dateBlank`).
+        if matches!(v, Value::Date(0, false)) {
+            return Ok("''".into());
+        }
+        // A view writes a Boolean as `true` or `false` (:GetView_Field_Types `bool`).
+        if let (true, Value::Boolean(b)) = (iso, v) {
+            return Ok(b.to_string());
+        }
         if let (true, Value::Date(d, false)) = (iso, v) {
             if *d != 0 {
                 let (y, m, day) = al_builtins::format::civil_from_day(*d);

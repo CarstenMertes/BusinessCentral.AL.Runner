@@ -107,6 +107,7 @@ name = "al-link"
 version = "3.0.0-alpha.1"
 dependencies = [
  "al-ir",
+ "serde_json",
 ]
 
 [[package]]

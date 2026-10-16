@@ -140,14 +140,77 @@ impl Refs {
     }
 }
 
-/// An object as lowering produces it.
+/// The lists of extensions that a base object holds in the linked program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum ListKind {
+    /// `Table::extensions`.
+    TableExtensions,
+    /// `Page::extensions`: the page extensions (and request page extensions of a report) merged into a page.
+    PageExtensions,
+    /// `Report::extensions`: the report extensions that change a run.
+    ReportExtensions,
+}
+
+/// An extension object joins the list of its base (`SymObject::extends`). Link puts the joined objects
+/// in the list in the order of `order`, then of their place in the program.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub struct Join {
+    pub list: ListKind,
+    pub order: (u32, u32, u32),
+}
+
+/// A key a table extension declares: fields as references, as the table holds them.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyDecl {
+    pub fields: Vec<usize>,
+    pub unique: bool,
+    pub props: Vec<(String, String)>,
+}
+
+/// `modify(Field)` of a table extension: it changes properties of the field the name says and adds
+/// triggers to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldModify {
+    pub field: String,
+    pub properties: Vec<(String, String)>,
+    /// (object, routine) of the `OnBeforeValidate` and `OnAfterValidate` triggers it declares.
+    pub before_validate: Vec<(usize, usize)>,
+    pub after_validate: Vec<(usize, usize)>,
+}
+
+/// What a table extension adds to its table.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TableContribution {
+    pub fields: Vec<crate::Field>,
+    pub keys: Vec<KeyDecl>,
+    pub modifies: Vec<FieldModify>,
+}
+
+/// What an extension object adds to its base, which link merges into the base in the order of the
+/// extensions in the program (ADR-033 decision 3).
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct Contribution {
+    /// The values and captions an enum extension declares.
+    pub enum_values: Vec<(i32, String)>,
+    pub enum_captions: Vec<(i32, String)>,
+    /// The fields, keys and field changes a table extension declares.
+    pub table: Option<TableContribution>,
+}
+
+/// An object as lowering produces it.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct SymObject {
     pub key: ObjKey,
     /// The key of each routine of `object`, in the order of `object.routines`. Lowering leaves it
     /// empty (link asks for the keys of the objects that are called); a stored object fills it.
     pub routines: Vec<LocalKey>,
     pub refs: Refs,
+    /// For an extension object: the object it extends, when it is in the program.
+    pub extends: Option<ObjKey>,
+    /// The lists of its base that the extension is in.
+    pub joins: Vec<Join>,
+    /// What it adds to its base.
+    pub contribution: Contribution,
     /// For a table whose IR carries no field list (a dependency table that was not compiled) but
     /// whose fields other objects use: the number of each field, in the order of the table's field
     /// list. Empty otherwise.

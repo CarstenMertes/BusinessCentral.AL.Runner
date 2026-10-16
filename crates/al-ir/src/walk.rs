@@ -510,6 +510,36 @@ fn walk_expr<V: RefVisitor>(e: &mut Expr, v: &mut V) {
     }
 }
 
+/// Visits the references of what a table extension adds to its table. Its field references are
+/// fields of the table it extends.
+pub fn walk_table_contribution<V: RefVisitor>(c: &mut crate::sym::TableContribution, v: &mut V) {
+    let crate::sym::TableContribution { fields, keys, modifies } = c;
+    for f in fields {
+        walk_field(f, v);
+    }
+    for k in keys {
+        let crate::sym::KeyDecl {
+            fields,
+            unique: _,
+            props: _,
+        } = k;
+        for f in fields {
+            fld(v, f, TableOf::Own);
+        }
+    }
+    for m in modifies {
+        let crate::sym::FieldModify {
+            field: _,
+            properties: _,
+            before_validate,
+            after_validate,
+        } = m;
+        for p in before_validate.iter_mut().chain(after_validate.iter_mut()) {
+            pair(v, p);
+        }
+    }
+}
+
 fn walk_table<V: RefVisitor>(t: &mut Table, v: &mut V) {
     let Table {
         fields,

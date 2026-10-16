@@ -314,7 +314,7 @@ impl Lowerer<'_> {
         obj: &ast::Object,
         extensions: Vec<usize>,
         routine_at: &RoutineAt,
-    ) -> ir::Table {
+    ) -> (ir::Table, Vec<usize>) {
         let m = &self.members[oi];
         let fields = m
             .fields
@@ -384,6 +384,8 @@ impl Lowerer<'_> {
         let mut keys = Vec::new();
         let mut unique_keys = Vec::new();
         let mut key_props: Vec<Vec<(String, String)>> = Vec::new();
+        // The object that declares each key (the table or one of its extensions).
+        let mut key_owners: Vec<usize> = Vec::new();
         for o in std::iter::once(oi).chain(extensions.iter().copied()) {
             for sec in self
                 .ws
@@ -411,6 +413,7 @@ impl Lowerer<'_> {
                         .collect();
                     if pos.len() == names.len() && !pos.is_empty() {
                         keys.push(pos);
+                        key_owners.push(o);
                         key_props.push(k.properties().map(|p| (p.name(), p.value_text())).collect());
                         unique_keys.push(k.properties().any(|p| {
                             p.name().eq_ignore_ascii_case("Unique")
@@ -423,20 +426,24 @@ impl Lowerer<'_> {
         if keys.is_empty() {
             // Without a keys section the first field is the primary key (doc: Table keys).
             keys.push(vec![0]);
+            key_owners.push(oi);
             unique_keys.push(false);
             key_props.push(Vec::new());
         }
         let per_company = !obj.properties().any(|p| {
             p.name().eq_ignore_ascii_case("DataPerCompany") && p.value_text().trim().eq_ignore_ascii_case("false")
         });
-        ir::Table {
-            fields,
-            keys,
-            unique_keys,
-            key_props,
-            per_company,
-            extensions,
-        }
+        (
+            ir::Table {
+                fields,
+                keys,
+                unique_keys,
+                key_props,
+                per_company,
+                extensions,
+            },
+            key_owners,
+        )
     }
 
     /// A FlowField's `CalcFormula` with field names resolved against the table

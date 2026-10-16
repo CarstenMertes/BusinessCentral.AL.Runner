@@ -447,6 +447,13 @@ impl MemStore {
         self
     }
 
+    /// The rows a Modify stored for the computed table `t` (a provider answers them over its own).
+    pub fn stored_rows(&self, cx: &AccessContext, t: &TableDef) -> Vec<Row> {
+        self.table(cx, t)
+            .map(|tb| tb.values().cloned().collect())
+            .unwrap_or_default()
+    }
+
     /// The provider of table `t`, if its rows are computed.
     fn virtual_of(&self, t: &TableDef) -> Option<&dyn VirtualTables> {
         self.virtuals.as_deref().filter(|v| v.serves(t))
@@ -844,18 +851,28 @@ impl Store for MemStore {
 
     fn modify(&mut self, cx: &AccessContext, t: &TableDef, row: Row) -> Result<WriteOutcome, StoreError> {
         if let Some(v) = self.virtual_of(t) {
-            // A row written back as it is changes nothing.
-            if v.accepts_unchanged_modify(t) {
-                // The system fields (Id, created and modified stamps) are the record's, not the row's.
-                let same = v.get(self, cx, t, &t.primary_key(&row))?.is_some_and(|old| {
+            let writable = v.writable_columns(t);
+            if !writable.is_empty() {
+                let old = v.get(self, cx, t, &t.primary_key(&row))?;
+                // The columns outside the writable ones (the system fields are the record's, not the row's) must be as served.
+                let differs = |old: &Row, only_writable: bool| {
                     old.iter()
                         .zip(&row)
                         .zip(&t.fields)
-                        .filter(|(_, f)| f.id < 2_000_000_000)
-                        .all(|((a, b), _)| al_builtins::ops::compare(a, b).is_ok_and(|o| o == Ordering::Equal))
-                });
-                if same {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FeatureKeyUnchangedModify);
+                        .filter(|(_, f)| f.id < 2_000_000_000 && writable.contains(&f.id) == only_writable)
+                        .any(|((a, b), _)| !al_builtins::ops::compare(a, b).is_ok_and(|o| o == Ordering::Equal))
+                };
+                if let Some(old) = old.filter(|old| !differs(old, false)) {
+                    if differs(&old, true) {
+                        let k = Key(t.primary_key(&row));
+                        self.table_mut(cx, t).insert(k, row);
+                        self.touch(cx, t);
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FeatureKeyEnabledModify);
+                    } else {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::FeatureKeyUnchangedModify,
+                        );
+                    }
                     return Ok(WriteOutcome::Done);
                 }
             }

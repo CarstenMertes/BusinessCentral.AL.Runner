@@ -115,9 +115,11 @@ pub trait VirtualTables {
     fn write_refusal(&self, _t: &TableDef) -> Option<String> {
         None
     }
-    /// Whether a Modify of table `t` that writes back the row it already has is accepted and changes nothing.
-    fn accepts_unchanged_modify(&self, _t: &TableDef) -> bool {
-        false
+    /// The ids of the columns of table `t` a Modify may change; the store keeps the changed row and the provider
+    /// answers it from then on (see [`memory::MemStore::stored_rows`]). Any other change is refused. A Modify
+    /// that writes the row back unchanged is accepted when this is not empty.
+    fn writable_columns(&self, _t: &TableDef) -> &'static [u32] {
+        &[]
     }
     /// The reads take the store they are called through, so a provider can compose its rows from
     /// stored tables too (the Aggregate Permission Set lists the tenant's permission sets).

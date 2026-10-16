@@ -138,7 +138,9 @@ fn outcomes_app(app_id: &str, main: &str, roots: al_sema::check::Roots) -> Vec<(
     let engine = Engine::with_target(
         std::sync::Arc::new(program),
         blocked,
-        Some(al_version::Target::for_bc(al_version::BcVersion::parse("27.5.0.0").unwrap())),
+        Some(al_version::Target::for_bc(
+            al_version::BcVersion::parse("27.5.0.0").unwrap(),
+        )),
     );
     let oi = l
         .program
@@ -200,21 +202,23 @@ fn a_virtual_platform_table_is_read_but_cannot_be_written() {
     assert!(why.contains("virtual table 'Integer'"), "{why}");
 }
 
-// Microsoft's Tests-ERM `Initialize` sets a Feature Key to the value it already has and calls Modify (243 tests were
-// refused with "Modify on virtual table 'Feature Key'"). A Modify that changes nothing is accepted; a changed Enabled
-// is still refused, as its persistence is not pinned (docs/probes-needed.md).
+// Microsoft's Tests-ERM `Initialize` sets Feature Key ReminderTermsCommunicationTexts to None and calls Modify (243 tests were
+// refused with "Modify on virtual table 'Feature Key'"). Enabled is the only writable column; a change stays for later reads
+// (assumed, docs/probes-needed.md); another column is still refused.
 #[test]
-fn a_feature_key_modify_that_changes_nothing_is_accepted_and_a_change_is_refused() {
+fn a_feature_key_enabled_can_be_modified_and_reads_back_and_another_column_is_refused() {
     let o = outcomes(
         r#"codeunit 50000 "T" { Subtype = Test;
   [Test] procedure ModifyUnchanged() var K: Record "Feature Key"; begin K.FindFirst(); K.Enabled := K.Enabled; K.Modify(); end;
-  [Test] procedure ModifyChanged() var K: Record "Feature Key"; begin K.FindFirst(); if K.Enabled = K.Enabled::None then K.Enabled := K.Enabled::"All Users" else K.Enabled := K.Enabled::None; K.Modify(); end; }"#,
+  [Test] procedure ModifyEnabledReadsBack() var K: Record "Feature Key"; W: Record "Feature Key"; N: Option; begin
+    K.FindFirst(); if K.Enabled = K.Enabled::None then K.Enabled := K.Enabled::"All Users" else K.Enabled := K.Enabled::None;
+    N := K.Enabled; K.Modify(); W.Get(K.ID); if W.Enabled <> N then Error('read back %1', W.Enabled); end;
+  [Test] procedure ModifyAnotherColumn() var K: Record "Feature Key"; begin K.FindFirst(); K."Is One Way" := not K."Is One Way"; K.Modify(); end; }"#,
     );
-    assert!(
-        o.iter().any(|(n, o)| n == "ModifyUnchanged" && *o == Outcome::Pass),
-        "{o:?}"
-    );
-    let why = not_run(&o, "ModifyChanged");
+    for t in ["ModifyUnchanged", "ModifyEnabledReadsBack"] {
+        assert!(o.iter().any(|(n, o)| n == t && *o == Outcome::Pass), "{o:?}");
+    }
+    let why = not_run(&o, "ModifyAnotherColumn");
     assert!(why.contains("virtual table 'Feature Key'"), "{why}");
 }
 

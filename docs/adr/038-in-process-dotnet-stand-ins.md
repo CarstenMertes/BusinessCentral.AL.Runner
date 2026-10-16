@@ -1,10 +1,10 @@
 # ADR-038: In-process stand-ins for a small closed set of .NET framework types
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-16: the closed set as proposed, the RustCrypto md-5, sha1 and sha2 crates, and migration to the sidecar for a mixed object)
 - Date: 2026-10-16
 - Related: ADR-014 (DotNet provider seam, section 1 "stand-ins for hot standard-library classes"), ADR-016, ADR-031
 
-Nothing is built on this ADR until the owner accepts it.
+Accepted by the owner on 2026-10-16.
 
 ## Context
 

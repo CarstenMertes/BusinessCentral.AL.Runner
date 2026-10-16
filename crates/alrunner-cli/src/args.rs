@@ -14,6 +14,8 @@ pub enum Command {
     Serve(Vec<String>),
     /// `alrunner warm`: find (or download) the demo backup and build its index.
     Warm(Box<TestArgs>),
+    /// `alrunner cache clear [--cache-dir DIR]`: remove every entry of the compile cache.
+    CacheClear(Option<PathBuf>),
 }
 
 /// `alrunner test`.
@@ -32,6 +34,8 @@ pub struct TestArgs {
     pub no_compile_cache: bool,
     /// `--require-compile-cache`: a run without a usable cache entry is an error (CI).
     pub require_compile_cache: bool,
+    /// `--rebuild-compile-cache`: read no entry of the compile cache; build and write the ones this run needs.
+    pub rebuild_compile_cache: bool,
     /// `--codeunit ID`: select a test codeunit by object id.
     pub codeunits: Vec<u32>,
     /// `--filter TEXT`: select the tests whose name contains TEXT (any case).
@@ -121,6 +125,7 @@ alrunner: run AL tests without a service tier (AL Runner v3, preview)
 USAGE
     alrunner test [OPTIONS] APP...
     alrunner serve [--protocol 2] [OPTIONS]
+    alrunner cache clear [--cache-dir DIR]
     alrunner --version | --help
 
 APP is an app folder (with app.json), a source archive (`Tests-SMB.Source.zip`) or an `.app`
@@ -154,6 +159,17 @@ COMPILE CACHE
     --no-compile-cache   Compile the dependency apps on every run, only what the tests reach.
                          Same as ALRUNNER_NO_COMPILE_CACHE=1.
     --require-compile-cache  Fail when there is no usable cache entry instead of building one (CI).
+    --rebuild-compile-cache  Read no cache entry: build the entries this run needs again and write
+                         them over the old ones (the compiled dependency apps, the scan of their
+                         sources, the install baseline). Entries of other app sets stay.
+    The cache also holds the install baseline: what the install code of the dependency apps and
+    Company-Initialize leave in the database, with the demo data if the run has it. It is kept
+    under a key of the alrunner build, the dependency apps, the app's sources, the BC target, the
+    environment, the demo backup and the day, and a run that finds it starts its clock at the
+    instant the run that made it began. Entries nothing used for 30 days are removed.
+    alrunner cache clear [--cache-dir DIR]
+                         Remove every entry of the compile cache (<cache dir>/compile/): use it
+                         when a cached result is in doubt. The next run builds what it needs.
 
 SELECTION (a test is selected when any option matches it)
     --codeunit ID        A test codeunit by object id. Repeatable.
@@ -231,6 +247,7 @@ SERVE
                          excludeTests, testIsolation. See docs/adr/028-alrunner-serve.md.
 
 WARM
+    alrunner cache clear [--cache-dir DIR]
     alrunner warm [PATH.bak] [--bc-version BUILD] [--cache-dir DIR] [--no-download]
                   [--test-data-company NAME]
         Finds the demo backup the way `test` does (downloading it if need be), opens it and
@@ -283,6 +300,31 @@ ENVIRONMENT
 
 fn number(flag: &str, v: &str) -> Result<usize, String> {
     v.parse().map_err(|_| format!("{flag} needs a number, got `{v}`"))
+}
+
+/// `alrunner cache clear [--cache-dir DIR]`.
+fn parse_cache(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
+    match it.next().as_deref() {
+        Some("clear") => {}
+        Some(other) => {
+            return Err(format!(
+                "unknown cache command `{other}` (only `alrunner cache clear` exists)"
+            ));
+        }
+        None => return Err("alrunner cache needs a command: `alrunner cache clear`".into()),
+    }
+    let mut dir = None;
+    while let Some(f) = it.next() {
+        match f.as_str() {
+            "--cache-dir" => dir = Some(it.next().ok_or("--cache-dir needs a value")?.into()),
+            other => {
+                return Err(format!(
+                    "unknown option `{other}` for `alrunner cache clear` (see --help)"
+                ));
+            }
+        }
+    }
+    Ok(Command::CacheClear(dir))
 }
 
 /// `alrunner warm [PATH.bak] [--bc-version V] [--cache-dir DIR] [--no-download] [--test-data-company NAME]`.
@@ -376,6 +418,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             return Ok(Command::ListAssumptions(dir));
         }
         "test" => {}
+        "cache" => return parse_cache(it),
         "warm" => return parse_warm(it),
         "serve" => return parse_serve(it.collect()),
         "run" | "debug" | "deps" | "package" | "helper" | "doctor" | "migrate" | "guide" => {
@@ -479,6 +522,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--no-compile-cache" => a.no_compile_cache = true,
             "--require-compile-cache" => a.require_compile_cache = true,
+            "--rebuild-compile-cache" => a.rebuild_compile_cache = true,
             "--codeunit" => {
                 let v = text()?;
                 a.codeunits
@@ -552,6 +596,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     if a.apps.is_empty() {
         return Err("alrunner test needs at least one APP (an app folder or a *.Source.zip)".into());
     }
+    if a.rebuild_compile_cache && a.no_compile_cache {
+        return Err("--rebuild-compile-cache and --no-compile-cache cannot be combined".into());
+    }
+    if a.rebuild_compile_cache && a.require_compile_cache {
+        return Err("--rebuild-compile-cache and --require-compile-cache cannot be combined".into());
+    }
     if a.require_compile_cache && a.no_compile_cache {
         return Err("--require-compile-cache and --no-compile-cache cannot be combined".into());
     }
@@ -598,6 +648,33 @@ mod tests {
         ));
         assert!(p("warm").unwrap_err().contains("--bc-version"));
         assert!(p("warm App").unwrap_err().contains("unknown"));
+    }
+
+    #[test]
+    fn cache_clear_takes_a_cache_dir_and_nothing_else() {
+        assert_eq!(p("cache clear").unwrap(), Command::CacheClear(None));
+        assert_eq!(
+            p("cache clear --cache-dir /c").unwrap(),
+            Command::CacheClear(Some(PathBuf::from("/c")))
+        );
+        assert!(p("cache").unwrap_err().contains("clear"));
+        assert!(p("cache wipe").unwrap_err().contains("wipe"));
+        assert!(p("cache clear --all").unwrap_err().contains("--all"));
+    }
+
+    #[test]
+    fn rebuild_compile_cache_is_a_test_flag_that_excludes_the_other_two() {
+        assert!(test_args("test A --rebuild-compile-cache").rebuild_compile_cache);
+        assert!(!test_args("test A").rebuild_compile_cache);
+        assert!(p("test A --rebuild-compile-cache --no-compile-cache").is_err());
+        assert!(p("test A --rebuild-compile-cache --require-compile-cache").is_err());
+    }
+
+    #[test]
+    fn the_help_documents_the_flush_and_the_rebuild_and_the_baseline_entry() {
+        for needle in ["alrunner cache clear", "--rebuild-compile-cache", "install baseline"] {
+            assert!(HELP.contains(needle), "{needle}");
+        }
     }
 
     #[test]

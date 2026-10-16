@@ -22,7 +22,10 @@ pub(crate) fn lazy_index(
     let fits = |index: &Vec<Vec<al_sema::FileIndex>>| {
         index.len() == which.len() && index.iter().zip(&which).all(|(f, &i)| f.len() == apps[i].files.len())
     };
-    match crate::compile_cache::read_index(&cc.dir, &key) {
+    match (!cc.rebuild)
+        .then(|| crate::compile_cache::read_index(&cc.dir, &key))
+        .flatten()
+    {
         Some(index) if fits(&index) => {
             let mut index = index.into_iter();
             Ok((0..apps.len())

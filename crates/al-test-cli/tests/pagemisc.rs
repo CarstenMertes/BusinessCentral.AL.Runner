@@ -155,6 +155,12 @@ codeunit 62097 "PM Event Subs"
     [EventSubscriber(ObjectType::Page, Page::"PM Event Card", 'OnAfterValidateEvent', 'Descr', false, false)]
     local procedure After(var Rec: Record "PM Row") var P: Codeunit "PM Probe"; begin P.Note('A(' + Rec.Descr + ');'); end;
 }
+page 62191 "PM SetRec List"
+{
+    PageType = List; SourceTable = "PM Row";
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+    trigger OnOpenPage() var P: Codeunit "PM Probe"; begin P.Note('open=' + Rec."No." + ';'); end;
+}
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -779,5 +785,23 @@ fn set_value_raises_the_page_validate_events_around_the_control_trigger() {
             R.DeleteAll(); R.\"No.\" := 'E1'; R.Insert();
             C.OpenEdit(); C.GoToRecord(R); P.Reset(); C.Descr.SetValue('hello');
             Check('B(hello);V;A(hello);', P.Trace()); C.Close(); end;"
+    ));
+}
+
+// Base Application's VendEntry-Apply Posted Entries hands "Apply Vendor Entries" `SetRecord(Entry)` and then `SetTableView(Entry)`;
+// the page reads `Rec."Vendor No."` in OnOpenPage (39 Tests-ERM tests failed with "The Vendor does not exist ... No.=''").
+// SetRecord gives the position and SetTableView the filters, so the second does not blank the record of the first
+// (handlers/TestPageModalNewRowLine_Tests.al pins SetTableView alone: no position; docs/probes-needed.md for the pair).
+#[test]
+fn set_table_view_after_set_record_keeps_the_record_the_page_opens_on() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Pair() var R: Record \"PM Row\"; V: Record \"PM Row\"; W: Page \"PM SetRec List\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'S1'; R.Descr := 'x'; R.Insert(); R.\"No.\" := 'S2'; R.Descr := 'y'; R.Insert();
+            V.SetRange(Descr, 'y'); V.FindFirst(); P.Reset();
+            W.SetRecord(V); W.SetTableView(V); W.RunModal();
+            Check('open=S2;', P.Trace()); end;
+        [ModalPageHandler] procedure H(var T: TestPage \"PM SetRec List\") begin end;"
     ));
 }

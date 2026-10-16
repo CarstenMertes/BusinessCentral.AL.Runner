@@ -483,8 +483,20 @@ impl Session {
                 Some(Value::Record(r)) => {
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
                     let table = copy.borrow().table as usize;
-                    let blank = self.initial_fields(table);
-                    copy.borrow_mut().fields = blank;
+                    // A record SetRecord handed the page earlier stays the position the page opens on: SetRecord gives the
+                    // position and SetTableView the filters (Microsoft's VendEntry-Apply Posted Entries calls both with the
+                    // same record and its page reads Rec in OnOpenPage; not pinned, docs/probes-needed.md).
+                    let kept = st.borrow().set_record.as_ref().map(|p| p.borrow().fields.clone());
+                    let fields = match kept {
+                        Some(f) if f.len() == copy.borrow().fields.len() => {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::SetTableViewKeepsSetRecordPosition,
+                            );
+                            f
+                        }
+                        _ => self.initial_fields(table),
+                    };
+                    copy.borrow_mut().fields = fields;
                     st.borrow_mut().set_record = Some(copy);
                     Ok(Value::Null)
                 }

@@ -29,8 +29,8 @@ const MAGIC: &[u8; 8] = b"ALBASE\0\x01";
 
 impl Baseline {
     /// The baseline as bytes, to keep on disk or to hand to another thread (a `Baseline` holds `Rc`s and cannot go
-    /// there itself). `None` when it cannot be written: the store reads rows from test data, or a row holds something
-    /// that is not a plain value. The same baseline always gives the same bytes.
+    /// there itself). `None` when it cannot be written: a row holds something that is not a plain value. Over test
+    /// data the bytes hold the tables the install code wrote to (see [`Baseline::backed_by`]). The same baseline always gives the same bytes.
     pub fn to_bytes(&self) -> Option<Vec<u8>> {
         use al_builtins::value_codec::*;
         let mut out = MAGIC.to_vec();
@@ -178,6 +178,21 @@ impl Baseline {
             last_stamp,
             workspace_installs,
         })
+    }
+
+    /// This baseline over the test data of `engine`, for a baseline read from bytes: the bytes hold the tables the
+    /// install code wrote to, and every other table reads the restored database through the engine, as it did
+    /// in the run that made them. An engine without test data leaves the baseline as it is.
+    pub fn backed_by(mut self, engine: &std::sync::Arc<crate::Engine>) -> Baseline {
+        if let Some(td) = &engine.test_data {
+            self.store = self
+                .store
+                .with_backing(std::rc::Rc::new(crate::testdata::TestBacking::new(
+                    engine.clone(),
+                    td.clone(),
+                )));
+        }
+        self
     }
 
     /// The table objects that hold a row in the baseline.
@@ -328,7 +343,7 @@ mod tests {
     }
 
     #[test]
-    fn a_baseline_that_reads_from_test_data_has_no_bytes() {
+    fn a_baseline_over_test_data_has_bytes_of_the_tables_it_holds() {
         struct B;
         impl al_data::memory::Backing for B {
             fn company(&self) -> &str {
@@ -340,6 +355,8 @@ mod tests {
         }
         let mut b = sample();
         b.store = b.store.with_backing(std::rc::Rc::new(B));
-        assert!(b.to_bytes().is_none());
+        let bytes = b.to_bytes().expect("the held tables are plain rows");
+        let back = Baseline::from_bytes(&bytes).unwrap();
+        assert_eq!(summary(&back), summary(&b));
     }
 }

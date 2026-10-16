@@ -273,3 +273,12 @@ runners until many more of these tests run.
 - `oracle/`: the real-BC results the pass rate is measured against.
 - `metrics/<major>/passing.txt`: the cases that must keep passing, per BC major.
 - `docs/history/`: the original spike brief and report.
+
+## License
+
+al-runtime-rs is licensed under the Business Source License 1.1 (`LICENSE`). You may use it for free,
+including commercial work: developing, testing and building Business Central extensions for yourself or
+for your customers, on your own machines and in build pipelines. You may not sell it, or offer it or a
+product or service built substantially on it to others for a fee. Each version becomes available under
+the Apache License 2.0 four years after it is published. Versions published before this change remain
+under the MIT License. For other licensing arrangements, contact the author.

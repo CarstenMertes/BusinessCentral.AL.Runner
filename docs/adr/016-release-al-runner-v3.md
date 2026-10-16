@@ -631,7 +631,7 @@ Each is one decision. My recommendation is first.
 The owner asked for a first public build before gate P. The gates in section 7 stay as written.
 
 - **License**: MIT, like AL Runner v2. Copyright holder: Stefan Maron. `LICENSE` is at the repo root and the
-  workspace sets `license = "MIT"`.
+  workspace sets `license = "MIT"`. *Changed 2026-10-16, see "License change" below.*
 - **First release `3.0.0-alpha.1`**, below the preview gate on purpose: no v2 parity, refused tests are
   expected, results may change. The crates share one version (`[workspace.package]`).
   `alrunner --version` prints the version and the short commit, for example `alrunner 3.0.0-alpha.1 (d73d2cacb)`.
@@ -690,3 +690,15 @@ every way. For the tools that call v2 (ALchemist, LethAL; see docs/integrations/
   (2) Cobertura coverage; (3) `alrunner serve` with runTests and shutdown; (4) execute and
   cancel; (5) value capture and iteration tracking; (6) DAP debugging, with its own ADR.
   All six are in v3.0.
+
+## License change (owner decision 2026-10-16)
+
+From this change on, al-runtime-rs is licensed under the Business Source License 1.1 (`LICENSE`, SPDX
+`BUSL-1.1`). Licensor: Stefan Maron. Additional Use Grant: production use is free, including commercial
+work (developing, testing and building Business Central extensions for oneself or for customers, locally
+and in build pipelines); selling, sublicensing or offering the work, a modified version, or a product or
+service in which it is a substantial part, to third parties for a fee is not granted. Change Date: four
+years after each version is first published. Change License: Apache License 2.0. Versions published
+before the change (up to and including 3.0.0-alpha.1 and the edge builds before the change) remain under
+MIT. Outside contributions need a contributor agreement before they are accepted, so the licensing stays
+with one holder.

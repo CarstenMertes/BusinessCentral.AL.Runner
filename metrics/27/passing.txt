@@ -6379,6 +6379,7 @@
 70179 SaveValuesTestPageCloseThenReopen
 70180 HostCloseAfterPartMove
 70180 HostCloseRunsPartTriggers
+70180 OpenOrderOfHostAndPart
 70180 PartModeFollowsHost
 70181 PendingPartRowSavedOnHostClose
 70182 CardPendingNewRowSavedBeforeAction

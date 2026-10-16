@@ -9,9 +9,9 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
 | Triggers per object kind | 164 | 108 | 128 | 52 | 44 |
-| Object properties per object kind | 1112 | 263 | 1074 | 849 | 635 |
+| Object properties per object kind | 1110 | 261 | 1074 | 849 | 635 |
 | Platform and system events | 122 | 12 | 28 | 16 | 15 |
-| Statements and expressions | 59 | 53 | 52 | 0 | 0 |
+| Statements and expressions | 59 | 54 | 53 | 0 | 0 |
 | Runtime error sites (text pinned) | 39 | 36 | - | 3 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
@@ -449,14 +449,13 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `SubstituteReport` | 0 | no | 0 |
 | codeunit | `WordDocumentMergerAppMode` | 0 | no | 0 |
 
-## Statements and expressions: unpinned items (6)
+## Statements and expressions: unpinned items (5)
 
 | Group | Name | MS uses | Runtime reads | Corpus uses (not reached) |
 |---|---|---:|---|---:|
 | expression | `Literal` | 0 | yes | 0 |
 | expression | `BinExpr` | 0 | no | 0 |
 | expression | `PrefixExpr` | 0 | no | 0 |
-| statement | `ContinueStmt` | 0 | no | 0 |
 | statement | `EmptyStmt` | 0 | no | 0 |
 | statement | `WithStmt` | 0 | no | 0 |
 

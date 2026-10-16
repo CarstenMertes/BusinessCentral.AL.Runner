@@ -1485,7 +1485,7 @@
       "pinned": 108
     },
     {
-      "catalog": 1112,
+      "catalog": 1110,
       "dimension": "properties",
       "items": [
         {
@@ -11155,24 +11155,6 @@
           "site": null
         },
         {
-          "corpus_uses": 1,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "DEU",
-          "pinned": true,
-          "runtime_reads": true,
-          "site": "types/lt-variant/VaTTextConst.al:15"
-        },
-        {
-          "corpus_uses": 15,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "ENU",
-          "pinned": true,
-          "runtime_reads": true,
-          "site": "types/lt-variant-is-text-streams/LTP89TextConst.al:13"
-        },
-        {
           "corpus_uses": 1371,
           "group": "codeunit",
           "ms_uses": 0,
@@ -11497,7 +11479,7 @@
           "site": "handlers/ProbeObjectMetadataTables.al:162"
         }
       ],
-      "pinned": 263
+      "pinned": 261
     },
     {
       "catalog": 122,
@@ -12609,9 +12591,9 @@
       "dimension": "syntax",
       "items": [
         {
-          "corpus_uses": 417579,
+          "corpus_uses": 417566,
           "group": "expression",
-          "ms_uses": 1797685,
+          "ms_uses": 1797674,
           "name": "NameRef",
           "pinned": true,
           "runtime_reads": true,
@@ -12636,9 +12618,9 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 127940,
+          "corpus_uses": 127927,
           "group": "statement",
-          "ms_uses": 248572,
+          "ms_uses": 248561,
           "name": "ExprStmt",
           "pinned": true,
           "runtime_reads": false,
@@ -13041,6 +13023,15 @@
           "site": "types/TestTernaryContracts.al:19"
         },
         {
+          "corpus_uses": 13,
+          "group": "statement",
+          "ms_uses": 11,
+          "name": "ContinueStmt",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "misc/lt-system-functions/ControlFlow.al:68"
+        },
+        {
           "corpus_uses": 7,
           "group": "expression",
           "ms_uses": 9,
@@ -13116,15 +13107,6 @@
           "corpus_uses": 0,
           "group": "statement",
           "ms_uses": 0,
-          "name": "ContinueStmt",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "statement",
-          "ms_uses": 0,
           "name": "EmptyStmt",
           "pinned": false,
           "runtime_reads": false,
@@ -13140,7 +13122,7 @@
           "site": null
         }
       ],
-      "pinned": 53
+      "pinned": 54
     }
   ],
   "errors": {

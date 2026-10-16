@@ -507,11 +507,24 @@ impl CorpusRuntime {
         let engine_time = engine_started.elapsed();
         let compile_time = *compile_phase + engine_time;
         let started = std::time::Instant::now();
-        let baseline_run = if baseline {
-            crate::baseline::run(&engine, lowered)
-        } else {
-            None
-        };
+        // With several test threads the tests get a second engine once the baseline has run (below).
+        // It does not depend on the baseline, so it is built beside it, on another core.
+        let (baseline_run, mut spare_engine) = std::thread::scope(|scope| {
+            let spare = (baseline && workers > 1)
+                .then(|| {
+                    std::thread::Builder::new()
+                        .stack_size(64 << 20)
+                        .spawn_scoped(scope, make_engine)
+                        .ok()
+                })
+                .flatten();
+            let run = if baseline {
+                crate::baseline::run(&engine, lowered)
+            } else {
+                None
+            };
+            (run, spare.map(|h| h.join().expect("the second engine is built")))
+        });
         // The tests run against an engine that knows which tables the install baseline could not
         // seed. The baseline itself ran before it knew; with several test threads, which each run
         // the baseline again (its data is not for sharing between threads), the engine that ran it
@@ -537,7 +550,7 @@ impl CorpusRuntime {
                 started.elapsed().as_secs_f64()
             );
             if baseline_engine.is_some() {
-                engine = make_engine();
+                engine = spare_engine.take().unwrap_or_else(make_engine);
             }
             if let Some(e) = Arc::get_mut(&mut engine) {
                 e.unseeded = unseeded;
@@ -678,16 +691,26 @@ impl CorpusRuntime {
                     done.push((k, run_unit(&engine, lowered, baseline, u, None, limit)));
                 }
             };
+            // Each test thread starts from its own copy of the baseline (a baseline holds `Rc`s and cannot be shared
+            // between threads), and reading a snapshot is far cheaper than running the install code again.
+            let snapshot: Option<Vec<u8>> = baseline_engine
+                .is_some()
+                .then(|| baseline.as_ref().and_then(al_vm::Baseline::to_bytes))
+                .flatten();
             std::thread::scope(|scope| {
                 let mut handles = Vec::new();
                 for _ in 1..workers.min(units.len()) {
                     let spawned = std::thread::Builder::new()
                         .stack_size(TEST_STACK)
                         .spawn_scoped(scope, || {
-                            let own = baseline_engine
-                                .as_ref()
-                                .and_then(|e| crate::baseline::run(e, lowered))
-                                .map(|b| b.baseline);
+                            // The baseline the first run left, as its snapshot says; only a baseline that has
+                            // no snapshot (it reads test data) is run again, once per thread.
+                            let own = baseline_engine.as_ref().and_then(|e| {
+                                snapshot
+                                    .as_deref()
+                                    .and_then(al_vm::Baseline::from_bytes)
+                                    .or_else(|| crate::baseline::run(e, lowered).map(|b| b.baseline))
+                            });
                             pull(own.as_ref())
                         });
                     match spawned {
@@ -835,6 +858,9 @@ impl CorpusRuntime {
         } else {
             Vec::new()
         };
+        // The engines hold every compiled routine and the baseline's tables: freeing them on this
+        // thread kept the report waiting after the last test.
+        retire((engine, baseline_engine, spare_engine));
         CorpusRuntime {
             outcomes,
             times: times_by_case,

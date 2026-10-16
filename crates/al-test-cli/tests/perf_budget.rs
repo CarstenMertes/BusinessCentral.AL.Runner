@@ -138,7 +138,11 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
 /// applies. The seconds are printed for information. A run over the limit is repeated, at most `WITH_APPS_RUNS` times in
 /// all, and the best counts: a real regression is over the limit every time.
 const WITH_APPS_LIMIT_INSTRUCTIONS: u64 = 144_000_000_000;
-const WITH_APPS_BUDGET_SECS: f64 = 12.0;
+/// Where the kernel gives no instruction counter (a GitHub runner), the cost is the CPU time of the child process (user and
+/// system, `getrusage(RUSAGE_CHILDREN)`: the helper processes it waited for count too), not the wall time: the seconds of
+/// the runtime phases moved with the load of a shared runner (13.6 s against 12 s on main with the same code), CPU time
+/// moves much less. Main CI (run of 53fcf0cc) measured 25.8 s of child CPU; the limit is that plus about 25 %.
+const WITH_APPS_LIMIT_CPU_NS: u64 = 32_500_000_000;
 const WITH_APPS_RUNS: usize = 3;
 /// No single test codeunit may take longer: one codeunit that walked 2.9 million computed Date
 /// rows took 5 s of the run before.
@@ -242,7 +246,8 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
     let mut costs: Vec<u64> = Vec::new();
     for _ in 0..WITH_APPS_RUNS {
         let started = Instant::now();
-        let (out, cost) = meter.measure(|| {
+        let children_before = meter::children_cpu_ns();
+        let (out, instructions) = meter.measure(|| {
             std::process::Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
                 .arg("--root")
                 .arg(root())
@@ -250,26 +255,35 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
                 .output()
                 .unwrap()
         });
+        // With the counter: instructions. Without it: the CPU time of the child.
+        let cost = if counting {
+            instructions
+        } else {
+            meter::children_cpu_ns() - children_before
+        };
         costs.push(cost);
         let wall = started.elapsed().as_secs_f64();
         let err = String::from_utf8_lossy(&out.stderr).into_owned();
         assert!(out.status.success(), "{err}");
         let runtime = runtime_phases_secs(&err).expect("a `timings:` line in --timings");
         runs.push((runtime, wall, err));
-        let within = if counting {
-            cost <= WITH_APPS_LIMIT_INSTRUCTIONS
-        } else {
-            runtime <= WITH_APPS_BUDGET_SECS
-        };
+        let within = cost
+            <= if counting {
+                WITH_APPS_LIMIT_INSTRUCTIONS
+            } else {
+                WITH_APPS_LIMIT_CPU_NS
+            };
         if within {
             break;
         }
     }
     let best = costs.iter().copied().min().unwrap();
-    eprintln!(
-        "full run with the apps: {best} {} (limit {WITH_APPS_LIMIT_INSTRUCTIONS}), samples: {costs:?}",
-        meter.name()
-    );
+    let (unit, limit) = if counting {
+        ("instructions", WITH_APPS_LIMIT_INSTRUCTIONS)
+    } else {
+        ("ns of child CPU time", WITH_APPS_LIMIT_CPU_NS)
+    };
+    eprintln!("full run with the apps: {best} {unit} (limit {limit}), samples: {costs:?}");
     let (runtime, wall, err) = runs
         .iter()
         .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -319,16 +333,9 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
             "a .NET sidecar took {max:.1} s to start, over {SIDECAR_START_SECS} s:\n{err}"
         );
     }
-    if counting {
-        assert!(
-            best <= WITH_APPS_LIMIT_INSTRUCTIONS,
-            "the run used {best} instructions at best of {WITH_APPS_RUNS}, over the limit of {WITH_APPS_LIMIT_INSTRUCTIONS} \
-             (runtime phases {runtime:.1} s, for information):\n{err}"
-        );
-    } else {
-        assert!(
-            runtime <= WITH_APPS_BUDGET_SECS,
-            "the runtime phases took {runtime:.1} s at best of {WITH_APPS_RUNS}, over the {WITH_APPS_BUDGET_SECS} s budget:\n{err}"
-        );
-    }
+    assert!(
+        best <= limit,
+        "the run used {best} {unit} at best of {WITH_APPS_RUNS}, over the limit of {limit} \
+         (runtime phases {runtime:.1} s, for information):\n{err}"
+    );
 }

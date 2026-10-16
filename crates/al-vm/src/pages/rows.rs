@@ -271,7 +271,9 @@ impl Session {
         // raises OnAfterGetRecord 21 times when it opens, rows 1 to 20 and then row 1 again
         // (corpus handlers/TestPageRuntimeContracts.al:121-136 TestPage_List_OpenReads21Rows).
         self.page_trigger(st, "onaftergetrecord", vec![])?;
-        if end_reached {
+        // A list whose view ends inside the window reads its first row once more; a part does not (misc/lt-probes-needed-7/
+        // PnGPartTriggers.al:OpenOrderOfHostAndPart: two rows read as 10000, 20000 and 10000).
+        if end_reached && st.borrow().host.is_none() {
             self.page_trigger(st, "onaftergetrecord", vec![])?;
         }
         Ok(())

@@ -84,6 +84,23 @@ pub fn process_cpu_ns() -> u64 {
     ts.tv_sec as u64 * 1_000_000_000 + ts.tv_nsec as u64
 }
 
+/// The CPU time (user and system) of the child processes this process has waited for, in nanoseconds. The cost of a
+/// run that is a child process: unlike the process clock it does not move with the other tests of the same binary.
+#[cfg(target_os = "linux")]
+pub fn children_cpu_ns() -> u64 {
+    // SAFETY: an all-zero `rusage` is a valid value, and the call fills it in.
+    let mut ru: libc::rusage = unsafe { std::mem::zeroed() };
+    // SAFETY: `ru` is a valid rusage for the call to fill in.
+    unsafe { libc::getrusage(libc::RUSAGE_CHILDREN, &mut ru) };
+    let tv = |t: libc::timeval| t.tv_sec as u64 * 1_000_000_000 + t.tv_usec as u64 * 1_000;
+    tv(ru.ru_utime) + tv(ru.ru_stime)
+}
+
+#[cfg(not(target_os = "linux"))]
+pub fn children_cpu_ns() -> u64 {
+    0
+}
+
 #[cfg(target_os = "linux")]
 pub fn thread_cpu_ns() -> u64 {
     let mut ts = libc::timespec { tv_sec: 0, tv_nsec: 0 };

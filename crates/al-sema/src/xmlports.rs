@@ -62,6 +62,8 @@ fn allowed_triggers(kind: ir::XmlNodeKind) -> &'static [&'static str] {
         K::Text | K::TextAttr => &["onbeforepassvariable", "onafterassignvariable"],
         K::Field | K::FieldAttr => &["onafterassignfield", "onbeforepassfield"],
         K::Table => &[
+            "onprexmlitem",
+            "onaftergetrecord",
             "onafterinitrecord",
             "onbeforeinsertrecord",
             "onafterinsertrecord",

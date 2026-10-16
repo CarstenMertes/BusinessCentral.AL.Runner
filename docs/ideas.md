@@ -150,3 +150,32 @@ The path, in order, each step checked by the dual run (ADR-034):
    check), per-platform cache files, and debugger/capture/coverage hooks in native code.
 5. The record store as computation: with no SQL, key comparison, row copies and filter matching are the store's
    cost; ADR-035 steps 2 and 3 (shared rows, encoded keys), deferred today, come back when they are the top item.
+
+### Native code with Cranelift: how it would fit (owner, 2026-10-16)
+
+- Owner's model: compile to machine code wherever possible, on the user's machine, and cache it. Microsoft's apps
+  and other dependencies once per build (ahead of time, stored with the compile cache layer); the workspace
+  apps too if the compile cost allows.
+- Rough estimates, to be measured by a spike before any ADR: Cranelift compiles a medium function in roughly
+  50-200 microseconds. A workspace app with 2,000 routines: about 0.1-0.4 s on one core, less in parallel, so
+  compiling the user's own apps on every change is affordable, and the incremental compile (ADR-029/033)
+  limits it to the changed objects. Base Application (on the order of 100,000+ routines): roughly 10-30 s on one
+  core, a few seconds on 8 cores, once per BC build, cached per platform.
+- Tiering keeps cost where it pays: run bytecode first and compile a routine to native code only after it ran
+  often (true JIT for the hot part), or compile ahead of time only the routines a test run actually reached
+  (most of Base Application never runs in a given suite).
+- The spike to answer it: compile the corpus and Pageworks' hot codeunits (QR, fonts) with Cranelift; measure
+  compile time per routine, cache size, and run time against bytecode and BC.
+
+## Build pin for the compile cache (owner, 2026-10-16)
+
+Microsoft publishes several hotfix builds a day, and each new build means a new compile-cache layer for its
+apps. Today: `--bc-version <four numbers>` pins an exact build for one run, and with a major or major.minor a
+build already in the local artifact cache wins over a newer published one. Missing:
+- A settings file (in the project, e.g. next to app.json, and per user) that pins the build per BC major, so
+  every run and every developer of a project reuses one cache.
+- A policy instead of a fixed build: "newest at most once a day / once a week", or "a named channel", so the
+  cache moves on a schedule the developer or the pipeline chooses.
+- An explicit refresh command, and a line in each run saying which build was used and why.
+- Pipelines: with the pin in the repository, a CI cache keyed on the pinned build stays valid until the pin
+  moves (for example weekly), instead of a rebuild per hotfix.

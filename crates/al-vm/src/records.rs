@@ -1569,7 +1569,14 @@ impl Session {
                 // Delete_And_DeleteAll_WithAndWithoutRunTrigger).
                 // The User table has no bulk delete: the platform deletes it row by row.
                 let user_rows = self.is_user_row(&t, rec.borrow().temporary);
-                if events || global || user_rows || (run && trigger) {
+                // MarkedOnly limits the rows to the marked ones, which the store's bulk delete does not know: delete row
+                // by row what the scan finds (Post Inventory Cost to G/L ends its data item with
+                // `MarkedOnly(true); DeleteAll()` and keeps the capacity entries it has not posted yet).
+                let marked_only = rec.borrow().marked_only;
+                if marked_only {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DeleteAllMarkedOnly);
+                }
+                if events || global || user_rows || (run && trigger) || marked_only {
                     // One Delete per row (record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord).
                     let key = rec.borrow().key;
                     let mut rows = Vec::new();

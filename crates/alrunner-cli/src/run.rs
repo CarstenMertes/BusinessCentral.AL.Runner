@@ -773,6 +773,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         capture: a.capture,
         hooks,
         clock_starts: None,
+        dual_run: a.dual_run,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
             && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
@@ -1162,7 +1163,20 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         secs(total_time),
         peak_memory_mb().map_or(String::new(), |m| format!(", peak memory {m} MB"))
     );
-    let code = output::exit_code(&counts, a.allow_not_run);
+    let mut code = output::exit_code(&counts, a.allow_not_run);
+    if a.dual_run {
+        for d in rt.dual_diffs() {
+            say!("{d}");
+        }
+        say!(
+            "dual run: {} test(s) compared, {} difference(s)",
+            rt.results().len(),
+            rt.dual_diffs().len()
+        );
+        if !rt.dual_diffs().is_empty() {
+            code = code.max(1);
+        }
+    }
     say!(
         "Result: {} (exit {code})",
         match code {

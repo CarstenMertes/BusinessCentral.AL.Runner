@@ -50,6 +50,8 @@ pub struct TestArgs {
     pub defines: Vec<String>,
     /// `--coverage`: count the statements of the APPs each test runs.
     pub coverage: bool,
+    /// `--dual-run`: run every test codeunit twice (tree walker, executable form) and compare.
+    pub dual_run: bool,
     /// `--coverage-out FILE`: write Cobertura XML there (implies `--coverage`; default `coverage.cobertura.xml`).
     pub coverage_out: Option<PathBuf>,
     /// `--coverage-json FILE`: write the statements and the statements of each test as JSON (implies `--coverage`).
@@ -190,6 +192,11 @@ OUTPUT
                          FILE the document is the only thing on stdout and the report goes to
                          stderr. `--output-json=FILE` also works. See docs/integrations/migrating-tools-to-v3.md.
     --timings            Compile phases and the slowest test codeunits.
+
+DUAL RUN
+    --dual-run           Run every test codeunit twice, on the tree walker and on the executable form (ADR-034), and compare
+                         outcome, error stack, unprobed assumptions and the data each test leaves. Prints each difference
+                         and fails the run on any.
 
 COVERAGE
     --coverage           Count how often each statement of the APPs runs, per test. Writes Cobertura XML to
@@ -486,6 +493,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             }
             "--filter" | "--test" => a.filters.push(text()?),
             "--coverage" => a.coverage = true,
+            "--dual-run" => a.dual_run = true,
             "--coverage-out" => {
                 a.coverage = true;
                 a.coverage_out = Some(text()?.into());

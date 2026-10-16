@@ -1138,6 +1138,8 @@ fn int(v: &Value) -> Result<i64, Signal> {
         Value::BigInteger(i) => Ok(*i),
         Value::Byte(b) => Ok(i64::from(*b)),
         Value::Char(c) => Ok(i64::from(*c)),
+        // An Option member is its ordinal where an integer is wanted (an array index, a for-loop bound).
+        Value::Option(n, _) => Ok(i64::from(*n)),
         other => Err(Signal::Unsupported(format!("{} used as an integer", other.describe()))),
     }
 }

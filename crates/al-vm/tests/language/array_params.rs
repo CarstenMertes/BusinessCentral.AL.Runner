@@ -32,3 +32,25 @@ fn a_local_array_starts_with_default_elements() {
     assert!(matches!(run("exit(Zeroes());"), Value::Integer(0)));
     assert!(matches!(run("exit(X[1] + X[4]);"), Value::Integer(0)));
 }
+
+// Base Application's ServContractManagement writes `EntryAmount[AmountType::Amount] -= x` with `AmountType` an Option: an Option
+// member is an index (187 Tests-SCM-Service tests were refused with "Option member used as an integer").
+#[test]
+fn an_option_member_is_an_array_index_in_a_compound_assignment() {
+    let src = r#"
+codeunit 69860 OI
+{
+    var AmountType: Option ,Amount,UnitPrice,UnitCost;
+    procedure F(): Decimal
+    var A: array[3] of Decimal;
+    begin
+        A[AmountType::UnitPrice] += 5;
+        A[AmountType::UnitPrice] -= 2;
+        A[AmountType::Amount] += 1;
+        exit(A[2] * 10 + A[1]);
+    end;
+}
+"#;
+    let v = al_testkit::run_in(src, "OI", "F");
+    assert!(matches!(&v, Ok(al_builtins::value::Value::Decimal(d)) if *d == rust_decimal::Decimal::from(31)), "{v:?}");
+}

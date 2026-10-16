@@ -500,6 +500,10 @@ pub struct XmlPort {
     /// `Legacy` use the display text (xmlport/TestXmlPortFormatEvaluateContracts.al).
     #[serde(default)]
     pub format_evaluate_xml: bool,
+    /// The port declares `FormatEvaluate`. Without it an import reads the display text and, when that fails, the XML form
+    /// (xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:Import_OneItem; an export writes the display text).
+    #[serde(default)]
+    pub format_evaluate_declared: bool,
     /// Schema nodes in source order; `parent` makes the tree. Top-level nodes have no parent.
     pub nodes: Vec<XmlNode>,
     /// Global slots of the source `InStream` and destination `OutStream` set by

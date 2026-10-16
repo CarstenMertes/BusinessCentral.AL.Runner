@@ -260,6 +260,8 @@ impl Session {
                 }
                 // corpus recordref/TestRecordRefOpenMissingTable.al:31-49 pins both halves; the full
                 // text and the code AL:MetadataNotFound: recordref/TestRecordRefRuntimeContracts.al:30.
+                // Table 0 opens nothing and raises nothing (recordref/lt-refs/RfTOpen.al:Open_InvalidTableNumbers `zero`).
+                0 => Ok(Value::Null),
                 n => Err(self.missing_object("Table", n)),
             };
         };

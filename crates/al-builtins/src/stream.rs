@@ -268,6 +268,9 @@ pub struct InState {
     source: Source,
     pub pos: usize,
     pub enc: Encoding,
+    /// A read already found the stream at its end: the next typed read there raises (streams/StTStreams.al:ReadPastEnd against
+    /// streams/lt-stream-read-write-media/P102ReadTyped.al `pastend`: the first one answers 0).
+    pub hit_end: bool,
 }
 
 impl InState {
@@ -276,6 +279,7 @@ impl InState {
             source: Source::Snapshot(data),
             pos: 0,
             enc,
+            hit_end: false,
         }
     }
 
@@ -284,6 +288,7 @@ impl InState {
             source: Source::Live(blob),
             pos: 0,
             enc,
+            hit_end: false,
         }
     }
 
@@ -533,7 +538,9 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         if s.pos == 0 {
             let utf8 = s.enc == Encoding::Utf8;
             let bom = s.with_data(|d| {
-                if d.starts_with(&[0xFF, 0xFE]) {
+                // A stream created as UTF-8 does not take a UTF-16 mark: it reads the bytes as UTF-8 and fails on them (xmlport/
+                // lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_ThreeRows).
+                if !utf8 && d.starts_with(&[0xFF, 0xFE]) {
                     Some((Encoding::Utf16, 2))
                 } else if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
                     Some((Encoding::Utf8, 3))
@@ -547,8 +554,11 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             }
         }
         let (enc, pos) = (s.enc, s.pos);
+        if !s.is_empty() && pos >= s.len() {
+            s.hit_end = true;
+        }
         let unit = enc.unit();
-        let (text, consumed) = s.with_data(|data| {
+        let text = s.with_data(|data| {
             let rest = &data[pos.min(data.len())..];
             let mut end = 0;
             while end + unit <= rest.len() && end / unit < max_chars && !is_unit(&rest[end..end + unit], b'\n') {
@@ -567,8 +577,23 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             } else {
                 end
             };
-            (enc.decode_pinned(&line).then(|| enc.decode(&line)), consumed)
+            // Bytes that are no UTF-8 cannot be read from a stream created as UTF-8 (xmlport/lt-xmlport-query-datatransfer/
+            // XpTExportBasic.al:Export_ThreeRows: the UTF-16 bytes of an export).
+            let invalid_utf8 = enc == Encoding::Utf8 && std::str::from_utf8(&line).is_err();
+            (
+                (!invalid_utf8 && enc.decode_pinned(&line)).then(|| enc.decode(&line)),
+                consumed,
+                invalid_utf8,
+            )
         });
+        let (text, consumed, invalid_utf8) = (text.0, text.1, text.2);
+        if invalid_utf8 {
+            return Err(Signal::Error(Box::new(crate::native::AlError {
+                message: "Invalid data encountered in stream, unable to read text.".into(),
+                code: "InvalidStreamData".into(),
+                call_stack: String::new(),
+            })));
+        }
         let Some(text) = text else {
             return unsupported("InStream.ReadText of MS-DOS bytes whose character is not pinned");
         };
@@ -594,7 +619,7 @@ fn is_unit(u: &[u8], c: u8) -> bool {
 /// `Read` into an Integer (4 bytes, little endian: streams/TestInOutStream.al
 /// InOutStream_Write_Integer_ReadInteger) or a Byte (one byte: the HexOf helper of
 /// streams/TestStreamsRuntimeContracts.al reads a stream byte by byte). Other types are not pinned.
-fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     // `Read(Text, Length)` on a single-byte stream takes Length bytes as one character each
     // (xml/TestXmlDocumentWriteToOutStreamContracts.al:LeadingBytes reads the bytes 239 187 191 of a
     // byte order mark into a Text[3]); bytes 128 to 159, other encodings and a used result are not pinned.
@@ -682,6 +707,30 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             ));
         }
     };
+    // At the end of a stream that holds data nothing is read: the result is 0 and the variable takes its default value
+    // (streams/lt-stream-read-write-media/P102ReadTyped.al: every `pastend_*`). A stream without any data keeps the error below.
+    let at_end = with_in(r.as_deref_mut(), |s| {
+        let at = !s.is_empty() && s.pos >= s.len();
+        // The first read at the end answers 0; one after another read already hit the end raises.
+        let first = at && !s.hit_end;
+        if at {
+            s.hit_end = true;
+        }
+        Ok(first)
+    })?;
+    if at_end {
+        a[0] = Value::default_for(&match &a[0] {
+            Value::Integer(_) => crate::value::RtType::Integer,
+            Value::Boolean(_) => crate::value::RtType::Boolean,
+            Value::Date(..) => crate::value::RtType::Date,
+            Value::Byte(_) => crate::value::RtType::Byte,
+            Value::Char(_) => crate::value::RtType::Char,
+            Value::BigInteger(_) => crate::value::RtType::BigInteger,
+            Value::Guid(_) => crate::value::RtType::Guid,
+            _ => crate::value::RtType::Decimal,
+        });
+        return Ok(Value::Integer(0));
+    }
     let bytes = with_in(r, |s| {
         let pos = s.pos;
         // Fewer bytes than the type needs, also none at all: the stream data error (streams/TestProbeStreamContracts.al:
@@ -717,7 +766,16 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
                 Value::Date(0, false)
             } else {
                 let closing = (n - 731) % 2 != 0;
-                Value::Date((n - 731 - i32::from(closing)) / 2, closing)
+                let day = (n - 731 - i32::from(closing)) / 2;
+                // Bytes that are no date raise (misc/lt-probes-needed-1/PnAStreamReadMisc.al:Read_Types_A `op5`).
+                if !(1..=3_652_059).contains(&day) {
+                    return Err(Signal::Error(Box::new(crate::native::AlError {
+                        message: "The date is not valid.".into(),
+                        code: "DateInvalid".into(),
+                        call_stack: String::new(),
+                    })));
+                }
+                Value::Date(day, closing)
             }
         }
         Value::Decimal(_) => Value::Decimal(decimal_from_bytes(&bytes)?),
@@ -872,7 +930,14 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
                 "OutStream.Write with a length of something else than a Text and an Integer (not pinned)",
             );
         };
-        let cut: String = t.chars().take(usize::try_from(*n).unwrap_or(0)).collect();
+        // A negative length writes the whole text (streams/lt-stream-read-write-media/P102WriteTextLike.al:P102_Text `lenneg_ret`).
+        // A Code ignores the length and writes the whole text (:P102_Code `len2_ret` is 5).
+        let take = if *n < 0 || matches!(a[0], Value::Code(_)) {
+            usize::MAX
+        } else {
+            usize::try_from(*n).unwrap_or(0)
+        };
+        let cut: String = t.chars().take(take).collect();
         if !cut.is_ascii() {
             return unsupported("OutStream.Write(Text, Length) of non-ASCII characters (not pinned)");
         }
@@ -916,8 +981,9 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         // Non-ASCII characters are pinned only for a Windows stream, as one cp1252 byte each
         // (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_AfterWriteTextAndAfterWriteText_NonAscii:
         // 'wörld' is 77 F6 72 6C 64 00).
-        Value::Text(t) | Value::Code(t) if enc.encode_pinned(t) => {
-            let mut v = enc.encode(t);
+        // The text ends at its first NUL character (types/lt-variant-is-text-streams/LTP89StreamText.al:Text_BytesWritten `nul_char`).
+        Value::Text(t) | Value::Code(t) if enc.encode_pinned(t.split('\0').next().unwrap_or_default()) => {
+            let mut v = enc.encode(t.split('\0').next().unwrap_or_default());
             v.extend(std::iter::repeat_n(0, enc.unit()));
             v
         }

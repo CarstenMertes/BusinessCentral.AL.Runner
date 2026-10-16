@@ -181,30 +181,39 @@ fn merged_members(ws: &Workspace, i: usize) -> Members {
         // `modify(Field) { Caption = ...; }` changes properties of an existing field
         // (corpus tableextension/TestTableExtFieldModify.al:40-67, record/TestRecordCaptionSeparators.al:79-85).
         if o.kind == ObjKind::TableExtension {
-            for sec in ws
-                .object_ast(e)
-                .sections()
-                .filter(|s| s.name().eq_ignore_ascii_case("fields"))
-            {
-                for m in sec.sections().filter(|m| m.name().eq_ignore_ascii_case("modify")) {
-                    let Some(name) = m.args().first().cloned() else {
-                        continue;
-                    };
-                    let Some(field) = target.fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&name)) else {
-                        continue;
-                    };
-                    for p in m.properties() {
-                        let (k, v) = (p.name(), p.value_text());
-                        match field.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(&k)) {
-                            Some(slot) => slot.1 = v,
-                            None => field.properties.push((k, v)),
-                        }
+            for (name, props) in modify_properties(ws, e) {
+                let Some(field) = target.fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&name)) else {
+                    continue;
+                };
+                for (k, v) in props {
+                    match field.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(&k)) {
+                        Some(slot) => slot.1 = v,
+                        None => field.properties.push((k, v)),
                     }
                 }
             }
         }
     }
     target
+}
+
+/// The `modify(Field) { Property = ...; }` blocks of table extension `e`, in source order: the field
+/// name and the properties the block sets.
+pub(crate) fn modify_properties(ws: &Workspace, e: usize) -> Vec<(String, Vec<(String, String)>)> {
+    let mut out = Vec::new();
+    for sec in ws
+        .object_ast(e)
+        .sections()
+        .filter(|s| s.name().eq_ignore_ascii_case("fields"))
+    {
+        for m in sec.sections().filter(|m| m.name().eq_ignore_ascii_case("modify")) {
+            let Some(name) = m.args().first().cloned() else {
+                continue;
+            };
+            out.push((name, m.properties().map(|p| (p.name(), p.value_text())).collect()));
+        }
+    }
+    out
 }
 
 /// Platform fields every table has (learn.microsoft.com, "System fields").

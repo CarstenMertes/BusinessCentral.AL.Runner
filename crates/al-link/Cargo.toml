@@ -8,3 +8,6 @@ description = "The link step (ADR-033): symbolic objects with stable keys in, th
 
 [dependencies]
 al-ir.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

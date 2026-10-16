@@ -915,6 +915,7 @@ pub(crate) fn lower_core(
                     embeds: Vec::new(),
                     field_refs: Vec::new(),
                     control_refs: Vec::new(),
+                    key_owners: Vec::new(),
                     fields: src.map_or_else(Vec::new, |s| s.facts(oi).fields.clone()),
                     controls: src.map_or_else(Vec::new, |s| s.facts(oi).controls.clone()),
                     key: src.map(|s| s.facts(oi).key.clone()),
@@ -1021,6 +1022,8 @@ pub(crate) fn lower_core(
             key: piece.key,
             field_refs: piece.field_refs,
             control_refs: piece.control_refs,
+            key_owners: piece.key_owners,
+            table_contribution: None,
             fields: piece.fields,
             controls: piece.controls,
         });
@@ -1036,6 +1039,21 @@ pub(crate) fn lower_core(
             al_ir::sym::ListKind::TableExtensions => (0, 0, 0),
             al_ir::sym::ListKind::PageExtensions => (ws.app_depth(o.app) as u32, id, o.offset as u32),
             al_ir::sym::ListKind::ReportExtensions => (id, 0, 0),
+        }
+    };
+    let own_field_properties = |i: usize| {
+        members
+            .own(i)
+            .fields
+            .into_iter()
+            .map(|f| f.properties)
+            .collect::<Vec<_>>()
+    };
+    let modify_properties = |e: usize| {
+        if ws.usable(e) && ws.objects[e].kind == ObjKind::TableExtension {
+            crate::members::modify_properties(ws, e)
+        } else {
+            Vec::new()
         }
     };
     let own_enum = |i: usize| {
@@ -1062,6 +1080,8 @@ pub(crate) fn lower_core(
         extends: &extends,
         join_order: &join_order,
         own_enum: &own_enum,
+        own_field_properties: &own_field_properties,
+        modify_properties: &modify_properties,
     };
     let linked = link_pieces(staged, program, &prov, &routine_keys, &lookups, check)?;
     out.pos_ranges = linked.pos_ranges;
@@ -1085,7 +1105,11 @@ struct Lookups<'a> {
     report_item_table: &'a (dyn Fn(usize, usize) -> Option<usize> + Sync),
     extends: &'a (dyn Fn(usize) -> Option<usize> + Sync),
     join_order: &'a (dyn Fn(usize, al_ir::sym::ListKind) -> (u32, u32, u32) + Sync),
-    own_enum: &'a (dyn Fn(usize) -> (Vec<(i32, String)>, Vec<(i32, String)>) + Sync),
+    own_enum: &'a (dyn Fn(usize) -> super::localize::EnumOwn + Sync),
+    /// The properties of the fields a table declares itself, in order.
+    own_field_properties: &'a (dyn Fn(usize) -> Vec<Vec<(String, String)>> + Sync),
+    /// The `modify(Field)` blocks of a table extension: field name and the properties it sets.
+    modify_properties: &'a (dyn Fn(usize) -> super::localize::Modifies + Sync),
 }
 
 /// For the check: turns the references the expressions of an object hold into the positions
@@ -1122,6 +1146,144 @@ impl al_ir::walk::RefVisitor for Unembed<'_> {
     }
 }
 
+/// The `OnBeforeValidate` and `OnAfterValidate` triggers one extension attaches to the field of a name: (extension, field name, before, after).
+type ExtTriggers = (usize, String, Vec<(usize, usize)>, Vec<(usize, usize)>);
+
+/// Takes what the table extensions declare out of the tables that hold it: their fields, their keys
+/// and their changes to other fields (`modify`). The table keeps its own; link merges the rest again.
+fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync), lookups: &Lookups<'_>) {
+    use al_ir::sym::{FieldModify, KeyDecl, TableContribution};
+    let n = staged.len();
+    let mut contributions: Vec<Option<TableContribution>> = vec![None; n];
+    // The table extensions of each table, in program order.
+    let mut exts_of: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    #[allow(clippy::needless_range_loop)] // `e` is the object, which `extends` takes
+    for e in 0..n {
+        if staged[e].object.kind == ObjKind::TableExtension {
+            if let Some(b) = (lookups.extends)(e) {
+                exts_of.entry(b).or_default().push(e);
+            }
+        }
+    }
+    #[allow(clippy::needless_range_loop)] // `b` is the object, which `provided` and the lookups take
+    for b in 0..n {
+        if provided(b) || staged[b].object.uncompiled || staged[b].object.table.is_none() {
+            continue;
+        }
+        let owners = std::mem::take(&mut staged[b].key_owners);
+        let mut table = staged[b].object.table.take().expect("checked");
+        let own_props = (lookups.own_field_properties)(b);
+        // Fields: the table's own and system fields stay.
+        let all = std::mem::take(&mut table.fields);
+        let mut kept = Vec::new();
+        let mut by_ext: Vec<(usize, Vec<ir::Field>)> = Vec::new();
+        // Changes the extensions make to fields: the triggers they attach, by extension and field name.
+        let mut triggers: Vec<ExtTriggers> = Vec::new();
+        for mut f in all {
+            for (is_before, list) in [
+                (true, std::mem::take(&mut f.ext_before_validate)),
+                (false, std::mem::take(&mut f.ext_after_validate)),
+            ] {
+                for (e, r) in list {
+                    let slot = match triggers
+                        .iter()
+                        .position(|(x, name, ..)| *x == e && name.eq_ignore_ascii_case(&f.name))
+                    {
+                        Some(i) => i,
+                        None => {
+                            triggers.push((e, f.name.clone(), Vec::new(), Vec::new()));
+                            triggers.len() - 1
+                        }
+                    };
+                    // Fields of one name carry the same triggers: take them once.
+                    let (_, _, before, after) = &mut triggers[slot];
+                    let target = if is_before { before } else { after };
+                    if !target.contains(&(e, r)) {
+                        target.push((e, r));
+                    }
+                }
+            }
+            match f.declared_in {
+                None => kept.push(f),
+                Some(d) if d as usize == b => kept.push(f),
+                Some(d) => match by_ext.iter_mut().find(|(e, _)| *e == d as usize) {
+                    Some((_, v)) => v.push(f),
+                    None => by_ext.push((d as usize, vec![f])),
+                },
+            }
+        }
+        if own_props.len() == kept.len() {
+            for (f, props) in kept.iter_mut().zip(own_props) {
+                f.properties = props;
+            }
+        }
+        table.fields = kept;
+        // Keys.
+        let mut base_keys = (Vec::new(), Vec::new(), Vec::new());
+        let mut ext_keys: Vec<(usize, KeyDecl)> = Vec::new();
+        for (i, k) in table.keys.drain(..).enumerate() {
+            let unique = table.unique_keys[i];
+            let props = std::mem::take(&mut table.key_props[i]);
+            match owners.get(i).copied() {
+                Some(o) if o != b => ext_keys.push((
+                    o,
+                    KeyDecl {
+                        fields: k,
+                        unique,
+                        props,
+                    },
+                )),
+                _ => {
+                    base_keys.0.push(k);
+                    base_keys.1.push(unique);
+                    base_keys.2.push(props);
+                }
+            }
+        }
+        (table.keys, table.unique_keys, table.key_props) = base_keys;
+        // Hand it to the extensions.
+        let mut touched: Vec<usize> = by_ext.iter().map(|(e, _)| *e).collect();
+        touched.extend(ext_keys.iter().map(|(e, _)| *e));
+        touched.extend(triggers.iter().map(|(e, ..)| *e));
+        touched.extend(exts_of.get(&b).into_iter().flatten().copied());
+        touched.sort_unstable();
+        touched.dedup();
+        for e in touched {
+            let c = contributions[e].get_or_insert_with(|| {
+                let modifies = (lookups.modify_properties)(e)
+                    .into_iter()
+                    .map(|(field, properties)| FieldModify {
+                        field,
+                        properties,
+                        before_validate: Vec::new(),
+                        after_validate: Vec::new(),
+                    })
+                    .collect();
+                TableContribution {
+                    fields: Vec::new(),
+                    keys: Vec::new(),
+                    modifies,
+                }
+            });
+            if let Some(pos) = by_ext.iter().position(|(x, _)| *x == e) {
+                c.fields.extend(by_ext.swap_remove(pos).1);
+            }
+            c.keys
+                .extend(ext_keys.iter().filter(|(x, _)| *x == e).map(|(_, k)| k.clone()));
+            for (_, name, before, after) in triggers.iter().filter(|(x, ..)| *x == e) {
+                if let Some(m) = c.modifies.iter_mut().find(|m| m.field.eq_ignore_ascii_case(name)) {
+                    m.before_validate.extend(before.iter().copied());
+                    m.after_validate.extend(after.iter().copied());
+                }
+            }
+        }
+        staged[b].object.table = Some(table);
+    }
+    for (e, c) in contributions.into_iter().enumerate() {
+        staged[e].table_contribution = c;
+    }
+}
+
 /// A lowered object waiting to be linked.
 struct Staged {
     object: ir::Object,
@@ -1129,6 +1291,9 @@ struct Staged {
     key: Option<al_ir::sym::ObjKey>,
     field_refs: Vec<(usize, u32)>,
     control_refs: Vec<(usize, String, usize)>,
+    key_owners: Vec<usize>,
+    /// What a table extension adds to its table, taken out of the table before the objects are made symbolic.
+    table_contribution: Option<al_ir::sym::TableContribution>,
     /// For a provided table: its field numbers (`DepFacts::fields`).
     fields: Vec<u32>,
     /// For a provided page: its control names (`DepFacts::controls`).
@@ -1141,7 +1306,7 @@ struct Staged {
 /// With `check`, the program is also built the way lowering used to build it, and a difference
 /// is an error (`AL_CHECK_LINK=1`).
 fn link_pieces(
-    staged: Vec<Staged>,
+    mut staged: Vec<Staged>,
     base: ir::Program,
     provided: &(dyn Fn(usize) -> bool + Sync),
     routine_keys: &super::localize::RoutineKeys<'_>,
@@ -1215,6 +1380,7 @@ fn link_pieces(
             }
         }
     }
+    split_tables(&mut staged, provided, lookups);
     let joins = &joins;
     let mut units: Vec<al_link::Unit> = al_link::par_map(staged, workers, |oi, s| {
         if provided(oi) {
@@ -1233,7 +1399,10 @@ fn link_pieces(
                 s.positions,
                 &s.field_refs,
                 &s.control_refs,
-                &joins[oi],
+                super::localize::Extras {
+                    joins: &joins[oi],
+                    table_contribution: s.table_contribution,
+                },
             )
             .map(al_link::Unit::Sym)
         }
@@ -1394,7 +1563,10 @@ pub fn relower_objects(
                 &piece.field_refs,
                 &piece.control_refs,
                 // The lists of extensions stay as they were: the declarations did not change.
-                &[],
+                super::localize::Extras {
+                    joins: &[],
+                    table_contribution: None,
+                },
             )?,
         ));
     }
@@ -1451,6 +1623,8 @@ pub(crate) struct Piece {
     pub(crate) field_refs: Vec<(usize, u32)>,
     /// The controls the object's expressions name (`localize.rs`).
     pub(crate) control_refs: Vec<(usize, String, usize)>,
+    /// The object that declares each key of a table (the table or one of its extensions).
+    pub(crate) key_owners: Vec<usize>,
     /// A provided table: its field numbers, from the cache's facts.
     pub(crate) fields: Vec<u32>,
     /// A provided page: its control names, from the cache's facts.

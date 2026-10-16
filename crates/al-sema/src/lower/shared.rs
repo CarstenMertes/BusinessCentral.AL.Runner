@@ -278,6 +278,7 @@ pub(crate) fn lower_object<'a>(
             key: None,
             field_refs: Vec::new(),
             control_refs: Vec::new(),
+            key_owners: Vec::new(),
             fields: Vec::new(),
             controls: Vec::new(),
         };
@@ -558,6 +559,12 @@ pub(crate) fn lower_object<'a>(
             properties.push((name, p.value_text()));
         }
     }
+    let (table, key_owners) = if o.kind == ObjKind::Table && ws.usable(oi) {
+        let (t, owners) = lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), routine_at);
+        (Some(t), owners)
+    } else {
+        (None, Vec::new())
+    };
     let object = ir::Object {
         kind: o.kind,
         uncompiled: false,
@@ -579,8 +586,7 @@ pub(crate) fn lower_object<'a>(
         // A table whose source cannot be used (a platform table nothing provides, a dependency
         // file that does not parse) has no members, so it has no schema: the Field and Key
         // tables report it as not compiled instead of reading fields it does not have.
-        table: (o.kind == ObjKind::Table && ws.usable(oi))
-            .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), routine_at)),
+        table,
         rec_slot,
         xrec_slot,
         page,
@@ -611,6 +617,7 @@ pub(crate) fn lower_object<'a>(
         key: None,
         field_refs: lw.field_refs.take().list,
         control_refs: lw.control_refs.take().list,
+        key_owners,
         fields: Vec::new(),
         controls: Vec::new(),
     }

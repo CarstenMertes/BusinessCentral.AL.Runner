@@ -8,7 +8,7 @@
 //!
 //! Core crate: no OS access (ADR-006).
 use al_ir::sym::{Contribution, ControlKey, FieldKey, FxMap, ListKind, LocalKey, ObjKey, RoutineKey, SymObject};
-use al_ir::walk::{RefVisitor, TableOf, walk_object};
+use al_ir::walk::{RefVisitor, TableOf, walk_object, walk_table_contribution};
 use al_ir::{Object, Program, SrcPos};
 use std::sync::OnceLock;
 
@@ -31,6 +31,8 @@ pub struct DenseObject {
 
 /// One object to link.
 #[derive(Debug, Clone, PartialEq)]
+/// (The two variants differ in size; units are made once and moved, so boxing them would cost more.)
+#[allow(clippy::large_enum_variant)]
 pub enum Unit {
     Sym(SymObject),
     Dense(DenseObject),
@@ -132,11 +134,17 @@ trait Space {
     fn control_names(&self, _i: usize) -> Option<&[String]> {
         None
     }
+    /// The numbers of the fields that table extensions add to table `i`, in order.
+    fn extra_field_numbers(&self, _i: usize) -> &[u32] {
+        &[]
+    }
 }
 
 /// The units to link, with the keys of their routines.
 struct UnitSpace<'u, 'k> {
     units: &'u [Unit],
+    /// Per table: the numbers of the fields its extensions add.
+    extras: FxMap<usize, Vec<u32>>,
     routines: &'k (dyn Fn(usize) -> &'k [LocalKey] + Sync),
 }
 
@@ -166,6 +174,26 @@ impl Space for UnitSpace<'_, '_> {
             _ => None,
         }
     }
+    fn extra_field_numbers(&self, i: usize) -> &[u32] {
+        self.extras.get(&i).map_or(&[], |v| v.as_slice())
+    }
+}
+
+/// The numbers of the fields the table extensions of each table add, in program order.
+fn extra_fields(units: &[Unit]) -> FxMap<usize, Vec<u32>> {
+    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (u.key(), i)).collect();
+    let mut out: FxMap<usize, Vec<u32>> = FxMap::default();
+    for u in units {
+        let Unit::Sym(s) = u else { continue };
+        let (Some(base), Some(t)) = (
+            s.extends.as_ref().and_then(|k| at.get(k)).copied(),
+            s.contribution.table.as_ref(),
+        ) else {
+            continue;
+        };
+        out.entry(base).or_default().extend(t.fields.iter().map(|f| f.id));
+    }
+    out
 }
 
 /// The positions of keys in a [`Space`], found when first asked for.
@@ -228,7 +256,12 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
                 return first_of(f.iter().copied());
             }
             match &self.space.object(i).table {
-                Some(t) => first_of(t.fields.iter().map(|f| f.id)),
+                Some(t) => first_of(
+                    t.fields
+                        .iter()
+                        .map(|f| f.id)
+                        .chain(self.space.extra_field_numbers(i).iter().copied()),
+                ),
                 None => FxMap::default(),
             }
         })
@@ -337,6 +370,7 @@ pub fn link<'k>(
     let resolved: Vec<Option<Resolved>> = {
         let space = UnitSpace {
             units: &units,
+            extras: extra_fields(&units),
             routines,
         };
         let tables = Tables::new(&space)?;
@@ -364,17 +398,33 @@ pub fn link<'k>(
             Unit::Dense(_) => Contribution::default(),
         })
         .collect();
-    let work: Vec<(Unit, Option<Resolved>)> = units.into_iter().zip(resolved).collect();
+    let work: Vec<(Unit, Option<Resolved>, Contribution)> = units
+        .into_iter()
+        .zip(resolved)
+        .zip(contributions)
+        .map(|((u, r), c)| (u, r, c))
+        .collect();
     let done = par_map(
         work,
         workers,
-        |i, (u, res)| -> Result<(Object, Vec<SrcPos>), Box<LinkError>> {
+        |i, (u, res, mut contribution)| -> Result<Done, Box<LinkError>> {
             let (mut object, mut positions, key) = match u {
                 Unit::Sym(s) => (s.object, s.positions, s.key),
                 Unit::Dense(d) => (d.object, d.positions, d.key),
             };
             if let Some(res) = res {
                 rewrite(&mut object, &res, &key)?;
+                if let Some(t) = contribution.table.as_mut() {
+                    let mut w = Rewrite { res: &res, bad: None };
+                    walk_table_contribution(t, &mut w);
+                    if let Some((class, index)) = w.bad {
+                        return Err(Box::new(LinkError::BadReference {
+                            object: key,
+                            class,
+                            index,
+                        }));
+                    }
+                }
             }
             if !positions.is_empty() {
                 for r in &mut object.routines {
@@ -384,22 +434,27 @@ pub fn link<'k>(
                     p.object = i as u32;
                 }
             }
-            Ok((object, positions))
+            Ok((object, positions, contribution))
         },
     );
     base.objects.reserve(done.len());
     base.positions.reserve(next as usize);
+    let mut contributions = Vec::with_capacity(done.len());
     for d in done {
-        let (object, mut positions) = d?;
+        let (object, mut positions, contribution) = d?;
         base.positions.append(&mut positions);
         base.objects.push(object);
+        contributions.push(contribution);
     }
-    merges.apply(&mut base.objects, &contributions);
+    merges.apply(&mut base.objects, &mut contributions);
     Ok(Linked {
         program: base,
         pos_ranges,
     })
 }
+
+/// An object linked, the source positions it holds, and what it adds to its base.
+type Done = (Object, Vec<SrcPos>, Contribution);
 
 /// How many objects a worker takes at a time.
 const CHUNK: usize = 8;
@@ -451,12 +506,17 @@ pub fn par_map<T: Send, R: Send>(items: Vec<T>, workers: usize, f: impl Fn(usize
 /// What the extension objects add to their bases (ADR-033 decision 3), found before the objects are
 /// consumed and applied after they are linked. Only a base that is symbolic takes it: an object a
 /// compile cache supplied already holds its lists.
+/// (base, list, order, extension)
+type ListEntry = (usize, ListKind, (u32, u32, u32), usize);
+
 #[derive(Default)]
 struct Merges {
     /// (base, list, order, extension)
-    lists: Vec<(usize, ListKind, (u32, u32, u32), usize)>,
+    lists: Vec<ListEntry>,
     /// (base, extension) of the extensions with values, in program order.
     enums: Vec<(usize, usize)>,
+    /// (base, extension) of the table extensions that add fields, keys or changes.
+    tables: Vec<(usize, usize)>,
     symbolic: Vec<bool>,
 }
 
@@ -477,12 +537,15 @@ impl Merges {
             if !s.contribution.enum_values.is_empty() || !s.contribution.enum_captions.is_empty() {
                 m.enums.push((base, i));
             }
+            if s.contribution.table.is_some() {
+                m.tables.push((base, i));
+            }
         }
         m.lists.sort();
         m
     }
 
-    fn apply(&self, objects: &mut [Object], contributions: &[Contribution]) {
+    fn apply(&self, objects: &mut [Object], contributions: &mut [Contribution]) {
         for &(base, list, _, ext) in &self.lists {
             if !self.symbolic[base] || objects[base].uncompiled {
                 continue;
@@ -506,11 +569,68 @@ impl Merges {
                 }
             }
         }
+        self.apply_tables(objects, contributions);
         for &(base, ext) in &self.enums {
             if self.symbolic[base] && !objects[base].uncompiled {
                 let c = &contributions[ext];
                 objects[base].enum_values.extend(c.enum_values.iter().cloned());
                 objects[base].enum_captions.extend(c.enum_captions.iter().cloned());
+            }
+        }
+    }
+}
+
+impl Merges {
+    /// Merges what table extensions add into their tables the way the members of a table are merged:
+    /// the fields of each extension, then its `modify` blocks (the first field of the name takes the
+    /// properties), then the triggers every field of the name takes, and the keys.
+    fn apply_tables(&self, objects: &mut [Object], contributions: &mut [Contribution]) {
+        let mut at = 0;
+        while at < self.tables.len() {
+            let base = self.tables[at].0;
+            let mut end = at;
+            while end < self.tables.len() && self.tables[end].0 == base {
+                end += 1;
+            }
+            let exts: Vec<usize> = self.tables[at..end].iter().map(|&(_, e)| e).collect();
+            at = end;
+            if !self.symbolic[base] || objects[base].uncompiled {
+                continue;
+            }
+            let Some(table) = objects[base].table.as_mut() else {
+                continue;
+            };
+            let adds: Vec<al_ir::sym::TableContribution> =
+                exts.iter().filter_map(|&e| contributions[e].table.take()).collect();
+            for c in &adds {
+                table.fields.extend(c.fields.iter().cloned());
+                for m in &c.modifies {
+                    if let Some(f) = table.fields.iter_mut().find(|f| f.name.eq_ignore_ascii_case(&m.field)) {
+                        for (k, v) in &m.properties {
+                            match f.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(k)) {
+                                Some(slot) => slot.1 = v.clone(),
+                                None => f.properties.push((k.clone(), v.clone())),
+                            }
+                        }
+                    }
+                }
+            }
+            for c in &adds {
+                for m in &c.modifies {
+                    for f in table
+                        .fields
+                        .iter_mut()
+                        .filter(|f| f.name.eq_ignore_ascii_case(&m.field))
+                    {
+                        f.ext_before_validate.extend(m.before_validate.iter().copied());
+                        f.ext_after_validate.extend(m.after_validate.iter().copied());
+                    }
+                }
+                for k in &c.keys {
+                    table.keys.push(k.fields.clone());
+                    table.unique_keys.push(k.unique);
+                    table.key_props.push(k.props.clone());
+                }
             }
         }
     }
@@ -960,6 +1080,102 @@ mod tests {
             .collect();
         assert_eq!(names, ["Zero", "One", "Five", "Six"]);
         assert!(linked.program.objects[0].enum_values.is_empty());
+    }
+
+    fn field(id: u32, name: &str) -> al_ir::Field {
+        serde_json::from_value(serde_json::json!({
+            "id": id, "name": name, "ty": "Integer", "stored": true, "init": null, "init_text": null,
+            "relation_table": null, "relation_tables": [], "auto_increment": false, "relation": false,
+            "on_validate": null, "ext_before_validate": [], "ext_after_validate": [], "on_lookup": null,
+            "properties": [["Caption", "'Old'"]], "relation_arms": [], "relation_meta": [], "relation_runtime": [],
+            "flow_filter": false, "calc": null, "calc_refusal": null, "declared_in": null
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn a_table_extension_adds_fields_keys_and_changes_in_program_order() {
+        use al_ir::sym::{FieldModify, KeyDecl, TableContribution};
+        let key = |id, kind| ObjKey {
+            app: "app".into(),
+            kind,
+            name: ObjName::Id(id),
+        };
+        let table = SymObject {
+            key: key(1, ObjKind::Table),
+            object: Object {
+                kind: ObjKind::Table,
+                id: Some(1),
+                table: Some(al_ir::Table {
+                    fields: vec![field(1, "A")],
+                    keys: vec![vec![0]],
+                    unique_keys: vec![true],
+                    key_props: vec![vec![]],
+                    per_company: true,
+                    extensions: vec![],
+                }),
+                ..Default::default()
+            },
+            refs: Refs {
+                fields: vec![al_ir::sym::FieldKey {
+                    table: key(1, ObjKind::Table),
+                    no: 1,
+                }],
+                ..Default::default()
+            },
+            ..Default::default()
+        };
+        let ext = |id: u32, field_id: u32, name: &str, key_of: Option<u32>| {
+            let mut s = SymObject {
+                key: key(id, ObjKind::TableExtension),
+                extends: Some(key(1, ObjKind::Table)),
+                object: Object {
+                    kind: ObjKind::TableExtension,
+                    id: Some(id),
+                    ..Default::default()
+                },
+                refs: Refs {
+                    fields: vec![
+                        al_ir::sym::FieldKey {
+                            table: key(1, ObjKind::Table),
+                            no: field_id,
+                        },
+                        al_ir::sym::FieldKey {
+                            table: key(1, ObjKind::Table),
+                            no: 1,
+                        },
+                    ],
+                    ..Default::default()
+                },
+                ..Default::default()
+            };
+            s.contribution.table = Some(TableContribution {
+                fields: vec![field(field_id, name)],
+                keys: key_of
+                    .map(|_| KeyDecl {
+                        fields: vec![0, 1],
+                        unique: false,
+                        props: vec![],
+                    })
+                    .into_iter()
+                    .collect(),
+                modifies: vec![FieldModify {
+                    field: "a".into(),
+                    properties: vec![("Caption".into(), "'New'".into())],
+                    before_validate: vec![],
+                    after_validate: vec![],
+                }],
+            });
+            Unit::Sym(s)
+        };
+        let units = vec![ext(11, 20, "B", None), Unit::Sym(table), ext(12, 30, "C", Some(1))];
+        let linked = link_all(units, 1).unwrap();
+        let t = linked.program.objects[1].table.as_ref().unwrap();
+        let ids: Vec<u32> = t.fields.iter().map(|f| f.id).collect();
+        assert_eq!(ids, [1, 20, 30]);
+        assert_eq!(t.fields[0].properties, [("Caption".to_string(), "'New'".to_string())]);
+        assert_eq!(t.keys, [vec![0], vec![2, 0]]);
+        assert_eq!(t.unique_keys, [true, false]);
     }
 
     #[test]

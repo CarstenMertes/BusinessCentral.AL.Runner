@@ -159,6 +159,33 @@ pub struct Join {
     pub order: (u32, u32, u32),
 }
 
+/// A key a table extension declares: fields as references, as the table holds them.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct KeyDecl {
+    pub fields: Vec<usize>,
+    pub unique: bool,
+    pub props: Vec<(String, String)>,
+}
+
+/// `modify(Field)` of a table extension: it changes properties of the field the name says and adds
+/// triggers to it.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct FieldModify {
+    pub field: String,
+    pub properties: Vec<(String, String)>,
+    /// (object, routine) of the `OnBeforeValidate` and `OnAfterValidate` triggers it declares.
+    pub before_validate: Vec<(usize, usize)>,
+    pub after_validate: Vec<(usize, usize)>,
+}
+
+/// What a table extension adds to its table.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct TableContribution {
+    pub fields: Vec<crate::Field>,
+    pub keys: Vec<KeyDecl>,
+    pub modifies: Vec<FieldModify>,
+}
+
 /// What an extension object adds to its base, which link merges into the base in the order of the
 /// extensions in the program (ADR-033 decision 3).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -166,6 +193,8 @@ pub struct Contribution {
     /// The values and captions an enum extension declares.
     pub enum_values: Vec<(i32, String)>,
     pub enum_captions: Vec<(i32, String)>,
+    /// The fields, keys and field changes a table extension declares.
+    pub table: Option<TableContribution>,
 }
 
 /// An object as lowering produces it.

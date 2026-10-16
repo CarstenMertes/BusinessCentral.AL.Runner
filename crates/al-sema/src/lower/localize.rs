@@ -7,7 +7,10 @@
 //! because of that.
 
 use al_ir as ir;
-use al_ir::sym::{Contribution, ControlKey, FieldKey, Join, ListKind, LocalKey, ObjKey, Refs, RoutineKey, SymObject};
+use al_ir::sym::{
+    Contribution, ControlKey, FieldKey, Join, ListKind, LocalKey, ObjKey, Refs, RoutineKey, SymObject,
+    TableContribution,
+};
 use al_ir::walk::{RefVisitor, TableOf, walk_object};
 use al_syntax::ast;
 use std::collections::HashMap;
@@ -157,6 +160,12 @@ impl ControlRefs {
 use al_ir::ObjKind;
 use al_ir::sym::FxMap;
 
+/// The values and the captions an enum declares.
+pub(crate) type EnumOwn = (Vec<(i32, String)>, Vec<(i32, String)>);
+
+/// The `modify` blocks of a table extension: field name and the properties it sets.
+pub(crate) type Modifies = Vec<(String, Vec<(String, String)>)>;
+
 /// What the symbolic form of each object is made from: the key of every object and of its routines,
 /// in program order, and what the lowering knew about tables.
 pub(crate) struct Keys<'a> {
@@ -172,9 +181,16 @@ pub(crate) struct Keys<'a> {
     /// Where an extension object is in the order of the list of its base.
     pub join_order: &'a (dyn Fn(usize, ListKind) -> (u32, u32, u32) + Sync),
     /// The values and captions an enum or enum extension declares itself, as the IR holds them.
-    pub own_enum: &'a (dyn Fn(usize) -> (Vec<(i32, String)>, Vec<(i32, String)>) + Sync),
+    pub own_enum: &'a (dyn Fn(usize) -> EnumOwn + Sync),
     /// The table (object) of data item `item` of report `report`.
     pub report_item_table: &'a (dyn Fn(usize, usize) -> Option<usize> + Sync),
+}
+
+/// What other objects hold of an object that the symbolic form takes out of them.
+pub(crate) struct Extras<'a> {
+    /// The lists of its base that the object is in: (list, base).
+    pub joins: &'a [(ListKind, usize)],
+    pub table_contribution: Option<TableContribution>,
 }
 
 /// Makes the symbolic object of a lowered one. `Err` names a reference that points outside the
@@ -186,8 +202,12 @@ pub(crate) fn localize(
     positions: Vec<ir::SrcPos>,
     field_refs: &[(usize, u32)],
     control_refs: &[(usize, String, usize)],
-    joins: &[(ListKind, usize)],
+    extras: Extras<'_>,
 ) -> Result<SymObject, String> {
+    let Extras {
+        joins,
+        table_contribution,
+    } = extras;
     // What other objects add to this one is not part of it: link merges it again.
     match object.kind {
         ObjKind::Enum if !object.uncompiled => {
@@ -204,15 +224,17 @@ pub(crate) fn localize(
     if let Some(r) = object.report.as_mut() {
         r.extensions.clear();
     }
-    let contribution = if object.kind == ObjKind::EnumExtension {
+    let mut contribution = if object.kind == ObjKind::EnumExtension {
         let (enum_values, enum_captions) = (keys.own_enum)(own);
         Contribution {
             enum_values,
             enum_captions,
+            table: None,
         }
     } else {
         Contribution::default()
     };
+    contribution.table = table_contribution;
     let extends = (keys.extends)(own).map(|t| keys.objects[t].clone());
     // The expressions' own references come first: they are already indices into this list.
     let mut refs = Refs::default();
@@ -240,6 +262,9 @@ pub(crate) fn localize(
         bad: None,
     };
     walk_object(&mut object, &mut v);
+    if let Some(t) = contribution.table.as_mut() {
+        al_ir::walk::walk_table_contribution(t, &mut v);
+    }
     if let Some(b) = v.bad {
         return Err(format!("{}: {b}", keys.objects[own]));
     }
@@ -276,7 +301,8 @@ impl Localize<'_, '_> {
     /// The table object a field reference is a field of, in workspace numbering.
     fn table_object(&self, table: TableOf) -> Option<usize> {
         match table {
-            TableOf::Own => Some(self.own),
+            // The table itself, or the table an extension adds to.
+            TableOf::Own => self.keys.table_of.get(self.own).copied().flatten().or(Some(self.own)),
             TableOf::Trigger | TableOf::PageSource => self.keys.table_of.get(self.own).copied().flatten(),
             TableOf::Object(t) => Some(t),
             TableOf::SourceOf(p) => self.keys.table_of.get(p).copied().flatten(),

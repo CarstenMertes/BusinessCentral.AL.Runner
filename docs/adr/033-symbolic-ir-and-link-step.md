@@ -130,3 +130,16 @@ What was built, and where it differs from the text above. None of this changes a
   used to build it (every reference a position) next to the linked one and fails on the first difference
   (`al_link::first_difference`). Checked: the corpus (27, 28, 29), the Microsoft apps for 27, 28 and 29 (complete
   compile for the cache and demand-driven), Tests-ERM, Tests-SCM, NP Retail and Pageworks.
+
+### Contributions (step 2)
+
+- An extension object names its base (`SymObject::extends`) and what it adds (`SymObject::contribution`, `joins`);
+  `al_link::link` merges it into the base in program order. Done: the lists `Table::extensions`,
+  `Page::extensions` and `Report::extensions`; the values and captions of enum extensions; the fields, keys and
+  `modify` blocks of table extensions. The extension lists are ordered by the rule lowering used (page: app depth,
+  id, offset; report: id).
+- Lowering still builds the merged object. `localize` and `split_tables` take the contribution out of the base and
+  put it into the extension; `AL_CHECK_LINK` compares the merge with the original, so a wrong split fails there.
+- Known impurity: a `modify` block that changes `TableRelation` or `CalcFormula` of a field changes what the base
+  lowering derives from those properties (`relation_arms`, `calc`). The base keeps the derived data, so adding
+  such an extension still changes the base. Properties as text are separated.

@@ -1,4 +1,4 @@
-# Behavior coverage map: design note (Proposed)
+# Behavior coverage map: design note (Accepted; built, with the amendment that catalogs are runtime-known union Microsoft-used)
 
 Task: extend `--coverage-map` beyond builtin overloads (1074 of 1729 pinned) so the corpus writer gets a gap list for the rest of the language. Status: design only, nothing built.
 

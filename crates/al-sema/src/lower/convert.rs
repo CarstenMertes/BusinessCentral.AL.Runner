@@ -199,6 +199,15 @@ impl<'a> Lowerer<'a> {
             let ch = self.convert_to(&Ty::Char, src, value)?;
             return self.convert_to(target, &Ty::Char, ch);
         }
+        // The literal of an option member (`O::B`) is an Integer in a Variant; a platform enum's member keeps its type
+        // (types/lt-variant-is-text-streams/LTP89IsMisc.al:NearTypes `option_literal`, LTP89IsEnumsA.al `literal`).
+        if matches!(self.rt(target), Ok(RtType::Variant)) {
+            if let ir::Expr::Const(ir::Const::Option(i, members)) = &value {
+                if !al_builtins::sysenum::is_platform(members) {
+                    return self.convert_to(target, &Ty::Integer, ir::Expr::Const(ir::Const::Integer(*i)));
+                }
+            }
+        }
         if !self.tys_on {
             return self.convert_raw(target, src, value);
         }

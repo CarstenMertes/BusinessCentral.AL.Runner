@@ -416,7 +416,8 @@ fn evaluate_guid_and_datetime_xml_form() {
 
 #[test]
 fn evaluate_of_forms_the_corpus_does_not_pin_is_refused() {
-    assert!(unsupported("I: Integer;", "Evaluate(I, '1,000'); exit('');"));
+    // Grouped thousands are read (P86Eval.al); a group of two digits is not pinned.
+    assert!(unsupported("I: Integer;", "Evaluate(I, '1,00'); exit('');"));
     assert_eq!(
         raised("B: Boolean;", "Evaluate(B, 'maybe'); exit('');"),
         (
@@ -1107,24 +1108,29 @@ fn evaluate_into_an_enum_reads_the_xml_ordinal_and_member_names() {
     assert_eq!(t("R := Evaluate(E, '1', 9); exit(Format(R) + Format(E));"), "YesBee");
     assert_eq!(t("R := Evaluate(E, 'Zed'); exit(Format(R) + Format(E));"), "YesZed");
     // A name that is none makes Evaluate return false. A number that is no member is accepted with
-    // format 0 (types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms) and not pinned with format 9.
+    // format 0 (types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms) and with format 9 (P86Eval.al, codeunit "LT P86 Eval Enum").
     assert_eq!(
         t("E := E::Bee; R := Evaluate(E, '2'); exit(Format(R) + Format(E, 0, 2));"),
         "Yes2"
     );
-    assert!(matches!(
-        enum_text_of("E: Enum \"Ev Enum\";", "Evaluate(E, '2', 9); exit('');"),
-        Err(Signal::Unsupported(_))
-    ));
+    assert_eq!(
+        t("E := E::Bee; R := Evaluate(E, '2', 9); exit(Format(R) + Format(E, 0, 2));"),
+        "Yes2"
+    );
     assert_eq!(
         t("E := E::Bee; R := Evaluate(E, 'Nope'); exit(Format(R) + Format(E));"),
         "NoBee"
     );
-    // The statement form of a failure is refused: its text is not pinned.
-    assert!(matches!(
-        enum_text_of("E: Enum \"Ev Enum\";", "Evaluate(E, 'Nope'); exit('');"),
-        Err(Signal::Unsupported(_))
-    ));
+    // The statement form of a failure raises (P86Eval.al, codeunit "LT P86 Eval Enum": `Dflt1_Error_FNone`).
+    match enum_text_of("E: Enum \"Ev Enum\";", "Evaluate(E, 'Nope'); exit('');") {
+        Err(Signal::Error(e)) => assert!(
+            e.message
+                .starts_with("'Nope' is not an option. The existing options are: "),
+            "{}",
+            e.message
+        ),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

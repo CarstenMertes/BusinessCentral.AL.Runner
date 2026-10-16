@@ -488,8 +488,14 @@ pub struct XmlPort {
     pub field_delimiter: Option<String>,
     #[serde(default)]
     pub record_separator: Option<String>,
+    /// `TableSeparator` as written (`None`: the default).
+    #[serde(default)]
+    pub table_separator: Option<String>,
     #[serde(default)]
     pub utf8: bool,
+    /// A `TextEncoding` property other than UTF8 was declared (its value is not kept).
+    #[serde(default)]
+    pub text_encoding_declared: bool,
     /// `FormatEvaluate = Xml`: values export and import in their XML forms. The default and
     /// `Legacy` use the display text (xmlport/TestXmlPortFormatEvaluateContracts.al).
     #[serde(default)]

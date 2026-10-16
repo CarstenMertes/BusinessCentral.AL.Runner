@@ -108,6 +108,112 @@ impl Session {
                     other => unsupported(format!("{id} with {}", other.describe())),
                 }
             }
+            // The separators of a text xmlport: a value a program set reads back as it was given; a declared one reads as the
+            // characters it stands for (`<CR/LF>` is `\r\n`, `<None>` is empty); an undeclared one reads as the default
+            // (platform/lt-xmlport-session-navapp-cookie/P94XpDelim.al:Getters_*, Setters_*, *_Variants).
+            ids::XMLPORT_FIELDDELIMITER_1
+            | ids::XMLPORT_FIELDSEPARATOR_1
+            | ids::XMLPORT_RECORDSEPARATOR_1
+            | ids::XMLPORT_TABLESEPARATOR_1 => {
+                let inst = self.xp_instance(receiver)?;
+                let kind: u8 = match id {
+                    ids::XMLPORT_FIELDDELIMITER_1 => 0,
+                    ids::XMLPORT_FIELDSEPARATOR_1 => 1,
+                    ids::XMLPORT_RECORDSEPARATOR_1 => 2,
+                    _ => 3,
+                };
+                match args.first() {
+                    Some(v) => {
+                        let Some(text) = al_builtins::native::text_of(v) else {
+                            return unsupported(format!("{id} with {}", v.describe()));
+                        };
+                        let mut i = inst.borrow_mut();
+                        i.xp_text.retain(|(k, _)| *k != kind);
+                        i.xp_text.push((kind, text.to_string()));
+                        Ok(Value::Null)
+                    }
+                    None => {
+                        if let Some((_, v)) = inst.borrow().xp_text.iter().find(|(k, _)| *k == kind) {
+                            return Ok(Value::Text(v.clone().into()));
+                        }
+                        let object = inst.borrow().object as usize;
+                        let Some(xp) = self.engine.program.objects[object].xmlport.as_ref() else {
+                            return unsupported(format!("object {object} is not an xmlport"));
+                        };
+                        let (declared, default) = match kind {
+                            0 => (&xp.field_delimiter, "\""),
+                            1 => (&xp.field_separator, ","),
+                            2 => (&xp.record_separator, "\\r\\n"),
+                            _ => (&xp.table_separator, "\\r\\n\\r\\n"),
+                        };
+                        Ok(Value::Text(
+                            match declared {
+                                Some(d) => declared_separator(d)?,
+                                None => default.to_string(),
+                            }
+                            .into(),
+                        ))
+                    }
+                }
+            }
+            // Filename(): empty until set, per instance (P94XpFilename.al: Fresh_Empty, Set_ReadBack, Set_TwoInstancesIndependent).
+            ids::XMLPORT_FILENAME_1 => {
+                let inst = self.xp_instance(receiver)?;
+                match args.first() {
+                    Some(v) => {
+                        let Some(text) = al_builtins::native::text_of(v) else {
+                            return unsupported(format!("{id} with {}", v.describe()));
+                        };
+                        let text = text.to_string();
+                        let mut s = inst.borrow_mut();
+                        s.xp_text.retain(|(k, _)| *k != 5);
+                        s.xp_text.push((5, text));
+                        Ok(Value::Null)
+                    }
+                    None => {
+                        let s = inst.borrow();
+                        let name = s
+                            .xp_text
+                            .iter()
+                            .find(|(k, _)| *k == 5)
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_default();
+                        Ok(Value::Text(name.into()))
+                    }
+                }
+            }
+            // TextEncoding(): MSDos until declared or set (UTF8 when declared so); the setter takes the member (P94XpEncoding.al:
+            // Getter_Defaults, Setter_ReadBack). Which bytes an export then writes is separate.
+            ids::XMLPORT_TEXTENCODING_1 => {
+                const MEMBERS: [&str; 4] = ["MSDos", "UTF8", "UTF16", "Windows"];
+                let inst = self.xp_instance(receiver)?;
+                let members = || -> std::sync::Arc<[String]> {
+                    MEMBERS.iter().map(|m| (*m).to_string()).collect::<Vec<_>>().into()
+                };
+                match args.first() {
+                    Some(Value::Option(i, _)) if (0..4).contains(i) => {
+                        let mut s = inst.borrow_mut();
+                        s.xp_text.retain(|(k, _)| *k != 4);
+                        s.xp_text.push((4, i.to_string()));
+                        Ok(Value::Null)
+                    }
+                    Some(other) => unsupported(format!("{id} with {}", other.describe())),
+                    None => {
+                        if let Some((_, v)) = inst.borrow().xp_text.iter().find(|(k, _)| *k == 4) {
+                            return Ok(Value::Option(v.parse().unwrap_or(0), members()));
+                        }
+                        let object = inst.borrow().object as usize;
+                        match self.engine.program.objects[object].xmlport.as_ref() {
+                            Some(xp) if xp.utf8 => Ok(Value::Option(1, members())),
+                            Some(xp) if xp.text_encoding_declared => {
+                                unsupported("TextEncoding() of an xmlport that declares another encoding (not pinned)")
+                            }
+                            Some(_) => Ok(Value::Option(0, members())),
+                            None => unsupported(format!("object {object} is not an xmlport")),
+                        }
+                    }
+                }
+            }
             ids::XMLPORT_SETTABLEVIEW_1 => {
                 let inst = self.xp_instance(receiver)?;
                 self.xp_set_view(&inst, args.first())?;
@@ -891,7 +997,10 @@ impl Session {
 
     /// The root and table element of a text-format port: `Root > tableelement > fieldelements`.
     fn xp_text_layout(&self, schema: &Schema, top: usize) -> Result<(usize, Vec<usize>), Signal> {
-        let kids = schema.children(top);
+        // A text-format port may have its table element at the top, with no root element
+        // (P94Fixtures.al: "LT P94 Csv Plain", exported by P94XpDelim.al:Export_NothingDeclared).
+        let direct = schema.node(top).kind == ir::XmlNodeKind::Table;
+        let kids = if direct { vec![top] } else { schema.children(top) };
         let [table] = kids[..] else {
             return unsupported(
                 "a VariableText or FixedText port whose root has other than one table element (not pinned)",
@@ -1037,7 +1146,8 @@ impl Session {
         let [top] = tops[..] else {
             return unsupported("XmlPort export with more than one top-level element (not pinned)");
         };
-        if xp.nodes[top].kind != ir::XmlNodeKind::Text || schema.children(top).is_empty() {
+        let table_top = xp.format != ir::XmlFormat::Xml && xp.nodes[top].kind == ir::XmlNodeKind::Table;
+        if !table_top && (xp.nodes[top].kind != ir::XmlNodeKind::Text || schema.children(top).is_empty()) {
             return unsupported("XmlPort export whose root is not a text element with content (not pinned)");
         }
         let bytes = if xp.format == ir::XmlFormat::Xml {
@@ -1266,6 +1376,22 @@ fn for_each_row(
 
 /// A separator property: `<LF>`, `<CR>` and `<TAB>` stand for the control characters, other text
 /// is itself. Other `<...>` names are not pinned.
+/// A declared separator as the getter shows it: `<None>` is empty, `<CR/LF>`, `<LF>`, `<CR>` and `<Tab>` are their escapes, anything
+/// else is as written (P94XpDelim.al:Getters_Declared, Getters_DeclaredTwoTables). Other tokens are not pinned.
+fn declared_separator(v: &str) -> Result<String, Signal> {
+    Ok(match v.to_ascii_uppercase().as_str() {
+        "<NONE>" => String::new(),
+        "<CR/LF>" => "\\r\\n".into(),
+        "<LF>" => "\\n".into(),
+        "<CR>" => "\\r".into(),
+        "<TAB>" => "\\t".into(),
+        u if u.starts_with('<') && u.ends_with('>') => {
+            return unsupported(format!("the separator token {v} read back (not pinned)"));
+        }
+        _ => v.to_string(),
+    })
+}
+
 fn text_separator(value: Option<&str>, default: &str) -> Result<String, Signal> {
     let Some(v) = value else { return Ok(default.to_string()) };
     let mut out = String::new();
@@ -1549,7 +1675,7 @@ impl Sequence {
 
 #[cfg(test)]
 mod tests {
-    use super::split_variable;
+    use super::{declared_separator, split_variable};
 
     // xmlport/TestXmlPortTextFormatsContracts.al:VariableText_Import_QuotedUnquotedAndBlankValues
     #[test]
@@ -1566,5 +1692,15 @@ mod tests {
             split("\"2\",\"say \"\"hi\"\"\",\"0\",\"\""),
             ["2", "say ", "hi", "", "0", ""]
         );
+    }
+
+    // platform/lt-xmlport-session-navapp-cookie/P94XpDelim.al:Getters_Declared, Getters_DeclaredTwoTables
+    #[test]
+    fn a_declared_separator_reads_back_as_backslash_text() {
+        assert_eq!(declared_separator("<CR/LF>").unwrap(), "\\r\\n");
+        assert_eq!(declared_separator("<LF>").unwrap(), "\\n");
+        assert_eq!(declared_separator("<None>").unwrap(), "");
+        assert_eq!(declared_separator(";").unwrap(), ";");
+        assert!(declared_separator("<Space>").is_err());
     }
 }

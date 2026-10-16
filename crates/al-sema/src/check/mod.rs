@@ -431,6 +431,7 @@ fn system_enums(catalog: &Catalog) -> HashSet<String> {
         "action",
         "pagebackgroundtaskerrorlevel",
         "testpermissions",
+        "defaultlayout",
         "transactionmodel",
         "commitbehavior",
         "errorbehavior",

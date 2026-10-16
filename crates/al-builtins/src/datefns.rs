@@ -383,6 +383,16 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
         Some(b'Y') => Some(Unit::Year),
         _ => None,
     };
+    // `1WD` evaluates and CalcDate gives the next day from Friday 2024-03-15 (types/W7EvaluateTests.al:
+    // EvaluateDateFormula_Format2_NonEnglishFormulas), which fits no term this parser knows; what it means is not pinned.
+    if (1..b.len()).any(|k| {
+        b[k] == b'W'
+            && b.get(k + 1) == Some(&b'D')
+            && b[k - 1].is_ascii_digit()
+            && !b.get(k + 2).is_some_and(u8::is_ascii_digit)
+    }) {
+        return refuse();
+    }
     let mut terms = Vec::new();
     let mut i = 0;
     while i < b.len() {

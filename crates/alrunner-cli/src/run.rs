@@ -704,6 +704,8 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         }
     }
     let sidecar_host = host.clone();
+    // ADR-038: the closed set of pure framework members is answered in process; ALRUNNER_NO_INPROC=1 sends all to the sidecar.
+    let host = al_host::inproc::wrap(host);
     let opts_only = (selection.active() && !a.execute).then(|| {
         let mut v: Vec<(usize, u32)> = chosen_units.iter().map(|f| (f.app, f.id)).collect();
         v.sort_unstable();

@@ -779,6 +779,7 @@ impl Session {
             rerun: false,
             base: None,
             exts: Vec::new(),
+            xp_text: Vec::new(),
         }))
     }
 
@@ -821,6 +822,7 @@ impl Session {
             rerun: false,
             base: None,
             exts: Vec::new(),
+            xp_text: Vec::new(),
         }))
     }
 

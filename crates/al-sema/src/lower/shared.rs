@@ -887,7 +887,23 @@ pub(crate) fn label_text(t: &ast::TypeRef) -> Option<String> {
             .descendants_with_tokens()
             .filter_map(|e| e.into_token())
             .find(|k| k.kind() == SyntaxKind::StringLit)?;
-        return Some(unquote(tok.text()));
+        let text = unquote(tok.text());
+        // `MaxLength = n` cuts the text to n characters (text/lt-label-textbuilder/TxCLabel.al:Label_MaxLength).
+        let toks: Vec<_> = t
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .filter(|k| !k.kind().is_trivia())
+            .collect();
+        let max = toks.windows(3).find_map(|w| {
+            (w[0].text().eq_ignore_ascii_case("maxlength") && w[1].kind() == SyntaxKind::Eq)
+                .then(|| w[2].text().parse::<usize>().ok())
+                .flatten()
+        });
+        return Some(match max {
+            Some(n) => text.chars().take(n).collect(),
+            None => text,
+        });
     }
     if !kind.eq_ignore_ascii_case("textconst") {
         return None;

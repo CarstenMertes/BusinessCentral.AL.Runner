@@ -433,7 +433,9 @@ impl Session {
             "RecordId" => Ok(self.record_id(&rec, &t)),
             "LockTable" | "ReadConsistency" | "RecordLevelLocking" | "ReadPermission" | "WritePermission"
             | "CountApprox" | "ReadIsolation" | "SecurityFiltering" | "GetPosition" | "SetPosition" | "Ascending"
-            | "SetRecFilter" => self.record_meta_op(record_method(method), &rec, &t, args),
+            | "SetRecFilter" | "Mark" | "MarkedOnly" | "ClearMarks" => {
+                self.record_meta_op(record_method(method), &rec, &t, args)
+            }
             // Doc (RecordRef.Get): loads the row a RecordId names; the table must be the ref's own.
             "Get" => {
                 let key = match args.first() {

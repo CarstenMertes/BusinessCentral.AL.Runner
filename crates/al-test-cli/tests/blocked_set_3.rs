@@ -136,9 +136,9 @@ codeunit 69301 T {{ Subtype = Test; var Rows: Text;
 
 // A subscriber to a page field's OnAfterValidateEvent refused every page that was merely opened (about 610 Microsoft
 // tests: Sales Setup / Sales Order subscribers in Base Application). The client raises the event when it writes the
-// field, so only that write is refused.
+// field (record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al), so the write runs the subscriber.
 #[test]
-fn a_page_field_event_refuses_the_write_not_the_open() {
+fn a_page_field_event_does_not_refuse_the_open_and_the_write_raises_it() {
     let (ws, l) = compile(format!(
         "{OBJECTS}
 page 69313 \"CV Field Card\" {{ PageType = Card; SourceTable = \"CV Row\"; layout {{ area(Content) {{ field(Code; Rec.Code) {{ }} field(Number; Rec.Number) {{ }} }} }} }}
@@ -160,10 +160,7 @@ codeunit 69301 T {{ Subtype = Test;
     let o = run_codeunit(&engine, &l, oi);
     let get = |n: &str| o.iter().find(|(m, _)| m == n).map(|(_, x)| x.clone()).unwrap();
     assert_eq!(get("OpenIsFine"), Outcome::Pass);
-    assert!(
-        matches!(get("WriteIsRefused"), Outcome::NotRun(w) if w.contains("onaftervalidateevent")),
-        "{o:?}"
-    );
+    assert_eq!(get("WriteIsRefused"), Outcome::Pass, "{o:?}");
 }
 
 // `for Stepwise := false to true do` (Library - Sales and others): runs for false, then for true. Assumed, not pinned

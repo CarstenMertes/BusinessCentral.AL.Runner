@@ -3,6 +3,7 @@
 mod multi_reportext;
 mod queries;
 mod query_outer_link;
+mod report_custom_layout;
 mod report_no_output;
 mod report_obsolete_properties;
 mod report_properties;

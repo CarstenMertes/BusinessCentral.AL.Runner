@@ -52,6 +52,7 @@ fn apps(base: &str) -> (Vec<AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>) {
                 version: "1.0.0.0".into(),
                 resources: vec![],
                 include_source: false,
+                layout_files: Vec::new(),
                 symbols: vec![],
             },
             Manifest {
@@ -59,6 +60,7 @@ fn apps(base: &str) -> (Vec<AppSource>, Vec<al_sema::AppKind>, Vec<Manifest>) {
                 version: "27.5.0.0".into(),
                 resources: vec![],
                 include_source: false,
+                layout_files: Vec::new(),
                 symbols: vec![],
             },
         ],

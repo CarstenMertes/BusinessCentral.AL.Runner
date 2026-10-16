@@ -170,6 +170,11 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // (types/ProbeTypeFormsAndFilters.al:Clear_JsonTypes_GiveFreshUnassigned, BC 27.5); an object or array
         // gives its compact text; any other value is not pinned.
         Value::Library(name, l) if matches!(name.as_str(), "JsonObject" | "JsonArray" | "JsonValue" | "JsonToken") => {
+            if let crate::value::LibraryValue::Json(c) = &*l.borrow() {
+                if let Some(why) = c.unpinned {
+                    return Err(FormatFail::Unsupported(why.to_string()));
+                }
+            }
             let container = matches!(&*l.borrow(), crate::value::LibraryValue::Json(c)
                 if matches!(&c.node, crate::json::JsonNode::Object(k) if !k.is_empty())
                     || matches!(&c.node, crate::json::JsonNode::Array(_)));

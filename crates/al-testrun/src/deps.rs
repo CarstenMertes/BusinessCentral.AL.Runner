@@ -168,6 +168,7 @@ pub fn load_project_with(
             version: d.version.to_string(),
             resources: Vec::new(),
             include_source: false,
+            layout_files: Vec::new(),
             symbols: d.preprocessor_symbols.clone(),
         });
         summary.push(format!("{} {}", d.app.name, d.version));

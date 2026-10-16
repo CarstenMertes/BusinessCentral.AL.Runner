@@ -37,6 +37,7 @@ pub fn load(path: &Path, build: Option<&str>) -> Result<AppInput, String> {
         version: m.version.to_string(),
         resources: Vec::new(),
         include_source: false,
+        layout_files: Vec::new(),
         symbols: Vec::new(),
     };
     let mut versions = AppVersions::parse(

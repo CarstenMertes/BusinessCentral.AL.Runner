@@ -1500,6 +1500,11 @@ impl Session {
             let (inst, schema) = self.report_by_number(id, args.first())?;
             (inst, schema, false)
         };
+        let custom = if format == "Xml" {
+            None
+        } else {
+            self.custom_layout(&schema)?
+        };
         match format.as_str() {
             "Xml" => {}
             // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Html_WithAnRdlcLayout_IsRefused: false, the
@@ -1520,6 +1525,9 @@ impl Session {
                 };
                 return Ok(Value::Boolean(false));
             }
+            // A layout of Type = Custom is rendered by whoever subscribes to the platform's CustomDocumentMergerEx; the
+            // event is raised below, once the dataset is written (assumption custom-layout-merger).
+            "Pdf" | "Word" | "Excel" | "Html" if custom.is_some() => {}
             "Html" if schema.report().layout == ir::ReportLayout::Rdlc => {
                 self.last_error = al_builtins::native::AlError {
                     message: FORMAT_NOT_SUPPORTED_BY_LAYOUT.into(),
@@ -1607,6 +1615,14 @@ impl Session {
             Ok(true) => {
                 let header = self.dataset_header(&schema)?;
                 let bytes = written.expect("a SaveAs run has a dataset").finish(&header)?;
+                if let Some(layout) = custom {
+                    let SaveTarget::Stream(blob) = target else {
+                        return unsupported(format!(
+                            "{id} to a file of a report with a Custom layout (only a stream is handed to the merger)"
+                        ));
+                    };
+                    return self.render_custom_layout(&schema, &format, layout, bytes, &blob);
+                }
                 match target {
                     SaveTarget::Stream(blob) if !discard => al_builtins::stream::write_bytes(&blob, &bytes),
                     SaveTarget::Stream(blob) => {
@@ -1650,6 +1666,134 @@ impl Session {
                 }
             }
             Err(other) => Err(other),
+        }
+    }
+
+    /// The layout a rendered `SaveAs` of `schema` uses when it is of `Type = Custom`: the report's
+    /// `DefaultRenderingLayout`, with its file's bytes. `None` for a report whose layout is not a custom one; a custom
+    /// layout whose file the app does not hold is refused.
+    fn custom_layout(&self, schema: &Schema) -> Result<Option<(ir::RenderingLayout, Vec<u8>)>, Signal> {
+        let report = schema.report();
+        let Some(default) = &report.default_rendering_layout else {
+            return Ok(None);
+        };
+        let Some(layout) = report
+            .rendering_layouts
+            .iter()
+            .find(|l| l.name.eq_ignore_ascii_case(default))
+            .filter(|l| l.kind == "custom")
+        else {
+            return Ok(None);
+        };
+        let app = self.engine.program.objects[schema.object].app as usize;
+        let bytes = self
+            .engine
+            .program
+            .apps
+            .get(app)
+            .and_then(|a| a.layout_files.iter().find(|(p, _)| *p == layout.path))
+            .map(|(_, b)| b.clone());
+        match bytes {
+            Some(b) => Ok(Some((layout.clone(), b))),
+            None => unsupported(format!(
+                "Report.SaveAs of \"{}\" with the custom layout {}, whose file {} the app does not hold",
+                schema.name(),
+                layout.name,
+                layout.path
+            )),
+        }
+    }
+
+    /// Raises the platform's `CustomDocumentMergerEx` for a custom layout (assumption custom-layout-merger) and answers
+    /// whether a subscriber rendered the document into `blob`.
+    fn render_custom_layout(
+        &mut self,
+        schema: &Schema,
+        format: &str,
+        (layout, layout_bytes): (ir::RenderingLayout, Vec<u8>),
+        dataset: Vec<u8>,
+        blob: &al_builtins::stream::BlobRef,
+    ) -> Result<Value, Signal> {
+        use al_builtins::stream::{Encoding, InState};
+        use al_builtins::value::LibraryValue;
+        if !self
+            .engine
+            .events
+            .is_subscribed(crate::events::REPORTING_TRIGGERS, "customdocumentmergerex")
+        {
+            return unsupported(format!(
+                "Report.SaveAs of \"{}\" with the custom layout {}: no subscriber to CustomDocumentMergerEx (what BC does then is not pinned)",
+                schema.name(),
+                layout.name
+            ));
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::CustomLayoutMerger);
+        let members: std::sync::Arc<[String]> = [
+            "SaveAsPdf",
+            "SaveAsWord",
+            "SaveAsExcel",
+            "Preview",
+            "Print",
+            "SaveAsHtml",
+        ]
+        .iter()
+        .map(|m| m.to_string())
+        .collect();
+        let action = match format {
+            "Pdf" => 0,
+            "Word" => 1,
+            "Excel" => 2,
+            _ => 5,
+        };
+        let stream = |name: &str, v: LibraryValue| Value::Library(name.into(), Rc::new(RefCell::new(v)));
+        let names: Vec<String> = [
+            "ObjectID",
+            "ReportAction",
+            "ObjectPayload",
+            "XmlData",
+            "LayoutData",
+            "DocumentStream",
+            "Success",
+        ]
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+        // The payload keys are not pinned (corpus topic #176): any use of the object is refused.
+        let payload = al_builtins::json::unpinned_object(
+            "the ObjectPayload of a custom layout merger is not pinned (corpus topic #176)",
+        );
+        let mut args = vec![
+            Value::Integer(self.object_id_of(schema.object as u32) as i32),
+            Value::Option(action, members),
+            payload,
+            stream(
+                "InStream",
+                LibraryValue::InStream(InState::snapshot(dataset, Encoding::Utf8)),
+            ),
+            stream(
+                "InStream",
+                LibraryValue::InStream(InState::snapshot(layout_bytes, Encoding::Utf8)),
+            ),
+            stream("OutStream", LibraryValue::OutStream(blob.clone(), Encoding::Utf8)),
+            Value::Boolean(false),
+        ];
+        let call = crate::dispatch::EventCall {
+            object: crate::events::REPORTING_TRIGGERS,
+            event: "customdocumentmergerex",
+            element: None,
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)?;
+        if matches!(args[6], Value::Boolean(true)) {
+            Ok(Value::Boolean(true))
+        } else {
+            unsupported(format!(
+                "Report.SaveAs of \"{}\" with the custom layout {}: no subscriber rendered it (what SaveAs does then is not pinned)",
+                schema.name(),
+                layout.name
+            ))
         }
     }
 

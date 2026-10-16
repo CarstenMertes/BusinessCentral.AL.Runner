@@ -107,6 +107,10 @@ pub const CAPTION_CLASS: usize = usize::MAX;
 /// raises them itself (`globaltriggers.rs`).
 pub const GLOBAL_TRIGGERS: usize = usize::MAX - 1;
 
+/// The object key under which subscribers to the platform codeunit `Reporting Triggers` are registered: the runtime
+/// raises its `CustomDocumentMergerEx` when a report renders with a custom layout.
+pub const REPORTING_TRIGGERS: usize = usize::MAX - 2;
+
 fn is_global_triggers(target: &str) -> bool {
     target.eq_ignore_ascii_case("Global Triggers") || target == "2000000002"
 }
@@ -231,6 +235,20 @@ impl Registry {
                                         element: String::new(),
                                     });
                             }
+                            if kind == ObjKind::Codeunit
+                                && target.eq_ignore_ascii_case("Reporting Triggers")
+                                && event == "customdocumentmergerex"
+                            {
+                                reg.subscribers
+                                    .entry((REPORTING_TRIGGERS, event.clone()))
+                                    .or_default()
+                                    .push(Subscriber {
+                                        object: oi,
+                                        routine: ri,
+                                        manual: is_manual(o),
+                                        element: String::new(),
+                                    });
+                            }
                             match found {
                                 Some(t) => {
                                     if kind == ObjKind::Codeunit && is_global_triggers(&target) {
@@ -289,6 +307,7 @@ impl Registry {
                     reg.global_key
                 }
                 ir::PlatformPublisher::CaptionClass => CAPTION_CLASS,
+                ir::PlatformPublisher::ReportingTriggers => REPORTING_TRIGGERS,
             };
             reg.missing.entry((key, u.event.clone())).or_default().push(Missing {
                 element: u.element.clone(),

@@ -36,6 +36,10 @@ pub struct RunOptions {
     /// Callbacks while the run goes on: a line per test as it finishes, and a flag that stops the run after the
     /// current test (`alrunner serve`).
     pub hooks: crate::events::Hooks,
+    /// Where the run clock of a test codeunit starts (codeunit id to Unix milliseconds), instead of now: the corpus
+    /// oracle recorded values derived from `Today` on the day real BC ran, so the harness starts each codeunit at the
+    /// time of that codeunit's suite in the oracle.
+    pub clock_starts: Option<Arc<std::collections::HashMap<u32, i64>>>,
 }
 
 /// What the compile phase of a run leaves for its run phase (`CorpusRuntime::compile_suites`).

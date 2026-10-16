@@ -573,6 +573,7 @@ impl CorpusRuntime {
                         capture: opts.capture,
                         order: order_arc.clone(),
                         hooks: opts.hooks.clone(),
+                        clock_start: None,
                     });
                 }
                 continue;
@@ -596,6 +597,7 @@ impl CorpusRuntime {
                         capture: opts.capture,
                         order: order_arc.clone(),
                         hooks: opts.hooks.clone(),
+                        clock_start: opts.clock_starts.as_ref().and_then(|m| m.get(&id).copied()),
                     }),
                     Err(why) => {
                         for r in test_routines(o) {

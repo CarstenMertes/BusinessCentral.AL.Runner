@@ -64,6 +64,68 @@ pub fn parse_junit(xml: &str) -> Result<Vec<OracleCase>, OracleError> {
     }
 }
 
+/// When real BC ran each test codeunit: the `timestamp` of its `<testsuite name="Codeunit N">` in a JUnit oracle, as Unix
+/// milliseconds (UTC; the container BC ran in used UTC, as the oracle's days show: values derived from `Today` on the
+/// CI day, which a rerun on another day cannot reproduce). A suite without a readable timestamp is left out.
+pub fn parse_clocks(xml: &str) -> Result<std::collections::HashMap<u32, i64>, OracleError> {
+    use quick_xml::events::Event;
+
+    let mut reader = quick_xml::Reader::from_str(xml);
+    let mut out = std::collections::HashMap::new();
+    loop {
+        match reader.read_event().map_err(|e| OracleError::Xml(e.to_string()))? {
+            Event::Start(e) | Event::Empty(e) if e.name().as_ref() == b"testsuite" => {
+                let id =
+                    attr(&e, b"name")?.and_then(|n| n.strip_prefix("Codeunit ").and_then(|n| n.trim().parse().ok()));
+                let at = attr(&e, b"timestamp")?.and_then(|t| unix_millis(&t));
+                if let (Some(id), Some(at)) = (id, at) {
+                    out.insert(id, at);
+                }
+            }
+            Event::Eof => return Ok(out),
+            _ => {}
+        }
+    }
+}
+
+/// `2026-10-15T22:00:23Z` (UTC, optional fraction of a second) as Unix milliseconds.
+pub fn unix_millis(text: &str) -> Option<i64> {
+    let t = text.trim().strip_suffix('Z')?;
+    let (date, time) = t.split_once('T')?;
+    let mut d = date.split('-');
+    let (y, m, day): (i64, i64, i64) = (
+        d.next()?.parse().ok()?,
+        d.next()?.parse().ok()?,
+        d.next()?.parse().ok()?,
+    );
+    let (hms, frac) = match time.split_once('.') {
+        Some((h, f)) => (h, f),
+        None => (time, ""),
+    };
+    let mut p = hms.split(':');
+    let (h, mi, sec): (i64, i64, i64) = (
+        p.next()?.parse().ok()?,
+        p.next()?.parse().ok()?,
+        p.next()?.parse().ok()?,
+    );
+    if d.next().is_some() || p.next().is_some() || !(1..=12).contains(&m) || !(1..=31).contains(&day) {
+        return None;
+    }
+    let ms: i64 = if frac.is_empty() {
+        0
+    } else {
+        format!("{frac:0<3}")[..3].parse().ok()?
+    };
+    // Days since 1970-01-01 (Howard Hinnant's days_from_civil).
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + day - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days = era * 146_097 + doe - 719_468;
+    Some(((days * 24 + h) * 60 + mi) * 60_000 + sec * 1000 + ms)
+}
+
 /// One `<test>` of an XUnit report, with the failure message real BC gave.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct XunitCase {
@@ -192,6 +254,17 @@ mod tests {
             codeunit: cu,
             name: n.into(),
         }
+    }
+
+    #[test]
+    fn the_clock_of_a_codeunit_is_the_timestamp_of_its_suite() {
+        let xml = "<testsuites><testsuite name=\"Codeunit 60002\" tests=\"1\" timestamp=\"2026-10-15T22:00:23Z\"><testcase classname=\"Codeunit 60002\" name=\"A\" /></testsuite><testsuite name=\"Codeunit 7\" timestamp=\"bad\" /><testsuite name=\"Other\" timestamp=\"2026-10-15T22:00:23Z\" /></testsuites>";
+        let clocks = parse_clocks(xml).unwrap();
+        assert_eq!(clocks.len(), 1, "{clocks:?}");
+        assert_eq!(clocks[&60002], 1_792_101_623_000);
+        assert_eq!(unix_millis("1970-01-01T00:00:00Z"), Some(0));
+        assert_eq!(unix_millis("2024-02-29T23:59:59.5Z"), Some(1_709_251_199_500));
+        assert_eq!(unix_millis("2026-10-15T22:00:23"), None);
     }
 
     #[test]

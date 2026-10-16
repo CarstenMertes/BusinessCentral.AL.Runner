@@ -244,6 +244,8 @@ pub(crate) struct Unit {
     /// See `Scratch::order`.
     order: Arc<Vec<usize>>,
     hooks: crate::events::Hooks,
+    /// See `Scratch::clock_start`.
+    clock_start: Option<i64>,
 }
 
 /// What a scratch run or a capture leaves besides outcomes, per test.
@@ -257,6 +259,8 @@ pub(crate) struct Scratch {
     messages: Vec<(String, Vec<String>)>,
     /// What the capture saw.
     captured: Vec<(String, crate::events::CapturedAt)>,
+    /// Where the run clock of the codeunit starts, in Unix milliseconds (`RunOptions::clock_starts`); `None`: now.
+    clock_start: Option<i64>,
 }
 
 /// What a test codeunit left: each test's outcome, the call stack of each AL error that failed one, how long
@@ -326,6 +330,7 @@ fn run_unit(
         let mut scratch = Scratch {
             capture: u.capture,
             order: u.order.clone(),
+            clock_start: u.clock_start,
             ..Default::default()
         };
         if u.coverage {

@@ -27,6 +27,9 @@ pub trait RefVisitor {
     fn routine(&mut self, r: &mut usize, object: usize);
     /// A field reference. `table` says which table the field is a field of.
     fn field(&mut self, r: &mut usize, table: TableOf);
+    /// A control reference of an expression: an index into the object's control references, which
+    /// lowering wrote there (`Expr::Control`).
+    fn control(&mut self, r: &mut usize);
 }
 
 /// Which table a field reference is a field of. Object references inside it have the value they
@@ -447,14 +450,22 @@ fn walk_expr<V: RefVisitor>(e: &mut Expr, v: &mut V) {
         }
         Expr::Control {
             page,
-            control: _,
+            control,
             runtime: _,
-        } => walk_expr(page, v),
+        } => {
+            v.control(control);
+            walk_expr(page, v);
+        }
         Expr::FieldOf(x, f) => {
             fld(v, f, TableOf::Embedded);
             walk_expr(x, v);
         }
-        Expr::QueryColumn { query, column: _ } => walk_expr(query, v),
+        Expr::QueryColumn { query, column } => {
+            // The column of a query is named like a field of a table: by its number, which is its
+            // position in the query's column list.
+            fld(v, column, TableOf::Embedded);
+            walk_expr(query, v);
+        }
         Expr::DotNet {
             ty: _,
             receiver,

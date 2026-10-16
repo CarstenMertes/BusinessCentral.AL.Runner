@@ -447,7 +447,7 @@ impl Lowerer<'_> {
                     let slot = *self.globals.get("currquery").ok_or("the running query")?;
                     Ok(ir::Expr::QueryColumn {
                         query: Box::new(ir::Expr::Load(ir::Place::Global(slot))),
-                        column,
+                        column: self.field_ref(query, column as u32),
                     })
                 }
                 Some(Res::QueryColumn { query, column }) if n.kind() == MemberExpr => {
@@ -457,7 +457,7 @@ impl Lowerer<'_> {
                     }
                     Ok(ir::Expr::QueryColumn {
                         query: Box::new(self.expr(&kids[0])?),
-                        column,
+                        column: self.field_ref(query, column as u32),
                     })
                 }
                 // A bare column name in the query's own code reads the running query's current row
@@ -471,7 +471,7 @@ impl Lowerer<'_> {
                     let slot = *self.globals.get("currquery").ok_or("the running query")?;
                     Ok(ir::Expr::QueryColumn {
                         query: Box::new(ir::Expr::Load(ir::Place::Global(slot))),
-                        column,
+                        column: self.field_ref(query, column as u32),
                     })
                 }
                 // `Database::A.B."Name"`: a namespace-qualified object id.
@@ -598,6 +598,7 @@ impl Lowerer<'_> {
             .position(|c| c.name.eq_ignore_ascii_case(name))
             .ok_or_else(|| format!("control `{name}` is not in the page layout"))?;
         let runtime = matches!(self.ty_of(recv), Ty::Object(ObjKind::Page, _));
+        let control = self.control_ref(page, &layout.controls[control].name, control);
         Ok(ir::Expr::Control {
             page: Box::new(self.expr(recv)?),
             control,

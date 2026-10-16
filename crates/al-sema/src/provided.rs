@@ -50,6 +50,9 @@ pub struct DepFacts {
     /// For a table: the number of each field, in the order of the table's field list (ADR-033):
     /// what the symbolic form of other objects names a field by.
     pub fields: Vec<u32>,
+    /// For a page (or a report with a request page): the name of each control in lower case, in the
+    /// order of the page's control list (ADR-033).
+    pub controls: Vec<String>,
     /// The key of every routine, in the same order (ADR-033): what the symbolic form of other
     /// objects names a routine of this one by.
     pub routine_keys: Vec<ir::sym::LocalKey>,

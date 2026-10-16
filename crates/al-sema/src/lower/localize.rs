@@ -7,7 +7,7 @@
 //! because of that.
 
 use al_ir as ir;
-use al_ir::sym::{FieldKey, LocalKey, ObjKey, Refs, RoutineKey, SymObject};
+use al_ir::sym::{ControlKey, FieldKey, LocalKey, ObjKey, Refs, RoutineKey, SymObject};
 use al_ir::walk::{RefVisitor, TableOf, walk_object};
 use al_syntax::ast;
 use std::collections::HashMap;
@@ -87,11 +87,32 @@ impl FieldRefs {
     }
 }
 
+/// The controls the expressions of an object name: (page, control name in lower case, the control's
+/// position in the page's layout, which the check against the old numbering reads). An expression
+/// holds the index into this list.
+#[derive(Default)]
+pub(crate) struct ControlRefs {
+    pub(crate) list: Vec<(usize, String, usize)>,
+    ix: HashMap<(usize, String), usize>,
+}
+
+impl ControlRefs {
+    pub(crate) fn intern(&mut self, page: usize, name: &str, pos: usize) -> usize {
+        let name = name.to_ascii_lowercase();
+        let list = &mut self.list;
+        *self.ix.entry((page, name.clone())).or_insert_with(|| {
+            list.push((page, name, pos));
+            list.len() - 1
+        })
+    }
+}
+
 /// What the symbolic form of each object is made from: the key of every object and of its routines,
 /// in program order, and what the lowering knew about tables.
 pub(crate) struct Keys<'a> {
     pub objects: &'a [ObjKey],
-    pub routines: &'a [Vec<LocalKey>],
+    /// The key of each routine of object `i`.
+    pub routines: &'a dyn Fn(usize) -> &'a [LocalKey],
     /// Per object: the table whose record it works on (`Shared::table_of`).
     pub table_of: &'a [Option<usize>],
     /// The number of field `pos` of table `table`.
@@ -108,6 +129,7 @@ pub(crate) fn localize(
     mut object: ir::Object,
     positions: Vec<ir::SrcPos>,
     field_refs: &[(usize, u32)],
+    control_refs: &[(usize, String, usize)],
 ) -> Result<SymObject, String> {
     // The expressions' own references come first: they are already indices into this list.
     let mut refs = Refs::default();
@@ -119,6 +141,12 @@ pub(crate) fn localize(
         };
         fields.entry(key.clone()).or_insert(refs.fields.len());
         refs.fields.push(key);
+    }
+    for (page, name, _) in control_refs {
+        refs.controls.push(ControlKey {
+            page: keys.objects[*page].clone(),
+            name: name.clone(),
+        });
     }
     let mut v = Localize {
         keys,
@@ -135,15 +163,15 @@ pub(crate) fn localize(
     }
     Ok(SymObject {
         key: keys.objects[own].clone(),
-        routines: keys.routines[own].clone(),
+        routines: (keys.routines)(own).to_vec(),
         refs: v.refs,
         object,
         positions,
     })
 }
 
-struct Localize<'a> {
-    keys: &'a Keys<'a>,
+struct Localize<'a, 'k> {
+    keys: &'a Keys<'k>,
     own: usize,
     refs: Refs,
     objects: HashMap<usize, usize>,
@@ -152,7 +180,7 @@ struct Localize<'a> {
     bad: Option<String>,
 }
 
-impl Localize<'_> {
+impl Localize<'_, '_> {
     /// The table object a field reference is a field of, in workspace numbering.
     fn table_object(&self, table: TableOf) -> Option<usize> {
         match table {
@@ -166,7 +194,7 @@ impl Localize<'_> {
     }
 }
 
-impl RefVisitor for Localize<'_> {
+impl RefVisitor for Localize<'_, '_> {
     fn object(&mut self, r: &mut usize) {
         let at = *r;
         let Some(key) = self.keys.objects.get(at) else {
@@ -183,7 +211,8 @@ impl RefVisitor for Localize<'_> {
 
     fn routine(&mut self, r: &mut usize, object: usize) {
         let at = (object, *r);
-        let Some(local) = self.keys.routines.get(object).and_then(|t| t.get(*r)) else {
+        let known = object < self.keys.objects.len();
+        let Some(local) = known.then(|| (self.keys.routines)(object)).and_then(|t| t.get(*r)) else {
             self.bad
                 .get_or_insert_with(|| format!("routine reference {} of object {object} does not exist", at.1));
             return;
@@ -197,6 +226,13 @@ impl RefVisitor for Localize<'_> {
             });
             refs.routines.len() - 1
         });
+    }
+
+    fn control(&mut self, r: &mut usize) {
+        if *r >= self.refs.controls.len() {
+            self.bad
+                .get_or_insert_with(|| format!("control reference {} is outside the object's list", *r));
+        }
     }
 
     fn field(&mut self, r: &mut usize, table: TableOf) {

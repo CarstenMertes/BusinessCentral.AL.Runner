@@ -100,6 +100,12 @@ pub(crate) fn role_of(r: &ast::Routine) -> u8 {
 }
 
 impl Lowerer<'_> {
+    /// The reference an expression holds to control `name` of page `page`, which is at `pos` in
+    /// the page's layout.
+    pub(crate) fn control_ref(&self, page: usize, name: &str, pos: usize) -> usize {
+        self.control_refs.borrow_mut().intern(page, name, pos)
+    }
+
     /// The reference an expression holds to field `id` of table `table` (a position in the
     /// workspace's objects), to be turned into a key when the object is made symbolic.
     pub(crate) fn field_ref(&self, table: usize, id: u32) -> usize {
@@ -162,6 +168,8 @@ pub(crate) struct Lowerer<'a> {
     /// The fields the expressions of the object name, as (table, field number): `Place::Field`,
     /// `Expr::FieldOf` and `Const::FieldPos` hold an index into this list (`localize.rs`).
     field_refs: std::cell::RefCell<localize::FieldRefs>,
+    /// The controls the expressions of the object name (`Expr::Control` holds an index into this list).
+    control_refs: std::cell::RefCell<localize::ControlRefs>,
     /// Answers many routines ask for, computed once per program.
     memo: &'a Memo,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).

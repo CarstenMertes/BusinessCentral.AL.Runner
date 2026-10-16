@@ -1248,6 +1248,9 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // The empty formula (types/TestDateFormulaDurationFormatContracts.al:38-42).
         Value::DateFormula(_) => Value::DateFormula(String::new()),
         Value::Option(_, m) => Value::Option(0, m.clone()),
+        // A cleared Enum is the enum's initial value, ordinal 0, as a variable that was never assigned (`default_for`;
+        // types/TestBlankEnumInitTests.Codeunit.al for the blank member reading as ordinal 0).
+        Value::Enum(id, _) => Value::Enum(*id, 0),
         // A cleared List or Dictionary is a new, empty one (types/TestClearContracts.al:130-150,
         // collections/TestListByRefContracts.al:155 through a `var` parameter).
         Value::List(_) => Value::List(Default::default()),

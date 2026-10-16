@@ -879,6 +879,13 @@ pub fn parse_sub_page_link(text: &str) -> Result<Vec<(String, LinkRhs)>, String>
                     .or_else(|| inner.strip_prefix("database::"))
                 {
                     LinkRhs::TableId(crate::scan::unquote_double(t))
+                } else if inner.len() > 1
+                    && inner.starts_with('"')
+                    && inner.ends_with('"')
+                    && !inner[1..inner.len() - 1].contains('"')
+                {
+                    // A quoted member name: `const("Released Production Order")` is the member, not text with quotes.
+                    LinkRhs::Filter(inner[1..inner.len() - 1].to_string())
                 } else {
                     LinkRhs::Filter(unquote_literals(inner))
                 }
@@ -1193,6 +1200,19 @@ mod tests {
         let names = routines(&out);
         assert_eq!(names.len(), 2, "{names:?}");
         assert!(names.iter().all(|n| is_synthetic(n)), "{names:?}");
+    }
+
+    // A quoted name in const(..) is the name (Base Application: `\"Document Type\" = const(\"Released Production Order\")`).
+    #[test]
+    fn a_quoted_member_name_in_a_link_constant_loses_its_quotes() {
+        let got = parse_sub_page_link("\"Document Type\" = const(\"Released Production Order\")").unwrap();
+        assert_eq!(
+            got,
+            vec![(
+                "Document Type".to_string(),
+                LinkRhs::Filter("Released Production Order".into())
+            )]
+        );
     }
 
     // Corpus handlers/TestPageSubpagePartConstFilter.al, TestPagePartLinkFilterGroup.al:

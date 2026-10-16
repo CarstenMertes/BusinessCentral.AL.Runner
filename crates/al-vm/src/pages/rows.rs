@@ -14,6 +14,13 @@ impl Session {
     /// event is the session language (types/PSCaptionClass.al).
     pub(super) fn caption_class_text(&mut self, st: &St, text: &str) -> Result<String, Signal> {
         if let Some(rest) = text.strip_prefix("3,") {
+            if rest.is_empty() {
+                // P84Captions.al Page_NoSubscriber c06: a control whose CaptionClass is '3,' reads the caption of another
+                // control on the same field ('Ctl Plain'), not its own; which one BC takes is not pinned.
+                return unsupported(
+                    "CaptionClass '3,' with nothing after the comma on a page control: which caption BC reads is not pinned",
+                );
+            }
             return Ok(rest.to_string());
         }
         let (area, expr) = text.split_once(',').unwrap_or(("", text));

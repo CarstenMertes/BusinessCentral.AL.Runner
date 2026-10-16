@@ -84,6 +84,19 @@ page 51092 "PT Cap Card"
     layout { area(Content) { field(Grp; Rec.Grp) { Caption = 'Plain'; CaptionClass = '5,1,GB'; } field(Dim; Rec.Descr) { Caption = 'Plain'; CaptionClass = '1,1,'; } field(Lit; Rec.Descr) { Caption = 'Plain'; CaptionClass = '3,Fixed'; } } }
 }
 
+table 51093 "PT Cap Rec"
+{
+    fields
+    {
+        field(1; Id; Integer) { Caption = 'Identifier'; }
+        field(2; A; Text[10]) { Caption = 'Tbl A'; CaptionClass = '1,1,x'; }
+        field(3; B; Text[10]) { Caption = 'Tbl B'; CaptionClass = '3,x'; }
+        field(4; C; Text[10]) { Caption = 'Tbl C'; CaptionClass = '3,'; }
+        field(5; D; Text[10]) { Caption = 'Tbl D'; CaptionClass = ',x'; }
+    }
+    keys { key(PK; Id) { } }
+}
+
 table 51020 "PT Rank"
 {
     fields { field(1; "Entry No."; Integer) { } field(2; Rank; Integer) { } field(3; Bucket; Code[10]) { } }
@@ -827,4 +840,15 @@ fn a_numeric_caption_class_area_other_than_3_keeps_the_text_as_written() {
         "F",
     );
     assert_eq!(text(r), "5,1,GB|1,1,|Fixed");
+}
+
+// pages/lt-page-report-events/P84Captions.al Table_NoSubscriber f01..f14 (BC 29): FieldCaption of a field with a CaptionClass.
+#[test]
+fn field_caption_of_a_field_with_a_caption_class_follows_the_pinned_forms() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PT Cap Rec\"; begin
+            exit(R.FieldCaption(A) + '|' + R.FieldCaption(B) + '|' + R.FieldCaption(C) + '|' + R.FieldCaption(D)); end;",
+        "F",
+    );
+    assert_eq!(text(r), "1,1,x|x|Tbl C|,x");
 }

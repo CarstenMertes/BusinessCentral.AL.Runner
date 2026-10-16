@@ -541,7 +541,9 @@ impl Parser<'_> {
             }
             let v = u32::from_str_radix(&digits, if hex { 16 } else { 10 }).unwrap_or(u32::MAX);
             let valid = matches!(v, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF);
-            if !valid {
+            // An XmlPort import does not check characters (xmlport/lt-xmlport-query-datatransfer/XpTEncoding.al:
+            // Encoding_ImportControlCharacterEntity: `&#1;` reads).
+            if !valid && self.dom {
                 // A value past the last code point is reported as the high surrogate .NET computes for it.
                 let shown = if v > 0x10FFFF && v < 0x10000 + (0x10_0000 << 1) {
                     0xD800 + ((v - 0x10000) >> 10)

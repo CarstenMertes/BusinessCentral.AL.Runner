@@ -749,6 +749,9 @@ impl Session {
     /// Field element or attribute: the text becomes the field's value, then `OnAfterAssignField`.
     /// Returns the field's position.
     fn xp_assign_field(&mut self, inst: &Inst, schema: &Schema, node: usize, text: &str) -> Result<usize, Signal> {
+        // White space around a value is dropped, for text too (xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:
+        // Import_WhitespaceAroundValues).
+        let text = text.trim();
         let n = schema.node(node);
         let table_node = schema.node(n.table_node.expect("field nodes have a table node"));
         let pos = n.field.expect("field nodes have a field");
@@ -775,6 +778,17 @@ impl Session {
                 Ok(v) => v,
                 Err(Signal::Error(first)) => match self.xp_value_xml(text, &ty, None) {
                     Ok(v) => v,
+                    // A Date that neither reads gives the long text with the code Evaluate (XpTImportBasic.al: Import_BadDate,
+                    // Import_DateWrongFormat).
+                    Err(Signal::Error(_)) if matches!(ty, RtType::Date) => {
+                        return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                            message: format!(
+                                "The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+                            ),
+                            code: "Evaluate".into(),
+                            call_stack: String::new(),
+                        })));
+                    }
                     Err(Signal::Error(_)) => return Err(Signal::Error(first)),
                     Err(other) => return Err(other),
                 },

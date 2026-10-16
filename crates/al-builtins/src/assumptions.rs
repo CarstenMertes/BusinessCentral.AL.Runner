@@ -133,12 +133,6 @@ registry! {
         tests: "Incoming Document.FindFromIncomingDocumentEntryNo (`Get(Format(FieldRef.Value))`): about 400 Tests-ERM tests behind the Incoming Doc. Attach. FactBox.",
         probe: "Rec.Get(Format(5)) on an Integer key; Get('5'); Get('x'); Get('') and Get(' 5 ') on an Integer and a BigInteger key.",
     },
-    RecordRefGetUnopened => {
-        id: "recordref-get-unopened",
-        assumed: "RecordRef.Get(RecordId) on a RecordRef that was never opened, with the result used, answers false and leaves the ref closed.",
-        tests: "System Application Data Type Management (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`): about 260 Tests-ERM tests (CheckICPartner).",
-        probe: "RecordRef.Get(Rec.RecordId()) on a fresh RecordRef: the Boolean, then Number() and an Open on the same ref; with the result unused (PnE08RecordMisc.al asks the same row).",
-    },
     CookieSetterResult => {
         id: "cookie-setter-result",
         assumed: "Cookie.Name(NewName) and Cookie.Value(NewValue), with the result used, answer the new text.",

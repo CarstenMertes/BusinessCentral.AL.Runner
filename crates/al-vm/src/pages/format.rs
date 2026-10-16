@@ -242,7 +242,8 @@ impl Session {
         let mut text = pagefmt::control_text(v, &f, &caption);
         // From BC 28 a DateTime control writes a narrow no-break space before AM / PM (pages/lt-page-run-overloads-testpart/
         // P106TestFieldAsDateTime.al:P106_AsDateTime_Values, pages/lt-page-runtime/P82TestField.al `dt-value`, #if BC28PLUS).
-        if matches!(v, Value::DateTime(ms) if *ms != 0) && self.engine.target.as_ref().map_or(29, |t| t.bc.major) >= 28 {
+        if matches!(v, Value::DateTime(ms) if *ms != 0) && self.engine.target.as_ref().map_or(29, |t| t.bc.major) >= 28
+        {
             if let Some(at) = text.rfind(' ') {
                 text.replace_range(at..=at, "\u{202f}");
             }

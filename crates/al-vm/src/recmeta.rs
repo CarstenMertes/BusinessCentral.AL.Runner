@@ -859,22 +859,20 @@ impl Session {
             let v = match ty {
                 RtType::Text(_) | RtType::Code(_) => ops::convert(Value::Text(value.as_str().into()), ty)?,
                 _ if value.is_empty() => Value::default_for(ty),
-                RtType::Integer | RtType::BigInteger | RtType::Decimal => {
-                    match self.parse_filter_text(value, ty) {
-                        Ok(al_builtins::filter::FilterExpr::Eq(v)) => v,
-                        _ => {
-                            let name = match ty {
-                                RtType::Integer => "Integer",
-                                RtType::BigInteger => "BigInteger",
-                                _ => "Decimal",
-                            };
-                            return Err(error(
-                                format!("The value \"{value}\" can't be evaluated into type {name}."),
-                                "Evaluate",
-                            ));
-                        }
+                RtType::Integer | RtType::BigInteger | RtType::Decimal => match self.parse_filter_text(value, ty) {
+                    Ok(al_builtins::filter::FilterExpr::Eq(v)) => v,
+                    _ => {
+                        let name = match ty {
+                            RtType::Integer => "Integer",
+                            RtType::BigInteger => "BigInteger",
+                            _ => "Decimal",
+                        };
+                        return Err(error(
+                            format!("The value \"{value}\" can't be evaluated into type {name}."),
+                            "Evaluate",
+                        ));
                     }
-                }
+                },
                 _ => match self.parse_filter_text(value, ty) {
                     Ok(al_builtins::filter::FilterExpr::Eq(v)) => v,
                     _ => return unsupported(format!("position value `{value}`")),

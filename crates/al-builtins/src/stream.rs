@@ -536,11 +536,15 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         // PnC19XmlPort.al:Export_BothFormatEvaluates, ` þ`).
         if s.pos == 0 {
             let utf8 = s.enc == Encoding::Utf8;
+            let s_enc = s.enc;
             let bom = s.with_data(|d| {
                 // A stream created as UTF-8 does not take a UTF-16 mark: it reads the bytes as UTF-8 and fails on them (xmlport/
                 // lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_ThreeRows).
                 if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
                     Some((Encoding::Utf8, 3))
+                } else if s_enc == Encoding::Utf16 && d.starts_with(&[0xFF, 0xFE]) {
+                    // A stream created as UTF-16 skips the mark (xmlport/TestXmlPortExportImportContracts.al:ExportedText).
+                    Some((Encoding::Utf16, 2))
                 } else {
                     None
                 }
@@ -806,7 +810,9 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
     // blob is not emptied (misc/lt-probes-needed-3/PnC20JsonStreams.al:WriteTo_DefaultStream_And_Appending,
     // `[1,2]1}`). Pinned only for a stream nothing was written to; after other writes it is refused.
     if b.borrow().write_pos != 0 {
-        return unsupported("JSON WriteTo(OutStream) on a stream that was written to (the place it writes at is not pinned)");
+        return unsupported(
+            "JSON WriteTo(OutStream) on a stream that was written to (the place it writes at is not pinned)",
+        );
     }
     write_bytes(&b, text.as_bytes());
     b.borrow_mut().write_pos = 0;

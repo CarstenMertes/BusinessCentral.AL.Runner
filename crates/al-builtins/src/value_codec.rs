@@ -163,7 +163,18 @@ fn encode_in(v: &Value, out: &mut Vec<u8>) -> bool {
                 (b.loaded as u8) | ((b.refetch as u8) << 1) | ((b.persisted as u8) << 2),
             );
         }
-        _ => return false,
+        // Handles (`Rc`) have no form: they cannot leave their thread. Every variant is named, so a new one is a
+        // compile error here and has to be placed (plain, with a tag, or in this list), never a silent fallback.
+        Value::List(_)
+        | Value::Dictionary(_)
+        | Value::Array(_)
+        | Value::Codeunit(_)
+        | Value::Library(..)
+        | Value::Record(_)
+        | Value::TestPage(_)
+        | Value::TestControl(_)
+        | Value::Query(_)
+        | Value::DotNet(_) => return false,
     }
     true
 }
@@ -314,6 +325,18 @@ mod tests {
         let mut out = vec![42];
         assert!(!encode(&list, &mut out));
         assert_eq!(out, vec![42]);
+    }
+
+    #[test]
+    fn a_value_has_a_form_exactly_when_it_is_plain() {
+        let handles = vec![
+            Value::List(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+            Value::Dictionary(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+            Value::Array(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+        ];
+        for v in plain_samples().into_iter().chain(handles) {
+            assert_eq!(encode(&v, &mut Vec::new()), v.is_plain(), "{v:?}");
+        }
     }
 
     #[test]

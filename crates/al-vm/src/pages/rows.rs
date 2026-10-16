@@ -752,31 +752,38 @@ impl Session {
     /// A `Trap()` set on a TestPage that belongs to a routine ends with the routine; one set through
     /// a `var` parameter belongs to the caller (corpus handlers/TestPageTrapScope_Tests.al:1-15).
     pub(crate) fn end_trap_scope(&mut self, frame: &crate::Frame, params: usize, by_var: &[bool]) {
-        let Some(trap) = &self.pages.trap else { return };
-        // The trap ends with the last variable holding the page. A by-var parameter hands its page
-        // back to the caller, and a page another variable still holds keeps the trap alive (corpus
-        // handlers/TestPageTrapSharedScope_Tests.al:87 TrapSharedByTwoLocalsSurvivesWhenOneIsAssignedOut,
-        // handlers/TestPageTrapScope_Tests.al TrapAssignedOutOfALocalVariableSurvives).
-        let mut local_holders = 0;
-        let mut handed_back = false;
-        for (i, v) in frame.locals.iter().enumerate() {
-            if let Value::TestPage(st) = v {
-                if Rc::ptr_eq(st, trap) {
-                    local_holders += 1;
-                    if i < params && by_var.get(i).copied().unwrap_or(false) {
-                        handed_back = true;
+        for trap in self.pages.traps.clone() {
+            // The trap ends with the last variable holding the page. A by-var parameter hands its page
+            // back to the caller, and a page another variable still holds keeps the trap alive (corpus
+            // handlers/TestPageTrapSharedScope_Tests.al:87 TrapSharedByTwoLocalsSurvivesWhenOneIsAssignedOut,
+            // handlers/TestPageTrapScope_Tests.al TrapAssignedOutOfALocalVariableSurvives).
+            let mut local_holders = 0;
+            let mut handed_back = false;
+            for (i, v) in frame.locals.iter().enumerate() {
+                if let Value::TestPage(st) = v {
+                    if Rc::ptr_eq(st, &trap) {
+                        local_holders += 1;
+                        if i < params && by_var.get(i).copied().unwrap_or(false) {
+                            handed_back = true;
+                        }
                     }
                 }
             }
+            if local_holders == 0 || handed_back {
+                continue;
+            }
+            let outside = Rc::strong_count(&trap).saturating_sub(1 + local_holders + 1);
+            if outside == 0 {
+                trap.borrow_mut().trapping = false;
+                self.pages.traps.retain(|t| !Rc::ptr_eq(t, &trap));
+            }
         }
-        if local_holders == 0 || handed_back {
-            return;
-        }
-        let outside = Rc::strong_count(trap).saturating_sub(1 + local_holders);
-        if outside == 0 {
-            trap.borrow_mut().trapping = false;
-            self.pages.trap = None;
-        }
+    }
+
+    /// The `Trap()` waiting for page `object`, taken out of the list.
+    pub(crate) fn take_trap(&mut self, object: u32) -> Option<Rc<RefCell<al_builtins::value::PageState>>> {
+        let at = self.pages.traps.iter().position(|t| t.borrow().object == object)?;
+        Some(self.pages.traps.remove(at))
     }
 
     // ---- pages opened by AL code ----------------------------------------------------------
@@ -823,10 +830,7 @@ impl Session {
         let mut st = st.clone();
         let mut trapped = false;
         if !modal {
-            if let Some(trap) = self.pages.trap.take() {
-                if trap.borrow().object != object {
-                    return unsupported("a Trap() for another page than the one Page.Run opens");
-                }
+            if let Some(trap) = self.take_trap(object) {
                 trap.borrow_mut().trapping = false;
                 // The trapped variable receives the page and keeps it open for the test. A `Page`
                 // variable that was set up first hands its instance over
@@ -834,6 +838,8 @@ impl Session {
                 self.adopt_instance(&st, &trap);
                 st = trap;
                 trapped = true;
+            } else if !self.pages.traps.is_empty() {
+                return unsupported("a Trap() for another page than the one Page.Run opens");
             }
         }
         if st.borrow().open {

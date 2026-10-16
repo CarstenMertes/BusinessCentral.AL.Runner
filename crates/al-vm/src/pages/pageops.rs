@@ -358,7 +358,12 @@ impl Session {
                 // The next plain Page.Run of this page type opens into this variable
                 // (corpus handlers/TestPageRunHandler_Tests.al:TrapReceivesTheNonModalPageAndItStaysOpen).
                 st.borrow_mut().trapping = true;
-                self.pages.trap = Some(st.clone());
+                // A second Trap() on the same page, from this or another variable, replaces the first.
+                let object = st.borrow().object;
+                self.pages
+                    .traps
+                    .retain(|t| !Rc::ptr_eq(t, st) && t.borrow().object != object);
+                self.pages.traps.push(st.clone());
                 Ok(Value::Null)
             }
             PageMethod::LookupMode => match args.first() {

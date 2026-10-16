@@ -187,6 +187,12 @@ registry! {
         tests: "VAT Return Period.\"VAT Return Status\" (lookup of \"VAT Report Header\".Status): 25 Tests-Misc tests (VAT Return Period UT).",
         probe: "A FlowField Enum A = lookup(T.Field of Enum B): Format of the result for a member present in both enums, one only in B (ordinal beyond A), and the empty result.",
     },
+    GetLastErrorTextFlagWithoutError => {
+        id: "get-last-error-text-flag-without-error",
+        assumed: "GetLastErrorText(true) with no error pending answers the empty text. (With an error pending the redacted text is pinned by errors/lt-last-error-and-events/P70_02LastErrFlag.al for eight kinds of error and is refused here until implemented.)",
+        tests: "Word Template Impl.Merge reads the redacted text on the success path: about 315 tests of Tests-Marketing and Tests-Misc.",
+        probe: "ClearLastError(); GetLastErrorText(true) in a fresh test, and after a successful TryFunction.",
+    },
     DateToTextIsFormat => {
         id: "date-to-text-is-format",
         assumed: "A Date converted to a Text or Code (a Variant from FieldRef.Value into a Text parameter) is its default Format text, so an Evaluate of it reads the same date back.",

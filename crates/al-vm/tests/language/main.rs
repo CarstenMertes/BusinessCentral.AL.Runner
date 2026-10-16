@@ -18,6 +18,7 @@ mod exec;
 mod format_variant_number;
 mod in_precedence;
 mod interfaces;
+mod last_error_text_flag;
 mod moved_fields;
 mod number_variant_to_text;
 mod pageworks_probes;

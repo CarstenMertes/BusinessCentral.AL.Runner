@@ -288,6 +288,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
+    ("System.GetLastErrorText#2", get_last_error_text_flagged),
     ("System.GetLastErrorCode#1", get_last_error_code),
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
@@ -604,9 +605,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
-        "System.GetLastErrorText#2" => {
-            "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
-        }
         _ => return None,
     })
 }
@@ -920,6 +918,25 @@ fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
         return unsupported("GetLastErrorText of an error whose text is not pinned");
     }
     Ok(Value::Text(e.message.into()))
+}
+
+/// `GetLastErrorText(ExcludeCustomerContent)`. The flag false is the plain text and the flag true redacts the values
+/// of the error (`<redacted>`, or a fixed telemetry sentence for `Error` with arguments), which differs per kind of error
+/// (errors/lt-last-error-and-events/P70_02LastErrFlag.al pins eight kinds, none implemented here yet). With no error
+/// there is nothing to redact: the text is empty (not pinned; Microsoft's Word Template Impl.Merge reads it on the
+/// success path of about 315 Tests-Marketing and Tests-Misc tests; assumption `get-last-error-text-flag-without-error`).
+/// Any other error stays refused.
+fn get_last_error_text_flagged(ctx: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    match a.first() {
+        Some(Value::Boolean(false)) => get_last_error_text(ctx, r, a),
+        Some(Value::Boolean(true)) if ctx.last_error().message.is_empty() => {
+            crate::assumptions::assume(crate::assumptions::Assumption::GetLastErrorTextFlagWithoutError);
+            Ok(Value::Text(String::new().into()))
+        }
+        _ => unsupported(
+            "GetLastErrorText(true) with an error pending: the redacted text is pinned for eight kinds of error only (errors/lt-last-error-and-events/P70_02LastErrFlag.al), none implemented yet",
+        ),
+    }
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

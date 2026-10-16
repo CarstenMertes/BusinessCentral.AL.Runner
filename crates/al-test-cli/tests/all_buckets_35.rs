@@ -15,17 +15,13 @@ fn lowered(src: &str) -> (al_sema::workspace::Workspace, al_sema::lower::Lowered
 }
 
 // No corpus test calls GetLastErrorText(ExcludeCustomerContent) (the signature is only in
-// scripts/al-surface.json), so what the flag removes from a text is not pinned.
+// scripts/al-surface.json). It is lowered as a call now (runtime refusal for a pending error, assumption get-last-error-text-flag-without-error):
+// 300 Microsoft tests reach it with no error pending.
 #[test]
-fn get_last_error_text_with_the_flag_is_refused_with_its_reason() {
+fn get_last_error_text_with_the_flag_is_lowered_as_a_call() {
     let src = "codeunit 63500 T { procedure P(): Text begin exit(GetLastErrorText(true)); end; }";
     let (ws, l) = lowered(src);
     assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
     let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
-    let why = l.unsupported[oi][0].first().cloned().unwrap_or_default();
-    assert!(
-        why.contains("ExcludeCustomerContent") && why.contains("not pinned"),
-        "{why}"
-    );
-    assert!(!why.contains("is not implemented"), "{why}");
+    assert_eq!(l.unsupported[oi][0].first().cloned(), None);
 }

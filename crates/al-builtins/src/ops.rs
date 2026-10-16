@@ -250,6 +250,28 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Guid(g), T::Code(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
             Value::Code(fit(crate::format::format_guid(&g), *max)?.into())
         }
+        // A Text of digits converts into an Integer or BigInteger where a Variant meets a number (a Get key).
+        // Not pinned by the corpus: Microsoft's Incoming Document `Get(Format(Value))`, registry entry text-digits-to-integer.
+        (Value::Text(s) | Value::Code(s), T::Integer | T::BigInteger)
+            if {
+                let d = s.trim();
+                let digits = d.strip_prefix(['-', '+']).unwrap_or(d);
+                !digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit())
+            } =>
+        {
+            let n: i64 = s
+                .trim()
+                .parse()
+                .map_err(|_| Signal::Unsupported(format!("text `{s}` into a number (out of range)")))?;
+            crate::assumptions::assume(crate::assumptions::Assumption::TextDigitsToInteger);
+            match t {
+                T::Integer => match i32::try_from(n) {
+                    Ok(i) => Value::Integer(i),
+                    Err(_) => return unsupported(format!("text `{s}` overflows Integer")),
+                },
+                _ => Value::BigInteger(n),
+            }
+        }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }
@@ -756,6 +778,20 @@ pub fn truthy(v: &Value) -> Result<bool, Signal> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Base Application's Incoming Document `Get(Format(FieldRef.Value))` hands a Text to an Integer key (Tests-ERM,
+    // about 400 tests behind the Incoming Doc. Attach. FactBox). A text of digits is the number; other text stays refused.
+    #[test]
+    fn a_text_of_digits_converts_into_an_integer_key() {
+        let t = |s: &str| convert(Value::Text(s.into()), &RtType::Integer);
+        assert!(matches!(t("0"), Ok(Value::Integer(0))));
+        assert!(matches!(t(" -12 "), Ok(Value::Integer(-12))));
+        assert!(t("1.5").is_err() && t("abc").is_err() && t("").is_err() && t("99999999999").is_err());
+        assert!(matches!(
+            convert(Value::Code("7".into()), &RtType::BigInteger),
+            Ok(Value::BigInteger(7))
+        ));
+    }
 
     /// What Integer arithmetic gives, worked out in 128 bits: the definition the fast path must keep
     /// (session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts for the two error texts).

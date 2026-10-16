@@ -309,6 +309,19 @@ impl Lowerer<'_> {
             {
                 Ok(ir::Expr::ThisInstance)
             }
+            // `this` in a report is the report being run, as the instance a Report variable holds (the way
+            // `this.BaseProc()` is in a report extension: types/PYThisExtensions.al:
+            // ReportExtension_ThisAndPublicProcedure_BeforeAndAfterRun). That it can be passed on, to an event for
+            // instance, is not pinned; Microsoft's "Whse.-Source - Create Document" does it
+            // (`OnAfterPostReport(..., this)`, about 960 tests of the Tests-SCM buckets), docs/probes-needed.md.
+            NameRef
+                if crate::check::is_this_keyword(n)
+                    && self.ws.objects[self.oi].kind == ObjKind::Report
+                    && !self.globals.contains_key("this") =>
+            {
+                self.assume(al_builtins::assumptions::Assumption::ReportThisPassedOn);
+                Ok(ir::Expr::ThisInstance)
+            }
             ParenExpr => self.expr(&kids[0]),
             PrefixExpr => {
                 let op = match sig_tokens(n)[0].text().to_ascii_lowercase().as_str() {

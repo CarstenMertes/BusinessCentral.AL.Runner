@@ -14,11 +14,22 @@ impl Session {
     /// event is the session language (types/PSCaptionClass.al).
     pub(super) fn caption_class_text(&mut self, st: &St, text: &str) -> Result<String, Signal> {
         if let Some(rest) = text.strip_prefix("3,") {
+            if rest.is_empty() {
+                // P84Captions.al Page_NoSubscriber c06: a control whose CaptionClass is '3,' reads the caption of another
+                // control on the same field ('Ctl Plain'), not its own; which one BC takes is not pinned.
+                return unsupported(
+                    "CaptionClass '3,' with nothing after the comma on a page control: which caption BC reads is not pinned",
+                );
+            }
             return Ok(rest.to_string());
         }
         let (area, expr) = text.split_once(',').unwrap_or(("", text));
-        if text.contains(',') && area.trim().parse::<u32>().is_ok() {
-            return unsupported(format!("CaptionClass `{text}` is resolved by the platform"));
+        // An empty area before the comma is not resolved either (P84Captions.al: c14 ',x', no event call).
+        if text.contains(',') && (area.trim().parse::<u32>().is_ok() || area.is_empty()) {
+            // A numeric area other than 3 (dimension, currency, county captions of Base Application) is not resolved here
+            // and raises no event: the caption stays as written, also when a subscriber would resolve it
+            // (pages/lt-page-report-events/P84Captions.al: Page_NoSubscriber c01..c13, Page_Resolve_A/B, BC 29).
+            return Ok(text.to_string());
         }
         let _ = st;
         self.raise_resolve_caption_class(area, expr, text)

@@ -979,7 +979,7 @@ pub(crate) fn lower_core(
         if !matches!(ws.objects[oi].kind, ObjKind::Enum | ObjKind::EnumExtension) {
             return (Vec::new(), Vec::new());
         }
-        let (decls, ordinals) = enum_info(oi);
+        let (decls, ordinals) = enum_info_with(ws, members, oi, ws.objects[oi].kind == ObjKind::Enum);
         let key = |i: Option<usize>| i.map(|i| piece_keys[i].clone());
         (
             decls
@@ -1185,17 +1185,26 @@ fn derive_relations(
     let tables: Vec<usize> = (0..program.objects.len())
         .filter(|&oi| !provided(oi) && !program.objects[oi].uncompiled && program.objects[oi].table.is_some())
         .collect();
-    let done: Vec<(usize, Relations)> = al_link::par_map(tables, workers, |_, oi| {
+    // The syntax cells of a worker are made once for a run of tables, not for each table.
+    let runs: Vec<Vec<usize>> = tables.chunks(16).map(<[usize]>::to_vec).collect();
+    let done: Vec<(usize, Relations)> = al_link::par_map(runs, workers, |_, run| {
         let local = Local::new(Nodes::new(ws, shared.active.clone()));
         let seq = Seq::new(shared);
-        let lw = make_lowerer(shared, &local, &seq, oi);
-        let relations = shared.members[oi]
-            .fields
-            .iter()
-            .map(|f| lw.field_relations(oi, f))
-            .collect();
-        (oi, relations)
-    });
+        run.into_iter()
+            .map(|oi| {
+                let lw = make_lowerer(shared, &local, &seq, oi);
+                let relations = shared.members[oi]
+                    .fields
+                    .iter()
+                    .map(|f| lw.field_relations(oi, f))
+                    .collect();
+                (oi, relations)
+            })
+            .collect::<Vec<_>>()
+    })
+    .into_iter()
+    .flatten()
+    .collect();
     for (oi, relations) in done {
         let Some(table) = program.objects[oi].table.as_mut() else {
             continue;
@@ -1412,9 +1421,21 @@ fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync)
 /// What enum (or enum extension) `i` declares itself: the implementations with their names resolved, and the
 /// ordinals of its values.
 fn enum_info_of(ws: &Workspace, members: &MemberTable<'_>, i: usize) -> super::localize::EnumInfo {
+    enum_info_with(ws, members, i, false)
+}
+
+/// [`enum_info_of`], with the declarations and values of the extensions when `merged` (what a cache holds for an
+/// enum: the extensions of its own set are part of it).
+fn enum_info_with(ws: &Workspace, members: &MemberTable<'_>, i: usize, merged: bool) -> super::localize::EnumInfo {
     use crate::members::ImplSlot as M;
     use al_ir::sym::ImplSlot as S;
-    let m = members.own(i);
+    let owned;
+    let m = if merged {
+        members.get(i)
+    } else {
+        owned = members.own(i);
+        &owned
+    };
     let decls = m
         .enum_impls
         .iter()

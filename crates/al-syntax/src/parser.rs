@@ -108,7 +108,9 @@ pub(crate) struct Parser<'a> {
     pos: usize,
     /// The significant (non-trivia) tokens only, so look-ahead is an index
     /// instead of a scan over trivia, and `sp` is how many have been consumed.
-    sig: Vec<(SyntaxKind, u32, u32)>,
+    sig: Vec<(SyntaxKind, u32, u32, u16)>,
+    // The last field of an entry is a keyword prefilter: for an identifier its length and lower-cased first letter
+    // (`length << 8 | letter`), otherwise zero.
     sp: usize,
     builder: TreeBuilder<'a>,
     pub(crate) errors: Vec<ParseError>,
@@ -125,7 +127,12 @@ impl<'a> Parser<'a> {
             let end = off + t.len as usize;
             tokens.push((t.kind, off, end));
             if !t.kind.is_trivia() {
-                sig.push((t.kind, off as u32, end as u32));
+                let sigil = if t.kind == SyntaxKind::Ident && t.len < 256 {
+                    u16::from(t.len as u8) << 8 | u16::from(src.as_bytes()[off].to_ascii_lowercase())
+                } else {
+                    0
+                };
+                sig.push((t.kind, off as u32, end as u32, sigil));
             }
             off = end;
         }
@@ -144,7 +151,9 @@ impl<'a> Parser<'a> {
     /// The n-th significant token ahead (0 = current).
     #[inline]
     fn sig(&self, n: usize) -> Option<(SyntaxKind, usize, usize)> {
-        self.sig.get(self.sp + n).map(|&(k, s, e)| (k, s as usize, e as usize))
+        self.sig
+            .get(self.sp + n)
+            .map(|&(k, s, e, _)| (k, s as usize, e as usize))
     }
 
     #[inline]
@@ -184,13 +193,45 @@ impl<'a> Parser<'a> {
 
     pub(crate) fn nth_kw(&self, n: usize, kw: &str) -> bool {
         self.tick();
-        let Some(&(kind, start, end)) = self.sig.get(self.sp + n) else {
+        let Some(&(kind, start, end, sigil)) = self.sig.get(self.sp + n) else {
             return false;
         };
-        let (start, end) = (start as usize, end as usize);
-        kind == SyntaxKind::Ident
-            && end - start == kw.len()
-            && self.src.as_bytes()[start..end].eq_ignore_ascii_case(kw.as_bytes())
+        // The length and the first letter turn most checks down (the keywords are lower case and under 256 bytes).
+        let kb = kw.as_bytes();
+        if kind != SyntaxKind::Ident || sigil != (kb.len() as u16) << 8 | u16::from(kb[0]) {
+            return false;
+        }
+        self.src.as_bytes()[start as usize..end as usize].eq_ignore_ascii_case(kb)
+    }
+
+    /// Current token is the identifier `kw` for one of `kws`, case-insensitively (one look-ahead for all of them).
+    pub(crate) fn at_any_kw(&self, kws: &[&str]) -> bool {
+        self.tick();
+        let Some(&(kind, start, end, sigil)) = self.sig.get(self.sp) else {
+            return false;
+        };
+        if kind != SyntaxKind::Ident {
+            return false;
+        }
+        kws.iter().any(|kw| {
+            let kb = kw.as_bytes();
+            sigil == (kb.len() as u16) << 8 | u16::from(kb[0])
+                && self.src.as_bytes()[start as usize..end as usize].eq_ignore_ascii_case(kb)
+        })
+    }
+
+    /// Which of `kws` the current token is (an identifier, case-insensitively), by one look-ahead.
+    pub(crate) fn which_kw(&self, kws: &[&str]) -> Option<usize> {
+        self.tick();
+        let &(kind, start, end, sigil) = self.sig.get(self.sp)?;
+        if kind != SyntaxKind::Ident {
+            return None;
+        }
+        kws.iter().position(|kw| {
+            let kb = kw.as_bytes();
+            sigil == (kb.len() as u16) << 8 | u16::from(kb[0])
+                && self.src.as_bytes()[start as usize..end as usize].eq_ignore_ascii_case(kb)
+        })
     }
 
     pub(crate) fn offset(&self) -> usize {

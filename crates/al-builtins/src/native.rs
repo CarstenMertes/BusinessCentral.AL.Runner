@@ -934,7 +934,13 @@ pub fn substitute(template: &str, args: &[Value], ctx: &dyn FormatCtx) -> Result
     while let Some(at) = rest.find('%') {
         out.push_str(&rest[..at]);
         rest = &rest[at + 1..];
-        let digits = rest.bytes().take_while(u8::is_ascii_digit).count();
+        // A number that starts with 0 is no placeholder (`%0`, `%01`, `%001` stay as written:
+        // types/lt-evaluate-format-lasterror-setview/P86StrSubstNo.al:Sub_Percent t11, t19, t20).
+        let digits = if rest.starts_with('0') {
+            0
+        } else {
+            rest.bytes().take_while(u8::is_ascii_digit).count()
+        };
         let n: usize = rest[..digits].parse().unwrap_or(0);
         match args.get(n.wrapping_sub(1)).filter(|_| digits > 0 && n >= 1) {
             Some(v) => out.push_str(&try_format(v, 0, 0, ctx).map_err(Signal::Unsupported)?),

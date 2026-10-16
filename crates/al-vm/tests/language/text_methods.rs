@@ -52,9 +52,9 @@ fn variant_knows_in_streams_out_streams_and_never_binary() {
 fn a_placeholder_without_an_argument_stays_as_written() {
     // types/lt-variant/VaTTextConst.al:TextConst_StrSubstNo.
     let src = "codeunit 50100 C { procedure F(): Text var W: Text; begin W := 'Value %1 and %2';
-        exit(StrSubstNo(W, 'a') + '|' + StrSubstNo(W) + '|' + StrSubstNo('%10 and %1', 'a') + '|' + StrSubstNo('%0 and %1', 'a') + '|' + StrSubstNo('%5', 'a') + '|' + StrSubstNo('end%', 'a') + '|' + StrSubstNo(W, '%2', 'x')); end; }";
+        exit(StrSubstNo(W, 'a') + '|' + StrSubstNo(W) + '|' + StrSubstNo('%10 and %1', 'a') + '|' + StrSubstNo('%0 and %1', 'a') + '|' + StrSubstNo('%5', 'a') + '|' + StrSubstNo('end%', 'a') + '|' + StrSubstNo(W, '%2', 'x') + '|' + StrSubstNo('%01', 'a') + '|' + StrSubstNo('%%1', 'a')); end; }";
     assert_eq!(
         text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
-        "Value a and %2|Value %1 and %2|%10 and a|%0 and a|%5|end%|Value %2 and x"
+        "Value a and %2|Value %1 and %2|%10 and a|%0 and a|%5|end%|Value %2 and x|%01|%a"
     );
 }

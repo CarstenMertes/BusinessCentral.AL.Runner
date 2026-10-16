@@ -121,6 +121,20 @@ pub enum TableError {
     Reader(String),
 }
 
+/// A number sequence the restored database holds (`NumberSequence` of AL, a SQL sequence in the backup).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct TestSequence {
+    /// The name AL code uses.
+    pub name: String,
+    /// A sequence of the restored company; false: one that belongs to no company.
+    pub company_specific: bool,
+    /// The sequence's start value.
+    pub start: i64,
+    pub increment: i64,
+    /// The last value handed out; equal to `start` when it is not known to have handed one out.
+    pub current: i64,
+}
+
 /// Rows of a restored company, read table by table on demand. One provider is shared by every test
 /// thread; [`TestData::read`] makes sure it is asked for a table once.
 pub trait TableProvider: Send + Sync {
@@ -134,6 +148,11 @@ pub trait TableProvider: Send + Sync {
     /// provider that does not measure answers `None`.
     fn cost(&self) -> Option<String> {
         None
+    }
+    /// The number sequences of the restored database (a company's own and the global ones). Additive: a
+    /// provider without any answers none.
+    fn sequences(&self) -> Vec<TestSequence> {
+        Vec::new()
     }
 }
 

@@ -406,6 +406,10 @@ fn decode_fixed_var(
 }
 
 impl BcSource for BakSource {
+    fn sequences(&self) -> Result<Vec<crate::catalog::SqlSequence>> {
+        self.cat.sequences(&self.pf)
+    }
+
     fn tables(&self) -> Result<&[SourceTable]> {
         Ok(&self.tables)
     }

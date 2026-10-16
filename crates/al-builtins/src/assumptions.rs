@@ -476,6 +476,12 @@ registry! {
         tests: "Match Bank Payments (the telemetry timers of MatchEntries) through Tests-Bank ERM Bank Reconciliation and ERM Cash Manager: about 268 tests.",
         probe: "D1 + D2, D1 - D2 and a negative result for two Duration variables, Format(Result, 0, 9), and the overflow at the BigInteger edge.",
     },
+    CalcSumsFlowFieldFilter => {
+        id: "calcsums-flowfield-filter",
+        assumed: "CalcSums on a record with a filter on a FlowField sums the stored field over the rows whose calculated FlowField value passes the filter. (CalcSums over stored-field filters is pinned by record/TestRecordFlowField.al:109-160.)",
+        tests: "Bank Acc. Recon. Test.GetTotalOutstanding (SetRange/SetFilter on the Check Ledger Entries FlowField of the Bank Account Ledger Entry), reached by posting a bank reconciliation: about 200 Tests-Bank tests.",
+        probe: "SetFilter(FlowField, '<>0') then CalcSums(StoredField), with rows whose FlowField is zero and non-zero, and a SetRange(FlowField, 0).",
+    },
 }
 
 thread_local! {

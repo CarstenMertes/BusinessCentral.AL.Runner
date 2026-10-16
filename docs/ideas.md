@@ -191,3 +191,15 @@ observable. Idea: run the tests of a Function-isolated codeunit in parallel, eac
 state, when a static check shows no global written by one test is read by another (or the author declares it);
 otherwise keep the order. Advice for test design meanwhile: many small test codeunits, and expensive tests
 (heavy setup, pure computation) in codeunits of their own.
+
+## Differential exploration against real BC, after the known gaps are closed (owner, 2026-10-16)
+
+The corpus is filled from three known sources: how the language is documented and works, Microsoft's test
+suites, and partner test suites. Once those are exhausted (every coverage map and refusal list closed), what is
+left is behavior no known test exercises: unusual combinations, edge values, orders of events across
+extensions, interactions of features. Idea for that phase: agents generate such combinations on purpose
+("try to break it"), run each one on a real BC container and on v3, and compare. Every difference is a new
+corpus case, found even though no existing test ever exercises it. The corpus writer's tooling (local
+container, compile legs, dupfinder) and the oracle comparison already exist; what is new is the generator:
+grammar- and catalog-driven programs over the pinned building blocks (types, triggers, events, record
+operations), kept small so a difference points at one cause, and deduplicated before they become cases.

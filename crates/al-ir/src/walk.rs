@@ -288,6 +288,7 @@ fn walk_routine<V: RefVisitor>(r: &mut Routine, v: &mut V) {
         end_pos: _,
         begin_pos: _,
         container: _,
+        expr_tys: _,
     } = r;
     field_opt(v, field, TableOf::Trigger);
     for a in attributes {

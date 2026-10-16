@@ -444,11 +444,11 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
         "all-versions writes only per-version files"
     );
     assert!(out.contains("Version comparison"), "{out}");
-    // Every oracle is recorded for the pin. Thirty-two cases exist on some majors only (corpus bump 11 added sixteen guarded probes-needed tests): FeatureKey_Columns_AndRows_OfThe27Platform
+    // Every oracle is recorded for the pin. Thirty-seven cases exist on some majors only (corpus bump 11 added sixteen guarded probes-needed tests, bump 12 five more): FeatureKey_Columns_AndRows_OfThe27Platform
     // (27, guarded by `#if not BC28PLUS`) and thirty-one guarded by `#if BC28PLUS` or `#if BC29PLUS` (corpus bump 10: the
     // BigInteger FlowField and query aggregate tests, the Base64 and conversion error texts that differ on 27.0 and 27.3,
     // and the interface collection codeunit).
-    assert!(out.contains("oracle: 32 case(s) differ between versions"), "{out}");
+    assert!(out.contains("oracle: 37 case(s) differ between versions"), "{out}");
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
     // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
     // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.

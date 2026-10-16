@@ -52,7 +52,12 @@ fn compile_corpus() -> usize {
 /// ADR-036 step 0 (the side table of expression types, `lower/tys.rs`) costs another 2.3 % (2.059 to 2.106 million), so
 /// the limit is 2 120 000 for now. Decision recorded in docs/owner-review.md (2026-10-16). Bound-tree steps 1 and 2 must
 /// bring it back below 1 990 000; the limit goes down with them.
-const LIMIT_INSTRUCTIONS_PER_OBJECT: u64 = 2_120_000;
+///
+/// Corpus bump 12 (laptop batch 5: 148 files, large test codeunits) raised the per-object value from 2.102 to 2.373 million
+/// with the same runtime code (measured on the old pin and the new one with the same binary; 3773 -> 4021 objects, 7.93 -> 9.54
+/// billion instructions). The objects of the new pin are bigger, not slower to compile. Limit 2 400 000 for this pin; the
+/// number still has to come down with the bound tree. Decision recorded in docs/owner-review.md (2026-10-17).
+const LIMIT_INSTRUCTIONS_PER_OBJECT: u64 = 2_400_000;
 const LIMIT_CPU_NS_PER_OBJECT: u64 = 2_000_000;
 const RUNS: usize = 3;
 

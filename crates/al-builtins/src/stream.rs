@@ -216,12 +216,10 @@ impl Encoding {
     pub fn decode_pinned(self, b: &[u8]) -> bool {
         self != Encoding::MsDos
             || b.iter().all(|&x| {
-                x < 0x80
-                    || CP437_AS_READ.iter().any(|(p, _)| *p == x)
-                    || {
-                        let c = CP437_HIGH[usize::from(x - 0x80)] as u32;
-                        c <= 0xFF || u16::try_from(c).is_ok_and(|u| CP1252_HIGH.contains(&u))
-                    }
+                x < 0x80 || CP437_AS_READ.iter().any(|(p, _)| *p == x) || {
+                    let c = CP437_HIGH[usize::from(x - 0x80)] as u32;
+                    c <= 0xFF || u16::try_from(c).is_ok_and(|u| CP1252_HIGH.contains(&u))
+                }
             })
     }
 
@@ -448,9 +446,7 @@ pub(crate) fn read_all_text(stream: &mut Value) -> Result<String, Signal> {
             Encoding::Utf16 if body.len() % 2 != 0 => {
                 unsupported("BigText.Read of a UTF-16 stream with an odd number of bytes (not pinned)")
             }
-            _ if !enc.decode_pinned(body) => {
-                unsupported("BigText.Read of MS-DOS bytes whose character is not pinned")
-            }
+            _ if !enc.decode_pinned(body) => unsupported("BigText.Read of MS-DOS bytes whose character is not pinned"),
             _ => Ok(enc.decode(body)),
         }
     })
@@ -609,7 +605,9 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
         }
         let text = with_in(r, |s| {
             if !matches!(s.enc, Encoding::Windows | Encoding::MsDos) {
-                return unsupported("InStream.Read(Text, Length) on a stream that is neither Windows nor MS-DOS encoded (not pinned)");
+                return unsupported(
+                    "InStream.Read(Text, Length) on a stream that is neither Windows nor MS-DOS encoded (not pinned)",
+                );
             }
             let rest = s.rest();
             let taken = &rest[..n.min(rest.len())];
@@ -654,7 +652,9 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
                 None => (rest.len(), rest.len()),
             };
             let body = &rest[..body_len];
-            if !s.enc.decode_pinned(body) || (!s.enc.decode(body).is_ascii() && !matches!(s.enc, Encoding::Windows | Encoding::MsDos)) {
+            if !s.enc.decode_pinned(body)
+                || (!s.enc.decode(body).is_ascii() && !matches!(s.enc, Encoding::Windows | Encoding::MsDos))
+            {
                 return unsupported(
                     "InStream.Read into a Text of non-ASCII characters on a stream that is not Windows-encoded (not pinned)",
                 );
@@ -887,7 +887,9 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     let bytes: Vec<u8> = match &a[0] {
         // A Char is one byte in the stream's encoding (streams/TestProbeStreamContracts.al:WriteText_NonAscii_Char_Byte_Length:
         // 65 is 41, 228 is 84 on a default stream).
-        Value::Char(c) if *c < 256 && char::from_u32(u32::from(*c)).is_some_and(|ch| enc.encode_pinned(&ch.to_string())) => {
+        Value::Char(c)
+            if *c < 256 && char::from_u32(u32::from(*c)).is_some_and(|ch| enc.encode_pinned(&ch.to_string())) =>
+        {
             enc.encode(&char::from_u32(u32::from(*c)).expect("checked").to_string())
         }
         // A Guid is written as .NET writes it: the first three groups little endian
@@ -914,9 +916,7 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         // Non-ASCII characters are pinned only for a Windows stream, as one cp1252 byte each
         // (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_AfterWriteTextAndAfterWriteText_NonAscii:
         // 'wörld' is 77 F6 72 6C 64 00).
-        Value::Text(t) | Value::Code(t)
-            if enc.encode_pinned(t) =>
-        {
+        Value::Text(t) | Value::Code(t) if enc.encode_pinned(t) => {
             let mut v = enc.encode(t);
             v.extend(std::iter::repeat_n(0, enc.unit()));
             v
@@ -1082,7 +1082,10 @@ mod blob_cell_tests {
         assert_eq!(Encoding::Windows.encode("hé"), vec![0x68, 0xE9]);
         // The euro sign comes back from its byte; the bytes whose character the Windows tier changes read as pinned.
         assert_eq!(Encoding::MsDos.decode(&[0xB1]), "€");
-        assert_eq!(Encoding::MsDos.decode(&[0x61, 0xC3, 0xA4, 0xE2, 0x82]), "a\u{201C}ñË\u{e9}");
+        assert_eq!(
+            Encoding::MsDos.decode(&[0x61, 0xC3, 0xA4, 0xE2, 0x82]),
+            "a\u{201C}ñË\u{e9}"
+        );
         assert!(Encoding::MsDos.decode_pinned(&[0x82, 0xA4, 0xC3]));
         // A box-drawing byte nothing pins is not decoded.
         assert!(!Encoding::MsDos.decode_pinned(&[0xC4]));

@@ -252,10 +252,7 @@ pub(crate) fn time_text(ms_of_day: i64) -> Result<String, Signal> {
     }
     let (h, m, s) = (ms_of_day / 3_600_000, ms_of_day / 60_000 % 60, ms_of_day / 1000 % 60);
     let h12 = if h % 12 == 0 { 12 } else { h % 12 };
-    Ok(format!(
-        "{h12}:{m:02}:{s:02} {}",
-        if h < 12 { "AM" } else { "PM" }
-    ))
+    Ok(format!("{h12}:{m:02}:{s:02} {}", if h < 12 { "AM" } else { "PM" }))
 }
 
 /// A Date as the dataset writes it: `m/d/yyyy` (the same file, `3/5/2024`).

@@ -1080,7 +1080,10 @@ fn xml_parser_edge_cases() {
         "E: XmlElement; C: XmlElement; S: Text;",
         "E := XmlElement.Create('root', 'urn:x'); C := XmlElement.Create('child', 'urn:x'); E.Add(C); E.SetAttribute('a', 'v\"&<'); E.WriteTo(S); exit(S);",
     );
-    assert_eq!(t, "<root xmlns=\"urn:x\" a=\"v&quot;&amp;&lt;\">\r\n  <child />\r\n</root>");
+    assert_eq!(
+        t,
+        "<root xmlns=\"urn:x\" a=\"v&quot;&amp;&lt;\">\r\n  <child />\r\n</root>"
+    );
 }
 
 // Evaluate into an enum: Format(Enum, 0, 9) gives the ordinal in this runtime, and System

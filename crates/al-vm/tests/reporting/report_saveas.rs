@@ -850,10 +850,7 @@ fn a_time_column_is_written_in_the_en_us_form_with_a_plain_space() {
     let text = f(
         "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; P: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); P.Get(1); P.At := 123456T; P.Modify(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); exit(H.Lines(Buf)); end;",
     );
-    assert!(
-        text.contains("<Column name=\"AtCol\">12:34:56 PM</Column>"),
-        "{text}"
-    );
+    assert!(text.contains("<Column name=\"AtCol\">12:34:56 PM</Column>"), "{text}");
     assert!(text.contains("<Column name=\"AtCol\"></Column>"), "{text}");
 }
 

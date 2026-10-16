@@ -1040,7 +1040,8 @@ impl Writer {
     /// xml/TestXmlRuntimeContracts.al, misc/lt-probes-needed-1/PnAXmlWriteTo.al: `\r\n` where the source has `\n`).
     fn push_text(&mut self, s: &str) {
         if self.crlf && s.contains(['\n', '\r']) {
-            self.out.push_str(&s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n"));
+            self.out
+                .push_str(&s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n"));
         } else {
             self.out.push_str(s);
         }

@@ -305,12 +305,18 @@ fn flag(v: &Value) -> Result<bool, Signal> {
 }
 
 fn to_base64_text(c: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let bytes = encode_text(&text_arg(&a[0])?, encoding(&a[2], &a[3], c.gate(al_version::Gate::Base64TextIsWindows1252From28))?)?;
+    let bytes = encode_text(
+        &text_arg(&a[0])?,
+        encoding(&a[2], &a[3], c.gate(al_version::Gate::Base64TextIsWindows1252From28))?,
+    )?;
     Ok(Value::Text(b64_encode(&bytes, flag(&a[1])?).into()))
 }
 
 fn to_base64_text_out(c: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let bytes = encode_text(&text_arg(&a[0])?, encoding(&a[2], &a[3], c.gate(al_version::Gate::Base64TextIsWindows1252From28))?)?;
+    let bytes = encode_text(
+        &text_arg(&a[0])?,
+        encoding(&a[2], &a[3], c.gate(al_version::Gate::Base64TextIsWindows1252From28))?,
+    )?;
     let text = b64_encode(&bytes, flag(&a[1])?);
     write_raw_bytes(&mut a[4], text.as_bytes())?;
     Ok(Value::Null)

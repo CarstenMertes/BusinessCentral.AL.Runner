@@ -211,10 +211,7 @@ codeunit 50100 C
 
 #[test]
 fn base64_convert_natives_answer_as_the_probe_did() {
-    assert_eq!(
-        text(run(BASE64, "Encoded")),
-        "SGVsbG8=|5AD2APwA|5Pb8|5Pb8|164|äöü|äöü"
-    );
+    assert_eq!(text(run(BASE64, "Encoded")), "SGVsbG8=|5AD2APwA|5Pb8|5Pb8|164|äöü|äöü");
     assert_eq!(
         text(run(BASE64, "Invalid")),
         "AL:Format|The input is not a valid Base-64 string as it contains a non-base 64 character, more than two padding characters, or an illegal character among the padding characters."

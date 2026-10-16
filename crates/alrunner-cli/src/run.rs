@@ -783,6 +783,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                 a.cache_dir.as_deref(),
             )),
             require: a.require_compile_cache,
+            rebuild: a.rebuild_compile_cache,
         }),
     };
     let load_time = started.elapsed();

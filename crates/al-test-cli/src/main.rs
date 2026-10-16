@@ -447,6 +447,7 @@ fn run_version(
             args.cache_dir.as_deref(),
         )),
         require: args.require_compile_cache,
+        rebuild: false,
     });
     if args.build_compile_cache {
         let cc = compile_cache

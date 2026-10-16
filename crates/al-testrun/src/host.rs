@@ -15,8 +15,12 @@ use std::time::{SystemTime, UNIX_EPOCH};
 /// back with `ALRUNNER_REAL_CLOCK=1`.
 pub struct SystemClock;
 
+/// The instant the run began: set by the first read of [`SystemClock`], or by [`SystemClock::begin_at`] before it.
+static RUN_START: OnceLock<i64> = OnceLock::new();
+
 impl SystemClock {
-    fn wall() -> i64 {
+    /// The wall clock, read now. It does not start the run clock.
+    pub fn wall() -> i64 {
         match SystemTime::now().duration_since(UNIX_EPOCH) {
             Ok(d) => d.as_millis() as i64,
             // A clock set before 1970: the same distance on the other side.
@@ -27,11 +31,30 @@ impl SystemClock {
 
 impl Clock for SystemClock {
     fn now_utc_millis(&self) -> i64 {
-        static START: OnceLock<i64> = OnceLock::new();
         if std::env::var_os("ALRUNNER_REAL_CLOCK").is_some() {
             return SystemClock::wall();
         }
-        *START.get_or_init(SystemClock::wall)
+        *RUN_START.get_or_init(SystemClock::wall)
+    }
+}
+
+impl SystemClock {
+    /// Starts the run clock at `ms` (Unix milliseconds), as if the run had begun then. A run that reads an install
+    /// baseline an earlier run kept does this with the instant that run began: the rows of the baseline carry that
+    /// instant, and a run that began later must not see them stamped with a time it never had. False, and nothing
+    /// changes, when the clock has started already (something read it) or the real clock is on.
+    pub fn begin_at(ms: i64) -> bool {
+        !real_clock() && RUN_START.set(ms).is_ok()
+    }
+
+    /// The instant the run began, which starts the run clock if nothing did.
+    pub fn run_start() -> i64 {
+        SystemClock.now_utc_millis()
+    }
+
+    /// Whether the run clock has started.
+    pub fn started() -> bool {
+        RUN_START.get().is_some()
     }
 }
 
@@ -58,6 +81,25 @@ static ENVIRONMENT: OnceLock<al_host::Environment> = OnceLock::new();
 /// `--environment saas|onprem` (owner decision 2026-10-15, ADR-014 amendment).
 pub fn set_environment(environment: al_host::Environment) {
     let _ = ENVIRONMENT.set(environment);
+}
+
+/// The environment of the system host, as text (a key of the install baseline on disk holds it).
+pub fn environment_text() -> &'static str {
+    match ENVIRONMENT.get().copied().unwrap_or_default() {
+        al_host::Environment::Saas => "saas",
+        al_host::Environment::OnPrem => "onprem",
+    }
+}
+
+/// Whether `--files-dir` gave the `File` type a real directory: what a run reads from there is not part of any key.
+pub fn uses_real_files() -> bool {
+    FILES_DIR.get().is_some()
+}
+
+/// Whether the system host reads the wall clock as it goes (`ALRUNNER_REAL_CLOCK`) instead of standing at the instant
+/// the run began.
+pub fn real_clock() -> bool {
+    std::env::var_os("ALRUNNER_REAL_CLOCK").is_some()
 }
 
 /// The real clock and AL Runner's identity, on the file system the command line chose: memory,

@@ -72,6 +72,7 @@ fn run(only: &[u32], cache: Option<&std::path::Path>) -> CorpusRuntime {
             compile_cache: cache.map(|dir| CompileCache {
                 dir: dir.to_path_buf(),
                 require: false,
+                rebuild: false,
             }),
             ..Default::default()
         },
@@ -220,6 +221,7 @@ fn run_lazy(only: &[u32], cache: &std::path::Path, base: &str) -> (CorpusRuntime
             compile_cache: Some(CompileCache {
                 dir: cache.to_path_buf(),
                 require: false,
+                rebuild: false,
             }),
             lazy: vec![
                 None,

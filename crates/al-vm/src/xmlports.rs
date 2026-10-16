@@ -1507,9 +1507,15 @@ impl Session {
         self.xp_run_trigger(inst, schema, node, "onprexmlitem")?;
         self.xp_rows(inst, schema, node, &mut rows)?;
         let rec = self.xp_record(inst, n)?;
-        // A table element without rows still passes its fields once, without a row: OnBeforePassField runs and nothing is
-        // written (P94XpPathFlow.al:Export_PathsNoRows).
-        if rows.is_empty() {
+        // A table element without rows still passes its fields once, without a row: OnBeforePassField runs and no
+        // OnAfterGetRecord (P94XpPathFlow.al:Export_PathsNoRows). Unless it is optional, the element is written once with the
+        // values of the record as it stands (xmlport/lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_StaticWithRecordNoRows,
+        // Export_EmptyTable: 462 bytes, a row of `0`, empty text, `0.00`, `No`).
+        if rows.is_empty() && !n.min_zero {
+            let mut e = Elem::new(&n.xml_name);
+            self.xp_export_content(inst, schema, node, &mut e)?;
+            out.push(e);
+        } else if rows.is_empty() {
             for child in schema.children(node) {
                 if matches!(
                     schema.node(child).kind,

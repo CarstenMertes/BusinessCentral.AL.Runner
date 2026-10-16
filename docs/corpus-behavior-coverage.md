@@ -9,7 +9,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
 | Triggers per object kind | 164 | 105 | 128 | 55 | 45 |
-| Object properties per object kind | 1112 | 260 | 1074 | 852 | 637 |
+| Object properties per object kind | 1112 | 260 | 1074 | 852 | 638 |
 | Platform and system events | 122 | 11 | 28 | 17 | 15 |
 | Statements and expressions | 59 | 53 | 52 | 0 | 0 |
 | Runtime error sites (text pinned) | 40 | 37 | - | 3 | - |

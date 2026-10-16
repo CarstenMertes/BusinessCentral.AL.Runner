@@ -45,6 +45,28 @@ workspace.
 | `al-test-cli/coverage.rs`, `compile_dump.rs` | read `resolutions` | read bound trees |
 | `incremental.rs` | recheck by file offsets | key by `LocalKey`; a routine's tree depends on its text and declarations read |
 
+## Expression types for the bytecode compiler (lane A, ADR-034)
+
+Lane A needs each expression's static type after lowering and reads it through one function, `expr_ty`, so the source
+can change later without touching the bytecode compiler.
+
+- **Form.** An additive side table on `ir::Routine`: `expr_tys: Vec<IrTy>` in the order the expressions appear in a
+  fixed walk of the routine body (the order `al_ir::walk` visits them), plus `expr_ty(routine, walk_index)`. A side
+  table needs no change to `Expr` (additive, no ADR, byte-identical `compile_dump` of the existing fields). `IrTy` is
+  the runtime type the IR already uses (`rt()` in `lower/convert.rs`), not the checker's `Ty`.
+- **Source, stage 1 (new step 0, before step 1).** Lowering fills the table from `ty_of(node)` at each `expr()` call,
+  since it already has the CST node and the checker's type there. This costs one push per expression and needs no
+  bound tree. Lane A can use it as soon as it merges.
+- **Source, stage 2.** From step 3 on, `BExpr::ty` fills the table; the interface does not change.
+- **Link.** The table holds no references, so `al-link` copies it unchanged; `relink` and the cache store it with the
+  routine (cache `FORMAT` bump; blocks grow by about one byte per expression, measured in step 0).
+- **Proof for step 0.** `compile_dump` byte-identical except the new field (the dump gets it as a separate section,
+  diffed against a golden file made by a second, independent walk in a test); expression count equals the walk's count
+  on the corpus; instruction count per object measured before and after (the push must stay under 0.5 percent).
+- **Open point.** Expressions lowering inserts (conversions, constants it folds) get the type of the result, set by
+  the lowering that creates them; where it cannot know, the entry is `Unknown`, and lane A falls back to the generic
+  instruction. Count of `Unknown` entries reported on the corpus and Tests-ERM.
+
 ## Migration order (each step merges green)
 
 Each step keeps old and new paths side by side. The proof for every step is the same:
@@ -56,6 +78,7 @@ Each step keeps old and new paths side by side. The proof for every step is the 
 
 Steps:
 
+0. **Expression types after lowering** (section above). First, because lane A waits on it.
 1. **`Ty` with object refs.** `Ty::Record/Enum/Object/TestPage/...` carry the resolved object next to the name.
    Lowering drops `resolve_obj` at the 16 sites that start from a `Ty`. Expected win: the second name resolution.
 2. **Slots for names.** `Res::Local(slot)`, `Res::Global(slot)`, `BaseGlobal`; lowering drops its name maps.

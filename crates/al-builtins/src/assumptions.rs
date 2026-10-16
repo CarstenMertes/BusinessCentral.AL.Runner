@@ -548,11 +548,23 @@ registry! {
         tests: "Bank Acc. Recon. Test.GetTotalOutstanding (SetRange/SetFilter on the Check Ledger Entries FlowField of the Bank Account Ledger Entry), reached by posting a bank reconciliation: about 200 Tests-Bank tests.",
         probe: "SetFilter(FlowField, '<>0') then CalcSums(StoredField), with rows whose FlowField is zero and non-zero, and a SetRange(FlowField, 0).",
     },
+    DeleteAllMarkedOnly => {
+        id: "delete-all-marked-only",
+        assumed: "Record.DeleteAll with MarkedOnly(true) deletes the marked rows that pass the filters and no other row, like Find, Next, Count and ModifyAll work on the marked set; with triggers and events as a DeleteAll with a filter.",
+        tests: "Post Inventory Cost to G/L (PostValueEntryToGL.MarkedOnly(true); DeleteAll() in OnPostDataItem, then CapValueEntryLoop Gets the capacity entries left): SCM Kitting D3 Part 2 and SCM Costing Batch, and every test that posts inventory cost with the report.",
+        probe: "Mark two of three rows, MarkedOnly(true), DeleteAll: which rows remain; the same with a filter that excludes a marked row, and DeleteAll(true) with an OnDelete trigger.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",
         tests: "Post Inventory Cost to G/L through Library - Costing and Library - Assembly PostInvtCostToGL (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch); Check.SaveAsPdf (ERM Cash Manager, Match Bank Rec. Scenarios).",
         probe: "A report on the list saved to a temp file and to a stream on a Windows tier: the answer, the order of the triggers, File.Exists and TempBlob.Length afterwards.",
+    },
+    HiddenPartUpdateIsNoop => {
+        id: "hidden-part-update-is-noop",
+        assumed: "CurrPage.Update (also with false) in the code of a part page that the host's code created without opening it (a literal Visible = false) does nothing and raises no error.",
+        tests: "Sales Invoice, Purchase Invoice and the other document pages call CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId) in OnAfterGetCurrRecord, which ends in CurrPage.Update(false): about 900 Tests-ERM, Tests-SCM and Tests-Misc tests.",
+        probe: "A host with part(P; ...) { Visible = false } whose OnAfterGetCurrRecord calls CurrPage.P.Page.Ping(), where Ping calls CurrPage.Update(false) and CurrPage.Update(true) and then reads Rec.",
     },
 }
 

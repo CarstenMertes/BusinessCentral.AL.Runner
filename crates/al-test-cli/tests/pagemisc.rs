@@ -181,6 +181,14 @@ page 62308 "PM Selection Own"
     actions { area(Processing) { action(Pick) { trigger OnAction() var S: Record "PM Row"; begin CurrPage.SetSelectionFilter(S); if S.FindFirst() then; end; } } }
     procedure SetSelectionFilter() begin end;
 }
+page 62320 "PM Hidden Part" { PageType = ListPart; SourceTable = "PM Row";
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } } } }
+  procedure Ping(Key: Code[20]) begin Rec.FilterGroup(2); Rec.SetRange("No.", Key); Rec.FilterGroup(0); if Rec.FindLast() then; CurrPage.Update(false); end; }
+page 62321 "PM Hidden Host" { PageType = Card; SourceTable = "PM Row";
+  layout { area(Content) { field("No."; Rec."No.") { } part(Hid; "PM Hidden Part") { Visible = false; } } }
+  trigger OnAfterGetCurrRecord() var P: Codeunit "PM Probe"; begin CurrPage.Hid.PAGE.Ping(Rec."No."); P.Note('host;'); end; }
+page 62322 "PM Selection Own Update" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
+  procedure UseAfterClose() begin CurrPage.Update(false); end; }
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -885,4 +893,34 @@ fn a_page_procedure_named_like_a_platform_method_leaves_the_other_overload_to_th
         procedure Selection() var C: TestPage \"PM Selection Own\"; R: Record \"PM Row\"; begin
             R.DeleteAll(); R.\"No.\" := 'S1'; R.Insert(); C.OpenEdit(); C.Pick.Invoke(); Check('S1', C.\"No.\".Value); C.Close(); end;"
     ));
+}
+
+// Base Application's Sales Invoice calls `CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId)` in OnAfterGetCurrRecord
+// behind `Visible = false`; that procedure ends in `CurrPage.Update(false)` on the part page, which is created and not opened. 926 Tests-ERM
+// tests failed with "The TestPage is not open." CurrPage.Update on such a part does nothing (assumption hidden-part-update-is-noop).
+#[test]
+fn current_page_update_inside_a_procedure_of_a_hidden_part_does_nothing() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Hidden() var C: TestPage \"PM Hidden Host\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'H1'; R.Insert(); P.Reset(); C.OpenEdit(); C.GoToRecord(R);
+            if StrPos(P.Trace(), 'host;') = 0 then Error('host trigger did not finish'); C.Close(); end;"
+    ));
+}
+
+// A procedure of a `Page` variable that uses `CurrPage` after the page closed is refused, not failed with the TestPage error
+// (Posted Sales Document Lines.CopyLineToDoc after RunModal: 35 Tests-ERM, SCM and SMB tests).
+#[test]
+fn a_page_variable_procedure_using_curr_page_after_the_page_closed_is_refused_not_failed() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Closed() var W: Page \"PM Selection Own Update\"; begin W.RunModal(); W.UseAfterClose(); end;
+        [ModalPageHandler] procedure H(var T: TestPage \"PM Selection Own Update\") begin T.OK().Invoke(); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("not open") && why.contains("not pinned")),
+        "{o:?}"
+    );
 }

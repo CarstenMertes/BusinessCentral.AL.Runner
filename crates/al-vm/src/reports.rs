@@ -106,7 +106,7 @@ impl Session {
             // the same after 1031, ibid.).
             ids::REPORT_LANGUAGE_1 => match args.first() {
                 Some(Value::Integer(n)) if *n > 0 => {
-                    self.curr_report_language = Some(*n);
+                    self.report.curr_report_language = Some(*n);
                     Ok(Value::Null)
                 }
                 Some(Value::Integer(0)) => Err(crate::transactions::al_error_code(
@@ -117,7 +117,7 @@ impl Session {
                     "CurrReport.Language set to {n}: only 0 is pinned as invalid (docs/probes-needed.md)"
                 )),
                 None => Ok(Value::Integer(
-                    self.curr_report_language.unwrap_or(self.global_language),
+                    self.report.curr_report_language.unwrap_or(self.global_language),
                 )),
                 Some(other) => unsupported(format!("CurrReport.Language with {}", other.describe())),
             },
@@ -160,7 +160,7 @@ impl Session {
             // page) and `RunModal` (handlers/TestReportRequestPageUpdateObjectIdContracts.al:
             // RequestPageUpdate_RefreshesTheOtherControls, ObjectIdAndPreview_WithoutTheRequestPage_AndWithRunModal).
             // Execute, SaveAs and the request page's preview action are not pinned.
-            ids::REPORT_PREVIEW_1 => match self.report_preview_pinned.last() {
+            ids::REPORT_PREVIEW_1 => match self.report.report_preview_pinned.last() {
                 Some(true) => Ok(Value::Boolean(false)),
                 _ => unsupported(
                     "Report.Preview outside a report started by Run or RunModal (whether an Execute, a SaveAs or a request page preview is a preview is not pinned)",
@@ -228,14 +228,15 @@ impl Session {
                 // handlers/TestReportRuntimeContracts.al:395-414: Execute keeps the globals, and a
                 // second Execute on the same variable is refused.
                 if self
+                    .report
                     .report_executed
                     .iter()
                     .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)))
                 {
                     return Err(al_error("The object has been run. Use the function CLEAR(Report)."));
                 }
-                self.report_executed.retain(|w| w.strong_count() > 0);
-                self.report_executed.push(Rc::downgrade(&inst));
+                self.report.report_executed.retain(|w| w.strong_count() > 0);
+                self.report.report_executed.push(Rc::downgrade(&inst));
                 if quit {
                     return Ok(Value::Null);
                 }
@@ -528,11 +529,11 @@ impl Session {
         };
         // CurrReport.Quit in OnInitReport stops OnPreReport and the body
         // (handlers/TestReportOnInitReportTiming.al:88-98, QuitInOnInitReport_StopsPreReportAndBody).
-        let saved = self.report_init_depth.replace(self.depth + 1);
-        self.report_quit = false;
+        let saved = self.report.report_init_depth.replace(self.depth + 1);
+        self.report.report_quit = false;
         let r = self.call(object, on_init, inst.clone(), Vec::new());
-        self.report_init_depth = saved;
-        let quit = std::mem::take(&mut self.report_quit);
+        self.report.report_init_depth = saved;
+        let quit = std::mem::take(&mut self.report.report_quit);
         r?;
         Ok(quit)
     }
@@ -543,9 +544,9 @@ impl Session {
     fn report_quit_builtin(&mut self, running: &Inst) -> Result<Value, Signal> {
         let object = running.borrow().object as usize;
         if self.engine.program.objects[object].is_kind(al_ir::ObjKind::Report)
-            && self.report_init_depth == Some(self.depth)
+            && self.report.report_init_depth == Some(self.depth)
         {
-            self.report_quit = true;
+            self.report.report_quit = true;
             // Leaves the trigger; `report_init` sees the flag.
             return Err(Signal::Exit(None));
         }
@@ -560,7 +561,7 @@ impl Session {
             let o = &self.engine.program.objects[object];
             o.is_kind(al_ir::ObjKind::Report) || o.is_kind(al_ir::ObjKind::ReportExtension)
         };
-        let allowed = match self.report_trigger {
+        let allowed = match self.report.report_trigger {
             Some((depth, kind)) if on_report && depth == self.depth => match flow {
                 Flow::Skip | Flow::Break => kind == TrigKind::Row,
                 Flow::Quit => kind != TrigKind::Other,
@@ -572,7 +573,7 @@ impl Session {
                 "CurrReport.{flow:?} outside the triggers where it is pinned (what it does there is not pinned)"
             ));
         }
-        self.report_flow = Some(flow);
+        self.report.report_flow = Some(flow);
         Err(Signal::Exit(None))
     }
 
@@ -584,11 +585,11 @@ impl Session {
         inst: Inst,
         kind: TrigKind,
     ) -> Result<Option<Flow>, Signal> {
-        let saved = self.report_trigger.replace((self.depth + 1, kind));
-        self.report_flow = None;
+        let saved = self.report.report_trigger.replace((self.depth + 1, kind));
+        self.report.report_flow = None;
         let r = self.call(object, routine, inst, Vec::new());
-        self.report_trigger = saved;
-        let flow = self.report_flow.take();
+        self.report.report_trigger = saved;
+        let flow = self.report.report_flow.take();
         r?;
         Ok(flow)
     }
@@ -727,7 +728,7 @@ impl Session {
         if self.in_write_transaction() {
             return Err(crate::transactions::transaction_stopped());
         }
-        if self.try_depth > 0 {
+        if self.tx.try_depth > 0 {
             return unsupported("a report run that enters a transaction world inside a TryFunction (not pinned)");
         }
         Ok(true)
@@ -742,9 +743,9 @@ impl Session {
         // requestpage section opens its page as well (handlers/TestReportRuntimeContracts.al:416-440).
         let shows_page = entry == Entry::Run && window;
         let enters = self.report_enter_world(schema, shows_page)?;
-        self.report_preview_pinned.push(entry == Entry::Run);
+        self.report.report_preview_pinned.push(entry == Entry::Run);
         let ran = self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None));
-        self.report_preview_pinned.pop();
+        self.report.report_preview_pinned.pop();
         ran.map(|_| ())
     }
 
@@ -757,9 +758,9 @@ impl Session {
         body: impl FnOnce(&mut Self) -> Result<T, Signal>,
     ) -> Result<T, Signal> {
         let began_world = self.no_transaction();
-        self.tx_world += 1;
+        self.tx.tx_world += 1;
         let result = body(self);
-        self.tx_world -= 1;
+        self.tx.tx_world -= 1;
         match result {
             Ok(v) => {
                 if (enters || began_world) && self.tx_model != TxModel::AutoRollback {
@@ -787,15 +788,15 @@ impl Session {
     /// (handlers/TestReportRequestPageSaveValues.al:SourceReport_SaveValues_RunRequestPageReturnsTheValueWithoutSavingIt).
     fn report_request_only(&mut self, inst: &Inst, schema: &Schema, seed: Option<&str>) -> Result<String, Signal> {
         let run = self.report_prepare(inst, schema)?;
-        let before = self.saved_values.get(&(schema.object as u32)).cloned();
+        let before = self.pages.saved_values.get(&(schema.object as u32)).cloned();
         let ext: Vec<(usize, Inst)> = run.exts.iter().map(|(i, e)| (*e, i.clone())).collect();
         let closed = self.run_request_page(inst, schema.object, seed, ext, true);
         match before {
             Some(v) => {
-                self.saved_values.insert(schema.object as u32, v);
+                self.pages.saved_values.insert(schema.object as u32, v);
             }
             None => {
-                self.saved_values.remove(&(schema.object as u32));
+                self.pages.saved_values.remove(&(schema.object as u32));
             }
         }
         match closed? {
@@ -885,7 +886,7 @@ impl Session {
     /// (docs/probes-needed.md).
     ///
     /// `save_as` is the parameters string of a `Report.SaveAs(.., Xml, ..)` run: the run writes the
-    /// dataset into `self.dataset` and renders nothing. Returns false when the report was quit.
+    /// dataset into `self.report.dataset` and renders nothing. Returns false when the report was quit.
     fn report_body(
         &mut self,
         inst: &Inst,
@@ -1116,7 +1117,7 @@ impl Session {
                     }
                 }
                 if run.dataset {
-                    self.dataset.as_mut().expect("a SaveAs run has a dataset").end();
+                    self.report.dataset.as_mut().expect("a SaveAs run has a dataset").end();
                 }
             }
             self.ret_used = true;
@@ -1408,26 +1409,27 @@ impl Session {
         if at == 0 {
             // `Execute` refuses a second run on one variable with an error of its own; that this holds
             // for `SaveAs` is not pinned.
-            self.report_executed.retain(|w| w.strong_count() > 0);
+            self.report.report_executed.retain(|w| w.strong_count() > 0);
             if self
+                .report
                 .report_executed
                 .iter()
                 .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)))
             {
                 return unsupported("a second SaveAs on one report variable (not pinned)");
             }
-            self.report_executed.push(Rc::downgrade(&inst));
+            self.report.report_executed.push(Rc::downgrade(&inst));
         }
         if let Some(rr) = record_ref {
             self.report_set_view(&inst, &schema, Some(rr))?;
         }
         let enters = self.report_enter_world(&schema, false)?;
-        let outer = self.dataset.replace(Dataset::default());
+        let outer = self.report.dataset.replace(Dataset::default());
         self.dataset_labels(&schema);
-        self.report_preview_pinned.push(false);
+        self.report.report_preview_pinned.push(false);
         let ran = self.report_in_world(enters, |s| s.report_body(&inst, &schema, false, Some(&parameters)));
-        self.report_preview_pinned.pop();
-        let written = std::mem::replace(&mut self.dataset, outer);
+        self.report.report_preview_pinned.pop();
+        let written = std::mem::replace(&mut self.report.dataset, outer);
         match ran {
             Ok(true) => {
                 let header = self.dataset_header(&schema)?;
@@ -1580,7 +1582,7 @@ impl Session {
             ItemRef::Base(i) => run.report().items.iter().any(|it| it.parent == Some(i)),
             ItemRef::Added(..) => false,
         };
-        self.dataset.as_mut().expect("a SaveAs run has a dataset").begin(
+        self.report.dataset.as_mut().expect("a SaveAs run has a dataset").begin(
             &name,
             identity.as_ref().map(|(t, g)| (*t, g.as_str())),
             &columns,
@@ -1608,7 +1610,7 @@ impl Session {
                     continue;
                 };
                 let label = (format!("{name}Caption"), self.field_caption(&t, pos));
-                let ds = self.dataset.as_mut().expect("a SaveAs run has a dataset");
+                let ds = self.report.dataset.as_mut().expect("a SaveAs run has a dataset");
                 if !ds.labels.contains(&label) {
                     ds.labels.push(label);
                 }
@@ -1673,7 +1675,7 @@ impl Session {
                 ));
             };
             let label = (format!("{name}Caption"), self.field_caption(t, pos));
-            let ds = self.dataset.as_mut().expect("a SaveAs run has a dataset");
+            let ds = self.report.dataset.as_mut().expect("a SaveAs run has a dataset");
             if !ds.labels.contains(&label) {
                 ds.labels.push(label);
             }

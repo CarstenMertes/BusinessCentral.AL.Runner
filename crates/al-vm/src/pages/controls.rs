@@ -261,7 +261,7 @@ impl Session {
                             .as_ref()
                             .map_or(0, |t| t.fields[pos].id as i32)
                     };
-                    self.curr_field_no.push((Rc::downgrade(&rec), number));
+                    self.pages.curr_field_no.push((Rc::downgrade(&rec), number));
                     // A validation through the page runs the table's OnValidate on fresh table
                     // globals, and leaves the page's record with fresh globals (ADR-021 decision 8;
                     // corpus probes TableGlobals_PageFieldValidate_*, TableGlobals_PageRec_ActionGlobalsAreLostAfterPageFieldValidation).
@@ -272,7 +272,7 @@ impl Session {
                         &mut [Value::Integer(pos as i32), parsed.clone()],
                     );
                     self.reset_table_globals(&rec);
-                    self.curr_field_no.pop();
+                    self.pages.curr_field_no.pop();
                     validated?;
                 }
                 ir::Binding::Var(_) | ir::Binding::BaseVar(_) => {

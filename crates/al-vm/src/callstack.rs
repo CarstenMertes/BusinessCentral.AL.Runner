@@ -42,7 +42,7 @@ impl Session {
     /// `SessionInformation.Callstack`: the live frames, innermost first, a backslash after each,
     /// then the runner's. `None` where a frame has no pinned format (the caller refuses).
     pub(crate) fn live_call_stack(&self) -> Option<String> {
-        if self.unpinned_event_depth > 0 {
+        if self.events.unpinned_event_depth > 0 {
             return None;
         }
         let mut out = String::new();

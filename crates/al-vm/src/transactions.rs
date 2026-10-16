@@ -168,13 +168,13 @@ impl Session {
     pub(crate) fn in_write_transaction(&self) -> bool {
         // A write call starts the transaction even when it changes nothing (record/TestProbeRecordRefContracts.al:
         // WriteTransaction_State: a DeleteAll or ModifyAll of no row).
-        self.bg_worker.is_none() && (self.store.has_uncommitted() || self.tx_phase == TX_WRITE)
+        self.pages.bg_worker.is_none() && (self.store.has_uncommitted() || self.tx.tx_phase == TX_WRITE)
     }
 
     /// Whether the running test method has no transaction: `TransactionModel::None` outside
     /// anything that begins a transaction of its own (a `Codeunit.Run`, a page).
     pub(crate) fn no_transaction(&self) -> bool {
-        self.tx_model == TxModel::None && self.tx_world == 0
+        self.tx_model == TxModel::None && self.tx.tx_world == 0
     }
 
     /// `Commit()`. The next transaction's type is Update until a set changes it
@@ -183,24 +183,24 @@ impl Session {
     /// `AutoRollback` refusal outranks `[CommitBehavior(Error)]` (:Test08).
     pub(crate) fn commit_builtin(&mut self) -> Result<(), Signal> {
         self.bg_refuse_transaction_call("Commit")?;
-        if self.commit_behavior == CommitBehavior::Ignore {
+        if self.tx.commit_behavior == CommitBehavior::Ignore {
             return Ok(());
         }
         if self.tx_model == TxModel::AutoRollback {
             return Err(al_error(COMMIT_UNDER_AUTO_ROLLBACK));
         }
-        if self.commit_behavior == CommitBehavior::Error {
+        if self.tx.commit_behavior == CommitBehavior::Error {
             return Err(al_error_code(COMMIT_PROHIBITED, "DB:Ok"));
         }
         // A deferred duplicate-key Insert comes out here (corpus record/TestRecordRuntimeTextsAndViews.al:
         // Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_...: "raised by Commit").
-        if let Some((_, e)) = self.deferred_insert.take() {
+        if let Some((_, e)) = self.tx.deferred_insert.take() {
             return Err(Signal::Error(Box::new(e)));
         }
         self.commit_transaction();
         // The next transaction has not started and its type is Update (see `tx_phase`).
-        self.tx_phase = TX_FRESH;
-        self.transaction_type = 1;
+        self.tx.tx_phase = TX_FRESH;
+        self.tx.transaction_type = 1;
         Ok(())
     }
 
@@ -320,10 +320,10 @@ impl Session {
         // Codeunit.Run begins a transaction of its own, so a write is allowed inside it even
         // under TransactionModel::None, and the transaction ends with the run
         // (codeunit/TestWriteTxTestBoundary.al:Test10_ARunCodeunitMayWriteUnderNone).
-        let began_world = self.tx_model == TxModel::None && self.tx_world == 0;
-        self.tx_world += 1;
+        let began_world = self.tx_model == TxModel::None && self.tx.tx_world == 0;
+        self.tx.tx_world += 1;
         let result = self.call(object, on_run, inst, Vec::new());
-        self.tx_world -= 1;
+        self.tx.tx_world -= 1;
 
         match result {
             Ok(_) if guarded => {
@@ -337,7 +337,7 @@ impl Session {
                 // In a page background worker the run's transaction is the worker's own and holds
                 // no change, so there is nothing to commit: the caller's pending rows stay pending
                 // (handlers/TestPageBgTaskTx_Tests.al:RunPageBackgroundTask_WorkerCommitLeavesCallersRowsUncommitted).
-                if self.bg_worker.is_none() {
+                if self.pages.bg_worker.is_none() {
                     self.commit_transaction();
                 }
                 Ok(Value::Boolean(true))
@@ -354,7 +354,7 @@ impl Session {
                 // error and the call returns false (TestCodeunitRunGuard.al:GuardedRun_TrapsInnerError_ReturnsFalse,
                 // :GuardedRun_InstanceForm_CommitThenError_KeepsCommittedRowOnly).
                 // (Nothing to undo in a page background worker: the caller's rows are not its own.)
-                if self.bg_worker.is_none() {
+                if self.pages.bg_worker.is_none() {
                     self.rollback_transaction();
                 }
                 self.error_finals = None;
@@ -370,7 +370,7 @@ impl Session {
     /// `Insert` is pinned (codeunit/TestWriteTxTestBoundary.al:Test09_NoneTestCannotWriteDirectly);
     /// the other writes are refused as unsupported rather than given a guessed outcome.
     pub(crate) fn gate_write(&self, method: RecordOp) -> Result<(), Signal> {
-        if !self.no_transaction() && !self.request_only_page {
+        if !self.no_transaction() && !self.report.request_only_page {
             return Ok(());
         }
         match method {
@@ -398,9 +398,9 @@ impl Session {
         body: impl FnOnce(&mut Session) -> Result<T, Signal>,
     ) -> Result<T, Signal> {
         let began_world = self.no_transaction();
-        self.tx_world += 1;
+        self.tx.tx_world += 1;
         let r = body(self);
-        self.tx_world -= 1;
+        self.tx.tx_world -= 1;
         if began_world && r.is_ok() {
             self.commit_transaction();
         }

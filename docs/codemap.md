@@ -266,7 +266,10 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `globaltriggers.rs` (225): The events of the platform codeunit `Global Triggers` (2000000002, in the platform `System.app`). Entry: `global_setup` 63, `global_enabled` 142, `global_trigger` 157.
 - `hostvalues.rs` (259): Builtins that answer from the host (ADR-006). Entry: `datetime_of_unix_millis` 26, `Replaced` 142.
 - `interfaces.rs` (106): Interface variables: dispatch through the implementing codeunit. Entry: `interface_test` 32, `interface_target` 54, `enum_implementation` 81.
-- `lib.rs` (1532): The tree-walking interpreter: Engine (immutable program), Session (all mutable state). Entry: `Engine` 46, `Session` 141, `call` 500, `call_inner` 529, `exec` 630, `eval` 791, `read` 1142, `write` 1189, `record` 1385, `finish_call` 1060.
+- `lib.rs` (1070): Engine (immutable program) and Session (mutable state, grouped into the sub-states of `state.rs`), construction and the transaction entry points. The interpreter is in `interp.rs`.
+- `interp.rs` (1210): The tree-walking interpreter: `exec`, `eval`, `read`, `write`, `finish_call`, constants. Entry: `exec_block`, `exec`, `eval`, `read`, `write`.
+- `ctx.rs` (289): `Session` as the context natives call back into: `FormatCtx` and `Ctx` (`record`, `page`, `session_op`, files, module lookups).
+- `state.rs` (117): Sub-states of `Session`: `TxState`, `UiState`, `PageClients`, `EventState`, `CoverageState`, `ReportState` (the .NET host state is `dotnet::DotNetState`).
 - `pages.rs` (432): The page test client (ADR-012): shared helpers, page triggers and events, the handle to a control. The rest is split by topic into `pages/`.
 - `pages/pageops.rs` (538): The `TestPage.*` and `TestField.*` methods. Entry: `page_op`, `test_page_op`.
 - `pages/open.rs` (891): Opening and closing a page, rows loaded on open. Entry: `page_open`, `open_page_as`, `page_close`, `close_with`.

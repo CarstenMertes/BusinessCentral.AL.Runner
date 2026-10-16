@@ -52,7 +52,7 @@ impl Session {
             store: self.store.clone().detached(),
             next_guid: self.next_guid,
             next_row_version: self.next_row_version,
-            committed_row_version: self.committed_row_version,
+            committed_row_version: self.tx.committed_row_version,
             autoinc: self.autoinc.clone(),
             isolated_storage: self.isolated_storage.clone(),
             sequences: self.sequences.clone(),
@@ -74,7 +74,7 @@ impl Session {
         self.store = b.store.clone().attached(provider);
         self.next_guid = b.next_guid;
         self.next_row_version = b.next_row_version;
-        self.committed_row_version = b.committed_row_version;
+        self.tx.committed_row_version = b.committed_row_version;
         self.autoinc = b.autoinc.clone();
         self.isolated_storage = b.isolated_storage.clone();
         self.isolated_committed = b.isolated_storage.clone();

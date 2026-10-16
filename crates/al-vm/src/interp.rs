@@ -232,10 +232,10 @@ impl Session {
                 if profile::ON.load(std::sync::atomic::Ordering::Relaxed) {
                     self.profile_sample();
                 }
-                if self.code_coverage {
+                if self.coverage.code_coverage {
                     self.coverage_hit(*p);
                 }
-                if let Some((counts, touched)) = &mut self.coverage_counts {
+                if let Some((counts, touched)) = &mut self.coverage.coverage_counts {
                     let i = *p as usize;
                     if counts.len() <= i {
                         counts.resize(self.engine.program.positions.len().max(i + 1), 0);
@@ -530,6 +530,7 @@ impl Session {
                         return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
                     };
                     match self
+                        .pages
                         .curr_field_no
                         .iter_mut()
                         .rev()
@@ -538,8 +539,8 @@ impl Session {
                         Some(entry) => entry.1 = n,
                         None => {
                             // Entries of dropped records are dead; forget them before adding one.
-                            self.curr_field_no.retain(|(w, _)| w.strong_count() > 0);
-                            self.curr_field_no.push((Rc::downgrade(&rec), n));
+                            self.pages.curr_field_no.retain(|(w, _)| w.strong_count() > 0);
+                            self.pages.curr_field_no.push((Rc::downgrade(&rec), n));
                         }
                     }
                     return Ok(Value::Null);
@@ -689,7 +690,8 @@ impl Session {
     /// What `CurrFieldNo` reads on `rec`: the field number a TestPage write is validating on this
     /// record, 0 anywhere else (handlers/TestPageCurrFieldNo_Tests.al:36-123).
     pub(crate) fn curr_field_of(&self, rec: &Rc<RefCell<RecordState>>) -> i32 {
-        self.curr_field_no
+        self.pages
+            .curr_field_no
             .iter()
             .rev()
             .find(|(w, _)| std::ptr::eq(w.as_ptr(), Rc::as_ptr(rec)))

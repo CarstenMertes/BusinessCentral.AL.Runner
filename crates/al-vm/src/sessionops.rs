@@ -234,29 +234,29 @@ impl Session {
             // zero (session/TestSystemExtended.al:635-659, TestBCDatabaseContracts.al:100-117).
             // What the database holds committed: a row inserted in the open transaction does not count yet
             // (record/TestProbeRecordRefContracts.al:LastUsedRowVersion_StartsAndGrows, `grows_after_insert` No).
-            ids::DATABASE_LASTUSEDROWVERSION_1 => return Ok(Value::BigInteger(self.committed_row_version.max(1))),
+            ids::DATABASE_LASTUSEDROWVERSION_1 => return Ok(Value::BigInteger(self.tx.committed_row_version.max(1))),
             // Set when given a value, read otherwise; the default is the documented one
             // (docs/probes-needed.md). session/TestSystemExtended.al:608-630 only calls it.
             ids::DATABASE_LOCKTIMEOUT_1 => {
                 match args.first() {
                     None | Some(Value::Null) => {}
-                    Some(Value::Boolean(b)) => self.lock_timeout = *b,
+                    Some(Value::Boolean(b)) => self.tx.lock_timeout = *b,
                     Some(other) => return unsupported(format!("LockTimeout with {}", other.describe())),
                 }
-                return Ok(Value::Boolean(self.lock_timeout));
+                return Ok(Value::Boolean(self.tx.lock_timeout));
             }
             // Set when given a value, read otherwise. Only "positive" is pinned (corpus types/PVLabelSplitForeach.al
             // on the staging branch: positive, 10 ms on the probe tier, "the exact default is a server setting").
             ids::DATABASE_LOCKTIMEOUTDURATION_1 => {
                 match args.first() {
                     None | Some(Value::Null) => {}
-                    Some(Value::Duration(d)) => self.lock_timeout_duration = *d,
-                    Some(Value::Integer(i)) => self.lock_timeout_duration = i64::from(*i),
+                    Some(Value::Duration(d)) => self.tx.lock_timeout_duration = *d,
+                    Some(Value::Integer(i)) => self.tx.lock_timeout_duration = i64::from(*i),
                     Some(other) => return unsupported(format!("LockTimeoutDuration with {}", other.describe())),
                 }
                 // The catalog types the result as an Integer (a Duration in AL); the id is pinned (pinned_ids.tsv).
                 return Ok(Value::Integer(
-                    i32::try_from(self.lock_timeout_duration).unwrap_or(i32::MAX),
+                    i32::try_from(self.tx.lock_timeout_duration).unwrap_or(i32::MAX),
                 ));
             }
             // The type of the transaction (session/ProbeSystemEnumMembers.al:60-161, BC 27.5;
@@ -274,27 +274,27 @@ impl Session {
                     .expect("a system option")
                     .into();
                 let new = match args.first() {
-                    None | Some(Value::Null) => return Ok(Value::Option(self.transaction_type, members)),
+                    None | Some(Value::Null) => return Ok(Value::Option(self.tx.transaction_type, members)),
                     Some(Value::Option(t, _)) => *t,
                     Some(other) => return unsupported(format!("CurrentTransactionType set to {}", other.describe())),
                 };
                 let (update, snapshot, report) = (1, 2, 4);
-                match self.tx_phase {
-                    TX_FRESH => self.transaction_type = new,
-                    TX_WRITE if new == self.transaction_type => {}
+                match self.tx.tx_phase {
+                    TX_FRESH => self.tx.transaction_type = new,
+                    TX_WRITE if new == self.tx.transaction_type => {}
                     TX_WRITE if new == snapshot || new == report => {}
                     TX_WRITE if new == update => {
                         let name = |t: i32| members.get(t as usize).cloned().unwrap_or_default();
                         return Err(crate::transactions::al_error_code(
                             &format!(
                                 "The transaction type cannot be changed after a transaction has started.\r\\\r\\A transaction starts when the first database operation, such as FIND, NEXT, INSERT, DELETE, MODIFY, SUM, or COUNT, is run.\r\\\r\\The error occurred because the transaction type was changed from {} to {}.",
-                                name(self.transaction_type),
+                                name(self.tx.transaction_type),
                                 name(new)
                             ),
                             "DB:CannotChangeTransactionType",
                         ));
                     }
-                    TX_READ if new == report => self.transaction_type = update,
+                    TX_READ if new == report => self.tx.transaction_type = update,
                     _ => {
                         return unsupported(format!(
                             "Database.CurrentTransactionType set to {} after a database call (not pinned)",
@@ -311,9 +311,9 @@ impl Session {
             // answers whether it is recording (codeunit/TestCodeCoverageStartStop.al:30-102). The
             // MultiSession flag changes nothing observable here.
             return match args.first() {
-                None => Ok(Value::Boolean(self.code_coverage)),
+                None => Ok(Value::Boolean(self.coverage.code_coverage)),
                 Some(Value::Boolean(on)) => {
-                    self.code_coverage = *on;
+                    self.coverage.code_coverage = *on;
                     Ok(Value::Boolean(*on))
                 }
                 Some(other) => unsupported(format!("CodeCoverageLog with {}", other.describe())),

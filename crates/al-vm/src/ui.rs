@@ -209,7 +209,7 @@ impl Session {
     /// Starts a test method: from here until `end_ui_scope`, UI calls go to
     /// `handlers`, and any other UI call is "Unhandled UI".
     pub fn begin_ui_scope(&mut self, handlers: Vec<UiHandler>) {
-        self.ui = Some(UiScope {
+        self.ui_state.scope = Some(UiScope {
             handlers,
             in_handler: false,
         });
@@ -218,7 +218,8 @@ impl Session {
     /// Ends the test method; returns the names of the declared handlers that
     /// never fired.
     pub fn end_ui_scope(&mut self) -> Vec<String> {
-        self.ui
+        self.ui_state
+            .scope
             .take()
             .map(|s| s.handlers.into_iter().filter(|h| !h.fired).map(|h| h.name).collect())
             .unwrap_or_default()
@@ -237,7 +238,7 @@ impl Session {
         shown: &str,
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
-        let Some(scope) = self.ui.as_mut() else {
+        let Some(scope) = self.ui_state.scope.as_mut() else {
             return Err(Signal::Unsupported(format!(
                 "{} outside a test method (what the runner does then is not pinned)",
                 kind.label()
@@ -262,7 +263,7 @@ impl Session {
         let (object, routine, instance) = (h.object, h.routine, h.instance.clone());
         scope.in_handler = true;
         let result = self.call(object, routine, instance, args);
-        if let Some(scope) = self.ui.as_mut() {
+        if let Some(scope) = self.ui_state.scope.as_mut() {
             scope.in_handler = false;
         }
         // An error raised inside a Message, Confirm or StrMenu handler comes out of the dialog call
@@ -282,7 +283,8 @@ impl Session {
 
     /// Whether an `[HttpClientHandler]` is bound to the running test.
     pub(crate) fn has_http_handler(&self) -> bool {
-        self.ui
+        self.ui_state
+            .scope
             .as_ref()
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::HttpClient))
     }
@@ -295,7 +297,8 @@ impl Session {
         response: Value,
     ) -> Result<Option<(Value, Value)>, Signal> {
         let bound = self
-            .ui
+            .ui_state
+            .scope
             .as_ref()
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::HttpClient));
         if !bound {
@@ -312,7 +315,8 @@ impl Session {
     /// pinned, so that is refused. What a handler's `false` means is not pinned either.
     pub(crate) fn ui_session_settings(&mut self, settings: Value) -> Result<Option<Value>, Signal> {
         let bound = self
-            .ui
+            .ui_state
+            .scope
             .as_ref()
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::SessionSettings));
         if !bound {
@@ -339,11 +343,12 @@ impl Session {
     /// (handlers/TestNotificationSendRecallContracts.al:59-93, BC 27.5). Returns the notification
     /// as the handler left it.
     pub(crate) fn ui_send_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<Option<Value>, Signal> {
-        if !self.sent_notifications.contains(&id) {
-            self.sent_notifications.push(id);
+        if !self.ui_state.sent_notifications.contains(&id) {
+            self.ui_state.sent_notifications.push(id);
         }
         let bound = self
-            .ui
+            .ui_state
+            .scope
             .as_ref()
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::SendNotification));
         if !bound {
@@ -359,11 +364,12 @@ impl Session {
     /// (handlers/TestNotificationSendRecallContracts.al:95-131, handlers/ProbeNotificationRecallEdges.al,
     /// BC 27.5).
     pub(crate) fn ui_recall_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<bool, Signal> {
-        if !self.sent_notifications.contains(&id) {
+        if !self.ui_state.sent_notifications.contains(&id) {
             return Ok(false);
         }
         let bound = self
-            .ui
+            .ui_state
+            .scope
             .as_ref()
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == UiKind::RecallNotification));
         if bound {
@@ -394,7 +400,7 @@ impl Session {
         page: u32,
     ) -> Result<(usize, usize, Rc<RefCell<Instance>>), Signal> {
         let shown_id = self.object_id_of(page);
-        let Some(scope) = self.ui.as_mut() else {
+        let Some(scope) = self.ui_state.scope.as_mut() else {
             return Err(Signal::Unsupported(format!(
                 "{} outside a test method (what the runner does then is not pinned)",
                 kind.label()
@@ -420,7 +426,8 @@ impl Session {
     /// The bound `Page`-typed `[ModalPageHandler]` of `page`, marked as used, when the test bound one.
     pub(crate) fn take_typed_modal_handler(&mut self, page: u32) -> Option<BoundHandler> {
         let h = self
-            .ui
+            .ui_state
+            .scope
             .as_mut()?
             .handlers
             .iter_mut()
@@ -441,7 +448,8 @@ impl Session {
     }
 
     pub(crate) fn has_page_handler(&self, kind: UiKind, page: u32) -> bool {
-        self.ui
+        self.ui_state
+            .scope
             .as_ref()
             .is_some_and(|s| s.handlers.iter().any(|h| h.kind == kind && h.page == Some(page)))
     }
@@ -450,7 +458,7 @@ impl Session {
     /// none. A `RunObject` action looks the handler up after the page opened and treats a missing
     /// one differently from `Page.Run` (corpus handlers/TestPageActionRunObjectNoHandler_Tests.al).
     pub(crate) fn try_bind_page_handler(&mut self, kind: UiKind, page: u32) -> Result<Option<BoundHandler>, Signal> {
-        let Some(scope) = self.ui.as_mut() else {
+        let Some(scope) = self.ui_state.scope.as_mut() else {
             return Err(Signal::Unsupported(format!(
                 "{} outside a test method (what the runner does then is not pinned)",
                 kind.label()
@@ -478,7 +486,7 @@ impl Session {
     }
 
     pub(crate) fn ui_message(&mut self, text: String) -> Result<(), Signal> {
-        if self.ui.is_none() && self.scratch_messages.is_some() {
+        if self.ui_state.scope.is_none() && self.scratch_messages.is_some() {
             self.cap_message(&text);
             if let Some(log) = self.scratch_messages.as_mut() {
                 log.push(text);

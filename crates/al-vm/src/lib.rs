@@ -12,6 +12,8 @@ use std::rc::Rc;
 use std::sync::Arc;
 
 mod autoinc;
+mod state;
+pub(crate) use state::*;
 mod baseline;
 mod capture;
 mod ctx;
@@ -255,15 +257,6 @@ pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
     depth: usize,
-    /// Page handler functions running right now (`[PageHandler]`, `[ModalPageHandler]`).
-    pub(crate) page_handler_depth: usize,
-    /// `CodeCoverageLog` is recording.
-    pub(crate) code_coverage: bool,
-    /// `alrunner test --coverage`: runs per statement position (`Program::positions`) since the last
-    /// [`Session::take_coverage`]. `None` when coverage is off, which costs one branch per statement.
-    coverage_counts: Option<(Vec<u32>, Vec<u32>)>,
-    /// What recording noted (`platform/coverage.rs`).
-    pub(crate) recorder: platform::coverage::Recorder,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
     pub(crate) frames: Vec<usize>,
@@ -273,12 +266,6 @@ pub struct Session {
     /// The test runner's frames below a test, in `Callstack` form (`callstack.rs`); empty
     /// outside a test run.
     pub(crate) runner_frames: String,
-    /// `publish` is about to raise its event: the next `raise` has an event frame on the stack.
-    pub(crate) publish_frame: bool,
-    /// Events being raised that have no publisher routine (table, page and Global Triggers
-    /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
-    /// live call stack is not answered while one runs.
-    pub(crate) unpinned_event_depth: usize,
     /// `faultsite.rs`: whether to record where errors and refusals leave from, and the last one.
     fault_trace: bool,
     fault_site: Vec<faultsite::FaultFrame>,
@@ -297,8 +284,6 @@ pub struct Session {
     /// The one instance of each `SingleInstance = true` codeunit in this session.
     singletons: std::collections::HashMap<usize, Rc<RefCell<Instance>>>,
     pub(crate) store: al_data::memory::MemStore,
-    /// What the subscribers of `Global Triggers` answered, per table object (globaltriggers.rs).
-    pub(crate) global_setups: std::collections::HashMap<usize, globaltriggers::GlobalSetup>,
     /// Private tables of temporary records, by temp id.
     pub(crate) temps: std::collections::HashMap<u64, al_data::memory::MemStore>,
     next_temp: u64,
@@ -307,8 +292,6 @@ pub struct Session {
     pub(crate) next_guid: u64,
     /// The host's seed, mixed into every Guid the session makes (see [`Session::fresh_guid`]).
     guid_seed: i32,
-    /// Ids of the notifications a `[SendNotificationHandler]` took in this session.
-    pub(crate) sent_notifications: Vec<[u8; 16]>,
     /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
     pub(crate) rng: al_host::random::NetRandom,
     /// How many `Randomize()` calls without a seed the session has seen.
@@ -325,49 +308,16 @@ pub struct Session {
     /// Validate, which nested Validates of the same record see as xRec (corpus
     /// record/TestXRecContracts.al:133).
     pub(crate) validating: Vec<(usize, Vec<Value>)>,
-    /// Try functions on the call stack (Truncate is refused inside them).
-    pub(crate) try_depth: usize,
     pub(crate) cx: al_data::AccessContext,
     /// The tables that held a row when the install baseline was captured (none without one).
     pub(crate) baseline_rows: std::collections::BTreeSet<u32>,
     /// Whether the builtin being called has its result used (ADR-011 `ret_used`).
     pub(crate) ret_used: bool,
-    /// Manual event subscriptions made by `BindSubscription`.
-    pub(crate) bindings: Vec<dispatch::Binding>,
-    /// What the Event Subscription table reports (calls handled, bound instances).
-    pub(crate) event_stats: Rc<platform::EventStats>,
     /// The parameters of the routine that just failed with an error, as it left them:
     /// the caller writes its `var` arguments back before it handles the error.
     pub(crate) error_finals: Option<Vec<Value>>,
-    /// The highest rowversion handed out when the last `Commit` ran: rows at or below it are durable.
-    pub(crate) committed_row_version: i64,
-    /// Handler functions bound to the running test method (None outside one).
-    pub(crate) ui: Option<ui::UiScope>,
-    /// The TestPage variable whose `Trap()` waits for the next plain `Page.Run` (ADR-012).
-    /// The variable-bound control values each SaveValues page stored when it closed.
-    pub(crate) saved_values: std::collections::HashMap<u32, Vec<(usize, Value)>>,
-    pub(crate) trap: Option<Rc<RefCell<al_builtins::value::PageState>>>,
-    /// A page background task worker is running: its parameters and the result it set.
-    pub(crate) bg_worker: Option<pages::BgWorker>,
-    /// The xRec fields the next `Modify` hands the table's triggers instead of the stored row: a
-    /// page saving a row passes its own xRec (corpus
-    /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).
-    pub(crate) page_xrec: Option<Vec<Value>>,
-    /// A duplicate-key Insert into a table without a Blob field does not fail where it is
-    /// called: the table (object index) and the error come out at the next access to the table
-    /// or at Commit (corpus record/TestRecordRuntimeTextsAndViews.al:
-    /// Record_Insert_DuplicateKey_WithoutBlobField_IsDeferred_AndSurfacesAtTheNextAccess).
-    pub(crate) deferred_insert: Option<(usize, AlError)>,
-    /// Set while the page client or an XmlPort import writes a record: their duplicate-key
-    /// errors are raised at once (their own tests pin it), not deferred like an AL `Insert`.
-    pub(crate) immediate_errors: bool,
     /// The transaction model of the running test method (set by the test runner).
     pub tx_model: TxModel,
-    /// Nesting depth of constructs that begin a transaction of their own (`Codeunit.Run`,
-    /// a TestPage operation); a `TransactionModel::None` test may write inside them.
-    pub(crate) tx_world: usize,
-    /// The `[CommitBehavior]` of the innermost procedure that declares one.
-    pub(crate) commit_behavior: transactions::CommitBehavior,
     /// Whether a test codeunit is executing (a test codeunit cannot be run from one).
     pub in_test_codeunit: bool,
     /// The `TestHttpRequestPolicy` of the running test codeunit (`None`: the property is absent).
@@ -393,24 +343,9 @@ pub struct Session {
     /// The `[ErrorBehavior(Collect)]` scopes on the call stack and the errors they hold
     /// (see `errorcollect.rs`).
     pub(crate) error_scopes: errorcollect::Scopes,
-    /// Records whose `CurrFieldNo` is set (a TestPage write validating a field, or an assignment in table
-    /// code), with the field's number: what `CurrFieldNo` reads. Held weakly: the entry keeps the record's
-    /// allocation, so a later record cannot get the same address and inherit the number.
-    pub(crate) curr_field_no: Vec<(std::rc::Weak<RefCell<RecordState>>, i32)>,
     /// Tables with an ad-hoc key appended, by (table object, key fields): see `Session::table`.
     pub(crate) initial_cache: std::collections::HashMap<usize, Option<Vec<Value>>>,
     pub(crate) adhoc_tables: RefCell<AdhocTables>,
-    /// `Database.LockTimeout`: whether a lock wait ends in a timeout error.
-    pub(crate) lock_timeout: bool,
-    /// `Database.LockTimeoutDuration` in milliseconds.
-    pub(crate) lock_timeout_duration: i64,
-    /// `Database.CurrentTransactionType`: a member index of the TransactionType option; a test
-    /// method starts at 0, UpdateNoLocks (`start_test_method`).
-    pub(crate) transaction_type: i32,
-    /// How far the transaction has started since the test method began or the last `Commit()`:
-    /// `TX_FRESH` (nothing yet), `TX_READ` (a read call) or `TX_WRITE` (a write call, also a DeleteAll that
-    /// finds no row). `CurrentTransactionType` depends on it (`sessionops.rs`).
-    pub(crate) tx_phase: u8,
     /// Imported media objects and media sets (the platform tables behind Media fields).
     pub(crate) media: al_builtins::media::MediaStore,
     /// The host session behind `DotNet` values; ends with the session (ADR-014 section 6).
@@ -433,29 +368,18 @@ pub struct Session {
     pub(crate) work_date: Option<i32>,
     /// The language `GlobalLanguage(Id)` set.
     pub(crate) global_language: i32,
-    /// `CurrReport.Language` of the running report (`reports.rs`); `None` until a trigger sets it.
-    pub(crate) curr_report_language: Option<i32>,
-    /// The call depth of the `OnInitReport` trigger being run, and whether it called
-    /// `CurrReport.Quit` (al-vm reports.rs).
-    pub(crate) report_init_depth: Option<usize>,
-    pub(crate) report_quit: bool,
-    /// The call depth of the report trigger being run and what it may ask of the report
-    /// (`CurrReport.Skip`, `Break`, `Quit`), and the request it made (al-vm reports.rs).
-    pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
-    pub(crate) report_flow: Option<crate::reports::Flow>,
-    /// The request page of a `RunRequestPage` is open: a table write in its handler finds no transaction
-    /// (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler).
-    pub(crate) request_only_page: bool,
-    /// The report instances that `Execute` has run: a second `Execute` on one is refused.
-    /// A page opened for a `RunObject` action looks its handler up without failing when there is
-    /// none (al-vm pages/runobject.rs).
-    pub(crate) lenient_bind: bool,
-    pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
-    /// For each report body running, innermost last: whether `CurrReport.Preview()` is pinned to be
-    /// false for it (it was started by `Run` or `RunModal`).
-    pub(crate) report_preview_pinned: Vec<bool>,
-    /// The dataset a `Report.SaveAs(.., Xml, ..)` run is writing (al-vm reports.rs).
-    pub(crate) dataset: Option<crate::dataset::Dataset>,
+    /// Transactions: the depth of transaction-beginning constructs, and where the open transaction stands.
+    pub(crate) tx: TxState,
+    /// Handler functions and notifications of the running test method.
+    pub(crate) ui_state: UiState,
+    /// What the TestPage client keeps between calls.
+    pub(crate) pages: PageClients,
+    /// Event subscriptions and what the Event Subscription table reports.
+    pub(crate) events: EventState,
+    /// Code coverage recording.
+    pub(crate) coverage: CoverageState,
+    /// The report being run: language, trigger flow, dataset.
+    pub(crate) report: ReportState,
 }
 
 /// Nested AL calls allowed before the session gives up. The corpus pins that a chain of 990 calls
@@ -500,7 +424,6 @@ impl Session {
         }
         let mut session = Session {
             global_language: host.identity.global_language(),
-            curr_report_language: None,
             host,
             waited_ms: 0,
             encrypted: Default::default(),
@@ -512,39 +435,27 @@ impl Session {
             depth: 0,
             singletons: Default::default(),
             store,
-            global_setups: Default::default(),
             temps: Default::default(),
             next_temp: 0,
             temp_release: Default::default(),
             next_guid: 0,
             guid_seed: random_seed,
-            sent_notifications: Vec::new(),
             rng: al_host::random::NetRandom::new(random_seed),
             unseeded_randomizes: 0,
             next_row_version: 0,
             autoinc: Default::default(),
             truncate_undo: Default::default(),
             validating: Vec::new(),
-            try_depth: 0,
             cx: al_data::AccessContext {
                 company: company.into(),
                 user: user.into(),
             },
             baseline_rows: Default::default(),
             ret_used: true,
-            bindings: Vec::new(),
-            event_stats,
             error_finals: None,
-            committed_row_version: 0,
-            page_handler_depth: 0,
-            code_coverage: false,
-            coverage_counts: None,
-            recorder: Default::default(),
             frames: Vec::new(),
             call_stack: Vec::new(),
             runner_frames: String::new(),
-            publish_frame: false,
-            unpinned_event_depth: 0,
             fault_trace: false,
             fault_site: Vec::new(),
             isolated_storage: Default::default(),
@@ -553,16 +464,7 @@ impl Session {
             sequences: Default::default(),
             table_connections: Default::default(),
             default_table_connection: Default::default(),
-            ui: None,
-            saved_values: std::collections::HashMap::new(),
-            trap: None,
-            bg_worker: None,
-            page_xrec: None,
-            deferred_insert: None,
-            immediate_errors: false,
             tx_model: TxModel::default(),
-            tx_world: 0,
-            commit_behavior: Default::default(),
             in_test_codeunit: false,
             http_policy: None,
             scratch_messages: None,
@@ -572,25 +474,59 @@ impl Session {
             stop: Arc::new(std::sync::atomic::AtomicBool::new(false)),
             commits: 0,
             error_scopes: Default::default(),
-            curr_field_no: Vec::new(),
             initial_cache: Default::default(),
             adhoc_tables: Default::default(),
-            lock_timeout: true,
-            lock_timeout_duration: 10,
-            transaction_type: 0,
-            tx_phase: crate::transactions::TX_FRESH,
             media,
             dotnet: Default::default(),
             application_areas: String::new(),
-            report_init_depth: None,
-            report_quit: false,
-            report_trigger: None,
-            report_flow: None,
-            request_only_page: false,
-            report_executed: Vec::new(),
-            report_preview_pinned: Vec::new(),
-            dataset: None,
-            lenient_bind: false,
+            tx: TxState {
+                tx_world: 0,
+                commit_behavior: Default::default(),
+                tx_phase: crate::transactions::TX_FRESH,
+                transaction_type: 0,
+                lock_timeout: true,
+                lock_timeout_duration: 10,
+                committed_row_version: 0,
+                deferred_insert: None,
+                immediate_errors: false,
+                try_depth: 0,
+            },
+            ui_state: UiState {
+                scope: None,
+                page_handler_depth: 0,
+                sent_notifications: Vec::new(),
+            },
+            pages: PageClients {
+                saved_values: std::collections::HashMap::new(),
+                trap: None,
+                bg_worker: None,
+                page_xrec: None,
+                curr_field_no: Vec::new(),
+                lenient_bind: false,
+            },
+            events: EventState {
+                bindings: Vec::new(),
+                event_stats,
+                publish_frame: false,
+                unpinned_event_depth: 0,
+                global_setups: Default::default(),
+            },
+            coverage: CoverageState {
+                code_coverage: false,
+                coverage_counts: None,
+                recorder: Default::default(),
+            },
+            report: ReportState {
+                curr_report_language: None,
+                report_init_depth: None,
+                report_quit: false,
+                report_trigger: None,
+                report_flow: None,
+                request_only_page: false,
+                report_executed: Vec::new(),
+                report_preview_pinned: Vec::new(),
+                dataset: None,
+            },
         };
         session.seed_platform_rows(&ident);
         session
@@ -600,18 +536,18 @@ impl Session {
     /// transaction type back at UpdateNoLocks.
     pub fn start_test_method(&mut self) {
         self.application_areas.clear();
-        self.transaction_type = 0;
-        self.tx_phase = crate::transactions::TX_FRESH;
+        self.tx.transaction_type = 0;
+        self.tx.tx_phase = crate::transactions::TX_FRESH;
     }
 
     /// Makes every change so far durable (and a Truncate of this transaction final).
     pub fn commit_transaction(&mut self) {
-        self.deferred_insert = None;
+        self.tx.deferred_insert = None;
         al_data::Store::commit(&mut self.store);
         self.commits += 1;
         self.truncate_undo.clear();
         // Rows at or below this rowversion are durable: a buffer older than one of them is stale.
-        self.committed_row_version = self.next_row_version;
+        self.tx.committed_row_version = self.next_row_version;
         self.isolated_committed = self.isolated_storage.clone();
         self.end_write_phase();
     }
@@ -620,8 +556,8 @@ impl Session {
     /// it with a write that changes nothing; codeunit/TestWriteTxTestBoundary.al:Test10 to Test13d end it with the run or
     /// the page operation, and a rollback ends it too).
     fn end_write_phase(&mut self) {
-        if self.tx_phase == crate::transactions::TX_WRITE {
-            self.tx_phase = crate::transactions::TX_FRESH;
+        if self.tx.tx_phase == crate::transactions::TX_WRITE {
+            self.tx.tx_phase = crate::transactions::TX_FRESH;
         }
     }
 
@@ -629,7 +565,7 @@ impl Session {
     /// part of the data and stay (corpus record/TestAutoIncrementExplicitKey.al:154), except
     /// those a Truncate of this transaction changed.
     pub fn rollback_transaction(&mut self) {
-        self.deferred_insert = None;
+        self.tx.deferred_insert = None;
         al_data::Store::rollback(&mut self.store);
         self.isolated_storage = self.isolated_committed.clone();
         // The code coverage tables keep their rows through a rollback (codeunit/PWCodeCoverageRows.al:
@@ -922,7 +858,7 @@ impl Session {
         let is_try = facts.is_try;
         // [CommitBehavior] governs the whole dynamic extent of the procedure and ends when it
         // returns (error-handling/TestCommitBehaviorAttribute.al:CommitBehavior_Ignore_ScopeIsPoppedOnReturn).
-        let saved_commit_behavior = self.commit_behavior;
+        let saved_commit_behavior = self.tx.commit_behavior;
         let collecting = if facts.odd_attributes {
             // An attribute the runtime does not understand: the scan that reports it.
             for a in r
@@ -931,7 +867,7 @@ impl Session {
                 .filter(|a| a.name.eq_ignore_ascii_case("CommitBehavior"))
             {
                 match transactions::CommitBehavior::from_attribute(&a.text) {
-                    Some(b) => self.commit_behavior = b,
+                    Some(b) => self.tx.commit_behavior = b,
                     None => {
                         return Err(Signal::Unsupported(format!(
                             "{} (only Ignore and Error are pinned)",
@@ -943,19 +879,19 @@ impl Session {
             errorcollect::declares_collect(&r.attributes)?
         } else {
             if let Some(b) = facts.commit_behavior {
-                self.commit_behavior = b;
+                self.tx.commit_behavior = b;
             }
             facts.collects
         };
         if collecting {
             self.error_scopes.open();
         }
-        self.try_depth += usize::from(is_try);
+        self.tx.try_depth += usize::from(is_try);
         // A [TryFunction] takes a platform scope of its own on top of its frame (session/
         // TestProbeSessionMiscContracts.al:CallDepth_1000 stops at 988 frames below test, TryDepth and TryDepthF, while
         // codeunit/TestCodeunitRecursionDepth.al:RecursionDepth_JustInsideTheCeiling_Completes runs 991 frames under a test).
         self.depth += usize::from(is_try);
-        let test_scope = if self.code_coverage {
+        let test_scope = if self.coverage.code_coverage {
             self.coverage_enter(object, routine)
         } else {
             None
@@ -992,9 +928,9 @@ impl Session {
         if collecting {
             outcome = self.close_error_scope(outcome);
         }
-        self.try_depth -= usize::from(is_try);
+        self.tx.try_depth -= usize::from(is_try);
         self.depth -= usize::from(is_try);
-        self.commit_behavior = saved_commit_behavior;
+        self.tx.commit_behavior = saved_commit_behavior;
         self.end_trap_scope(&frame, r.params, &r.by_var);
         let ret = match outcome {
             Ok(()) => None,
@@ -1027,12 +963,12 @@ impl Session {
 
     /// Starts counting how often each statement runs (`alrunner test --coverage`).
     pub fn enable_coverage(&mut self) {
-        self.coverage_counts = Some((Vec::new(), Vec::new()));
+        self.coverage.coverage_counts = Some((Vec::new(), Vec::new()));
     }
 
     /// The statements that ran since the last call, as (position id, runs); counting starts again.
     pub fn take_coverage(&mut self) -> Vec<(u32, u32)> {
-        let Some((counts, touched)) = &mut self.coverage_counts else {
+        let Some((counts, touched)) = &mut self.coverage.coverage_counts else {
             return Vec::new();
         };
         let mut out: Vec<(u32, u32)> = touched

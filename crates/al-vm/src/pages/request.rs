@@ -108,14 +108,14 @@ impl Session {
         else {
             return unsupported("a request page without a handler");
         };
-        self.page_handler_depth += 1;
+        self.ui_state.page_handler_depth += 1;
         // The handler of a `RunRequestPage` finds no transaction, while the page's own triggers write as ever
         // (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler; handlers/TestReportInstanceRunReqPage.al
         // writes a log row from OnOpenPage).
-        let outer = std::mem::replace(&mut self.request_only_page, want_parameters);
+        let outer = std::mem::replace(&mut self.report.request_only_page, want_parameters);
         let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
-        self.request_only_page = outer;
-        self.page_handler_depth -= 1;
+        self.report.request_only_page = outer;
+        self.ui_state.page_handler_depth -= 1;
         if let Err(e) = handled {
             self.mark_closed(&st);
             return Err(e);
@@ -180,9 +180,9 @@ impl Session {
                 .collect()
         };
         let run = self.report_run_for(object, &inst, ext, true);
-        let outer = self.dataset.replace(crate::dataset::Dataset::default());
+        let outer = self.report.dataset.replace(crate::dataset::Dataset::default());
         let ran = self.report_after_page(&run, &schema);
-        let written = std::mem::replace(&mut self.dataset, outer);
+        let written = std::mem::replace(&mut self.report.dataset, outer);
         match ran {
             Ok(true) => {}
             Ok(false) => return unsupported("CurrReport.Quit during a SaveAsXml (not pinned)"),

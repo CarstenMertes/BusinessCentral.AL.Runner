@@ -309,7 +309,7 @@ impl Session {
                     Err(crate::transactions::transaction_stopped())
                 };
             }
-            if self.try_depth > 0 {
+            if self.tx.try_depth > 0 {
                 return unsupported("guarded XmlPort.Import inside a TryFunction (not pinned)");
             }
         }
@@ -317,9 +317,9 @@ impl Session {
         // TransactionModel::None, and the transaction ends with the import
         // (codeunit/TestWriteTxTestBoundary.al:WriteTx_Test12_AnXmlPortImportMayWriteUnderNone).
         let began_world = self.no_transaction();
-        self.tx_world += 1;
+        self.tx.tx_world += 1;
         let result = self.xp_import_document(inst, schema);
-        self.tx_world -= 1;
+        self.tx.tx_world -= 1;
         match result {
             Ok(()) if guarded => {
                 // The import's own transaction ends with it, so a second guarded import is not

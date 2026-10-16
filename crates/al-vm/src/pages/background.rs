@@ -103,13 +103,13 @@ impl Session {
         else {
             return Ok(Ok(V::Dictionary(Default::default())));
         };
-        if self.bg_worker.is_some() {
+        if self.pages.bg_worker.is_some() {
             return unsupported("a background task started from a background task");
         }
-        self.bg_worker = Some(BgWorker { params, result: None });
+        self.pages.bg_worker = Some(BgWorker { params, result: None });
         let inst = self.instance(object);
         let ran = self.call(object, on_run, inst, Vec::new());
-        let worker = self.bg_worker.take().expect("the worker is still set");
+        let worker = self.pages.bg_worker.take().expect("the worker is still set");
         match ran {
             Ok(_) => Ok(Ok(worker.result.unwrap_or_else(|| V::Dictionary(Default::default())))),
             Err(Signal::Error(e)) => Ok(Err(*e)),
@@ -149,7 +149,7 @@ impl Session {
 
     /// `Page.GetBackgroundParameters()` and `Page.SetBackgroundTaskResult(Results)`, called by a worker.
     pub(super) fn bg_static(&mut self, method: PageOp, args: &mut [Value]) -> Result<Value, Signal> {
-        let Some(worker) = self.bg_worker.as_mut() else {
+        let Some(worker) = self.pages.bg_worker.as_mut() else {
             return unsupported(format!("{method} outside a page background task (not pinned)"));
         };
         if method == PageOp::PageGetBackgroundParameters {
@@ -238,7 +238,7 @@ impl Session {
     /// three pinned writes have a text (corpus handlers/TestPageBgTask_Tests.al, the three
     /// `..._RefusedByReadOnlySession` arms).
     pub(crate) fn bg_refuse_write(&self, table: usize, method: &str) -> Result<(), Signal> {
-        if self.bg_worker.is_none() {
+        if self.pages.bg_worker.is_none() {
             return Ok(());
         }
         if !matches!(method, "Insert" | "Modify" | "Rename") {
@@ -264,7 +264,7 @@ impl Session {
     /// The calls inside a worker whose transaction effect is not pinned: a direct `Commit` and an
     /// unguarded `Codeunit.Run` (the corpus pins the guarded run only).
     pub(crate) fn bg_refuse_transaction_call(&self, what: &str) -> Result<(), Signal> {
-        if self.bg_worker.is_some() {
+        if self.pages.bg_worker.is_some() {
             return unsupported(format!(
                 "{what} in a page background task (not pinned: handlers/TestPageBgTaskTx_Tests.al pins only the guarded Codeunit.Run)"
             ));

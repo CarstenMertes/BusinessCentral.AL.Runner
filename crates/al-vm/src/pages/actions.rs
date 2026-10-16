@@ -492,7 +492,9 @@ impl Session {
                 }
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::UpdateRefreshOnFindRecord);
                 if !self.nav_find(st, "=")? {
-                    return unsupported("OnFindRecord does not find the current row after CurrPage.Update (not pinned)");
+                    return unsupported(
+                        "OnFindRecord does not find the current row after CurrPage.Update (not pinned)",
+                    );
                 }
                 let r = (|| {
                     self.populate_current(st)?;

@@ -217,7 +217,10 @@ fn drop_moved_duplicates(m: &mut Members) {
         .map(|f| (f.id, f.name.to_ascii_lowercase()))
         .collect();
     m.fields.retain(|f| {
-        !moved(f) || !live.iter().any(|(id, name)| *id == f.id || *name == f.name.to_ascii_lowercase())
+        !moved(f)
+            || !live
+                .iter()
+                .any(|(id, name)| *id == f.id || *name == f.name.to_ascii_lowercase())
     });
 }
 

@@ -232,3 +232,40 @@ The rule is that a typed op calls the same helper or the same expression as the 
   (Integer and Boolean) and the numbers decide whether step 2 goes ahead.
 - Question for the owner before step 2: Decimal typed ops pay off only when Decimal arithmetic is hot, which perf_vm's
   Decimal loop shows (1780 instructions per iteration); Pageworks (QR, fonts) is Integer and Boolean heavy.
+
+## Retiring the tree walker (2026-10-16, lane A)
+
+State after this step: no statement and no expression of the IR needs the tree walker.
+
+**What runs on bytecode now that did not.**
+- Value capture and loop tracking (ADR-030) have a captured form of each tracked routine (`compile(.., true)`,
+  `ExecProgram::captured_chunk`). It adds `CapHit`, `CapBegin`, `CapEnd`, `CapPop`, `CapLoopEnter`, `CapLoopPass`,
+  `CapLoopExit` and the loop id carried by `ForSite` and `ForeachSite`, and calls the same `cap_*` functions in the same
+  order as `exec_block_captured`. A `break`, `continue`, `exit`, an error and an `asserterror` that catches one close the
+  statements they leave (`CapPop`, `CapFrame::stmt_base`, a depth restore in `op_assert`).
+- `Foreach` over any collection (globals, routine results, .NET enumerators: `foreach_dotnet_start` and
+  `foreach_dotnet_next` are the tree walker's loop split in two), `Stmt::Assume`, the interface call with computed
+  arguments (`IfaceResolve` resolves the target before the arguments run), `DotNetCoerce`, `DotNetOperand`,
+  `Bind/UnbindSubscription`, `CurrFieldNo`, `ClearAll`, `ApplicationArea` (`Special`), and `Refused`, `Fail` and a builtin
+  nothing implements (`Fault`).
+- Every routine compiles at its first call (the hot threshold is gone). On Pageworks the instruction count is the same
+  with and without it (556.3 G and 556.5 G): compiling a routine that runs once costs about what the tree walker costs
+  to run it.
+
+**Proof.** `crates/al-testrun/tests/capture_modes.rs` runs four programs under `AL_EXEC=tree` and `AL_EXEC=bytecode` in two
+processes and compares the whole capture (values, loops, iterations, statements, messages); breaking one instruction
+makes it fail. The capture output of Pageworks (the four `VectorMatchesReference` tests, 109 MB) and of Tests-ERM
+(`TestPmntDisc*`) is byte for byte equal. `--dual-run`: 0 differences on the corpus (27, 28, 29) and Pageworks.
+`AL_EXEC_REPORT=1`: no tree node on the corpus, Tests-ERM and Pageworks.
+
+**What the tree walker is still used for.**
+1. `AL_EXEC=tree` and `AL_EXEC=dual`: the oracle of the dual run (a CI step) and the fallback switch.
+2. A routine that needs more than 65535 registers (`compile` returns `None`): never seen in the corpus, Tests-ERM or
+   Pageworks.
+3. Code that only the tree walker reaches: `exec_block_captured` and `exec_block_dyn` (capture on the tree walker),
+   `foreach_dotnet` (its loop), `Session::eval` and `exec` themselves, and the
+   `ExecMode::Tree` branches in `call_inner`.
+
+Deleting the tree walker means dropping the oracle of the dual run, so it needs the ADR-034 amendment. What would replace
+the oracle: the corpus, whose expected results come from real BC, and Pageworks; the dual run protects against a
+difference between two forms that no longer both exist.

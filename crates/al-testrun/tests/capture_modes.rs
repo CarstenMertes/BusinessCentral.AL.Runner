@@ -111,12 +111,22 @@ fn dump_captures() {
 
 fn dump(mode: &str) -> String {
     let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args(["--exact", "dump_captures", "--ignored", "--nocapture", "--test-threads=1"])
+        .args([
+            "--exact",
+            "dump_captures",
+            "--ignored",
+            "--nocapture",
+            "--test-threads=1",
+        ])
         .env("AL_EXEC", mode)
         .output()
         .unwrap();
     let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert!(out.status.success(), "{mode}: {text}\n{}", String::from_utf8_lossy(&out.stderr));
+    assert!(
+        out.status.success(),
+        "{mode}: {text}\n{}",
+        String::from_utf8_lossy(&out.stderr)
+    );
     let (a, b) = (text.find("<<<").unwrap(), text.find(">>>").unwrap());
     text[a..b].to_string()
 }

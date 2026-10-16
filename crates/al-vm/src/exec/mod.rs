@@ -1,9 +1,9 @@
 //! The executable form of a routine: register bytecode (ADR-034, `docs/reviews/2026-10-bytecode-design.md`).
 //!
 //! A routine's registers are its locals followed by temporaries. Instructions call the helpers the tree walker
-//! calls, so a result is the same by construction. A node the compiler does not cover is kept as IR and run by the tree
-//! walker from inside the bytecode (`TreeExpr`, `TreeStmt`), so every routine compiles and the share of such nodes is
-//! the fallback share. Capture runs on the tree walker only.
+//! calls, so a result is the same by construction. Every statement and expression of the IR has instructions: the
+//! compiler returns `None` only when a routine needs more registers than an instruction can name. A value capture runs
+//! the captured form (`compile(.., true)`), which adds the statement and loop instructions of ADR-030.
 
 mod compile;
 mod run;
@@ -261,17 +261,6 @@ pub(crate) enum Op {
         s: u32,
         d: u16,
     },
-    /// A node the compiler does not cover: the tree walker evaluates the IR expression.
-    TreeExpr {
-        e: u32,
-        d: u16,
-    },
-    /// A statement the compiler does not cover. A `Break` or `Continue` that leaves it goes to `brk` / `cont`.
-    TreeStmt {
-        s: u32,
-        brk: u32,
-        cont: u32,
-    },
     /// `d := a[b]` for a text `a` (the UTF-16 code unit at position `b`).
     CharAt {
         d: u16,
@@ -328,6 +317,11 @@ pub(crate) enum Op {
         s: u32,
         t: u32,
     },
+    /// Resolves the target of the interface call whose site comes next, in the receiver's register, before the arguments run.
+    IfaceResolve {
+        r: u16,
+        s: u32,
+    },
     IfaceCall {
         s: u32,
         d: u16,
@@ -338,21 +332,58 @@ pub(crate) enum Op {
     },
     // ---- value capture and iteration tracking (ADR-030): only in the captured form of a routine ----
     /// A statement marker ran: the statement is one of the open loops' pass.
-    CapHit { p: u32 },
+    CapHit {
+        p: u32,
+    },
     /// The statement after the marker `p` begins.
-    CapBegin { p: u32 },
+    CapBegin {
+        p: u32,
+    },
     /// The statement ended without an error: the locals it wrote or changed are recorded (site `s`).
-    CapEnd { s: u32 },
+    CapEnd {
+        s: u32,
+    },
     /// A `break` or `continue` leaves a statement: it is no longer open, and nothing is recorded.
     CapPop,
     /// A loop statement starts; `d` gets its id (an Integer) or Null when nothing is tracked.
-    CapLoopEnter { d: u16 },
+    CapLoopEnter {
+        d: u16,
+    },
     /// A pass of the loop in `a` starts.
-    CapLoopPass { a: u16 },
+    CapLoopPass {
+        a: u16,
+    },
     /// The loop in `a` ends.
-    CapLoopExit { a: u16 },
+    CapLoopExit {
+        a: u16,
+    },
+    /// A builtin the VM runs on operands it holds itself (subscriptions, `CurrFieldNo`, `ClearAll`, `ApplicationArea`).
+    Special {
+        s: u32,
+        d: u16,
+    },
+    /// `d := ` an error the code was lowered to raise (`Refused`, `Fail`, a builtin nothing implements).
+    Fault {
+        k: u32,
+    },
+    /// Forgets the null string a .NET call left (before the operand of a `DotNetCoerce` or `DotNetOperand` is evaluated).
+    DotNetClear,
+    /// `d := the .NET value a coerced to type t`.
+    DotNetCoerce {
+        d: u16,
+        a: u16,
+        t: u32,
+    },
+    /// `d := the operand a settled for its use h`.
+    DotNetOperand {
+        d: u16,
+        a: u16,
+        h: ir::OperandUse,
+    },
     /// An assumption of an unprobed behavior ran (`Stmt::Assume`).
-    Assume { a: al_builtins::assumptions::Assumption },
+    Assume {
+        a: al_builtins::assumptions::Assumption,
+    },
     /// `Exit()`.
     Ret,
     /// `Exit(a)`.
@@ -363,8 +394,6 @@ pub(crate) enum Op {
     RaiseBreak,
     RaiseContinue,
 }
-
-pub(crate) const NONE: u32 = u32::MAX;
 
 pub(crate) struct CallSite {
     pub object: usize,
@@ -408,6 +437,20 @@ pub(crate) enum AuxSite {
     QueryColumn {
         column: usize,
     },
+}
+
+/// What a `Fault` raises.
+pub(crate) enum FaultKind {
+    Unsupported(String),
+    Error { message: String, code: String },
+}
+
+pub(crate) struct SpecialSite {
+    pub id: al_builtins::builtin_id::BuiltinId,
+    /// The record a `CurrFieldNo` belongs to.
+    pub place: Option<ir::Place>,
+    pub arg: Option<u16>,
+    pub ret_used: bool,
 }
 
 pub(crate) struct ForeachSite {
@@ -468,11 +511,6 @@ pub(crate) struct Chunk {
     pub consts: Vec<ir::Const>,
     pub places: Vec<ir::Place>,
     pub types: Vec<al_builtins::value::RtType>,
-    pub exprs: Vec<ir::Expr>,
-    pub stmts: Vec<ir::Stmt>,
-    /// The node kind of each tree expression and statement, for the fallback report.
-    pub expr_kinds: Vec<String>,
-    pub stmt_kinds: Vec<&'static str>,
     pub calls: Vec<CallSite>,
     pub builtins: Vec<BuiltinSite>,
     pub fors: Vec<ForSite>,
@@ -481,26 +519,21 @@ pub(crate) struct Chunk {
     pub dotnets: Vec<DotNetSite>,
     pub aux: Vec<AuxSite>,
     pub foreachs: Vec<ForeachSite>,
+    pub specials: Vec<SpecialSite>,
+    pub faults: Vec<FaultKind>,
     pub ifaces: Vec<IfaceSite>,
     /// Registers `0..nlocals` are the routine's locals.
     pub nlocals: u16,
     /// Temporaries after the locals.
     pub temps: u16,
-    /// How many nodes run on the tree walker from inside this chunk.
-    pub tree_nodes: u32,
 }
 
-/// The chunks of a program, compiled the first time a routine is called.
+/// The chunks of a program, compiled the first time a routine is called (every routine runs as bytecode).
 pub(crate) struct ExecProgram {
     chunks: Vec<Vec<OnceLock<Option<Box<Chunk>>>>>,
     /// The captured form of a routine (value capture and iteration tracking), built on first use by a capture.
     captured: Vec<Vec<OnceLock<Option<Box<Chunk>>>>>,
-    /// How often each routine was asked for: a routine that runs once (install and setup code) is not worth compiling.
-    calls: Vec<Vec<std::sync::atomic::AtomicU32>>,
 }
-
-/// A routine is compiled when it is called this many times, or at the first call if it has a loop.
-const HOT: u32 = 2;
 
 impl ExecProgram {
     pub(crate) fn new(program: &ir::Program) -> ExecProgram {
@@ -515,20 +548,10 @@ impl ExecProgram {
                 .iter()
                 .map(|o| o.routines.iter().map(|_| OnceLock::new()).collect())
                 .collect(),
-            calls: program
-                .objects
-                .iter()
-                .map(|o| {
-                    o.routines
-                        .iter()
-                        .map(|_| std::sync::atomic::AtomicU32::new(0))
-                        .collect()
-                })
-                .collect(),
         }
     }
 
-    /// The captured form of routine `routine` of object `object` (no hot threshold: a capture runs a routine once or twice).
+    /// The captured form of routine `routine` of object `object` .
     pub(crate) fn captured_chunk(&self, program: &ir::Program, object: usize, routine: usize) -> Option<&Chunk> {
         self.captured[object][routine]
             .get_or_init(|| compile(&program.objects[object].routines[routine], true).map(Box::new))
@@ -538,18 +561,9 @@ impl ExecProgram {
     /// The chunk of routine `routine` of object `object`, if it compiles.
     pub(crate) fn chunk(&self, program: &ir::Program, object: usize, routine: usize) -> Option<&Chunk> {
         let cell = &self.chunks[object][routine];
-        if cell.get().is_none()
-            && self.calls[object][routine].fetch_add(1, Ordering::Relaxed) + 1 < HOT
-            && !has_loop(&program.objects[object].routines[routine].body)
-        {
-            return None;
-        }
         cell.get_or_init(|| {
             let c = compile(&program.objects[object].routines[routine], false)?;
             STATS.routines.fetch_add(1, Ordering::Relaxed);
-            if c.tree_nodes > 0 {
-                STATS.routines_with_tree.fetch_add(1, Ordering::Relaxed);
-            }
             Some(Box::new(c))
         })
         .as_deref()
@@ -565,54 +579,28 @@ pub(crate) fn counting() -> bool {
 /// Process-wide counters for the fallback report (`AL_EXEC_REPORT=1`).
 pub(crate) struct Stats {
     pub routines: AtomicU64,
-    pub routines_with_tree: AtomicU64,
     pub bytecode_calls: AtomicU64,
     pub tree_calls: AtomicU64,
-    pub tree_exprs_run: AtomicU64,
-    pub tree_stmts_run: AtomicU64,
     /// Typed instructions that met an operand of another kind (a local that holds a value of another kind than its declared one, for example an Integer variable that a List Get filled with a BigInteger; the generic path gives the result).
     pub typed_fallbacks: AtomicU64,
 }
 
-/// How often each kind of node ran on the tree walker from inside bytecode (`AL_EXEC_REPORT=1`).
-pub(crate) static TREE_KINDS: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
-
-pub(crate) fn note_tree(kind: &str, stmt: bool) {
-    let key = format!("{}{kind}", if stmt { "stmt " } else { "expr " });
-    if let Ok(mut v) = TREE_KINDS.lock() {
-        match v.iter_mut().find(|(k, _)| *k == key) {
-            Some(e) => e.1 += 1,
-            None => v.push((key, 1)),
-        }
-    }
-}
-
 pub(crate) static STATS: Stats = Stats {
     routines: AtomicU64::new(0),
-    routines_with_tree: AtomicU64::new(0),
     bytecode_calls: AtomicU64::new(0),
     tree_calls: AtomicU64::new(0),
-    tree_exprs_run: AtomicU64::new(0),
-    tree_stmts_run: AtomicU64::new(0),
     typed_fallbacks: AtomicU64::new(0),
 };
 
-/// One line for the fallback report: routines compiled, how many keep a tree node, and the share of executed work.
+/// One line for the report: routines compiled, calls by form, typed instructions that fell back.
 pub fn report() -> String {
     let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
-    let mut kinds = TREE_KINDS.lock().map(|v| v.clone()).unwrap_or_default();
-    kinds.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
-    let top: Vec<String> = kinds.iter().take(12).map(|(k, n)| format!("{k} {n}")).collect();
     format!(
-        "exec: {} routines compiled ({} with tree nodes); calls: {} bytecode, {} tree; tree nodes run: {} exprs, {} stmts; typed fallbacks: {}; most run: {}",
+        "exec: {} routines compiled; calls: {} bytecode, {} tree; typed fallbacks: {}",
         g(&STATS.routines),
-        g(&STATS.routines_with_tree),
         g(&STATS.bytecode_calls),
         g(&STATS.tree_calls),
-        g(&STATS.tree_exprs_run),
-        g(&STATS.tree_stmts_run),
         g(&STATS.typed_fallbacks),
-        top.join(", "),
     )
 }
 
@@ -620,20 +608,6 @@ pub fn report() -> String {
 pub fn disassemble(program: &ir::Program, object: usize, routine: usize) -> Option<Vec<String>> {
     let c = compile(&program.objects[object].routines[routine], false)?;
     Some(c.code.iter().map(|op| format!("{op:?}")).collect())
-}
-
-/// Whether any statement of `body` is a loop: one call of such a routine can run long.
-fn has_loop(body: &[ir::Stmt]) -> bool {
-    use ir::Stmt as S;
-    body.iter().any(|s| match s {
-        S::While(..) | S::Repeat(..) | S::For { .. } | S::Foreach { .. } => true,
-        S::If(_, a, b) => has_loop(a) || has_loop(b),
-        S::Case {
-            branches, otherwise, ..
-        } => branches.iter().any(|(_, b)| has_loop(b)) || has_loop(otherwise),
-        S::AssertError(b) => has_loop(b),
-        _ => false,
-    })
 }
 
 #[cfg(test)]

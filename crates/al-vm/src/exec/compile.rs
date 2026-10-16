@@ -22,10 +22,6 @@ pub(crate) fn compile(r: &ir::Routine, captured: bool) -> Option<Chunk> {
             consts: Vec::new(),
             places: Vec::new(),
             types: Vec::new(),
-            exprs: Vec::new(),
-            stmts: Vec::new(),
-            expr_kinds: Vec::new(),
-            stmt_kinds: Vec::new(),
             calls: Vec::new(),
             builtins: Vec::new(),
             fors: Vec::new(),
@@ -34,22 +30,19 @@ pub(crate) fn compile(r: &ir::Routine, captured: bool) -> Option<Chunk> {
             dotnets: Vec::new(),
             aux: Vec::new(),
             foreachs: Vec::new(),
+            specials: Vec::new(),
+            faults: Vec::new(),
             ifaces: Vec::new(),
             nlocals,
             temps: 0,
-            tree_nodes: 0,
         },
         next: nlocals,
         max: nlocals,
         loops: Vec::new(),
         captured,
         cap_depth: 0,
-        bail: false,
     };
     c.block(&r.body).ok()?;
-    if c.bail {
-        return None;
-    }
     c.chunk.temps = c.max - nlocals;
     if std::env::var_os("AL_EXEC_DUMP").is_some() {
         eprintln!("routine {} ({} locals, {} temps)", r.name, nlocals, c.chunk.temps);
@@ -80,8 +73,6 @@ struct Compiler<'a> {
     captured: bool,
     /// The statements open at this point of the code (captured form only).
     cap_depth: u32,
-    /// A statement needs the tree walker, which the captured form cannot take.
-    bail: bool,
 }
 
 type R<T> = Result<T, ()>;
@@ -161,7 +152,6 @@ impl<'a> Compiler<'a> {
             | Op::MatchAny { t, .. }
             | Op::ForeachNext { t, .. }
             | Op::ForTest { t, .. } => *t = to,
-            Op::TreeStmt { .. } => unreachable!("tree statements are patched through patch_tree"),
             other => unreachable!("not a jump: {other:?}"),
         }
     }
@@ -225,18 +215,6 @@ impl<'a> Compiler<'a> {
         self.emit(Op::Aux { s, d, a });
     }
 
-    fn tree_expr(&mut self, e: &'a ir::Expr, d: u16) {
-        self.chunk.exprs.push(e.clone());
-        self.chunk.expr_kinds.push(match e {
-            ir::Expr::Builtin { id, .. } => format!("Builtin {id}"),
-            other => expr_kind(other).to_string(),
-        });
-        let idx = (self.chunk.exprs.len() - 1) as u32;
-        self.chunk.tree_nodes += 1;
-        self.emit(Op::TreeExpr { e: idx, d });
-    }
-
-    /// Emits the typed instruction for `l op r` when both operands are proven Integer (or both Boolean) and one exists.
     fn typed_binary(&mut self, op: ir::BinOp, l: &'a ir::Expr, r: &'a ir::Expr, d: u16) -> R<bool> {
         use ir::BinOp as B;
         let (Some(tl), Some(tr)) = (self.tys.expr_ty(l), self.tys.expr_ty(r)) else {
@@ -314,6 +292,62 @@ impl<'a> Compiler<'a> {
         } else {
             Op::JumpIfNot { a, t }
         }))
+    }
+
+    /// The builtins the VM runs on operands it holds (`special`): `false` when the shape of the call is not one it knows, which
+    /// then stays a tree node (the error is the tree walker's).
+    fn special(
+        &mut self,
+        id: al_builtins::builtin_id::BuiltinId,
+        receiver: Option<&'a ir::Arg>,
+        args: &'a [ir::Arg],
+        ret_used: bool,
+        d: u16,
+    ) -> R<bool> {
+        let (mut place, mut arg) = (None, None);
+        match id {
+            ids::SESSION_BINDSUBSCRIPTION_1 | ids::SESSION_UNBINDSUBSCRIPTION_1 => {
+                let Some(ir::Arg::Value(e)) = args.first() else {
+                    return Ok(false);
+                };
+                arg = Some(self.expr_copy(e)?);
+            }
+            ids::RECORD_SETCURRFIELDNO_1 => {
+                let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver, args.first()) else {
+                    return Ok(false);
+                };
+                place = Some(p.clone());
+                arg = Some(self.expr_copy(e)?);
+            }
+            ids::RECORD_CURRFIELDNO_1 => {
+                let Some(ir::Arg::Ref(p)) = receiver else {
+                    return Ok(false);
+                };
+                place = Some(p.clone());
+            }
+            ids::SYSTEM_CLEARALL_1 => {}
+            ids::SESSION_APPLICATIONAREA_1 => match args.first() {
+                None => {}
+                Some(ir::Arg::Value(e)) => arg = Some(self.expr_copy(e)?),
+                Some(_) => return Ok(false),
+            },
+            _ => return Ok(false),
+        }
+        self.chunk.specials.push(SpecialSite {
+            id,
+            place,
+            arg,
+            ret_used,
+        });
+        let s = (self.chunk.specials.len() - 1) as u32;
+        self.emit(Op::Special { s, d });
+        Ok(true)
+    }
+
+    fn fault(&mut self, k: FaultKind) {
+        self.chunk.faults.push(k);
+        let k = (self.chunk.faults.len() - 1) as u32;
+        self.emit(Op::Fault { k });
     }
 
     fn expr_into(&mut self, e: &'a ir::Expr, d: u16) -> R<()> {
@@ -397,6 +431,12 @@ impl<'a> Compiler<'a> {
                 receiver,
                 args,
                 ret_used,
+            } if special(*id) && self.special(*id, receiver.as_deref(), args, *ret_used, d)? => {}
+            E::Builtin {
+                id,
+                receiver,
+                args,
+                ret_used,
             } if !special(*id) && (vm_class(*id) || al_builtins::native::by_id(*id).is_some()) => {
                 let vm = vm_class(*id);
                 let native = if vm { None } else { al_builtins::native::by_id(*id) };
@@ -456,22 +496,39 @@ impl<'a> Compiler<'a> {
                 receiver,
                 targets,
                 args,
-            } if args.iter().all(|a| {
-                matches!(a, ir::Arg::Value(v) if simple(v))
-                    || matches!(a, ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)))
-            }) =>
-            {
-                // The target is resolved before the arguments are evaluated; plain operands cannot tell the order.
+            } => {
+                // The target is resolved before the arguments are evaluated (a receiver that holds nothing raises before an
+                // argument runs). Plain operands cannot tell the order; for any other the target is resolved first.
+                let plain = args.iter().all(|a| {
+                    matches!(a, ir::Arg::Value(v) if simple(v))
+                        || matches!(a, ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)))
+                });
                 let recv = self.expr_copy(receiver)?;
-                let arg_regs = self.arg_regs(args)?;
                 self.chunk.ifaces.push(IfaceSite {
                     targets: targets.clone(),
                     recv,
-                    arg_regs,
+                    arg_regs: Vec::new(),
                     args: blank(args),
                 });
                 let s = (self.chunk.ifaces.len() - 1) as u32;
+                if !plain {
+                    self.emit(Op::IfaceResolve { r: recv, s });
+                }
+                let arg_regs = self.arg_regs(args)?;
+                self.chunk.ifaces[s as usize].arg_regs = arg_regs;
                 self.emit(Op::IfaceCall { s, d });
+            }
+            E::DotNetCoerce(ty, inner) => {
+                self.emit(Op::DotNetClear);
+                let a = self.expr_any(inner)?;
+                self.chunk.types.push(ty.clone());
+                let t = (self.chunk.types.len() - 1) as u32;
+                self.emit(Op::DotNetCoerce { d, a, t });
+            }
+            E::DotNetOperand(inner, h) => {
+                self.emit(Op::DotNetClear);
+                let a = self.expr_any(inner)?;
+                self.emit(Op::DotNetOperand { d, a, h: *h });
             }
             E::ThisInstance => {
                 self.emit(Op::ThisInstance { d });
@@ -534,7 +591,13 @@ impl<'a> Compiler<'a> {
                 let a = self.expr_any(query)?;
                 self.aux(AuxSite::QueryColumn { column: *column }, d, a);
             }
-            other => self.tree_expr(other, d),
+            E::Refused(why) => self.fault(FaultKind::Unsupported(why.clone())),
+            E::Fail { message, code } => self.fault(FaultKind::Error {
+                message: message.clone(),
+                code: code.clone(),
+            }),
+            // A builtin no native implements: the tree walker refuses it before it evaluates an operand.
+            E::Builtin { id, .. } => self.fault(FaultKind::Unsupported(format!("builtin {id}"))),
         }
         // Temporaries used inside `e` are free again; `d` itself stays allocated by the caller.
         self.next = mark;
@@ -668,40 +731,9 @@ impl<'a> Compiler<'a> {
         }
     }
 
-    fn tree_stmt(&mut self, s: &'a ir::Stmt) {
-        if self.captured {
-            self.bail = true;
-        }
-        self.chunk.stmts.push(s.clone());
-        self.chunk.stmt_kinds.push(stmt_kind(s));
-        let idx = (self.chunk.stmts.len() - 1) as u32;
-        self.chunk.tree_nodes += 1;
-        let at = self.emit(Op::TreeStmt {
-            s: idx,
-            brk: NONE,
-            cont: NONE,
-        });
-        if let Some(l) = self.loops.last_mut() {
-            // Patched with the loop's targets when it ends.
-            l.brk.push(at | TREE_BRK);
-            l.cont.push(at | TREE_CONT);
-        }
-    }
-
     fn patch_all(&mut self, list: Vec<usize>, to: u32) {
         for at in list {
-            if at & TREE_BRK != 0 || at & TREE_CONT != 0 {
-                let i = at & !(TREE_BRK | TREE_CONT);
-                if let Op::TreeStmt { brk, cont, .. } = &mut self.chunk.code[i] {
-                    if at & TREE_BRK != 0 {
-                        *brk = to;
-                    } else {
-                        *cont = to;
-                    }
-                }
-            } else {
-                self.patch(at, to);
-            }
+            self.patch(at, to);
         }
     }
 
@@ -904,7 +936,7 @@ impl<'a> Compiler<'a> {
                     *e = end;
                 }
             }
-            S::Foreach { var, collection, body } =>            {
+            S::Foreach { var, collection, body } => {
                 let coll = self.expr_copy(collection)?;
                 let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let items = self.alloc()?;
@@ -1001,62 +1033,10 @@ impl<'a> Compiler<'a> {
     }
 }
 
-const TREE_BRK: usize = 1 << 40;
-const TREE_CONT: usize = 1 << 41;
-
 fn arg_pure(a: &ir::Arg) -> bool {
     match a {
         ir::Arg::Value(e) => pure(e),
         ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)) => true,
         ir::Arg::Ref(_) => false,
-    }
-}
-
-fn expr_kind(e: &ir::Expr) -> &'static str {
-    use ir::Expr as E;
-    match e {
-        E::Const(_) => "Const",
-        E::Load(_) => "Load",
-        E::Unary(..) => "Unary",
-        E::Binary(..) => "Binary",
-        E::In(..) => "In",
-        E::Ternary(..) => "Ternary",
-        E::Convert(..) => "Convert",
-        E::Call { .. } => "Call",
-        E::InterfaceCall { .. } => "InterfaceCall",
-        E::BaseInstance => "BaseInstance",
-        E::ThisInstance => "ThisInstance",
-        E::Refused(_) => "Refused",
-        E::Fail { .. } => "Fail",
-        E::InterfaceTest { .. } => "InterfaceTest",
-        E::EnumImpl { .. } => "EnumImpl",
-        E::Control { .. } => "Control",
-        E::FieldOf(..) => "FieldOf",
-        E::QueryColumn { .. } => "QueryColumn",
-        E::DotNet { .. } => "DotNet",
-        E::CharAt(..) => "CharAt",
-        E::DotNetCoerce(..) => "DotNetCoerce",
-        E::DotNetOperand(..) => "DotNetOperand",
-        E::Builtin { .. } => "Builtin",
-    }
-}
-
-fn stmt_kind(s: &ir::Stmt) -> &'static str {
-    use ir::Stmt as S;
-    match s {
-        S::Assign(..) => "Assign",
-        S::Expr(_) => "Expr",
-        S::If(..) => "If",
-        S::While(..) => "While",
-        S::Repeat(..) => "Repeat",
-        S::For { .. } => "For",
-        S::Foreach { .. } => "Foreach",
-        S::Case { .. } => "Case",
-        S::Exit(_) => "Exit",
-        S::Break => "Break",
-        S::AssertError(_) => "AssertError",
-        S::Pos(_) => "Pos",
-        S::Assume(_) => "Assume",
-        S::Continue => "Continue",
     }
 }

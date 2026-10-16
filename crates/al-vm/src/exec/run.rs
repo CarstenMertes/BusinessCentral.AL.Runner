@@ -289,6 +289,36 @@ impl Session {
                 }
                 Op::CapLoopPass { a } => self.cap_loop_pass(cap_id(f, a)),
                 Op::CapLoopExit { a } => self.cap_loop_exit(cap_id(f, a)),
+                Op::IfaceResolve { r, s } => {
+                    let recv = std::mem::replace(&mut f.locals[r as usize], Value::Null);
+                    let (_, _, inst) = self.interface_target_value(recv, &chunk.ifaces[s as usize].targets)?;
+                    f.locals[r as usize] = Value::Codeunit(inst);
+                }
+                Op::Fault { k } => {
+                    return Err(match &chunk.faults[k as usize] {
+                        FaultKind::Unsupported(why) => Signal::Unsupported(why.clone()),
+                        FaultKind::Error { message, code } => Signal::Error(Box::new(al_builtins::native::AlError {
+                            message: message.clone(),
+                            code: code.clone(),
+                            call_stack: String::new(),
+                        })),
+                    });
+                }
+                Op::DotNetClear => self.dotnet.clear_null_string(),
+                Op::DotNetCoerce { d, a, t } => {
+                    let v = take(f, a, nl);
+                    let v = self.dotnet_coerce(v, &chunk.types[t as usize])?;
+                    set(&mut f.locals[d as usize], v);
+                }
+                Op::DotNetOperand { d, a, h } => {
+                    let v = take(f, a, nl);
+                    let v = self.settle_operand(v, h)?;
+                    set(&mut f.locals[d as usize], v);
+                }
+                Op::Special { s, d } => {
+                    let v = self.run_special(&chunk.specials[s as usize], f, nl)?;
+                    set(&mut f.locals[d as usize], v);
+                }
                 Op::Assume { a } => al_builtins::assumptions::assume(a),
                 Op::Jump { t } => pc = t as usize,
                 Op::JumpIfNot { a, t } => {
@@ -323,7 +353,13 @@ impl Session {
                         }
                     }
                 }
-                Op::ForSet { s } => self.for_set(&chunk.fors[s as usize], f)?,
+                Op::ForSet { s } => {
+                    let site = &chunk.fors[s as usize];
+                    match site.cap_loop {
+                        None => self.for_set(site, f)?,
+                        Some(r) => self.for_set_captured(site, r, f)?,
+                    }
+                }
                 Op::ForNext { s } => self.for_next(&chunk.fors[s as usize], f)?,
                 Op::Call { s, d } => {
                     let v = self.run_call(&chunk.calls[s as usize], f, nl)?;
@@ -332,26 +368,6 @@ impl Session {
                 Op::Builtin { s, d } => {
                     let v = self.run_builtin(&chunk.builtins[s as usize], f, nl)?;
                     set(&mut f.locals[d as usize], v);
-                }
-                Op::TreeExpr { e, d } => {
-                    if counting() {
-                        STATS.tree_exprs_run.fetch_add(1, Ordering::Relaxed);
-                        note_tree(&chunk.expr_kinds[e as usize], false);
-                    }
-                    let v = self.eval(&chunk.exprs[e as usize], f)?;
-                    set(&mut f.locals[d as usize], v);
-                }
-                Op::TreeStmt { s, brk, cont } => {
-                    if counting() {
-                        STATS.tree_stmts_run.fetch_add(1, Ordering::Relaxed);
-                        note_tree(chunk.stmt_kinds[s as usize], true);
-                    }
-                    match self.exec::<false>(&chunk.stmts[s as usize], f) {
-                        Ok(()) => {}
-                        Err(Signal::Break) if brk != NONE => pc = brk as usize,
-                        Err(Signal::Continue) if cont != NONE => pc = cont as usize,
-                        Err(e) => return Err(e),
-                    }
                 }
                 Op::CharAt { d, a, b } => self.op_char_at(f, d, a, b, nl)?,
                 Op::AppendText { s, old, a } => self.op_append(&chunk.appends[s as usize], f, old, a, nl)?,
@@ -451,6 +467,37 @@ impl Session {
         }
         set(&mut f.locals[d as usize], v);
         Ok(())
+    }
+
+    #[inline(never)]
+    fn run_special(&mut self, site: &SpecialSite, f: &mut Frame, nl: u16) -> Result<Value, Signal> {
+        use al_builtins::builtin_id::ids;
+        match site.id {
+            ids::SESSION_BINDSUBSCRIPTION_1 | ids::SESSION_UNBINDSUBSCRIPTION_1 => {
+                let cu = site.arg.map_or(Value::Null, |r| take(f, r, nl));
+                self.subscription(site.id == ids::SESSION_BINDSUBSCRIPTION_1, cu, site.ret_used)
+            }
+            ids::RECORD_SETCURRFIELDNO_1 => {
+                let rec = match &site.place {
+                    Some(p) => self.read(p, f)?,
+                    None => Value::Null,
+                };
+                let n = site.arg.map_or(Value::Null, |r| take(f, r, nl));
+                self.set_curr_field_no(rec, n)
+            }
+            ids::RECORD_CURRFIELDNO_1 => {
+                let rec = match &site.place {
+                    Some(p) => self.read(p, f)?,
+                    None => Value::Null,
+                };
+                self.curr_field_no(rec)
+            }
+            ids::SYSTEM_CLEARALL_1 => self.clear_all(f),
+            _ => {
+                let set = site.arg.map(|r| take(f, r, nl));
+                self.application_area(set)
+            }
+        }
     }
 
     #[inline(never)]
@@ -605,18 +652,17 @@ impl Session {
         Ok(())
     }
 
+    /// `for_set` of a loop a capture tracks: the pass starts, the counter is set, and its value is a record.
     #[inline(never)]
-    fn for_set(&mut self, site: &ForSite, f: &mut Frame) -> Result<(), Signal> {
-        let Some(r) = site.cap_loop else {
-            return self.for_set_counter(site, f);
-        };
+    fn for_set_captured(&mut self, site: &ForSite, r: u16, f: &mut Frame) -> Result<(), Signal> {
         self.cap_loop_pass(cap_id(f, r));
-        self.for_set_counter(site, f)?;
+        self.for_set(site, f)?;
         self.cap_loop_var(&site.var, f);
         Ok(())
     }
 
-    fn for_set_counter(&mut self, site: &ForSite, f: &mut Frame) -> Result<(), Signal> {
+    #[inline(never)]
+    fn for_set(&mut self, site: &ForSite, f: &mut Frame) -> Result<(), Signal> {
         let Value::BigInteger(i) = f.locals[site.i as usize] else {
             return Err(Signal::Unsupported("a for loop counter that is not set".into()));
         };

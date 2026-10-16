@@ -163,3 +163,15 @@ fn a_builtin_that_fills_a_decimal_variable_leaves_what_an_assignment_leaves() {
     );
     assert!(matches!(call(&src, vec![]), Ok(Value::Boolean(true))));
 }
+
+#[test]
+fn a_builtin_that_fills_a_record_field_leaves_the_field_type() {
+    // A field is a by-reference place of its own kind: the Integer field takes the BigInteger from the list as an assignment would.
+    let src = "table 50101 T { fields { field(1; K; Integer) { } field(2; N; Integer) { } } keys { key(PK; K) { Clustered = true; } } }
+        codeunit 50100 C { procedure F(): Integer var L: List of [BigInteger]; R: Record T; begin L.Add(100000); L.Get(1, R.N); R.N := R.N * R.N; exit(1); end; }";
+    assert!(call_in(src, vec![]).is_err(), "an Integer field times itself overflows");
+}
+
+fn call_in(src: &str, args: Vec<Value>) -> Result<Value, Signal> {
+    al_testkit::run_with(src, "C", "F", args).map(|(v, _)| v)
+}

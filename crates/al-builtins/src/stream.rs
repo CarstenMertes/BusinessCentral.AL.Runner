@@ -529,20 +529,17 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     }
     let mut enc_used = Encoding::Windows;
     let text = with_in(r, |s| {
-        // A UTF-16 byte order mark at the start decides the encoding, whatever the stream was created with:
-        // the XmlPort export is UTF-16 with a mark, and the corpus reads it back with the default encoding
-        // (xmlport/TestXmlPortObject.al:ReadBlobText). A UTF-8 mark is taken as one only by a stream created with
-        // `TextEncoding::UTF8` (handlers/TestReportSaveAsDatasetContracts.al:DatasetLines); a stream with the default
-        // encoding reads it as the three characters 239, 187, 191 (al-language-onprem/handlers/
-        // TestRequestPageSaveAsXmlContracts.al:FileText).
+        // A UTF-8 mark is taken as one only by a stream created with `TextEncoding::UTF8` (handlers/
+        // TestReportSaveAsDatasetContracts.al:DatasetLines); a stream with the default encoding reads it as the three
+        // characters 239, 187, 191 (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:FileText). A UTF-16 mark
+        // is no mark to ReadText: the default encoding reads `FF FE` as two characters (misc/lt-probes-needed-3/
+        // PnC19XmlPort.al:Export_BothFormatEvaluates, ` þ`).
         if s.pos == 0 {
             let utf8 = s.enc == Encoding::Utf8;
             let bom = s.with_data(|d| {
                 // A stream created as UTF-8 does not take a UTF-16 mark: it reads the bytes as UTF-8 and fails on them (xmlport/
                 // lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_ThreeRows).
-                if !utf8 && d.starts_with(&[0xFF, 0xFE]) {
-                    Some((Encoding::Utf16, 2))
-                } else if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
                     Some((Encoding::Utf8, 3))
                 } else {
                     None
@@ -561,11 +558,15 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         let text = s.with_data(|data| {
             let rest = &data[pos.min(data.len())..];
             let mut end = 0;
-            while end + unit <= rest.len() && end / unit < max_chars && !is_unit(&rest[end..end + unit], b'\n') {
+            // A NUL ends the text like a line feed does and is consumed with it: the UTF-16 bytes of an export read one
+            // character per call (xmlport/lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_StaticWithRecordNoRows,
+            // misc/lt-probes-needed-3/PnC19XmlPort.al:Export_BothFormatEvaluates, streams/StTEncodings.al:CrossEncodingMsDosAndUtf16).
+            let ends = |u: &[u8]| is_unit(u, b'\n') || u.iter().all(|b| *b == 0);
+            while end + unit <= rest.len() && end / unit < max_chars && !ends(&rest[end..end + unit]) {
                 end += unit;
             }
             // Stopping on the length leaves the line feed unread.
-            let at_lf = end + unit <= rest.len() && is_unit(&rest[end..end + unit], b'\n');
+            let at_lf = end + unit <= rest.len() && ends(&rest[end..end + unit]);
             let line: Vec<u8> = rest[..end]
                 .chunks(unit)
                 .filter(|u| !is_unit(u, b'\r'))
@@ -581,15 +582,7 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             // XpTExportBasic.al:Export_ThreeRows: the UTF-16 bytes of an export).
             let invalid_utf8 = enc == Encoding::Utf8 && std::str::from_utf8(&line).is_err();
             (
-                // The text ends at its first NUL character: the UTF-16 bytes of `ab` read as UTF-8 are `a` (streams/StTEncodings.al:
-                // CrossEncodingMsDosAndUtf16).
-                (!invalid_utf8 && enc.decode_pinned(&line)).then(|| {
-                    let mut t = enc.decode(&line);
-                    if let Some(nul) = t.find('\0') {
-                        t.truncate(nul);
-                    }
-                    t
-                }),
+                (!invalid_utf8 && enc.decode_pinned(&line)).then(|| enc.decode(&line)),
                 consumed,
                 invalid_utf8,
             )

@@ -261,7 +261,7 @@ registry! {
     },
     InvisiblePartForPageCode => {
         id: "invisible-part-for-page-code",
-        assumed: "CurrPage.<Part>.Page in the page's own code reaches a part whose Visible came out false, whose Visible is the literal false or whose ApplicationArea is not enabled (its page is created and opened on the first reach).",
+        assumed: "CurrPage.<Part>.Page in the page's own code reaches a part whose Visible came out false, whose Visible is the literal false or whose ApplicationArea is not enabled (its page is created on the first reach, initialised and not opened).",
         tests: "Cash Receipt Journal OnAfterGetCurrRecord (WorkflowStatusBatch, Visible = variable); 7 Tests-General Journal tests; Sales Credit Memo and other document pages (IncomingDocAttachFactBox), about 230 Tests-ERM tests.",
         probe: "A page with part(P; ...) { Visible = Flag } where Flag is false at open and OnAfterGetCurrRecord calls CurrPage.P.Page.Method().",
     },

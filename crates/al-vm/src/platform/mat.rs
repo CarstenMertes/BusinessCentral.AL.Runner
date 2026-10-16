@@ -52,15 +52,18 @@ pub(crate) struct Mat {
     clean: bool,
     /// The rows that passed a set of filters, for a set seen before (`passing`): a lookup that scans a big listing
     /// on a column the key does not cover (the fields that relate to a table) repeats with the same filters.
-    memo: std::sync::Mutex<Memo>,
+    memo: Box<std::sync::Mutex<Memo>>,
 }
 
 /// The filter sets a big listing has been scanned with: how often, and for the repeated ones the indexes of the
 /// rows that pass, in order.
 #[derive(Default)]
 struct Memo {
-    seen: std::collections::HashMap<String, (u32, Option<std::sync::Arc<Vec<u32>>>)>,
+    seen: std::collections::HashMap<String, Seen>,
 }
+
+/// How often a filter set was scanned with, and, from the second time on, the indexes of the rows that pass.
+type Seen = (u32, Option<std::sync::Arc<Vec<u32>>>);
 
 /// Listings with fewer rows than this are walked each time.
 const MEMO_MIN_ROWS: usize = 2048;

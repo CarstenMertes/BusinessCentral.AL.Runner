@@ -138,7 +138,7 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                     });
                 }
                 Err(Signal::Unsupported(why)) => return Err(why.into()),
-                Err(other) => return Err(format!("Format of a {name}: {other:?}").into()),
+                Err(_) => return Err(format!("Format of a {name} that is neither a result nor an error").into()),
             }
         }
         // A JSON value formats as its compact text. Pinned: an empty JsonObject is `{}` and a null token `null`

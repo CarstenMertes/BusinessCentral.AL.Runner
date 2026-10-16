@@ -1,9 +1,10 @@
 //! A workspace is a set of apps. Each app is its manifest plus its sources
 //! (path, text). Loading parses every file and builds the object table.
 
+use crate::check::posmap::{FxMap as HashMap, FxSet as HashSet};
 use al_syntax::ast;
 use rayon::prelude::*;
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
 use std::sync::OnceLock;
 
 pub use al_ir::ObjKind;
@@ -252,16 +253,16 @@ impl Workspace {
             objects: Vec::new(),
             dotnet: Vec::new(),
             diagnostics: Vec::new(),
-            by_name: HashMap::new(),
-            by_id: HashMap::new(),
+            by_name: HashMap::default(),
+            by_id: HashMap::default(),
             apps: Vec::new(),
             symbols: symbols_of.clone(),
             ext_target: Vec::new(),
-            ext_of: HashMap::new(),
-            subscribers_of: HashMap::new(),
-            implementers_of: HashMap::new(),
-            iface_base: HashMap::new(),
-            iface_derived: HashMap::new(),
+            ext_of: HashMap::default(),
+            subscribers_of: HashMap::default(),
+            implementers_of: HashMap::default(),
+            iface_base: HashMap::default(),
+            iface_derived: HashMap::default(),
             usable_cache: Vec::new(),
             flakes: Default::default(),
             compiled: OnceLock::new(),

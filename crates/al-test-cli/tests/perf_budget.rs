@@ -1,5 +1,5 @@
 //! Performance budget: cold compile of the pinned corpus (issue #1, docs/architecture.md). The budget is in instructions
-//! per object (see below); the wall time is printed for information.
+//! per KiB of corpus source (see below); the wall time is printed for information.
 //!
 //! "Compile" is everything between the app folders on disk and the lowered
 //! program: reading the `.al` files, lex, preprocess, parse, workspace load,
@@ -27,6 +27,19 @@ fn root() -> PathBuf {
         .unwrap()
 }
 
+/// The bytes of corpus source the compile reads: every `.al` file of the two apps. Computed once, outside the measured
+/// region.
+fn corpus_bytes() -> u64 {
+    let tests = root().join("corpus/tests");
+    ["al-language-internals-fixture", "al-language"]
+        .iter()
+        .map(|a| {
+            let app = runtime::load_app(&tests.join(a)).unwrap();
+            app.files.iter().map(|(_, text)| text.len() as u64).sum::<u64>()
+        })
+        .sum()
+}
+
 fn compile_corpus() -> usize {
     let tests = root().join("corpus/tests");
     let apps = vec![
@@ -38,27 +51,26 @@ fn compile_corpus() -> usize {
     lowered.program.objects.len()
 }
 
-/// The cold compile is budgeted in instructions per compiled object, not in seconds. On a shared CI runner the same code
+/// The cold compile is budgeted in instructions per KiB of corpus source, not in seconds. On a shared CI runner the same code
 /// measured 828 and then 955 ms (and 2.4 and then 3.0 s of CPU) between two runs a day apart; the instruction count of
-/// every commit is the same to within 1 % on every machine, and per object it does not break when the corpus grows.
+/// every commit is the same to within 1 % on every machine, and per KiB of source it does not break when the corpus grows (per object it did: the same compiler measured 1.961 million
+/// per object on the old pin and 2.218 on the pin of corpus bump 12, whose objects are bigger; per KiB it is 607 346 and 629 042, +3.5 %).
 /// The limit is the value of the day plus 5 %. Where the kernel refuses the counter the test falls back to the CPU time of
-/// the process per object, with a limit three times as wide, and says so. The wall time is printed for information only.
+/// the process per KiB, with a limit three times as wide, and says so. The wall time is printed for information only.
 ///
 /// ADR-033 step 1 added the link step (every lowered object is made symbolic and linked again, on worker threads): the
 /// day's value went from 1.936 to 1.999 million (+3.3 %), so the limit went from 1 990 000 to 2 060 000. The wall time
 /// did not grow (the walks run on all cores). Lowering that writes the symbolic form directly saves the first of the two
 /// walks.
 ///
-/// ADR-036 step 0 (the side table of expression types, `lower/tys.rs`) costs another 2.3 % (2.059 to 2.106 million), so
-/// the limit is 2 120 000 for now. Decision recorded in docs/owner-review.md (2026-10-16). Bound-tree steps 1 and 2 must
-/// bring it back below 1 990 000; the limit goes down with them.
+/// ADR-036 step 0 (the side table of expression types, `lower/tys.rs`) added 2.3 % and ADR-033 step 1 3.3 %. Cheaper
+/// type copies (`Ty` names are shared, `Arc<str>`), Fx-hashed name maps, and no copy of the candidate list of a call took
+/// the day's value from 2.106 to 1.958 million, so the limit was back at the original 1 990 000 per object (1.958 million that day).
 ///
-/// Corpus bump 12 (laptop batch 5: 148 files, large test codeunits) raised the per-object value from 2.102 to 2.373 million
-/// with the same runtime code (measured on the old pin and the new one with the same binary; 3773 -> 4021 objects, 7.93 -> 9.54
-/// billion instructions). The objects of the new pin are bigger, not slower to compile. Limit 2 400 000 for this pin; the
-/// number still has to come down with the bound tree. Decision recorded in docs/owner-review.md (2026-10-17).
-const LIMIT_INSTRUCTIONS_PER_OBJECT: u64 = 2_400_000;
-const LIMIT_CPU_NS_PER_OBJECT: u64 = 2_000_000;
+/// The unit changed from the object to the KiB of source at corpus bump 12 (14 523 191 bytes, 4021 objects; 8.92 billion
+/// instructions = 629 042 per KiB). The limit is that value plus 5 %, 660 000. Compare values only on one compiler build.
+const LIMIT_INSTRUCTIONS_PER_KIB: u64 = 660_000;
+const LIMIT_CPU_NS_PER_KIB: u64 = 660_000;
 const RUNS: usize = 3;
 
 #[test]
@@ -72,6 +84,7 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
         "corpus submodule not checked out: run `git submodule update --init`"
     );
     // The warm-up (file cache, allocator, the thread pools) is not counted.
+    let bytes = corpus_bytes();
     let mut objects = compile_corpus();
     // Open before the compile starts its threads: they inherit the counter, so the whole compile is counted.
     let meter = Meter::new(true);
@@ -86,13 +99,15 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
         best = best.min(cost);
     }
     let per_object = best / objects as u64;
+    // Budgeted per KiB of source: the objects of a corpus grow without the compiler getting slower.
+    let per_kib = best * 1024 / bytes;
     let limit = if counting {
-        LIMIT_INSTRUCTIONS_PER_OBJECT
+        LIMIT_INSTRUCTIONS_PER_KIB
     } else {
-        LIMIT_CPU_NS_PER_OBJECT
+        LIMIT_CPU_NS_PER_KIB
     };
     eprintln!(
-        "cold compile: {objects} objects, {} ({}), least of {RUNS} = {best}, {per_object} per object, limit {limit}; samples: {}",
+        "cold compile: {objects} objects, {} ({}), least of {RUNS} = {best}, {per_object} per object, {per_kib} per KiB of source ({bytes} bytes), limit {limit} per KiB; samples: {}",
         meter.name(),
         if counting { "all threads" } else { "process" },
         samples.join(", ")
@@ -102,8 +117,8 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
         "compiled only {objects} objects: the corpus was not loaded"
     );
     assert!(
-        limit == 0 || per_object <= limit,
-        "the cold compile used {per_object} {} per object, over the limit of {limit}",
+        limit == 0 || per_kib <= limit,
+        "the cold compile used {per_kib} {} per KiB of corpus source, over the limit of {limit}",
         meter.name()
     );
 }

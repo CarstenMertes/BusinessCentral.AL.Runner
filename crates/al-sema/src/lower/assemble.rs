@@ -238,11 +238,11 @@ pub(crate) fn build_shared<'a>(
     let routine_at = RoutineAt(routine_offsets.clone());
     // The table whose record is the implicit `Rec` of each object, and each table's extensions.
     let mut table_of: Vec<Option<usize>> = vec![None; ws.objects.len()];
-    let mut extensions: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut extensions: HashMap<usize, Vec<usize>> = HashMap::default();
     // Pages: the control tree, the source table, and what the client cannot drive yet.
     let mut layouts: Vec<Option<crate::pages::Layout>> = (0..ws.objects.len()).map(|_| None).collect();
     let mut page_temporary: Vec<bool> = vec![false; ws.objects.len()];
-    let mut page_extensions: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut page_extensions: HashMap<usize, Vec<usize>> = HashMap::default();
     for (oi, o) in ws.objects.iter().enumerate() {
         if prov(oi) {
             continue;
@@ -475,7 +475,7 @@ pub(crate) fn build_shared<'a>(
             continue;
         }
         let l = crate::xmlports::layout(&ws.object_ast(oi));
-        let mut slots = HashMap::new();
+        let mut slots = HashMap::default();
         for n in &l.nodes {
             if matches!(
                 n.kind,
@@ -511,7 +511,7 @@ pub(crate) fn build_shared<'a>(
     let mut ext_irs: Vec<Option<ir::ReportExt>> = (0..ws.objects.len()).map(|_| None).collect();
     let mut ext_base: Vec<Option<usize>> = vec![None; ws.objects.len()];
     // Per report: the reportextensions that change a run.
-    let mut changing: HashMap<usize, Vec<usize>> = HashMap::new();
+    let mut changing: HashMap<usize, Vec<usize>> = HashMap::default();
     for (oi, o) in ws.objects.iter().enumerate() {
         // Every reportextension of a report that is compiled counts, whether or not it was
         // compiled itself: what changes a run is decided by the installed apps' sources, never by
@@ -546,7 +546,7 @@ pub(crate) fn build_shared<'a>(
         }
         let obj = ws.object_ast(oi);
         let l = crate::reports::layout(&obj);
-        let mut slots = HashMap::new();
+        let mut slots = HashMap::default();
         for i in &l.items {
             let next = slots.len();
             slots.entry(i.name.to_lowercase()).or_insert(next);
@@ -720,7 +720,7 @@ pub(crate) fn build_shared<'a>(
     };
     // The global slot of each variable of a page extension, by lower-case name. The page's control
     // tree is built before the extensions are lowered, and binds their controls to these slots.
-    let mut ext_slot_table: Vec<HashMap<String, usize>> = vec![HashMap::new(); ws.objects.len()];
+    let mut ext_slot_table: Vec<HashMap<String, usize>> = vec![HashMap::default(); ws.objects.len()];
     {
         let local = Local::new(Nodes::new(ws, shared.active.clone()));
         let seq = Seq::new(&shared);
@@ -730,7 +730,7 @@ pub(crate) fn build_shared<'a>(
                     continue;
                 }
                 let lw = make_lowerer(&shared, &local, &seq, e);
-                let mut slots = HashMap::new();
+                let mut slots = HashMap::default();
                 for v in ws.object_ast(e).var_decls() {
                     let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
                     for n in v.names() {
@@ -863,7 +863,7 @@ pub(crate) fn lower_core(
     let next = std::sync::atomic::AtomicUsize::new(0);
     let take_some = |local: &Local<'_>, seq: &Seq<'_>| -> Vec<(usize, Piece)> {
         let mut out = Vec::new();
-        let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
+        let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::default();
         loop {
             let k = next.fetch_add(LOWER_CHUNK, std::sync::atomic::Ordering::Relaxed);
             if k >= theirs.len() {
@@ -933,7 +933,7 @@ pub(crate) fn lower_core(
         }
     }
     // Objects nothing compiled are shells.
-    let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
+    let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::default();
     #[allow(clippy::needless_range_loop)] // `oi` is the object, not just a slot of `pieces`
     for oi in 0..n {
         if pieces[oi].is_none() {
@@ -1302,7 +1302,7 @@ fn split_tables(
     let n = staged.len();
     let mut contributions: Vec<Option<TableContribution>> = vec![None; n];
     // The table extensions of each table, in program order.
-    let mut exts_of: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::new();
+    let mut exts_of: std::collections::HashMap<usize, Vec<usize>> = std::collections::HashMap::default();
     #[allow(clippy::needless_range_loop)] // `e` is the object, which `extends` takes
     for e in 0..n {
         if staged[e].object.kind == ObjKind::TableExtension {
@@ -1939,7 +1939,7 @@ pub fn relower_objects(
             .spawn_scoped(scope, || {
                 let local = Local::new(Nodes::new(ws, shared.active.clone()));
                 let seq = Seq::new(&shared);
-                let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::new();
+                let mut line_cache: HashMap<usize, std::rc::Rc<FileLines>> = HashMap::default();
                 dirty
                     .iter()
                     .map(|&oi| (oi, lower_object(&shared, &local, &seq, oi, &mut line_cache)))

@@ -196,6 +196,11 @@ pub struct Workspace {
 }
 
 impl Workspace {
+    /// The preprocessor symbols app `app` was parsed with.
+    pub fn symbols_of(&self, app: usize) -> &BTreeSet<String> {
+        &self.symbols[app]
+    }
+
     pub fn load(apps: Vec<AppSource>, symbols: &BTreeSet<String>) -> Workspace {
         let kinds = vec![AppKind::Workspace; apps.len()];
         Workspace::load_apps(apps, kinds, symbols)

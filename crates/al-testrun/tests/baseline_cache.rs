@@ -43,6 +43,15 @@ fn app(id: &str, deps: &[&str], src: String) -> AppSource {
 }
 
 fn run(installed: &str, expected: &str, cache: Option<&Path>) -> CorpusRuntime {
+    run_with_symbols(installed, expected, cache, &Default::default())
+}
+
+fn run_with_symbols(
+    installed: &str,
+    expected: &str,
+    cache: Option<&Path>,
+    symbols: &std::collections::BTreeSet<String>,
+) -> CorpusRuntime {
     let manifest = |p: &str| Manifest {
         publisher: p.into(),
         version: "1.0.0.0".into(),
@@ -57,7 +66,7 @@ fn run(installed: &str, expected: &str, cache: Option<&Path>) -> CorpusRuntime {
         ],
         vec![al_sema::AppKind::Workspace, al_sema::AppKind::Dependency],
         &[manifest("Me"), manifest("Microsoft")],
-        &Default::default(),
+        symbols,
         None,
         Default::default(),
         &[SuiteRun::everything()],
@@ -137,4 +146,15 @@ fn a_run_without_the_compile_cache_keeps_nothing() {
     let dir = tempfile::tempdir().unwrap();
     assert_eq!(outcome(&run("yes", "yes", None)), Outcome::Pass);
     assert!(files(dir.path()).is_empty());
+}
+
+#[test]
+fn other_preprocessor_symbols_of_the_workspace_get_a_baseline_of_their_own() {
+    // The symbols select the code that is compiled, and the workspace's install codeunits are part of the baseline.
+    let dir = tempfile::tempdir().unwrap();
+    let none = std::collections::BTreeSet::new();
+    let some: std::collections::BTreeSet<String> = ["SPECIAL".to_string()].into_iter().collect();
+    run_with_symbols("yes", "yes", Some(dir.path()), &none);
+    run_with_symbols("yes", "yes", Some(dir.path()), &some);
+    assert_eq!(files(dir.path()).len(), 2, "the symbols are part of the key");
 }

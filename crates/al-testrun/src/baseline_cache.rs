@@ -8,12 +8,12 @@
 //! sees half a file; a file that cannot be read is removed and the install code runs.
 
 use crate::baseline::BaselineRun;
-use al_builtins::value_codec::{Reader, put_str, put_u8, put_u32};
+use al_builtins::value_codec::{Reader, put_i64, put_str, put_u8, put_u32};
 use sha2::{Digest, Sha256};
 use std::path::{Path, PathBuf};
 
 /// The first bytes of a file: what it is and which layout it has.
-const MAGIC: &[u8; 8] = b"ALBRUN\0\x01";
+const MAGIC: &[u8; 8] = b"ALBRUN\0\x02";
 
 /// How many files the folder keeps: the newest ones.
 const KEPT: usize = 8;
@@ -55,12 +55,14 @@ impl Default for KeyBuilder {
 }
 
 /// The bytes of a run, or `None` when it cannot be kept: it recorded changes to a restored company (test data), or
-/// its baseline has no bytes.
-pub fn encode(run: &BaselineRun) -> Option<Vec<u8>> {
+/// its baseline has no bytes. `started_at` is the instant the run began (Unix milliseconds): the rows of the baseline
+/// carry it, so a run that reads the file starts its own clock there (`SystemClock::begin_at`).
+pub fn encode(run: &BaselineRun, started_at: i64) -> Option<Vec<u8>> {
     if !run.restored.is_empty() {
         return None;
     }
     let mut out = MAGIC.to_vec();
+    put_i64(&mut out, started_at);
     put_u32(&mut out, run.unseeded.len() as u32);
     for t in &run.unseeded {
         put_u32(&mut out, *t);
@@ -78,9 +80,10 @@ pub fn encode(run: &BaselineRun) -> Option<Vec<u8>> {
     Some(out)
 }
 
-/// The run [`encode`] wrote, or `None` for anything else.
-pub fn decode(bytes: &[u8]) -> Option<BaselineRun> {
+/// The run [`encode`] wrote and the instant it began, or `None` for anything else.
+pub fn decode(bytes: &[u8]) -> Option<(BaselineRun, i64)> {
     let mut r = Reader::new(bytes.strip_prefix(&MAGIC[..])?);
+    let started_at = r.i64()?;
     let mut unseeded = std::collections::BTreeSet::new();
     for _ in 0..r.u32()? {
         unseeded.insert(r.u32()?);
@@ -96,23 +99,26 @@ pub fn decode(bytes: &[u8]) -> Option<BaselineRun> {
         return None;
     }
     let baseline = al_vm::Baseline::from_bytes(r.rest())?;
-    Some(BaselineRun {
-        baseline,
-        unseeded,
-        filled,
-        notes,
-        ran,
-        total,
-        restored: Vec::new(),
-    })
+    Some((
+        BaselineRun {
+            baseline,
+            unseeded,
+            filled,
+            notes,
+            ran,
+            total,
+            restored: Vec::new(),
+        },
+        started_at,
+    ))
 }
 
 fn file(dir: &Path, key: &str) -> PathBuf {
     folder(dir).join(format!("{key}.albrun"))
 }
 
-/// The run kept under `key`. A file that cannot be read is removed.
-pub fn read(dir: &Path, key: &str) -> Option<BaselineRun> {
+/// The run kept under `key` and the instant it began. A file that cannot be read is removed.
+pub fn read(dir: &Path, key: &str) -> Option<(BaselineRun, i64)> {
     let path = file(dir, key);
     let bytes = std::fs::read(&path).ok()?;
     match decode(&bytes) {
@@ -124,10 +130,10 @@ pub fn read(dir: &Path, key: &str) -> Option<BaselineRun> {
     }
 }
 
-/// Keeps `run` under `key` and drops all but the newest files. Best effort: a folder that cannot be written costs
-/// the next run its install code, nothing else.
-pub fn write(dir: &Path, key: &str, run: &BaselineRun) {
-    let Some(bytes) = encode(run) else {
+/// Keeps `run` under `key`, with the instant it began, and drops all but the newest files. Best effort: a folder that
+/// cannot be written costs the next run its install code, nothing else.
+pub fn write(dir: &Path, key: &str, run: &BaselineRun, started_at: i64) {
+    let Some(bytes) = encode(run, started_at) else {
         return;
     };
     let folder = folder(dir);
@@ -187,8 +193,9 @@ mod tests {
     fn a_run_survives_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let r = run();
-        write(dir.path(), "k1", &r);
-        let back = read(dir.path(), "k1").expect("written and read");
+        write(dir.path(), "k1", &r, 1_792_000_000_123);
+        let (back, at) = read(dir.path(), "k1").expect("written and read");
+        assert_eq!(at, 1_792_000_000_123, "the instant the run began comes back");
         assert!(same(&r, &back));
         assert!(back.restored.is_empty());
     }
@@ -197,14 +204,14 @@ mod tests {
     fn a_key_with_no_file_reads_nothing() {
         let dir = tempfile::tempdir().unwrap();
         assert!(read(dir.path(), "none").is_none());
-        write(dir.path(), "k1", &run());
+        write(dir.path(), "k1", &run(), 0);
         assert!(read(dir.path(), "other").is_none());
     }
 
     #[test]
     fn a_file_that_cannot_be_read_is_removed() {
         let dir = tempfile::tempdir().unwrap();
-        write(dir.path(), "k1", &run());
+        write(dir.path(), "k1", &run(), 0);
         let path = file(dir.path(), "k1");
         let mut bytes = std::fs::read(&path).unwrap();
         bytes.truncate(bytes.len() - 3);
@@ -226,7 +233,7 @@ mod tests {
             same: false,
             fields: Vec::new(),
         });
-        write(dir.path(), "k1", &r);
+        write(dir.path(), "k1", &r, 0);
         assert!(read(dir.path(), "k1").is_none());
         assert!(!folder(dir.path()).join("k1.albrun").exists());
     }
@@ -235,7 +242,7 @@ mod tests {
     fn only_the_newest_files_are_kept() {
         let dir = tempfile::tempdir().unwrap();
         for i in 0..KEPT + 3 {
-            write(dir.path(), &format!("k{i:02}"), &run());
+            write(dir.path(), &format!("k{i:02}"), &run(), 0);
             // File times have a coarse grain on some systems.
             std::thread::sleep(std::time::Duration::from_millis(20));
         }

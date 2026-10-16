@@ -525,10 +525,18 @@ impl CorpusRuntime {
         } else {
             None
         };
+        // A kept baseline is taken only when the run clock can start at the instant its run began: the rows carry
+        // it. A clock that has started already at another instant (something read it, or an earlier run in this
+        // process began later) makes the file unusable here, and the install code runs.
         let kept = baseline_key
             .as_ref()
             .zip(opts.compile_cache.as_ref())
-            .and_then(|(key, cc)| crate::baseline_cache::read(&cc.dir, key));
+            .and_then(|(key, cc)| crate::baseline_cache::read(&cc.dir, key))
+            .filter(|(_, at)| {
+                crate::host::SystemClock::begin_at(*at)
+                    || (crate::host::SystemClock::started() && crate::host::SystemClock::run_start() == *at)
+            })
+            .map(|(run, _)| run);
         let from_cache = kept.is_some();
         let (baseline_run, mut spare_engine) = std::thread::scope(|scope| {
             let spare = (baseline && workers > 1)
@@ -552,7 +560,8 @@ impl CorpusRuntime {
             opts.compile_cache.as_ref(),
             baseline_run.as_ref(),
         ) {
-            crate::baseline_cache::write(&cc.dir, key, run);
+            // The clock has started by now if the install code read it; if not, no row carries it and it starts here.
+            crate::baseline_cache::write(&cc.dir, key, run, crate::host::SystemClock::run_start());
         }
         // The tests run against an engine that knows which tables the install baseline could not
         // seed. The baseline itself ran before it knew; with several test threads, which each run
@@ -991,8 +1000,10 @@ impl CorpusRuntime {
 /// workspace's own install codeunits. It is the same for the same program and the same world around it, which is
 /// everything the key holds: this runtime build, the dependency layers (the key of the top layer holds every app of
 /// them and the target), the source of every other app, the test codeunits that were compiled, the BC target, the
-/// environment of the host and the day. The day is there because the rows carry the time the run began (`SystemClock`),
-/// and a test may ask how old one is.
+/// environment of the host and the day. The rows carry the time the run began (`SystemClock`), and a test may ask how
+/// old one is. The file therefore holds that instant, and a run that reads the file starts its own clock there, so
+/// the rows and the clock agree as they do in a run that began then and ran the install code. The day only bounds how
+/// far in the past a run may think it began.
 ///
 /// Not kept at all: a run that reads test data, runs .NET, lets `File` use a real directory, reads the real clock as
 /// it goes, records, compares two executable forms or has a test runner of its own: what such a run does is not in
@@ -1008,13 +1019,11 @@ fn baseline_key(
     dotnet: &al_vm::dotnet::DotNetConfig,
     opts: &RunOptions,
 ) -> Option<String> {
-    use al_host::Clock;
     let _ = lowered;
     let report = report?;
     opts.compile_cache.as_ref()?;
     if opts.test_data.is_some()
         || opts.trace
-        || opts.dual_run
         || opts.execute
         || opts.coverage
         || suites.iter().any(|s| s.runner.is_some())
@@ -1030,6 +1039,11 @@ fn baseline_key(
     for (i, app) in ws.apps.iter().enumerate() {
         if ws.kinds.get(i) != Some(&al_sema::AppKind::Dependency) {
             key.text("app", &app.id);
+            key.text("app_name", &app.name);
+            key.text("app_dependencies", &app.dependencies.join(","));
+            // The preprocessor symbols the app was parsed with: they select the code that is compiled.
+            let symbols: Vec<&str> = ws.symbols_of(i).iter().map(String::as_str).collect();
+            key.text("app_symbols", &symbols.join(","));
             key.bytes("source", &crate::compile_cache::source_hash(app));
         }
     }
@@ -1041,7 +1055,14 @@ fn baseline_key(
         None => key.text("target", "none"),
     };
     key.text("environment", crate::host::environment_text());
-    let day = crate::host::SystemClock.now_utc_millis().div_euclid(86_400_000);
+    // Read the wall clock without starting the run clock: a run that finds its baseline starts the clock at the
+    // instant the baseline's run began (`SystemClock::begin_at`).
+    let day = crate::host::SystemClock::wall().div_euclid(86_400_000);
     key.text("day", &day.to_string());
+    // The lowering reads it (ADR-023), so the install code it produces depends on it.
+    key.text(
+        "base_access",
+        &std::env::var("AL_UNPINNED_BASE_ACCESS").unwrap_or_default(),
+    );
     Some(key.finish())
 }

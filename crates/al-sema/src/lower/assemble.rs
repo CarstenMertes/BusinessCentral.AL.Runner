@@ -919,6 +919,7 @@ pub(crate) fn lower_core(
                     field_refs: Vec::new(),
                     control_refs: Vec::new(),
                     expansions: Vec::new(),
+                    page_mods: Default::default(),
                     key_owners: Vec::new(),
                     implements: src.map_or_else(Vec::new, |s| s.facts(oi).implements.clone()),
                     enum_impls: src.map_or_else(Vec::new, |s| s.facts(oi).enum_impls.clone()),
@@ -1082,6 +1083,8 @@ pub(crate) fn lower_core(
             field_refs: piece.field_refs,
             control_refs: piece.control_refs,
             expansions: piece.expansions,
+            page_mods: piece.page_mods,
+            page_contribution: None,
             implements: piece.implements,
             enum_impls: piece.enum_impls,
             enum_ordinals: piece.enum_ordinals,
@@ -1501,6 +1504,172 @@ impl al_ir::walk::RefVisitor for FillSets<'_> {
     }
 }
 
+/// Takes what the page extensions add out of the pages that hold it: their controls, with where each goes, their
+/// `modify` blocks and their page triggers. The page keeps its own controls. A page whose own controls refer to a
+/// control of an extension is left as it is.
+fn split_pages(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync), keys: &[al_ir::sym::ObjKey]) {
+    use al_ir::sym::{ControlId, ControlMod, ExtControl, PageContribution};
+    let n = staged.len();
+    let mut contributions: Vec<Option<PageContribution>> = vec![None; n];
+    #[allow(clippy::needless_range_loop)] // `b` is the object, which `provided` and `keys` take
+    for b in 0..n {
+        if provided(b) || staged[b].object.uncompiled || staged[b].object.page.is_none() {
+            continue;
+        }
+        let mods = std::mem::take(&mut staged[b].page_mods);
+        let mut page = staged[b].object.page.take().expect("checked");
+        if page.controls.iter().all(|c| c.owner.is_none()) && page.ext_triggers.is_empty() && mods.mods.is_empty() {
+            staged[b].object.page = Some(page);
+            continue;
+        }
+        // Where each control goes: the page's own controls keep their order, an extension's are counted per extension.
+        let mut pure_of: Vec<Option<usize>> = Vec::with_capacity(page.controls.len());
+        let mut ext_at: Vec<Option<(usize, usize)>> = Vec::with_capacity(page.controls.len());
+        let mut per_ext: Vec<(usize, usize)> = Vec::new();
+        let mut pure = 0;
+        for c in &page.controls {
+            match c.owner {
+                None => {
+                    pure_of.push(Some(pure));
+                    ext_at.push(None);
+                    pure += 1;
+                }
+                Some(e) => {
+                    let k = match per_ext.iter_mut().find(|(x, _)| *x == e) {
+                        Some((_, k)) => {
+                            *k += 1;
+                            *k - 1
+                        }
+                        None => {
+                            per_ext.push((e, 1));
+                            0
+                        }
+                    };
+                    pure_of.push(None);
+                    ext_at.push(Some((e, k)));
+                }
+            }
+        }
+        let id_of = |i: usize| -> ControlId {
+            match (pure_of[i], ext_at[i]) {
+                (Some(p), _) => ControlId::Base(p),
+                (None, Some((e, k))) => ControlId::Ext {
+                    ext: keys[e].clone(),
+                    index: k,
+                },
+                (None, None) => unreachable!("a control is the page's or an extension's"),
+            }
+        };
+        // The page's own controls must not refer to an extension's.
+        let own_refs_ext = page.controls.iter().enumerate().any(|(i, c)| {
+            pure_of[i].is_some()
+                && (c.parent.is_some_and(|p| pure_of[p].is_none())
+                    || matches!(c.action_ref, Some(ir::ActionRef::Target(t)) if pure_of[t].is_none())
+                    || c.part_link
+                        .as_ref()
+                        .is_some_and(|l| l.provider.is_some_and(|p| pure_of[p].is_none()))
+                    || c.run_object
+                        .as_ref()
+                        .and_then(|r| r.link.as_ref())
+                        .is_some_and(|l| l.provider.is_some_and(|p| pure_of[p].is_none())))
+        });
+        if own_refs_ext {
+            staged[b].object.page = Some(page);
+            continue;
+        }
+        // The properties of the controls the `modify` blocks change, before any applies.
+        for (ci, before) in mods.before {
+            page.controls[ci].props = before;
+        }
+        for c in &mut page.controls {
+            c.ext_triggers.clear();
+        }
+        let area_of = |i: usize| {
+            page.action_areas
+                .iter()
+                .find(|a| a.roots.contains(&i))
+                .map(|a| a.name.clone())
+        };
+        let part_pages: Vec<Option<usize>> = page.controls.iter().map(|c| c.part_page).collect();
+        let mut kept = Vec::with_capacity(pure);
+        let old_controls = std::mem::take(&mut page.controls);
+        let mut ext_controls: Vec<(usize, ExtControl)> = Vec::new();
+        for (i, mut c) in old_controls.into_iter().enumerate() {
+            let remap = |x: usize| pure_of[x].expect("checked");
+            match ext_at[i] {
+                None => {
+                    c.parent = c.parent.map(remap);
+                    if let Some(ir::ActionRef::Target(t)) = &mut c.action_ref {
+                        *t = remap(*t);
+                    }
+                    if let Some(l) = c.part_link.as_mut() {
+                        l.provider = l.provider.map(remap);
+                    }
+                    if let Some(l) = c.run_object.as_mut().and_then(|r| r.link.as_mut()) {
+                        l.provider = l.provider.map(remap);
+                    }
+                    kept.push(c);
+                }
+                Some((e, _)) => {
+                    let ext = ExtControl {
+                        pred: (i > 0).then(|| id_of(i - 1)),
+                        parent: c.parent.map(&id_of),
+                        target: match c.action_ref {
+                            Some(ir::ActionRef::Target(t)) => Some(id_of(t)),
+                            _ => None,
+                        },
+                        provider: c.part_link.as_ref().and_then(|l| l.provider).map(&id_of),
+                        area: if c.parent.is_none() { area_of(i) } else { None },
+                        provider_page: c
+                            .part_link
+                            .as_ref()
+                            .and_then(|l| l.provider)
+                            .and_then(|p| part_pages[p]),
+                        control: {
+                            c.parent = None;
+                            if let Some(ir::ActionRef::Target(t)) = &mut c.action_ref {
+                                *t = 0;
+                            }
+                            if let Some(l) = c.part_link.as_mut() {
+                                l.provider = None;
+                            }
+                            c
+                        },
+                    };
+                    ext_controls.push((e, ext));
+                }
+            }
+        }
+        page.controls = kept;
+        for a in &mut page.action_areas {
+            a.roots = a.roots.iter().filter_map(|&r| pure_of[r]).collect();
+        }
+        for (e, c) in ext_controls {
+            contributions[e].get_or_insert_with(Default::default).controls.push(c);
+        }
+        for m in mods.mods {
+            contributions[m.ext]
+                .get_or_insert_with(Default::default)
+                .mods
+                .push(ControlMod {
+                    target: id_of(m.control),
+                    props: m.props,
+                    triggers: m.triggers,
+                });
+        }
+        for (name, e, r) in std::mem::take(&mut page.ext_triggers) {
+            contributions[e]
+                .get_or_insert_with(Default::default)
+                .triggers
+                .push((name, r));
+        }
+        staged[b].object.page = Some(page);
+    }
+    for (e, c) in contributions.into_iter().enumerate() {
+        staged[e].page_contribution = c;
+    }
+}
+
 /// The program built the way lowering used to build it, and where each object's source positions are (the check).
 type Expected = (ir::Program, Vec<(u32, u32)>);
 
@@ -1512,6 +1681,9 @@ struct Staged {
     field_refs: Vec<(usize, u32)>,
     control_refs: Vec<(usize, String, usize)>,
     expansions: Vec<super::localize::Expanded>,
+    page_mods: super::localize::PageMods,
+    /// What a page extension adds to its page, taken out of the page before the objects are made symbolic.
+    page_contribution: Option<al_ir::sym::PageContribution>,
     /// A provided codeunit: the interfaces it implements, from the cache's facts.
     implements: Vec<al_ir::sym::ObjKey>,
     enum_impls: Vec<al_ir::sym::EnumImplDecl>,
@@ -1610,6 +1782,7 @@ fn link_pieces(
         }
     }
     split_tables(&mut staged, provided, lookups);
+    split_pages(&mut staged, provided, &keys);
     let joins = &joins;
     let mut units: Vec<al_link::Unit> = al_link::par_map(staged, workers, |oi, s| {
         if provided(oi) {
@@ -1634,6 +1807,7 @@ fn link_pieces(
                 super::localize::Extras {
                     joins: &joins[oi],
                     table_contribution: s.table_contribution,
+                    page_contribution: s.page_contribution,
                     expansions: &s.expansions,
                     subscribers: subscribers[oi].clone(),
                 },
@@ -1797,6 +1971,7 @@ pub fn relower_objects(
                 super::localize::Extras {
                     joins: &[],
                     table_contribution: None,
+                    page_contribution: None,
                     expansions: &[],
                     subscribers: Vec::new(),
                 },
@@ -1858,6 +2033,8 @@ pub(crate) struct Piece {
     pub(crate) control_refs: Vec<(usize, String, usize)>,
     /// The sets that link works out for the object's sites (`localize::Expanded`).
     pub(crate) expansions: Vec<super::localize::Expanded>,
+    /// What the page extensions' `modify` blocks change in the page's controls.
+    pub(crate) page_mods: super::localize::PageMods,
     /// The object that declares each key of a table (the table or one of its extensions).
     pub(crate) key_owners: Vec<usize>,
     /// A provided codeunit: the interfaces it implements, from the cache's facts.

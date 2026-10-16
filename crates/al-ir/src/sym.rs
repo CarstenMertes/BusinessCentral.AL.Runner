@@ -251,6 +251,50 @@ pub struct TableContribution {
     pub modifies: Vec<FieldModify>,
 }
 
+/// A control of a page among the controls of the page and of its extensions.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ControlId {
+    /// The place among the controls of the page itself.
+    Base(usize),
+    /// The place among the controls an extension adds.
+    Ext { ext: ObjKey, index: usize },
+}
+
+/// A control a page extension adds, and where it goes: after `pred` in the list of all controls (`None`: first),
+/// in the control `parent` (`None`: at the top of an area).
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ExtControl {
+    /// The control. Its `parent`, `action_ref` target and `part_link` provider are replaced by the ids below.
+    pub control: crate::Control,
+    pub pred: Option<ControlId>,
+    pub parent: Option<ControlId>,
+    pub target: Option<ControlId>,
+    pub provider: Option<ControlId>,
+    /// For a control at the top of an area of `actions`: the name of the area.
+    pub area: Option<String>,
+    /// While the object is made symbolic: the page the part named by `provider` shows, as a position in the
+    /// workspace (the host fields of the part's link are fields of its source table). Cleared after.
+    pub provider_page: Option<usize>,
+}
+
+/// What one `modify` block of a page extension changes in a control.
+#[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
+pub struct ControlMod {
+    pub target: ControlId,
+    pub props: Vec<(String, crate::PropVal)>,
+    /// (trigger name in lower case, routine of the extension).
+    pub triggers: Vec<(String, usize)>,
+}
+
+/// What a page extension adds to its page.
+#[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
+pub struct PageContribution {
+    pub controls: Vec<ExtControl>,
+    pub mods: Vec<ControlMod>,
+    /// The page triggers it declares: (name in lower case, routine of the extension).
+    pub triggers: Vec<(String, usize)>,
+}
+
 /// What an extension object adds to its base, which link merges into the base in the order of the
 /// extensions in the program (ADR-033 decision 3).
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
@@ -260,6 +304,8 @@ pub struct Contribution {
     pub enum_captions: Vec<(i32, String)>,
     /// The fields, keys and field changes a table extension declares.
     pub table: Option<TableContribution>,
+    /// The controls, changes and triggers a page extension (or a report extension's request page) adds.
+    pub page: Option<PageContribution>,
 }
 
 /// An object as lowering produces it.

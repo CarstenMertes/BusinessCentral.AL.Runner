@@ -235,6 +235,18 @@ registry! {
         tests: "Whse.-Source - Create Document raises OnAfterPostReport(..., this); about 960 tests of the Tests-SCM buckets.",
         probe: "A report that passes this to an event in OnPostReport; a subscriber calls a procedure of the report and one of a reportextension on the parameter.",
     },
+    PageRunRecordAndSourceTableView => {
+        id: "page-run-record-and-source-table-view",
+        assumed: "Page.Run(Page, Rec) on a page that declares SourceTableView: the page shows the rows of the record that the view also admits (the record's filters, then the view in filter group 2).",
+        tests: "Assemble-to-Order Link ShowAsmOrders runs the Assembly Orders page on a temporary record; about 30 tests of the Tests-SCM-Assembly bucket.",
+        probe: "A page with SourceTableView = where(Kind = const(B)) run on a temporary record holding A and B rows: the rows a handler sees; and on a record with a filter of its own.",
+    },
+    BooleanToTextAsFormat => {
+        id: "boolean-to-text-as-format",
+        assumed: "A Boolean given where a Text or Code is expected (Record.Get(Boolean) on a Code key) converts as Format writes it: Yes or No, upper case for a Code.",
+        tests: "Item Tracking Code Get(Serial) in the SCM kitting tests; about 90 tests of the Tests-SCM-Assembly bucket.",
+        probe: "Get(true) on a table with a Code[10] key holding the rows 'Yes' and 'YES' and '1'; assign a Boolean to a Text and a Code variable.",
+    },
     FormatCodeSpelling => {
         id: "format-code-spelling",
         assumed: "The codes of a Format string are read in any case (`<sign><integer>`) and with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`).",

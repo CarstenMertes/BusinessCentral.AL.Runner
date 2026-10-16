@@ -231,6 +231,7 @@ impl Session {
                     message: "The record is not open.".into(),
                     code: "RecordNotOpened".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 })))
             }
             // BC's answer is not pinned by the corpus: the error text, and whether `Get(RecordId)` opens the

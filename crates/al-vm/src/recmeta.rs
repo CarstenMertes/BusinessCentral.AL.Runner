@@ -822,6 +822,7 @@ impl Session {
                 message,
                 code: "DB:Ok".into(),
                 call_stack: String::new(),
+                ..Default::default()
             }))
         };
         let invalid = || db_ok(format!("Invalid expression of type: position.\\{text}"));

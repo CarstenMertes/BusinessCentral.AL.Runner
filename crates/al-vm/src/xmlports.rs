@@ -788,6 +788,7 @@ impl Session {
                             ),
                             code: "Evaluate".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                     Err(Signal::Error(_)) => return Err(Signal::Error(first)),

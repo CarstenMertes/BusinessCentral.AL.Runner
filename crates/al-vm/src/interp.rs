@@ -211,6 +211,7 @@ impl Session {
                         ),
                         code: "Argument".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 self.application_areas = t.to_string();

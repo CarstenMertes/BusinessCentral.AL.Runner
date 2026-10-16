@@ -422,6 +422,13 @@ impl Builder<'_> {
             match (&class, filter_element) {
                 (FieldClass::Normal, _) | (FieldClass::FlowFilter, true) => {}
                 (FieldClass::FlowField, false) if method.is_none() => {}
+                // Sum, Average, Min and Max add up the values calculated per row; Base Application's "Cust. Ledg. Entry
+                // Remain. Amt." sums "Remaining Amt. (LCY)" (assumption query-method-over-flowfield).
+                (FieldClass::FlowField, false)
+                    if matches!(
+                        method,
+                        Some(ir::QueryMethod::Sum | ir::QueryMethod::Average | ir::QueryMethod::Min | ir::QueryMethod::Max)
+                    ) => {}
                 // Base Application's "Vend. Ledg. Entry Remain. Amt." sums a FlowField; the corpus pins
                 // a FlowField column only without a method (query/TestQueryJoinFlowFieldGroupBy.al).
                 (FieldClass::FlowField, false) => self.reason(format!(

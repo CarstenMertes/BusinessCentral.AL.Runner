@@ -205,6 +205,12 @@ registry! {
         tests: "Tests-ERM `PaymentToleranceWarning` handler (`PaymentToleranceWarning.InitializeOption(OptionValue)`, page 591, whose OnOpenPage and OnQueryClosePage would overwrite the result) and about 47 more tests.",
         probe: "A page with Trace logging in OnInit, OnOpenPage, OnQueryClosePage and OnClosePage, run with RunModal under a ModalPageHandler typed as the Page that logs and sets Response.",
     },
+    QueryMethodOverFlowField => {
+        id: "query-method-over-flowfield",
+        assumed: "A query column over a FlowField with Method Sum, Average, Min or Max aggregates the value calculated for each joined row (with the flow filters of its dataitem), as a column without a method shows it.",
+        tests: "Query \"Cust. Ledg. Entry Remain. Amt.\" (Sum of the FlowField \"Remaining Amt. (LCY)\"): T120_NotifyAboutMissingSalesSetupOnLineDiscountValidation and about 425 more Tests-ERM tests.",
+        probe: "A query with column(Total; FlowFieldOfTheTable) { Method = Sum; } over three rows: the total; the same with Min, Max, Average, ReverseSign and a filter() element feeding the flow filter.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

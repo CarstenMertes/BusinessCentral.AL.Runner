@@ -594,6 +594,7 @@ impl Session {
                 flow_unwind: None,
                 request_only_page: false,
                 report_executed: Vec::new(),
+                prepared: Vec::new(),
                 report_preview_pinned: Vec::new(),
                 dataset: None,
             },

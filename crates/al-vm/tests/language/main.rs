@@ -7,6 +7,7 @@ mod call_stack;
 mod clear_enum;
 mod continue_stmt;
 mod dataformats;
+mod enum_in_set;
 mod erm_builtins;
 mod erm_builtins_2;
 mod erm_defects;

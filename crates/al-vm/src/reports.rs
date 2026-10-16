@@ -202,7 +202,12 @@ impl Session {
                 // run" (handlers/TestReportSetTableView.al:17-22); a global read afterwards belongs
                 // to a new instance (handlers/TestReportRunWithRequestPage.al:32-36,
                 // handlers/TestReportOnInitReportTimingFixtures.al:3-5).
-                self.report_clear(&inst);
+                // `RunModal` does not clear it: a getter called after it reads what the run collected (corpus
+                // reportextensiontrigger/TestPrecompiledReportExtensionDataItems.al: "Run frees the variable's report
+                // instance when it ends ... RunModal keeps it", as Base Application's Reservation Worksheet relies on).
+                if id == ids::REPORT_RUN_1 {
+                    self.report_clear(&inst);
+                }
                 result.map(|()| Value::Null)
             }
             // The static forms run a fresh instance of the report with that id.
@@ -528,6 +533,15 @@ impl Session {
         if self.report_init(inst)? {
             return unsupported("CurrReport.Quit in OnInitReport while a procedure first uses the report (not pinned)");
         }
+        // A procedure the caller runs on the variable before the run (`SetParameters`) may set what the request page
+        // shows (`restore_page_values`).
+        if self.report.report_trigger.is_none()
+            && self.engine.program.objects[inst.borrow().object as usize]
+                .report
+                .is_some()
+        {
+            self.report.prepared.push(Rc::downgrade(inst));
+        }
         Ok(())
     }
 
@@ -535,6 +549,11 @@ impl Session {
     /// whether the trigger quit the report.
     fn report_init(&mut self, inst: &Inst) -> Result<bool, Signal> {
         let first = !inst.borrow().initialized;
+        if first {
+            self.report
+                .prepared
+                .retain(|w| w.upgrade().is_some_and(|i| !Rc::ptr_eq(&i, inst)));
+        }
         self.ensure_initialized(inst);
         let object = inst.borrow().object as usize;
         let engine = self.engine.clone();

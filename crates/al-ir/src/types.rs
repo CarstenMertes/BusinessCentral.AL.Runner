@@ -283,23 +283,31 @@ fn expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
 /// The types of the expressions of one routine, found by the address of the node.
 ///
 /// A node that is not part of the routine's body, or any node when the routine has no table (or one of the wrong
-/// length), is `Unknown`. The routine must not change while an `ExprTypes` of it is in use.
-pub struct ExprTypes {
+/// length), is `Unknown`. The addresses are only good while the routine stays where it is and unchanged, so the
+/// value borrows the routine for `'a` and `of` takes a node borrowed for `'a`: the compiler refuses a change or a
+/// drop of the routine while the value lives.
+///
+/// ```compile_fail
+/// use al_ir::types::ExprTypes;
+/// fn f(mut r: al_ir::Routine) {
+///     let t = ExprTypes::new(&r);
+///     r.body.clear(); // error: `r` is borrowed by `t`
+///     let _ = t;
+/// }
+/// ```
+pub struct ExprTypes<'a> {
     by_addr: std::collections::HashMap<usize, ExprTy>,
+    _routine: std::marker::PhantomData<&'a Routine>,
 }
 
-impl ExprTypes {
+impl<'a> ExprTypes<'a> {
     /// One walk of the body.
-    pub fn new(routine: &Routine) -> ExprTypes {
+    pub fn new(routine: &'a Routine) -> ExprTypes<'a> {
         let mut by_addr = std::collections::HashMap::new();
         let table = &routine.expr_tys;
         if !table.is_empty() {
-            let mut i = 0;
             let mut found = Vec::new();
-            for_each_expr_post(&routine.body, &mut |e| {
-                found.push(e as *const Expr as usize);
-                i += 1;
-            });
+            for_each_expr_post(&routine.body, &mut |e| found.push(e as *const Expr as usize));
             if table.len() == found.len() {
                 by_addr.reserve(found.len());
                 for (addr, ty) in found.into_iter().zip(table.iter()) {
@@ -309,11 +317,14 @@ impl ExprTypes {
                 }
             }
         }
-        ExprTypes { by_addr }
+        ExprTypes {
+            by_addr,
+            _routine: std::marker::PhantomData,
+        }
     }
 
     /// The type of `e`, a node of the routine's body.
-    pub fn of(&self, e: &Expr) -> ExprTy {
+    pub fn of(&self, e: &'a Expr) -> ExprTy {
         self.by_addr
             .get(&(e as *const Expr as usize))
             .copied()

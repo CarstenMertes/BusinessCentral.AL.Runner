@@ -57,6 +57,14 @@ impl Session {
         let ctl = &page.controls[idx];
         let current = self.control_value(st, idx)?;
         let Some(ty) = self.control_type(st, idx, &current) else {
+            // A control bound to an expression on a page with no source table is pinned for the write itself
+            // (misc/lt-probes-needed-7/PnGTempControl.al, pages/W1Controls.al:TempRecordControl_SetValue) but the page also
+            // refreshes after an action there (AGCR), which is not modelled: refused.
+            if matches!(ctl.binding, ir::Binding::Expr(_)) && ctl.trigger("__sourceset").is_some() {
+                return unsupported(
+                    "SetValue on a control bound to an expression of a page with no source table (the refresh after an action is not modelled)",
+                );
+            }
             return unsupported("SetValue on a control whose type is not known");
         };
         let rec_bound = matches!(ctl.binding, ir::Binding::Field(_));
@@ -320,6 +328,11 @@ impl Session {
                     inst.borrow_mut().globals[slot] = current.clone();
                 } else if let (ir::Binding::Expr(_), Some(w)) = (&ctl.binding, ctl.trigger("__sourceset")) {
                     let _ = self.owner_routine_with(st, ctl.owner, w, vec![current.clone()]);
+                }
+                // An error of the write through an expression source (a text too long for the field) is a TestValidation
+                // error, as for a variable (misc/lt-probes-needed-7/PnGTempControl.al:SetValueTooLongAndInvalid).
+                if matches!(ctl.binding, ir::Binding::Expr(_)) {
+                    return Err(refuse_bound(e.message));
                 }
                 Err(refuse(self, e.message))
             }

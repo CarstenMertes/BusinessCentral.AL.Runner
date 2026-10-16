@@ -100,6 +100,7 @@ table 51093 "PT Cap Rec"
 page 51094 "PT Expr Card"
 {
     PageType = Card;
+    SourceTable = "PT Row";
     layout
     {
         area(Content)
@@ -875,7 +876,8 @@ fn field_caption_of_a_field_with_a_caption_class_follows_the_pinned_forms() {
 #[test]
 fn set_value_on_a_control_bound_to_an_assignable_expression_writes_it_and_validates() {
     let r = run(
-        "procedure F(): Text var H: TestPage \"PT Expr Card\"; s: Text; begin
+        "procedure F(): Text var H: TestPage \"PT Expr Card\"; R: Record \"PT Row\"; s: Text; begin
+            R.Grp := 'A'; R.\"Line No.\" := 1; R.Insert();
             H.OpenEdit();
             s := H.Ctl.Value() + '|' + H.Amt.Value();
             H.Ctl.SetValue('changed'); H.Amt.SetValue(12);

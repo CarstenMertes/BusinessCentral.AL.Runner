@@ -1,5 +1,5 @@
 //! `Query` variable methods. The VM executes them (`al-vm/src/queries.rs`); the registry only routes
-//! catalog overload ids to it. A method not listed here, such as `SaveAsCsv` (no probe pins its text), is refused at
+//! catalog overload ids to it. A method not listed here, such as `SaveAsCsv` to a file name, is refused at
 //! lowering ("builtin ... is not implemented").
 
 use crate::native::NativeFn;
@@ -27,4 +27,6 @@ query_methods! {
     "Query.SecurityFiltering#1" => "SecurityFiltering",
     "Query.SaveAsXml#2" => "SaveAsXml",
     "Query.SaveAsJson#1" => "SaveAsJson",
+    "Query.SaveAsCsv#2" => "SaveAsCsv",
+    "Query.SaveAsCsv#4" => "SaveAsCsvStatic",
 }

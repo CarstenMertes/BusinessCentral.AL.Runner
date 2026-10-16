@@ -139,6 +139,12 @@ registry! {
         tests: "System Application Data Type Management (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`): about 260 Tests-ERM tests (CheckICPartner).",
         probe: "RecordRef.Get(Rec.RecordId()) on a fresh RecordRef: the Boolean, then Number() and an Open on the same ref; with the result unused (PnE08RecordMisc.al asks the same row).",
     },
+    CookieSetterResult => {
+        id: "cookie-setter-result",
+        assumed: "Cookie.Name(NewName) and Cookie.Value(NewValue), with the result used, answer the new text.",
+        tests: "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al assigns the result to a Text it never reads (SetName_DoesNotTouchOtherMembers, Copy_AndClear).",
+        probe: "Format of the result of C.Name('n') and C.Value('v') on a cookie that had other values before.",
+    },
     PrimitiveToTextIsFormat => {
         id: "primitive-totext-is-format",
         assumed: "Date.ToText() and Boolean.ToText() give Format(value) with the default format (en-US).",

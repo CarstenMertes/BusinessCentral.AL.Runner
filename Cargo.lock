@@ -103,11 +103,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "al-link"
+version = "3.0.0-alpha.1"
+dependencies = [
+ "al-ir",
+]
+
+[[package]]
 name = "al-sema"
 version = "3.0.0-alpha.1"
 dependencies = [
  "al-builtins",
  "al-ir",
+ "al-link",
  "al-syntax",
  "al-version",
  "postcard",

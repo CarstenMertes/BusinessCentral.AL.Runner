@@ -43,7 +43,12 @@ fn compile_corpus() -> usize {
 /// every commit is the same to within 1 % on every machine, and per object it does not break when the corpus grows.
 /// The limit is the value of the day plus 5 %. Where the kernel refuses the counter the test falls back to the CPU time of
 /// the process per object, with a limit three times as wide, and says so. The wall time is printed for information only.
-const LIMIT_INSTRUCTIONS_PER_OBJECT: u64 = 1_990_000;
+///
+/// ADR-033 step 1 added the link step (every lowered object is made symbolic and linked again, on worker threads): the
+/// day's value went from 1.936 to 1.999 million (+3.3 %), so the limit went from 1 990 000 to 2 060 000. The wall time
+/// did not grow (the walks run on all cores). Lowering that writes the symbolic form directly saves the first of the two
+/// walks.
+const LIMIT_INSTRUCTIONS_PER_OBJECT: u64 = 2_060_000;
 const LIMIT_CPU_NS_PER_OBJECT: u64 = 2_000_000;
 const RUNS: usize = 3;
 

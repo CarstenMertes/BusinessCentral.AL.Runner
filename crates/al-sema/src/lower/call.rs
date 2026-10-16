@@ -285,7 +285,8 @@ impl Lowerer<'_> {
                         let Some(Res::Field { table, id: fid }) = self.res(a).cloned() else {
                             return Err("CopyFilter to something that is not a field of a record".into());
                         };
-                        let pos = self.readable_field_pos(table, fid)?;
+                        self.readable_field_pos(table, fid)?;
+                        let field = self.field_ref(table, fid);
                         let base = match a.kind() {
                             SyntaxKind::MemberExpr => self.place(&a.children().next().ok_or("member base")?)?,
                             _ => ir::Place::Global(
@@ -293,7 +294,7 @@ impl Lowerer<'_> {
                             ),
                         };
                         out.push(ir::Arg::Ref(base));
-                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(field as u32))));
                         continue;
                     }
                     // A parameter named Field... that is an Integer takes the number as a VALUE (`RecRef.Field(Buf."Field No.")`,
@@ -303,13 +304,16 @@ impl Lowerer<'_> {
                         || p.name.to_ascii_lowercase().starts_with("column");
                     match (field_param, self.res(a).cloned()) {
                         (true, Some(Res::Field { table, id })) => {
-                            let pos = self.readable_field_pos(table, id)?;
-                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(pos as u32))));
+                            self.readable_field_pos(table, id)?;
+                            let field = self.field_ref(table, id);
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(field as u32))));
                             continue;
                         }
                         // A query column is named by its position in the query's column list.
-                        (true, Some(Res::QueryColumn { column, .. })) => {
-                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(column as u32))));
+                        // The query is the table; the column's position in its list is the field number.
+                        (true, Some(Res::QueryColumn { query, column })) => {
+                            let field = self.field_ref(query, column as u32);
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(field as u32))));
                             continue;
                         }
                         _ => {}

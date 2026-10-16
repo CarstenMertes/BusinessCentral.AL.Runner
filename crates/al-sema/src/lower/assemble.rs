@@ -913,6 +913,11 @@ pub(crate) fn lower_core(
                         .collect(),
                     direct: Vec::new(),
                     embeds: Vec::new(),
+                    field_refs: Vec::new(),
+                    control_refs: Vec::new(),
+                    fields: src.map_or_else(Vec::new, |s| s.facts(oi).fields.clone()),
+                    controls: src.map_or_else(Vec::new, |s| s.facts(oi).controls.clone()),
+                    key: src.map(|s| s.facts(oi).key.clone()),
                 });
             }
         }
@@ -925,15 +930,37 @@ pub(crate) fn lower_core(
             pieces[oi] = Some(lower_object(&shared, &local, &seq, oi, &mut line_cache));
         }
     }
+    let routine_keys = super::localize::RoutineKeys::new(
+        ws,
+        (0..n)
+            .map(|oi| src.filter(|_| prov(oi)).map(|s| s.facts(oi).routine_keys.as_slice()))
+            .collect(),
+        shared.active.clone(),
+    );
     let mut exported = export.then(crate::provided::DepSet::default);
+    let kinds: Vec<ObjKind> = ws.objects.iter().map(|o| o.kind).collect();
+    let field_pos = |t: usize, id: u32| members.get(t).fields.iter().position(|f| f.id == id);
+    let mut staged: Vec<Staged> = Vec::with_capacity(n);
     let embeds_of_all: Vec<Vec<usize>> = pieces
         .iter()
         .map(|p| p.as_ref().map_or_else(Vec::new, |p| p.embeds.clone()))
         .collect();
-    for (oi, mut piece) in pieces.into_iter().flatten().enumerate() {
+    for (oi, piece) in pieces.into_iter().flatten().enumerate() {
         if let Some(set) = exported.as_mut() {
             set.blocks.push(crate::provided::DepBlock {
-                object: piece.object.clone(),
+                object: {
+                    // A block holds positions (the objects of a dependency set keep their places in the
+                    // run): the fields the expressions named are resolved here.
+                    let mut object = piece.object.clone();
+                    let mut u = Unembed {
+                        list: &piece.field_refs,
+                        controls: &piece.control_refs,
+                        kinds: &kinds,
+                        field_pos: &field_pos,
+                    };
+                    al_ir::walk::walk_object(&mut object, &mut u);
+                    object
+                },
                 unsupported: piece.unsupported.clone(),
                 calls: piece
                     .direct
@@ -944,6 +971,7 @@ pub(crate) fn lower_core(
             let o = &ws.objects[oi];
             let recorded: std::collections::BTreeSet<usize> = embeds_of_all[oi].iter().copied().collect();
             set.facts.push(crate::provided::DepFacts {
+                key: al_ir::sym::ObjKey::of(&piece.object, &program.apps),
                 kind: Some(o.kind),
                 id: o.id,
                 name: o.name.clone(),
@@ -970,30 +998,228 @@ pub(crate) fn lower_core(
                 },
                 routine_offsets: shared.routine_offsets[oi].iter().map(|&o| o as u32).collect(),
                 routine_roles: shared.driven.routine_roles[oi].clone(),
+                fields: piece
+                    .object
+                    .table
+                    .as_ref()
+                    .map_or_else(Vec::new, |t| t.fields.iter().map(|f| f.id).collect()),
+                controls: piece.object.page.as_ref().map_or_else(Vec::new, |p| {
+                    p.controls.iter().map(|c| c.name.to_ascii_lowercase()).collect()
+                }),
+                routine_keys: routine_keys.of(oi).to_vec(),
                 xml_reason: shared.xml_reasons[oi].clone(),
                 report_reason: shared.report_reasons[oi].clone(),
                 report_extensions: shared.driven.report_extension[oi].iter().map(|&e| e as u32).collect(),
                 query: checked.queries[oi].clone(),
             });
         }
-        let base = program.positions.len() as u32;
-        out.pos_ranges.push((base, piece.positions.len() as u32));
-        if !piece.positions.is_empty() {
-            for r in &mut piece.object.routines {
-                r.shift_positions(base);
-            }
-            program.positions.append(&mut piece.positions);
-        }
-        program.objects.push(piece.object);
         out.unsupported.push(piece.unsupported);
         out.calls.push(piece.calls);
+        staged.push(Staged {
+            object: piece.object,
+            positions: piece.positions,
+            key: piece.key,
+            field_refs: piece.field_refs,
+            control_refs: piece.control_refs,
+            fields: piece.fields,
+            controls: piece.controls,
+        });
     }
+    let check = cfg!(test) || std::env::var_os("AL_CHECK_LINK").is_some();
+    let field_no = |t: usize, pos: usize| members.get(t).fields.get(pos).map(|f| f.id);
+    let field_numbers = |t: usize| members.get(t).fields.iter().map(|f| f.id).collect::<Vec<u32>>();
+    let report_item_table = |r: usize, item: usize| {
+        shared
+            .report_irs
+            .get(r)
+            .and_then(|x| x.as_ref())
+            .and_then(|x| x.items.get(item))
+            .and_then(|i| i.table)
+    };
+    let lookups = Lookups {
+        table_of: &shared.table_of,
+        field_no: &field_no,
+        field_pos: &field_pos,
+        field_numbers: &field_numbers,
+        report_item_table: &report_item_table,
+    };
+    let linked = link_pieces(staged, program, &prov, &routine_keys, &lookups, check)?;
+    out.pos_ranges = linked.pos_ranges;
+    let program = linked.program;
     out.exported = exported;
     if src.is_some() {
         out.driven = Some(shared.driven.clone());
     }
     out.program = std::sync::Arc::new(program);
     Ok(out)
+}
+
+/// What the lowering knew about tables, which making an object symbolic reads again.
+struct Lookups<'a> {
+    table_of: &'a [Option<usize>],
+    field_no: &'a (dyn Fn(usize, usize) -> Option<u32> + Sync),
+    /// The position of field `id` in table `table`.
+    field_pos: &'a (dyn Fn(usize, u32) -> Option<usize> + Sync),
+    /// The number of every field of table `table`, in order.
+    field_numbers: &'a (dyn Fn(usize) -> Vec<u32> + Sync),
+    report_item_table: &'a (dyn Fn(usize, usize) -> Option<usize> + Sync),
+}
+
+/// For the check: turns the references the expressions of an object hold into the positions
+/// lowering used to write there.
+struct Unembed<'a> {
+    list: &'a [(usize, u32)],
+    controls: &'a [(usize, String, usize)],
+    kinds: &'a [ObjKind],
+    field_pos: &'a dyn Fn(usize, u32) -> Option<usize>,
+}
+
+impl al_ir::walk::RefVisitor for Unembed<'_> {
+    fn object(&mut self, _: &mut usize) {}
+    fn routine(&mut self, _: &mut usize, _: usize) {}
+    fn control(&mut self, r: &mut usize) {
+        *r = self.controls[*r].2;
+    }
+    fn field(&mut self, r: &mut usize, table: al_ir::walk::TableOf) {
+        if table != al_ir::walk::TableOf::Embedded {
+            return;
+        }
+        let (t, id) = self.list[*r];
+        // A query's column is named by its position, which is the number.
+        *r = if self.kinds[t] == ObjKind::Query {
+            id as usize
+        } else {
+            (self.field_pos)(t, id).unwrap_or_else(|| {
+                panic!(
+                    "field {id} of object {t} (kind {}), which the lowering named, is not in its members",
+                    self.kinds[t]
+                )
+            })
+        };
+    }
+}
+
+/// A lowered object waiting to be linked.
+struct Staged {
+    object: ir::Object,
+    positions: Vec<ir::SrcPos>,
+    key: Option<al_ir::sym::ObjKey>,
+    field_refs: Vec<(usize, u32)>,
+    control_refs: Vec<(usize, String, usize)>,
+    /// For a provided table: its field numbers (`DepFacts::fields`).
+    fields: Vec<u32>,
+    /// For a provided page: its control names (`DepFacts::controls`).
+    controls: Vec<String>,
+}
+
+/// Turns the lowered objects, in program order, into the program (ADR-033): the objects that were
+/// lowered now become symbolic, the ones a compile cache supplied (`provided`) are placed as they
+/// are, and link gives every object its position. `base` holds everything that is not an object.
+/// With `check`, the program is also built the way lowering used to build it, and a difference
+/// is an error (`AL_CHECK_LINK=1`).
+fn link_pieces(
+    staged: Vec<Staged>,
+    base: ir::Program,
+    provided: &(dyn Fn(usize) -> bool + Sync),
+    routine_keys: &super::localize::RoutineKeys<'_>,
+    lookups: &Lookups<'_>,
+    check: bool,
+) -> Result<al_link::Linked, String> {
+    use al_ir::sym::ObjKey;
+    let keys: Vec<ObjKey> = staged
+        .iter()
+        .map(|s| s.key.clone().unwrap_or_else(|| ObjKey::of(&s.object, &base.apps)))
+        .collect();
+    // The check builds the program the way lowering used to: every reference a position.
+    let expected = check.then(|| {
+        let mut p = base.clone();
+        let mut ranges = Vec::new();
+        for (oi, s) in staged.iter().enumerate() {
+            let at = p.positions.len() as u32;
+            ranges.push((at, s.positions.len() as u32));
+            let mut object = s.object.clone();
+            if !provided(oi) {
+                let mut u = Unembed {
+                    list: &s.field_refs,
+                    controls: &s.control_refs,
+                    kinds: &keys.iter().map(|k| k.kind).collect::<Vec<_>>(),
+                    field_pos: lookups.field_pos,
+                };
+                al_ir::walk::walk_object(&mut object, &mut u);
+            }
+            if !s.positions.is_empty() {
+                for r in &mut object.routines {
+                    r.shift_positions(at);
+                }
+                p.positions.extend(s.positions.iter().copied());
+            }
+            p.objects.push(object);
+        }
+        (p, ranges)
+    });
+    let routines_of = |i: usize| routine_keys.of(i);
+    let tables = super::localize::Keys {
+        objects: &keys,
+        routines: &routines_of,
+        table_of: lookups.table_of,
+        field_no: lookups.field_no,
+        report_item_table: lookups.report_item_table,
+    };
+    let workers = lower_workers();
+    let mut units: Vec<al_link::Unit> = al_link::par_map(staged, workers, |oi, s| {
+        if provided(oi) {
+            Ok(al_link::Unit::Dense(al_link::DenseObject {
+                key: keys[oi].clone(),
+                fields: s.fields,
+                controls: s.controls,
+                object: s.object,
+                positions: s.positions,
+            }))
+        } else {
+            super::localize::localize(&tables, oi, s.object, s.positions, &s.field_refs, &s.control_refs)
+                .map(al_link::Unit::Sym)
+        }
+    })
+    .into_iter()
+    .collect::<Result<_, String>>()?;
+    // A table nothing compiled has no field list, but other objects may name its fields: they are
+    // counted from its members, for the tables that are named.
+    let at: HashMap<&ObjKey, usize> = keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
+    let mut numbered = std::collections::HashSet::new();
+    for u in &units {
+        if let al_link::Unit::Sym(s) = u {
+            for f in &s.refs.fields {
+                if f.table.kind == ObjKind::Table {
+                    if let Some(&t) = at.get(&f.table) {
+                        numbered.insert(t);
+                    }
+                }
+            }
+        }
+    }
+    for t in numbered {
+        let (no_table, object_kind_table) = match &units[t] {
+            al_link::Unit::Sym(s) => (s.object.table.is_none(), true),
+            al_link::Unit::Dense(_) => (false, false),
+        };
+        if no_table && object_kind_table {
+            if let al_link::Unit::Sym(s) = &mut units[t] {
+                s.field_numbers = (lookups.field_numbers)(t);
+            }
+        }
+    }
+    let linked = al_link::link(units, base, workers, &routines_of).map_err(|e| format!("link: {e}"))?;
+    if let Some((p, ranges)) = expected {
+        if let Some(d) = al_link::first_difference(&p, &linked.program) {
+            return Err(format!(
+                "AL_CHECK_LINK: the linked program differs from the lowered one: {d}"
+            ));
+        }
+        if ranges != linked.pos_ranges {
+            return Err("AL_CHECK_LINK: the source position ranges differ".into());
+        }
+    }
+    Ok(linked)
 }
 
 /// The incremental compile (`incremental.rs`): the objects `dirty` changed in code only (the declarations of
@@ -1053,49 +1279,57 @@ pub fn relower_objects(
             .join()
             .expect("the lowering thread panicked")
     });
-    // The new source positions: the table is rebuilt in object order, the objects that did not change
-    // moved to their new place.
-    let mut is_dirty = vec![false; n];
-    for &oi in dirty {
-        is_dirty[oi] = true;
-    }
-    let mut renewed: Vec<Option<Piece>> = (0..n).map(|_| None).collect();
-    for (oi, piece) in pieces {
-        renewed[oi] = Some(piece);
-    }
+    // The new objects are made symbolic and linked into the program as it is (ADR-033); link also
+    // numbers the source positions again, in object order, the objects that did not change moved
+    // to their new place.
     let program = std::sync::Arc::make_mut(&mut old.program);
-    let old_positions = std::mem::take(&mut program.positions);
-    let mut positions: Vec<ir::SrcPos> = Vec::with_capacity(old_positions.len());
-    for (oi, slot) in renewed.iter_mut().enumerate() {
-        let cursor = positions.len() as u32;
-        match slot.take() {
-            Some(mut piece) => {
-                let len = piece.positions.len() as u32;
-                for r in &mut piece.object.routines {
-                    r.shift_positions(cursor);
-                }
-                positions.append(&mut piece.positions);
-                program.objects[oi] = piece.object;
-                old.unsupported[oi] = piece.unsupported;
-                old.calls[oi] = piece.calls;
-                old.pos_ranges[oi] = (cursor, len);
-            }
-            None => {
-                let (start, len) = old.pos_ranges[oi];
-                if len > 0 {
-                    positions.extend_from_slice(&old_positions[start as usize..(start + len) as usize]);
-                    if start != cursor {
-                        let by = cursor.wrapping_sub(start);
-                        for r in &mut program.objects[oi].routines {
-                            r.shift_positions(by);
-                        }
-                    }
-                }
-                old.pos_ranges[oi] = (cursor, len);
-            }
-        }
+    let keys: Vec<al_ir::sym::ObjKey> = program
+        .objects
+        .iter()
+        .map(|o| al_ir::sym::ObjKey::of(o, &program.apps))
+        .collect();
+    let compiled: Vec<bool> = program.objects.iter().map(|o| !o.uncompiled).collect();
+    let routine_keys = super::localize::RoutineKeys::new(
+        ws,
+        (0..n)
+            .map(|i| old.provided[i].then(|| src.facts(i).routine_keys.as_slice()))
+            .collect(),
+        compiled,
+    );
+    let routines_of = |i: usize| routine_keys.of(i);
+    let field_no = |t: usize, pos: usize| members.get(t).fields.get(pos).map(|f| f.id);
+    let report_item_table = |r: usize, item: usize| {
+        shared
+            .report_irs
+            .get(r)
+            .and_then(|x| x.as_ref())
+            .and_then(|x| x.items.get(item))
+            .and_then(|i| i.table)
+    };
+    let tables = super::localize::Keys {
+        objects: &keys,
+        routines: &routines_of,
+        table_of: &shared.table_of,
+        field_no: &field_no,
+        report_item_table: &report_item_table,
+    };
+    let mut replace = Vec::with_capacity(pieces.len());
+    for (oi, piece) in pieces {
+        old.unsupported[oi] = piece.unsupported;
+        old.calls[oi] = piece.calls;
+        replace.push((
+            oi,
+            super::localize::localize(
+                &tables,
+                oi,
+                piece.object,
+                piece.positions,
+                &piece.field_refs,
+                &piece.control_refs,
+            )?,
+        ));
     }
-    program.positions = positions;
+    al_link::relink(program, &mut old.pos_ranges, &keys, &routines_of, replace).map_err(|e| format!("link: {e}"))?;
     program.uncompiled_subscribers = uncompiled_subscribers;
     old.driven = Some(shared.driven.clone());
     // The diagnostics: what the checker found in the files that did not change stays.
@@ -1142,6 +1376,16 @@ pub(crate) struct Piece {
     pub(crate) direct: Vec<Vec<(usize, usize)>>,
     /// The objects whose extensions or implementers the lowering read (see `provided.rs`).
     pub(crate) embeds: Vec<usize>,
+    /// With a compile cache: the key the cache recorded for the object (a layer build's placeholder has no object to take it from).
+    pub(crate) key: Option<al_ir::sym::ObjKey>,
+    /// The fields the object's expressions name: (table, field number) (`localize.rs`).
+    pub(crate) field_refs: Vec<(usize, u32)>,
+    /// The controls the object's expressions name (`localize.rs`).
+    pub(crate) control_refs: Vec<(usize, String, usize)>,
+    /// A provided table: its field numbers, from the cache's facts.
+    pub(crate) fields: Vec<u32>,
+    /// A provided page: its control names, from the cache's facts.
+    pub(crate) controls: Vec<String>,
 }
 
 /// How many threads lower dependency objects. `AL_LOWER_THREADS` sets it; the default is the

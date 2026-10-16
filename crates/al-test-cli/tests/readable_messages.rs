@@ -10,6 +10,16 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-link/src/lib.rs",
+        r#""source position {at}: {:?} against {:?} ({} and {} positions)","#,
+        "the report of a defect of the link step (AL_CHECK_LINK, tests): for the developers of the compiler",
+    ),
+    (
+        "al-link/src/lib.rs",
+        r#"let (x, y) = (format!("{a:?}"), format!("{b:?}"));"#,
+        "the report of a defect of the link step (AL_CHECK_LINK, tests): for the developers of the compiler",
+    ),
+    (
         "al-data/src/memory.rs",
         r#"format!("{row:?}").hash(h);"#,
         "a hash input of the dual-run digest, never shown",

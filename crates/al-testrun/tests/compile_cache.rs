@@ -69,6 +69,7 @@ fn cache(dir: &Path, require: bool) -> Option<CompileCache> {
     Some(CompileCache {
         dir: dir.to_path_buf(),
         require,
+        rebuild: false,
     })
 }
 

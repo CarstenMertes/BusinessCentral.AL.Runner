@@ -797,6 +797,87 @@ and the cached one.
    Tests-ERM took 0.2 to 1.1 s each, 2.8 s together. Overlapping the scan of the next layer with the compile of this one
    would save an estimated 0.6 s of that and costs a second workspace in memory; not built.
 
+## Amendment (Proposed, 2026-10-17): the install baseline is an entry of this cache (branch `baseline-in-compile-cache`)
+
+Status of this amendment: **Proposed**. It needs the owner's acceptance. The code is on the branch and works; nothing
+here is merged.
+
+### Why
+
+Every run first runs the install code of the dependency apps and `Company-Initialize` on a fresh session, then
+captures the data it left (the install baseline, ADR-013 decision 5). The result is the same for the same program
+and the same world around it. A first version of keeping it between runs (the pull request of 2026-10-16) put it in
+a folder of its own. The owner allows one persistent cache, so this is the same cache, not a second one.
+
+### Decision
+
+1. **One more entry type in `<cache dir>/compile/`.** The baseline entry is a file `<key>.albr` next to the layer files
+   (`.alcc`) and the source indexes (`.alci`). The same folder, the same write method (a temporary file, then a rename),
+   the same cleanup (`compile_cache::prune`: an entry nothing used for 30 days goes; a read marks the file as used).
+2. **Same build pin.** The key starts with the hash of the running executable (`runtime_build`), as the layers do.
+   Another build never reads the entry.
+3. **The key** is a SHA-256 over named parts, so a part that is missing changes the key as much as one that differs:
+   - the build pin and the file name of the top dependency layer (that name holds every dependency app, its version
+     and source hash, and the target);
+   - for each non-dependency app: id, name, dependencies, preprocessor symbols and the hash of its source files;
+   - the selected test codeunits (the install code that runs depends on what the selection reaches);
+   - the BC target, `--environment`, and `AL_UNPINNED_BASE_ACCESS`;
+   - whether a .NET host is usable (see 5);
+   - the identity of the test data: for the Cronus demo backup, the file's full path, length and modification time
+     plus the company. The backup comes from the version-pinned artifact of the same build, so the path and the
+     modification time follow the artifact. A source that cannot give an identity gets no entry;
+   - the UTC day.
+4. **The run clock.** The rows of a baseline carry the instant the run that made it began (`SystemClock`). The entry
+   stores that instant. A run that reads the entry starts its run clock there, as if it had begun then. If its clock
+   has started already at another instant, the entry is not used and the install code runs. So every value a test can
+   see equals what an uncached run started at that instant would show. The day in the key bounds how far back a
+   run's clock can start.
+5. **.NET makes no difference to whether the entry is kept.** A run with a usable .NET host keeps and reads the entry
+   like any other. The installed state is a valid result whatever .NET calls happened. The key does hold whether a
+   host was usable, because a baseline made without one lacks what the refused calls would have written, and a run
+   with one must not start from it. The key does not hold the assembly folders; a change there that changes install
+   results needs `alrunner cache clear`.
+6. **Test data.** The entry holds the tables the install code wrote to (with the restored rows copied in and the
+   changes made), the note lines about changes to restored rows, and the counters. Every other table is the restored
+   database and is read through the run's own engine, as in an uncached run (`Baseline::backed_by`).
+   A table the install code emptied stays empty.
+7. **The multi-thread snapshot** (test threads start from the bytes of the baseline instead of running the install
+   code again) is the same format and now also works with test data.
+8. **Flush and rebuild.**
+   - `alrunner cache clear [--cache-dir DIR]` removes every entry of the compile cache (layers, indexes, baselines,
+     temporary files) and prints how many files and bytes. It does not touch the downloaded artifacts or the backup
+     page maps.
+   - `alrunner test --rebuild-compile-cache` reads no entry: it builds the entries the run needs again and writes them
+     over the old ones. Entries of other app sets stay. It cannot be combined with `--no-compile-cache` or
+     `--require-compile-cache`.
+   - Owner, 2026-10-16: with a way to flush, a cached result in doubt is not a problem.
+
+### Measured
+
+Tests-ERM with test data, BC 27.5.46862.48827, `--filter Reminder` (198 tests), `AL_FORCE_BASELINE=1`, 5 runs each,
+alternating (cold: the entry removed; cached: read). The machine had a load average of 17 to 23 on 12 cores.
+
+| | install baseline phase |
+|---|---|
+| cold (install code runs) | 0.09, 0.12, 0.08, 0.14, 0.14 s; median 0.12 s |
+| cached | 0.08, 0.04, 0.04, 0.09, 0.06 s; median 0.06 s |
+
+The entry is 164 KB. The saving is about 0.06 s per run here, because the install code of this set is cheap. The
+corpus run with Microsoft's apps (no test data) spends 0.2 to 0.5 s on the baseline, which the entry also removes.
+Outcomes: the 198 tests, and the whole of Tests-ERM (9333 tests, 100 s), give 0 differences between `origin/main`, a cold run
+and a cached run (JUnit compared with `tools/compare_junit.py`). The cached full run printed "baseline: read from the cache".
+
+### Not changed
+
+The layer entries, their keys and the format number are not touched. A baseline entry has its own magic and layout
+number; a change of the layout makes old files unreadable, and an unreadable file is removed.
+
+### Open for the owner
+
+- Whether the small saving justifies another entry type. The cost is one more thing that can be stale; the flush
+  command and the build pin are the guard.
+- Whether the key should hold the assembly folders of `--dotnet-assembly-dir`.
+
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an

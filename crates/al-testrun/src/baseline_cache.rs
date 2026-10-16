@@ -1,11 +1,12 @@
-//! The install baseline on disk. Running the install code of the dependency apps and `Company-Initialize` takes
-//! longer than reading what they leave: the data of a baseline is a few hundred rows, and it is the same for the same
-//! program. A run with the compile cache (ADR-022) keeps the baseline next to it, in `<cache>/baseline/`, under a key
-//! of everything the install code can read, and reads it back instead of running the install code again.
+//! The install baseline as an entry of the compile cache (ADR-022). Running the install code of the dependency
+//! apps and `Company-Initialize` takes longer than reading what they leave, and it is the same for the same program
+//! and the same world around it. The entry lives in the compile cache's folder (`<cache>/compile/`, file extension
+//! `albr`), is tied to the same build of the runtime, is pruned with the other entries, and goes with
+//! `alrunner cache clear` and is replaced by `--rebuild-compile-cache`. There is no second cache.
 //!
-//! The file is the [`BaselineRun`] without the part only a run with test data has (`restored`), so a run
-//! with test data never stores or reads one. The file is written to a name of its own and renamed, so a reader never
-//! sees half a file; a file that cannot be read is removed and the install code runs.
+//! The file is the [`BaselineRun`]: the data the install code left, the notes about roots that did not run to their
+//! end, and the instant the run began. The file is written to a name of its own and renamed, so a reader never sees
+//! half a file; a file that cannot be read is removed and the install code runs.
 
 use crate::baseline::BaselineRun;
 use al_builtins::value_codec::{Reader, put_i64, put_str, put_u8, put_u32};
@@ -15,13 +16,8 @@ use std::path::{Path, PathBuf};
 /// The first bytes of a file: what it is and which layout it has.
 const MAGIC: &[u8; 8] = b"ALBRUN\0\x02";
 
-/// How many files the folder keeps: the newest ones.
-const KEPT: usize = 8;
-
-/// The folder of the files, under the compile cache's.
-pub fn folder(compile_cache_dir: &Path) -> PathBuf {
-    compile_cache_dir.join("baseline")
-}
+/// The extension of the entry files (the layers have `alcc`, the source index `alci`).
+pub const EXTENSION: &str = "albr";
 
 /// What the key is made of, one part after the other; a part that is not given changes the key as well as one that
 /// differs.
@@ -54,13 +50,10 @@ impl Default for KeyBuilder {
     }
 }
 
-/// The bytes of a run, or `None` when it cannot be kept: it recorded changes to a restored company (test data), or
-/// its baseline has no bytes. `started_at` is the instant the run began (Unix milliseconds): the rows of the baseline
+/// The bytes of a run, or `None` when it cannot be kept: its baseline has no bytes (a row holds a value that is not
+/// plain). `started_at` is the instant the run began (Unix milliseconds): the rows of the baseline
 /// carry it, so a run that reads the file starts its own clock there (`SystemClock::begin_at`).
 pub fn encode(run: &BaselineRun, started_at: i64) -> Option<Vec<u8>> {
-    if !run.restored.is_empty() {
-        return None;
-    }
     let mut out = MAGIC.to_vec();
     put_i64(&mut out, started_at);
     put_u32(&mut out, run.unseeded.len() as u32);
@@ -73,6 +66,16 @@ pub fn encode(run: &BaselineRun, started_at: i64) -> Option<Vec<u8>> {
     put_u32(&mut out, run.notes.len() as u32);
     for n in &run.notes {
         put_str(&mut out, n);
+    }
+    put_u32(&mut out, run.restored.len() as u32);
+    for c in &run.restored {
+        put_str(&mut out, &c.table);
+        put_u8(&mut out, op_code(c.op));
+        put_u8(&mut out, c.same as u8);
+        put_u32(&mut out, c.fields.len() as u32);
+        for f in &c.fields {
+            put_str(&mut out, f);
+        }
     }
     put_u8(&mut out, 1);
     let baseline = run.baseline.to_bytes()?;
@@ -95,6 +98,22 @@ pub fn decode(bytes: &[u8]) -> Option<(BaselineRun, i64)> {
     for _ in 0..r.u32()? {
         notes.push(r.str()?);
     }
+    let mut restored = Vec::new();
+    for _ in 0..r.u32()? {
+        let table = r.str()?;
+        let op = op_name(r.u8()?)?;
+        let same = r.u8()? != 0;
+        let mut fields = Vec::new();
+        for _ in 0..r.u32()? {
+            fields.push(r.str()?);
+        }
+        restored.push(al_data::memory::RestoredChange {
+            table,
+            op,
+            same,
+            fields,
+        });
+    }
     if r.u8()? != 1 {
         return None;
     }
@@ -107,22 +126,36 @@ pub fn decode(bytes: &[u8]) -> Option<(BaselineRun, i64)> {
             notes,
             ran,
             total,
-            restored: Vec::new(),
+            restored,
         },
         started_at,
     ))
 }
 
-fn file(dir: &Path, key: &str) -> PathBuf {
-    folder(dir).join(format!("{key}.albrun"))
+const OPS: [&str; 4] = ["Modify", "Delete", "Rename", "DeleteAll"];
+
+fn op_code(op: &str) -> u8 {
+    OPS.iter().position(|o| *o == op).unwrap_or(0) as u8
 }
 
-/// The run kept under `key` and the instant it began. A file that cannot be read is removed.
+fn op_name(code: u8) -> Option<&'static str> {
+    OPS.get(code as usize).copied()
+}
+
+fn file(dir: &Path, key: &str) -> PathBuf {
+    dir.join(format!("{key}.{EXTENSION}"))
+}
+
+/// The run kept under `key` and the instant it began. A file that cannot be read is removed. A hit marks the file
+/// as used now, so that the cleanup of the compile cache keeps what runs still use.
 pub fn read(dir: &Path, key: &str) -> Option<(BaselineRun, i64)> {
     let path = file(dir, key);
     let bytes = std::fs::read(&path).ok()?;
     match decode(&bytes) {
-        Some(run) => Some(run),
+        Some(run) => {
+            crate::compile_cache::touch(&path);
+            Some(run)
+        }
         None => {
             let _ = std::fs::remove_file(&path);
             None
@@ -130,40 +163,23 @@ pub fn read(dir: &Path, key: &str) -> Option<(BaselineRun, i64)> {
     }
 }
 
-/// Keeps `run` under `key`, with the instant it began, and drops all but the newest files. Best effort: a folder that
-/// cannot be written costs the next run its install code, nothing else.
+/// Keeps `run` under `key`, with the instant it began. Best effort: a folder that cannot be written costs the next
+/// run its install code, nothing else. The cleanup is the compile cache's (`compile_cache::prune`).
 pub fn write(dir: &Path, key: &str, run: &BaselineRun, started_at: i64) {
     let Some(bytes) = encode(run, started_at) else {
         return;
     };
-    let folder = folder(dir);
-    if std::fs::create_dir_all(&folder).is_err() {
+    if std::fs::create_dir_all(dir).is_err() {
         return;
     }
     let target = file(dir, key);
     // A name of its own per writer: two runs that write at once do not mix their bytes.
-    let temp = folder.join(format!("{key}.{}.tmp", std::process::id()));
+    let temp = dir.join(format!(".{key}.tmp-{}", std::process::id()));
     if std::fs::write(&temp, &bytes).is_err() || std::fs::rename(&temp, &target).is_err() {
         let _ = std::fs::remove_file(&temp);
         return;
     }
-    prune(&folder);
-}
-
-fn prune(folder: &Path) {
-    let Ok(entries) = std::fs::read_dir(folder) else {
-        return;
-    };
-    let mut files: Vec<(std::time::SystemTime, PathBuf)> = entries
-        .filter_map(|e| e.ok())
-        .filter(|e| e.path().extension().is_some_and(|x| x == "albrun"))
-        .filter_map(|e| Some((e.metadata().ok()?.modified().ok()?, e.path())))
-        .collect();
-    files.sort();
-    let drop = files.len().saturating_sub(KEPT);
-    for (_, path) in files.into_iter().take(drop) {
-        let _ = std::fs::remove_file(path);
-    }
+    crate::compile_cache::prune(dir, &[target]);
 }
 
 #[cfg(test)]
@@ -224,39 +240,58 @@ mod tests {
     }
 
     #[test]
-    fn a_run_with_changes_to_restored_rows_is_not_kept() {
+    fn the_changes_the_install_code_made_to_restored_rows_survive_the_file() {
         let dir = tempfile::tempdir().unwrap();
         let mut r = run();
         r.restored.push(al_data::memory::RestoredChange {
             table: "T".into(),
-            op: "Modify",
+            op: "Rename",
+            same: false,
+            fields: vec!["A".into(), "B".into()],
+        });
+        r.restored.push(al_data::memory::RestoredChange {
+            table: "U".into(),
+            op: "DeleteAll",
             same: false,
             fields: Vec::new(),
         });
         write(dir.path(), "k1", &r, 0);
-        assert!(read(dir.path(), "k1").is_none());
-        assert!(!folder(dir.path()).join("k1.albrun").exists());
+        let (back, _) = read(dir.path(), "k1").expect("kept");
+        assert_eq!(back.restored, r.restored);
     }
 
     #[test]
-    fn only_the_newest_files_are_kept() {
+    fn the_entry_sits_in_the_compile_cache_folder_and_goes_with_its_cleanup() {
         let dir = tempfile::tempdir().unwrap();
-        for i in 0..KEPT + 3 {
-            write(dir.path(), &format!("k{i:02}"), &run(), 0);
-            // File times have a coarse grain on some systems.
-            std::thread::sleep(std::time::Duration::from_millis(20));
-        }
-        let left: Vec<String> = std::fs::read_dir(folder(dir.path()))
-            .unwrap()
-            .map(|e| e.unwrap().file_name().to_string_lossy().into_owned())
-            .collect();
-        assert_eq!(left.len(), KEPT, "{left:?}");
+        write(dir.path(), "old", &run(), 0);
+        write(dir.path(), "new", &run(), 0);
         assert!(
-            read(dir.path(), &format!("k{:02}", KEPT + 2)).is_some(),
-            "the newest stays"
+            dir.path().join("old.albr").exists(),
+            "next to the layer files, not in a folder of its own"
         );
-        assert!(read(dir.path(), "k00").is_none(), "the oldest goes");
-        assert!(left.iter().all(|f| !f.ends_with(".tmp")), "no temporary file is left");
+        // An entry nothing used for more than the cleanup limit goes when another is written; a used one stays.
+        let long_ago = std::time::SystemTime::now()
+            - std::time::Duration::from_secs((crate::compile_cache::KEEP_DAYS + 1) * 24 * 3600);
+        std::fs::File::options()
+            .write(true)
+            .open(dir.path().join("old.albr"))
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        write(dir.path(), "newer", &run(), 0);
+        assert!(!dir.path().join("old.albr").exists(), "unused for too long");
+        assert!(dir.path().join("new.albr").exists());
+        assert!(dir.path().join("newer.albr").exists());
+        // A read marks the file as used.
+        std::fs::File::options()
+            .write(true)
+            .open(dir.path().join("new.albr"))
+            .unwrap()
+            .set_modified(long_ago)
+            .unwrap();
+        assert!(read(dir.path(), "new").is_some());
+        write(dir.path(), "newest", &run(), 0);
+        assert!(dir.path().join("new.albr").exists(), "a read renewed it");
     }
 
     #[test]

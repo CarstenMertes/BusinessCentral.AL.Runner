@@ -58,6 +58,7 @@ fn run(cache: &Path) -> Outcome {
             compile_cache: Some(CompileCache {
                 dir: cache.to_path_buf(),
                 require: false,
+                rebuild: false,
             }),
             ..Default::default()
         },
@@ -86,9 +87,14 @@ fn a_run_that_reads_the_kept_baseline_starts_its_clock_where_that_run_began() {
         .status()
         .unwrap();
     assert!(status.success(), "the first process");
-    let kept = std::fs::read_dir(al_testrun::baseline_cache::folder(dir.path()))
+    let kept = std::fs::read_dir(dir.path())
         .unwrap()
         .filter_map(|e| e.ok())
+        .filter(|e| {
+            e.path()
+                .extension()
+                .is_some_and(|x| x == al_testrun::baseline_cache::EXTENSION)
+        })
         .count();
     assert_eq!(kept, 1, "the first process kept its baseline");
     // This process began later. Its run reads the file; the rows say when the first process began.

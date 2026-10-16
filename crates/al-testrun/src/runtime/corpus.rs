@@ -531,12 +531,18 @@ impl CorpusRuntime {
         let kept = baseline_key
             .as_ref()
             .zip(opts.compile_cache.as_ref())
+            // `--rebuild-compile-cache`: the file is not read, and the run writes a new one.
+            .filter(|(_, cc)| !cc.rebuild)
             .and_then(|(key, cc)| crate::baseline_cache::read(&cc.dir, key))
             .filter(|(_, at)| {
                 crate::host::SystemClock::begin_at(*at)
                     || (crate::host::SystemClock::started() && crate::host::SystemClock::run_start() == *at)
             })
-            .map(|(run, _)| run);
+            // Over test data the file holds the tables the install code wrote to; the rest is the restored database.
+            .map(|(mut run, _)| {
+                run.baseline = run.baseline.backed_by(&engine);
+                run
+            });
         let from_cache = kept.is_some();
         let (baseline_run, mut spare_engine) = std::thread::scope(|scope| {
             let spare = (baseline && workers > 1)
@@ -744,12 +750,13 @@ impl CorpusRuntime {
                     let spawned = std::thread::Builder::new()
                         .stack_size(TEST_STACK)
                         .spawn_scoped(scope, || {
-                            // The baseline the first run left, as its snapshot says; only a baseline that has
-                            // no snapshot (it reads test data) is run again, once per thread.
+                            // The baseline the first run left, as its snapshot says (over the engine's test data, if
+                            // it has any); only a baseline that has no snapshot is run again, once per thread.
                             let own = baseline_engine.as_ref().and_then(|e| {
                                 snapshot
                                     .as_deref()
                                     .and_then(al_vm::Baseline::from_bytes)
+                                    .map(|b| b.backed_by(e))
                                     .or_else(|| crate::baseline::run(e, lowered).map(|b| b.baseline))
                             });
                             pull(own.as_ref())
@@ -1022,18 +1029,32 @@ fn baseline_key(
     let _ = lowered;
     let report = report?;
     opts.compile_cache.as_ref()?;
-    if opts.test_data.is_some()
-        || opts.trace
+    if opts.trace
         || opts.execute
         || opts.coverage
         || suites.iter().any(|s| s.runner.is_some())
-        || dotnet.host.availability().is_ok()
         || crate::host::uses_real_files()
         || crate::host::real_clock()
     {
         return None;
     }
     let mut key = crate::baseline_cache::KeyBuilder::new();
+    // The restored database: which backup, as the provider says (file, length, modification time, company). A
+    // provider that cannot say gets nothing kept.
+    match &opts.test_data {
+        Some(td) => key.text("test_data", &td.provider.identity()?),
+        None => key.text("test_data", ""),
+    };
+    // Whether `DotNet` calls of the install code could run. A baseline made without a usable .NET holds what the
+    // refused calls left out, and one made with it holds what they did.
+    key.text(
+        "dotnet",
+        if dotnet.host.availability().is_ok() {
+            "available"
+        } else {
+            "unavailable"
+        },
+    );
     key.bytes("runtime_build", &crate::compile_cache::runtime_build());
     key.text("dependencies", &report.file.file_name()?.to_string_lossy());
     for (i, app) in ws.apps.iter().enumerate() {

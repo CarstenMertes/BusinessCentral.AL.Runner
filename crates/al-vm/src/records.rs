@@ -1577,6 +1577,21 @@ impl Session {
                     // (ADR-021 decision 6; corpus probe TableGlobals_DeleteAll_TriggersRunOnOneInstanceForAllRows).
                     let shared = al_builtins::value::TableGlobals::new_shared();
                     for row in rows {
+                        // A row an earlier row's OnDelete deleted is not visited: BC finds the next row of the table as
+                        // it is then. Not pinned; Requisition Line's OnDelete deletes the lines that follow it
+                        // (Tests-SCM-Manufacturing B42538_UserIDOnReqLine; assumption delete-all-skips-rows-deleted-meanwhile).
+                        let pk: Vec<Value> = t.keys[0].iter().map(|&f| row[f].clone()).collect();
+                        let still_there = self
+                            .store_for(rec)
+                            .get(&cx, &t, &pk)
+                            .map_err(|e| Signal::Unsupported(format!("{e}")))?
+                            .is_some();
+                        if !still_there {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::DeleteAllSkipsRowsDeletedMeanwhile,
+                            );
+                            continue;
+                        }
                         let mut st = rec.borrow().clone();
                         st.fields = row;
                         st.filters.clear();

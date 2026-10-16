@@ -325,6 +325,18 @@ registry! {
         tests: "Microsoft's tests that set a view written by GetView after an ad hoc SetCurrentKey (Posting Preview and Item Journal tests): Tests-SCM and Tests-SCM-Manufacturing, about 110 tests.",
         probe: "SetCurrentKey on fields no key starts with, GetView, a second record SetView(that view): compare the order and CurrentKey().",
     },
+    DeleteAllSkipsRowsDeletedMeanwhile => {
+        id: "delete-all-skips-rows-deleted-meanwhile",
+        assumed: "DeleteAll(true) with triggers goes row by row and does not visit a row that an earlier row's OnDelete (or an event) deleted.",
+        tests: "Requisition Line OnDelete (deletes the lines of a higher level that follow) under Order Planning Mgt. PrepareRequisitionRecord: Tests-SCM-Manufacturing B42538_UserIDOnReqLine and Order Planning tests.",
+        probe: "A table whose OnDelete deletes the next row; DeleteAll(true) over three rows; count the rows and the OnDelete calls.",
+    },
+    RelationWhereOnTargetFlowFilter => {
+        id: "relation-where-on-a-flowfilter-of-the-target",
+        assumed: "A where() condition of a TableRelation on a FlowFilter field of the related table does not select rows when the relation is validated.",
+        tests: "Item Journal Line \"Bin Code\" (Bin.Code where(\"Item Filter\" = field(\"Item No.\"), \"Variant Filter\" = ...)): Tests-SCM and Tests-SCM-Manufacturing, about 10 tests.",
+        probe: "A table relation whose where() names a FlowFilter of the target; Validate a value that exists; Validate one that does not.",
+    },
     ImplicitCategoryGroup => {
         id: "implicit-category-group",
         assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",

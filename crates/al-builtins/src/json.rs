@@ -52,6 +52,7 @@ fn error(message: impl Into<String>, code: &str) -> Signal {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 

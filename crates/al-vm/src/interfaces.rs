@@ -20,6 +20,7 @@ fn not_initialized() -> Signal {
         message: "Interface not initialized".into(),
         code: "InvalidOperation".into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 
@@ -36,6 +37,7 @@ impl Session {
                 message: "The expression cannot be the target interface.".into(),
                 code: "UnableToCast".into(),
                 call_stack: String::new(),
+                ..Default::default()
             }))
         };
         match value {
@@ -100,6 +102,7 @@ impl Session {
                     message: format!("Enum does not contain value {ordinal}."),
                     code: "ArgumentOutOfRange".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 }))
             })?,
         };

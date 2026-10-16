@@ -220,6 +220,7 @@ fn error_code<T>(message: &str, code: &str) -> Result<T, Signal> {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
+        ..Default::default()
     })))
 }
 

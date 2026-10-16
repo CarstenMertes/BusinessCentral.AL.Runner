@@ -115,6 +115,7 @@ fn get_module(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
             message: format!("No installed extension was found with ID '{}'.", plain_guid(&id)),
             code: "App".into(),
             call_stack: String::new(),
+            ..Default::default()
         }))),
     }
 }
@@ -287,6 +288,7 @@ fn resource(c: &dyn Ctx, name: &str) -> Result<Vec<u8>, Signal> {
             message: format!("A resource matching '{name}' could not be found in app '{app}'."),
             code: String::new(),
             call_stack: String::new(),
+            ..Default::default()
         }))),
     }
 }

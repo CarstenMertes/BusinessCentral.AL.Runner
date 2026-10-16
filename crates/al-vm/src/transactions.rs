@@ -114,6 +114,7 @@ pub(crate) fn al_error_code(message: &str, code: &str) -> Signal {
         message: message.to_string(),
         code: code.to_string(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 

@@ -65,6 +65,7 @@ fn al_error(message: String) -> Signal {
         message,
         code: "Dialog".into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 
@@ -162,6 +163,7 @@ impl Session {
                             message: "The record is not open.".into(),
                             code: "RecordNotOpened".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                 };
@@ -229,6 +231,7 @@ impl Session {
                     message: "The record is not open.".into(),
                     code: "RecordNotOpened".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 })))
             }
             // BC's answer is not pinned by the corpus: the error text, and whether `Get(RecordId)` opens the
@@ -381,6 +384,7 @@ impl Session {
                             message: "The record is not open.".into(),
                             code: "RecordNotOpened".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                     _ => return unsupported("RecordRef.Copy on a RecordRef opened on a system table"),
@@ -601,6 +605,7 @@ impl Session {
                         message: "Index out of bounds.".into(),
                         code: "IndexOutOfBounds".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     }))),
                 }
             }
@@ -620,6 +625,7 @@ impl Session {
                             message: format!("The {} table does not have an active key at index {i}.", t.name),
                             code: "DB:KeyNotFound".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                     let mut r = rec.borrow_mut();
@@ -729,6 +735,7 @@ impl Session {
                         message: "Index out of bounds".into(),
                         code: String::new(),
                         call_stack: String::new(),
+                        ..Default::default()
                     }))),
                 }
             }
@@ -748,6 +755,7 @@ impl Session {
                     message: "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized.".into(),
                     code: "NotInitialized".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 })));
             }
             _ => {

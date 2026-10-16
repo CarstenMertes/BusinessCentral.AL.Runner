@@ -232,6 +232,7 @@ impl Session {
                 "DB:PrimRecordNotFound".into()
             },
             call_stack: String::new(),
+            ..Default::default()
         })))
     }
 }

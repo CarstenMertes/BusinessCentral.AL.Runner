@@ -57,6 +57,7 @@ fn binding_error(id: u32, why: &str) -> Signal {
         message: format!("The binding of codeunit {id} was unsuccessful. {why}"),
         code: "EventBinding".into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 

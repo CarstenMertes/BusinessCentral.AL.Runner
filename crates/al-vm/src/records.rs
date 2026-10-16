@@ -202,10 +202,21 @@ impl Session {
                 "DB:RecordNotFound",
             )
         };
+        // A missing row: the flag hides the key (P86LastError.al:309, :316, :319, P70_02LastErrFlag.al:76, :82, :88). A row that
+        // exists is not pinned.
+        let origin = if exists {
+            al_builtins::native::ErrorOrigin::Unknown
+        } else {
+            al_builtins::native::ErrorOrigin::Redacted(format!(
+                "The {} does not exist. Identification fields and values: <redacted>",
+                self.caption(t)
+            ))
+        };
         Err(Signal::Error(Box::new(AlError {
             message,
             code: code.into(),
-            call_stack: String::new(),
+            origin,
+            ..Default::default()
         })))
     }
 
@@ -511,6 +522,7 @@ impl Session {
             ),
             code: "DB:RecordExists".into(),
             call_stack: String::new(),
+            ..Default::default()
         })))
     }
 
@@ -898,6 +910,7 @@ impl Session {
             ),
             code: "DB:RecordExists".into(),
             call_stack: String::new(),
+            ..Default::default()
         })))
     }
 
@@ -1096,6 +1109,7 @@ impl Session {
                         message: (*messages.iter().next().expect("one message")).clone(),
                         code: String::new(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 return unsupported(format!(
@@ -1419,6 +1433,7 @@ impl Session {
                             ),
                             code: "DB:RecordChanged".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                 }
@@ -1513,6 +1528,7 @@ impl Session {
                         message: "It is not possible to delete any record in the Tenant License State table.".into(),
                         code: "DB:Ok".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 let (filters, flow_field_filters) = self.split_filters(rec);
@@ -1679,6 +1695,7 @@ impl Session {
                         ),
                         code: "DB:BadSearchMethod".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 let found = match which.as_str() {
@@ -1772,6 +1789,7 @@ impl Session {
                             ),
                             code: "DB:NothingInsideFilter".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })))
                     }
                 }
@@ -1885,6 +1903,7 @@ impl Session {
                             ),
                             code: "Filter:CSide".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                     Err(e) => return Err(Signal::Unsupported(format!("SetFilter: {e}"))),

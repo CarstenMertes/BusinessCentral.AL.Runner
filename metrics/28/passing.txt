@@ -7928,6 +7928,9 @@
 72064 ViewModePage_EditableTrueThenFalse
 72064 ViewModePage_GivenEditableTrue
 72064 ViewModePage_Untouched
+72067 Flag_AfterClearAndSequence
+72067 Flag_ModifyDeleteGetMissing
+72067 Flag_TestFieldForms
 72068 StackAndCode_ClearAndNoError
 72068 StackAndCode_FieldErrors
 72073 Sender_IsPublisherInstance
@@ -9023,6 +9026,14 @@
 73531 CallStack_NoError
 73531 CallStack_RaisedDeeper
 73531 CallStack_Start
+73531 ErrorInfo_CustomDimensions
+73531 ErrorInfo_CustomerContent
+73531 ErrorInfo_DefaultClassification
+73531 ErrorInfo_DimensionsAndCustomerContent
+73531 ErrorInfo_OtherClassifications
+73531 PlainError_Exclude
+73531 RuntimeError_NotFound
+73531 TestField_Exclude
 73800 CalcDate_Undefined_Base
 73800 Days
 73800 Months
@@ -9086,6 +9097,10 @@
 73850 UseRequestPageTrue_OverridesDeclaredFalse
 73850 UseRequestPage_GetterSetter
 73851 Flag_AfterNoError
+73851 Flag_ErrorPlain
+73851 Flag_ErrorWithArgument
+73851 Flag_GetMissing
+73851 Flag_TestField
 73859 Relation_QuotedFilter_Alternatives
 73859 Relation_QuotedFilter_Negated
 73859 Relation_QuotedFilter_NoRows

@@ -126,6 +126,7 @@ fn error(message: String) -> Signal {
         message,
         code: "Dialog".into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 

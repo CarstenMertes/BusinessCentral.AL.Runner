@@ -301,6 +301,7 @@ impl Session {
                             message: message.clone(),
                             code: code.clone(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })),
                     });
                 }
@@ -421,6 +422,7 @@ impl Session {
                 message: "An error was expected inside an ASSERTERROR statement.".into(),
                 code: "AssertError".into(),
                 call_stack: String::new(),
+                ..Default::default()
             }))),
             Ok(at) => Ok(at),
             Err(Signal::Error(mut e)) => {

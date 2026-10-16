@@ -32,6 +32,7 @@ fn xerr(message: impl Into<String>, code: &str) -> Signal {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 
@@ -787,6 +788,7 @@ impl Session {
                             ),
                             code: "Evaluate".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                     Err(Signal::Error(_)) => return Err(Signal::Error(first)),

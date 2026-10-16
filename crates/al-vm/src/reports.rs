@@ -1402,6 +1402,7 @@ impl Session {
                     ),
                     code: "Dialog".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 };
                 return Ok(Value::Boolean(false));
             }
@@ -1410,6 +1411,7 @@ impl Session {
                     message: FORMAT_NOT_SUPPORTED_BY_LAYOUT.into(),
                     code: "Dialog".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 };
                 return Ok(Value::Boolean(false));
             }
@@ -1432,6 +1434,7 @@ impl Session {
                 ),
                 code: "ReportProcessingOnly".into(),
                 call_stack: String::new(),
+                ..Default::default()
             };
             // The statement form raises the same error (handlers/TestReportSaveAsColumnDetailsContracts.al:
             // ProcessingOnlyReport_StatementFormRaises, handlers/PWReportSaveAsColumns.al:

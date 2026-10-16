@@ -465,4 +465,4 @@ A site is pinned when a corpus string literal holds the message text. Codes are 
 
 - crates/al-builtins/src/media.rs:235 `The specified path is invalid.` code `InvalidPath`
 - crates/al-builtins/src/media.rs:238 `Could not find a part of the path '%'.` code `InvalidPath`
-- crates/al-vm/src/usertable.rs:373 `There should be at least one enabled 'SUPER' user.` code `Dialog`
+- crates/al-vm/src/usertable.rs:374 `There should be at least one enabled 'SUPER' user.` code `Dialog`

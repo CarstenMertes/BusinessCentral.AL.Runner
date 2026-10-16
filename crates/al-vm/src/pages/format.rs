@@ -253,7 +253,20 @@ impl Session {
             let object = owner.unwrap_or(st.borrow().object as usize);
             return Some(engine.program.objects[object].globals[slot].ty.clone());
         }
-        let _ = v;
+        // A control bound to an expression has the type of the value the expression gives now (its routine returns a
+        // Variant); only the plain kinds, and only when the expression can be written.
+        if matches!(ctl.binding, ir::Binding::Expr(_)) && ctl.trigger("__sourceset").is_some() && self.has_source(st) {
+            return match v {
+                Value::Decimal(_) => Some(RtType::Decimal),
+                Value::Integer(_) => Some(RtType::Integer),
+                Value::BigInteger(_) => Some(RtType::BigInteger),
+                Value::Boolean(_) => Some(RtType::Boolean),
+                Value::Date(..) => Some(RtType::Date),
+                Value::Text(_) => Some(RtType::Text(None)),
+                Value::Code(_) => Some(RtType::Code(None)),
+                _ => None,
+            };
+        }
         None
     }
 
@@ -282,9 +295,12 @@ impl Session {
         if expected_text != actual_text {
             let engine = self.engine();
             let name = page_of(&engine, st).controls[idx].name.clone();
-            return Err(error(format!(
-                "AssertEquals for Field: {name} Expected = '{expected_text}', Actual = '{actual_text}'"
-            )));
+            // misc/lt-probes-needed-7/PnGTempControl.al:AssertEqualsThroughTheControls and pages/lt-page-runtime/P82TestField.al:
+            // the error code is TestAssertEquals.
+            return Err(error_code(
+                format!("AssertEquals for Field: {name} Expected = '{expected_text}', Actual = '{actual_text}'"),
+                "TestAssertEquals",
+            ));
         }
         Ok(Value::Null)
     }

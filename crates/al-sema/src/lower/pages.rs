@@ -198,10 +198,18 @@ impl Lowerer<'_> {
                     None => {}
                 }
             }
-            let triggers = sec
+            let mut triggers: Vec<(String, usize)> = sec
                 .triggers()
                 .filter_map(|t| routine_of(&ow, &t).map(|r| (t.name().to_ascii_lowercase(), r)))
                 .collect();
+            // The routine that writes an expression source (`pages::expand` made it): kept with the triggers under a name
+            // no AL trigger has.
+            if matches!(binding, ir::Binding::Expr(_)) {
+                let off = usize::from(sec.syntax().text_range().start()) - ow.base;
+                if let Some(r) = routine_named(&ow, &crate::pages::synthetic_name("sourceset", off)) {
+                    triggers.push(("__sourceset".into(), r));
+                }
+            }
             let file = self.ws.objects[ow.object].file;
             let part_page = if raw.kind == ir::ControlKind::Part {
                 match crate::types::section_object_name(sec, 1).map(|n| self.resolve_obj_in(file, ObjKind::Page, &n)) {

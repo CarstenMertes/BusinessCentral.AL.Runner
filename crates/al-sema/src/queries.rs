@@ -585,20 +585,21 @@ impl Builder<'_> {
                 }
             }
         }
-        // A static filter or table filter on the optional side of an outer join: whether BC puts it
-        // in the join condition or the WHERE clause is not pinned.
-        for (i, item) in self.items.iter().enumerate() {
-            if !(item.left_outer && item.parent.is_some()) {
-                continue;
-            }
-            let filtered =
-                !item.table_filter.is_empty() || self.columns.iter().any(|c| c.item == i && c.static_filter.is_some());
-            if filtered {
-                let r = format!(
-                    "dataitem {} is outer-joined and carries a static filter (not pinned)",
-                    item.name
-                );
-                self.reasons.push(r);
+        // A static filter or table filter on the optional side of an outer join acts after the join: a parent row
+        // whose joined row is missing or fails the filter is gone, so the join is an inner join in effect
+        // (corpus query/lt-outer-joins/P71JoinStatic.al: Join_Left_StaticActive gives 2 of 3 items,
+        // Join_Left_StaticZoneBlank gives none; P71FilterCombined.al for a run time filter on top).
+        let filtered: Vec<bool> = self
+            .items
+            .iter()
+            .enumerate()
+            .map(|(i, item)| {
+                !item.table_filter.is_empty() || self.columns.iter().any(|c| c.item == i && c.static_filter.is_some())
+            })
+            .collect();
+        for (item, filtered) in self.items.iter_mut().zip(filtered) {
+            if item.left_outer && item.parent.is_some() && filtered {
+                item.left_outer = false;
             }
         }
     }
@@ -792,17 +793,23 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
             "query 50100 Q { elements { dataitem(A; T) { column(S; Big) { Method = Sum; } } } }",
             "not Decimal or Integer",
         );
-        // A static filter on the optional side of an outer join.
-        has(
-            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { }
-                dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; DataItemTableFilter = Amount = filter(>0); column(X; Amount) { } } } } }",
-            "outer-joined",
-        );
         // A table outside the workspace.
         has(
             "query 50100 Q { elements { dataitem(A; Nowhere) { column(No; \"No.\") { } } } }",
             "outside the workspace",
         );
+    }
+
+    /// A static filter on the optional side of an outer join acts after the join, so the join is an inner join in effect
+    /// (query/lt-outer-joins/P71JoinStatic.al).
+    #[test]
+    fn a_static_filter_on_the_optional_side_makes_the_join_inner() {
+        let l = layout_of(
+            "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { }
+                dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; DataItemTableFilter = Amount = filter(>0); column(X; Amount) { } } } } }",
+        );
+        assert_eq!(l.reasons, Vec::<String>::new());
+        assert!(!l.query.items[1].left_outer);
     }
 
     #[test]

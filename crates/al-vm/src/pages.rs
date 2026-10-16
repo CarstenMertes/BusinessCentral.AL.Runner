@@ -399,6 +399,21 @@ impl Session {
         result
     }
 
+    /// Calls routine `r` of `owner` with arguments.
+    fn owner_routine_with(
+        &mut self,
+        st: &St,
+        owner: Option<usize>,
+        r: usize,
+        args: Vec<Value>,
+    ) -> Result<Value, Signal> {
+        let object = owner.unwrap_or(st.borrow().object as usize);
+        let inst = self.owner_instance(st, owner);
+        let result = self.call(object, r, inst, args).map(|(v, _)| v);
+        self.end_page_call(st);
+        result
+    }
+
     /// Calls routine `r` written in control `idx`: in the extension that declares the control, else the page.
     fn control_routine(&mut self, st: &St, idx: usize, r: usize) -> Result<Value, Signal> {
         let engine = self.engine();

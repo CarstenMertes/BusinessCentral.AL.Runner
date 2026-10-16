@@ -279,7 +279,11 @@ impl Session {
             }
             // CurrFieldNo is 0 for a Validate called from code (the field's own OnValidate
             // sees 0: handlers/TestPageCurrFieldNo_Tests.al); docs/probes-needed.md for the event.
-            "onbeforevalidateevent" | "onaftervalidateevent" => (&["Rec", "xRec", "CurrFieldNo"], Value::Integer(0)),
+            // Through a TestPage write it is the field's number (record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al:
+            // `cur=2`).
+            "onbeforevalidateevent" | "onaftervalidateevent" => {
+                (&["Rec", "xRec", "CurrFieldNo"], Value::Integer(self.curr_field_of(rec)))
+            }
             other => return unsupported(format!("table event {other}")),
         };
         let mut args = vec![Value::Record(rec.clone())];

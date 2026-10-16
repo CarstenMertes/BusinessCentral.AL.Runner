@@ -485,7 +485,9 @@ impl Session {
                 // The client asks OnFindRecord for the current row (`=`), then reads it as it does after
                 // any move. Assumed (update-refresh-onfindrecord): Base Application's document pages do this
                 // under Microsoft's tests; a page that holds edits or has only OnNextRecord stays refused.
-                if !self.declares(st, "onfindrecord") || st.borrow().dirty {
+                // A list refills its window around the row (misc/W2FindRecordUpdate.al:Update_True_OnOpenedPage pins that
+                // trace); only a card, which has the one row, is served.
+                if !self.declares(st, "onfindrecord") || st.borrow().dirty || self.is_list(st) {
                     return unsupported(
                         "CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned)",
                     );

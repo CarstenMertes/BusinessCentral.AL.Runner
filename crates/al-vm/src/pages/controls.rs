@@ -184,8 +184,8 @@ impl Session {
             return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
         }
         // A Text variable given too many characters (handlers/TestPageVariableMinMaxContracts.al:119).
-        // A table field's overlong text is not pinned.
-        if let (RtType::Text(Some(max)), Value::Text(t), false) = (&ty, &parsed, rec_bound) {
+        // A table field's overlong text is a TestValidation error too (P81PageValidateEvents.al:TestPage_SetValue_NameTooLong).
+        if let (RtType::Text(Some(max)), Value::Text(t)) = (&ty, &parsed) {
             let len = Value::text_len(t);
             if len > *max as usize {
                 return Err(refuse_bound(format!(
@@ -349,7 +349,10 @@ impl Session {
                 if matches!(ctl.binding, ir::Binding::Expr(_)) {
                     return Err(refuse_bound(e.message));
                 }
-                Err(refuse(self, e.message))
+                // An error of the table's validation (its trigger, the length of the text) carries TestValidation
+                // (record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al:TestPage_SetValue_NegativeQty_TableTriggerRaises,
+                // TestPage_SetValue_NameTooLong).
+                Err(refuse_bound(e.message))
             }
             Err(other) => Err(other),
         }

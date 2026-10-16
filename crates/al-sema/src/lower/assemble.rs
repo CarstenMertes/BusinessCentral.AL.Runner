@@ -1824,20 +1824,21 @@ fn link_pieces(
     split_tables(&mut staged, provided, lookups, export);
     split_pages(&mut staged, provided, &keys);
     let joins = &joins;
-    let mut units: Vec<al_link::Unit> = al_link::par_map(staged, workers, |oi, s| {
+    let mut units: Vec<al_ir::sym::SymObject> = al_link::par_map(staged, workers, |oi, s| {
         if let Some(sym) = s.sym {
-            Ok(al_link::Unit::Sym(sym))
+            Ok(sym)
         } else if provided(oi) {
-            Ok(al_link::Unit::Dense(al_link::DenseObject {
+            // Only the facts the other objects ask of it.
+            Ok(al_ir::sym::SymObject {
                 key: keys[oi].clone(),
+                placeholder: true,
                 enum_impls: s.enum_impls,
                 enum_ordinals: s.enum_ordinals,
                 implements: s.implements,
-                fields: s.fields,
-                controls: s.controls,
-                object: s.object,
-                positions: s.positions,
-            }))
+                field_numbers: s.fields,
+                control_names: s.controls,
+                ..Default::default()
+            })
         } else {
             super::localize::localize(
                 &tables,
@@ -1854,7 +1855,6 @@ fn link_pieces(
                     subscribers: subscribers[oi].clone(),
                 },
             )
-            .map(al_link::Unit::Sym)
         }
     })
     .into_iter()
@@ -1863,36 +1863,24 @@ fn link_pieces(
     // counted from its members, for the tables that are named.
     let at: HashMap<&ObjKey, usize> = keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
     let mut numbered = std::collections::HashSet::new();
-    for u in &units {
-        if let al_link::Unit::Sym(s) = u {
-            for f in &s.refs.fields {
-                if f.table.kind == ObjKind::Table {
-                    if let Some(&t) = at.get(&f.table) {
-                        numbered.insert(t);
-                    }
+    for s in &units {
+        for f in &s.refs.fields {
+            let table = &s.refs.objects[f.table as usize];
+            if table.kind == ObjKind::Table {
+                if let Some(&t) = at.get(table) {
+                    numbered.insert(t);
                 }
             }
         }
     }
     for t in numbered {
-        let (no_table, object_kind_table) = match &units[t] {
-            al_link::Unit::Sym(s) => (s.object.table.is_none(), true),
-            al_link::Unit::Dense(_) => (false, false),
-        };
-        if no_table && object_kind_table {
-            if let al_link::Unit::Sym(s) = &mut units[t] {
-                s.field_numbers = (lookups.field_numbers)(t);
-            }
+        let s = &mut units[t];
+        if s.object.table.is_none() && !s.placeholder {
+            s.field_numbers = (lookups.field_numbers)(t);
         }
     }
     let syms: Vec<Option<al_ir::sym::SymObject>> = if export {
-        units
-            .iter()
-            .map(|u| match u {
-                al_link::Unit::Sym(s) => Some(s.clone()),
-                al_link::Unit::Dense(_) => None,
-            })
-            .collect()
+        units.iter().map(|u| (!u.placeholder).then(|| u.clone())).collect()
     } else {
         Vec::new()
     };

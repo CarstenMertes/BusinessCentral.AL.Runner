@@ -157,3 +157,15 @@ What was built, and where it differs from the text above. None of this changes a
   extension's control is left merged. A control named by another object (`Expr::Control`) is found by name in the
   page with its extensions placed. Impurity left: the page's `unsupported` reasons and `assumes` are the merged
   ones, and the implicit action areas an extension creates stay in the base page.
+
+### One compile path (step 6)
+
+- Eager, demand-driven, cached and incremental compiles all end in `al_link::link` (or `relink`). `Unit` is now the
+  symbolic object itself: an object a layer build only marks as supplied is a `SymObject` with `placeholder` set and
+  the facts others ask of it (`field_numbers`, `control_names`, enum and interface facts). `DenseObject` is gone.
+- References to a routine, field or control name their object by its place in `Refs::objects` (`RoutineRef`,
+  `FieldRef`, `ControlRef`), so keys are not repeated and cache blocks are smaller (cache `FORMAT` 11).
+- `ObjKey` hashes kind and name only (the app is long; equality still separates apps).
+- Proof: `AL_CHECK_LINK=1` over the corpus on every major, `compile_dump` byte-identical (with and without
+  dependencies) against the commit before step 6, `demand_vs_eager.sh` and `cache_vs_uncached.sh` 0 differences.
+  Cached compile of Tests-ERM did not measurably differ from before step 6 (machine load was 20, wall times noisy).

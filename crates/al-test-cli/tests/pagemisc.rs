@@ -28,6 +28,13 @@ page 62010 "PM Wizard"
     procedure SetStep(S: Integer) var P: Codeunit "PM Probe"; begin P.Note('S'); Step := S; end;
     procedure GetStep(): Integer begin exit(Step); end;
 }
+page 62019 "PM Second"
+{
+    PageType = Card;
+    layout { area(Content) { field(Label2; Txt) { } } }
+    var Txt: Text[10];
+    trigger OnOpenPage() begin Txt := 'second'; end;
+}
 page 62011 "PM Persist"
 {
     PageType = Worksheet;
@@ -228,6 +235,21 @@ fn a_trapped_run_receives_the_page_variables_instance() {
         procedure SetterBeforeTrappedRun() var W: Page \"PM Wizard\"; T: TestPage \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin
             P.Reset(); T.Trap(); W.SetStep(1); W.Run();
             Check('ISO', P.Trace()); Check('1', T.StepCtl.Value()); T.Close(); end;"
+    ));
+}
+
+// Microsoft's Test Posting Preview traps the entries page and, in a callee, the posting preview page, then runs the
+// preview and the page its action opens: two Trap()s wait at once, one per page (Tests-ERM, 17 tests).
+#[test]
+fn two_traps_wait_at_once_one_per_page() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure TwoTraps() var A: TestPage \"PM Wizard\"; B: TestPage \"PM Second\"; begin
+            A.Trap(); B.Trap();
+            Page.Run(Page::\"PM Second\");
+            Page.Run(Page::\"PM Wizard\");
+            Check('0', A.StepCtl.Value()); Check('second', B.Label2.Value()); A.Close(); B.Close(); end;"
     ));
 }
 

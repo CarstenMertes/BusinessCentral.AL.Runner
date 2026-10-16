@@ -509,6 +509,8 @@ fn run_version(
         }
     }
     let sidecar_host = host.clone();
+    // ADR-038: the closed set of pure framework members is answered in process; ALRUNNER_NO_INPROC=1 sends all to the sidecar.
+    let host = al_host::inproc::wrap(host);
     if !args.no_deps {
         // The Microsoft apps call .NET (Media, images). Start the helper processes now so the
         // starts overlap the compile; a run without them starts nothing (ADR-014 section 6).

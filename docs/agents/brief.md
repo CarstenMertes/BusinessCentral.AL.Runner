@@ -207,13 +207,21 @@ Run these in order. Do not skip any.
    must give zero outcome differences. If you touched the lazy reading of dependency packages
    (`al-deps/src/lazy.rs`, `Workspace::load_apps_lazy`), run `alrunner test` on Tests-ERM twice, once with
    `ALRUNNER_EAGER_SOURCES=1`, and compare the two `--junit` files with `tools/compare_junit.py`: 0 differences.
-5. Commit on your branch. Do not add attribution or session lines to commit
+5. No corpus case may newly fail. A case that was not run and now fails counts
+   as wrong behavior (hard rule 4); the baseline ratchet does not catch it. Run
+   `al-test-cli --root . --bc-version 27 --junit FILE` on `origin/main` and on
+   your branch, and list every case that fails on the branch but not on main.
+   Fix each one or refuse its path. Before each commit, check
+   `git submodule status` (the corpus must stay at the oracle's
+   `corpus_commit`), and stage explicit paths: never `git add -A` or
+   `git commit -a`.
+6. Commit on your branch. Do not add attribution or session lines to commit
    messages. The message says what changed and why, in plain American English.
-6. Merge current `origin/main` into your branch (`git fetch`, then
+7. Merge current `origin/main` into your branch (`git fetch`, then
    `git merge origin/main`). Resolve conflicts. Regenerate the baselines after
    the merge; never hand-merge `metrics/<major>/passing.txt`. Run `check.sh`
    again and commit.
-7. Do not merge into `main`. Whether you push is set by your task: a local
+8. Do not merge into `main`. Whether you push is set by your task: a local
    agent does not push, a remote worker pushes its own branch and nothing else.
 
 ## Report

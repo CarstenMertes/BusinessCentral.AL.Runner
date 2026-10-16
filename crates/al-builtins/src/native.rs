@@ -273,6 +273,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
     ("System.Format#2", format_2),
     ("System.Evaluate#1", crate::evaluate::evaluate),
+    (
+        "System.EvaluateVariableOption#1",
+        crate::evaluate::evaluate_variable_option,
+    ),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
     ("System.GetLastErrorCode#1", get_last_error_code),
@@ -418,6 +422,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.SetSource#1", vm_only),
     ("Xmlport.SetDestination#1", vm_only),
     ("Xmlport.SetTableView#1", vm_only),
+    ("Xmlport.FieldDelimiter#1", vm_only),
+    ("Xmlport.FieldSeparator#1", vm_only),
+    ("Xmlport.RecordSeparator#1", vm_only),
+    ("Xmlport.TableSeparator#1", vm_only),
+    ("Xmlport.TextEncoding#1", vm_only),
+    ("Xmlport.Filename#1", vm_only),
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
     // ids not listed (SaveAsPdf, SaveAsXml and the other file forms, Preview, the layout accessors, Skip, Break, ...) need
     // output or behaviour the corpus does not pin and are refused in lowering.
@@ -509,7 +519,20 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // primitive-totext-is-format.
     ("Date.ToText#1", |c, r, _| primitive_to_text(c, r, "Date")),
     ("Boolean.ToText#1", |c, r, _| primitive_to_text(c, r, "Boolean")),
+    ("Variant.IsDefaultLayout#1", |_, r, _| is(r, "defaultlayout")),
+    ("Variant.IsTestPermissions#1", |_, r, _| is(r, "testpermissions")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
+    ("Variant.IsAction#1", |_, r, _| is(r, "action")),
+    ("Variant.IsClientType#1", |_, r, _| is(r, "clienttype")),
+    ("Variant.IsDataClassification#1", |_, r, _| is(r, "dataclassification")),
+    ("Variant.IsExecutionMode#1", |_, r, _| is(r, "executionmode")),
+    ("Variant.IsObjectType#1", |_, r, _| is(r, "objecttype")),
+    ("Variant.IsPromptMode#1", |_, r, _| is(r, "promptmode")),
+    ("Variant.IsReportFormat#1", |_, r, _| is(r, "reportformat")),
+    ("Variant.IsTableConnectionType#1", |_, r, _| {
+        is(r, "tableconnectiontype")
+    }),
+    ("Variant.IsTextEncoding#1", |_, r, _| is(r, "textencoding")),
     // A Char is also a wide char; nothing else is (types/lt-variant-is-text-streams/LTP89IsMisc.al:WideChar_Variants: Char values
     // `WideChar,Char,`, a Byte, an Integer, a BigInteger, a Text and a two-character literal not).
     ("Variant.IsWideChar#1", |_, r, _| is(r, "Char")),
@@ -1208,6 +1231,8 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                     | "XmlDocument"
                     | "XmlDocumentType"
                     | "XmlDeclaration"
+                    // types/TestClearContracts.al:Clear_TextBuilder_ResetsToEmpty.
+                    | "TextBuilder"
                     | "JsonObject"
                     | "JsonArray"
                     | "JsonValue"
@@ -1603,7 +1628,9 @@ pub(crate) mod tests {
     fn every_registered_id_is_in_the_catalog() {
         let cat = crate::catalog::Catalog::load();
         let ids: Vec<String> = cat.signatures.iter().map(|s| cat.id(s)).collect();
-        for id in registered_ids() {
+        // Ids lowering picks for a call of a catalog overload that needs another implementation (`Evaluate` into an Option variable).
+        let derived = ["System.EvaluateVariableOption#1"];
+        for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");
         }
     }

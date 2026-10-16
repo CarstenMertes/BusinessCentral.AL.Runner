@@ -110,6 +110,11 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "Api",
             "ChildSession",
         ]),
+        // The report's default layout and a test codeunit's TestPermissions, in the documentation's order. The corpus only
+        // formats and tests the type of them (types/lt-variant-is-text-streams/LTP89IsEnumsA.al, LTP89IsEnumsB.al); the
+        // ordinals are not pinned and nothing may print them.
+        "defaultlayout" => Some(&["RDLC", "Word"]),
+        "testpermissions" => Some(&["Disabled", "Restrictive", "NonRestrictive", "InheritFromTestCodeunit"]),
         "datascope" => Some(&["Module", "Company", "User", "CompanyAndUser"]),
         // Normal and Install are pinned (install/TestInstallEnvVisible_Tests.al:90-127).
         "executioncontext" => Some(&["Normal", "Install", "Upgrade"]),
@@ -203,4 +208,68 @@ fn members_static(name: &str) -> &'static [&'static str] {
 /// The member names as an owned option type.
 pub fn option_members(name: &str) -> Option<Vec<String>> {
     members(name).map(|m| m.iter().map(|s| s.to_string()).collect())
+}
+
+/// The platform enum a value of option type with these members belongs to, when it is one the `Is<Type>` tests of a Variant
+/// tell apart (types/lt-variant-is-text-streams/LTP89IsEnumsA.al and LTP89IsEnumsB.al: such a value is `IsAction`, say, and
+/// not `IsOption`). The members decide, so a user option with exactly these members counts as the platform one.
+pub fn kind_of(members: &[String]) -> Option<&'static str> {
+    let same = |known: &[&str]| members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b);
+    if same(&crate::value::ACTION_MEMBERS) {
+        return Some("action");
+    }
+    if same(&crate::value::PROMPT_MODE_MEMBERS) {
+        return Some("promptmode");
+    }
+    if same(&["MSDos", "UTF8", "UTF16", "Windows"]) {
+        return Some("textencoding");
+    }
+    [
+        "clienttype",
+        "dataclassification",
+        "defaultlayout",
+        "executionmode",
+        "objecttype",
+        "reportformat",
+        "tableconnectiontype",
+        "testpermissions",
+    ]
+    .into_iter()
+    .find(|name| same(members_static(name)))
+}
+
+/// Whether `members` belong to a platform option or enum this module lists (also the ones `kind_of` does not tell apart), as opposed to an
+/// option a variable or a table field of the app declares.
+pub fn is_platform(members: &[String]) -> bool {
+    const NAMES: &[&str] = &[
+        "fieldclass",
+        "securityfilter",
+        "isolationlevel",
+        "objecttype",
+        "verbosity",
+        "telemetryscope",
+        "securityoperationresult",
+        "auditcategory",
+        "dataclassification",
+        "tableconnectiontype",
+        "transactiontype",
+        "reportlayouttype",
+        "reportformat",
+        "errortype",
+        "httprequesttype",
+        "clienttype",
+        "defaultlayout",
+        "testpermissions",
+        "datascope",
+        "executioncontext",
+        "executionmode",
+        "notificationscope",
+        "webserviceactionresultcode",
+        "fieldtype",
+    ];
+    kind_of(members).is_some()
+        || is_field_table_type(members)
+        || NAMES.iter().any(|name| {
+            members.len() == members_static(name).len() && members.iter().zip(members_static(name)).all(|(a, b)| a == b)
+        })
 }

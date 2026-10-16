@@ -1,0 +1,24 @@
+# The members served in process (ADR-038 section 1), one `Type.Member` per line. A test keeps this list equal to the
+# members the code serves and to the members the differential test covers.
+System.Text.StringBuilder..ctor
+System.Text.StringBuilder.Append
+System.Text.StringBuilder.AppendLine
+System.Text.StringBuilder.Clear
+System.Text.StringBuilder.Length
+System.Text.StringBuilder.ToString
+System.Array.GetValue
+System.Array.SetValue
+System.Array.Length
+System.Byte.ToString
+System.Int32.ToString
+System.Text.Encoding.UTF8
+System.Text.Encoding.ASCII
+System.Text.Encoding.Unicode
+System.Text.Encoding.GetBytes
+System.Text.Encoding.GetByteCount
+System.Text.Encoding.GetString
+System.Security.Cryptography.HashAlgorithm.Create
+System.Security.Cryptography.HashAlgorithm.ComputeHash
+System.Security.Cryptography.HashAlgorithm.Dispose
+System.Convert.ToBase64String
+System.Convert.FromBase64String

@@ -65,6 +65,9 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                 .get(*o as usize)
                 .map_or_else(|| o.to_string(), |v| v.to_string()),
             2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
+            // `Option` declared without members is the one empty name: it shows the number
+            // (types/lt-scalars/ScT70062.al:Option_Defaults `nomembers_len`, `nomembers_3`).
+            _ if members.len() == 1 && members[0].is_empty() => o.to_string(),
             _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),
         },
         Value::Enum(id, o) => match standard {
@@ -220,6 +223,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             "{cut}{}",
             " ".repeat((length as usize).saturating_sub(cut.chars().count()))
         ));
+    }
+    // A text longer than the length is cut to it (text/lt-label-textbuilder/TxCLabel.al:Label_Value_And_Format `Format(Plain, 5)`).
+    if matches!(v, Value::Text(_) | Value::Code(_)) && length > 0 && s.chars().count() > length as usize {
+        return Ok(s.chars().take(length as usize).collect());
     }
     Ok(pad(s, length))
 }

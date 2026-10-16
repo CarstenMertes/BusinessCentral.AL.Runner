@@ -208,7 +208,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.
-            let s = upper_code(crate::native::text_of(&v).expect("text").trim());
+            let text = crate::native::text_of(&v).expect("text");
+            let s = upper_code(text.trim());
+            // The error shows the text as it was given (text/lt-label-textbuilder/TxCLabel.al:Label_MaxLength `toCode2`).
+            if max.is_some_and(|m| Value::text_len(&s) > m as usize) {
+                fit(text.trim().to_string(), *max)?;
+            }
             Value::Code(fit(s, *max)?.into())
         }
         (Value::Text(s) | Value::Code(s), T::Char) => {
@@ -271,6 +276,17 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 },
                 _ => Value::BigInteger(n),
             }
+        }
+        // A Boolean for a Text or Code (a Boolean handed to `Get` of a Code key): as `Format` writes it, Yes or No (the
+        // Code upper-cased). Not pinned; Microsoft's tests need the call not to be refused (assumption
+        // `boolean-to-text-as-format`).
+        (Value::Boolean(b), T::Text(max)) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::BooleanToTextAsFormat);
+            Value::Text(fit(if b { "Yes" } else { "No" }.to_string(), *max)?.into())
+        }
+        (Value::Boolean(b), T::Code(max)) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::BooleanToTextAsFormat);
+            Value::Code(fit(if b { "YES" } else { "NO" }.to_string(), *max)?.into())
         }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
@@ -1074,6 +1090,16 @@ mod tests {
         assert!(matches!(arith(Arith::Add, &dec(1000), &t(5000)), Ok(Value::Time(6001))));
         assert!(matches!(arith(Arith::Sub, &t(5000), &dec(1000)), Ok(Value::Time(4001))));
         assert!(matches!(arith(Arith::Add, &t(5000), &dec(0)), Ok(Value::Time(5001))));
+    }
+
+    /// `ItemTrackingCode.Get(Serial)` with a Boolean for a Code key (Microsoft's Tests-SCM kitting tests): the Boolean
+    /// converts as `Format` writes it. Not pinned (assumption `boolean-to-text-as-format`).
+    #[test]
+    fn a_boolean_converts_to_text_and_code_as_format_writes_it() {
+        let c = convert(Value::Boolean(true), &RtType::Code(Some(10))).unwrap();
+        assert_eq!(crate::native::text_of(&c).unwrap().to_string(), "YES");
+        let t = convert(Value::Boolean(false), &RtType::Text(None)).unwrap();
+        assert_eq!(crate::native::text_of(&t).unwrap().to_string(), "No");
     }
 
     #[test]

@@ -165,7 +165,7 @@ impl Session {
         let has_source = self.has_source(st);
         // SourceTableView is the page's own view of its table (corpus
         // pagefindrecord/TestPageFindRecord.al:192 PlainPage_WithoutTheTriggers_WalksTheTableDescending);
-        // how it combines with the view of a record handed to Page.Run is not pinned.
+        // how it combines with the view of a record handed to Page.Run is the assumption `page-run-record-and-source-table-view`.
         let source_view = engine.program.objects[st.borrow().object as usize]
             .properties
             .iter()
@@ -180,18 +180,10 @@ impl Session {
             let table = self.table(&rec)?;
             self.set_view_in(&rec, &table, view, Some(parts::LINK_GROUP), false, true)?;
         }
-        if let (Some(view), true) = (source_view, has_source) {
-            if record.is_some() {
-                self.mark_closed(st);
-                return unsupported("Page.Run with a record on a page that declares SourceTableView");
-            }
-            let rec = self.page_rec(st);
-            let table = self.table(&rec)?;
-            // The platform applies the view in filter group 2: the page's own AL reads it with
-            // FilterGroup(2) and finds group 0 empty (corpus handlers/TestPageSourceTableView.al:
-            // FiltersAreInFilterGroup2WhenOnOpenPageRuns).
-            self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
-        }
+        // A record handed to Page.Run brings its own filters, key and order; they come first and the page's
+        // SourceTableView then adds to them (how the two combine is not pinned: assumption
+        // `page-run-record-and-source-table-view`). A view that names a sorting or an order would fight the record's key,
+        // so that stays refused.
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
             let src = r.borrow();
@@ -203,6 +195,24 @@ impl Session {
             dst.temporary = src.temporary;
             dst.temp_id = src.temp_id.clone();
             dst.ascending = src.ascending;
+        }
+        if let (Some(view), true) = (source_view, has_source) {
+            if record.is_some() {
+                let lower = view.to_ascii_lowercase();
+                if lower.contains("sorting(") || lower.contains("order(") {
+                    self.mark_closed(st);
+                    return unsupported(
+                        "Page.Run with a record on a page whose SourceTableView names a sorting or an order (not pinned)",
+                    );
+                }
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageRunRecordAndSourceTableView);
+            }
+            let rec = self.page_rec(st);
+            let table = self.table(&rec)?;
+            // The platform applies the view in filter group 2: the page's own AL reads it with
+            // FilterGroup(2) and finds group 0 empty (corpus handlers/TestPageSourceTableView.al:
+            // FiltersAreInFilterGroup2WhenOnOpenPageRuns).
+            self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
         }
         let result = (|| {
             // A `Page` variable whose procedure ran before this open was constructed then, and its

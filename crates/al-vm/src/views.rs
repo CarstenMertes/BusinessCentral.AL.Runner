@@ -38,7 +38,15 @@ impl Session {
         al_builtins::filter::parse_filter_with(text, &[], ty, &enums)
     }
 
-    fn filter_value(&self, v: &Value) -> Result<String, Signal> {
+    /// `filter_value`; with `iso` a Date reads `yyyy-mm-dd`, as a view writes it (record/lt-record-read/RcAMisc.al:
+    /// GetView_Field_Types `date`).
+    fn filter_value_with(&self, v: &Value, iso: bool) -> Result<String, Signal> {
+        if let (true, Value::Date(d, false)) = (iso, v) {
+            if *d != 0 {
+                let (y, m, day) = al_builtins::format::civil_from_day(*d);
+                return Ok(format!("{y:04}-{m:02}-{day:02}"));
+            }
+        }
         if let Value::Text(s) | Value::Code(s) = v {
             // A blank text shows as two single quotes (corpus record/PWFilterGroupOr.al: `A: ''`).
             if s.is_empty() {
@@ -67,30 +75,35 @@ impl Session {
     }
 
     pub(crate) fn filter_text(&self, e: &FilterExpr) -> Result<String, Signal> {
+        self.filter_text_with(e, false)
+    }
+
+    /// `filter_text`; with `iso` the dates are written as a view writes them.
+    pub(crate) fn filter_text_with(&self, e: &FilterExpr, iso: bool) -> Result<String, Signal> {
         Ok(match e {
             FilterExpr::Range(Some(a), Some(b)) => {
                 if al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal) {
-                    self.filter_value(a)?
+                    self.filter_value_with(a, iso)?
                 } else {
-                    format!("{}..{}", self.filter_value(a)?, self.filter_value(b)?)
+                    format!("{}..{}", self.filter_value_with(a, iso)?, self.filter_value_with(b, iso)?)
                 }
             }
-            FilterExpr::Range(Some(a), None) => format!("{}..", self.filter_value(a)?),
-            FilterExpr::Range(None, Some(b)) => format!("..{}", self.filter_value(b)?),
+            FilterExpr::Range(Some(a), None) => format!("{}..", self.filter_value_with(a, iso)?),
+            FilterExpr::Range(None, Some(b)) => format!("..{}", self.filter_value_with(b, iso)?),
             FilterExpr::Range(None, None) => return unsupported("an unbounded range filter"),
-            FilterExpr::Eq(v) => self.filter_value(v)?,
-            FilterExpr::Ne(v) => format!("<>{}", self.filter_value(v)?),
-            FilterExpr::Lt(v) => format!("<{}", self.filter_value(v)?),
-            FilterExpr::Le(v) => format!("<={}", self.filter_value(v)?),
-            FilterExpr::Gt(v) => format!(">{}", self.filter_value(v)?),
-            FilterExpr::Ge(v) => format!(">={}", self.filter_value(v)?),
+            FilterExpr::Eq(v) => self.filter_value_with(v, iso)?,
+            FilterExpr::Ne(v) => format!("<>{}", self.filter_value_with(v, iso)?),
+            FilterExpr::Lt(v) => format!("<{}", self.filter_value_with(v, iso)?),
+            FilterExpr::Le(v) => format!("<={}", self.filter_value_with(v, iso)?),
+            FilterExpr::Gt(v) => format!(">{}", self.filter_value_with(v, iso)?),
+            FilterExpr::Ge(v) => format!(">={}", self.filter_value_with(v, iso)?),
             FilterExpr::Like(p, ci) if needs_quotes(p) && !p.contains(['*', '?', '\'', '>']) => {
                 format!("'{}{p}'", if *ci { "@" } else { "" })
             }
             FilterExpr::Like(p, ci) => format!("{}{p}", if *ci { "@" } else { "" }),
             FilterExpr::Or(xs) => xs
                 .iter()
-                .map(|x| self.filter_text(x))
+                .map(|x| self.filter_text_with(x, iso))
                 .collect::<Result<Vec<_>, _>>()?
                 .join("|"),
             FilterExpr::And(xs) => {
@@ -98,7 +111,7 @@ impl Session {
                     return unsupported("an AND of OR filters");
                 }
                 xs.iter()
-                    .map(|x| self.filter_text(x))
+                    .map(|x| self.filter_text_with(x, iso))
                     .collect::<Result<Vec<_>, _>>()?
                     .join("&")
             }
@@ -244,7 +257,7 @@ impl Session {
                 let text = if option_ordinals {
                     self.filter_text(&ordinals(&f.expr))?
                 } else {
-                    self.filter_text(&f.expr)?
+                    self.filter_text_with(&f.expr, true)?
                 };
                 // The numeric form writes the kind as a number: FILTER is 1, CONST is 0.
                 items.push(if use_names || !record_form {

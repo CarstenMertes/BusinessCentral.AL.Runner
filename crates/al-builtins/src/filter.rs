@@ -164,7 +164,9 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
             flush(&mut raw, &mut out);
             out.push(Tok::Op(op));
             i += op.len();
-        } else if c[i] == '\'' {
+        // A quote opens a literal only where a value starts; inside a word it is a character (record/lt-record-read/RcAMisc.al:
+        // GetView_Field_Types `quote`: `it's`).
+        } else if c[i] == '\'' && raw.trim().is_empty() {
             flush(&mut raw, &mut out);
             let mut lit = String::new();
             i += 1;

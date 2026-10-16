@@ -796,10 +796,12 @@ impl Session {
         let mut parts = Vec::new();
         for &p in &t.keys[0] {
             let mut value = self.message_value(&r.fields[p])?;
-            if value.contains('"') {
-                return unsupported("a position value with a double quote");
-            }
+            // A double quote is written as it is when the value needs no quotes around it (record/lt-record-read/RcAMisc.al:
+            // GetPosition_Text_With_Special_Characters `a"b`); inside quotes it is not pinned.
             if value.contains(['(', ')']) {
+                if value.contains('"') {
+                    return unsupported("a position value with a double quote and a parenthesis");
+                }
                 value = format!("\"{value}\"");
             }
             if use_names {

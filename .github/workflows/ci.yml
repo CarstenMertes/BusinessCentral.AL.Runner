@@ -232,22 +232,6 @@ jobs:
             --junit ruled-junit.xml > ruled.log 2>&1 || status=1
           tools/baseline_rule_check.sh compare . || status=1
           exit $status
-      # Pageworks (the owner's private repository) is not in CI: its dual run is a local step, `alrunner test Pageworks
-      # Pageworks.Test --dual-run` on a checkout with the dependency apps from the feed (docs/reviews/2026-10-pageworks-profile.md).
-      # ADR-034 decision 4, the dual run: every corpus test runs on the tree walker and on the executable form, and
-      # the outcome, the error stack, the unprobed assumptions and the data left in the store must be equal. The exit
-      # code is not 0 on any difference.
-      - name: Dual run, tree walker against executable form
-        run: |
-          status=0
-          for v in 27 28 29; do
-            ./target/release/al-test-cli --bc-version $v --require-dotnet --no-ratchet --dual-run > dual-$v.log 2>&1 || {
-              echo "::error::the dual run for BC $v found a difference"
-              status=1
-            }
-            grep "^dual run" dual-$v.log | head -50
-          done
-          exit $status
       # Keeps the entries this run used and drops the rest, so the cache that is saved at the end of
       # the job holds only what the next run can use.
       - name: Compile cache, prune

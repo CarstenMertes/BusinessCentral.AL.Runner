@@ -1,8 +1,9 @@
-//! The captured form of the bytecode (ADR-030 on ADR-034) records what the tree walker records: the same values, loops,
-//! iterations, statements and messages, for programs that use every loop kind, `break`, `continue`, `exit`, `asserterror`,
-//! calls with `var` arguments and `case`.
+//! Value capture and loop tracking (ADR-030) on the executable form: the values, loops, iterations, statements and
+//! messages a capture records for programs that use every loop kind, `break`, `continue`, `exit`, `asserterror`, calls
+//! with `var` arguments and `case`.
 //!
-//! The mode (`AL_EXEC`) is read once per process, so the test runs this binary twice, once per mode, and compares.
+//! `capture_golden.txt` was recorded from the tree walker, the oracle at the time it was retired (ADR-034 amendment,
+//! 2026-10-16); the bytecode's captured form gave the same text. A change of it is a change of what a capture reports.
 
 use al_sema::workspace::AppSource;
 use al_testrun::runtime::{CorpusRuntime, RunOptions, SuiteRun};
@@ -38,14 +39,14 @@ const PROGRAMS: &[&str] = &[
     }",
     // asserterror inside loops, an error that leaves a loop and a statement.
     "codeunit 50102 X {
-        procedure Boom(N: Integer) begin if N = 2 then Error('boom %1', N); end;
+        procedure Boom(N: Integer) begin if N >= 1 then Error('boom %1', N); end;
         trigger OnRun() var I: Integer; Hits: Integer; J: Integer;
         begin
             for I := 1 to 3 do begin
                 asserterror Boom(I);
                 if GetLastErrorText() <> '' then Hits += 1;
                 J := 0;
-                while J < 2 do begin J += 1; asserterror begin if J = 1 then Error('x'); end; end;
+                while J < 2 do begin J += 1; asserterror begin if J >= 1 then Error('x'); end; end;
             end;
             asserterror begin for I := 1 to 5 do begin Hits += 1; if I = 2 then Error('stop'); end; end;
             Hits += 10;
@@ -98,43 +99,20 @@ fn run(code: &str) -> String {
     format!("{:?}\n{:#?}", r.outcome, r.captured.as_ref().map(|c| &c.captured))
 }
 
-/// The child: prints what the capture collected, between markers.
 #[test]
-#[ignore]
-fn dump_captures() {
-    println!("<<<");
+fn the_capture_of_the_programs_is_the_recorded_one() {
+    let mut got = String::new();
     for p in PROGRAMS {
-        println!("{}", run(p));
+        got.push_str(&run(p));
+        got.push('\n');
     }
-    println!(">>>");
-}
-
-fn dump(mode: &str) -> String {
-    let out = std::process::Command::new(std::env::current_exe().unwrap())
-        .args([
-            "--exact",
-            "dump_captures",
-            "--ignored",
-            "--nocapture",
-            "--test-threads=1",
-        ])
-        .env("AL_EXEC", mode)
-        .output()
-        .unwrap();
-    let text = String::from_utf8_lossy(&out.stdout).to_string();
-    assert!(
-        out.status.success(),
-        "{mode}: {text}\n{}",
-        String::from_utf8_lossy(&out.stderr)
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("tests/capture_golden.txt");
+    if std::env::var_os("UPDATE_CAPTURE_GOLDEN").is_some() {
+        std::fs::write(&path, &got).unwrap();
+    }
+    let want = std::fs::read_to_string(&path).unwrap();
+    assert_eq!(
+        got, want,
+        "the capture changed; if the change is meant: UPDATE_CAPTURE_GOLDEN=1 cargo test -p al-testrun --test capture_golden"
     );
-    let (a, b) = (text.find("<<<").unwrap(), text.find(">>>").unwrap());
-    text[a..b].to_string()
-}
-
-#[test]
-fn the_bytecode_captures_what_the_tree_walker_captures() {
-    let (tree, bytecode) = (dump("tree"), dump("bytecode"));
-    assert!(tree.contains("iterations"), "the programs capture loops:\n{tree}");
-    assert!(tree.len() > 2000, "{tree}");
-    assert_eq!(tree, bytecode);
 }

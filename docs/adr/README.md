@@ -42,7 +42,7 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [031](031-vm-speed-budget-and-fast-paths.md) | VM speed budget in CI (instructions per iteration of six benchmarks); interpreter fast paths as internals; `Signal::Error` boxed | Accepted |
 | [032](032-typed-ids-across-seams.md) | Typed ids across seams: `ObjKind` in the IR, a generated `BuiltinId` with one registry, `RecordOp`/`PageOp`, `LibraryKind`, typed schema facts, `CompanyId` | Accepted |
 | [033](033-symbolic-ir-and-link-step.md) | Symbolic IR with stable keys and a link step (`al-link`) that produces today's `Program` exactly; cache blocks with read lists; incremental compile of declaration changes | Accepted |
-| [034](034-executable-form-and-dual-run.md) | An executable form private to `al-vm`, checked against the tree walker by a dual run; profile the real suites first; no JIT | Accepted |
+| [034](034-executable-form-and-dual-run.md) | An executable form private to `al-vm` (the only executor since 2026-10-16: tree walker and dual run retired); profile the real suites first; no JIT | Accepted |
 | [035](035-store-keys-and-rows.md) | Store internals: encoded keys with `memcmp` order equal to `key_cmp`, shared rows, company ids, precomputed table facts; the `Store` trait unchanged | Accepted |
 | [036](036-one-resolved-tree-from-check-to-lower.md) | The checker builds a bound tree; lowering reads it instead of the CST and position maps; `Ty` names objects by key | Accepted |
 | [037](037-code-structure-rules.md) | Code structure: file-size rule, splits of the largest files and of `Session`, one parser per grammar, an `al-testkit` crate, CLIs through `al-testrun` | Accepted |

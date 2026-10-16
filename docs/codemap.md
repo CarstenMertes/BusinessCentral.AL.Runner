@@ -275,8 +275,9 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `globaltriggers.rs` (225): The events of the platform codeunit `Global Triggers` (2000000002, in the platform `System.app`). Entry: `global_setup` 63, `global_enabled` 142, `global_trigger` 157.
 - `hostvalues.rs` (259): Builtins that answer from the host (ADR-006). Entry: `datetime_of_unix_millis` 26, `Replaced` 142.
 - `interfaces.rs` (106): Interface variables: dispatch through the implementing codeunit. Entry: `interface_test` 32, `interface_target` 54, `enum_implementation` 81.
-- `lib.rs` (1070): Engine (immutable program) and Session (mutable state, grouped into the sub-states of `state.rs`), construction and the transaction entry points. The interpreter is in `interp.rs`.
-- `interp.rs` (1210): The tree-walking interpreter: `exec`, `eval`, `read`, `write`, `finish_call`, constants. Entry: `exec_block`, `exec`, `eval`, `read`, `write`.
+- `lib.rs` (1070): Engine (immutable program) and Session (mutable state, grouped into the sub-states of `state.rs`), construction and the transaction entry points. The executor is the bytecode in `exec/`; `interp.rs` holds what both it and the rest of the VM use.
+- `interp.rs`: Helpers the bytecode calls: `read`, `write` (places, with their index registers), `element`, `write_char`, `finish_call`, `call_site`, `run_native` (by-reference write-back, `fit_ref_number`), `vm_class_call`, `binary_op`, `unary_op`, `set_curr_field_no`, `clear_all`, `application_area`, constants.
+- `exec/mod.rs`, `exec/compile.rs`, `exec/run.rs`, `exec/types.rs`: The executable form (ADR-034), the only executor. `compile` turns a routine of the IR into a `Chunk` of register instructions (`compile(.., true)` is the captured form that value capture runs, ADR-030); `run_range` is the loop; `types.rs` is the interface the typed instructions get their static types from. Entry: `ExecProgram::chunk`, `captured_chunk`, `compile`, `Session::run_chunk`.
 - `ctx.rs` (289): `Session` as the context natives call back into: `FormatCtx` and `Ctx` (`record`, `page`, `session_op`, files, module lookups).
 - `state.rs` (117): Sub-states of `Session`: `TxState`, `UiState`, `PageClients`, `EventState`, `CoverageState`, `ReportState` (the .NET host state is `dotnet::DotNetState`).
 - `pages.rs` (432): The page test client (ADR-012): shared helpers, page triggers and events, the handle to a control. The rest is split by topic into `pages/`.
@@ -343,7 +344,7 @@ functions or methods; the file is in the module list above.
    slowest codeunits.
 5. `run_codeunit_observed`: `Session::with_host` -> `restore_baseline` -> `run_install_codeunits` -> `OnRun` via
    `Session::call` -> per `[Test]` routine: `resolve_handlers`, `blocked_site` (refusal decided at lowering),
-   `bind_handlers`, then `Session::call` -> `call_inner` -> `exec_block` -> `exec` / `eval`. The result becomes
+   `bind_handlers`, then `Session::call` -> `call_inner` -> `exec::compile` (once per routine) -> `Session::run_chunk`. The result becomes
    `Outcome::{Pass, Fail, NotRun}` (`Signal::Error` is a failure, `Signal::Unsupported` is a refusal).
 6. Back in `run_version`: `report::build` (counts by area) -> `output::junit` / `markdown` -> `report::ratchet` and
    `decide` against `metrics/<major>/passing.txt` -> `format_baseline` with `--update-baseline`.

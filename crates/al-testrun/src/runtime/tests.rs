@@ -1826,39 +1826,3 @@ fn the_marks_of_a_test_do_not_depend_on_what_ran_before_it_or_on_the_run() {
         );
     }
 }
-
-/// The dual run compares two runs of every test codeunit (outcome, error stack, assumptions, data left). While the
-/// executable form is the tree walker too, two runs of one interpreter must not differ, and a failing test is
-/// compared like a passing one.
-#[test]
-fn the_dual_run_finds_no_difference_between_two_runs_of_one_interpreter() {
-    let src = r#"
-table 50100 "Dual Row" { fields { field(1; Id; Integer) { } field(2; V; Text[30]) { } } keys { key(PK; Id) { } } }
-codeunit 50001 "Dual Tests" { Subtype = Test;
-  [Test] procedure Writes() var R: Record "Dual Row"; begin R.Id := 1; R.V := 'a'; R.Insert(); R.V := 'b'; R.Modify(); end;
-  [Test] procedure Fails() begin Error('boom'); end;
-  [Test] procedure Asserts() begin asserterror Error('inner'); if GetLastErrorText() <> 'inner' then Error('wrong'); end; }
-"#;
-    let opts = RunOptions {
-        dual_run: true,
-        ..Default::default()
-    };
-    let rt = CorpusRuntime::try_run_suites_with(
-        vec![AppSource {
-            id: "main".into(),
-            name: "main".into(),
-            dependencies: vec![],
-            files: vec![("main.al".into(), src.into())],
-        }],
-        vec![al_sema::AppKind::Workspace],
-        &[],
-        &Default::default(),
-        None,
-        Default::default(),
-        &[SuiteRun::everything()],
-        &opts,
-    )
-    .expect("the run");
-    assert_eq!(rt.results().len(), 3);
-    assert!(rt.dual_diffs().is_empty(), "{:?}", rt.dual_diffs());
-}

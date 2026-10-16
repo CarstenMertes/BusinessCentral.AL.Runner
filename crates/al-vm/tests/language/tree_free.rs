@@ -69,3 +69,22 @@ fn an_interface_call_with_computed_arguments_resolves_its_target_before_the_argu
     // Get(1 * 2) = 3 -> R = 3; the call on the cleared variable raises before Next() runs, so Calls stays 1.
     assert_eq!(run(src), 301);
 }
+
+#[test]
+fn a_routine_that_needs_more_registers_than_the_bytecode_can_name_is_refused_not_run_in_part() {
+    // 65,600 locals: the executable form names a register with 16 bits. The call is refused with a reason, as an
+    // unsupported feature is (hard rule 4); the routine does not run in part and nothing else is affected.
+    let mut vars = String::new();
+    for i in 0..65_600 {
+        vars.push_str(&format!("v{i}: Integer; "));
+    }
+    let src = code(&format!(
+        "procedure Big(): Integer var {vars} begin exit(1); end; procedure F(): Integer begin exit(7); end;"
+    ));
+    assert_eq!(run(&src), 7, "a routine of the same codeunit still runs");
+    let err = al_testkit::run_with(&src, "C", "Big", vec![]).unwrap_err();
+    match err {
+        al_builtins::native::Signal::Unsupported(why) => assert!(why.contains("65,535 registers"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+}

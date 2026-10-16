@@ -12,7 +12,7 @@ AL source
   → workspace: apps, objects, namespaces, extensions     al-sema   (parallel per file)
   → member tables, type check, name/overload resolution  al-sema
   → lowering to a fully resolved typed IR                al-sema → al-ir
-  → tree-walking interpreter over the IR                 al-vm
+  → register bytecode compiled from the IR, run by al-vm   al-vm
   → in-memory store (persistent maps)                    al-data
 ```
 
@@ -22,8 +22,8 @@ statically is refused. What can only be discovered while running raises
 `Signal::Unsupported`, which is also reported as not run. Nothing unsupported
 runs with a guessed behaviour.
 
-There is no bytecode stage. ADR-011 keeps the tree-walker until a budget
-needs more.
+The IR is compiled to register bytecode per routine on its first call (ADR-034); the bytecode is the only executor
+(the tree walker was retired on 2026-10-16).
 
 ## Crates
 

@@ -6,8 +6,8 @@ use al_builtins::value::RtType;
 use types::{DeclaredTypes, ExprTypes, Ty, of_rt};
 
 /// Compiles `r`.
-/// `captured`: the form a value capture runs (ADR-030): statement and loop ops that tell the capture what the tree walker
-/// tells it. `None` for it also when a statement would need the tree walker.
+/// `captured`: the form a value capture runs (ADR-030): statement and loop ops that tell the capture
+/// what a statement did.
 pub(crate) fn compile(r: &ir::Routine, captured: bool) -> Option<Chunk> {
     let nlocals = u16::try_from(r.locals.len()).ok()?;
     let mut c = Compiler {
@@ -25,7 +25,6 @@ pub(crate) fn compile(r: &ir::Routine, captured: bool) -> Option<Chunk> {
             calls: Vec::new(),
             builtins: Vec::new(),
             fors: Vec::new(),
-            labels: Vec::new(),
             appends: Vec::new(),
             dotnets: Vec::new(),
             aux: Vec::new(),
@@ -88,8 +87,7 @@ fn pure(e: &ir::Expr) -> bool {
     }
 }
 
-/// The builtins the tree walker handles itself, with operands of their own kind, before anything else; they stay on
-/// the tree walker.
+/// The builtins the VM runs itself on operands it holds (`Op::Special`).
 fn special(id: al_builtins::builtin_id::BuiltinId) -> bool {
     matches!(
         id,
@@ -117,15 +115,13 @@ fn simple(e: &ir::Expr) -> bool {
     )
 }
 
-/// A copy of an argument list with the value expressions replaced by a constant: after a call only the places of
-/// by-reference arguments are used.
-fn blank(args: &[ir::Arg]) -> Vec<ir::Arg> {
-    args.iter()
-        .map(|a| match a {
-            ir::Arg::Value(_) => ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))),
-            ir::Arg::Ref(p) => ir::Arg::Ref(p.clone()),
-        })
-        .collect()
+/// Whether a place has an index expression that evaluating it would run.
+fn has_index(p: &ir::Place) -> bool {
+    match p {
+        ir::Place::Index(..) => true,
+        ir::Place::Field(base, _) => has_index(base),
+        _ => false,
+    }
 }
 
 impl<'a> Compiler<'a> {
@@ -149,7 +145,9 @@ impl<'a> Compiler<'a> {
             | Op::JumpUnlessLeInt { t, .. }
             | Op::JumpUnlessGtInt { t, .. }
             | Op::JumpUnlessGeInt { t, .. }
-            | Op::MatchAny { t, .. }
+            | Op::JumpEq { t, .. }
+            | Op::JumpLt { t, .. }
+            | Op::JumpGt { t, .. }
             | Op::ForeachNext { t, .. }
             | Op::ForTest { t, .. } => *t = to,
             other => unreachable!("not a jump: {other:?}"),
@@ -295,7 +293,7 @@ impl<'a> Compiler<'a> {
     }
 
     /// The builtins the VM runs on operands it holds (`special`): `false` when the shape of the call is not one it knows, which
-    /// then stays a tree node (the error is the tree walker's).
+    /// then raises the error of a builtin nothing implements.
     fn special(
         &mut self,
         id: al_builtins::builtin_id::BuiltinId,
@@ -316,14 +314,14 @@ impl<'a> Compiler<'a> {
                 let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver, args.first()) else {
                     return Ok(false);
                 };
-                place = Some(p.clone());
+                place = Some(self.rplace(p)?);
                 arg = Some(self.expr_copy(e)?);
             }
             ids::RECORD_CURRFIELDNO_1 => {
                 let Some(ir::Arg::Ref(p)) = receiver else {
                     return Ok(false);
                 };
-                place = Some(p.clone());
+                place = Some(self.rplace(p)?);
             }
             ids::SYSTEM_CLEARALL_1 => {}
             ids::SESSION_APPLICATIONAREA_1 => match args.first() {
@@ -369,7 +367,8 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::LoadGlobal { d, i: *i as u32 });
             }
             E::Load(p) => {
-                let p = self.place(p);
+                let rp = self.rplace(p)?;
+                let p = self.place(&rp);
                 self.emit(Op::ReadPlace { d, p });
             }
             E::Unary(ir::UnOp::Not, a) if self.tys.expr_ty(a) == Some(Ty::Boolean) => {
@@ -414,13 +413,13 @@ impl<'a> Compiler<'a> {
                     Some(i) => Some(self.expr_copy(i)?),
                     None => None,
                 };
-                let arg_regs = self.arg_regs(args)?;
+                let (arg_regs, site_args) = self.arg_regs(args)?;
                 self.chunk.calls.push(CallSite {
                     object: *object,
                     routine: *routine,
                     instance,
                     arg_regs,
-                    args: blank(args),
+                    args: site_args,
                     try_call: *try_call,
                 });
                 let s = (self.chunk.calls.len() - 1) as u32;
@@ -442,25 +441,29 @@ impl<'a> Compiler<'a> {
                 let native = if vm { None } else { al_builtins::native::by_id(*id) };
                 let n = args.len();
                 let mut regs = Vec::with_capacity(n + 1);
-                let mut all: Vec<&ir::Arg> = Vec::with_capacity(n + 1);
+                let mut kept: Vec<ir::Arg> = Vec::with_capacity(n + 1);
+                let mut all: Vec<&'a ir::Arg> = Vec::with_capacity(n + 1);
                 if let Some(r) = receiver.as_deref() {
                     all.push(r);
                 }
                 all.extend(args.iter());
                 for (i, a) in all.iter().enumerate() {
                     let rest_pure = all[i + 1..].iter().all(|b| arg_pure(b));
-                    regs.push(self.arg_reg(a, rest_pure)?);
+                    let (r, arg) = self.arg_reg(a, rest_pure)?;
+                    regs.push(r);
+                    kept.push(arg);
                 }
                 let receiver_reg = if receiver.is_some() { Some(regs.remove(0)) } else { None };
+                let receiver_arg = if receiver.is_some() { Some(kept.remove(0)) } else { None };
                 self.chunk.builtins.push(BuiltinSite {
                     id: *id,
                     vm_class: vm,
                     native,
                     class: id.class(),
                     receiver: receiver_reg,
-                    receiver_arg: receiver.as_deref().map(|a| blank(std::slice::from_ref(a)).remove(0)),
+                    receiver_arg,
                     arg_regs: regs,
-                    args: blank(args),
+                    args: kept,
                     ret_used: *ret_used,
                 });
                 let s = (self.chunk.builtins.len() - 1) as u32;
@@ -472,22 +475,31 @@ impl<'a> Compiler<'a> {
             }
             E::In(v, set) => {
                 let a = self.expr_copy(v)?;
-                self.chunk.labels.push(set.clone());
-                let l = (self.chunk.labels.len() - 1) as u32;
-                self.emit(Op::InSet { d, a, l });
+                let hits = self.label_tests(a, set)?;
+                let k = self.k(&ir::Const::Boolean(false));
+                self.emit(Op::Const { d, k });
+                let over = self.emit(Op::Jump { t: 0 });
+                let hit_at = self.here();
+                for h in hits {
+                    self.patch(h, hit_at);
+                }
+                let k = self.k(&ir::Const::Boolean(true));
+                self.emit(Op::Const { d, k });
+                let end = self.here();
+                self.patch(over, end);
             }
             E::DotNet { ty, receiver, op, args } => {
                 let recv = match receiver.as_deref() {
                     Some(r) => Some(self.expr_copy(r)?),
                     None => None,
                 };
-                let arg_regs = self.arg_regs(args)?;
+                let (arg_regs, site_args) = self.arg_regs(args)?;
                 self.chunk.dotnets.push(DotNetSite {
                     ty: *ty,
                     op: op.clone(),
                     recv,
                     arg_regs,
-                    args: blank(args),
+                    args: site_args,
                 });
                 let s = (self.chunk.dotnets.len() - 1) as u32;
                 self.emit(Op::DotNet { s, d });
@@ -508,14 +520,15 @@ impl<'a> Compiler<'a> {
                     targets: targets.clone(),
                     recv,
                     arg_regs: Vec::new(),
-                    args: blank(args),
+                    args: Vec::new(),
                 });
                 let s = (self.chunk.ifaces.len() - 1) as u32;
                 if !plain {
                     self.emit(Op::IfaceResolve { r: recv, s });
                 }
-                let arg_regs = self.arg_regs(args)?;
+                let (arg_regs, site_args) = self.arg_regs(args)?;
                 self.chunk.ifaces[s as usize].arg_regs = arg_regs;
+                self.chunk.ifaces[s as usize].args = site_args;
                 self.emit(Op::IfaceCall { s, d });
             }
             E::DotNetCoerce(ty, inner) => {
@@ -596,7 +609,7 @@ impl<'a> Compiler<'a> {
                 message: message.clone(),
                 code: code.clone(),
             }),
-            // A builtin no native implements: the tree walker refuses it before it evaluates an operand.
+            // A builtin no native implements: it is refused before an operand is evaluated.
             E::Builtin { id, .. } => self.fault(FaultKind::Unsupported(format!("builtin {id}"))),
         }
         // Temporaries used inside `e` are free again; `d` itself stays allocated by the caller.
@@ -604,36 +617,94 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn arg_regs(&mut self, args: &'a [ir::Arg]) -> R<Vec<u16>> {
+    /// The tests of the labels of `case` or of `in [...]` on the value in `a`: the jumps (to patch) taken on a match.
+    /// A label is evaluated when it is reached, in order, and the first that matches ends the tests, as before.
+    fn label_tests(&mut self, a: u16, labels: &'a [ir::SetElem]) -> R<Vec<usize>> {
+        let mut hits = Vec::new();
+        for l in labels {
+            match l {
+                ir::SetElem::One(e) => {
+                    let b = self.expr_copy(e)?;
+                    hits.push(self.emit(Op::JumpEq { a, b, t: 0 }));
+                }
+                ir::SetElem::Range(lo, hi) => {
+                    let mut fails = Vec::new();
+                    if let Some(lo) = lo {
+                        let b = self.expr_copy(lo)?;
+                        fails.push(self.emit(Op::JumpLt { a, b, t: 0 }));
+                    }
+                    if let Some(hi) = hi {
+                        let b = self.expr_copy(hi)?;
+                        fails.push(self.emit(Op::JumpGt { a, b, t: 0 }));
+                    }
+                    hits.push(self.emit(Op::Jump { t: 0 }));
+                    let next = self.here();
+                    for f in fails {
+                        self.patch(f, next);
+                    }
+                }
+            }
+        }
+        Ok(hits)
+    }
+
+    /// `p` with the index expressions of it evaluated now, into registers that stay allocated until the instruction that
+    /// uses the place has run; the place that comes back reads them as locals.
+    fn rplace(&mut self, p: &'a ir::Place) -> R<ir::Place> {
+        Ok(match p {
+            ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_) => p.clone(),
+            ir::Place::Field(base, pos) => ir::Place::Field(Box::new(self.rplace(base)?), *pos),
+            ir::Place::Index(base, idx) => {
+                let base = self.rplace(base)?;
+                let mut regs = Vec::with_capacity(idx.len());
+                for e in idx {
+                    let r = self.expr_copy(e)?;
+                    self.keep(r);
+                    regs.push(ir::Expr::Load(ir::Place::Local(r as usize)));
+                }
+                ir::Place::Index(Box::new(base), regs)
+            }
+        })
+    }
+
+    fn arg_regs(&mut self, args: &'a [ir::Arg]) -> R<(Vec<u16>, Vec<ir::Arg>)> {
         let mut regs = Vec::with_capacity(args.len());
+        let mut out = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
             let rest_pure = args[i + 1..].iter().all(arg_pure);
-            regs.push(self.arg_reg(a, rest_pure)?);
+            let (r, arg) = self.arg_reg(a, rest_pure)?;
+            regs.push(r);
+            out.push(arg);
         }
-        Ok(regs)
+        Ok((regs, out))
     }
 
     /// The register of one call or builtin argument. A local is used in place when the arguments after it cannot write
     /// it; the register stays allocated until the instruction runs (the caller resets the temporaries per statement).
-    fn arg_reg(&mut self, a: &'a ir::Arg, rest_pure: bool) -> R<u16> {
+    /// The register of one argument, and the argument as the site keeps it: a value blanked, a place with its indexes in registers.
+    fn arg_reg(&mut self, a: &'a ir::Arg, rest_pure: bool) -> R<(u16, ir::Arg)> {
+        let blank = ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0)));
         match a {
             ir::Arg::Value(e) => {
                 if rest_pure {
                     let r = self.expr_any(e)?;
                     self.keep(r);
-                    Ok(r)
+                    Ok((r, blank))
                 } else {
                     let r = self.expr_copy(e)?;
                     self.keep(r);
-                    Ok(r)
+                    Ok((r, blank))
                 }
             }
-            ir::Arg::Ref(ir::Place::Local(i)) if rest_pure => u16::try_from(*i).map_err(|_| ()),
+            ir::Arg::Ref(ir::Place::Local(i)) if rest_pure => {
+                Ok((u16::try_from(*i).map_err(|_| ())?, ir::Arg::Ref(ir::Place::Local(*i))))
+            }
             ir::Arg::Ref(p) => {
+                let rp = self.rplace(p)?;
                 let d = self.alloc()?;
-                let p = self.place(p);
-                self.emit(Op::ReadPlace { d, p });
-                Ok(d)
+                let pi = self.place(&rp);
+                self.emit(Op::ReadPlace { d, p: pi });
+                Ok((d, ir::Arg::Ref(rp)))
             }
         }
     }
@@ -825,6 +896,7 @@ impl<'a> Compiler<'a> {
                 let end_reg = self.alloc()?;
                 let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let (fr, tr) = self.pair(from, to)?;
+                let rvar = self.rplace(var)?;
                 let int_local = match var {
                     ir::Place::Local(v) if matches!(self.locals_ty.get(*v), Some(RtType::Integer)) => {
                         u16::try_from(*v).ok()
@@ -832,7 +904,7 @@ impl<'a> Compiler<'a> {
                     _ => None,
                 };
                 self.chunk.fors.push(ForSite {
-                    var: var.clone(),
+                    var: rvar,
                     down: *down,
                     from: fr,
                     to: tr,
@@ -909,9 +981,12 @@ impl<'a> Compiler<'a> {
                 let a = self.expr_copy(scrutinee)?;
                 let mut ends = Vec::new();
                 for (labels, body) in branches {
-                    self.chunk.labels.push(labels.clone());
-                    let l = (self.chunk.labels.len() - 1) as u32;
-                    let miss = self.emit(Op::MatchAny { a, l, t: 0 });
+                    let hits = self.label_tests(a, labels)?;
+                    let miss = self.emit(Op::Jump { t: 0 });
+                    let hit_at = self.here();
+                    for h in hits {
+                        self.patch(h, hit_at);
+                    }
                     self.emit(Op::Clear { a });
                     self.block(body)?;
                     ends.push(self.emit(Op::Jump { t: 0 }));
@@ -938,11 +1013,12 @@ impl<'a> Compiler<'a> {
             }
             S::Foreach { var, collection, body } => {
                 let coll = self.expr_copy(collection)?;
+                let rvar = self.rplace(var)?;
                 let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let items = self.alloc()?;
                 let at = self.alloc()?;
                 self.chunk.foreachs.push(ForeachSite {
-                    var: var.clone(),
+                    var: rvar,
                     coll,
                     items,
                     at,
@@ -980,7 +1056,7 @@ impl<'a> Compiler<'a> {
     }
 
     fn assign(&mut self, p: &'a ir::Place, e: &'a ir::Expr) -> R<()> {
-        // `S += x` and `S := S + x` on a text variable append in place: the tree walker's routine does it.
+        // `S += x` and `S := S + x` on a text variable append in place: the append routine does it.
         if let (ir::Place::Local(_) | ir::Place::Global(_), ir::Expr::Convert(RtType::Text(_), inner)) = (p, e) {
             if let ir::Expr::Binary(ir::BinOp::Add, l, _) = &**inner {
                 if matches!(&**l, ir::Expr::Load(lp) if lp == p) {
@@ -990,7 +1066,7 @@ impl<'a> Compiler<'a> {
                     let ir::Expr::Binary(_, _, r) = &**inner else {
                         unreachable!("matched above")
                     };
-                    // The old value is read before `x` is evaluated, as the tree walker does.
+                    // The old value is read before `x` is evaluated.
                     let old = self.alloc()?;
                     let pi = self.place(p);
                     self.emit(Op::ReadPlace { d: old, p: pi });
@@ -1024,8 +1100,13 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::StoreLocal { i, a, p: pi });
             }
             _ => {
-                let a = self.expr_any(e)?;
-                let pi = self.place(p);
+                let a = if has_index(p) {
+                    self.expr_copy(e)?
+                } else {
+                    self.expr_any(e)?
+                };
+                let rp = self.rplace(p)?;
+                let pi = self.place(&rp);
                 self.emit(Op::StorePlace { p: pi, a });
             }
         }

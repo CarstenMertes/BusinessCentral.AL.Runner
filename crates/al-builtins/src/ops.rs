@@ -334,25 +334,40 @@ pub enum Arith {
     Mod,
 }
 
+/// Integer with Integer for `+ - * div mod`, in 32 bits. The one body the general path, the bytecode's `BinI` and its typed
+/// Integer ops all use, so an overflow or a division by zero gives the same error everywhere. `Div` is a Decimal quotient and
+/// is not an Integer operation (the caller keeps it off this function).
+#[inline(always)]
+pub fn int_arith(op: Arith, a: i32, b: i32) -> Result<i32, Signal> {
+    let n = match op {
+        Arith::Add => a.checked_add(b),
+        Arith::Sub => a.checked_sub(b),
+        Arith::Mul => a.checked_mul(b),
+        Arith::IntDiv | Arith::Mod if b == 0 => return raise("Attempted to divide by zero.", "AL:DivideByZero"),
+        Arith::IntDiv => a.checked_div(b),
+        Arith::Mod => Some(a.wrapping_rem(b)),
+        Arith::Div => return Err(Signal::Unsupported("int_arith of the quotient operator".into())),
+    };
+    n.ok_or_else(arith_overflow)
+}
+
+#[cold]
+fn arith_overflow() -> Signal {
+    match raise::<Value>("Arithmetic operation resulted in an overflow.", "AL:Overflow") {
+        Err(s) => s,
+        Ok(_) => unreachable!(),
+    }
+}
+
 pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     use Value as V;
     // Integer with Integer is done in 32 bits: the same results and errors as the general path below, which goes
     // through a Decimal (session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts for the two error texts). `/` is a
     // Decimal quotient and stays below. `MIN mod -1` is 0, as the Decimal remainder is.
     if let (V::Integer(a), V::Integer(b)) = (l, r) {
-        let n = match op {
-            Arith::Add => a.checked_add(*b),
-            Arith::Sub => a.checked_sub(*b),
-            Arith::Mul => a.checked_mul(*b),
-            Arith::IntDiv | Arith::Mod if *b == 0 => return raise("Attempted to divide by zero.", "AL:DivideByZero"),
-            Arith::IntDiv => a.checked_div(*b),
-            Arith::Mod => Some(a.wrapping_rem(*b)),
-            Arith::Div => return arith_general(op, l, r),
-        };
-        return match n {
-            Some(n) => Ok(V::Integer(n)),
-            None => raise("Arithmetic operation resulted in an overflow.", "AL:Overflow"),
-        };
+        if op != Arith::Div {
+            return int_arith(op, *a, *b).map(V::Integer);
+        }
     }
     arith_general(op, l, r)
 }
@@ -800,6 +815,29 @@ mod tests {
                         assert_eq!((e.message.as_str(), e.code.as_str()), (message, code), "{a} {op:?} {b}")
                     }
                     (got, want) => panic!("{a} {op:?} {b}: got {got:?}, want {want:?}"),
+                }
+            }
+        }
+    }
+
+    /// Regression guard (the behavior is unchanged by moving the body out of `arith`): `int_arith`, which the bytecode's
+    /// typed Integer ops call, gives the definition's results and error texts on the edge grid.
+    #[test]
+    fn int_arith_gives_what_the_definition_gives_on_the_edge_grid() {
+        let edges = [0, 1, -1, 2, -2, 46341, i32::MAX, i32::MIN];
+        for a in edges {
+            for b in edges {
+                for op in [Arith::Add, Arith::Sub, Arith::Mul, Arith::IntDiv, Arith::Mod] {
+                    match (
+                        int_arith(op, a, b),
+                        integer_reference(op, a, b).expect("not a division"),
+                    ) {
+                        (Ok(g), Ok(w)) => assert_eq!(g, w, "{a} {op:?} {b}"),
+                        (Err(Signal::Error(e)), Err((m, c))) => {
+                            assert_eq!((e.message.as_str(), e.code.as_str()), (m, c), "{a} {op:?} {b}")
+                        }
+                        (got, want) => panic!("{a} {op:?} {b}: got {got:?}, want {want:?}"),
+                    }
                 }
             }
         }

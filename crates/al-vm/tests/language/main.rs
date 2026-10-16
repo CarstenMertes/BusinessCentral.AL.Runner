@@ -15,4 +15,5 @@ mod interfaces;
 mod pageworks_probes;
 mod text_append;
 mod text_scans;
+mod typed_ops;
 mod version_gates;

@@ -18,6 +18,8 @@ const KEPT: &[(&str, &str, &str)] = &[
         "al-link/src/lib.rs",
         r#"let (x, y) = (format!("{a:?}"), format!("{b:?}"));"#,
         "the report of a defect of the link step (AL_CHECK_LINK, tests): for the developers of the compiler",
+    ),
+    (
         "al-data/src/memory.rs",
         r#"format!("{row:?}").hash(h);"#,
         "a hash input of the dual-run digest, never shown",

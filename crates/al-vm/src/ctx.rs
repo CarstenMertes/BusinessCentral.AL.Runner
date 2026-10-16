@@ -25,6 +25,9 @@ impl al_builtins::native::Ctx for Session {
     fn today_day(&self) -> Option<i32> {
         Some(self.today_day_number())
     }
+    fn now_unix_millis(&self) -> Option<i64> {
+        Some(self.now_millis())
+    }
     fn format_composite(&mut self, v: &Value) -> Option<Result<String, Signal>> {
         self.format_composite_value(v)
     }

@@ -103,6 +103,10 @@ pub trait Ctx: FormatCtx {
     fn today_day(&self) -> Option<i32> {
         None
     }
+    /// The host clock in milliseconds since the Unix epoch; `None` where there is no host.
+    fn now_unix_millis(&self) -> Option<i64> {
+        None
+    }
     /// `Format` of a record variable, a `RecordRef` or a `FieldRef` (standard format 0): needs the
     /// table's fields. `None` where the context has no program.
     fn format_composite(&mut self, _v: &Value) -> Option<Result<String, Signal>> {
@@ -1263,6 +1267,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                     | "XmlDeclaration"
                     // types/TestClearContracts.al:Clear_TextBuilder_ResetsToEmpty.
                     | "TextBuilder"
+                    | "Cookie"
                     | "JsonObject"
                     | "JsonArray"
                     | "JsonValue"

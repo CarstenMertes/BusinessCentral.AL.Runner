@@ -1296,9 +1296,14 @@ fn min_max_and_lookup_accept_text_for_code_and_the_same_enum() {
 }
 
 #[test]
-fn min_max_and_lookup_into_another_type_or_another_enum_are_refused() {
+fn min_max_and_lookup_into_another_type_are_refused() {
     assert!(unsupported(calc_one("MinWrong")).contains("another type"));
-    assert!(unsupported(calc_one("EnumOther")).contains("another type"));
+}
+
+// A lookup into an Enum of another enum type copies the ordinal (assumption flowfield-lookup-other-enum).
+#[test]
+fn a_lookup_into_another_enum_copies_the_ordinal() {
+    assert_eq!(text(calc_one("EnumOther")), "B");
 }
 
 // A sum over a BigInteger source works past the Int32 range.

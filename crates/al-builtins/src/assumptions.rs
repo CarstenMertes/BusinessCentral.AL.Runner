@@ -181,6 +181,12 @@ registry! {
         tests: "Tests-Resource ResourceCapacityMatrixBalanceAtDate (format `<Week>.<Year4>`) and 2 more.",
         probe: "Format(D, 0, '<Week>') for 2021-01-03, 2024-12-30, 2026-01-01 and 2020-12-31, compared with Date2DWY(D, 2); and <Week,2> for a week below 10.",
     },
+    FlowfieldLookupOtherEnum => {
+        id: "flowfield-lookup-other-enum",
+        assumed: "A Lookup FlowField whose field is an Enum of another enum type than the looked-up field copies the ordinal into its own enum (the value keeps its ordinal even when the target enum has no such member). Min and Max stay refused.",
+        tests: "VAT Return Period.\"VAT Return Status\" (lookup of \"VAT Report Header\".Status): 25 Tests-Misc tests (VAT Return Period UT).",
+        probe: "A FlowField Enum A = lookup(T.Field of Enum B): Format of the result for a member present in both enums, one only in B (ordinal beyond A), and the empty result.",
+    },
     DateToTextIsFormat => {
         id: "date-to-text-is-format",
         assumed: "A Date converted to a Text or Code (a Variant from FieldRef.Value into a Text parameter) is its default Format text, so an Evaluate of it reads the same date back.",

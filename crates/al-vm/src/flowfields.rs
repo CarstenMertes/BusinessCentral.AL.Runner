@@ -234,8 +234,20 @@ impl Session {
                         type_name(&f.ty)
                     ));
                 }
-                if !same_kind(&f.ty, &s.ty) {
-                    return unsupported("min, max or lookup into a field of another type");
+                // A lookup into an Enum field of another enum type copies the ordinal (Base Application's VAT Return
+                // Period."VAT Return Status" looks up "VAT Report Header".Status; 25 Tests-Misc tests, "VAT Return
+                // Period UT"; no corpus pin, assumption flowfield-lookup-other-enum).
+                if calc.method == ir::CalcMethod::Lookup && matches!((&f.ty, &s.ty), (RtType::Enum(_), RtType::Enum(_)))
+                {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FlowfieldLookupOtherEnum);
+                } else if !same_kind(&f.ty, &s.ty) {
+                    return unsupported(format!(
+                        "min, max or lookup into a field of another type ({}: {} from {}: {})",
+                        f.name,
+                        type_name(&f.ty),
+                        s.name,
+                        type_name(&s.ty)
+                    ));
                 }
             }
             ir::CalcMethod::Count => {
@@ -414,6 +426,11 @@ impl Session {
                     None => self.default_value(&f.ty),
                 }
             }
+        };
+        // The ordinal of a looked-up Enum of another type (assumption flowfield-lookup-other-enum).
+        let value = match (value, &f.ty) {
+            (Value::Enum(_, ordinal), RtType::Enum(id)) => Value::Enum(*id, ordinal),
+            (value, _) => value,
         };
         ops::convert(value, &f.ty)
     }

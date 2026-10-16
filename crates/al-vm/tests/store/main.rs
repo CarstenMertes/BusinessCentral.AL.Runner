@@ -3,6 +3,7 @@
 mod companies;
 mod find_directions;
 mod fix_records;
+mod flowfield_enum_other_enum;
 mod flowfields;
 mod general_journal;
 mod hostvalues;

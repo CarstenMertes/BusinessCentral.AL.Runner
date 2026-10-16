@@ -200,6 +200,14 @@ fn date(text: &str, number: i64, today: Option<i32>) -> Result<Parsed, Signal> {
         if t.is_empty() {
             return Ok(Parsed::Value(Value::Date(0, false)));
         }
+        // The first day of the calendar reads as the empty date, and year 0 as the day after it
+        // (types/lt-datetime/Evaluate.al:Date_Format9 `iso min`, `iso 0D` and `iso year 0`).
+        if t == "0001-01-01" {
+            return Ok(Parsed::Value(Value::Date(0, false)));
+        }
+        if t == "0000-01-01" {
+            return Ok(Parsed::Value(Value::Date(2, false)));
+        }
         return Ok(
             match crate::iso::parse_date(t).filter(|_| t.len() == 10 && t.as_bytes()[4] == b'-') {
                 Some(d) => Parsed::Value(Value::Date(d, false)),
@@ -551,7 +559,9 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
                 .or_else(|| {
                     members
                         .iter()
-                        .find(|(_, n)| !text.is_empty() && n.eq_ignore_ascii_case(text))
+                        // A blank member matches the blank text (types/TestBlankEnumInitTests.Codeunit.al:
+                        // EvaluateMatchesBlankMemberAndRejectsNonMember).
+                        .find(|(_, n)| n.trim().eq_ignore_ascii_case(text))
                         .map(|(o, _)| *o)
                 })
                 .or_else(|| {

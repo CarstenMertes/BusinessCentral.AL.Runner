@@ -101,7 +101,7 @@ impl Lowerer<'_> {
                     Ty::Text(Some(n)) | Ty::Code(Some(n)) => Ok(ir::Expr::Const(ir::Const::Integer(n as i32))),
                     Ty::Text(None) | Ty::Code(None) => Ok(ir::Expr::Const(ir::Const::Integer(i32::MAX))),
                     // A TextConst has the length 2048 (types/lt-variant/VaTTextConst.al:TextConst_MaxStrLen: Simple, Long, Empty and
-                    // MultiLang). A Label is assumed the same: docs/probes-needed.md "MaxStrLen of a Label".
+                    // MultiLang). A Label answers 2048 too (text/lt-label-textbuilder/TxCLabel.al:Label_MaxLength).
                     Ty::Label => Ok(ir::Expr::Const(ir::Const::Integer(2048))),
                     other => Err(format!("MaxStrLen of a value of type {other}")),
                 }

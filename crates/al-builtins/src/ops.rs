@@ -208,7 +208,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         (v, T::Code(max)) if crate::native::text_of(&v).is_some() => {
             // Doc (Code data type): upper case, leading and trailing spaces removed.
-            let s = upper_code(crate::native::text_of(&v).expect("text").trim());
+            let text = crate::native::text_of(&v).expect("text");
+            let s = upper_code(text.trim());
+            // The error shows the text as it was given (text/lt-label-textbuilder/TxCLabel.al:Label_MaxLength `toCode2`).
+            if max.is_some_and(|m| Value::text_len(&s) > m as usize) {
+                fit(text.trim().to_string(), *max)?;
+            }
             Value::Code(fit(s, *max)?.into())
         }
         (Value::Text(s) | Value::Code(s), T::Char) => {

@@ -224,6 +224,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             " ".repeat((length as usize).saturating_sub(cut.chars().count()))
         ));
     }
+    // A text longer than the length is cut to it (text/lt-label-textbuilder/TxCLabel.al:Label_Value_And_Format `Format(Plain, 5)`).
+    if matches!(v, Value::Text(_) | Value::Code(_)) && length > 0 && s.chars().count() > length as usize {
+        return Ok(s.chars().take(length as usize).collect());
+    }
     Ok(pad(s, length))
 }
 

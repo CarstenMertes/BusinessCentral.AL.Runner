@@ -3275,6 +3275,7 @@
 60893 OpenNew_TraceIsOneOnAfterGetCurrRecord
 60893 SetValue_SavedByCurrPageUpdate_RaisesOnAfterGetRecordForTheSavedRow
 60893 SetValue_SavedByCurrPageUpdate_WritesOneRowUnderTheAssignedKey
+60895 EvaluateMatchesBlankMemberAndRejectsNonMember
 60895 InTestInsertInitializesBlankEnumToOrdinalZero
 60895 InstallInsertSucceededAndBlankEnumReadsBackAsOrdinalZero
 60895 NamedInitValueOnSparseEnumEvaluatesToTrueOrdinal
@@ -6431,13 +6432,16 @@
 70501 CopyStrUnicodeAndBlanks
 70502 DelStrBasic
 70502 DelStrErrors
+70502 DelStrTargets
 70503 InsStrBasic
 70503 InsStrErrors
+70503 InsStrTargets
 70505 IncStrBasic
 70505 IncStrNoDigits
 70505 IncStrWithBlanks
 70506 SelectStrBasic
 70506 SelectStrErrors
+70506 SelectStrTargets
 70507 ConvertStrBasic
 70507 ConvertStrErrors
 70507 ConvertStrTargets
@@ -6447,14 +6451,18 @@
 70510 StrPosBasic
 70510 StrPosTargets
 70511 SubstNoErrors
+70511 SubstNoLengthAndTargets
 70511 SubstNoPercent
 70511 SubstNoTen
 70511 SubstNoTypes
 70512 MaxStrLenSubstTemp
 70512 MaxStrLenVariables
+70513 CodeNAssign
 70513 CodeTrimUpper
 70513 TextNAssign
+70513 TextNtoCodeAndBack
 70515 Concatenation
+70515 ConcatenationOverflow
 70515 TextEquality
 70515 TextEqualityVariables
 70518 DeleteAll_Events
@@ -6915,9 +6923,12 @@
 71016 Codeunit_Passing_Large
 71020 Label_Constant_Methods
 71020 Label_Instance_Methods_Empty
+71021 Label_MaxLength
 71021 Label_StrSubstNo_Placeholders
+71021 Label_Value_And_Format
 71022 Label_Assignment_Shapes
 71022 Label_In_Builtins
+71022 Label_To_Short_Param_Errors
 71022 Label_To_Text_Param
 71023 Label_In_Error
 71023 Label_In_ErrorInfo_Fields
@@ -7183,6 +7194,7 @@
 71500 Find_SearchStrings_FirstLast
 71500 Find_SearchStrings_Neighbours
 71500 Find_Uses_Key_Fields_Only_Not_Other_Fields
+71500 Get_Code_Key_CaseAndBlank
 71500 Get_Composite_Key
 71500 Get_Decimal_Date_Bool_Option_Enum_Keys
 71500 Get_Integer_Key
@@ -7210,6 +7222,7 @@
 71503 SetRange_Every_Field_Type
 71503 SetRange_Replaces_Previous_Filter_On_Same_Field
 71503 SetRange_Single_And_FromTo
+71503 SetRange_Text_Field_Too_Long_Value
 71504 SetFilter_Integer_Operators
 71504 SetFilter_Integer_Whitespace_And_Case
 71504 SetFilter_Long_Filter_Strings
@@ -7643,6 +7656,7 @@
 72515 InOperator
 72515 WhileRepeat_Semantics
 72516 Exit_DefaultValues
+72516 Exit_Forms
 72516 Recursion_Values
 72518 Asserterror_RollsBackWrites
 72518 CodeunitRun_Error_RollsBack
@@ -8271,6 +8285,7 @@
 73804 Time_Format_Values
 73805 DateFormula_Assign_Compare
 73805 DateFormula_Evaluate
+73805 Date_Format9
 73813 Execute_NestedItems_Order
 73813 RunRequestPage_UseRequestPageFalse_NoPage
 73813 Run_EmptyTables_Order
@@ -8588,6 +8603,7 @@
 74611 Err_GetRangeEdge
 74611 Err_RemoveRangeBounds
 74611 Err_SetInsertRange
+74611 Err_UninitialisedAndTextOverflow
 74612 AddRange_List
 74612 AddRange_Mixed
 74612 AddRange_Self
@@ -8654,6 +8670,7 @@
 74623 Values_Large
 74623 Values_ListKeysOfDictionary
 74623 Values_ListOfInteger
+74623 Values_Scalars
 74623 Values_TextLong
 74624 BooleanDateEnumList_Sweep
 74624 DecimalList_Sweep

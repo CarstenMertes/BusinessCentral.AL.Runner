@@ -28,9 +28,9 @@ pub struct DepFacts {
     pub id: Option<u32>,
     pub name: String,
     pub app: u32,
-    /// The objects whose extensions or implementers this object's lowered form embeds, itself
+    /// The objects whose extensions, implementers or reasons the lowering of this object read, itself
     /// included (see the module comment).
-    pub embeds: Vec<u32>,
+    pub reads: Vec<ir::sym::ObjKey>,
     /// The table whose record is the implicit `Rec` of the object.
     pub table_of: Option<u32>,
     pub page_temporary: bool,
@@ -73,8 +73,9 @@ pub struct DepFacts {
 /// The lowered form of one dependency object.
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DepBlock {
-    pub object: ir::Object,
-
+    /// The object in its symbolic form (ADR-033): its references are keys, so link places it in any program that
+    /// has the objects it names. `None` for a placeholder.
+    pub object: Option<ir::sym::SymObject>,
     /// Per routine: why it cannot run (empty: it can).
     pub unsupported: Vec<Vec<String>>,
     /// Per routine: the routines it calls directly, as (object, routine). What a variable of a
@@ -88,7 +89,7 @@ impl DepBlock {
     /// does not decode their blocks.
     pub fn placeholder() -> DepBlock {
         DepBlock {
-            object: ir::Object::default(),
+            object: None,
             unsupported: Vec::new(),
             calls: Vec::new(),
         }
@@ -311,6 +312,14 @@ pub fn touched(ws: &Workspace, n_dep: usize) -> HashSet<usize> {
     out
 }
 
+/// The blocks that must be lowered again because the declarations of the objects `changed` are not as the
+/// cache saw them: those whose lowering read one of them (`DepFacts::reads`).
+pub fn stale_blocks(src: &dyn DepSource, changed: &HashSet<&ir::sym::ObjKey>) -> Vec<usize> {
+    (0..src.len())
+        .filter(|&oi| src.facts(oi).reads.iter().any(|k| changed.contains(k)))
+        .collect()
+}
+
 /// The dependency objects that cannot come from the source because the workspace changes
 /// something their lowered form embeds, and the objects that extend each other with them.
 pub fn relower_set(ws: &Workspace, n_dep: usize, src: &dyn DepSource) -> Vec<bool> {
@@ -319,8 +328,9 @@ pub fn relower_set(ws: &Workspace, n_dep: usize, src: &dyn DepSource) -> Vec<boo
     if touched.is_empty() {
         return relower;
     }
-    for (oi, r) in relower.iter_mut().enumerate() {
-        *r = src.facts(oi).embeds.iter().any(|e| touched.contains(&(*e as usize)));
+    let changed: HashSet<&ir::sym::ObjKey> = touched.iter().map(|&t| &src.facts(t).key).collect();
+    for oi in stale_blocks(src, &changed) {
+        relower[oi] = true;
     }
     // An object and the objects that extend it are lowered together: the extension's lowering
     // reads the base's layout, and the base's lists the extensions.
@@ -498,6 +508,50 @@ reportextension 60030 WRE extends R { dataset { add(TD) { column(WB; B) { } } } 
 interface IWork extends IBar { procedure More(); }
 codeunit 60031 WBar implements IWork { procedure Bump(): Integer begin exit(3); end; procedure Name(): Text begin exit('w'); end; procedure More() begin end; }
 "#;
+
+    #[test]
+    fn a_changed_declaration_invalidates_exactly_the_blocks_that_read_it() {
+        let set = lower_for_cache(deps(), &BTreeSet::new(), None);
+        let key_of = |name: &str| set.facts.iter().find(|f| f.name == name).expect(name).key.clone();
+        let ifoo = key_of("IFoo");
+        let stale = stale_blocks(&set, &HashSet::from([&ifoo]));
+        // Exactly the blocks whose read list names the object.
+        for (i, f) in set.facts.iter().enumerate() {
+            assert_eq!(stale.contains(&i), f.reads.contains(&ifoo), "`{}`", f.name);
+        }
+        let names: BTreeSet<&str> = stale.iter().map(|&i| set.facts[i].name.as_str()).collect();
+        for read_it in ["IFoo", "DUse", "DEnum"] {
+            assert!(
+                names.contains(read_it),
+                "`{read_it}` calls through the interface: {names:?}"
+            );
+        }
+        for did_not in ["DPlain", "OUse", "T"] {
+            assert!(
+                !names.contains(did_not),
+                "`{did_not}` does not read the interface: {names:?}"
+            );
+        }
+        // Adding an implementer changes only blocks that read the interface (the new object is last, so the
+        // others keep their places).
+        let mut more = deps();
+        more.push(app(
+            "d4",
+            &["d1"],
+            "codeunit 70000 NewImpl implements IFoo { procedure Bump(): Integer begin exit(9); end; }",
+        ));
+        let changed = lower_for_cache(more, &BTreeSet::new(), None);
+        let differing: Vec<usize> = (0..set.len()).filter(|&i| set.blocks[i] != changed.blocks[i]).collect();
+        assert!(!differing.is_empty(), "the interface calls gained a target");
+        for i in &differing {
+            assert!(
+                stale.contains(i),
+                "block `{}` changed and was not read-listed",
+                set.facts[*i].name
+            );
+        }
+        assert!(differing.len() < set.len() / 2, "most blocks are untouched");
+    }
 
     #[test]
     fn a_workspace_that_changes_nothing_takes_every_dependency_object_from_the_cache() {

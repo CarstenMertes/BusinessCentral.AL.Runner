@@ -314,7 +314,10 @@ impl ExprTypes {
 
     /// The type of `e`, a node of the routine's body.
     pub fn of(&self, e: &Expr) -> ExprTy {
-        self.by_addr.get(&(e as *const Expr as usize)).copied().unwrap_or_default()
+        self.by_addr
+            .get(&(e as *const Expr as usize))
+            .copied()
+            .unwrap_or_default()
     }
 }
 
@@ -348,10 +351,11 @@ mod tests {
 
     #[test]
     fn the_walk_is_post_order_and_counts_places_and_args() {
-        let e = Expr::Binary(BinOp::Add, Box::new(int(1)), Box::new(Expr::Load(Place::Index(
-            Box::new(Place::Local(0)),
-            vec![int(2)],
-        ))));
+        let e = Expr::Binary(
+            BinOp::Add,
+            Box::new(int(1)),
+            Box::new(Expr::Load(Place::Index(Box::new(Place::Local(0)), vec![int(2)]))),
+        );
         let body = vec![Stmt::Assign(Place::Local(0), e)];
         let mut seen = Vec::new();
         for_each_expr_post(&body, &mut |e| {
@@ -371,7 +375,9 @@ mod tests {
         let body = vec![Stmt::Expr(Expr::Binary(BinOp::Add, Box::new(int(1)), Box::new(int(2))))];
         let r = routine(body, vec![ExprTy::Integer, ExprTy::Integer, ExprTy::Integer]);
         let t = ExprTypes::new(&r);
-        let Stmt::Expr(Expr::Binary(_, a, _)) = &r.body[0] else { unreachable!() };
+        let Stmt::Expr(Expr::Binary(_, a, _)) = &r.body[0] else {
+            unreachable!()
+        };
         assert_eq!(t.of(a), ExprTy::Integer);
         assert_eq!(t.of(&int(1)), ExprTy::Unknown, "a node of another tree");
         let short = routine(r.body.clone(), vec![ExprTy::Integer]);

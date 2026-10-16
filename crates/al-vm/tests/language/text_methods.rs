@@ -33,3 +33,17 @@ fn index_of_any_takes_a_one_based_start_index() {
         "5|6|9"
     );
 }
+
+#[test]
+fn variant_knows_in_streams_out_streams_and_never_binary() {
+    // types/lt-variant/VaTHelper.al Flags (InStream, OutStream) and lt-variant-is-text-streams/LTP89IsMisc.al:Binary_OnManyVariants
+    // (IsBinary is No for every value, a stream and a Blob field's value included).
+    let src = "table 50101 T { fields { field(1; Id; Integer) { } field(2; Data; Blob) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var R: Record T; Ins: InStream; Outs: OutStream; V: Variant; S: Text; begin
+          R.Data.CreateInStream(Ins); R.Data.CreateOutStream(Outs);
+          V := Ins; S += Format(V.IsInStream()) + Format(V.IsOutStream()) + Format(V.IsBinary()) + '|';
+          V := Outs; S += Format(V.IsInStream()) + Format(V.IsOutStream()) + Format(V.IsBinary()) + '|';
+          V := 5; S += Format(V.IsInStream()) + Format(V.IsOutStream()) + Format(V.IsBinary());
+          exit(S); end; }";
+    assert_eq!(text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)), "YesNoNo|NoYesNo|NoNoNo");
+}

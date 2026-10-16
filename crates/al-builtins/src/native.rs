@@ -505,6 +505,11 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
     }),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
+    ("Variant.IsInStream#1", |_, r, _| is(r, "InStream")),
+    ("Variant.IsOutStream#1", |_, r, _| is(r, "OutStream")),
+    // `IsBinary` is No for every value the corpus puts in a Variant: numbers, text, a record, a Blob field's value, an InStream,
+    // an OutStream, a TextBuilder, a FieldRef and an empty Variant (types/lt-variant-is-text-streams/LTP89IsMisc.al:Binary_*).
+    ("Variant.IsBinary#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),

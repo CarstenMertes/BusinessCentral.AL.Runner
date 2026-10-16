@@ -52,6 +52,15 @@ pub struct RowSet {
     pub compression_level: u8,
 }
 
+/// A SQL sequence: its name as the database holds it, and its state.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct SqlSequence {
+    pub name: String,
+    pub start: i64,
+    pub increment: i64,
+    pub current: i64,
+}
+
 #[derive(Debug, Clone)]
 pub struct SysObject {
     pub object_id: i32,
@@ -354,6 +363,52 @@ impl Catalog {
         let au = self.au_for_rowset(rowset_id)?;
         let (pid, fid) = au.first_page;
         walk_chain(pf, fid, pid, f)
+    }
+
+    /// The SQL sequences of the database: name, start, increment and current value.
+    ///
+    /// A sequence is a `sysschobjs` row of type `SO`; its state is the row of `sysobjvalues` (object 60) with value
+    /// class 0x3f for that object id. The value is 45 bytes, observed on a BC 29 W1 backup and checked against the
+    /// demo data (the contact series holds 24 contacts and its sequence says 24): magic `a5 01 40 1f`, then five
+    /// little-endian 64-bit integers (start, increment, minimum, maximum, current) and a flag byte. A row of another
+    /// length or magic is skipped, never guessed.
+    pub fn sequences(&self, pf: &PageFile) -> Result<Vec<SqlSequence>> {
+        const SYSOBJVALUES_ID: i32 = 60;
+        const SEQUENCE_VALUE_CLASS: u8 = 0x3f;
+        let mut names: HashMap<i32, String> = HashMap::new();
+        self.walk_table(pf, SYSSCHOBJS_ID, &mut |page, slot| {
+            let r = FixedVar::parse(page, slot)?;
+            let fx = r.fixed;
+            if fx.len() >= 15 && fx[13] == b'S' && fx[14] == b'O' && r.var_count() > 0 {
+                let (name, _) = r.var(0)?;
+                names.insert(le::i32(fx, 0), utf16(name));
+            }
+            Ok(())
+        })?;
+        let mut out = Vec::new();
+        self.walk_table(pf, SYSOBJVALUES_ID, &mut |page, slot| {
+            let r = FixedVar::parse(page, slot)?;
+            let fx = r.fixed;
+            if fx.len() < 5 || fx[0] != SEQUENCE_VALUE_CLASS || r.var_count() == 0 {
+                return Ok(());
+            }
+            let Some(name) = names.get(&le::i32(fx, 1)) else {
+                return Ok(());
+            };
+            let (v, _) = r.var(0)?;
+            if v.len() != 45 || v[..4] != [0xa5, 0x01, 0x40, 0x1f] {
+                return Ok(());
+            }
+            let i = |o: usize| i64::from_le_bytes(v[o..o + 8].try_into().expect("8 bytes"));
+            out.push(SqlSequence {
+                name: name.clone(),
+                start: i(4),
+                increment: i(12),
+                current: i(36),
+            });
+            Ok(())
+        })?;
+        Ok(out)
     }
 
     fn walk_table(&self, pf: &PageFile, obj_id: i32, f: &mut dyn FnMut(&[u8], usize) -> Result<()>) -> Result<()> {

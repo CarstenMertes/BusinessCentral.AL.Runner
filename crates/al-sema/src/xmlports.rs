@@ -125,8 +125,10 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "textencoding" if value.trim().eq_ignore_ascii_case("utf8") => out.utf8 = true,
             "textencoding" => {
                 out.text_encoding_declared = true;
-                out.run_reasons
-                    .push(format!("xmlport property textencoding = {} is not pinned for a run", value.trim()));
+                out.run_reasons.push(format!(
+                    "xmlport property textencoding = {} is not pinned for a run",
+                    value.trim()
+                ));
             }
             "fieldseparator" => out.field_separator = Some(crate::scan::unquote_xmlport(&value)),
             "fielddelimiter" => out.field_delimiter = Some(crate::scan::unquote_xmlport(&value)),

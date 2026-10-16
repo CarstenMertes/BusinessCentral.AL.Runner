@@ -1127,7 +1127,12 @@ impl Value {
             Value::Guid(_) => k == "guid",
             Value::DateFormula(_) => k == "dateformula",
             // An enum in a Variant reports IsOption: corpus types/TestVariantExtended.al:261.
-            Value::Option(..) | Value::Enum(..) => k == "option",
+            // A platform enum is its own type there, not an option (types/lt-variant-is-text-streams/LTP89IsEnumsA.al).
+            Value::Option(_, members) => match crate::sysenum::kind_of(members) {
+                Some(kind) => k == kind,
+                None => k == "option",
+            },
+            Value::Enum(..) => k == "option",
             Value::List(_) => k == "list",
             Value::Dictionary(_) => k == "dictionary",
             Value::Array(_) => false,

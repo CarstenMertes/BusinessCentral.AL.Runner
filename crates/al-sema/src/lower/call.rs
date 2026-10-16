@@ -100,6 +100,9 @@ impl Lowerer<'_> {
                 match self.ty_of(arg) {
                     Ty::Text(Some(n)) | Ty::Code(Some(n)) => Ok(ir::Expr::Const(ir::Const::Integer(n as i32))),
                     Ty::Text(None) | Ty::Code(None) => Ok(ir::Expr::Const(ir::Const::Integer(i32::MAX))),
+                    // A TextConst has the length 2048 (types/lt-variant/VaTTextConst.al:TextConst_MaxStrLen: Simple, Long, Empty and
+                    // MultiLang). A Label is assumed the same: docs/probes-needed.md "MaxStrLen of a Label".
+                    Ty::Label => Ok(ir::Expr::Const(ir::Const::Integer(2048))),
                     other => Err(format!("MaxStrLen of a value of type {other}")),
                 }
             }
@@ -149,6 +152,18 @@ impl Lowerer<'_> {
                     .by_id(&id)
                     .ok_or_else(|| format!("{id} not in catalog"))?
                     .clone();
+                // Evaluate into an Option variable: a variable has no OptionCaption, so a text that is neither an ordinal nor a
+                // member name is a plain rejection (P86Eval.al:Eval Option, `Bet`, `-1`, `1,0`). A field may name a member by its
+                // caption, which the value does not carry, so a field keeps the id that refuses it.
+                let emit_id = if id == "System.Evaluate#1"
+                    && args.first().is_some_and(|a| {
+                        matches!(self.ty_of(a), Ty::Option(_))
+                            && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
+                    }) {
+                    "System.EvaluateVariableOption#1".to_string()
+                } else {
+                    id.clone()
+                };
                 let receiver = match &receiver_node {
                     // `CurrReport` is the report whose code is running: the VM takes the running
                     // instance when a report builtin has no receiver.
@@ -357,7 +372,7 @@ impl Lowerer<'_> {
                     });
                 }
                 Ok(ir::Expr::Builtin {
-                    id: builtin_id(&id)?,
+                    id: builtin_id(&emit_id)?,
                     receiver,
                     args: out,
                     ret_used: true,

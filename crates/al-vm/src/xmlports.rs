@@ -172,7 +172,12 @@ impl Session {
                     }
                     None => {
                         let s = inst.borrow();
-                        let name = s.xp_text.iter().find(|(k, _)| *k == 5).map(|(_, v)| v.clone()).unwrap_or_default();
+                        let name = s
+                            .xp_text
+                            .iter()
+                            .find(|(k, _)| *k == 5)
+                            .map(|(_, v)| v.clone())
+                            .unwrap_or_default();
                         Ok(Value::Text(name.into()))
                     }
                 }
@@ -182,7 +187,9 @@ impl Session {
             ids::XMLPORT_TEXTENCODING_1 => {
                 const MEMBERS: [&str; 4] = ["MSDos", "UTF8", "UTF16", "Windows"];
                 let inst = self.xp_instance(receiver)?;
-                let members = || -> std::sync::Arc<[String]> { MEMBERS.iter().map(|m| (*m).to_string()).collect::<Vec<_>>().into() };
+                let members = || -> std::sync::Arc<[String]> {
+                    MEMBERS.iter().map(|m| (*m).to_string()).collect::<Vec<_>>().into()
+                };
                 match args.first() {
                     Some(Value::Option(i, _)) if (0..4).contains(i) => {
                         let mut s = inst.borrow_mut();

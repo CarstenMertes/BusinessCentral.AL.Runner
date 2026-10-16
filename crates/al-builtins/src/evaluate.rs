@@ -37,15 +37,51 @@ fn whole_number(text: &str, ty: &str) -> Result<Parsed, Signal> {
     Ok(Parsed::Value(Value::Text(text.to_string().into())))
 }
 
-fn integer(text: &str) -> Result<Parsed, Signal> {
-    Ok(match whole_number(text, "Integer")? {
-        Parsed::Value(_) => match text.parse::<i32>() {
-            Ok(n) => Parsed::Value(Value::Integer(n)),
-            // session/TestProbeSessionMiscContracts.al:Arithmetic_ErrorTexts, `evaluate_int_overflow_statement`.
-            Err(_) => Parsed::Rejected,
+/// A whole number as `Evaluate` reads it into an Integer. Spaces around it are dropped, one sign is allowed and the
+/// digits are ASCII; number 0 also reads properly grouped thousands (`1,234`), number 9 does not. Everything else is
+/// rejected, an overflow too (types/lt-evaluate-format-lasterror-setview/P86Eval.al, codeunit "LT P86 Eval Integer":
+/// `+1`, `007`, `-0`, `1 234`, `1.5`, `1e3`, `0x1F`, Arabic digits, `1-`, `--1`, `2147483648`).
+fn integer(text: &str, number: i64) -> Result<Parsed, Signal> {
+    if text.chars().any(|c| c.is_whitespace() && c != ' ') {
+        return unsupported(format!(
+            "Evaluate of `{text}` into Integer with white space other than spaces (not pinned)"
+        ));
+    }
+    let t = text.trim_matches(' ');
+    let (negative, digits) = match t.strip_prefix('-') {
+        Some(rest) => (true, rest),
+        None => (false, t.strip_prefix('+').unwrap_or(t)),
+    };
+    let ungrouped;
+    let digits = if digits.contains(',') {
+        let groups: Vec<&str> = digits.split(',').collect();
+        let grouped = (1..=3).contains(&groups[0].len())
+            && groups.iter().all(|g| g.bytes().all(|b| b.is_ascii_digit()))
+            && groups[1..].iter().all(|g| g.len() == 3);
+        if number != 0 {
+            return Ok(Parsed::Rejected);
+        }
+        if !grouped {
+            return unsupported(format!("Evaluate of `{text}` into Integer (grouping not pinned)"));
+        }
+        ungrouped = groups.concat();
+        ungrouped.as_str()
+    } else {
+        digits
+    };
+    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(Parsed::Rejected);
+    }
+    let magnitude = digits.parse::<i64>().ok();
+    Ok(
+        match magnitude
+            .map(|m| if negative { -m } else { m })
+            .and_then(|n| i32::try_from(n).ok())
+        {
+            Some(n) => Parsed::Value(Value::Integer(n)),
+            None => Parsed::Rejected,
         },
-        Parsed::Rejected => Parsed::Rejected,
-    })
+    )
 }
 
 fn big_integer(text: &str) -> Result<Parsed, Signal> {
@@ -152,13 +188,29 @@ fn guid(text: &str) -> Result<Parsed, Signal> {
 
 /// Number 0: the inverse of `Format(Date)` as the runtime formats it (`MM/DD/YY`,
 /// docs/probes-needed.md); a two-digit year below 50 is 20yy and from 50 on 19yy. Number 9: ISO `yyyy-MM-dd`.
-fn date(text: &str, number: i64) -> Result<Parsed, Signal> {
+/// `today` is the host's current day, for the text `T`.
+///
+/// Pinned by types/lt-evaluate-format-lasterror-setview/P86Eval.al, codeunit "LT P86 Eval Date": number 0 reads
+/// `yyyy-mm-dd`, `m/d/yyyy`, `m/d/yy` and `T`; it rejects `15.01.2024`, `150124`, `15012024`, `20240115`,
+/// `2024-01-15T00:00:00Z`, `0D` and `15-01-2024`. Number 9 reads `yyyy-mm-dd` with spaces around it and the empty text
+/// (which leaves the date empty) and rejects everything else, `T` and the slash forms included.
+fn date(text: &str, number: i64, today: Option<i32>) -> Result<Parsed, Signal> {
     if number == 9 {
-        return match crate::iso::parse_date(text).filter(|_| text.len() == 10) {
+        let t = text.trim_matches(' ');
+        if t.is_empty() {
+            return Ok(Parsed::Value(Value::Date(0, false)));
+        }
+        return Ok(
+            match crate::iso::parse_date(t).filter(|_| t.len() == 10 && t.as_bytes()[4] == b'-') {
+                Some(d) => Parsed::Value(Value::Date(d, false)),
+                None => Parsed::Rejected,
+            },
+        );
+    }
+    if text.eq_ignore_ascii_case("t") {
+        return match today {
             Some(d) => Ok(Parsed::Value(Value::Date(d, false))),
-            None => unsupported(format!(
-                "Evaluate of `{text}` into Date with format 9 (form not pinned)"
-            )),
+            None => unsupported("Evaluate of `T` into a Date without a clock"),
         };
     }
     // The ISO form is read in format 0 too (types/TestFormatEvaluateTextContracts.al:Evaluate_Date_TwoDigitYear_PivotsAt50).
@@ -169,15 +221,28 @@ fn date(text: &str, number: i64) -> Result<Parsed, Signal> {
         };
     }
     let parts: Vec<&str> = text.split('/').collect();
-    let two = |s: &str| s.len() == 2 && s.bytes().all(|b| b.is_ascii_digit());
-    if parts.len() == 3 && parts.iter().all(|p| two(p)) {
+    let digits = |s: &str, lens: std::ops::RangeInclusive<usize>| {
+        lens.contains(&s.len()) && s.bytes().all(|b| b.is_ascii_digit())
+    };
+    if parts.len() == 3
+        && digits(parts[0], 1..=2)
+        && digits(parts[1], 1..=2)
+        && (parts[2].len() == 2 || parts[2].len() == 4)
+        && digits(parts[2], 2..=4)
+    {
         let (m, d, yy): (u32, u32, i32) = (
             parts[0].parse().unwrap(),
             parts[1].parse().unwrap(),
             parts[2].parse().unwrap(),
         );
         // types/TestFormatEvaluateTextContracts.al:Evaluate_Date_TwoDigitYear_PivotsAt50.
-        let y = if yy < 50 { 2000 + yy } else { 1900 + yy };
+        let y = if parts[2].len() == 4 {
+            yy
+        } else if yy < 50 {
+            2000 + yy
+        } else {
+            1900 + yy
+        };
         let valid = (1..=12).contains(&m) && d >= 1 && {
             let first = day_from_civil(y, m, 1);
             let next = if m == 12 {
@@ -197,17 +262,188 @@ fn date(text: &str, number: i64) -> Result<Parsed, Signal> {
     if !text.bytes().any(|b| b.is_ascii_digit()) {
         return Ok(Parsed::Rejected);
     }
+    let all_digits = text.bytes().all(|b| b.is_ascii_digit());
+    let dotted = text.split('.').count() == 3 && text.split('.').all(|p| digits(p, 1..=4));
+    let dashed = text.split('-').count() == 3 && text.split('-').all(|p| digits(p, 1..=4));
+    let iso_with_time = text.len() > 10 && text.as_bytes()[4] == b'-' && crate::iso::parse_date(&text[..10]).is_some();
+    if (all_digits && matches!(text.len(), 6 | 8))
+        || dotted
+        || dashed
+        || iso_with_time
+        || text.eq_ignore_ascii_case("0d")
+    {
+        return Ok(Parsed::Rejected);
+    }
     unsupported(format!(
         "Evaluate of `{text}` into Date (form not pinned by the corpus)"
     ))
 }
 
-/// Only the XML round-trip form with format number 9 is pinned
-/// (session/TestSessionEvaluateRegionalPatterns.al:38).
-fn datetime(text: &str, number: i64) -> Result<Parsed, Signal> {
+/// A time of day, as a `Value::Time` holds it (milliseconds since midnight, plus one).
+///
+/// Pinned by types/lt-evaluate-format-lasterror-setview/P86Eval.al, codeunit "LT P86 Eval Time". Number 0 reads
+/// `h:m[:s[.f]]` with one or two digits per part, `h.m.s`, `hhmm`, and `h:m[:s] AM|PM`; it rejects hours from 24, minutes
+/// or seconds from 60, a minus sign, a trailing `Z` and `0T`. Number 9 reads exactly `hh:mm:ss[.f]` with an optional `Z`
+/// and rejects everything else. Spaces around the text are dropped and the empty text leaves the time empty in both.
+fn time(text: &str, number: i64) -> Result<Parsed, Signal> {
+    let t = text.trim_matches(' ');
+    if t.is_empty() {
+        return Ok(Parsed::Value(Value::Time(0)));
+    }
+    let value = |h: i64, m: i64, s: i64, f: i64| Parsed::Value(Value::Time(((h * 60 + m) * 60 + s) * 1000 + f + 1));
+    let num = |s: &str, max_len: usize| -> Option<i64> {
+        (!s.is_empty() && s.len() <= max_len && s.bytes().all(|b| b.is_ascii_digit()))
+            .then(|| s.parse().ok())
+            .flatten()
+    };
+    // `.f`: one to three digits, as tenths, hundredths or milliseconds.
+    let fraction = |s: &str| -> Option<i64> {
+        let n = num(s, 3)?;
+        Some(n * 10_i64.pow(3 - s.len() as u32))
+    };
+    let in_range = |h: i64, m: i64, s: i64| h < 24 && m < 60 && s < 60;
     if number == 9 {
-        if let Some(v) = crate::iso::parse_datetime(text) {
-            return Ok(Parsed::Value(Value::DateTime(v)));
+        let body = t.strip_suffix('Z').unwrap_or(t);
+        let (clock, frac) = match body.split_once('.') {
+            Some((c, f)) => (c, Some(f)),
+            None => (body, None),
+        };
+        let parts: Vec<&str> = clock.split(':').collect();
+        let strict = parts.len() == 3 && parts.iter().all(|p| p.len() == 2);
+        let f = match frac {
+            Some(f) => fraction(f),
+            None => Some(0),
+        };
+        return Ok(
+            match (
+                strict,
+                f,
+                parts.iter().map(|p| num(p, 2)).collect::<Vec<_>>()[..].to_vec(),
+            ) {
+                (true, Some(f), nums) if nums.iter().all(Option::is_some) => {
+                    let (h, m, s) = (nums[0].unwrap_or(0), nums[1].unwrap_or(0), nums[2].unwrap_or(0));
+                    if in_range(h, m, s) {
+                        value(h, m, s, f)
+                    } else {
+                        Parsed::Rejected
+                    }
+                }
+                _ => Parsed::Rejected,
+            },
+        );
+    }
+    if t.starts_with('-') || t.ends_with(['Z', 'z']) || t.eq_ignore_ascii_case("0t") {
+        return Ok(Parsed::Rejected);
+    }
+    if !t.bytes().any(|b| b.is_ascii_digit()) {
+        return Ok(Parsed::Rejected);
+    }
+    let (body, meridiem) = match (t.strip_suffix(" AM"), t.strip_suffix(" PM")) {
+        (Some(b), _) => (b, Some(false)),
+        (_, Some(b)) => (b, Some(true)),
+        _ => (t, None),
+    };
+    let nums: Option<(i64, i64, i64, i64)> = if body.contains(':') {
+        let (clock, frac) = match body.split_once('.') {
+            Some((c, f)) => (c, Some(f)),
+            None => (body, None),
+        };
+        let parts: Vec<&str> = clock.split(':').collect();
+        match (parts.len(), frac) {
+            (2, None) => num(parts[0], 2).zip(num(parts[1], 2)).map(|(h, m)| (h, m, 0, 0)),
+            (3, f) => {
+                let f = match f {
+                    Some(f) => fraction(f),
+                    None => Some(0),
+                };
+                num(parts[0], 2)
+                    .zip(num(parts[1], 2))
+                    .zip(num(parts[2], 2))
+                    .zip(f)
+                    .map(|(((h, m), s), f)| (h, m, s, f))
+            }
+            _ => None,
+        }
+    } else if body.contains('.') {
+        let parts: Vec<&str> = body.split('.').collect();
+        match parts[..] {
+            [h, m, s] => num(h, 2).zip(num(m, 2)).zip(num(s, 2)).map(|((h, m), s)| (h, m, s, 0)),
+            _ => None,
+        }
+    } else if body.len() == 4 {
+        num(&body[..2], 2).zip(num(&body[2..], 2)).map(|(h, m)| (h, m, 0, 0))
+    } else {
+        None
+    };
+    let Some((mut h, m, s, f)) = nums else {
+        return unsupported(format!(
+            "Evaluate of `{text}` into Time (form not pinned by the corpus)"
+        ));
+    };
+    if let Some(pm) = meridiem {
+        if !(1..=12).contains(&h) {
+            return unsupported(format!(
+                "Evaluate of `{text}` into Time (hour with AM or PM not pinned)"
+            ));
+        }
+        h = h % 12 + if pm { 12 } else { 0 };
+    }
+    Ok(if in_range(h, m, s) {
+        value(h, m, s, f)
+    } else {
+        Parsed::Rejected
+    })
+}
+
+/// A date and time in UTC (`Value::DateTime`).
+///
+/// Pinned by types/lt-evaluate-format-lasterror-setview/P86Eval.al, codeunit "LT P86 Eval DateTime". Number 9 reads
+/// `yyyy-mm-dd[Thh:mm:ss[.f][Z|+hh:mm]]` (no zone means UTC) and the empty text, and rejects everything else. Number 0
+/// reads the same with `Z` or an offset, the empty text, and `m/d/y h:mm[:ss] [AM|PM]`; it rejects a time past 23:59:59,
+/// a day that does not exist and `0D`, `0T`, `0DT`. Not read: the ISO form without a zone in number 0 (BC raises
+/// `The date is not valid.`) and `10:20`, which BC completes with the current year.
+fn datetime(text: &str, number: i64) -> Result<Parsed, Signal> {
+    let t = text.trim_matches(' ');
+    if t.is_empty() {
+        return Ok(Parsed::Value(Value::DateTime(0)));
+    }
+    let iso = t.len() >= 10 && t.as_bytes()[4] == b'-';
+    if number == 9 {
+        if t.len() == 10 && t.as_bytes()[4] == b'-' {
+            return Ok(match crate::iso::parse_date(t) {
+                Some(d) => Parsed::Value(Value::DateTime((i64::from(d) - 1) * 86_400_000 + 1)),
+                None => Parsed::Rejected,
+            });
+        }
+        return Ok(
+            match crate::iso::parse_datetime(t).filter(|_| iso && t.as_bytes().get(10) == Some(&b'T')) {
+                Some(v) => Parsed::Value(Value::DateTime(v)),
+                None => Parsed::Rejected,
+            },
+        );
+    }
+    if ["0d", "0t", "0dt"].iter().any(|k| t.eq_ignore_ascii_case(k)) || !t.bytes().any(|b| b.is_ascii_digit()) {
+        return Ok(Parsed::Rejected);
+    }
+    if iso && t.as_bytes().get(10) == Some(&b'T') {
+        if !(t.ends_with(['Z', 'z']) || t[11..].contains(['+', '-'])) {
+            return unsupported(format!(
+                "Evaluate of `{text}` into DateTime without a zone (BC raises another error)"
+            ));
+        }
+        return Ok(match crate::iso::parse_datetime(t) {
+            Some(v) => Parsed::Value(Value::DateTime(v)),
+            None => Parsed::Rejected,
+        });
+    }
+    if let Some((d, clock)) = t.split_once(' ') {
+        if d.contains('/') {
+            return Ok(match (date(d, 0, None)?, time(clock, 0)?) {
+                (Parsed::Value(Value::Date(day, _)), Parsed::Value(Value::Time(ms))) => {
+                    Parsed::Value(Value::DateTime((i64::from(day) - 1) * 86_400_000 + ms))
+                }
+                _ => Parsed::Rejected,
+            });
         }
     }
     unsupported(format!(
@@ -222,13 +458,13 @@ pub fn read_text(ty: &crate::value::RtType, text: &str) -> Option<Value> {
     // `Format(ClosingDate(D))` is `C` and the date (corpus types/lt-datetime/DateFuncs.al:47 `C12/31/23`,
     // misc/lt-system-functions/RandomFormat.al:432): the closing date of that day.
     if let (T::Date, Some(rest)) = (ty, text.strip_prefix('C')) {
-        return match date(rest, 0).ok()? {
+        return match date(rest, 0, None).ok()? {
             Parsed::Value(Value::Date(d, false)) => Some(Value::Date(d, true)),
             _ => None,
         };
     }
     let parsed = match ty {
-        T::Date => date(text, 0).ok()?,
+        T::Date => date(text, 0, None).ok()?,
         T::Guid => guid(text).ok()?,
         _ => return None,
     };
@@ -239,6 +475,15 @@ pub fn read_text(ty: &crate::value::RtType, text: &str) -> Option<Value> {
 }
 
 pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    evaluate_with(c, a, false)
+}
+
+/// `Evaluate` into an Option variable, which has no OptionCaption to name a member by.
+pub fn evaluate_variable_option(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    evaluate_with(c, a, true)
+}
+
+fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Result<Value, Signal> {
     let Some(text) = crate::native::text_of(&a[1]) else {
         return unsupported("Evaluate of a source that is not text");
     };
@@ -254,12 +499,13 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
         ));
     }
     let parsed = match &a[0] {
-        Value::Integer(_) => integer(&text)?,
+        Value::Integer(_) => integer(&text, number)?,
         Value::BigInteger(_) => big_integer(&text)?,
         Value::Decimal(_) => decimal(&text)?,
         Value::Boolean(_) => boolean(&text)?,
         Value::Guid(_) => guid(&text)?,
-        Value::Date(..) => date(&text, number)?,
+        Value::Date(..) => date(&text, number, c.today_day())?,
+        Value::Time(_) => time(&text, number)?,
         Value::DateTime(_) => datetime(&text, number)?,
         // The text is kept as written once it is a form the runtime can calculate with
         // (types/TestDateFormulaContracts.al:21-139); what Format prints is docs/probes-needed.md.
@@ -292,34 +538,50 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
             };
             // White space around the text is ignored (types/W7EvaluateTests.al:EvaluateIntoAnEnum_DefaultFormat,
             // ` Second ` gives Second).
+            let original = text.clone();
             let text = text.trim();
-            let ordinal = (!text.is_empty() && text.bytes().all(|b| b.is_ascii_digit()))
-                .then(|| text.parse::<i32>().ok())
+            let digits = text.strip_prefix('+').unwrap_or(text);
+            let ordinal = (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+                .then(|| digits.parse::<i32>().ok())
                 .flatten();
-            // With format 9 an ordinal that no member has is not pinned (format 0 accepts it:
-            // types/ProbeTypeFormsAndFilters.al:Enum_Evaluate_Forms, `unknownOrdinal_result`).
-            if number == 9 && ordinal.is_some_and(|n| !members.iter().any(|(o, _)| *o == n)) {
-                return unsupported(format!(
-                    "Evaluate of the number `{text}` into an Enum with format 9, though no member has that ordinal (not pinned)"
-                ));
-            }
+            // A sign is allowed before the digits and an ordinal no member has is kept, with format 9 too
+            // (P86Eval.al, codeunit "LT P86 Eval Enum": `+5`, `00`, `11`).
             let captions = c.enum_captions(*id);
             let found = ordinal
                 .or_else(|| {
                     members
                         .iter()
-                        .find(|(_, n)| n.eq_ignore_ascii_case(text))
+                        .find(|(_, n)| !text.is_empty() && n.eq_ignore_ascii_case(text))
                         .map(|(o, _)| *o)
                 })
                 .or_else(|| {
                     captions
                         .iter()
-                        .find(|(_, n)| n.eq_ignore_ascii_case(text))
+                        .find(|(_, n)| !text.is_empty() && n.eq_ignore_ascii_case(text))
                         .map(|(o, _)| *o)
                 });
             match found {
                 Some(o) => Parsed::Value(Value::Enum(*id, o)),
-                None => Parsed::Rejected,
+                None if c.ret_used() => Parsed::Rejected,
+                // The error names every member by its caption, in ordinal order, and quotes the text as given.
+                None => {
+                    let options: Vec<String> = members
+                        .iter()
+                        .map(|(o, n)| {
+                            captions
+                                .iter()
+                                .find(|(co, _)| co == o)
+                                .map_or(n.clone(), |(_, cap)| cap.clone())
+                        })
+                        .collect();
+                    return crate::native::raise(
+                        format!(
+                            "'{original}' is not an option. The existing options are: {}",
+                            options.join(",")
+                        ),
+                        "InvalidOptionString",
+                    );
+                }
             }
         }
         // An ordinal into SecurityFilter: `Evaluate(Filter, '3')` gives Disallowed
@@ -345,6 +607,37 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
             }
         }
         // An Option reads an ordinal or a member name (types/PROptionInteger.al:Option_InCaseAndLoopBounds: `1` is B, `C` is C).
+        // A variable: an ordinal of any size is kept (`3` of three members formats as `3`), a text that is neither an ordinal
+        // nor a member name is rejected, and the error names the members (P86Eval.al, codeunit "LT P86 Eval Option").
+        Value::Option(_, members) if variable_option => {
+            let t = text.trim();
+            // An empty text names no member, not even one declared as "" (types/lt-scalars/ScT70062.al:Option_EvaluateByName `empty`).
+            let by_name = members.iter().position(|m| !t.is_empty() && m.eq_ignore_ascii_case(t));
+            let ordinal = if t.starts_with(|ch: char| ch.is_ascii_digit() || ch == '+') {
+                t.parse::<u64>().ok()
+            } else {
+                None
+            };
+            match (ordinal, by_name) {
+                (Some(n), _) => match i32::try_from(n) {
+                    Ok(n) => Parsed::Value(Value::Option(n, members.clone())),
+                    Err(_) => {
+                        return unsupported(format!("Evaluate of the ordinal `{text}` into an Option (not pinned)"));
+                    }
+                },
+                (None, Some(n)) => Parsed::Value(Value::Option(n as i32, members.clone())),
+                _ if c.ret_used() => return Ok(Value::Boolean(false)),
+                _ => {
+                    return crate::native::raise(
+                        format!(
+                            "'{text}' is not an option. The existing options are: {}",
+                            members.join(",")
+                        ),
+                        "InvalidOptionString",
+                    );
+                }
+            }
+        }
         Value::Option(_, members) => {
             let t = text.trim();
             let by_name = members.iter().position(|m| m.eq_ignore_ascii_case(t));
@@ -378,17 +671,39 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
         Parsed::Rejected
             if matches!(
                 a[0],
-                Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Boolean(_)
+                Value::Integer(_)
+                    | Value::BigInteger(_)
+                    | Value::Decimal(_)
+                    | Value::Boolean(_)
+                    | Value::Time(_)
+                    | Value::DateTime(_)
             ) =>
         {
             let ty = match a[0] {
                 Value::Integer(_) => "Integer",
                 Value::BigInteger(_) => "BigInteger",
                 Value::Decimal(_) => "Decimal",
+                Value::Time(_) => "Time",
+                Value::DateTime(_) => "DateTime",
                 _ => "Boolean",
             };
             crate::native::raise(
                 format!("The value \"{text}\" can't be evaluated into type {ty}."),
+                "Evaluate",
+            )
+        }
+        // The error of a rejected date that looks like one (P86Eval.al:Dflt3_Error_FNone, Fmt03_Error_F0, Fmt93_Error_F9: the same
+        // text as a date filter gives, SetFilter on a Date).
+        Parsed::Rejected
+            if matches!(a[0], Value::Date(..))
+                && text
+                    .bytes()
+                    .all(|b| b.is_ascii_digit() || matches!(b, b'-' | b'.' | b'/')) =>
+        {
+            crate::native::raise(
+                format!(
+                    "The format of the Date '{text}' does not match your device's date settings.\\r\\\\r\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+                ),
                 "Evaluate",
             )
         }
@@ -399,5 +714,62 @@ pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Resu
         Parsed::Rejected => unsupported(format!(
             "Evaluate of `{text}` failed with the result unused (error text not pinned yet)"
         )),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn value(p: Result<Parsed, Signal>) -> Option<Value> {
+        match p {
+            Ok(Parsed::Value(v)) => Some(v),
+            _ => None,
+        }
+    }
+
+    // types/lt-evaluate-format-lasterror-setview/P86Eval.al, codeunit "LT P86 Eval Integer"
+    #[test]
+    fn integers_read_spaces_signs_and_grouping_by_format_number() {
+        let int = |s: &str, n: i64| value(integer(s, n)).map(|v| matches!(v, Value::Integer(_)));
+        assert!(matches!(value(integer("  +12 ", 0)), Some(Value::Integer(12))));
+        assert!(matches!(value(integer("-0", 9)), Some(Value::Integer(0))));
+        assert!(matches!(value(integer("1,234", 0)), Some(Value::Integer(1234))));
+        assert_eq!(int("1,234", 9), None);
+        assert_eq!(int("2147483648", 9), None);
+        assert_eq!(int("1.5", 0), None);
+        assert_eq!(int("1 234", 0), None);
+    }
+
+    // codeunit "LT P86 Eval Time"
+    #[test]
+    fn times_read_the_forms_of_each_format_number() {
+        let ms = |s: &str, n: i64| match value(time(s, n)) {
+            Some(Value::Time(t)) => Some(t - 1),
+            _ => None,
+        };
+        assert_eq!(ms("12:00 PM", 0), Some(43_200_000));
+        assert_eq!(ms("12:00:00 AM", 0), Some(0));
+        assert_eq!(ms("1200", 0), Some(43_200_000));
+        assert_eq!(ms("12.00.00", 0), Some(43_200_000));
+        assert_eq!(ms("12:00:00.5", 9), Some(43_200_500));
+        assert_eq!(ms("12:00", 9), None);
+        assert_eq!(ms("24:00:00", 0), None);
+        assert_eq!(ms("12:00:60", 0), None);
+    }
+
+    // codeunit "LT P86 Eval Date"
+    #[test]
+    fn dates_read_slash_forms_in_format_0_and_only_iso_in_format_9() {
+        let day = |s: &str, n: i64| match value(date(s, n, Some(5))) {
+            Some(Value::Date(d, _)) => Some(d),
+            _ => None,
+        };
+        assert_eq!(day("1/15/24", 0), day("2024-01-15", 0));
+        assert_eq!(day("01/15/2024", 0), day("2024-01-15", 9));
+        assert_eq!(day("T", 0), Some(5));
+        assert_eq!(day("T", 9), None);
+        assert_eq!(day("01/15/2024", 9), None);
+        assert_eq!(day("20240115", 0), None);
     }
 }

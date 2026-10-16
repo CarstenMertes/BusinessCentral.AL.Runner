@@ -1,6 +1,7 @@
 //! The incremental compile of a warm run (ADR-029): after a change of the code of routines, the program
 //! the warm compile holds is the program a complete compile of the new texts gives, and the tests have
-//! the outcomes they would have had. A change of a declaration compiles everything again.
+//! the outcomes they would have had. A change of a declaration of a codeunit is taken in with the objects that
+//! name it; other kinds compile everything again.
 
 use al_sema::workspace::AppSource;
 use al_testrun::compile_cache::CompileCache;
@@ -327,17 +328,82 @@ fn a_change_of_code_gives_the_program_a_complete_compile_gives() {
     }
 }
 
+/// Warm run on `texts`, then on `changed`: the second must be an update and equal a complete compile.
+fn assert_updated(from: [&str; 4], to: [&str; 4], what: &str) {
+    let dir = tempfile::tempdir().unwrap();
+    let mut warm = Warm::new();
+    warm_run(&mut warm, &from, dir.path());
+    let (used, got) = warm_run(&mut warm, &to, dir.path());
+    assert_eq!(used, WarmUse::Updated, "{what}");
+    assert_same(&warm, &to, dir.path(), what);
+    let (_, want) = complete(&to, dir.path());
+    assert_eq!(got, want, "{what}: outcomes");
+}
+
 #[test]
-fn a_change_of_a_declaration_compiles_everything_again() {
+fn a_change_of_a_declaration_of_a_codeunit_and_the_code_that_uses_it_is_taken_in() {
+    let lib = LIB.replace("procedure Twice(N: Integer)", "procedure Twice(N: Integer; M: Integer)");
+    let tests = TESTS.replace("L.Twice(2)", "L.Twice(2, 0)");
+    assert_updated(
+        [LIB, TESTS, OTHER, TABLES],
+        [lib.as_str(), tests.as_str(), OTHER, TABLES],
+        "a new parameter and its caller",
+    );
+}
+
+#[test]
+fn a_declaration_the_readers_did_not_change_with_is_seen_by_them() {
+    // A procedure more in a codeunit that other code names, and a signature the callers have not followed
+    // (the complete compile refuses the callers; the update must say the same).
+    let more = LIB.replace(
+        "    procedure Label(): Text",
+        "    procedure Extra(): Integer\n    begin\n        exit(1);\n    end;\n\n    procedure Label(): Text",
+    );
+    assert_updated(
+        [LIB, TESTS, OTHER, TABLES],
+        [more.as_str(), TESTS, OTHER, TABLES],
+        "a procedure more",
+    );
+    let broken = LIB.replace("procedure Twice(N: Integer)", "procedure Twice(N: Integer; M: Integer)");
+    assert_updated(
+        [LIB, TESTS, OTHER, TABLES],
+        [broken.as_str(), TESTS, OTHER, TABLES],
+        "a signature the caller did not follow",
+    );
+    let gone = LIB.replace("procedure Label(): Text", "procedure Label2(): Text");
+    assert_updated(
+        [LIB, TESTS, OTHER, TABLES],
+        [gone.as_str(), TESTS, OTHER, TABLES],
+        "a procedure renamed",
+    );
+}
+
+#[test]
+fn a_declaration_of_a_codeunit_nothing_names_is_taken_in_alone() {
+    let other = OTHER.replace(
+        "    [Test]\n    procedure Fails()",
+        "    procedure Added() begin end;\n\n    [Test]\n    procedure Fails()",
+    );
+    assert_updated(
+        [LIB, TESTS, OTHER, TABLES],
+        [LIB, TESTS, other.as_str(), TABLES],
+        "a procedure more",
+    );
+}
+
+#[test]
+fn a_change_of_a_declaration_of_a_table_compiles_everything_again() {
     let dir = tempfile::tempdir().unwrap();
     let mut warm = Warm::new();
     warm_run(&mut warm, &[LIB, TESTS, OTHER, TABLES], dir.path());
-    let lib = LIB.replace("procedure Twice(N: Integer)", "procedure Twice(N: Integer; M: Integer)");
-    let tests = TESTS.replace("L.Twice(2)", "L.Twice(2, 0)");
-    let texts = [lib.as_str(), tests.as_str(), OTHER, TABLES];
+    let tables = TABLES.replace(
+        "field(3; Amount; Decimal) { }",
+        "field(3; Amount; Decimal) { }\n        field(4; More; Integer) { }",
+    );
+    let texts = [LIB, TESTS, OTHER, tables.as_str()];
     let (used, got) = warm_run(&mut warm, &texts, dir.path());
     assert_eq!(used, WarmUse::Compiled);
-    assert_same(&warm, &texts, dir.path(), "a new parameter");
+    assert_same(&warm, &texts, dir.path(), "a field more");
     let (_, want) = complete(&texts, dir.path());
     assert_eq!(got, want);
 }

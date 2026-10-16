@@ -851,6 +851,9 @@ pub struct TestHttpRequestState {
 /// What a `TestHttpResponseMessage` holds: what a `[HttpClientHandler]` answers.
 #[derive(Debug, Clone)]
 pub struct TestHttpResponseState {
+    /// The handler answered true and the request, which the runtime never sends, failed like one to an unresolvable
+    /// host: the call answers false and the response keeps nothing of the handler's.
+    pub request_failed: bool,
     pub status: i32,
     pub reason: String,
     pub success: bool,

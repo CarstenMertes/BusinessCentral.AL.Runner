@@ -105,9 +105,16 @@ impl Session {
         match answer {
             Value::Boolean(false) | Value::Null => {}
             Value::Boolean(true) => {
-                return unsupported(
-                    "an [HttpClientHandler] answered true: BC then sends the request for real; the runtime never opens a connection (ADR-027)",
-                );
+                // BC then sends the request for real. The runtime never opens a connection, so the request fails the way
+                // one to an unresolvable host does (session/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest,
+                // example.invalid: the call answers false). The handler's response is dropped.
+                assume(Assumption::HttpTrueIsUnresolvable);
+                let mut failed = fresh_test_response();
+                failed.request_failed = true;
+                failed.status = 0;
+                failed.reason = String::new();
+                failed.success = false;
+                return Ok(failed);
             }
             other => return unsupported(format!("an [HttpClientHandler] that answers {}", other.describe())),
         }

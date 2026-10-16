@@ -128,24 +128,31 @@ fn a_handler_that_sets_nothing_answers_200_ok() {
     );
 }
 
-// PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest: the runtime never sends it.
+// PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest (BC 29.0): a handler that answers true lets the real request
+// go; to an unresolvable name (example.invalid) the call answers false, the handler ran once, and the response is not
+// the one the handler could have filled. The runtime never sends: every such request is treated as one to an
+// unresolvable host (assumption http-true-is-unresolvable for hosts other than .invalid).
 #[test]
-fn a_handler_that_answers_true_would_send_the_request_and_is_refused() {
-    let why = not_run(
+fn a_handler_that_answers_true_lets_the_request_fail_like_an_unresolvable_host() {
+    all_pass(
         "TestHttpRequestPolicy = AllowOutboundFromHandler;",
         r#"
+    var Calls: Integer;
     [HttpClientHandler]
     procedure FallThrough(Request: TestHttpRequestMessage; var Response: TestHttpResponseMessage): Boolean
     begin
+        Calls += 1;
+        Response.HttpStatusCode := 202;
         exit(true);
     end;
     [Test] [HandlerFunctions('FallThrough')] procedure Fall()
-    var Client: HttpClient; Resp: HttpResponseMessage;
+    var Client: HttpClient; Resp: HttpResponseMessage; Ok: Boolean;
     begin
-        Client.Get('https://example.invalid/fall-through', Resp);
+        Ok := Client.Get('https://example.invalid/fall-through', Resp);
+        if Ok or (Calls <> 1) or (Resp.HttpStatusCode = 202) then
+            Error('fall through');
     end;"#,
     );
-    assert!(why.contains("never") && why.contains("connection"), "{why}");
 }
 
 // PZHttpHandler.al:NoHandler_UnderAllowOutboundFromHandler and PZHttpBlock.al:NoHandler_UnderBlockOutboundRequests.

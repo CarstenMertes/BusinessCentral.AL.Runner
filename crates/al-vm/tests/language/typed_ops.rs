@@ -138,3 +138,28 @@ fn a_local_holding_another_kind_than_declared_still_gets_the_generic_result() {
     );
     assert_eq!(int(call(&src, vec![])), 7);
 }
+
+/// A by-reference builtin argument takes the declared type of the variable, as an assignment does.
+#[test]
+fn a_builtin_that_fills_an_integer_variable_leaves_an_integer() {
+    // Integer overflow is an error for an Integer and not for a BigInteger: 100000 * 100000 shows which one the variable holds.
+    let src = code(
+        "procedure F(): Integer var L: List of [BigInteger]; I: Integer; begin L.Add(100000); L.Get(1, I); asserterror I := I * I; exit(1); end;",
+    );
+    assert_eq!(int(call(&src, vec![])), 1);
+    let src = code(
+        "procedure F(): Integer var L: List of [BigInteger]; I: Integer; begin L.Add(100000); L.Get(1, I); I := I * I; exit(7); end;",
+    );
+    assert!(
+        call(&src, vec![]).is_err(),
+        "an Integer variable times itself overflows"
+    );
+}
+
+#[test]
+fn a_builtin_that_fills_a_decimal_variable_leaves_what_an_assignment_leaves() {
+    let src = code(
+        "procedure F(): Boolean var L: List of [Integer]; D: Decimal; E: Decimal; begin L.Add(5); L.Get(1, D); E := 5; exit(Format(D / 3) = Format(E / 3)); end;",
+    );
+    assert!(matches!(call(&src, vec![]), Ok(Value::Boolean(true))));
+}

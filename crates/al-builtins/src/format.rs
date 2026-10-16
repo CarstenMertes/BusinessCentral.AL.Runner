@@ -274,16 +274,25 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
     if matches!(standard, 1 | 2 | 9) {
         return Ok(plain);
     }
-    // Formats 3 and 4 are formats 0 and 1 with a trailing blank (text/TestProbeTextDateFormatContracts.al:
-    // Format_FormatStrings_Number, `standard_format_3` and `standard_format_4`).
-    if standard == 4 {
-        return Ok(format!("{plain} "));
+    // Format 4 is format 1 and 3 is format 0 with the sign behind the number: a trailing blank when it is not negative, a
+    // trailing minus when it is (types/lt-evaluate-format-lasterror-setview/P86FormatDecimal.al:Num_*; text/
+    // TestProbeTextDateFormatContracts.al:Format_FormatStrings_Number). Numbers 5 to 8 do not exist for a Decimal.
+    if (5..=8).contains(&standard) {
+        return Err(no_such_format(standard, "Decimal"));
     }
-    if standard != 0 && standard != 3 {
+    if standard != 0 && standard != 3 && standard != 4 {
         return Err(format!("Format of a Decimal with standard format {standard} (not pinned)").into());
     }
-    let tail = if standard == 3 { " " } else { "" };
     let (sign, digits) = plain.strip_prefix('-').map_or(("", plain.as_str()), |r| ("-", r));
+    if standard == 4 {
+        return Ok(format!("{digits}{}", if sign.is_empty() { " " } else { "-" }));
+    }
+    let tail = match (standard, sign) {
+        (3, "-") => "-",
+        (3, _) => " ",
+        _ => "",
+    };
+    let sign = if standard == 3 { "" } else { sign };
     let (int, frac) = digits.split_once('.').map_or((digits, None), |(i, f)| (i, Some(f)));
     let mut grouped = String::new();
     for (i, c) in int.chars().enumerate() {

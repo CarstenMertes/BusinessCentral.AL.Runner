@@ -1102,16 +1102,13 @@ impl Session {
     fn xp_export_text(&mut self, inst: &Inst, schema: &Schema, top: usize) -> Result<Vec<u8>, Signal> {
         let xp = schema.xp();
         let (table, fields) = self.xp_text_layout(schema, top)?;
-        let record_sep = non_empty(text_separator(
+        let record_sep = text_separator(
             set_or_declared(inst, 2, xp.record_separator.as_deref()).as_deref(),
             "\r\n",
-        )?)?;
+        )?;
         let variable = xp.format == ir::XmlFormat::VariableText;
         let (fsep, fdelim) = (
-            non_empty(text_separator(
-                set_or_declared(inst, 1, xp.field_separator.as_deref()).as_deref(),
-                ",",
-            )?)?,
+            text_separator(set_or_declared(inst, 1, xp.field_separator.as_deref()).as_deref(), ",")?,
             text_separator(set_or_declared(inst, 0, xp.field_delimiter.as_deref()).as_deref(), "\"")?,
         );
         let mut lines = Vec::new();
@@ -1448,7 +1445,7 @@ fn text_separator(value: Option<&str>, default: &str) -> Result<String, Signal> 
             "CR" => out.push('\r'),
             "TAB" => out.push('\t'),
             // <NewLine> writes CR LF (XpTVariableText.al:Csv_ExportThreeRows reads the lines back as <NL>-separated).
-            "NEWLINE" => out.push_str("\r\n"),
+            "NEWLINE" | "CR/LF" => out.push_str("\r\n"),
             // <None> is the empty text (XmlPortFixtures.al "LT XpT Csv Semi" has no field delimiter).
             "NONE" => {}
             other => return unsupported(format!("the separator token <{other}> (not pinned)")),

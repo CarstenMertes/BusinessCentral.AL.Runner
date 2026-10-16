@@ -45,5 +45,8 @@ fn a_record_takes_the_record_ref_a_variant_holds() {
 #[test]
 fn a_record_ref_of_another_table_is_refused() {
     let r = run_in(SRC, "C", "G");
-    assert!(format!("{r:?}").contains("RecordRef to Record of another table"), "{r:?}");
+    assert!(
+        format!("{r:?}").contains("RecordRef to Record of another table"),
+        "{r:?}"
+    );
 }

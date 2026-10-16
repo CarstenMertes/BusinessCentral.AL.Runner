@@ -19,6 +19,7 @@ mod format_variant_number;
 mod in_precedence;
 mod interfaces;
 mod moved_fields;
+mod number_variant_to_text;
 mod pageworks_probes;
 mod proc_assign;
 mod rec_field_by_var;

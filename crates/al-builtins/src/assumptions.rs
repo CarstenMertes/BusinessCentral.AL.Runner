@@ -163,6 +163,12 @@ registry! {
         tests: "Purchase and Sales Order Statistics (`InvDiscountAmount_General`): ConfirmationOnInvDiscUpdateInPurchOrderWithInvoicedLine and about 55 more Tests-ERM tests.",
         probe: "A page field(Ctl; Arr[1].Amount) with an OnValidate; TestPage.Ctl.SetValue(5) then the global and the OnValidate effect; SetValue('x') on it.",
     },
+    NumberToTextIsFormat => {
+        id: "number-to-text-is-format",
+        assumed: "An Integer, BigInteger or Decimal converted to a Text or Code (a Variant from FieldRef.Value or a SetValue argument) is its default Format text; TextBuilder.Append of such a Variant appends that text.",
+        tests: "Assert.RecordCount (TextBuilder.Append(RecRef.FieldIndex(i).Value())): Tests-Misc AssertTest and Tests-Marketing MarketingCampaignSegments; ERM Suggest Employee Payment (StartingDocumentNo.SetValue(RandInt(10)) on a Code[20] control) and ResourceGroupAllocatedPerJob in Tests-Resource.",
+        probe: "T := V and C := V where V is a Variant holding an Integer, a BigInteger and a Decimal (also negative, and a Decimal with trailing zeros): compare with Format; TextBuilder.Append(V); a Code[2] that is too short.",
+    },
     DateToTextIsFormat => {
         id: "date-to-text-is-format",
         assumed: "A Date converted to a Text or Code (a Variant from FieldRef.Value into a Text parameter) is its default Format text, so an Evaluate of it reads the same date back.",

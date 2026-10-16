@@ -687,7 +687,17 @@ fn with_string<T>(h: &Rc<RefCell<LibraryValue>>, f: impl FnOnce(&mut String) -> 
 }
 
 fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (h, t) = (string_of(r)?, text(a, 0)?);
+    let h = string_of(r)?;
+    // A number held by a Variant appends its Format text (assumption number-to-text-is-format).
+    let t = match a.first() {
+        Some(v @ (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_))) => {
+            match crate::ops::convert(v.clone(), &crate::value::RtType::Text(None))? {
+                Value::Text(t) => t,
+                other => return unsupported(format!("TextBuilder.Append of {}", other.describe())),
+            }
+        }
+        _ => text(a, 0)?,
+    };
     with_string(&h, |s| s.push_str(&t));
     Ok(Value::Boolean(true))
 }

@@ -114,7 +114,13 @@ pub fn parse_filter_with_captions(
     captions: &dyn Fn(u32) -> Vec<(i32, String)>,
 ) -> Result<FilterExpr, String> {
     let toks = tokenize(text, args)?;
-    let mut p = Parser { toks, i: 0, ty, enums, captions };
+    let mut p = Parser {
+        toks,
+        i: 0,
+        ty,
+        enums,
+        captions,
+    };
     let e = p.or()?;
     if p.i != p.toks.len() {
         return Err(format!("unexpected {} in filter `{text}`", p.toks[p.i].describe()));

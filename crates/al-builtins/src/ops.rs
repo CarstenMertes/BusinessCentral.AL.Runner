@@ -72,10 +72,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // assignment then copies (Microsoft's Electronic Document Format.GetDocumentNo: `SalesInvoiceHeader :=
         // DocumentVariant` after `DocumentVariant.IsRecordRef`; Tests-Misc, "PEPPOL BIS BillingTests".
         // ExportXmlToVerifyFileName; no corpus pin, assumption `recordref-variant-to-record`). Another table stays refused.
-        (Value::Library(_, cell), T::Record(table, _))
-            if matches!(&*cell.borrow(), LibraryValue::RecordRef(_)) =>
-        {
-            let LibraryValue::RecordRef(rec) = &*cell.borrow() else { unreachable!() };
+        (Value::Library(_, cell), T::Record(table, _)) if matches!(&*cell.borrow(), LibraryValue::RecordRef(_)) => {
+            let LibraryValue::RecordRef(rec) = &*cell.borrow() else {
+                unreachable!()
+            };
             if rec.borrow().table != *table {
                 return unsupported("conversion of RecordRef to Record of another table".to_string());
             }
@@ -227,6 +227,27 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 }
             }
             crate::assumptions::assume(crate::assumptions::Assumption::DateToTextIsFormat);
+            let text = crate::format::try_format(&v, 0, 0, &NoEnums).map_err(Signal::Unsupported)?;
+            match t {
+                T::Text(max) => Value::Text(fit_txt(text.into(), *max)?),
+                _ => {
+                    let T::Code(max) = t else { unreachable!() };
+                    Value::Code(fit(upper_code(text.trim()), *max)?.into())
+                }
+            }
+        }
+        // A number handed to a Text or Code (a Variant from `FieldRef.Value` or `SetValue`'s argument) is its default
+        // `Format` text. Not pinned: assumption number-to-text-is-format (Microsoft's Assert.RecordCount appends
+        // `RecRef.FieldIndex(i).Value()` to a TextBuilder; ERM Suggest Employee Payment does
+        // `StartingDocumentNo.SetValue(RandInt(10))` on a Code[20] control).
+        (v @ (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)), T::Text(_) | T::Code(_)) => {
+            struct NoEnums;
+            impl crate::format::FormatCtx for NoEnums {
+                fn enum_name(&self, _: u32, _: i32) -> String {
+                    String::new()
+                }
+            }
+            crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
             let text = crate::format::try_format(&v, 0, 0, &NoEnums).map_err(Signal::Unsupported)?;
             match t {
                 T::Text(max) => Value::Text(fit_txt(text.into(), *max)?),

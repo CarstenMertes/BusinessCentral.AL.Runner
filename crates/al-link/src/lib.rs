@@ -11,7 +11,7 @@ use al_ir::sym::{
     Contribution, ControlKey, EnumImplDecl, Expansion, FieldKey, FxMap, ImplSlot, ListKind, LocalKey, ObjKey,
     RoutineKey, SubscriberTarget, SymObject,
 };
-use al_ir::walk::{ExpansionSite, RefVisitor, TableOf, walk_object, walk_table_contribution};
+use al_ir::walk::{ExpansionSite, RefVisitor, TableOf, walk_object, walk_page_contribution, walk_table_contribution};
 use al_ir::{Object, Program, SrcPos};
 use std::sync::OnceLock;
 
@@ -595,16 +595,19 @@ pub fn link<'k>(
             };
             if let Some(res) = res {
                 rewrite(&mut object, &res, &key)?;
+                let mut w = Rewrite { res: &res, bad: None };
                 if let Some(t) = contribution.table.as_mut() {
-                    let mut w = Rewrite { res: &res, bad: None };
                     walk_table_contribution(t, &mut w);
-                    if let Some((class, index)) = w.bad {
-                        return Err(Box::new(LinkError::BadReference {
-                            object: key,
-                            class,
-                            index,
-                        }));
-                    }
+                }
+                if let Some(p) = contribution.page.as_mut() {
+                    walk_page_contribution(p, &mut w);
+                }
+                if let Some((class, index)) = w.bad {
+                    return Err(Box::new(LinkError::BadReference {
+                        object: key,
+                        class,
+                        index,
+                    }));
                 }
             }
             if !positions.is_empty() {
@@ -627,7 +630,7 @@ pub fn link<'k>(
         base.objects.push(object);
         contributions.push(contribution);
     }
-    merges.apply(&mut base.objects, &mut contributions);
+    merges.apply(&mut base.objects, &mut contributions)?;
     if !subscribers.is_empty() {
         base.uncompiled_subscribers = subscribers;
     }
@@ -741,12 +744,15 @@ struct Merges {
     /// (base, extension) of the table extensions that add fields, keys or changes.
     tables: Vec<(usize, usize)>,
     symbolic: Vec<bool>,
+    /// Where each object is (to read a control id of an extension).
+    at: FxMap<ObjKey, usize>,
 }
 
 impl Merges {
     fn collect<S: Space + ?Sized>(units: &[Unit], tables: &Tables<'_, S>) -> Merges {
         let mut m = Merges {
             symbolic: units.iter().map(|u| matches!(u, Unit::Sym(_))).collect(),
+            at: tables.at.iter().map(|(k, &i)| ((*k).clone(), i)).collect(),
             ..Default::default()
         };
         for (i, u) in units.iter().enumerate() {
@@ -768,7 +774,7 @@ impl Merges {
         m
     }
 
-    fn apply(&self, objects: &mut [Object], contributions: &mut [Contribution]) {
+    fn apply(&self, objects: &mut [Object], contributions: &mut [Contribution]) -> Result<(), Box<LinkError>> {
         for &(base, list, _, ext) in &self.lists {
             if !self.symbolic[base] || objects[base].uncompiled {
                 continue;
@@ -793,6 +799,7 @@ impl Merges {
             }
         }
         self.apply_tables(objects, contributions);
+        self.apply_pages(objects, contributions)?;
         for &(base, ext) in &self.enums {
             if self.symbolic[base] && !objects[base].uncompiled {
                 let c = &contributions[ext];
@@ -800,10 +807,159 @@ impl Merges {
                 objects[base].enum_captions.extend(c.enum_captions.iter().cloned());
             }
         }
+        Ok(())
     }
 }
 
 impl Merges {
+    /// Puts the controls the page extensions add into their pages, applies their `modify` blocks and adds their
+    /// page triggers. An added control goes after the control `pred` names in the list of all controls (the
+    /// controls of the page keep their places), and every index inside the page is made again.
+    fn apply_pages(&self, objects: &mut [Object], contributions: &mut [Contribution]) -> Result<(), Box<LinkError>> {
+        use al_ir::sym::ControlId;
+        /// (extension or `BASE`, place in its list)
+        type Id = (usize, usize);
+        const BASE: usize = usize::MAX;
+        for b in 0..objects.len() {
+            if !self.symbolic[b] || objects[b].uncompiled || objects[b].page.is_none() {
+                continue;
+            }
+            let exts: Vec<usize> = objects[b].page.as_ref().expect("checked").extensions.clone();
+            if exts.iter().all(|&e| contributions[e].page.is_none()) {
+                continue;
+            }
+            let whose = ObjKey::new("", objects[b].kind, objects[b].id, None, &objects[b].name);
+            let bad = |class: &'static str| {
+                Box::new(LinkError::BadReference {
+                    object: whose.clone(),
+                    class,
+                    index: 0,
+                })
+            };
+            let id = |c: &ControlId| -> Result<Id, Box<LinkError>> {
+                match c {
+                    ControlId::Base(i) => Ok((BASE, *i)),
+                    ControlId::Ext { ext, index } => self
+                        .at
+                        .get(ext)
+                        .map(|&e| (e, *index))
+                        .ok_or_else(|| bad("control of an extension")),
+                }
+            };
+            let contribs: Vec<(usize, al_ir::sym::PageContribution)> = exts
+                .iter()
+                .filter_map(|&e| contributions[e].page.take().map(|p| (e, p)))
+                .collect();
+            let page = objects[b].page.as_mut().expect("checked");
+            let base_controls = std::mem::take(&mut page.controls);
+            let base_n = base_controls.len();
+            // The order of all controls.
+            let mut order: Vec<Id> = (0..base_n).map(|i| (BASE, i)).collect();
+            let mut pending: Vec<(usize, usize)> = Vec::new();
+            for (ci, (_, p)) in contribs.iter().enumerate() {
+                for k in 0..p.controls.len() {
+                    pending.push((ci, k));
+                }
+            }
+            loop {
+                let before = pending.len();
+                let mut later = Vec::new();
+                for (ci, k) in std::mem::take(&mut pending) {
+                    let (e, p) = &contribs[ci];
+                    let at = match &p.controls[k].pred {
+                        None => Some(0),
+                        Some(pred) => {
+                            let pid = id(pred)?;
+                            order.iter().position(|x| *x == pid).map(|i| i + 1)
+                        }
+                    };
+                    match at {
+                        Some(at) => order.insert(at, (*e, k)),
+                        None => later.push((ci, k)),
+                    }
+                }
+                pending = later;
+                if pending.is_empty() || pending.len() == before {
+                    break;
+                }
+            }
+            if !pending.is_empty() {
+                return Err(bad("control order"));
+            }
+            let place: FxMap<Id, usize> = order.iter().enumerate().map(|(i, x)| (*x, i)).collect();
+            let at = |c: &ControlId| -> Result<usize, Box<LinkError>> {
+                place.get(&id(c)?).copied().ok_or_else(|| bad("control"))
+            };
+            let pure = |i: usize| place.get(&(BASE, i)).copied().ok_or_else(|| bad("control"));
+            // The controls in their new order, with the indices made again.
+            let mut base_slots: Vec<Option<al_ir::Control>> = base_controls.into_iter().map(Some).collect();
+            let mut ext_slots: FxMap<Id, al_ir::sym::ExtControl> = FxMap::default();
+            for (e, p) in contribs.iter() {
+                for (k, c) in p.controls.iter().enumerate() {
+                    ext_slots.insert((*e, k), c.clone());
+                }
+            }
+            let mut controls = Vec::with_capacity(order.len());
+            let mut areas: FxMap<String, Vec<usize>> = FxMap::default();
+            for (pos, x) in order.iter().enumerate() {
+                if x.0 == BASE {
+                    let mut c = base_slots[x.1].take().expect("a control is placed once");
+                    c.parent = c.parent.map(&pure).transpose()?;
+                    if let Some(al_ir::ActionRef::Target(t)) = &mut c.action_ref {
+                        *t = pure(*t)?;
+                    }
+                    if let Some(l) = c.part_link.as_mut() {
+                        l.provider = l.provider.map(&pure).transpose()?;
+                    }
+                    if let Some(l) = c.run_object.as_mut().and_then(|r| r.link.as_mut()) {
+                        l.provider = l.provider.map(&pure).transpose()?;
+                    }
+                    controls.push(c);
+                } else {
+                    let ec = ext_slots.remove(x).expect("an added control is placed once");
+                    let mut c = ec.control;
+                    c.parent = ec.parent.as_ref().map(at).transpose()?;
+                    if let (Some(al_ir::ActionRef::Target(t)), Some(target)) = (&mut c.action_ref, &ec.target) {
+                        *t = at(target)?;
+                    }
+                    if let (Some(l), Some(p)) = (c.part_link.as_mut(), &ec.provider) {
+                        l.provider = Some(at(p)?);
+                    }
+                    if let Some(a) = ec.area {
+                        areas.entry(a).or_default().push(pos);
+                    }
+                    controls.push(c);
+                }
+            }
+            // The `modify` blocks, the extensions in order.
+            for (e, p) in &contribs {
+                for m in &p.mods {
+                    let c = &mut controls[at(&m.target)?];
+                    for (name, val) in &m.props {
+                        match c.props.iter_mut().find(|(n, _)| n == name) {
+                            Some(slot) => slot.1 = val.clone(),
+                            None => c.props.push((name.clone(), val.clone())),
+                        }
+                    }
+                    for (name, r) in &m.triggers {
+                        c.ext_triggers.push((name.clone(), *e, *r));
+                    }
+                }
+                for (name, r) in &p.triggers {
+                    page.ext_triggers.push((name.clone(), *e, *r));
+                }
+            }
+            for a in &mut page.action_areas {
+                let mut roots = a.roots.iter().map(|&r| pure(r)).collect::<Result<Vec<_>, _>>()?;
+                roots.extend(areas.remove(&a.name).unwrap_or_default());
+                roots.sort_unstable();
+                a.roots = roots;
+            }
+            page.controls = controls;
+        }
+        Ok(())
+    }
+
     /// Merges what table extensions add into their tables the way the members of a table are merged:
     /// the fields of each extension, then its `modify` blocks (the first field of the name takes the
     /// properties), then the triggers every field of the name takes, and the keys.

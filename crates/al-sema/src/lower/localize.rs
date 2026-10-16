@@ -234,6 +234,23 @@ impl Expanded {
     }
 }
 
+/// What one `modify` block of a page extension changes in a control (an index of the page's control list): the
+/// properties it sets and the triggers it adds, in the order it wrote them.
+#[derive(Clone, Debug)]
+pub(crate) struct PageMod {
+    pub(crate) control: usize,
+    pub(crate) ext: usize,
+    pub(crate) props: Vec<(String, ir::PropVal)>,
+    pub(crate) triggers: Vec<(String, usize)>,
+}
+
+/// The `modify` blocks of the page being lowered, and the properties of the controls they change before any applies.
+#[derive(Default)]
+pub(crate) struct PageMods {
+    pub(crate) mods: Vec<PageMod>,
+    pub(crate) before: Vec<(usize, Vec<(String, ir::PropVal)>)>,
+}
+
 /// The sites that stand for sets: lowering writes a marker and the index of the entry.
 #[derive(Default)]
 pub(crate) struct Expansions {
@@ -279,6 +296,7 @@ pub(crate) struct Extras<'a> {
     /// The lists of its base that the object is in: (list, base).
     pub joins: &'a [(ListKind, usize)],
     pub table_contribution: Option<TableContribution>,
+    pub page_contribution: Option<al_ir::sym::PageContribution>,
     pub expansions: &'a [Expanded],
     /// The uncompiled subscribers this object declares.
     pub subscribers: Vec<al_ir::sym::SubscriberDecl>,
@@ -298,6 +316,7 @@ pub(crate) fn localize(
     let Extras {
         joins,
         table_contribution,
+        page_contribution,
         expansions,
         subscribers,
     } = extras;
@@ -341,11 +360,13 @@ pub(crate) fn localize(
             enum_values,
             enum_captions,
             table: None,
+            page: None,
         }
     } else {
         Contribution::default()
     };
     contribution.table = table_contribution;
+    contribution.page = page_contribution;
     let extends = (keys.extends)(own).map(|t| keys.objects[t].clone());
     // The expressions' own references come first: they are already indices into this list.
     let mut refs = Refs {
@@ -378,6 +399,12 @@ pub(crate) fn localize(
     walk_object(&mut object, &mut v);
     if let Some(t) = contribution.table.as_mut() {
         al_ir::walk::walk_table_contribution(t, &mut v);
+    }
+    if let Some(p) = contribution.page.as_mut() {
+        al_ir::walk::walk_page_contribution(p, &mut v);
+        for c in &mut p.controls {
+            c.provider_page = None;
+        }
     }
     if let Some(b) = v.bad {
         return Err(format!("{}: {b}", keys.objects[own]));

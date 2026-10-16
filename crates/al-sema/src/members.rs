@@ -194,7 +194,34 @@ fn merged_members(ws: &Workspace, i: usize) -> Members {
             }
         }
     }
+    drop_moved_duplicates(&mut target);
     target
+}
+
+/// A field with `ObsoleteState = Moved` has moved to another app, which declares the live one (Business Foundation's
+/// `Source Code Setup` extension lists `Sales` as Moved, Base Application's declares it): the moved declaration gives way
+/// to a live field of the same id or name, so the table has one field and not two.
+fn drop_moved_duplicates(m: &mut Members) {
+    let moved = |f: &FieldInfo| {
+        f.properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("ObsoleteState") && v.trim().eq_ignore_ascii_case("Moved"))
+    };
+    if !m.fields.iter().any(moved) {
+        return;
+    }
+    let live: Vec<(u32, String)> = m
+        .fields
+        .iter()
+        .filter(|f| !moved(f))
+        .map(|f| (f.id, f.name.to_ascii_lowercase()))
+        .collect();
+    m.fields.retain(|f| {
+        !moved(f)
+            || !live
+                .iter()
+                .any(|(id, name)| *id == f.id || *name == f.name.to_ascii_lowercase())
+    });
 }
 
 /// The `modify(Field) { Property = ...; }` blocks of table extension `e`, in source order: the field

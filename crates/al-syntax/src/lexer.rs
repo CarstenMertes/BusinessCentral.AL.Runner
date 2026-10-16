@@ -79,6 +79,13 @@ impl Lexer<'_> {
     }
 
     fn eat_ident_rest(&mut self) {
+        let src = self.src;
+        let mut i = self.pos;
+        // The ASCII run, with no bounds checks beyond the slice's own.
+        while i < src.len() && (src[i] == b'_' || src[i].is_ascii_alphanumeric()) {
+            i += 1;
+        }
+        self.pos = i;
         while let Some(&b) = self.src.get(self.pos) {
             if b < 0x80 {
                 if !(b == b'_' || b.is_ascii_alphanumeric()) {
@@ -168,6 +175,11 @@ impl Lexer<'_> {
                 }
             }
             b'0'..=b'9' => self.number(start),
+            b'a'..=b'z' | b'A'..=b'Z' | b'_' => {
+                self.pos += 1;
+                self.eat_ident_rest();
+                self.push(Ident, start);
+            }
             _ => {
                 let ch = self.char_at(self.pos).expect("valid utf-8");
                 if is_ident_start(ch) {
@@ -182,20 +194,23 @@ impl Lexer<'_> {
     }
 
     fn string(&mut self, start: usize) {
-        self.pos += 1;
-        loop {
-            match self.peek(0) {
-                b'\'' if self.peek(1) == b'\'' => self.pos += 2,
+        let src = self.src;
+        let mut i = self.pos + 1;
+        // Up to the closing quote; a doubled quote is one quote of the text; a line end or the end of the file makes
+        // an error token.
+        while i < src.len() {
+            match src[i] {
+                b'\'' if src.get(i + 1) == Some(&b'\'') => i += 2,
                 b'\'' => {
-                    self.pos += 1;
+                    self.pos = i + 1;
                     self.push(SyntaxKind::StringLit, start);
                     return;
                 }
-                0 if self.pos >= self.src.len() => break,
                 b'\n' | b'\r' => break,
-                _ => self.pos += 1,
+                _ => i += 1,
             }
         }
+        self.pos = i;
         self.push(SyntaxKind::Error, start);
     }
 

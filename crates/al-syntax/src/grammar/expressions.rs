@@ -15,6 +15,7 @@ use crate::SyntaxKind::{self, *};
 use crate::parser::Parser;
 
 /// Words that can never be a name in expression position.
+#[cfg(test)]
 const RESERVED: &[&str] = &[
     "begin",
     "end",
@@ -48,7 +49,47 @@ const RESERVED: &[&str] = &[
 ];
 
 pub(crate) fn is_reserved(word: &str) -> bool {
-    RESERVED.iter().any(|r| r.eq_ignore_ascii_case(word))
+    // Lower-cased into a small buffer and matched by length and bytes: this runs for every identifier the parser meets.
+    let w = word.as_bytes();
+    if w.len() < 2 || w.len() > 11 {
+        return false;
+    }
+    let mut buf = [0u8; 11];
+    for (d, s) in buf.iter_mut().zip(w) {
+        *d = s.to_ascii_lowercase();
+    }
+    matches!(
+        &buf[..w.len()],
+        b"begin"
+            | b"end"
+            | b"if"
+            | b"then"
+            | b"else"
+            | b"case"
+            | b"of"
+            | b"while"
+            | b"do"
+            | b"repeat"
+            | b"until"
+            | b"for"
+            | b"to"
+            | b"downto"
+            | b"foreach"
+            | b"in"
+            | b"exit"
+            | b"var"
+            | b"procedure"
+            | b"trigger"
+            | b"local"
+            | b"and"
+            | b"or"
+            | b"xor"
+            | b"not"
+            | b"div"
+            | b"mod"
+            | b"with"
+            | b"asserterror"
+    )
 }
 
 pub(crate) fn at_expr_start(p: &Parser) -> bool {
@@ -76,7 +117,7 @@ pub(crate) fn expr(p: &mut Parser) {
 fn relational(p: &mut Parser) {
     let cp = p.checkpoint();
     additive(p);
-    while matches!(p.current(), Eq | Neq | Lt | Le | Gt | Ge) || p.at_kw("in") || p.at_kw("is") || p.at_kw("as") {
+    while matches!(p.current(), Eq | Neq | Lt | Le | Gt | Ge) || p.at_any_kw(&["in", "is", "as"]) {
         let type_operator = p.at_kw("is") || p.at_kw("as");
         p.start_at(cp, BinExpr);
         p.bump_any();
@@ -122,7 +163,7 @@ fn additive(p: &mut Parser) {
 fn multiplicative(p: &mut Parser) {
     let cp = p.checkpoint();
     unary(p);
-    while matches!(p.current(), Star | Slash) || ["and", "xor", "div", "mod"].iter().any(|k| p.at_kw(k)) {
+    while matches!(p.current(), Star | Slash) || p.at_any_kw(&["and", "xor", "div", "mod"]) {
         p.start_at(cp, BinExpr);
         p.bump_any();
         unary(p);
@@ -325,6 +366,27 @@ mod tests {
             e("a DIV b MOD c"),
             "(BinExpr (BinExpr (NameRef a) DIV (NameRef b)) MOD (NameRef c))"
         );
+    }
+
+    #[test]
+    fn is_reserved_matches_the_list_in_any_case_and_nothing_else() {
+        for w in RESERVED {
+            assert!(is_reserved(w), "{w}");
+            assert!(is_reserved(&w.to_uppercase()), "{w}");
+        }
+        for w in [
+            "",
+            "a",
+            "xx",
+            "beginn",
+            "begi",
+            "customer",
+            "asserterrors",
+            "É",
+            "ändern",
+        ] {
+            assert!(!is_reserved(w), "{w}");
+        }
     }
 
     #[test]

@@ -82,7 +82,14 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Guid(g) => format_guid(g),
         // A Blob shows `*` when it holds data and one space when it does not (record/
         // TestFormatRecordContracts.al:132-136, the cleared record shows the blank form).
-        Value::Blob(b) => (if b.borrow().bytes.is_empty() { " " } else { "*" }).to_string(),
+        Value::Blob(b) => {
+            let buf = b.borrow();
+            // ADR-040: the text shows whether the buffer holds data, which a pending buffer cannot say.
+            if let Some(report) = &buf.render_pending {
+                crate::stream::note_pending_observation(report);
+            }
+            (if buf.bytes.is_empty() { " " } else { "*" }).to_string()
+        }
         Value::Date(0, _) | Value::Time(0) | Value::DateTime(0) => String::new(),
         Value::Date(day, closing) => format_date(*day, *closing, standard)?,
         Value::Time(t) => format_time(t - 1, standard)?,

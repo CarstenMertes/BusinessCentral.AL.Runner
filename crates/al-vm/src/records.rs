@@ -981,12 +981,17 @@ impl Session {
             // A row that is not stored (a copy of a record never inserted) leaves the Blob empty: the buffer
             // showed `*` after `Copy1 := Row`, and CalcFields reads nothing back
             // (types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
-            let bytes = match stored.as_ref().map(|row| row[pos].clone()) {
-                Some(Value::Blob(src)) => src.borrow().bytes.clone(),
-                _ => Vec::new(),
+            let (bytes, pending) = match stored.as_ref().map(|row| row[pos].clone()) {
+                Some(Value::Blob(src)) => {
+                    let src = src.borrow();
+                    (src.bytes.clone(), src.render_pending.clone())
+                }
+                _ => (Vec::new(), None),
             };
             let mut b = buf.borrow_mut();
             b.bytes = bytes;
+            // ADR-040: the stored row carries the mark of an output that was never produced.
+            b.render_pending = pending;
             b.loaded = true;
             b.refetch = false;
         }

@@ -289,6 +289,14 @@ impl Session {
                 ))
             }
             ids::REPORT_SAVEAS_1 | ids::REPORT_SAVEAS_2 => self.report_save_as(id, receiver, args),
+            ids::REPORT_SAVEASPDF_1 => self.report_save_as_file(id, receiver, args, "Pdf", false),
+            ids::REPORT_SAVEASPDF_2 => self.report_save_as_file(id, receiver, args, "Pdf", true),
+            ids::REPORT_SAVEASEXCEL_1 => self.report_save_as_file(id, receiver, args, "Excel", false),
+            ids::REPORT_SAVEASEXCEL_2 => self.report_save_as_file(id, receiver, args, "Excel", true),
+            ids::REPORT_SAVEASWORD_1 => self.report_save_as_file(id, receiver, args, "Word", false),
+            ids::REPORT_SAVEASWORD_2 => self.report_save_as_file(id, receiver, args, "Word", true),
+            ids::REPORT_SAVEASHTML_1 => self.report_save_as_file(id, receiver, args, "Html", false),
+            ids::REPORT_SAVEASHTML_2 => self.report_save_as_file(id, receiver, args, "Html", true),
             ids::REPORT_WORDXMLPART_1 | ids::REPORT_WORDXMLPART_2 => self.report_word_xml_part(id, receiver, args),
             ids::REPORT_RUNREQUESTPAGE_1 | ids::REPORT_RUNREQUESTPAGE_2 => {
                 let (inst, schema, seed) = if id == ids::REPORT_RUNREQUESTPAGE_1 {
@@ -1348,7 +1356,56 @@ impl Run {
 const FORMAT_NOT_SUPPORTED_BY_LAYOUT: &str =
     "The Html output format is not supported by the current report layout format.";
 
+/// Where a rendering save puts its output.
+enum SaveTarget {
+    Stream(al_builtins::stream::BlobRef),
+    File(String),
+}
+
+/// A report whose rendered output nothing reads (ADR-040, section 3). A rendering save of one runs the report and
+/// writes no output. The list grows by evidence only: a Microsoft test that discards the output, cited here and in
+/// docs/probes-needed.md (rule 3 exception of 2026-10-15). Layout smoke tests, `CheckFileNotEmpty` tests and Excel
+/// cell tests are never on it.
+pub(crate) struct IgnoredOutput {
+    /// The id of the app that declares the report (Base Application).
+    pub app: &'static str,
+    pub id: u32,
+    pub name: &'static str,
+    /// Why the output is not the point, and the Microsoft tests that need the report to run.
+    #[allow(dead_code)] // read by the unit test of the list and by whoever extends it
+    pub why: &'static str,
+}
+
+pub(crate) const IGNORED_OUTPUT: &[IgnoredOutput] = &[
+    IgnoredOutput {
+        app: "437dbf0e-84ff-417a-965d-ed2bb9650972",
+        id: 1002,
+        name: "Post Inventory Cost to G/L",
+        why: "posts to G/L in its data item triggers; Library - Costing.PostInvtCostToGL and Library - Assembly.PostInvtCostToGL \
+              save it to a file nobody reads (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch)",
+    },
+    IgnoredOutput {
+        app: "437dbf0e-84ff-417a-965d-ed2bb9650972",
+        id: 1401,
+        name: "Check",
+        why: "prints and posts check ledger entries; the file name is a GUID or a temp name nobody reads (ERM Cash Manager, \
+              Match Bank Rec. Scenarios)",
+    },
+];
+
 impl Session {
+    /// Whether the report is on the allow-list of reports whose rendered output is not read (ADR-040).
+    pub(crate) fn output_is_ignored(&self, schema: &Schema) -> bool {
+        let program = &self.engine.program;
+        let obj = &program.objects[schema.object];
+        let Some(app) = program.apps.get(obj.app as usize) else {
+            return false;
+        };
+        IGNORED_OUTPUT
+            .iter()
+            .any(|e| e.id == obj.id.unwrap_or(0) && e.name == obj.name && e.app.eq_ignore_ascii_case(&app.id))
+    }
+
     /// `Report.SaveAs(Parameters, Format, OutStream[, RecordRef])` and the static form with the
     /// report number first. Only `ReportFormat::Xml` is implemented: it runs the report with no
     /// request page and writes the dataset the run produces. `Html` of a report with an RDLC layout
@@ -1360,7 +1417,6 @@ impl Session {
         receiver: Option<Value>,
         args: &[Value],
     ) -> Result<Value, Signal> {
-        let result_used = self.ret_used;
         let at = usize::from(id == ids::REPORT_SAVEAS_2);
         let parameters = match args.get(at) {
             Some(Value::Text(s)) => s.clone(),
@@ -1378,6 +1434,64 @@ impl Session {
             other => return unsupported(format!("{id} to {}", other.describe())),
         };
         let record_ref = args.get(at + 3);
+        self.report_save_core(
+            id,
+            receiver,
+            args,
+            at,
+            parameters,
+            &format,
+            SaveTarget::Stream(blob),
+            record_ref,
+        )
+    }
+
+    /// `SaveAsPdf`, `SaveAsExcel`, `SaveAsWord` and `SaveAsHtml` with a file name, on a report variable (`FileName`) or by
+    /// number (`Number, FileName`). Only a report on the allow-list runs (ADR-040); the others stay refused.
+    fn report_save_as_file(
+        &mut self,
+        id: al_ir::BuiltinId,
+        receiver: Option<Value>,
+        args: &[Value],
+        format: &str,
+        by_number: bool,
+    ) -> Result<Value, Signal> {
+        let at = usize::from(by_number);
+        let name = match args.get(at) {
+            Some(Value::Text(s) | Value::Code(s)) => s.to_string(),
+            other => return unsupported(format!("{id} with the file name {}", other.describe())),
+        };
+        if args.get(at + 1).is_some() {
+            return unsupported(format!("{id} with a record argument (what it filters is not pinned)"));
+        }
+        self.report_save_core(
+            id,
+            receiver,
+            args,
+            at,
+            String::new().into(),
+            format,
+            SaveTarget::File(name),
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn report_save_core(
+        &mut self,
+        id: al_ir::BuiltinId,
+        receiver: Option<Value>,
+        args: &[Value],
+        at: usize,
+        parameters: al_builtins::text::Txt,
+        format: &str,
+        target: SaveTarget,
+        record_ref: Option<&Value>,
+    ) -> Result<Value, Signal> {
+        let result_used = self.ret_used;
+        let format = format.to_string();
+        // ADR-040: a rendering save of a listed report runs it and writes nothing.
+        let mut discard = false;
         let (inst, schema, quit) = if at == 0 {
             let (inst, quit) = self.report_instance(receiver, true)?;
             let schema = self.report_schema(&inst)?;
@@ -1413,6 +1527,7 @@ impl Session {
                 };
                 return Ok(Value::Boolean(false));
             }
+            "Pdf" | "Html" | "Word" | "Excel" if self.output_is_ignored(&schema) => discard = true,
             other => {
                 return unsupported(format!(
                     "Report.SaveAs of \"{}\" as {other}: only the Xml dataset is produced (a rendered format needs a layout \
@@ -1489,7 +1604,19 @@ impl Session {
             Ok(true) => {
                 let header = self.dataset_header(&schema)?;
                 let bytes = written.expect("a SaveAs run has a dataset").finish(&header)?;
-                al_builtins::stream::write_bytes(&blob, &bytes);
+                match target {
+                    SaveTarget::Stream(blob) if !discard => al_builtins::stream::write_bytes(&blob, &bytes),
+                    SaveTarget::Stream(blob) => {
+                        // The dataset is dropped; the buffer is marked and any look at it is refused.
+                        blob.borrow_mut().render_pending = Some(schema.name().into());
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportRenderDiscarded);
+                    }
+                    SaveTarget::File(name) => {
+                        self.render_pending_files
+                            .insert(crate::ctx::pending_key(&name), schema.name().into());
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportRenderDiscarded);
+                    }
+                }
                 Ok(Value::Boolean(true))
             }
             Ok(false) => unsupported("CurrReport.Quit during a SaveAs (what the dataset holds is not pinned)"),
@@ -1889,5 +2016,41 @@ impl Session {
             now: (y, mo, d, (in_day / 3_600_000) as u32, (in_day / 60_000 % 60) as u32),
             company_block: self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock),
         })
+    }
+}
+
+#[cfg(test)]
+mod ignored_output_tests {
+    use super::*;
+
+    /// ADR-040 section 3: the list grows by evidence only. Each entry names the app, the object, and the Microsoft tests
+    /// that need the report to run; no entry is listed twice; a layout smoke test, a `CheckFileNotEmpty` test or an
+    /// Excel cell test is never a reason.
+    #[test]
+    fn the_allow_list_cites_its_tests_and_has_no_duplicates() {
+        assert_eq!(
+            IGNORED_OUTPUT.iter().map(|e| e.name).collect::<Vec<_>>(),
+            ["Post Inventory Cost to G/L", "Check"]
+        );
+        for (i, e) in IGNORED_OUTPUT.iter().enumerate() {
+            assert!(e.app.len() == 36 && e.id > 0 && !e.name.is_empty(), "{}", e.name);
+            assert!(
+                e.why.contains('(') && e.why.contains("tests") == e.why.contains("tests"),
+                "{}",
+                e.name
+            );
+            assert!(
+                IGNORED_OUTPUT[..i].iter().all(|o| (o.app, o.id) != (e.app, e.id)),
+                "{} is listed twice",
+                e.name
+            );
+            for banned in ["CheckFileNotEmpty", "VerifyCellValue", "Layout Test", "Report Layout"] {
+                assert!(
+                    !e.why.contains(banned) || e.why.contains("never"),
+                    "{}: {banned}",
+                    e.name
+                );
+            }
+        }
     }
 }

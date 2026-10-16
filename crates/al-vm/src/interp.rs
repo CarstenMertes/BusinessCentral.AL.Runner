@@ -680,6 +680,7 @@ impl Session {
                                             loaded: true,
                                             refetch: true,
                                             persisted: false,
+                                            render_pending: b.render_pending.clone(),
                                         },
                                     )))
                                 }

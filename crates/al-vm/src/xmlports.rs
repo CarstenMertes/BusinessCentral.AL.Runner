@@ -755,6 +755,17 @@ impl Session {
                 }
             };
             self.xp_value_xml(text, &ty, members.map(|(_, m)| m))?
+        } else if !schema.xp().format_evaluate_declared {
+            // Without a FormatEvaluate the display text is read and, when that is no value, the XML form.
+            match self.xp_value(text, &ty, false) {
+                Ok(v) => v,
+                Err(Signal::Error(first)) => match self.xp_value_xml(text, &ty, None) {
+                    Ok(v) => v,
+                    Err(Signal::Error(_)) => return Err(Signal::Error(first)),
+                    Err(other) => return Err(other),
+                },
+                Err(other) => return Err(other),
+            }
         } else {
             self.xp_value(text, &ty, false)?
         };

@@ -22,7 +22,11 @@ fn main() -> ExitCode {
         .stack_size(512 << 20)
         .spawn(real_main)
         .expect("spawn runner thread");
-    match worker.join() {
+    let joined = worker.join();
+    if std::env::var_os("AL_EXEC_REPORT").is_some() {
+        eprintln!("{}", al_vm::exec_report());
+    }
+    match joined {
         Ok(code) => code,
         Err(_) => {
             eprintln!("error: the runner thread panicked (a bug)");

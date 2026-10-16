@@ -109,8 +109,15 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
 /// branch perf-1). It is on the runtime phases of `--timings` (compile, install baseline, run tests), not on
 /// the whole process: "load apps and dependencies" reads the artifact cache and the network, and took 9.9 s of a
 /// 14.7 s run on a runner while it takes about 1 s otherwise (issue 16). The load time is printed and
-/// not budgeted. The limit leaves room for a CI runner with few cores. A run over the limit is repeated, at most
-/// `WITH_APPS_RUNS` times in all, and the best counts: a real regression is over the limit every time.
+/// not budgeted.
+///
+/// The budget is in instructions of the whole process tree (137.1 billion on 2026-10-16) (the meter is opened before the run starts, so the worker
+/// threads and a .NET helper count), not in seconds: the seconds moved with the load of the machine (12 s was
+/// exceeded at 21.5 s on a machine with a load of 25 and the same code), the instructions do not. The limit is the
+/// value of the day plus 5 %. Where the kernel refuses the counter, the old limit on the runtime phases in seconds
+/// applies. The seconds are printed for information. A run over the limit is repeated, at most `WITH_APPS_RUNS` times in
+/// all, and the best counts: a real regression is over the limit every time.
+const WITH_APPS_LIMIT_INSTRUCTIONS: u64 = 144_000_000_000;
 const WITH_APPS_BUDGET_SECS: f64 = 12.0;
 const WITH_APPS_RUNS: usize = 3;
 /// No single test codeunit may take longer: one codeunit that walked 2.9 million computed Date
@@ -209,24 +216,40 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
     if cfg!(debug_assertions) {
         panic!("perf budgets are only meaningful in --release; this is a debug build");
     }
+    let meter = Meter::new(true);
+    let counting = matches!(meter, Meter::Instructions(_));
     let mut runs: Vec<(f64, f64, String)> = Vec::new();
+    let mut costs: Vec<u64> = Vec::new();
     for _ in 0..WITH_APPS_RUNS {
         let started = Instant::now();
-        let out = std::process::Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
-            .arg("--root")
-            .arg(root())
-            .args(["--bc-version", "29", "--no-ratchet", "--timings"])
-            .output()
-            .unwrap();
+        let (out, cost) = meter.measure(|| {
+            std::process::Command::new(env!("CARGO_BIN_EXE_al-test-cli"))
+                .arg("--root")
+                .arg(root())
+                .args(["--bc-version", "29", "--no-ratchet", "--timings"])
+                .output()
+                .unwrap()
+        });
+        costs.push(cost);
         let wall = started.elapsed().as_secs_f64();
         let err = String::from_utf8_lossy(&out.stderr).into_owned();
         assert!(out.status.success(), "{err}");
         let runtime = runtime_phases_secs(&err).expect("a `timings:` line in --timings");
         runs.push((runtime, wall, err));
-        if runtime <= WITH_APPS_BUDGET_SECS {
+        let within = if counting {
+            cost <= WITH_APPS_LIMIT_INSTRUCTIONS
+        } else {
+            runtime <= WITH_APPS_BUDGET_SECS
+        };
+        if within {
             break;
         }
     }
+    let best = costs.iter().copied().min().unwrap();
+    eprintln!(
+        "full run with the apps: {best} {} (limit {WITH_APPS_LIMIT_INSTRUCTIONS}), samples: {costs:?}",
+        meter.name()
+    );
     let (runtime, wall, err) = runs
         .iter()
         .min_by(|a, b| a.0.total_cmp(&b.0))
@@ -276,8 +299,16 @@ fn a_full_corpus_run_with_the_microsoft_apps_stays_within_its_budget() {
             "a .NET sidecar took {max:.1} s to start, over {SIDECAR_START_SECS} s:\n{err}"
         );
     }
-    assert!(
-        runtime <= WITH_APPS_BUDGET_SECS,
-        "the runtime phases took {runtime:.1} s at best of {WITH_APPS_RUNS}, over the {WITH_APPS_BUDGET_SECS} s budget:\n{err}"
-    );
+    if counting {
+        assert!(
+            best <= WITH_APPS_LIMIT_INSTRUCTIONS,
+            "the run used {best} instructions at best of {WITH_APPS_RUNS}, over the limit of {WITH_APPS_LIMIT_INSTRUCTIONS} \
+             (runtime phases {runtime:.1} s, for information):\n{err}"
+        );
+    } else {
+        assert!(
+            runtime <= WITH_APPS_BUDGET_SECS,
+            "the runtime phases took {runtime:.1} s at best of {WITH_APPS_RUNS}, over the {WITH_APPS_BUDGET_SECS} s budget:\n{err}"
+        );
+    }
 }

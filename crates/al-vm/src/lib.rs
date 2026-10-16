@@ -22,7 +22,7 @@ mod interp;
 pub use baseline::Baseline;
 pub use capture::{CaptureConfig, Captured, ClosedBy, LoopRecord, MAX_RECORDS, MessageRecord, Rendered, ValueRecord};
 pub(crate) use ctx::base_slot_missing;
-pub use exec::{ExecMode, report as exec_report};
+pub use exec::{ExecMode, disassemble as exec_disassemble, report as exec_report};
 pub use faultsite::FaultFrame;
 pub(crate) use interp::constant;
 mod callstack;

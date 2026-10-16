@@ -73,6 +73,9 @@ fn run() -> Result<ExitCode, String> {
         al_test_cli::host::set_files_dir(dir.clone());
     }
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
+    if let Some(dir) = &args.behavior_coverage_map {
+        return behavior_coverage_map(&root, dir.as_deref());
+    }
     if let Some(dir) = &args.coverage_map {
         return coverage_map(&root, dir.as_deref());
     }
@@ -151,6 +154,36 @@ fn coverage_map(root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
         "corpus coverage: pinned {pinned} of {all} builtin overloads; written to {}",
         dir.display()
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `--behavior-coverage-map`: which language behavior the corpus pins (`behavior_coverage.rs`).
+fn behavior_coverage_map(root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
+    let commit = git_head(&root.join("corpus"))?;
+    let map = al_test_cli::behavior_coverage::corpus_behavior_coverage(root, &commit)?;
+    let dir = dir.map(Path::to_path_buf).unwrap_or_else(|| root.join("docs"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let write = |name: &str, text: String| {
+        std::fs::write(dir.join(name), text).map_err(|e| format!("{}: {e}", dir.join(name).display()))
+    };
+    write(
+        "corpus-behavior-coverage.md",
+        al_test_cli::behavior_coverage::to_markdown(&map),
+    )?;
+    write(
+        "corpus-behavior-coverage.json",
+        al_test_cli::behavior_coverage::to_json(&map),
+    )?;
+    for d in al_test_cli::behavior_coverage::Dim::ALL {
+        let items = map.of(d);
+        println!(
+            "behavior coverage: {}: pinned {} of {}",
+            d.title(),
+            items.iter().filter(|i| i.site.is_some()).count(),
+            items.len()
+        );
+    }
+    println!("written to {}", dir.display());
     Ok(ExitCode::SUCCESS)
 }
 

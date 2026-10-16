@@ -117,3 +117,44 @@ fn corpus_coverage_map_is_current() {
         );
     }
 }
+
+/// `docs/corpus-behavior-coverage.md` and `.json`: which triggers, properties, platform events,
+/// syntax kinds and runtime error sites some corpus test pins. Regenerate with
+/// `al-test-cli --root . --behavior-coverage-map` (or `UPDATE_GOLDEN=1` on this test).
+#[test]
+#[ignore = "slow unoptimised: cargo test --release -p al-test-cli --test corpus_resolve_deps -- --ignored"]
+fn corpus_behavior_coverage_is_current() {
+    let commit = String::from_utf8(
+        std::process::Command::new("git")
+            .arg("-C")
+            .arg(root().join("corpus"))
+            .args(["rev-parse", "HEAD"])
+            .output()
+            .unwrap()
+            .stdout,
+    )
+    .unwrap()
+    .trim()
+    .to_string();
+    let map = al_test_cli::behavior_coverage::corpus_behavior_coverage(&root(), &commit).unwrap();
+    for (name, text) in [
+        (
+            "docs/corpus-behavior-coverage.md",
+            al_test_cli::behavior_coverage::to_markdown(&map),
+        ),
+        (
+            "docs/corpus-behavior-coverage.json",
+            al_test_cli::behavior_coverage::to_json(&map),
+        ),
+    ] {
+        let path = root().join(name);
+        if std::env::var_os("UPDATE_GOLDEN").is_some() {
+            std::fs::write(&path, &text).unwrap();
+        }
+        let committed = std::fs::read_to_string(&path).unwrap_or_default();
+        assert!(
+            committed == text,
+            "{name} is stale; run `al-test-cli --root . --behavior-coverage-map` and commit it"
+        );
+    }
+}

@@ -549,7 +549,7 @@ impl Session {
                         let v = if class == Class::InStreamRead {
                             self.fit_stream_read(p, v, f)?
                         } else {
-                            v
+                            self.fit_ref_number(p, v, f)?
                         };
                         self.write(p, v, f)?;
                     }
@@ -617,12 +617,34 @@ impl Session {
                 let v = if class == al_builtins::builtin_id::Class::InStreamRead {
                     self.fit_stream_read(p, v, f)?
                 } else {
-                    v
+                    self.fit_ref_number(p, v, f)?
                 };
                 self.write(p, v, f)?;
             }
         }
         Ok(ret)
+    }
+
+    /// A number a builtin stored in a by-reference argument takes the declared number type of the variable, as an assignment
+    /// does (`List of [BigInteger].Get(1, I)` leaves an Integer in `I`; an overflow raises the error of the conversion).
+    #[inline]
+    fn fit_ref_number(&self, p: &ir::Place, v: Value, f: &Frame) -> Result<Value, Signal> {
+        if !matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
+            return Ok(v);
+        }
+        let Some(ty) = self.place_ty(p, f) else {
+            return Ok(v);
+        };
+        let same = matches!(
+            (&v, ty),
+            (Value::Integer(_), RtType::Integer)
+                | (Value::BigInteger(_), RtType::BigInteger)
+                | (Value::Decimal(_), RtType::Decimal)
+        );
+        if same || !matches!(ty, RtType::Integer | RtType::BigInteger | RtType::Decimal) {
+            return Ok(v);
+        }
+        al_builtins::ops::convert(v, ty)
     }
 
     /// What `InStream.Read` stores in a Text or Code variable: a Code takes the characters
@@ -1242,6 +1264,19 @@ impl Session {
             Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
             Err(_) => None,
         };
+        // A Text of ASCII only gets an ASCII character in place (a loop over a long text stays linear): the variable lets
+        // go of its hold first so that nothing is copied.
+        if let (false, Some(unit), true) = (is_code, unit.filter(|u| *u < 128), i >= 1) {
+            if let ir::Place::Local(l) = base {
+                if let Value::Text(t) = &mut f.locals[*l] {
+                    let at = (i - 1) as usize;
+                    if t.is_ascii() && at < t.len() {
+                        t.set_ascii_byte(at, unit as u8);
+                        return Ok(());
+                    }
+                }
+            }
+        }
         let (Value::Text(s) | Value::Code(s)) = self.read(base, f)? else {
             return Err(Signal::Unsupported(
                 "assigning a character into a value that is no text".into(),

@@ -519,6 +519,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // primitive-totext-is-format.
     ("Date.ToText#1", |c, r, _| primitive_to_text(c, r, "Date")),
     ("Boolean.ToText#1", |c, r, _| primitive_to_text(c, r, "Boolean")),
+    ("Decimal.ToText#1", |c, r, _| primitive_to_text(c, r, "Decimal")),
     ("Variant.IsDefaultLayout#1", |_, r, _| is(r, "defaultlayout")),
     ("Variant.IsTestPermissions#1", |_, r, _| is(r, "testpermissions")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
@@ -1454,7 +1455,7 @@ fn value_kind(v: &Value) -> String {
 /// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
 fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<Value, Signal> {
     match r.as_deref() {
-        Some(v @ (Value::Date(..) | Value::Boolean(_))) => {
+        Some(v @ (Value::Date(..) | Value::Boolean(_) | Value::Decimal(_))) => {
             crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
             match crate::format::try_format(v, 0, 0, &*c) {
                 Ok(t) => Ok(Value::Text(t.into())),

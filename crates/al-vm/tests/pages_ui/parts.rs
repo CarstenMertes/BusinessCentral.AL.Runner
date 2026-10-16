@@ -896,3 +896,16 @@ fn set_value_on_a_control_bound_to_a_call_stays_read_only() {
     );
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
+
+// Microsoft's Tests-ERM write `Page.Control.SetValue := value;` (ERM Pmt. Tolerance VAT Appln., 197 tests with the other
+// "is not assignable" shapes): the setter form of the SetValue method, as `Value :=` is of Value. Unprobed.
+#[test]
+fn set_value_written_as_an_assignment_is_the_call() {
+    let r = run(
+        "procedure F(): Text var H: TestPage \"PT Cap Card\"; R: Record \"PT Row\"; begin
+            R.Grp := 'A'; R.\"Line No.\" := 1; R.Insert();
+            H.OpenEdit(); H.Dim.SetValue := 'viaassign'; exit(H.Dim.Value()); end;",
+        "F",
+    );
+    assert_eq!(text(r), "viaassign");
+}

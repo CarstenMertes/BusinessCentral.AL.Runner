@@ -23,6 +23,17 @@ table 60866 "RRE Row"
     keys { key(PK; "Entry No.") { } key(ByName; Name) { } }
 }
 
+report 60899 "RU Probe"
+{
+    ProcessingOnly = true;
+    UsageCategory = None;
+    trigger OnPreReport()
+    var Log: Record "RRE Log";
+    begin
+        Log.Log(Format(CurrReport.UseRequestPage()));
+    end;
+}
+
 table 60867 "RRE Log"
 {
     fields { field(1; "Entry No."; Integer) { } field(2; Marker; Text[250]) { } }
@@ -720,6 +731,18 @@ fn refusal(vars_and_body: &str) -> String {
         Err(Signal::Unsupported(r)) => r,
         other => panic!("expected a refusal, got {other:?}"),
     }
+}
+
+// Base Application's Copy Sales Document reads `CurrReport.UseRequestPage()` in OnPreReport: the running report, no variable
+// (186 Tests-ERM tests). The setter on a variable is pinned by handlers/TestReportRuntimeContracts.al:416-440.
+#[test]
+fn currreport_use_request_page_is_the_running_reports() {
+    assert_eq!(
+        f(
+            "var R: Report \"RU Probe\"; L: Record \"RRE Log\"; begin R.UseRequestPage(false); R.Run(); L.FindLast(); exit(L.Marker); end;"
+        ),
+        "No"
+    );
 }
 
 // ---------------------------------------------------------------- OnInitReport

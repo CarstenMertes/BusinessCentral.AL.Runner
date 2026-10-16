@@ -178,6 +178,10 @@ impl Session {
                 ),
             },
             ids::REPORT_USEREQUESTPAGE_1 => {
+                // `CurrReport.UseRequestPage()` has no receiver value: it is the running report, as for ObjectId (Copy Sales
+                // Document OnPreReport, 186 Tests-ERM tests; the getter of a report run by Run is pinned by
+                // handlers/TestReportRuntimeContracts.al:416-440 for a variable).
+                let receiver = receiver.or_else(|| Some(Value::Codeunit(running.clone())));
                 let inst = self.report_instance(receiver, false)?.0;
                 let schema = self.report_schema(&inst)?;
                 let slot = schema.report().request_flag_slot;

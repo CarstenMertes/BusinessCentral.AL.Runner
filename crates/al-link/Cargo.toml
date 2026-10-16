@@ -1,0 +1,13 @@
+[package]
+name = "al-link"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "The link step (ADR-033): symbolic objects with stable keys in, the dense al_ir::Program out. Core crate: no OS access (ADR-006)."
+
+[dependencies]
+al-ir.workspace = true
+
+[dev-dependencies]
+serde_json.workspace = true

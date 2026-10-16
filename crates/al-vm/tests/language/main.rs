@@ -1,5 +1,6 @@
 //! The tests of one area in one binary (ADR-037 item 5): fewer binaries to link. Each module is a file of language/.
 
+mod array_params;
 mod builtins;
 mod call_stack;
 mod continue_stmt;

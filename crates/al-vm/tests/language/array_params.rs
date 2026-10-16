@@ -1,0 +1,34 @@
+//! An array parameter takes the caller's array (by var) or a copy of it (by value); the callee's own local arrays start
+//! with default elements. The default of a parameter that is passed in is not built (it would be thrown away at once).
+
+use al_builtins::value::Value;
+
+fn run(body: &str) -> Value {
+    let src = format!(
+        "codeunit 50100 C {{
+           procedure Fill(var A: array[4] of Integer) begin A[2] := 7; end;
+           procedure Peek(A: array[4] of Integer): Integer begin A[2] := 99; exit(A[2]); end;
+           procedure Zeroes(): Integer var L: array[3] of Integer; begin exit(L[1] + L[3]); end;
+           procedure F(): Integer var X: array[4] of Integer; R: Integer; begin {body} end; }}"
+    );
+    al_testkit::run_in(&src, "C", "F").unwrap_or(Value::Null)
+}
+
+#[test]
+fn a_var_array_parameter_is_the_callers_array() {
+    assert!(matches!(run("Fill(X); exit(X[2]);"), Value::Integer(7)));
+}
+
+#[test]
+fn a_by_value_array_parameter_is_a_copy() {
+    assert!(matches!(
+        run("X[2] := 5; R := Peek(X); exit(R * 1000 + X[2]);"),
+        Value::Integer(99005)
+    ));
+}
+
+#[test]
+fn a_local_array_starts_with_default_elements() {
+    assert!(matches!(run("exit(Zeroes());"), Value::Integer(0)));
+    assert!(matches!(run("exit(X[1] + X[4]);"), Value::Integer(0)));
+}

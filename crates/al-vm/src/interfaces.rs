@@ -62,7 +62,17 @@ impl Session {
         targets: &[(usize, usize)],
         f: &mut Frame,
     ) -> Result<(usize, usize, Rc<RefCell<Instance>>), Signal> {
-        match self.eval(receiver, f)? {
+        let v = self.eval(receiver, f)?;
+        self.interface_target_value(v, targets)
+    }
+
+    /// [`Session::interface_target`] for a receiver already evaluated (the bytecode).
+    pub(crate) fn interface_target_value(
+        &mut self,
+        receiver: Value,
+        targets: &[(usize, usize)],
+    ) -> Result<(usize, usize, Rc<RefCell<Instance>>), Signal> {
+        match receiver {
             Value::Codeunit(i) => {
                 let object = i.borrow().object as usize;
                 match targets.iter().find(|(o, _)| *o == object) {

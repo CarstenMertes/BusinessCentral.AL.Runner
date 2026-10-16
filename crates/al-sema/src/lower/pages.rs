@@ -102,16 +102,21 @@ impl Lowerer<'_> {
                     },
                 ));
             }
-            // `modify` blocks replace what the control states, in the order the extensions apply.
+            // `modify` blocks replace what the control states, in the order the extensions apply. What each
+            // block changes is also kept apart (`PageMods`), so that the symbolic form can leave it to link.
             let mut ext_triggers = Vec::new();
+            let props_before = (!raw.modifies.is_empty()).then(|| props.clone());
             for (e, msec) in &raw.modifies {
                 let mow = owner_of(Some(*e));
+                let mut changed = Vec::new();
+                let mut added = Vec::new();
                 for p in msec.properties() {
                     let (name, value, routine) = prop_value(&mow, &p, &mut unsupported, &raw.name);
                     let val = match routine {
                         Some(r) => ir::PropVal::Ext(*e, r),
                         None => ir::PropVal::Lit(value),
                     };
+                    changed.push((name.clone(), val.clone()));
                     match props.iter_mut().find(|(n, _)| *n == name) {
                         Some(slot) => slot.1 = val,
                         None => props.push((name, val)),
@@ -119,12 +124,24 @@ impl Lowerer<'_> {
                 }
                 for t in msec.triggers() {
                     match routine_of(&mow, &t) {
-                        Some(r) => ext_triggers.push((t.name().to_ascii_lowercase(), *e, r)),
+                        Some(r) => {
+                            ext_triggers.push((t.name().to_ascii_lowercase(), *e, r));
+                            added.push((t.name().to_ascii_lowercase(), r));
+                        }
                         None => {
                             unsupported.push(format!("trigger {} of control {} has no routine", t.name(), raw.name))
                         }
                     }
                 }
+                self.page_mods.borrow_mut().mods.push(super::localize::PageMod {
+                    control: controls.len(),
+                    ext: *e,
+                    props: changed,
+                    triggers: added,
+                });
+            }
+            if let Some(before) = props_before {
+                self.page_mods.borrow_mut().before.push((controls.len(), before));
             }
             let mut binding = ir::Binding::None;
             if raw.kind == ir::ControlKind::Field && sec.name().eq_ignore_ascii_case("label") {

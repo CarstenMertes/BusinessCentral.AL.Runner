@@ -140,6 +140,13 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `lib.rs` (1067): The typed IR (ADR-011): Program, Object, Routine, Stmt, Expr. Plain serde data, no syntax nodes. Entry: `Program` 8, `Object` 150, `Routine` 747, `Stmt` 937, `Expr` 844, `SrcPos` 85, `NO_POS` 79.
 
+- `sym.rs` (160): The symbolic form of an object (ADR-033): the keys (`ObjKey`, `LocalKey`, `RoutineKey`, `FieldKey`, `ControlKey`), the per-object tables of references (`Refs`) and `SymObject`. Entry: `ObjKey`, `Refs`, `SymObject`.
+- `walk.rs` (992): Every reference to another object, routine, field or control that an `Object` holds (`RefVisitor`, `walk_object`, `TableOf`); the one place that lists the reference sites of the IR. Entry: `walk_object`, `RefVisitor`.
+
+### al-link
+
+- `lib.rs` (851): The link step (ADR-033): symbolic objects in, the dense `Program` out. `link` for a whole program, `relink` for the incremental compile, `first_difference` for the `AL_CHECK_LINK` proof, `par_map` for the worker threads. Entry: `link`, `relink`, `Unit`, `LinkError`.
+
 ### al-sema
 
 - `alcodes.rs` (520): Compile errors with the AL compiler's own codes (must-not-compile corpus): `IMPLEMENTED`, `NOT_CHECKED`, `check_workspace` (source-only checks, run by `check_with`), `check_context` (target and app.json checks, the caller supplies the `AppContext`). The typed ones (AL0118, AL0122, AL0132, AL0161) are in `check.rs` (`al_unresolved_name`, `al_enum_assignment`, `ABSENT_ENUM_MEMBERS`).
@@ -156,6 +163,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `lib.rs` (16): Crate root of the semantic model.
 - `lower/mod.rs` (352): Lowers resolved syntax to the typed IR (ADR-011). Anything inexpressible becomes a refusal reason on the routine. Holds `Lowered`, the `Lowerer` state and the module list. Entry: `Lowered` 26, `Lowerer` 127.
 - `lower/assemble.rs` (1162): Lowering a whole workspace: drives the objects (in parallel), builds the shared data, relowers the objects an edit touched. Entry: `lower_with_positions` 114, `build_shared` 168, `lower_core` 763, `relower_objects` 1008.
+- `lower/localize.rs` (267): From a lowered object (positions) to a symbolic one (keys): routine keys from the syntax, the walk that moves every reference into the object's tables. Entry: `localize`, `routine_keys`, `Keys`.
 - `lower/shared.rs` (880): What the lowering of an object reads (`Shared`) and the per-object state (`Nodes`, `Local`, `Seq`), `lower_object`, the constants and literal helpers. Entry: `Shared` 6, `make_lowerer` 173, `lower_object` 211.
 - `lower/tables.rs` (518): Table schemas: relations, field triggers, CalcFormulas. Entry: `table_schema` 311, `relation_arms` 10, `lower_calc` 445.
 - `lower/pages.rs` (458): Page control trees, `RunObject`, part links. Entry: `page` 8, `run_object` 292.

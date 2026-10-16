@@ -413,7 +413,23 @@ pub(crate) fn property_view(raw: &str) -> String {
                 .map(|item| match item.split_once('=') {
                     Some((field, cond)) => match (cond.find('('), cond.find('(').and_then(|o| balanced(&cond[o..]))) {
                         (Some(o), Some((value, tail))) => {
-                            format!("{field}={}({}){tail}", &cond[..o], rewrite_al_quotes(value))
+                            // The AL string of `filter('>10')` is the filter text `>10`; in a `const` it stays a quoted
+                            // literal (handlers/TestPageSourceTableView.al, misc/lt-probes-needed-7/PnGFixtures.al:666, 1036).
+                            let value = value.trim();
+                            let is_filter = cond[..o].trim().eq_ignore_ascii_case("filter");
+                            let whole = value.len() >= 2
+                                && value.starts_with('\'')
+                                && value.ends_with('\'')
+                                && !value[1..value.len() - 1].replace("''", "").contains('\'');
+                            if is_filter && whole {
+                                format!(
+                                    "{field}={}({}){tail}",
+                                    &cond[..o],
+                                    value[1..value.len() - 1].replace("''", "'")
+                                )
+                            } else {
+                                format!("{field}={}({}){tail}", &cond[..o], rewrite_al_quotes(value))
+                            }
                         }
                         _ => item.to_string(),
                     },

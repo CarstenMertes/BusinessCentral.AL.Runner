@@ -468,6 +468,14 @@ impl Session {
         let [top] = tops[..] else {
             return unsupported("XmlPort import with more than one top-level element (not pinned)");
         };
+        // An import of a text port whose root is a table element is refused by BC, an export is not
+        // (xmlport/lt-xmlport-query-datatransfer/XpTVariableText.al:Csv_ImportBasic and the other Csv_Import tests).
+        if xp.format != ir::XmlFormat::Xml && xp.nodes[top].kind == ir::XmlNodeKind::Table {
+            return Err(xerr(
+                "If you choose XMLport format Fixed Text or Variable Text, then the root element must have source type Text.",
+                "XmlPortInvalidNodeType",
+            ));
+        }
         if xp.nodes[top].kind != ir::XmlNodeKind::Text || schema.children(top).is_empty() {
             return unsupported("XmlPort import whose root is not a text element with content (not pinned)");
         }
@@ -1024,11 +1032,17 @@ impl Session {
     fn xp_import_text(&mut self, inst: &Inst, schema: &Schema, top: usize, text: &str) -> Result<(), Signal> {
         let xp = schema.xp();
         let (table, fields) = self.xp_text_layout(schema, top)?;
-        let record_sep = text_separator(xp.record_separator.as_deref(), "\r\n")?;
+        let record_sep = non_empty(text_separator(
+            set_or_declared(inst, 2, xp.record_separator.as_deref()).as_deref(),
+            "\r\n",
+        )?)?;
         let variable = xp.format == ir::XmlFormat::VariableText;
         let (fsep, fdelim) = (
-            text_separator(xp.field_separator.as_deref(), ",")?,
-            text_separator(xp.field_delimiter.as_deref(), "\"")?,
+            non_empty(text_separator(
+                set_or_declared(inst, 1, xp.field_separator.as_deref()).as_deref(),
+                ",",
+            )?)?,
+            text_separator(set_or_declared(inst, 0, xp.field_delimiter.as_deref()).as_deref(), "\"")?,
         );
         for line in text.split(record_sep.as_str()).filter(|l| !l.is_empty()) {
             let values: Vec<String> = if variable {
@@ -1088,11 +1102,17 @@ impl Session {
     fn xp_export_text(&mut self, inst: &Inst, schema: &Schema, top: usize) -> Result<Vec<u8>, Signal> {
         let xp = schema.xp();
         let (table, fields) = self.xp_text_layout(schema, top)?;
-        let record_sep = text_separator(xp.record_separator.as_deref(), "\r\n")?;
+        let record_sep = non_empty(text_separator(
+            set_or_declared(inst, 2, xp.record_separator.as_deref()).as_deref(),
+            "\r\n",
+        )?)?;
         let variable = xp.format == ir::XmlFormat::VariableText;
         let (fsep, fdelim) = (
-            text_separator(xp.field_separator.as_deref(), ",")?,
-            text_separator(xp.field_delimiter.as_deref(), "\"")?,
+            non_empty(text_separator(
+                set_or_declared(inst, 1, xp.field_separator.as_deref()).as_deref(),
+                ",",
+            )?)?,
+            text_separator(set_or_declared(inst, 0, xp.field_delimiter.as_deref()).as_deref(), "\"")?,
         );
         let mut lines = Vec::new();
         for_each_row(self, inst, schema, table, |me, inst, schema| {
@@ -1392,6 +1412,26 @@ fn declared_separator(v: &str) -> Result<String, Signal> {
     })
 }
 
+/// The text a setter stored for separator `kind` (0 delimiter, 1 field, 2 record, 3 table), else the declared one.
+fn set_or_declared(inst: &Inst, kind: u8, declared: Option<&str>) -> Option<String> {
+    let set = inst
+        .borrow()
+        .xp_text
+        .iter()
+        .find(|(k, _)| *k == kind)
+        .map(|(_, v)| v.clone());
+    set.or_else(|| declared.map(str::to_string))
+}
+
+/// A field or record separator has to hold text; an empty one is not pinned.
+fn non_empty(s: String) -> Result<String, Signal> {
+    if s.is_empty() {
+        unsupported("an empty field or record separator (not pinned)")
+    } else {
+        Ok(s)
+    }
+}
+
 fn text_separator(value: Option<&str>, default: &str) -> Result<String, Signal> {
     let Some(v) = value else { return Ok(default.to_string()) };
     let mut out = String::new();
@@ -1407,14 +1447,15 @@ fn text_separator(value: Option<&str>, default: &str) -> Result<String, Signal> 
             "LF" => out.push('\n'),
             "CR" => out.push('\r'),
             "TAB" => out.push('\t'),
+            // <NewLine> writes CR LF (XpTVariableText.al:Csv_ExportThreeRows reads the lines back as <NL>-separated).
+            "NEWLINE" => out.push_str("\r\n"),
+            // <None> is the empty text (XmlPortFixtures.al "LT XpT Csv Semi" has no field delimiter).
+            "NONE" => {}
             other => return unsupported(format!("the separator token <{other}> (not pinned)")),
         }
         rest = &rest[start + end + 1..];
     }
     out.push_str(rest);
-    if out.is_empty() {
-        return unsupported("an empty separator (not pinned)");
-    }
     Ok(out)
 }
 
@@ -1424,6 +1465,9 @@ fn text_separator(value: Option<&str>, default: &str) -> Result<String, Signal> 
 /// (xmlport/TestXmlPortTextFormatsContracts.al:VariableText_Import_DoubledQuoteInsideAQuotedValue_IsNotAnEscape,
 /// corpus: .
 fn split_variable(line: &str, sep: &str, delim: &str) -> Vec<String> {
+    if delim.is_empty() {
+        return line.split(sep).map(str::to_string).collect();
+    }
     let mut out = Vec::new();
     let mut rest = line;
     loop {

@@ -265,7 +265,14 @@ impl Session {
                 });
             }
             if let Some(view) = &link.view {
-                self.set_view_in(&rec, &table, view, Some(RUN_VIEW_GROUP), false, false)?;
+                self.set_view_in(
+                    &rec,
+                    &table,
+                    &crate::views::property_view(view),
+                    Some(RUN_VIEW_GROUP),
+                    false,
+                    false,
+                )?;
             }
         }
         Ok(Some(rec))

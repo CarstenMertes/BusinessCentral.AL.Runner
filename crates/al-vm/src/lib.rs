@@ -269,6 +269,31 @@ impl Engine {
 /// The reason `Signal::Unsupported` carries when the runner stopped the test (`Session::stop_flag`).
 pub const STOPPED: &str = "the runner stopped the test";
 
+/// Whether the default value of a variable of this type holds no state of its own, so copies of one default are as good as
+/// separate defaults.
+fn plain_default(t: &RtType) -> bool {
+    matches!(
+        t,
+        RtType::Boolean
+            | RtType::Integer
+            | RtType::BigInteger
+            | RtType::Decimal
+            | RtType::Byte
+            | RtType::Char
+            | RtType::Text(_)
+            | RtType::Code(_)
+            | RtType::Date
+            | RtType::Time
+            | RtType::DateTime
+            | RtType::Duration
+            | RtType::Guid
+            | RtType::DateFormula
+            | RtType::Option(_)
+            | RtType::Enum(_)
+            | RtType::Variant
+    )
+}
+
 pub struct Session {
     pub engine: Arc<Engine>,
     /// Which form runs routines (`AL_EXEC`, default the tree walker).
@@ -639,7 +664,12 @@ impl Session {
             // nulls (Tests-ERM "Discount Setup Notifications": `A: array[2] of Record "General Posting Setup"`).
             RtType::Array(dims, el) => {
                 let n = dims.iter().map(|d| *d as usize).product();
-                let cells: Vec<Value> = (0..n).map(|_| self.default_value(el)).collect();
+                // An element that is a plain value (no shared state behind it) is built once and copied.
+                let cells: Vec<Value> = if plain_default(el) {
+                    vec![Value::default_for(el); n]
+                } else {
+                    (0..n).map(|_| self.default_value(el)).collect()
+                };
                 Value::Array(Rc::new(RefCell::new(cells)))
             }
             other => Value::default_for(other),
@@ -843,8 +873,13 @@ impl Session {
             engine.exec.chunk(&engine.program, object, routine)
         };
         let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len() + chunk.map_or(0, |c| usize::from(c.temps)));
-        for s in &r.locals {
-            locals.push(self.default_value(&s.ty));
+        for (i, s) in r.locals.iter().enumerate() {
+            // The default of an array parameter that is passed in is never seen: the argument replaces it.
+            if i < r.params && i < args.len() && matches!(&s.ty, RtType::Array(_, el) if plain_default(el)) {
+                locals.push(Value::Null);
+            } else {
+                locals.push(self.default_value(&s.ty));
+            }
         }
         for (i, a) in args.into_iter().enumerate().take(r.params) {
             locals[i] = match (a, r.by_var.get(i).copied().unwrap_or(false)) {

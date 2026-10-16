@@ -118,3 +118,19 @@ fn a_text_builder_has_a_capacity_of_16_that_can_be_set_and_that_clear_keeps() {
         "16|16|100|100||0"
     );
 }
+
+#[test]
+fn data_transfer_errors_carry_their_code_and_ensure_capacity_grows() {
+    // misc/W5DataTransferOutside.al (DB:Ok), text/lt-label-textbuilder/TxCTextBuilderBasics.al:EnsureCapacity_Basics.
+    let src = "table 50101 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var DT: DataTransfer; TB: TextBuilder; S: Text; begin
+        DT.SetTables(Database::T, Database::T); asserterror DT.CopyRows(); S := GetLastErrorCode();
+        TB.EnsureCapacity(50); S += '|' + Format(TB.Capacity() >= 50); asserterror TB.EnsureCapacity(2147483647 + 1);
+        exit(S); end; }";
+    let r = al_testkit::run_with(src, "C", "F", vec![]);
+    let s = match r {
+        Ok((al_builtins::value::Value::Text(s), _)) => s.to_string(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(s, "DB:Ok|Yes");
+}

@@ -16,7 +16,8 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
 fn error<T>(message: &str) -> Result<T, Signal> {
     Err(Signal::Error(Box::new(AlError {
         message: message.to_string(),
-        code: String::new(),
+        // xmlport/lt-xmlport-query-datatransfer/XpTDataTransfer.al, misc/W5DataTransferOutside.al: the code is DB:Ok.
+        code: "DB:Ok".into(),
         call_stack: String::new(),
     })))
 }

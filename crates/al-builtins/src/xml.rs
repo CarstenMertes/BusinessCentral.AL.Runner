@@ -1039,6 +1039,13 @@ impl Writer {
         self.text_end = self.out.len();
     }
 
+    /// White space between the nodes of a document (outside the root): written as it is and not content of any element, so
+    /// it does not make the root's content mixed (xml/TestXmlRuntimeContracts.al:XmlDocument_ReadFrom_KeepsWhiteSpaceInsideAndOutsideTheRoot).
+    fn document_text(&mut self, s: &str) {
+        self.out.push_str(s);
+        self.text_end = self.out.len();
+    }
+
     fn markup(&mut self, s: &str) {
         self.break_line();
         self.out.push_str(s);
@@ -1181,8 +1188,9 @@ impl Writer {
         }
         self.break_line();
         self.level += 1;
+        // An element inside mixed content is written inline with everything it holds, as .NET's indenting writer does (the
+        // mixed-content bit is inherited, then restored at the end tag): P90CDataEdit.al:AfterSelf_Attached_ExistingNodes `k12`.
         self.saved.push(self.mixed);
-        self.mixed = false;
         self.out.push('<');
         self.out.push_str(&qname(prefix, local));
         self.out.push_str(&extra);
@@ -1281,7 +1289,17 @@ fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
             ));
         }
         for c in kids {
-            w.node(&c)?;
+            match with(&c, |d| match d {
+                XData::Text(s) => Some(s.clone()),
+                _ => None,
+            }) {
+                Some(s) => {
+                    let mut esc = String::new();
+                    escape_text(&s, &mut esc);
+                    w.document_text(&esc);
+                }
+                None => w.node(&c)?,
+            }
         }
     } else {
         w.node(h)?;
@@ -2975,28 +2993,54 @@ fn add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
                 continue;
             }
         }
-        insert(&h, None, content_nodes(std::slice::from_ref(arg))?)?;
+        let nodes = content_nodes(std::slice::from_ref(arg))?;
+        reject_declaration_in_document(&h, &nodes)?;
+        insert(&h, None, nodes)?;
     }
     Ok(Value::Boolean(true))
 }
 
+/// `Add` of an XML declaration to a document raises (a declaration comes with `Create` or `SetDeclaration`:
+/// misc/lt-probes-needed-1/PnAXmlNodeAdds.al `declaration-into-document`, an Argument error).
+fn reject_declaration_in_document(container: &Handle, nodes: &[Handle]) -> Result<(), Signal> {
+    if kind(container) == "XmlDocument" && nodes.iter().any(|n| kind(n) == "XmlDeclaration") {
+        return Err(nav_argument());
+    }
+    Ok(())
+}
+
+/// An attribute is not a sibling: `AddAfterSelf`, `AddBeforeSelf` and `ReplaceWith` of an attribute raise an Argument error
+/// (xml/lt-xml-cdata-comment-pi-text/P90*Edit.al:AfterSelf_Attached_InvalidKinds `k6`).
+fn reject_attributes(nodes: &[Handle]) -> Result<(), Signal> {
+    if nodes.iter().any(|n| kind(n) == "XmlAttribute") {
+        return Err(nav_argument());
+    }
+    Ok(())
+}
+
 fn add_first(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
-    insert(&h, Some(0), content_nodes(a)?)?;
+    let nodes = content_nodes(a)?;
+    reject_declaration_in_document(&h, &nodes)?;
+    insert(&h, Some(0), nodes)?;
     Ok(Value::Boolean(true))
 }
 
 fn add_after_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let (p, i) = position_in_parent(&h)?;
-    insert(&p, Some(i + 1), content_nodes(a)?)?;
+    let nodes = content_nodes(a)?;
+    reject_attributes(&nodes)?;
+    insert(&p, Some(i + 1), nodes)?;
     Ok(Value::Boolean(true))
 }
 
 fn add_before_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let (p, i) = position_in_parent(&h)?;
-    insert(&p, Some(i), content_nodes(a)?)?;
+    let nodes = content_nodes(a)?;
+    reject_attributes(&nodes)?;
+    insert(&p, Some(i), nodes)?;
     Ok(Value::Boolean(true))
 }
 
@@ -3031,6 +3075,7 @@ fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     }
     let (p, i) = position_in_parent(&h)?;
     let nodes = content_nodes(a)?;
+    reject_attributes(&nodes)?;
     // A document type that cannot be replaced is removed all the same (DocTypeNode.al:ReplaceWith_Element: the document
     // is `<a />` afterwards).
     if with(&h, |d| matches!(d, XData::DocType { .. })) {

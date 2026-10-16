@@ -68,3 +68,18 @@ fn select_single_node_without_a_match_raises_in_the_statement_form_and_a_declara
         "The XPath query '/r/comment()' does not match any nodes.|InvalidXPathSelection|<r>&lt;?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?&gt;</r>"
     );
 }
+
+#[test]
+fn xml_sibling_and_content_rules_of_the_p90_families() {
+    // P90CDataEdit.al:AfterSelf_Attached_InvalidKinds `k6` (an attribute as a sibling: Argument), AfterSelf_Attached_ExistingNodes
+    // `k12` (a copy of the parent inside mixed content is written inline); PnAXmlNodeAdds.al `declaration-into-document` (Argument).
+    let src = "codeunit 50100 C { procedure F(): Text var Doc: XmlDocument; R: XmlElement; X: XmlCData; S: Text; T: Text; begin
+        Doc := XmlDocument.Create(); R := XmlElement.Create('r'); Doc.Add(R); R.Add(XmlElement.Create('a')); X := XmlCData.Create('x'); R.Add(X);
+        asserterror X.AddAfterSelf(XmlAttribute.Create('a', '1')); S := GetLastErrorCode();
+        asserterror Doc.Add(XmlDeclaration.Create('1.0', 'utf-8', 'yes')); S += '|' + GetLastErrorCode();
+        X.AddAfterSelf(R.AsXmlNode()); Doc.WriteTo(T); exit(S + '|' + T); end; }";
+    assert_eq!(
+        al_testkit::text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "Argument|Argument|<?xml version=\"1.0\" encoding=\"utf-16\"?>\n<r>\n  <a /><![CDATA[x]]><r><a /><![CDATA[x]]></r></r>"
+    );
+}

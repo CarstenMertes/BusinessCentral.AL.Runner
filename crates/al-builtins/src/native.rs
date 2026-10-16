@@ -1070,7 +1070,7 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
         return Err(Signal::Error(Box::new(AlError {
             message: "Sessions can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled."
                 .into(),
-            code: String::new(),
+            code: "TestStartSessionNotAllowed".into(),
             call_stack: String::new(),
         })));
     }

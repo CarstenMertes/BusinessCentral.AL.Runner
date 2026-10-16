@@ -808,8 +808,18 @@ fn tb_remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(true))
 }
 
-fn tb_ensure_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    string_of(r)?;
+/// `EnsureCapacity(N)` makes the capacity at least N and answers true; N above the maximum is an overflow; zero and a negative N
+/// change nothing (TxCTextBuilderBasics.al:EnsureCapacity_Basics).
+fn tb_ensure_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let h = string_of(r)?;
+    let n = int(a, 0)?;
+    if n > i64::from(i32::MAX) {
+        return crate::native::raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+    }
+    if n > i64::from(capacity_of(&h)) {
+        let s = with_string(&h, |s| std::mem::take(s));
+        *h.borrow_mut() = LibraryValue::TextCap(s, n as i32);
+    }
     Ok(Value::Boolean(true))
 }
 

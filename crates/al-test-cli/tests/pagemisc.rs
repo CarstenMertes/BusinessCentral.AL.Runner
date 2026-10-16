@@ -155,6 +155,13 @@ codeunit 62097 "PM Event Subs"
     [EventSubscriber(ObjectType::Page, Page::"PM Event Card", 'OnAfterValidateEvent', 'Descr', false, false)]
     local procedure After(var Rec: Record "PM Row") var P: Codeunit "PM Probe"; begin P.Note('A(' + Rec.Descr + ');'); end;
 }
+table 62300 "PM Host" { fields { field(1; "No."; Code[20]) { } field(2; Name; Text[30]) { } } keys { key(PK; "No.") { } } }
+table 62301 "PM Host Line" { fields { field(1; "Host No."; Code[20]) { TableRelation = "PM Host"; } field(2; "Line No."; Integer) { } field(3; Info; Text[30]) { } } keys { key(PK; "Host No.", "Line No.") { } } }
+page 62302 "PM Host Lines" { PageType = ListPart; SourceTable = "PM Host Line"; AutoSplitKey = true; DelayedInsert = true;
+  layout { area(Content) { repeater(R) { field(Info; Rec.Info) { } } } } }
+page 62303 "PM Host Card" { PageType = ListPlus; SourceTable = "PM Host";
+  layout { area(Content) { group(G) { field("No."; Rec."No.") { } field(Name; Rec.Name) { } }
+    part(Lines; "PM Host Lines") { SubPageLink = "Host No." = field("No."); } } } }
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -779,5 +786,19 @@ fn set_value_raises_the_page_validate_events_around_the_control_trigger() {
             R.DeleteAll(); R.\"No.\" := 'E1'; R.Insert();
             C.OpenEdit(); C.GoToRecord(R); P.Reset(); C.Descr.SetValue('hello');
             Check('B(hello);V;A(hello);', P.Trace()); C.Close(); end;"
+    ));
+}
+
+// Base Application's Allocation Account page is a ListPlus card with a part linked on its key. A test opens it with OpenNew and types the
+// key: the part's blank line must not validate the link against a host row that is not saved yet (34 Tests-ERM tests failed
+// with "contains a value that cannot be found in the related table"). Assumed, part-link-not-validated-for-unsaved-host.
+#[test]
+fn a_part_linked_to_a_new_unsaved_host_does_not_validate_the_link_when_the_key_is_typed() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure KeyThenName() var C: TestPage \"PM Host Card\"; H: Record \"PM Host\"; begin
+            H.DeleteAll(); C.OpenNew(); C.\"No.\".SetValue('NEWHOST'); C.Name.SetValue('n');
+            if not H.Get('NEWHOST') then Error('host not saved'); C.Close(); end;"
     ));
 }

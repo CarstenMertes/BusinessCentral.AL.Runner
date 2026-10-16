@@ -241,6 +241,12 @@ registry! {
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
     },
+    PartLinkNotValidatedForUnsavedHost => {
+        id: "part-link-not-validated-for-unsaved-host",
+        assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",
+        tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
+        probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

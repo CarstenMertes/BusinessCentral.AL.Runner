@@ -268,6 +268,9 @@ pub struct InState {
     source: Source,
     pub pos: usize,
     pub enc: Encoding,
+    /// A read already found the stream at its end: the next typed read there raises (streams/StTStreams.al:ReadPastEnd against
+    /// streams/lt-stream-read-write-media/P102ReadTyped.al `pastend`: the first one answers 0).
+    pub hit_end: bool,
 }
 
 impl InState {
@@ -276,6 +279,7 @@ impl InState {
             source: Source::Snapshot(data),
             pos: 0,
             enc,
+            hit_end: false,
         }
     }
 
@@ -284,6 +288,7 @@ impl InState {
             source: Source::Live(blob),
             pos: 0,
             enc,
+            hit_end: false,
         }
     }
 
@@ -549,6 +554,9 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             }
         }
         let (enc, pos) = (s.enc, s.pos);
+        if !s.is_empty() && pos >= s.len() {
+            s.hit_end = true;
+        }
         let unit = enc.unit();
         let text = s.with_data(|data| {
             let rest = &data[pos.min(data.len())..];
@@ -701,7 +709,15 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
     };
     // At the end of a stream that holds data nothing is read: the result is 0 and the variable takes its default value
     // (streams/lt-stream-read-write-media/P102ReadTyped.al: every `pastend_*`). A stream without any data keeps the error below.
-    let at_end = with_in(r.as_deref_mut(), |s| Ok(s.len() > 0 && s.pos >= s.len()))?;
+    let at_end = with_in(r.as_deref_mut(), |s| {
+        let at = !s.is_empty() && s.pos >= s.len();
+        // The first read at the end answers 0; one after another read already hit the end raises.
+        let first = at && !s.hit_end;
+        if at {
+            s.hit_end = true;
+        }
+        Ok(first)
+    })?;
     if at_end {
         a[0] = Value::default_for(&match &a[0] {
             Value::Integer(_) => crate::value::RtType::Integer,

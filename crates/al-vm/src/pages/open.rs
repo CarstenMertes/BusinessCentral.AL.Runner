@@ -174,7 +174,7 @@ impl Session {
         // The part control's SubPageView comes first: its filters land in the link group, its
         // sorting and order set the key and direction. The part page's own SourceTableView then
         // sets only the halves it names (corpus handlers/TestPartOwnSortVsSubPageView.al:1-45).
-        let sub_view = self.sub_page_view(st).map(|v| crate::views::property_view(&v));
+        let sub_view = self.sub_page_view(st).map(|v| crate::views::sub_page_view_text(&v));
         if let (Some(view), true) = (&sub_view, has_source) {
             let rec = self.page_rec(st);
             let table = self.table(&rec)?;
@@ -269,8 +269,7 @@ impl Session {
                 return Ok(());
             }
             self.load_first_row(st, mode, record.is_some())?;
-            self.sync_parts(st)?;
-            self.sync_hidden_parts(st)
+            self.sync_parts_at_open(st)
         })();
         if let Err(e) = result {
             // The open raises the error itself and leaves the variable closed

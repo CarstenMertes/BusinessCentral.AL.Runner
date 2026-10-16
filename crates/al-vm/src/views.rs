@@ -398,10 +398,18 @@ fn ordinals(e: &FilterExpr) -> FilterExpr {
 /// handlers/TestPageSourceTableView.al:169-190 (a SourceTableView `const("G/L")`). Field names keep their
 /// quotes (`field_by_name` takes either).
 pub(crate) fn property_view(raw: &str) -> String {
-    property_view_with(raw)
+    property_view_with(raw, true)
 }
 
-fn property_view_with(raw: &str) -> String {
+/// [`property_view`] for a part control's `SubPageView`: a quoted filter stays as written, so a view like `filter('>10')` is
+/// refused. Opening the page "LT PnG Doc Parts" with it logs one more OnAfterGetRecord for the part that views the linked field than
+/// BC does (misc/lt-probes-needed-7/PnGPartTriggers.al:OpenOrderOfHostWithSixParts, 17 reads where this reads 18), and why is not
+/// pinned.
+pub(crate) fn sub_page_view_text(raw: &str) -> String {
+    property_view_with(raw, false)
+}
+
+fn property_view_with(raw: &str, unquote_filter: bool) -> String {
     let mut parts = Vec::new();
     let mut rest = raw.trim();
     while !rest.is_empty() {
@@ -420,7 +428,7 @@ fn property_view_with(raw: &str) -> String {
                             // The AL string of `filter('>10')` is the filter text `>10`; in a `const` it stays a quoted
                             // literal (handlers/TestPageSourceTableView.al, misc/lt-probes-needed-7/PnGFixtures.al:666, 1036).
                             let value = value.trim();
-                            let is_filter = cond[..o].trim().eq_ignore_ascii_case("filter");
+                            let is_filter = unquote_filter && cond[..o].trim().eq_ignore_ascii_case("filter");
                             let whole = value.len() >= 2
                                 && value.starts_with('\'')
                                 && value.ends_with('\'')

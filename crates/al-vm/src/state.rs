@@ -106,10 +106,14 @@ pub(crate) struct ReportState {
     /// (`CurrReport.Skip`, `Break`, `Quit`), and the request it made (al-vm reports.rs).
     pub(crate) report_trigger: Option<(usize, crate::reports::TrigKind)>,
     pub(crate) report_flow: Option<crate::reports::Flow>,
+    /// A `CurrReport.Skip`, `Break` or `Quit` is leaving the procedures down to the report trigger at this depth.
+    pub(crate) flow_unwind: Option<usize>,
     /// The request page of a `RunRequestPage` is open: a table write in its handler finds no transaction
     /// (report/TestProbeReportContracts.al:RequestPage_TableWriteInsideHandler).
     pub(crate) request_only_page: bool,
     pub(crate) report_executed: Vec<std::rc::Weak<RefCell<Instance>>>,
+    /// Report variables a procedure of the caller initialized before their run (`SetParameters` and the like).
+    pub(crate) prepared: Vec<std::rc::Weak<RefCell<Instance>>>,
     /// For each report body running, innermost last: whether `CurrReport.Preview()` is pinned to be
     /// false for it (it was started by `Run` or `RunModal`).
     pub(crate) report_preview_pinned: Vec<bool>,

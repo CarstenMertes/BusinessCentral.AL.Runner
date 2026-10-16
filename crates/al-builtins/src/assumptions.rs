@@ -470,6 +470,12 @@ registry! {
         tests: "Service Item Line CalculateResponseDateTime through Calendar Management: about 820 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
         probe: "T + 1000.0 and T - 1000.0 for a Decimal variable holding a whole number, and 0.",
     },
+    FilterChangeLandsOnNewLine => {
+        id: "filter-change-lands-on-new-line",
+        assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",
+        tests: "Item Vendor Catalog (OpenNew, Filter.SetFilter(\"Item No.\"), then SetValue of the vendor): ERM Item Reference Purchase and about 12 more Tests-ERM tests.",
+        probe: "An editable list opened with OpenNew and with OpenEdit over an empty filtered result: SetValue of a non-key field and the stored row's key; Next() and the row triggers that run.",
+    },
 }
 
 thread_local! {

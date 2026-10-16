@@ -295,16 +295,6 @@ pub(crate) fn base_slot_missing(slot: usize) -> Signal {
     ))
 }
 
-#[cfg(test)]
-mod conformance {
-    /// ADR-001: the compiled program is shared across threads; sessions are not.
-    #[test]
-    fn engine_is_send_and_sync() {
-        fn assert_send_sync<T: Send + Sync>() {}
-        assert_send_sync::<super::Engine>();
-    }
-}
-
 /// How a path is compared with the pending ones: case folded and with `/` for `\`, so a different spelling of the
 /// same file is still the file (a superset of what the file system would call equal, which only refuses more).
 pub(crate) fn pending_key(path: &str) -> String {
@@ -321,5 +311,15 @@ impl Session {
             Some(report) => Err(al_builtins::stream::render_pending_error(report)),
             None => Ok(()),
         }
+    }
+}
+
+#[cfg(test)]
+mod conformance {
+    /// ADR-001: the compiled program is shared across threads; sessions are not.
+    #[test]
+    fn engine_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<super::Engine>();
     }
 }

@@ -886,11 +886,14 @@ impl Session {
         };
         self.ret_used = ret_used;
         self.depth -= 1;
-        // ADR-040: a look at the output of a report that was never produced, made where the builtin could not
-        // refuse it (`Format` of a Blob), ends the run at the latest when the outermost call returns.
-        if self.depth == 0 && r.is_ok() {
+        // ADR-040: a look at the output of a report that was never produced, made where the builtin could not refuse it
+        // (a parser or a hash reading a stream, `Format` of a Blob), ends the run when the outermost call returns:
+        // the result, or the error the empty bytes caused, is replaced by the refusal. One branch per outermost call.
+        if self.depth == 0 {
             if let Some(refusal) = al_builtins::stream::take_pending_observation() {
-                return Err(refusal);
+                if !matches!(r, Err(Signal::Unsupported(_))) {
+                    return Err(refusal);
+                }
             }
         }
         r

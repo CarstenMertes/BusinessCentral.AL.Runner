@@ -366,13 +366,8 @@ impl Session {
                     set(&mut f.locals[d as usize], v);
                 }
                 Op::Builtin { s, d } => {
-                    let v = self.run_builtin(&chunk.builtins[s as usize], f, nl);
-                    // ADR-040: a builtin that looked at a pending report output through a path that cannot refuse
-                    // (its own error, about the empty bytes it got, does not count).
-                    if let Some(refusal) = al_builtins::stream::take_pending_observation() {
-                        return Err(refusal);
-                    }
-                    set(&mut f.locals[d as usize], v?);
+                    let v = self.run_builtin(&chunk.builtins[s as usize], f, nl)?;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::CharAt { d, a, b } => self.op_char_at(f, d, a, b, nl)?,
                 Op::AppendText { s, old, a } => self.op_append(&chunk.appends[s as usize], f, old, a, nl)?,
@@ -608,11 +603,8 @@ impl Session {
 
     #[inline(never)]
     fn op_dotnet(&mut self, site: &DotNetSite, f: &mut Frame, d: u16, nl: u16) -> Result<(), Signal> {
-        let v = self.run_dotnet(site, f, nl);
-        if let Some(refusal) = al_builtins::stream::take_pending_observation() {
-            return Err(refusal);
-        }
-        set(&mut f.locals[d as usize], v?);
+        let v = self.run_dotnet(site, f, nl)?;
+        set(&mut f.locals[d as usize], v);
         Ok(())
     }
 

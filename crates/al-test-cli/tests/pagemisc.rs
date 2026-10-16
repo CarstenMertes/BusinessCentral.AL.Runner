@@ -162,6 +162,9 @@ page 62302 "PM Host Lines" { PageType = ListPart; SourceTable = "PM Host Line"; 
 page 62303 "PM Host Card" { PageType = ListPlus; SourceTable = "PM Host";
   layout { area(Content) { group(G) { field("No."; Rec."No.") { } field(Name; Rec.Name) { } }
     part(Lines; "PM Host Lines") { SubPageLink = "Host No." = field("No."); } } } }
+table 62304 "PM Pick" { LookupPageId = "PM Pick List"; fields { field(1; Id; Code[10]) { } field(2; Grp; Integer) { } } keys { key(PK; Id) { } } }
+page 62305 "PM Pick List" { PageType = List; SourceTable = "PM Pick"; Editable = false;
+  layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } } }
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -800,5 +803,20 @@ fn a_part_linked_to_a_new_unsaved_host_does_not_validate_the_link_when_the_key_i
         procedure KeyThenName() var C: TestPage \"PM Host Card\"; H: Record \"PM Host\"; begin
             H.DeleteAll(); C.OpenNew(); C.\"No.\".SetValue('NEWHOST'); C.Name.SetValue('n');
             if not H.Get('NEWHOST') then Error('host not saved'); C.Close(); end;"
+    ));
+}
+
+// Base Application's lookups run `Page.RunModal(0, Rec) = Action::LookupOK` and read the record afterwards (Gen. Journal
+// Management's template selection: 10 Tests-ERM tests failed with an empty template name). On LookupOK the record holds
+// the row the page was left on. Not pinned by a corpus test (assumption page-run-modal-record-takes-selection).
+#[test]
+fn page_run_modal_with_a_record_hands_back_the_selected_row_on_lookup_ok() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('Pick')]
+        procedure PicksB() var R: Record \"PM Pick\"; T: Record \"PM Pick\"; A: Action; begin
+            R.DeleteAll(); R.Id := 'A'; R.Grp := 1; R.Insert(); R.Id := 'B'; R.Grp := 1; R.Insert(); R.Id := 'C'; R.Grp := 2; R.Insert();
+            T.SetRange(Grp, 1); A := Page.RunModal(0, T); Check('LookupOK', Format(A)); Check('B', T.Id); end;
+        [ModalPageHandler] procedure Pick(var L: TestPage \"PM Pick List\") begin L.GoToKey('B'); L.OK().Invoke(); end;"
     ));
 }

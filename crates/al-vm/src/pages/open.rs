@@ -528,6 +528,10 @@ impl Session {
         if !(via_action && matches!(action, "Cancel" | "LookupCancel" | "No")) {
             self.store_page_values(st);
         }
+        if action == "LookupOK" && self.has_source(st) && st.borrow().cursor == Cursor::Row {
+            let fields = self.page_rec(st).borrow().fields.clone();
+            st.borrow_mut().selection = Some(fields);
+        }
         self.mark_closed(st);
         st.borrow_mut().result = Some(action.to_string());
         Ok(Value::Null)

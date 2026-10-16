@@ -533,7 +533,9 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         if s.pos == 0 {
             let utf8 = s.enc == Encoding::Utf8;
             let bom = s.with_data(|d| {
-                if d.starts_with(&[0xFF, 0xFE]) {
+                // A stream created as UTF-8 does not take a UTF-16 mark: it reads the bytes as UTF-8 and fails on them (xmlport/
+                // lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_ThreeRows).
+                if !utf8 && d.starts_with(&[0xFF, 0xFE]) {
                     Some((Encoding::Utf16, 2))
                 } else if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
                     Some((Encoding::Utf8, 3))
@@ -548,7 +550,7 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         }
         let (enc, pos) = (s.enc, s.pos);
         let unit = enc.unit();
-        let (text, consumed) = s.with_data(|data| {
+        let text = s.with_data(|data| {
             let rest = &data[pos.min(data.len())..];
             let mut end = 0;
             while end + unit <= rest.len() && end / unit < max_chars && !is_unit(&rest[end..end + unit], b'\n') {
@@ -567,8 +569,19 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             } else {
                 end
             };
-            (enc.decode_pinned(&line).then(|| enc.decode(&line)), consumed)
+            // Bytes that are no UTF-8 cannot be read from a stream created as UTF-8 (xmlport/lt-xmlport-query-datatransfer/
+            // XpTExportBasic.al:Export_ThreeRows: the UTF-16 bytes of an export).
+            let invalid_utf8 = enc == Encoding::Utf8 && std::str::from_utf8(&line).is_err();
+            ((!invalid_utf8 && enc.decode_pinned(&line)).then(|| enc.decode(&line)), consumed, invalid_utf8)
         });
+        let (text, consumed, invalid_utf8) = (text.0, text.1, text.2);
+        if invalid_utf8 {
+            return Err(Signal::Error(Box::new(crate::native::AlError {
+                message: "Invalid data encountered in stream, unable to read text.".into(),
+                code: "InvalidStreamData".into(),
+                call_stack: String::new(),
+            })));
+        }
         let Some(text) = text else {
             return unsupported("InStream.ReadText of MS-DOS bytes whose character is not pinned");
         };

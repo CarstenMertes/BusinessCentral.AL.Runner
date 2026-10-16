@@ -24,7 +24,11 @@ fn main() -> ExitCode {
         .stack_size(512 << 20)
         .spawn(run)
         .expect("spawn runner thread");
-    match worker.join().expect("runner thread panicked") {
+    let result = worker.join().expect("runner thread panicked");
+    if std::env::var_os("AL_EXEC_REPORT").is_some() {
+        eprintln!("{}", al_vm::exec_report());
+    }
+    match result {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e}");

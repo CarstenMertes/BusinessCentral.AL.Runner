@@ -103,49 +103,21 @@ impl Session {
                 body,
             } => {
                 let (from, to) = (self.eval(from, f)?, self.eval(to, f)?);
-                // A loop over a Boolean (`for Stepwise := false to true do`, 27 Microsoft codeunits) runs for false and
-                // then for true, the variable holding the Boolean each round (registry entry for-boolean). Not pinned.
-                if matches!(from, Value::Boolean(_)) || matches!(to, Value::Boolean(_)) {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
-                }
-                // Option bounds of an Integer loop take its type as an assignment does: the ordinal (Microsoft's
-                // "Library - Manufacturing" loops `for Day := FromDay to ToDay` with Option parameters; pinned by the
-                // corpus Option_InCaseAndLoopBounds, types/ for_to_option).
-                let bound = |v: Value| match v {
-                    Value::Option(o, _) | Value::Enum(_, o) => Value::Integer(o),
-                    Value::Boolean(b) => Value::Integer(i32::from(b)),
-                    v => v,
-                };
-                if matches!(from, Value::Enum(..)) || matches!(to, Value::Enum(..)) {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
-                }
-                let (from, to) = (bound(from), bound(to));
-                let (start, end) = (int(&from)?, int(&to)?);
+                let (start, end) = Self::for_limits(from, to)?;
                 let mut i = start;
                 let lid = if CAP { self.cap_loop_enter() } else { None };
                 // The type of the counter variable does not change while the loop runs: found once.
                 let slot_ty = self.place_type(var, f);
-                let option_like = matches!(slot_ty, RtType::Option(_) | RtType::Enum(_));
-                let is_boolean = matches!(slot_ty, RtType::Boolean);
-                let is_integer = matches!(slot_ty, RtType::Integer);
+                let kind = ForKind::of(&slot_ty);
                 while if *down { i >= end } else { i <= end } {
                     self.check_stop()?;
                     if CAP {
                         self.cap_loop_pass(lid);
                     }
-                    if option_like {
+                    if kind.option_like {
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
                     }
-                    let counter = if is_boolean {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
-                        Value::Boolean(i != 0)
-                    } else if is_integer && let Ok(n) = i32::try_from(i) {
-                        // What the conversion of a BigInteger into an Integer gives, without the Decimal in between; a
-                        // counter beyond Integer takes the general path, which reports it.
-                        Value::Integer(n)
-                    } else {
-                        ops::convert(Value::BigInteger(i), &slot_ty)?
-                    };
+                    let counter = Self::for_counter(kind, i, &slot_ty)?;
                     self.write(var, counter, f)?;
                     if CAP {
                         self.cap_loop_var(var, f);
@@ -157,7 +129,7 @@ impl Session {
                     }
                     // The counter is read back from the variable, which may be an Option (an Option field as the
                     // loop variable, Sales Price Calc. Mgt.): its ordinal.
-                    i = int(&bound(self.read(var, f)?))?;
+                    i = int(&Self::for_bound(self.read(var, f)?))?;
                     i += if *down { -1 } else { 1 };
                 }
                 if CAP {
@@ -226,25 +198,7 @@ impl Session {
             S::Break => Err(Signal::Break),
             S::Continue => Err(Signal::Continue),
             S::Pos(p) => {
-                if let Some(top) = self.call_stack.last_mut() {
-                    top.pos = *p;
-                }
-                if profile::ON.load(std::sync::atomic::Ordering::Relaxed) {
-                    self.profile_sample();
-                }
-                if self.coverage.code_coverage {
-                    self.coverage_hit(*p);
-                }
-                if let Some((counts, touched)) = &mut self.coverage.coverage_counts {
-                    let i = *p as usize;
-                    if counts.len() <= i {
-                        counts.resize(self.engine.program.positions.len().max(i + 1), 0);
-                    }
-                    if counts[i] == 0 {
-                        touched.push(*p);
-                    }
-                    counts[i] += 1;
-                }
+                self.at_pos(*p);
                 Ok(())
             }
             S::AssertError(body) => {
@@ -315,40 +269,14 @@ impl Session {
             }
             E::Unary(op, e) => {
                 let v = self.eval(e, f)?;
-                match op {
-                    ir::UnOp::Not => Ok(Value::Boolean(!ops::truthy(&v)?)),
-                    ir::UnOp::Plus => Ok(v),
-                    ir::UnOp::Neg => ops::arith(ops::Arith::Sub, &Value::Integer(0), &v).map(|r| match (&v, r) {
-                        (Value::Decimal(_), r) => r,
-                        (_, r) => r,
-                    }),
-                }
+                Self::unary_op(*op, v)
             }
             E::Binary(op, l, r) => {
                 // AL evaluates both operands of and/or (no short circuit):
                 // docs/probes-needed.md.
                 let l = self.eval(l, f)?;
                 let r = self.eval(r, f)?;
-                use ir::BinOp as B;
-                Ok(match op {
-                    B::Add => ops::arith(ops::Arith::Add, &l, &r)?,
-                    B::Sub => ops::arith(ops::Arith::Sub, &l, &r)?,
-                    B::Mul => ops::arith(ops::Arith::Mul, &l, &r)?,
-                    B::Div => ops::arith(ops::Arith::Div, &l, &r)?,
-                    B::IntDiv => ops::arith(ops::Arith::IntDiv, &l, &r)?,
-                    B::Mod => ops::arith(ops::Arith::Mod, &l, &r)?,
-                    B::And => Value::Boolean(ops::truthy(&l)? & ops::truthy(&r)?),
-                    B::Or => Value::Boolean(ops::truthy(&l)? | ops::truthy(&r)?),
-                    B::Xor => Value::Boolean(ops::truthy(&l)? ^ ops::truthy(&r)?),
-                    B::Eq => Value::Boolean(ops::compare(&l, &r)? == Ordering::Equal),
-                    B::Ne => Value::Boolean(ops::compare(&l, &r)? != Ordering::Equal),
-                    B::Lt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Less),
-                    B::Le => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Greater),
-                    B::Gt => Value::Boolean(ops::compare_order(&l, &r)? == Ordering::Greater),
-                    B::Ge => Value::Boolean(ops::compare_order(&l, &r)? != Ordering::Less),
-                    B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(&l, &r)?),
-                    B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(&l, &r)?),
-                })
+                Self::binary_op(*op, &l, &r)
             }
             E::In(v, set) => {
                 let v = self.eval(v, f)?;
@@ -385,7 +313,7 @@ impl Session {
                         // variable's own globals (ADR-021).
                         Value::Record(rc) => {
                             let (inst, saved) = self.enter_record(*object, rc, None)?;
-                            let r = self.finish_call(*object, *routine, inst.clone(), args, *try_call, f);
+                            let r = self.finish_call(*object, *routine, inst.clone(), args, None, *try_call, f);
                             Self::leave_record(&inst, saved);
                             return r;
                         }
@@ -412,7 +340,7 @@ impl Session {
                         }
                     },
                 };
-                self.finish_call(*object, *routine, inst, args, *try_call, f)
+                self.finish_call(*object, *routine, inst, args, None, *try_call, f)
             }
             E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
             E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
@@ -428,7 +356,7 @@ impl Session {
                 args,
             } => {
                 let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
-                self.finish_call(object, routine, inst, args, false, f)
+                self.finish_call(object, routine, inst, args, None, false, f)
             }
             E::InterfaceTest { value, objects, cast } => {
                 let v = self.eval(value, f)?;
@@ -667,6 +595,39 @@ impl Session {
         }
     }
 
+    /// Runs the native of a builtin on evaluated operands and writes the by-reference ones back. Used by the bytecode;
+    /// the tree walker's `E::Builtin` arm is the same logic kept inline (see `call_site`).
+    #[allow(clippy::too_many_arguments)]
+    #[inline(never)]
+    pub(crate) fn run_native(
+        &mut self,
+        native: al_builtins::native::NativeFn,
+        class: al_builtins::builtin_id::Class,
+        receiver: Option<&ir::Arg>,
+        args: &[ir::Arg],
+        mut recv: Option<Value>,
+        mut values: Vec<Value>,
+        ret_used: bool,
+        f: &mut Frame,
+    ) -> Result<Value, Signal> {
+        self.ret_used = ret_used;
+        let ret = native(self, recv.as_mut(), &mut values)?;
+        if let (Some(ir::Arg::Ref(p)), Some(v)) = (receiver, recv) {
+            self.write(p, v, f)?;
+        }
+        for (a, v) in args.iter().zip(values) {
+            if let ir::Arg::Ref(p) = a {
+                let v = if class == al_builtins::builtin_id::Class::InStreamRead {
+                    self.fit_stream_read(p, v, f)?
+                } else {
+                    v
+                };
+                self.write(p, v, f)?;
+            }
+        }
+        Ok(ret)
+    }
+
     /// What `InStream.Read` stores in a Text or Code variable: a Code takes the characters
     /// upper-cased and cut to its length without an error (streams/ProbeJsonAndInStreamBytes.al:
     /// InStreamRead_Text_ReturnValueIsLength reads `toolongvalueforcode` into a Code[10] and gets
@@ -698,24 +659,202 @@ impl Session {
             .map_or(0, |(_, n)| *n)
     }
 
+    /// A binary operator on two evaluated operands. Shared by the tree walker and the bytecode.
+    #[inline(always)]
+    pub(crate) fn binary_op(op: ir::BinOp, l: &Value, r: &Value) -> Result<Value, Signal> {
+        use ir::BinOp as B;
+        Ok(match op {
+            B::Add => ops::arith(ops::Arith::Add, l, r)?,
+            B::Sub => ops::arith(ops::Arith::Sub, l, r)?,
+            B::Mul => ops::arith(ops::Arith::Mul, l, r)?,
+            B::Div => ops::arith(ops::Arith::Div, l, r)?,
+            B::IntDiv => ops::arith(ops::Arith::IntDiv, l, r)?,
+            B::Mod => ops::arith(ops::Arith::Mod, l, r)?,
+            B::And => Value::Boolean(ops::truthy(l)? & ops::truthy(r)?),
+            B::Or => Value::Boolean(ops::truthy(l)? | ops::truthy(r)?),
+            B::Xor => Value::Boolean(ops::truthy(l)? ^ ops::truthy(r)?),
+            B::Eq => Value::Boolean(ops::compare(l, r)? == Ordering::Equal),
+            B::Ne => Value::Boolean(ops::compare(l, r)? != Ordering::Equal),
+            B::Lt => Value::Boolean(ops::compare_order(l, r)? == Ordering::Less),
+            B::Le => Value::Boolean(ops::compare_order(l, r)? != Ordering::Greater),
+            B::Gt => Value::Boolean(ops::compare_order(l, r)? == Ordering::Greater),
+            B::Ge => Value::Boolean(ops::compare_order(l, r)? != Ordering::Less),
+            B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(l, r)?),
+            B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(l, r)?),
+        })
+    }
+
+    /// A unary operator on an evaluated operand. Shared by the tree walker and the bytecode.
+    #[inline(always)]
+    pub(crate) fn unary_op(op: ir::UnOp, v: Value) -> Result<Value, Signal> {
+        match op {
+            ir::UnOp::Not => Ok(Value::Boolean(!ops::truthy(&v)?)),
+            ir::UnOp::Plus => Ok(v),
+            ir::UnOp::Neg => ops::arith(ops::Arith::Sub, &Value::Integer(0), &v).map(|r| match (&v, r) {
+                (Value::Decimal(_), r) => r,
+                (_, r) => r,
+            }),
+        }
+    }
+
+    /// The statement at position `p` begins: the call stack, the profiler and coverage see it.
+    #[inline(always)]
+    pub(crate) fn at_pos(&mut self, p: u32) {
+        if let Some(top) = self.call_stack.last_mut() {
+            top.pos = p;
+        }
+        if profile::ON.load(std::sync::atomic::Ordering::Relaxed) {
+            self.profile_sample();
+        }
+        if self.coverage.code_coverage {
+            self.coverage_hit(p);
+        }
+        if let Some((counts, touched)) = &mut self.coverage.coverage_counts {
+            let i = p as usize;
+            if counts.len() <= i {
+                counts.resize(self.engine.program.positions.len().max(i + 1), 0);
+            }
+            if counts[i] == 0 {
+                touched.push(p);
+            }
+            counts[i] += 1;
+        }
+    }
+
+    /// An Option, Enum or Boolean bound of a `for` loop as the Integer it stands for.
+    #[inline(always)]
+    pub(crate) fn for_bound(v: Value) -> Value {
+        match v {
+            Value::Option(o, _) | Value::Enum(_, o) => Value::Integer(o),
+            Value::Boolean(b) => Value::Integer(i32::from(b)),
+            v => v,
+        }
+    }
+
+    /// The first and last counter value of a `for` loop from its evaluated bounds. A loop over a Boolean
+    /// (`for Stepwise := false to true do`, 27 Microsoft codeunits) runs for false and then for true, the variable
+    /// holding the Boolean each round (registry entry for-boolean). Not pinned. Option bounds of an Integer loop take
+    /// its type as an assignment does: the ordinal (Microsoft's "Library - Manufacturing" loops
+    /// `for Day := FromDay to ToDay` with Option parameters; pinned by the corpus Option_InCaseAndLoopBounds,
+    /// types/ for_to_option).
+    #[inline(always)]
+    pub(crate) fn for_limits(from: Value, to: Value) -> Result<(i64, i64), Signal> {
+        if matches!(from, Value::Boolean(_)) || matches!(to, Value::Boolean(_)) {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
+        }
+        if matches!(from, Value::Enum(..)) || matches!(to, Value::Enum(..)) {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
+        }
+        let (from, to) = (Self::for_bound(from), Self::for_bound(to));
+        Ok((int(&from)?, int(&to)?))
+    }
+
+    /// The value the counter variable of a `for` loop holds in the round with counter `i`.
+    #[inline(always)]
+    pub(crate) fn for_counter(kind: ForKind, i: i64, slot_ty: &RtType) -> Result<Value, Signal> {
+        if kind.is_boolean {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
+            Ok(Value::Boolean(i != 0))
+        } else if kind.is_integer
+            && let Ok(n) = i32::try_from(i)
+        {
+            // What the conversion of a BigInteger into an Integer gives, without the Decimal in between; a counter
+            // beyond Integer takes the general path, which reports it.
+            Ok(Value::Integer(n))
+        } else {
+            ops::convert(Value::BigInteger(i), slot_ty)
+        }
+    }
+
+    /// A call of a procedure: `instance` is the value the procedure is called on (`None`: the running object). Used by
+    /// the bytecode; `pre` holds the argument values it already computed. The tree walker's `E::Call` arm is the same
+    /// logic kept inline (the budget in `perf_vm` measures the tree walker); the dual run keeps the two equal.
+    #[inline(never)]
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn call_site(
+        &mut self,
+        object: usize,
+        routine: usize,
+        instance: Option<Value>,
+        args: &[ir::Arg],
+        pre: Option<Vec<Value>>,
+        try_call: bool,
+        f: &mut Frame,
+    ) -> Result<Value, Signal> {
+        let inst = match instance {
+            None => f.instance.clone(),
+            Some(v) => match v {
+                // A procedure of a reportextension called through the report variable runs on the extension's
+                // instance of that variable, which keeps the extension's globals and added data items
+                // (reportext/W3RpExtProcedures.al:ExtensionProcedure_*).
+                Value::Codeunit(i)
+                    if self.engine.program.objects[object].report_ext.is_some()
+                        && i.borrow().object as usize != object =>
+                {
+                    self.report_extension_instance(&i, object)?
+                }
+                Value::Codeunit(i) => self.shared_instance(i),
+                // A table procedure runs with the record as its Rec, on the record
+                // variable's own globals (ADR-021).
+                Value::Record(rc) => {
+                    let (inst, saved) = self.enter_record(object, rc, None)?;
+                    let r = self.finish_call(object, routine, inst.clone(), args, pre, try_call, f);
+                    Self::leave_record(&inst, saved);
+                    return r;
+                }
+                // A query procedure runs with the query it was called on as its own state.
+                Value::Query(q) => self.query_instance(object, q),
+                // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which
+                // is constructed at first use.
+                Value::TestPage(st) => {
+                    let i = self.construct_page(&st)?;
+                    // A procedure a page extension declares runs on the extension's instance.
+                    let ext = st
+                        .borrow()
+                        .ext_instances
+                        .iter()
+                        .find(|(e, _)| *e == object)
+                        .map(|(_, i)| i.clone());
+                    self.shared_instance(ext.unwrap_or(i))
+                }
+                other => {
+                    return Err(Signal::Unsupported(format!(
+                        "a procedure call on a {} value",
+                        value_kind(&other)
+                    )));
+                }
+            },
+        };
+        self.finish_call(object, routine, inst, args, pre, try_call, f)
+    }
+
     /// Evaluates the arguments of a resolved call and runs it on `inst`, writing back the
     /// by-reference arguments.
+    #[allow(clippy::too_many_arguments)]
     pub(crate) fn finish_call(
         &mut self,
         object: usize,
         routine: usize,
         inst: Rc<RefCell<Instance>>,
         args: &[ir::Arg],
+        pre: Option<Vec<Value>>,
         try_call: bool,
         f: &mut Frame,
     ) -> Result<Value, Signal> {
-        let mut values = Vec::with_capacity(args.len());
-        for a in args {
-            values.push(match a {
-                ir::Arg::Value(e) => self.eval(e, f)?,
-                ir::Arg::Ref(p) => self.read(p, f)?,
-            });
-        }
+        // The bytecode hands over the argument values it already computed.
+        let values = match pre {
+            Some(v) => v,
+            None => {
+                let mut values = Vec::with_capacity(args.len());
+                for a in args {
+                    values.push(match a {
+                        ir::Arg::Value(e) => self.eval(e, f)?,
+                        ir::Arg::Ref(p) => self.read(p, f)?,
+                    });
+                }
+                values
+            }
+        };
         let result = self.call(object, routine, inst, values);
         if let Err(Signal::Error(_)) = &result {
             if let Some(finals) = self.error_finals.take() {
@@ -1208,5 +1347,24 @@ pub(crate) fn constant(c: &ir::Const) -> Value {
         ir::Const::Enum(o, v) => Value::Enum(*o, *v),
         ir::Const::DateFormula(f) => Value::DateFormula(f.clone()),
         ir::Const::FieldPos(p) => Value::Integer(*p as i32),
+    }
+}
+
+/// What the type of a `for` counter variable decides, found once per loop.
+#[derive(Clone, Copy)]
+pub(crate) struct ForKind {
+    pub(crate) option_like: bool,
+    pub(crate) is_boolean: bool,
+    pub(crate) is_integer: bool,
+}
+
+impl ForKind {
+    #[inline(always)]
+    pub(crate) fn of(ty: &RtType) -> ForKind {
+        ForKind {
+            option_like: matches!(ty, RtType::Option(_) | RtType::Enum(_)),
+            is_boolean: matches!(ty, RtType::Boolean),
+            is_integer: matches!(ty, RtType::Integer),
+        }
     }
 }

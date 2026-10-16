@@ -17,10 +17,12 @@ pub(crate) use state::*;
 mod baseline;
 mod capture;
 mod ctx;
+mod exec;
 mod interp;
 pub use baseline::Baseline;
 pub use capture::{CaptureConfig, Captured, ClosedBy, LoopRecord, MAX_RECORDS, MessageRecord, Rendered, ValueRecord};
 pub(crate) use ctx::base_slot_missing;
+pub use exec::{ExecMode, report as exec_report};
 pub use faultsite::FaultFrame;
 pub(crate) use interp::constant;
 mod callstack;
@@ -42,7 +44,6 @@ mod pages;
 mod partial;
 mod platform;
 mod profile;
-pub use dual::ExecMode;
 mod queries;
 mod recmeta;
 mod records;
@@ -99,6 +100,8 @@ pub struct Engine {
     pub(crate) delete_subscribed: std::sync::OnceLock<std::collections::HashSet<String>>,
     /// Per object, per routine: what a call needs to know about the routine, found once (see [`RoutineFacts`]).
     pub(crate) facts: Vec<Vec<RoutineFacts>>,
+    /// The register bytecode of the routines, compiled on first call (`exec/`).
+    pub(crate) exec: exec::ExecProgram,
 }
 
 /// What a call of a routine asks of the routine's declaration, answered once when the engine is built instead of by
@@ -240,6 +243,7 @@ impl Engine {
                 }
             }
         }
+        let exec = exec::ExecProgram::new(&program);
         Arc::new(Engine {
             program,
             blocked,
@@ -257,6 +261,7 @@ impl Engine {
             delete_subscribed: Default::default(),
             profile_seeds: Default::default(),
             facts,
+            exec,
         })
     }
 }
@@ -266,9 +271,9 @@ pub const STOPPED: &str = "the runner stopped the test";
 
 pub struct Session {
     pub engine: Arc<Engine>,
+    /// Which form runs routines (`AL_EXEC`, default the tree walker).
+    pub exec_mode: ExecMode,
     pub last_error: AlError,
-    /// Which executor runs the AL code (`dual.rs`).
-    exec_mode: ExecMode,
     depth: usize,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
@@ -436,7 +441,7 @@ impl Session {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
         }
         let mut session = Session {
-            exec_mode: ExecMode::default(),
+            exec_mode: ExecMode::from_env(),
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,
@@ -830,7 +835,13 @@ impl Session {
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
-        let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len());
+        // A capture watches the tree walker only; otherwise a routine runs as bytecode when the mode asks for it.
+        let chunk = if self.capturing || self.exec_mode == ExecMode::Tree {
+            None
+        } else {
+            engine.exec.chunk(&engine.program, object, routine)
+        };
+        let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len() + chunk.map_or(0, |c| usize::from(c.temps)));
         for s in &r.locals {
             locals.push(self.default_value(&s.ty));
         }
@@ -919,10 +930,27 @@ impl Session {
         if self.capture.is_some() {
             self.cap_enter_frame(object, r, &frame.locals);
         }
-        let mut outcome = if self.capturing {
-            self.exec_block::<true>(&r.body, &mut frame)
+        let mut outcome = if let Some(chunk) = chunk {
+            if exec::counting() {
+                exec::STATS
+                    .bytecode_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            frame
+                .locals
+                .resize(r.locals.len() + usize::from(chunk.temps), Value::Null);
+            self.run_chunk(chunk, &mut frame)
         } else {
-            self.exec_block::<false>(&r.body, &mut frame)
+            if exec::counting() {
+                exec::STATS
+                    .tree_calls
+                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
+            if self.capturing {
+                self.exec_block::<true>(&r.body, &mut frame)
+            } else {
+                self.exec_block::<false>(&r.body, &mut frame)
+            }
         };
         if self.capture.is_some() {
             self.cap_leave_frame(&outcome);

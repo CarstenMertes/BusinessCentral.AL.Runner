@@ -29,6 +29,7 @@ required-features = ["cli-e2e"]
 al-data.workspace = true
 al-deps.workspace = true
 al-sema.workspace = true
+al-syntax.workspace = true
 al-vm.workspace = true
 al-builtins.workspace = true
 al-ir.workspace = true

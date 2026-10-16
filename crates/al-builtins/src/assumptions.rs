@@ -199,6 +199,12 @@ registry! {
         tests: "Whse.-Source - Create Document raises OnAfterPostReport(..., this); about 960 tests of the Tests-SCM buckets.",
         probe: "A report that passes this to an event in OnPostReport; a subscriber calls a procedure of the report and one of a reportextension on the parameter.",
     },
+    FormatCodeSpelling => {
+        id: "format-code-spelling",
+        assumed: "The codes of a Format string are read in any case (`<sign><integer>`) and with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`).",
+        tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets) and Base Application's percent texts.",
+        probe: "Format of an Integer, a Decimal and a Date with the same codes in capitals, small letters and with a blank after the comma; compare with the canonical spelling.",
+    },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",
         assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",

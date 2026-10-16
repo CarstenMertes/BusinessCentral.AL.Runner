@@ -1871,7 +1871,8 @@ impl Session {
                 }
                 let engine = self.engine.clone();
                 let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
-                let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
+        let captions = |id: u32| engine.program.objects[id as usize].enum_captions.clone();
+                let expr = match al_builtins::filter::parse_filter_with_captions(&text, &args[2..], &ty, &enums, &captions) {
                     Ok(e) => e,
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {

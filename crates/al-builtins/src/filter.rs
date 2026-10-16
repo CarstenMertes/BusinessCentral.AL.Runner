@@ -101,8 +101,20 @@ pub fn parse_filter_with(
     ty: &crate::value::RtType,
     enums: &dyn Fn(u32) -> Vec<(i32, String)>,
 ) -> Result<FilterExpr, String> {
+    parse_filter_with_captions(text, args, ty, enums, &|_| Vec::new())
+}
+
+/// Like [`parse_filter_with`], and an enum member can also be named by its caption, which is what `Format` and
+/// `GetFilter` give (assumption `enum-filter-by-caption`).
+pub fn parse_filter_with_captions(
+    text: &str,
+    args: &[crate::value::Value],
+    ty: &crate::value::RtType,
+    enums: &dyn Fn(u32) -> Vec<(i32, String)>,
+    captions: &dyn Fn(u32) -> Vec<(i32, String)>,
+) -> Result<FilterExpr, String> {
     let toks = tokenize(text, args)?;
-    let mut p = Parser { toks, i: 0, ty, enums };
+    let mut p = Parser { toks, i: 0, ty, enums, captions };
     let e = p.or()?;
     if p.i != p.toks.len() {
         return Err(format!("unexpected {} in filter `{text}`", p.toks[p.i].describe()));
@@ -260,6 +272,7 @@ struct Parser<'a> {
     i: usize,
     ty: &'a crate::value::RtType,
     enums: &'a dyn Fn(u32) -> Vec<(i32, String)>,
+    captions: &'a dyn Fn(u32) -> Vec<(i32, String)>,
 }
 
 impl Parser<'_> {
@@ -342,6 +355,19 @@ impl Parser<'_> {
                     .into_iter()
                     .find(|(_, n)| !n.is_empty() && n.trim().eq_ignore_ascii_case(text.trim()))
                     .map(|(v, _)| v);
+                // A caption, as `GetFilter` gives it: Report Selections.CopyFilters does
+                // `SetFilter(Usage, GetFilter(Usage))` (Microsoft Tests-Misc, Report Selections Tests
+                // SalesQuoteSendByEmailWhenArchivingIsOn). No corpus test pins it.
+                let named = named.or_else(|| {
+                    let v = (self.captions)(*id)
+                        .into_iter()
+                        .find(|(_, n)| !n.is_empty() && n.trim().eq_ignore_ascii_case(text.trim()))
+                        .map(|(v, _)| v);
+                    if v.is_some() {
+                        crate::assumptions::assume(crate::assumptions::Assumption::EnumFilterByCaption);
+                    }
+                    v
+                });
                 match named.or_else(|| text.trim().parse().ok()) {
                     Some(v) => Value::Enum(*id, v),
                     None => return Err(format!("`{text}` is not a member of the enum")),

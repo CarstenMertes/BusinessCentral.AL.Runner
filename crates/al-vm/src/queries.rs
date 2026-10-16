@@ -206,8 +206,9 @@ impl Session {
                     let text = text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
                     let engine = self.engine.clone();
                     let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+        let captions = |id: u32| engine.program.objects[id as usize].enum_captions.clone();
                     Some(
-                        al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
+                        al_builtins::filter::parse_filter_with_captions(&text, &args[2..], &ty, &enums, &captions)
                             .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?,
                     )
                 };

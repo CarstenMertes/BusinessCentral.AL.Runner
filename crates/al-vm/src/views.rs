@@ -35,7 +35,8 @@ impl Session {
     pub(crate) fn parse_filter_text(&self, text: &str, ty: &al_builtins::value::RtType) -> Result<FilterExpr, String> {
         let engine = self.engine.clone();
         let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
-        al_builtins::filter::parse_filter_with(text, &[], ty, &enums)
+        let captions = |id: u32| engine.program.objects[id as usize].enum_captions.clone();
+        al_builtins::filter::parse_filter_with_captions(text, &[], ty, &enums, &captions)
     }
 
     fn filter_value(&self, v: &Value) -> Result<String, Signal> {

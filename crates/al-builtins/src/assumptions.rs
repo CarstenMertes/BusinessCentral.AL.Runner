@@ -325,6 +325,12 @@ registry! {
         tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
         probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; the same on a Guid field with Format(G); then GetFilter and Count.",
     },
+    EnumFilterByCaption => {
+        id: "enum-filter-by-caption",
+        assumed: "A filter text on an Enum field names a member by its caption as well as by its name, case-insensitively (the name wins when both match). GetFilter shows the caption, so SetFilter(F, GetFilter(F)) round-trips.",
+        tests: "Report Selections.CopyFilters (SetFilter(Usage, GetFilter(Usage))): Report Selections Tests SalesQuoteSendByEmailWhenArchivingIsOn and 41 Object Selection tests of Tests-Misc.",
+        probe: "An enum with a member whose caption differs from its name; SetFilter(F, Format(Member)) and SetFilter(F, 'caption'), then Count; a caption equal to another member's name.",
+    },
     ReportThisPassedOn => {
         id: "report-this-passed-on",
         assumed: "`this` in a report can be passed on (to a var parameter of the report's type, in an event for example) and is the running report: its procedures, and those of the report extensions, work on it.",

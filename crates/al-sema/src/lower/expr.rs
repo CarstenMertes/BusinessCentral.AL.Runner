@@ -541,6 +541,14 @@ impl Lowerer<'_> {
                 Some(Res::BaseGlobal(name)) if self.base_var(&name)?.2.is_some() => Ok(ir::Expr::Const(
                     ir::Const::Text(self.base_var(&name)?.2.unwrap_or_default()),
                 )),
+                // `CurrXmlPort` in an xmlport is the running instance (P94Fixtures.al:317 `currXMLport.Filename()`).
+                Some(Res::Global(name))
+                    if name == "currxmlport"
+                        && !self.globals.contains_key(&name)
+                        && self.ws.objects[self.oi].kind == ObjKind::XmlPort =>
+                {
+                    Ok(ir::Expr::ThisInstance)
+                }
                 // `CurrFieldNo` in table code: a property of the implicit `Rec` the VM reads.
                 Some(Res::Global(name)) if name == "currfieldno" && !self.globals.contains_key(&name) => {
                     let rec = self

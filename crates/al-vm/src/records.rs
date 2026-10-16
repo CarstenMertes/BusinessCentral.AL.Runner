@@ -940,7 +940,10 @@ impl Session {
             let Value::Blob(buf) = rec.borrow().fields[pos].clone() else {
                 return unsupported("CalcFields of a Blob field that holds no Blob");
             };
-            if buf.borrow().loaded && !buf.borrow().refetch {
+            // A temporary record's row that was never inserted has no stored content: CalcFields empties a Blob a stream
+            // wrote (P94XpDelim.al:Export_NothingDeclared exports into such a Blob and reads back nothing).
+            let temporary = rec.borrow().temporary;
+            if buf.borrow().loaded && !buf.borrow().refetch && !temporary {
                 continue;
             }
             if stored.is_none() {

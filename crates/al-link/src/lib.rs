@@ -1355,6 +1355,7 @@ mod tests {
             pos: al_ir::NO_POS,
             end_pos: al_ir::NO_POS,
             begin_pos: al_ir::NO_POS,
+            expr_tys: Vec::new(),
         }
     }
 

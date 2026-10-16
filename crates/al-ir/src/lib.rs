@@ -8,6 +8,7 @@ use serde::{Deserialize, Serialize};
 mod facts;
 mod objkind;
 pub mod sym;
+pub mod types;
 pub mod walk;
 pub use facts::{FieldClass, FieldFacts, ObjectFacts, PageType, TableType};
 pub use objkind::{ObjKind, UnknownKind};
@@ -1018,6 +1019,9 @@ pub struct Routine {
     /// BC names such a trigger in a call stack as `"<name> - <trigger>"`.
     #[serde(default)]
     pub container: Option<(String, String)>,
+    /// The static type of each expression of the body, in post-order (see [`types`]). Empty: every one is unknown.
+    #[serde(default)]
+    pub expr_tys: Vec<types::ExprTy>,
 }
 
 fn no_pos() -> u32 {
@@ -1339,6 +1343,7 @@ mod tests {
             end_pos: NO_POS,
             begin_pos: NO_POS,
             body,
+            expr_tys: vec![],
         }
     }
 
@@ -1454,6 +1459,7 @@ mod tests {
                     pos: NO_POS,
                     end_pos: NO_POS,
                     begin_pos: NO_POS,
+                    expr_tys: vec![],
                     body: vec![
                         Stmt::Pos(0),
                         Stmt::Assign(

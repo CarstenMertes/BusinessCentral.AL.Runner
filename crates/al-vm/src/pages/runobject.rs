@@ -102,12 +102,10 @@ impl Session {
         let engine = self.engine();
         let target = ro.object.expect("a page target");
         let obj = &engine.program.objects[target];
-        let page_type = obj
-            .properties
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("PageType"))
-            .map(|(_, v)| v.trim().to_ascii_lowercase())
-            .unwrap_or_else(|| "card".into());
+        let page_type = engine.object_facts[target]
+            .page_type
+            .as_ref()
+            .map_or_else(|| "card".to_string(), |p| p.lower().to_string());
         // A StandardDialog is shown as a dialog and answered by a [ModalPageHandler]; a Card or a
         // List is answered by a [PageHandler] (TestPageActionRunObject_Tests.al:
         // RunObjectActionToAStandardDialogTargetIsAnsweredByTheModalHandler). Other page types are
@@ -203,11 +201,7 @@ impl Session {
         }
         // How the target's own SourceTableView combines with a handed record is not pinned
         // (open_page refuses it for Page.Run as well).
-        if obj
-            .properties
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"))
-        {
+        if al_ir::ObjectFacts::of(obj).has_source_table_view {
             return unsupported("RunPageOnRec, RunPageLink or RunPageView on a target that declares SourceTableView");
         }
         self.page_instance(target)?;

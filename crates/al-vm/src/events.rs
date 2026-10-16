@@ -80,9 +80,7 @@ impl Default for Registry {
 }
 
 fn is_manual(o: &ir::Object) -> bool {
-    o.properties
-        .iter()
-        .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"))
+    ir::ObjectFacts::of(o).manual_subscriber
 }
 
 /// A subscriber of `Global Triggers` in a dependency app that cannot run.

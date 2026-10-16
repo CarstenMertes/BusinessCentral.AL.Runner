@@ -181,10 +181,7 @@ fn subscription_row(
     mut r: al_data::Row,
 ) -> Result<al_data::Row, String> {
     let what = || format!("subscriber '{}' of codeunit '{}'", routine, o.name);
-    let manual = o
-        .properties
-        .iter()
-        .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"));
+    let manual = al_ir::ObjectFacts::of(o).manual_subscriber;
     // "Subscriber Instance" reads Static-Automatic or Manual, "Error Information" is blank (record/
     // TestEventSubscriptionColumnsReportLayoutListContracts.al:98-107). "Number of Calls" and
     // "Active Manual Instances" are the session's, added when a row is read.
@@ -564,10 +561,7 @@ fn field_relations(
     let mut rows = Vec::new();
     // ValidateTableRelation = false is declared; a relation validates otherwise. Test Table
     // Relation is No for every declared relation (record/TestTableRelationsSequenceMetadataContracts.al:63-71).
-    let validate = !f
-        .properties
-        .iter()
-        .any(|(k, v)| k.eq_ignore_ascii_case("ValidateTableRelation") && v.trim().eq_ignore_ascii_case("false"));
+    let validate = al_ir::FieldFacts::of(f).validate_relation;
     for (n, arm) in arms_of(c, table, f, &what)?.iter().enumerate() {
         let mut row = fkey.clone();
         row[pos(t, 3)] = Value::Integer(n as i32 + 1);

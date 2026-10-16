@@ -266,14 +266,10 @@ impl Session {
         // A table of TableType CRM can only be opened through a registered table connection; with none
         // registered the open fails (session/TestCrmTableNoConnectionContracts.al:111-118, BC 27.5).
         // With one registered, what the open does is not pinned. Other table types are not pinned.
-        let table_type = self.engine.program.objects[table]
-            .properties
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("TableType"))
-            .map(|(_, v)| v.trim().to_ascii_lowercase());
-        match table_type.as_deref() {
-            None | Some("normal") | Some("temporary") => {}
-            Some("crm") if !self.table_connections.iter().any(|(kind, _)| *kind == 0) => {
+        let table_type = self.engine.object_facts[table].table_type.as_ref();
+        match table_type {
+            None | Some(al_ir::TableType::Normal) | Some(al_ir::TableType::Temporary) => {}
+            Some(al_ir::TableType::Crm) if !self.table_connections.iter().any(|(kind, _)| *kind == 0) => {
                 return Err(crate::transactions::al_error_code(
                     "Table connection  for table type CRM must be registered using RegisterTableConnection or cmdlet New-NAVTableConnection before it can be used.",
                     "Argument",
@@ -281,7 +277,8 @@ impl Session {
             }
             Some(other) => {
                 return unsupported(format!(
-                    "RecordRef.Open of a table with TableType = {other} (a table connection is not modelled)"
+                    "RecordRef.Open of a table with TableType = {} (a table connection is not modelled)",
+                    other.lower()
                 ));
             }
         }

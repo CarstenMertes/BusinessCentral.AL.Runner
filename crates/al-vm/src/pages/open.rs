@@ -382,12 +382,10 @@ impl Session {
         // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose); the dialogs report Cancel.
         // Other page types are not pinned and keep Cancel.
         let object = st.borrow().object as usize;
-        let ok_type = self.engine.program.objects[object].properties.iter().any(|(k, v)| {
-            k.eq_ignore_ascii_case("PageType")
-                && ["card", "list", "document", "worksheet", "listplus"]
-                    .iter()
-                    .any(|t| v.trim().eq_ignore_ascii_case(t))
-        });
+        let ok_type = self.engine.object_facts[object]
+            .page_type
+            .as_ref()
+            .is_some_and(al_ir::PageType::is_plain);
         let action = if ok_type && !st.borrow().modal { "OK" } else { "Cancel" };
         let r = self.close_with(st, action, false, false);
         // A refused TestPage.Close() leaves the variable not open all the same (corpus
@@ -521,12 +519,7 @@ impl Session {
         }
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        let page_type = engine.program.objects[object]
-            .properties
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("PageType"))
-            .map(|(_, v)| v.trim().to_ascii_lowercase())
-            .unwrap_or_default();
+        let page_type = engine.object_facts[object].page_type_lower().to_string();
         let dialog = matches!(
             page_type.as_str(),
             "confirmationdialog" | "standarddialog" | "promptdialog" | "navigatepage"
@@ -628,10 +621,7 @@ impl Session {
         // That is pinned for the default order; a page with a SourceTableView (a descending order
         // among them) keeps the `-` assumed so far, as the client's blank key would sit at the other end.
         let object = st.borrow().object as usize;
-        let has_view = self.engine.program.objects[object]
-            .properties
-            .iter()
-            .any(|(k, _)| k.eq_ignore_ascii_case("SourceTableView"));
+        let has_view = self.engine.object_facts[object].has_source_table_view;
         let which = if self.declares(st, "onfindrecord") && !has_view {
             "=><"
         } else {

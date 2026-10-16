@@ -354,10 +354,7 @@ impl Session {
         };
         let inst = self.shared_instance(rc);
         let object = inst.borrow().object as usize;
-        let manual = self.engine.program.objects[object]
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("EventSubscriberInstance") && v.trim().eq_ignore_ascii_case("Manual"));
+        let manual = self.engine.object_facts[object].manual_subscriber;
         self.bindings.retain(|b| b.instance.strong_count() > 0);
         let at = self
             .bindings

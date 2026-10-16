@@ -28,10 +28,26 @@ fn release(f: &mut Frame, r: u16, nl: u16) {
 impl Session {
     /// Runs `chunk` on frame `f`. The frame's locals already hold the temporaries.
     pub(crate) fn run_chunk(&mut self, chunk: &Chunk, f: &mut Frame) -> Result<(), Signal> {
+        self.run_range::<false>(chunk, f, 0, chunk.code.len()).map(|_| ())
+    }
+
+    /// Runs the instructions `start..end` and returns where it stopped: `end` when the code ran off its end, otherwise
+    /// the target of a jump that left the range (a `break` or `continue` out of an `asserterror` body).
+    pub(crate) fn run_range<const RANGED: bool>(
+        &mut self,
+        chunk: &Chunk,
+        f: &mut Frame,
+        start: usize,
+        end: usize,
+    ) -> Result<usize, Signal> {
         let nl = chunk.nlocals;
         let code = &chunk.code[..];
-        let mut pc = 0usize;
-        while pc < code.len() {
+        let mut pc = start;
+        while if RANGED {
+            pc.wrapping_sub(start) < end - start
+        } else {
+            pc < end
+        } {
             let op = code[pc];
             pc += 1;
             match op {
@@ -154,7 +170,7 @@ impl Session {
                 Op::TreeExpr { e, d } => {
                     if counting() {
                         STATS.tree_exprs_run.fetch_add(1, Ordering::Relaxed);
-                        note_tree(chunk.expr_kinds[e as usize], false);
+                        note_tree(&chunk.expr_kinds[e as usize], false);
                     }
                     let v = self.eval(&chunk.exprs[e as usize], f)?;
                     f.locals[d as usize] = v;
@@ -183,6 +199,17 @@ impl Session {
                 Op::ThisInstance { d } => Self::op_this(f, d),
                 Op::BaseInstance { d } => self.op_base(f, d)?,
                 Op::Aux { s, d, a } => self.op_aux(&chunk.aux[s as usize], f, d, a, nl)?,
+                Op::Assert { end: stop, from } => pc = self.op_assert(chunk, f, pc, stop as usize, from)?,
+                Op::ForeachInit { s } => self.op_foreach_init(&chunk.foreachs[s as usize], f, nl)?,
+                Op::ForeachNext { s, t } => {
+                    if !self.op_foreach_next(&chunk.foreachs[s as usize], f)? {
+                        pc = t as usize;
+                    }
+                }
+                Op::IfaceCall { s, d } => {
+                    let v = self.run_iface(&chunk.ifaces[s as usize], f, nl)?;
+                    f.locals[d as usize] = v;
+                }
                 Op::Clear { a } => f.locals[a as usize] = Value::Null,
                 Op::Ret => return Err(Signal::Exit(None)),
                 Op::RetVal { a } => return Err(Signal::Exit(Some(take(f, a, nl)))),
@@ -190,7 +217,67 @@ impl Session {
                 Op::RaiseContinue => return Err(Signal::Continue),
             }
         }
+        Ok(pc)
+    }
+
+    /// `asserterror`: runs the body `pc..stop`; returns where the code goes on.
+    #[inline(never)]
+    fn op_assert(&mut self, chunk: &Chunk, f: &mut Frame, pc: usize, stop: usize, from: u16) -> Result<usize, Signal> {
+        let nl = chunk.nlocals;
+        match self.run_range::<true>(chunk, f, pc, stop) {
+            Ok(at) if at == stop => Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                message: "An error was expected inside an ASSERTERROR statement.".into(),
+                code: "AssertError".into(),
+                call_stack: String::new(),
+            }))),
+            Ok(at) => Ok(at),
+            Err(Signal::Error(mut e)) => {
+                self.rollback_transaction();
+                self.add_top_frame(&mut e);
+                self.last_error = *e;
+                // Temporaries of the body that the error left behind hold nothing alive.
+                for r in from.max(nl) as usize..f.locals.len() {
+                    f.locals[r] = Value::Null;
+                }
+                Ok(stop)
+            }
+            Err(other) => Err(other),
+        }
+    }
+
+    #[inline(never)]
+    fn op_foreach_init(&mut self, site: &ForeachSite, f: &mut Frame, nl: u16) -> Result<(), Signal> {
+        let coll = take(f, site.coll, nl);
+        let items = Self::foreach_items(coll)?;
+        f.locals[site.items as usize] = Value::Array(std::rc::Rc::new(std::cell::RefCell::new(items)));
+        f.locals[site.at as usize] = Value::Integer(0);
         Ok(())
+    }
+
+    #[inline(never)]
+    fn op_foreach_next(&mut self, site: &ForeachSite, f: &mut Frame) -> Result<bool, Signal> {
+        let Value::Integer(i) = f.locals[site.at as usize] else {
+            return Err(Signal::Unsupported("a foreach loop that is not set up".into()));
+        };
+        let item = match &f.locals[site.items as usize] {
+            Value::Array(items) => items.borrow().get(i as usize).cloned(),
+            _ => None,
+        };
+        let Some(item) = item else { return Ok(false) };
+        f.locals[site.at as usize] = Value::Integer(i + 1);
+        self.write(&site.var, item, f)?;
+        Ok(true)
+    }
+
+    #[inline(never)]
+    fn run_iface(&mut self, site: &IfaceSite, f: &mut Frame, nl: u16) -> Result<Value, Signal> {
+        let recv = take(f, site.recv, nl);
+        let (object, routine, inst) = self.interface_target_value(recv, &site.targets)?;
+        let mut values = Vec::with_capacity(site.arg_regs.len());
+        for &r in &site.arg_regs {
+            values.push(take(f, r, nl));
+        }
+        self.finish_call(object, routine, inst, &site.args, Some(values), false, f)
     }
 
     #[inline(never)]
@@ -353,8 +440,14 @@ impl Session {
         for &r in &site.arg_regs {
             values.push(take(f, r, nl));
         }
+        if site.vm_class {
+            return self.vm_class_call(site.id, site.class, recv, values, site.ret_used, f);
+        }
+        let Some(native) = site.native else {
+            return Err(Signal::Unsupported(format!("builtin {}", site.id)));
+        };
         self.run_native(
-            site.native,
+            native,
             site.class,
             site.receiver_arg.as_ref(),
             &site.args,

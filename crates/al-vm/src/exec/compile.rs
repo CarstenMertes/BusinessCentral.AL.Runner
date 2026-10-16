@@ -25,6 +25,8 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
             appends: Vec::new(),
             dotnets: Vec::new(),
             aux: Vec::new(),
+            foreachs: Vec::new(),
+            ifaces: Vec::new(),
             nlocals,
             temps: 0,
             tree_nodes: 0,
@@ -72,21 +74,33 @@ fn pure(e: &ir::Expr) -> bool {
     }
 }
 
-/// The builtins the tree walker handles itself before the generic path; they stay on the tree walker.
-fn vm_run(id: al_builtins::builtin_id::BuiltinId) -> bool {
+/// The builtins the tree walker handles itself, with operands of their own kind, before anything else; they stay on
+/// the tree walker.
+fn special(id: al_builtins::builtin_id::BuiltinId) -> bool {
+    matches!(
+        id,
+        ids::SESSION_BINDSUBSCRIPTION_1
+            | ids::SESSION_UNBINDSUBSCRIPTION_1
+            | ids::RECORD_SETCURRFIELDNO_1
+            | ids::RECORD_CURRFIELDNO_1
+            | ids::SYSTEM_CLEARALL_1
+            | ids::SESSION_APPLICATIONAREA_1
+    )
+}
+
+/// The builtins the VM runs itself on evaluated operands (`Session::vm_class_call`).
+fn vm_class(id: al_builtins::builtin_id::BuiltinId) -> bool {
     let class = id.class();
     class != Class::Other && class != Class::InStreamRead
-        || matches!(
-            id,
-            ids::SESSION_BINDSUBSCRIPTION_1
-                | ids::SESSION_UNBINDSUBSCRIPTION_1
-                | ids::RECORD_SETCURRFIELDNO_1
-                | ids::RECORD_CURRFIELDNO_1
-                | ids::SYSTEM_CLEARALL_1
-                | ids::SESSION_APPLICATIONAREA_1
-                | ids::REQUESTPAGE_UPDATE_1
-                | ids::DATABASE_ISINWRITETRANSACTION_1
-        )
+        || matches!(id, ids::REQUESTPAGE_UPDATE_1 | ids::DATABASE_ISINWRITETRANSACTION_1)
+}
+
+/// An expression that cannot fail and writes nothing.
+fn simple(e: &ir::Expr) -> bool {
+    matches!(
+        e,
+        ir::Expr::Const(_) | ir::Expr::Load(ir::Place::Local(_) | ir::Place::Global(_))
+    )
 }
 
 /// A copy of an argument list with the value expressions replaced by a constant: after a call only the places of
@@ -112,7 +126,11 @@ impl Compiler {
 
     fn patch(&mut self, at: usize, to: u32) {
         match &mut self.chunk.code[at] {
-            Op::Jump { t } | Op::JumpIfNot { t, .. } | Op::MatchAny { t, .. } | Op::ForTest { t, .. } => *t = to,
+            Op::Jump { t }
+            | Op::JumpIfNot { t, .. }
+            | Op::MatchAny { t, .. }
+            | Op::ForeachNext { t, .. }
+            | Op::ForTest { t, .. } => *t = to,
             Op::TreeStmt { .. } => unreachable!("tree statements are patched through patch_tree"),
             other => unreachable!("not a jump: {other:?}"),
         }
@@ -179,7 +197,10 @@ impl Compiler {
 
     fn tree_expr(&mut self, e: &ir::Expr, d: u16) {
         self.chunk.exprs.push(e.clone());
-        self.chunk.expr_kinds.push(expr_kind(e));
+        self.chunk.expr_kinds.push(match e {
+            ir::Expr::Builtin { id, .. } => format!("Builtin {id}"),
+            other => expr_kind(other).to_string(),
+        });
         let idx = (self.chunk.exprs.len() - 1) as u32;
         self.chunk.tree_nodes += 1;
         self.emit(Op::TreeExpr { e: idx, d });
@@ -257,8 +278,9 @@ impl Compiler {
                 receiver,
                 args,
                 ret_used,
-            } if !vm_run(*id) && al_builtins::native::by_id(*id).is_some() => {
-                let native = al_builtins::native::by_id(*id).ok_or(())?;
+            } if !special(*id) && (vm_class(*id) || al_builtins::native::by_id(*id).is_some()) => {
+                let vm = vm_class(*id);
+                let native = if vm { None } else { al_builtins::native::by_id(*id) };
                 let n = args.len();
                 let mut regs = Vec::with_capacity(n + 1);
                 let mut all: Vec<&ir::Arg> = Vec::with_capacity(n + 1);
@@ -272,6 +294,8 @@ impl Compiler {
                 }
                 let receiver_reg = if receiver.is_some() { Some(regs.remove(0)) } else { None };
                 self.chunk.builtins.push(BuiltinSite {
+                    id: *id,
+                    vm_class: vm,
                     native,
                     class: id.class(),
                     receiver: receiver_reg,
@@ -308,6 +332,27 @@ impl Compiler {
                 });
                 let s = (self.chunk.dotnets.len() - 1) as u32;
                 self.emit(Op::DotNet { s, d });
+            }
+            E::InterfaceCall {
+                receiver,
+                targets,
+                args,
+            } if args.iter().all(|a| {
+                matches!(a, ir::Arg::Value(v) if simple(v))
+                    || matches!(a, ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)))
+            }) =>
+            {
+                // The target is resolved before the arguments are evaluated; plain operands cannot tell the order.
+                let recv = self.expr_copy(receiver)?;
+                let arg_regs = self.arg_regs(args)?;
+                self.chunk.ifaces.push(IfaceSite {
+                    targets: targets.clone(),
+                    recv,
+                    arg_regs,
+                    args: blank(args),
+                });
+                let s = (self.chunk.ifaces.len() - 1) as u32;
+                self.emit(Op::IfaceCall { s, d });
             }
             E::ThisInstance => {
                 self.emit(Op::ThisInstance { d });
@@ -637,7 +682,50 @@ impl Compiler {
                     self.patch(j, end);
                 }
             }
-            S::Foreach { .. } | S::AssertError(_) | S::Assume(_) => self.tree_stmt(s),
+            S::AssertError(body) => {
+                let at = self.emit(Op::Assert {
+                    end: 0,
+                    from: self.next,
+                });
+                self.block(body)?;
+                let end = self.here();
+                if let Op::Assert { end: e, .. } = &mut self.chunk.code[at] {
+                    *e = end;
+                }
+            }
+            S::Foreach { var, collection, body }
+                if matches!(collection, ir::Expr::Load(ir::Place::Local(i))
+                    if matches!(self.locals_ty.get(*i), Some(RtType::List(_)))) =>
+            {
+                let coll = self.expr_copy(collection)?;
+                let items = self.alloc()?;
+                let at = self.alloc()?;
+                self.chunk.foreachs.push(ForeachSite {
+                    var: var.clone(),
+                    coll,
+                    items,
+                    at,
+                });
+                let site = (self.chunk.foreachs.len() - 1) as u32;
+                self.emit(Op::ForeachInit { s: site });
+                let top = self.here();
+                let next = self.emit(Op::ForeachNext { s: site, t: 0 });
+                self.loops.push(LoopCtx {
+                    brk: Vec::new(),
+                    cont: Vec::new(),
+                });
+                let mark = self.next;
+                self.block(body)?;
+                self.next = mark;
+                let l = self.loops.pop().ok_or(())?;
+                self.emit(Op::Jump { t: top });
+                let end = self.here();
+                self.emit(Op::Clear { a: items });
+                self.patch(next, end);
+                self.patch_all(l.cont, top);
+                self.patch_all(l.brk, end);
+            }
+            S::Foreach { .. } | S::Assume(_) => self.tree_stmt(s),
         }
         Ok(())
     }

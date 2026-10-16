@@ -190,6 +190,24 @@ pub(crate) enum Op {
         d: u16,
         a: u16,
     },
+    /// `asserterror`: the body is the code up to `end`; a caught error rolls back, anything else leaves as it would.
+    Assert {
+        end: u32,
+        from: u16,
+    },
+    /// `foreach`: evaluates the collection in `a` once into the items held in the site's register.
+    ForeachInit {
+        s: u32,
+    },
+    /// The next item into the loop variable, or a jump to `t` when the items are used up.
+    ForeachNext {
+        s: u32,
+        t: u32,
+    },
+    IfaceCall {
+        s: u32,
+        d: u16,
+    },
     /// Lets go of a temporary whose value nobody reads.
     Clear {
         a: u16,
@@ -218,7 +236,10 @@ pub(crate) struct CallSite {
 }
 
 pub(crate) struct BuiltinSite {
-    pub native: al_builtins::native::NativeFn,
+    pub id: al_builtins::builtin_id::BuiltinId,
+    /// A builtin the VM runs itself (`Session::vm_class_call`) instead of a registered native.
+    pub vm_class: bool,
+    pub native: Option<al_builtins::native::NativeFn>,
     pub class: al_builtins::builtin_id::Class,
     pub receiver: Option<u16>,
     pub receiver_arg: Option<ir::Arg>,
@@ -246,6 +267,21 @@ pub(crate) enum AuxSite {
     QueryColumn {
         column: usize,
     },
+}
+
+pub(crate) struct ForeachSite {
+    pub var: ir::Place,
+    pub coll: u16,
+    /// Registers that hold the items (a `Value::Array`) and the next position (an `Integer`).
+    pub items: u16,
+    pub at: u16,
+}
+
+pub(crate) struct IfaceSite {
+    pub targets: Vec<(usize, usize)>,
+    pub recv: u16,
+    pub arg_regs: Vec<u16>,
+    pub args: Vec<ir::Arg>,
 }
 
 pub(crate) struct AppendSite {
@@ -282,7 +318,7 @@ pub(crate) struct Chunk {
     pub exprs: Vec<ir::Expr>,
     pub stmts: Vec<ir::Stmt>,
     /// The node kind of each tree expression and statement, for the fallback report.
-    pub expr_kinds: Vec<&'static str>,
+    pub expr_kinds: Vec<String>,
     pub stmt_kinds: Vec<&'static str>,
     pub calls: Vec<CallSite>,
     pub builtins: Vec<BuiltinSite>,
@@ -291,6 +327,8 @@ pub(crate) struct Chunk {
     pub appends: Vec<AppendSite>,
     pub dotnets: Vec<DotNetSite>,
     pub aux: Vec<AuxSite>,
+    pub foreachs: Vec<ForeachSite>,
+    pub ifaces: Vec<IfaceSite>,
     /// Registers `0..nlocals` are the routine's locals.
     pub nlocals: u16,
     /// Temporaries after the locals.
@@ -302,7 +340,12 @@ pub(crate) struct Chunk {
 /// The chunks of a program, compiled the first time a routine is called.
 pub(crate) struct ExecProgram {
     chunks: Vec<Vec<OnceLock<Option<Box<Chunk>>>>>,
+    /// How often each routine was asked for: a routine that runs once (install and setup code) is not worth compiling.
+    calls: Vec<Vec<std::sync::atomic::AtomicU32>>,
 }
+
+/// A routine is compiled when it is called this many times, or at the first call if it has a loop.
+const HOT: u32 = 2;
 
 impl ExecProgram {
     pub(crate) fn new(program: &ir::Program) -> ExecProgram {
@@ -312,21 +355,37 @@ impl ExecProgram {
                 .iter()
                 .map(|o| o.routines.iter().map(|_| OnceLock::new()).collect())
                 .collect(),
+            calls: program
+                .objects
+                .iter()
+                .map(|o| {
+                    o.routines
+                        .iter()
+                        .map(|_| std::sync::atomic::AtomicU32::new(0))
+                        .collect()
+                })
+                .collect(),
         }
     }
 
     /// The chunk of routine `routine` of object `object`, if it compiles.
     pub(crate) fn chunk(&self, program: &ir::Program, object: usize, routine: usize) -> Option<&Chunk> {
-        self.chunks[object][routine]
-            .get_or_init(|| {
-                let c = compile(&program.objects[object].routines[routine])?;
-                STATS.routines.fetch_add(1, Ordering::Relaxed);
-                if c.tree_nodes > 0 {
-                    STATS.routines_with_tree.fetch_add(1, Ordering::Relaxed);
-                }
-                Some(Box::new(c))
-            })
-            .as_deref()
+        let cell = &self.chunks[object][routine];
+        if cell.get().is_none()
+            && self.calls[object][routine].fetch_add(1, Ordering::Relaxed) + 1 < HOT
+            && !has_loop(&program.objects[object].routines[routine].body)
+        {
+            return None;
+        }
+        cell.get_or_init(|| {
+            let c = compile(&program.objects[object].routines[routine])?;
+            STATS.routines.fetch_add(1, Ordering::Relaxed);
+            if c.tree_nodes > 0 {
+                STATS.routines_with_tree.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(Box::new(c))
+        })
+        .as_deref()
     }
 }
 
@@ -349,7 +408,7 @@ pub(crate) struct Stats {
 /// How often each kind of node ran on the tree walker from inside bytecode (`AL_EXEC_REPORT=1`).
 pub(crate) static TREE_KINDS: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
 
-pub(crate) fn note_tree(kind: &'static str, stmt: bool) {
+pub(crate) fn note_tree(kind: &str, stmt: bool) {
     let key = format!("{}{kind}", if stmt { "stmt " } else { "expr " });
     if let Ok(mut v) = TREE_KINDS.lock() {
         match v.iter_mut().find(|(k, _)| *k == key) {
@@ -384,6 +443,20 @@ pub fn report() -> String {
         g(&STATS.tree_stmts_run),
         top.join(", "),
     )
+}
+
+/// Whether any statement of `body` is a loop: one call of such a routine can run long.
+fn has_loop(body: &[ir::Stmt]) -> bool {
+    use ir::Stmt as S;
+    body.iter().any(|s| match s {
+        S::While(..) | S::Repeat(..) | S::For { .. } | S::Foreach { .. } => true,
+        S::If(_, a, b) => has_loop(a) || has_loop(b),
+        S::Case {
+            branches, otherwise, ..
+        } => branches.iter().any(|(_, b)| has_loop(b)) || has_loop(otherwise),
+        S::AssertError(b) => has_loop(b),
+        _ => false,
+    })
 }
 
 #[cfg(test)]

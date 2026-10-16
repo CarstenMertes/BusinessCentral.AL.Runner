@@ -145,16 +145,7 @@ impl Session {
                 if matches!(coll, Value::DotNet(_)) || dotnet_var {
                     return self.foreach_dotnet(var, coll, collection, body, f);
                 }
-                let items: Vec<Value> = match coll {
-                    Value::List(l) => l.borrow().clone(),
-                    // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
-                    other => match al_builtins::json::array_items(&other)
-                        .or_else(|| al_builtins::xml::node_list_items(&other))
-                    {
-                        Some(items) => items,
-                        None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
-                    },
-                };
+                let items = Self::foreach_items(coll)?;
                 let lid = if CAP { self.cap_loop_enter() } else { None };
                 for item in items {
                     if CAP {
@@ -568,6 +559,39 @@ impl Session {
         }
     }
 
+    /// A builtin the VM runs itself (`Codeunit.Run`, `Xmlport.*`, `Report.*`, `FilterPageBuilder.*`, `RequestPage.Update`,
+    /// `Database.IsInWriteTransaction`) on evaluated operands. Used by the bytecode; the tree walker's `E::Builtin`
+    /// arm is the same chain kept inline.
+    #[allow(clippy::too_many_arguments)]
+    pub(crate) fn vm_class_call(
+        &mut self,
+        id: al_builtins::builtin_id::BuiltinId,
+        class: al_builtins::builtin_id::Class,
+        recv: Option<Value>,
+        values: Vec<Value>,
+        ret_used: bool,
+        f: &mut Frame,
+    ) -> Result<Value, Signal> {
+        use al_builtins::builtin_id::{Class, ids};
+        if id == ids::DATABASE_ISINWRITETRANSACTION_1 {
+            return Ok(Value::Boolean(self.in_write_transaction()));
+        }
+        if class == Class::Xmlport {
+            return self.xmlport_builtin(id, recv, &values, ret_used);
+        }
+        if id == ids::REQUESTPAGE_UPDATE_1 {
+            return self.request_page_update(&values);
+        }
+        if class == Class::Report {
+            self.ret_used = ret_used;
+            return self.report_builtin(id, recv, &values, f.instance.clone());
+        }
+        if class == Class::FilterPageBuilder {
+            return self.filter_page_builder_op(id, recv, &values, ret_used);
+        }
+        self.codeunit_run(id, recv, &values, ret_used)
+    }
+
     /// Runs the native of a builtin on evaluated operands and writes the by-reference ones back. Used by the bytecode;
     /// the tree walker's `E::Builtin` arm is the same logic kept inline (see `call_site`).
     #[allow(clippy::too_many_arguments)]
@@ -663,6 +687,19 @@ impl Session {
                 "a text read more than one position past its length (not pinned)".into(),
             )),
         }
+    }
+
+    /// The items a `foreach` runs over (a List, a JSON array or an XPath result).
+    pub(crate) fn foreach_items(coll: Value) -> Result<Vec<Value>, Signal> {
+        Ok(match coll {
+            Value::List(l) => l.borrow().clone(),
+            // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
+            other => match al_builtins::json::array_items(&other).or_else(|| al_builtins::xml::node_list_items(&other))
+            {
+                Some(items) => items,
+                None => return Err(Signal::Unsupported(format!("foreach over {}", other.describe()))),
+            },
+        })
     }
 
     /// A binary operator on two evaluated operands. Shared by the tree walker and the bytecode.

@@ -1148,8 +1148,12 @@ fn with_cookie<R>(r: Option<&mut Value>, f: impl FnOnce(&mut CookieState) -> R) 
     }
 }
 
-fn cookie_name(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn cookie_name(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let new = if a.is_empty() { None } else { Some(text(a, 0)?) };
+    // What a setter answers is not pinned (assumption `cookie-setter-result`).
+    if new.is_some() && c.ret_used() {
+        crate::assumptions::assume(crate::assumptions::Assumption::CookieSetterResult);
+    }
     with_cookie(r, |s| {
         if let Some(n) = new {
             s.name = n;
@@ -1158,8 +1162,12 @@ fn cookie_name(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     })
 }
 
-fn cookie_value(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn cookie_value(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let new = if a.is_empty() { None } else { Some(text(a, 0)?) };
+    // What a setter answers is not pinned (assumption `cookie-setter-result`).
+    if new.is_some() && c.ret_used() {
+        crate::assumptions::assume(crate::assumptions::Assumption::CookieSetterResult);
+    }
     with_cookie(r, |s| {
         if let Some(n) = new {
             s.value = n;

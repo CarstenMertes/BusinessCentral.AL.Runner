@@ -581,7 +581,15 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             // XpTExportBasic.al:Export_ThreeRows: the UTF-16 bytes of an export).
             let invalid_utf8 = enc == Encoding::Utf8 && std::str::from_utf8(&line).is_err();
             (
-                (!invalid_utf8 && enc.decode_pinned(&line)).then(|| enc.decode(&line)),
+                // The text ends at its first NUL character: the UTF-16 bytes of `ab` read as UTF-8 are `a` (streams/StTEncodings.al:
+                // CrossEncodingMsDosAndUtf16).
+                (!invalid_utf8 && enc.decode_pinned(&line)).then(|| {
+                    let mut t = enc.decode(&line);
+                    if let Some(nul) = t.find('\0') {
+                        t.truncate(nul);
+                    }
+                    t
+                }),
                 consumed,
                 invalid_utf8,
             )

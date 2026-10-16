@@ -259,6 +259,8 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             | Value::Date(..)
             | Value::Time(_)
             | Value::DateTime(_)
+            // types/lt-implicit-conversions/P79RecordId.al:RecordId_InLongerTexts `comp-subst-width`.
+            | Value::Library(crate::library_kind::LibraryKind::RecordId, _)
     ) && length > 0
         && s.chars().count() > length as usize
     {

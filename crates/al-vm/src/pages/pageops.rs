@@ -155,7 +155,12 @@ impl Session {
             // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
             // the call is refused instead of failing with the TestPage error (Posted Sales Document Lines.CopyLineToDoc reads
             // `CurrPage.PostedShpts.PAGE` after its RunModal returned).
-            Err(Signal::Error(e)) if e.code == "TestPageNotOpened" && method.recv() == PageRecv::Page => {
+            // `Run` and `RunModal` only pass on what their handler raised (handlers/TestPageModalSelfClose_Tests.al:104).
+            Err(Signal::Error(e))
+                if e.code == "TestPageNotOpened"
+                    && method.recv() == PageRecv::Page
+                    && !matches!(name, PageMethod::Run | PageMethod::RunModal) =>
+            {
                 return unsupported(format!(
                     "{} called by the code of a page that is not open (what it does then is not pinned)",
                     method.method()

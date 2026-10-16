@@ -35,6 +35,15 @@ impl Clock for SystemClock {
     }
 }
 
+/// A clock that stands still at one instant.
+pub struct FixedClock(pub i64);
+
+impl Clock for FixedClock {
+    fn now_utc_millis(&self) -> i64 {
+        self.0
+    }
+}
+
 /// The directory `--files-dir` named, if any. Set once at start-up.
 static FILES_DIR: OnceLock<PathBuf> = OnceLock::new();
 
@@ -54,7 +63,16 @@ pub fn set_environment(environment: al_host::Environment) {
 /// The real clock and AL Runner's identity, on the file system the command line chose: memory,
 /// unless `--files-dir` named a directory, on the environment `--environment` named.
 pub fn system_host() -> Host {
-    let host = Host::new(SystemClock, AlRunnerIdentity).in_environment(ENVIRONMENT.get().copied().unwrap_or_default());
+    host_at(None)
+}
+
+/// [`system_host`] whose clock stands still at `start` (Unix milliseconds), or reads the system clock when `None`.
+pub fn host_at(start: Option<i64>) -> Host {
+    let host = match start {
+        Some(ms) => Host::new(FixedClock(ms), AlRunnerIdentity),
+        None => Host::new(SystemClock, AlRunnerIdentity),
+    };
+    let host = host.in_environment(ENVIRONMENT.get().copied().unwrap_or_default());
     match FILES_DIR.get() {
         Some(dir) => host.with_files(DirFileSystem::new(dir.clone())),
         None => host,

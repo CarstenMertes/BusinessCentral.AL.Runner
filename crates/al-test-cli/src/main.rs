@@ -213,7 +213,11 @@ fn run_version(
     .map_err(|e| format!("BC {}: {e}", version.bc_version))?;
     let started = Instant::now();
     let junit_path = oracle_path.parent().unwrap_or(Path::new(".")).join(&version.junit);
-    let all_cases = oracle::parse_junit(&read(&junit_path)?).map_err(|e| format!("{}: {e}", junit_path.display()))?;
+    let junit_text = read(&junit_path)?;
+    let all_cases = oracle::parse_junit(&junit_text).map_err(|e| format!("{}: {e}", junit_path.display()))?;
+    // When real BC ran each test codeunit: the run clock of a codeunit starts there, so what the oracle recorded from
+    // `Today` is what the run sees.
+    let mut clocks = oracle::parse_clocks(&junit_text).map_err(|e| format!("{}: {e}", junit_path.display()))?;
     let index = corpus::discover(&root.join(&cfg.corpus_app)).map_err(|e| format!("corpus: {e}"))?;
     // The other test apps: each against its own oracle, pinned like the main one (ADR-007).
     let mut suite_data = Vec::new();
@@ -235,6 +239,9 @@ fn run_version(
         .map_err(|e| format!("BC {} {}: {e}", version.bc_version, suite.name))?;
         let path = oracle_path.parent().unwrap_or(Path::new(".")).join(&suite.oracle);
         let text = read(&path)?;
+        if suite.format == config::OracleFormat::Junit {
+            clocks.extend(oracle::parse_clocks(&text).map_err(|e| format!("{}: {e}", path.display()))?);
+        }
         let cases = match suite.format {
             config::OracleFormat::Junit => oracle::parse_junit(&text),
             config::OracleFormat::Xunit => oracle::parse_xunit(&text).map(|v| v.into_iter().map(|c| c.case).collect()),
@@ -514,6 +521,7 @@ fn run_version(
         execute: false,
         capture: Default::default(),
         hooks: Default::default(),
+        clock_starts: (!clocks.is_empty()).then(|| std::sync::Arc::new(clocks)),
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(

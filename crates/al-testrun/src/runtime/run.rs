@@ -168,7 +168,7 @@ pub(crate) fn run_codeunit_core(
     execute: bool,
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
-    let mut session = Session::with_host(engine.clone(), crate::host::system_host());
+    let mut session = Session::with_host(engine.clone(), crate::host::host_at(scratch.clock_start));
     if let Some(b) = baseline {
         session.restore_baseline(b);
     }

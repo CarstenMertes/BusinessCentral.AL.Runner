@@ -1052,12 +1052,12 @@ pub(crate) fn lower_core(
 /// What the lowering knew about tables, which making an object symbolic reads again.
 struct Lookups<'a> {
     table_of: &'a [Option<usize>],
-    field_no: &'a dyn Fn(usize, usize) -> Option<u32>,
+    field_no: &'a (dyn Fn(usize, usize) -> Option<u32> + Sync),
     /// The position of field `id` in table `table`.
-    field_pos: &'a dyn Fn(usize, u32) -> Option<usize>,
+    field_pos: &'a (dyn Fn(usize, u32) -> Option<usize> + Sync),
     /// The number of every field of table `table`, in order.
-    field_numbers: &'a dyn Fn(usize) -> Vec<u32>,
-    report_item_table: &'a dyn Fn(usize, usize) -> Option<usize>,
+    field_numbers: &'a (dyn Fn(usize) -> Vec<u32> + Sync),
+    report_item_table: &'a (dyn Fn(usize, usize) -> Option<usize> + Sync),
 }
 
 /// For the check: turns the references the expressions of an object hold into the positions
@@ -1116,7 +1116,7 @@ struct Staged {
 fn link_pieces(
     mut staged: Vec<Staged>,
     base: ir::Program,
-    provided: &dyn Fn(usize) -> bool,
+    provided: &(dyn Fn(usize) -> bool + Sync),
     lookups: &Lookups<'_>,
     check: bool,
 ) -> Result<al_link::Linked, String> {
@@ -1162,28 +1162,24 @@ fn link_pieces(
         field_no: lookups.field_no,
         report_item_table: lookups.report_item_table,
     };
-    let mut units = Vec::with_capacity(staged.len());
-    for (oi, s) in staged.into_iter().enumerate() {
-        units.push(if provided(oi) {
-            al_link::Unit::Dense(al_link::DenseObject {
+    let workers = lower_workers();
+    let mut units: Vec<al_link::Unit> = al_link::par_map(staged, workers, |oi, s| {
+        if provided(oi) {
+            Ok(al_link::Unit::Dense(al_link::DenseObject {
                 key: keys[oi].clone(),
                 routines: routine_keys[oi].clone(),
                 fields: s.fields,
                 controls: s.controls,
                 object: s.object,
                 positions: s.positions,
-            })
+            }))
         } else {
-            al_link::Unit::Sym(super::localize::localize(
-                &tables,
-                oi,
-                s.object,
-                s.positions,
-                &s.field_refs,
-                &s.control_refs,
-            )?)
-        });
-    }
+            super::localize::localize(&tables, oi, s.object, s.positions, &s.field_refs, &s.control_refs)
+                .map(al_link::Unit::Sym)
+        }
+    })
+    .into_iter()
+    .collect::<Result<_, String>>()?;
     // A table nothing compiled has no field list, but other objects may name its fields: they are
     // counted from its members, for the tables that are named.
     let at: HashMap<&ObjKey, usize> = keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
@@ -1210,7 +1206,7 @@ fn link_pieces(
             }
         }
     }
-    let linked = al_link::link(units, base).map_err(|e| format!("link: {e}"))?;
+    let linked = al_link::link(units, base, workers).map_err(|e| format!("link: {e}"))?;
     if let Some((p, ranges)) = expected {
         if let Some(d) = al_link::first_difference(&p, &linked.program) {
             return Err(format!(
@@ -1290,8 +1286,8 @@ pub fn relower_objects(
         .iter()
         .map(|o| al_ir::sym::ObjKey::of(o, &program.apps))
         .collect();
-    let routine_keys: Vec<std::cell::OnceCell<Vec<al_ir::sym::LocalKey>>> =
-        (0..n).map(|_| std::cell::OnceCell::new()).collect();
+    let routine_keys: Vec<std::sync::OnceLock<Vec<al_ir::sym::LocalKey>>> =
+        (0..n).map(|_| std::sync::OnceLock::new()).collect();
     let provided = &old.provided;
     let compiled: Vec<bool> = program.objects.iter().map(|o| !o.uncompiled).collect();
     let routines_of = |i: usize| -> &[al_ir::sym::LocalKey] {

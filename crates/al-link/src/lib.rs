@@ -11,8 +11,8 @@
 use al_ir::sym::{ControlKey, FieldKey, LocalKey, ObjKey, RoutineKey, SymObject};
 use al_ir::walk::{RefVisitor, TableOf, walk_object};
 use al_ir::{Object, Program, SrcPos};
-use std::cell::OnceCell;
 use std::collections::HashMap;
+use std::sync::OnceLock;
 
 /// An object whose references are already positions in the program it goes into (a dependency
 /// object taken from a compile cache before the cache holds symbolic objects). It is placed as it
@@ -59,6 +59,13 @@ impl Unit {
         match self {
             Unit::Sym(s) => &s.object,
             Unit::Dense(d) => &d.object,
+        }
+    }
+
+    fn position_count(&self) -> u32 {
+        match self {
+            Unit::Sym(s) => s.positions.len() as u32,
+            Unit::Dense(d) => d.positions.len() as u32,
         }
     }
 }
@@ -170,9 +177,9 @@ impl Space for [Unit] {
 struct Tables<'a, S: Space + ?Sized> {
     space: &'a S,
     at: HashMap<&'a ObjKey, usize>,
-    routine_at: Vec<OnceCell<HashMap<&'a LocalKey, usize>>>,
-    field_at: Vec<OnceCell<HashMap<u32, usize>>>,
-    control_at: Vec<OnceCell<HashMap<String, usize>>>,
+    routine_at: Vec<OnceLock<HashMap<&'a LocalKey, usize>>>,
+    field_at: Vec<OnceLock<HashMap<u32, usize>>>,
+    control_at: Vec<OnceLock<HashMap<String, usize>>>,
 }
 
 impl<'a, S: Space + ?Sized> Tables<'a, S> {
@@ -187,9 +194,9 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
         Ok(Tables {
             space,
             at,
-            routine_at: (0..n).map(|_| OnceCell::new()).collect(),
-            field_at: (0..n).map(|_| OnceCell::new()).collect(),
-            control_at: (0..n).map(|_| OnceCell::new()).collect(),
+            routine_at: (0..n).map(|_| OnceLock::new()).collect(),
+            field_at: (0..n).map(|_| OnceLock::new()).collect(),
+            control_at: (0..n).map(|_| OnceLock::new()).collect(),
         })
     }
 
@@ -320,46 +327,107 @@ fn rewrite(object: &mut Object, res: &Resolved, key: &ObjKey) -> Result<(), Box<
 /// Links `units` into `base`, which holds everything that is not an object (`apps`, `dotnet_types`,
 /// `sources`, `uncompiled_subscribers`; its `objects` and `positions` are empty). The objects come
 /// out in the order of `units`.
-pub fn link(units: Vec<Unit>, mut base: Program) -> Result<Linked, Box<LinkError>> {
+pub fn link(units: Vec<Unit>, mut base: Program, workers: usize) -> Result<Linked, Box<LinkError>> {
     debug_assert!(base.objects.is_empty() && base.positions.is_empty());
     // What each symbolic object's tables mean in the program: the position of every key.
     let resolved: Vec<Option<Resolved>> = {
         let tables = Tables::new(&units[..])?;
-        units
-            .iter()
-            .map(|u| match u {
-                Unit::Sym(s) => tables.resolve(s).map(Some),
-                Unit::Dense(_) => Ok(None),
-            })
-            .collect::<Result<_, _>>()?
+        par_map(units.iter().collect(), workers, |_, u| match u {
+            Unit::Sym(s) => tables.resolve(s).map(Some),
+            Unit::Dense(_) => Ok(None),
+        })
+        .into_iter()
+        .collect::<Result<_, _>>()?
     };
+    // Where each object's source positions go.
     let mut pos_ranges = Vec::with_capacity(units.len());
-    base.objects.reserve(units.len());
-    for (i, (u, res)) in units.into_iter().zip(resolved).enumerate() {
-        let (mut object, mut positions, key) = match u {
-            Unit::Sym(s) => (s.object, s.positions, s.key),
-            Unit::Dense(d) => (d.object, d.positions, d.key),
-        };
-        if let Some(res) = res {
-            rewrite(&mut object, &res, &key)?;
-        }
-        let start = base.positions.len() as u32;
-        pos_ranges.push((start, positions.len() as u32));
-        if !positions.is_empty() {
-            for r in &mut object.routines {
-                r.shift_positions(start);
+    let mut next = 0u32;
+    for u in &units {
+        let len = u.position_count();
+        pos_ranges.push((next, len));
+        next += len;
+    }
+    let work: Vec<(Unit, Option<Resolved>)> = units.into_iter().zip(resolved).collect();
+    let done = par_map(
+        work,
+        workers,
+        |i, (u, res)| -> Result<(Object, Vec<SrcPos>), Box<LinkError>> {
+            let (mut object, mut positions, key) = match u {
+                Unit::Sym(s) => (s.object, s.positions, s.key),
+                Unit::Dense(d) => (d.object, d.positions, d.key),
+            };
+            if let Some(res) = res {
+                rewrite(&mut object, &res, &key)?;
             }
-            for p in &mut positions {
-                p.object = i as u32;
+            if !positions.is_empty() {
+                for r in &mut object.routines {
+                    r.shift_positions(pos_ranges[i].0);
+                }
+                for p in &mut positions {
+                    p.object = i as u32;
+                }
             }
-            base.positions.append(&mut positions);
-        }
+            Ok((object, positions))
+        },
+    );
+    base.objects.reserve(done.len());
+    base.positions.reserve(next as usize);
+    for d in done {
+        let (object, mut positions) = d?;
+        base.positions.append(&mut positions);
         base.objects.push(object);
     }
     Ok(Linked {
         program: base,
         pos_ranges,
     })
+}
+
+/// How many objects a worker takes at a time.
+const CHUNK: usize = 8;
+/// The stack of a worker: the walk recurses on the nesting of the code, as lowering does.
+const STACK: usize = 64 << 20;
+
+/// `f` applied to every item, on `workers` threads (the calling thread waits), results in the order of the items.
+pub fn par_map<T: Send, R: Send>(items: Vec<T>, workers: usize, f: impl Fn(usize, T) -> R + Sync) -> Vec<R> {
+    use std::sync::Mutex;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let n = items.len();
+    let workers = workers.min(n / CHUNK).max(1);
+    if workers == 1 {
+        return items.into_iter().enumerate().map(|(i, x)| f(i, x)).collect();
+    }
+    let slots: Vec<Mutex<Option<T>>> = items.into_iter().map(|x| Mutex::new(Some(x))).collect();
+    let out: Vec<Mutex<Option<R>>> = (0..n).map(|_| Mutex::new(None)).collect();
+    let next = AtomicUsize::new(0);
+    std::thread::scope(|scope| {
+        let handles: Vec<_> = (0..workers)
+            .map(|_| {
+                std::thread::Builder::new()
+                    .stack_size(STACK)
+                    .spawn_scoped(scope, || {
+                        loop {
+                            let k = next.fetch_add(CHUNK, Ordering::Relaxed);
+                            if k >= n {
+                                return;
+                            }
+                            for i in k..(k + CHUNK).min(n) {
+                                let item = slots[i].lock().expect("a worker panicked").take().expect("taken once");
+                                let r = f(i, item);
+                                *out[i].lock().expect("a worker panicked") = Some(r);
+                            }
+                        }
+                    })
+                    .expect("spawn a link worker")
+            })
+            .collect();
+        for h in handles {
+            h.join().expect("a link worker panicked");
+        }
+    });
+    out.into_iter()
+        .map(|m| m.into_inner().expect("a worker panicked").expect("every item is done"))
+        .collect()
 }
 
 /// The objects of a linked program, as a [`Space`]: `keys` and `routines` say what the program
@@ -675,11 +743,17 @@ mod tests {
 
     #[test]
     fn a_call_finds_its_target_wherever_the_target_is() {
-        let a = link(vec![Unit::Sym(caller(1, 2)), Unit::Sym(callee(2))], Program::default()).unwrap();
+        let a = link(
+            vec![Unit::Sym(caller(1, 2)), Unit::Sym(callee(2))],
+            Program::default(),
+            1,
+        )
+        .unwrap();
         assert_eq!(call_of(&a.program, 0), (1, 1));
         let b = link(
             vec![Unit::Sym(callee(2)), Unit::Sym(callee(3)), Unit::Sym(caller(1, 2))],
             Program::default(),
+            1,
         )
         .unwrap();
         assert_eq!(call_of(&b.program, 2), (0, 1));
@@ -695,13 +769,15 @@ mod tests {
             object: object(2, vec![routine("First", vec![]), routine("Second", vec![])]),
             positions: vec![],
         };
-        let linked = link(vec![Unit::Dense(dense), Unit::Sym(caller(1, 2))], Program::default()).unwrap();
+        let linked = link(vec![Unit::Dense(dense), Unit::Sym(caller(1, 2))], Program::default(), 1).unwrap();
         assert_eq!(call_of(&linked.program, 1), (0, 1));
     }
 
     #[test]
     fn a_missing_target_is_an_error_that_names_it() {
-        let e = link(vec![Unit::Sym(caller(1, 2))], Program::default()).err().unwrap();
+        let e = link(vec![Unit::Sym(caller(1, 2))], Program::default(), 1)
+            .err()
+            .unwrap();
         assert_eq!(
             *e,
             LinkError::UnknownObject {
@@ -712,7 +788,7 @@ mod tests {
         let mut c = callee(2);
         c.routines.truncate(1);
         c.object.routines.truncate(1);
-        let e = link(vec![Unit::Sym(caller(1, 2)), Unit::Sym(c)], Program::default())
+        let e = link(vec![Unit::Sym(caller(1, 2)), Unit::Sym(c)], Program::default(), 1)
             .err()
             .unwrap();
         assert!(matches!(*e, LinkError::UnknownRoutine { .. }), "{e:?}");
@@ -720,7 +796,7 @@ mod tests {
 
     #[test]
     fn two_objects_with_one_key_do_not_link() {
-        let e = link(vec![Unit::Sym(callee(2)), Unit::Sym(callee(2))], Program::default())
+        let e = link(vec![Unit::Sym(callee(2)), Unit::Sym(callee(2))], Program::default(), 1)
             .err()
             .unwrap();
         assert_eq!(*e, LinkError::DuplicateObject(key(2)));
@@ -730,10 +806,23 @@ mod tests {
     fn a_reference_outside_the_table_is_an_error() {
         let mut c = caller(1, 2);
         c.refs.objects.clear();
-        let e = link(vec![Unit::Sym(c), Unit::Sym(callee(2))], Program::default())
+        let e = link(vec![Unit::Sym(c), Unit::Sym(callee(2))], Program::default(), 1)
             .err()
             .unwrap();
         assert!(matches!(*e, LinkError::BadReference { class: "object", .. }), "{e:?}");
+    }
+
+    #[test]
+    fn par_map_keeps_the_order_of_the_items_on_any_number_of_workers() {
+        let items: Vec<usize> = (0..1000).collect();
+        for workers in [1, 2, 7] {
+            let out = par_map(items.clone(), workers, |i, x| (i, x * 2));
+            assert!(
+                out.iter().enumerate().all(|(i, &(j, v))| i == j && v == i * 2),
+                "{workers}"
+            );
+        }
+        assert!(par_map(Vec::<u8>::new(), 4, |_, x| x).is_empty());
     }
 
     #[test]
@@ -753,7 +842,7 @@ mod tests {
         let mut b = callee(2);
         b.positions = vec![pos(7)];
         b.object.routines[1].pos = 0;
-        let linked = link(vec![Unit::Sym(a), Unit::Sym(b)], Program::default()).unwrap();
+        let linked = link(vec![Unit::Sym(a), Unit::Sym(b)], Program::default(), 1).unwrap();
         assert_eq!(linked.pos_ranges, vec![(0, 2), (2, 1)]);
         assert_eq!(linked.program.objects[1].routines[1].pos, 2);
         assert_eq!(linked.program.positions[2].line, 7);

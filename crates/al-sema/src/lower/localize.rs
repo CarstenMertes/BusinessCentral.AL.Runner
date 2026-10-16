@@ -112,13 +112,13 @@ impl ControlRefs {
 pub(crate) struct Keys<'a> {
     pub objects: &'a [ObjKey],
     /// The key of each routine of object `i`.
-    pub routines: &'a dyn Fn(usize) -> &'a [LocalKey],
+    pub routines: &'a (dyn Fn(usize) -> &'a [LocalKey] + Sync),
     /// Per object: the table whose record it works on (`Shared::table_of`).
     pub table_of: &'a [Option<usize>],
     /// The number of field `pos` of table `table`.
-    pub field_no: &'a dyn Fn(usize, usize) -> Option<u32>,
+    pub field_no: &'a (dyn Fn(usize, usize) -> Option<u32> + Sync),
     /// The table (object) of data item `item` of report `report`.
-    pub report_item_table: &'a dyn Fn(usize, usize) -> Option<usize>,
+    pub report_item_table: &'a (dyn Fn(usize, usize) -> Option<usize> + Sync),
 }
 
 /// Makes the symbolic object of a lowered one. `Err` names a reference that points outside the

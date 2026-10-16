@@ -492,7 +492,11 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         // Payments adds the Durations of its telemetry timers.
         (V::Duration(a), V::Duration(b)) if matches!(op, Arith::Add | Arith::Sub) => {
             crate::assumptions::assume(crate::assumptions::Assumption::DurationAddDuration);
-            let n = if op == Arith::Add { a.checked_add(*b) } else { a.checked_sub(*b) };
+            let n = if op == Arith::Add {
+                a.checked_add(*b)
+            } else {
+                a.checked_sub(*b)
+            };
             return n
                 .map(V::Duration)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));

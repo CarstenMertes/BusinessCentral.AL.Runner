@@ -1102,8 +1102,11 @@ impl Writer {
                 escape_text(t, &mut s);
                 Plan::Text(s)
             }
-            XData::CData(t) => Plan::CData(format!("<![CDATA[{t}]]>")),
-            XData::Comment(t) => Plan::Markup(format!("<!--{t}-->")),
+            // An end marker inside the text splits the section (xml/XmlNodes.al:CData_Create `contains_end`: `a]]>b` is written
+            // `<![CDATA[a]]]]><![CDATA[>b]]>`).
+            XData::CData(t) => Plan::CData(format!("<![CDATA[{}]]>", t.replace("]]>", "]]]]><![CDATA[>"))),
+            // Two hyphens in a row are separated by a blank (xml/XmlNodes.al:Comment_Create `double_dash`: `a--b` is written `<!--a- -b-->`).
+            XData::Comment(t) => Plan::Markup(format!("<!--{}-->", t.replace("--", "- -"))),
             XData::Pi { target, data } => Plan::Markup(if data.is_empty() {
                 format!("<?{target}?>")
             } else {
@@ -1286,7 +1289,16 @@ fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
                     encoding,
                     standalone,
                     explicit,
-                } => declaration_text(version, encoding, standalone, *explicit),
+                } => {
+                    // A declaration read without an encoding is written with `utf-16` in a document (misc/lt-probes-needed-1/
+                    // PnAXmlWriteTo.al:Layout_Declarations `version-only`, `standalone-no`).
+                    let encoding = if encoding.is_empty() && !*explicit {
+                        "utf-16"
+                    } else {
+                        encoding.as_str()
+                    };
+                    declaration_text(version, encoding, standalone, *explicit)
+                }
                 _ => unreachable!("a declaration slot holds a declaration"),
             }),
             None => "<?xml version=\"1.0\" encoding=\"utf-16\"?>".to_string(),
@@ -2012,6 +2024,13 @@ impl XParser<'_> {
                     if pre.is_some() && self.prefixes.is_none() {
                         return malformed("a prefixed name needs a namespace manager");
                     }
+                    // A prefix the manager does not know is an error whether or not a node is tested against it
+                    // (xml/lt-xml-remaining-node-methods/P104SelCData.al:P104_Nodes_WithManager `zz:r` answers No).
+                    if let (Some(p), Some(m)) = (&pre, self.prefixes) {
+                        if !m.iter().any(|(q, _)| q == p) {
+                            return malformed(format!("prefix {p} is not declared"));
+                        }
+                    }
                     test = Test::Name(pre, local);
                 }
             }
@@ -2329,6 +2348,16 @@ fn eval(e: &Expr, node: &Handle, pos: usize, last: usize, ctx: &XCtx) -> XRes<XV
                             with(&n, |d| match d {
                                 XData::Element { local, .. } | XData::Attribute { local, .. } => local.clone(),
                                 XData::Pi { target, .. } => target.clone(),
+                                _ => String::new(),
+                            })
+                        })
+                        .unwrap_or_default(),
+                ),
+                ("namespace-uri", _) => XVal::Str(
+                    first_node(&vals)
+                        .map(|n| {
+                            with(&n, |d| match d {
+                                XData::Element { ns, .. } | XData::Attribute { ns, .. } => ns.clone(),
                                 _ => String::new(),
                             })
                         })
@@ -2670,12 +2699,22 @@ fn comment_create(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NR
 /// The name of a document type, as `XmlConvert.VerifyName` takes it: an empty name is an argument error, a bad character
 /// the XML exception with its place (xml/lt-xml-doctype-declaration/DocTypeErrors.al:Create_InvalidNames, DocTypeSetters.al:SetName).
 fn verify_name(name: &str) -> Result<(), Signal> {
+    verify_name_with(name, true)
+}
+
+/// [`verify_name`] for a name without a prefix (`XmlConvert.VerifyNCName`): a colon is refused too (xml/lt-xml-attr-doc-http-members/
+/// P97DocQuery.al:GetChildElements_LocalNameAndNamespace `*` and `b:r`).
+fn verify_ncname(name: &str) -> Result<(), Signal> {
+    verify_name_with(name, false)
+}
+
+fn verify_name_with(name: &str, colon: bool) -> Result<(), Signal> {
     if name.is_empty() {
         return Err(nav_argument());
     }
     let hex = |c: char| format!("0x{:02X}", u32::from(c));
     for (i, c) in name.chars().enumerate() {
-        let start = c == '_' || c == ':' || c.is_alphabetic();
+        let start = c == '_' || (colon && c == ':') || c.is_alphabetic();
         let rest = start || c.is_alphanumeric() || c == '-' || c == '.' || c == '\u{B7}';
         let message = if i == 0 && !start {
             format!(
@@ -2885,6 +2924,8 @@ fn element_name(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NRes
     let h = recv(r)?;
     Ok(Value::Text(
         with(&h, |d| match d {
+            // An element in a namespace without a prefix reads `:name` (xml/XmlElement.al:Create_Namespace).
+            XData::Element { prefix, local, ns, .. } if prefix.is_empty() && !ns.is_empty() => format!(":{local}"),
             XData::Element { prefix, local, .. } | XData::Attribute { prefix, local, .. } => qname(prefix, local),
             _ => String::new(),
         })
@@ -3062,6 +3103,17 @@ fn add_before_self(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
 
 fn remove(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let h = recv_or_uninit(r, "XmlNode")?;
+    // A declaration cannot be removed, from its document or detached; the document keeps it (xml/lt-xml-remaining-node-methods/
+    // P104TreeBDecl.al:P104_Remove_InDoc).
+    if with(&h, |d| matches!(d, XData::Declaration { .. })) {
+        if c.ret_used() {
+            return unsupported("Remove of an XmlDeclaration with the result used (not pinned)");
+        }
+        return Err(error(
+            "The requested operation cannot be performed in this context.",
+            "InvalidOperation",
+        ));
+    }
     if parent_of(&h).is_none() {
         // A node of these kinds without a parent (DocTypeNode.al:Remove_DetachedDocType, P90*Edit.al:Remove_Detached_Twice).
         if detached_is_invalid(&h) && !c.ret_used() {
@@ -3090,6 +3142,19 @@ fn replace_with(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         ));
     }
     let (p, i) = position_in_parent(&h)?;
+    // A comment or a processing instruction of a document that cannot be replaced is gone all the same, whether the nodes
+    // are refused as an argument or in the document (xml/lt-xml-cdata-comment-pi-text/P90CommentRead.al:
+    // DocLevel_BeforeSelf_AndReplace, P90PIRead.al).
+    if kind(&p) == "XmlDocument" && with(&h, |d| matches!(d, XData::Comment(_) | XData::Pi { .. })) {
+        detach(&h);
+        let nodes = content_nodes(a)?;
+        reject_attributes(&nodes)?;
+        for n in &nodes {
+            check_fits(&p, n, &[], Some(i))?;
+        }
+        insert(&p, Some(i), nodes)?;
+        return Ok(Value::Boolean(true));
+    }
     let nodes = content_nodes(a)?;
     reject_attributes(&nodes)?;
     // A document type that cannot be replaced is removed all the same (DocTypeNode.al:ReplaceWith_Element: the document
@@ -3354,6 +3419,7 @@ fn get_child_elements(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
         }
         _ => {
             let (n, u) = (arg_text(a, 0)?, arg_text(a, 1)?);
+            verify_ncname(&n)?;
             list_of(child_elements(&h, Some((&n, Some(&u)))))
         }
     })
@@ -3387,7 +3453,11 @@ fn get_descendant_elements(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
             check_name(&n)?;
             Some((n, String::new()))
         }
-        _ => Some((arg_text(a, 0)?, arg_text(a, 1)?)),
+        _ => {
+            let (n, u) = (arg_text(a, 0)?, arg_text(a, 1)?);
+            verify_ncname(&n)?;
+            Some((n, u))
+        }
     };
     v.retain(|c| {
         with(c, |d| match (d, &want) {
@@ -3403,6 +3473,11 @@ fn get_descendant_elements(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Valu
 /// declared) when the result is used, which answers false; the statement form raises the pinned "not a node set" error and
 /// refuses the other cases (xml/TestProbeXmlContracts.al:XPath_MalformedStatement, XPath_NamespaceManager).
 fn select(c: &mut dyn Ctx, h: &Handle, path: &str, prefixes: Prefixes) -> Result<Option<Vec<Handle>>, Signal> {
+    // An XmlDeclaration selects nothing, whatever the path, even one that is no XPath (xml/lt-xml-remaining-node-methods/
+    // P104SelDecl.al: every case answers `No:0`).
+    if with(h, |d| matches!(d, XData::Declaration { .. })) {
+        return Ok(None);
+    }
     match xpath(h, path, prefixes) {
         Ok(v) => Ok(Some(v)),
         Err(XFail::Signal(s)) => Err(s),

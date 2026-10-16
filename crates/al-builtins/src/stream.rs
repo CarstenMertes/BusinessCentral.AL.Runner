@@ -890,7 +890,11 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         };
         // A negative length writes the whole text (streams/lt-stream-read-write-media/P102WriteTextLike.al:P102_Text `lenneg_ret`).
         // A Code ignores the length and writes the whole text (:P102_Code `len2_ret` is 5).
-        let take = if *n < 0 || matches!(a[0], Value::Code(_)) { usize::MAX } else { usize::try_from(*n).unwrap_or(0) };
+        let take = if *n < 0 || matches!(a[0], Value::Code(_)) {
+            usize::MAX
+        } else {
+            usize::try_from(*n).unwrap_or(0)
+        };
         let cut: String = t.chars().take(take).collect();
         if !cut.is_ascii() {
             return unsupported("OutStream.Write(Text, Length) of non-ASCII characters (not pinned)");
@@ -935,8 +939,9 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         // Non-ASCII characters are pinned only for a Windows stream, as one cp1252 byte each
         // (streams/ProbeJsonAndInStreamBytes.al:InStreamRead_Text_AfterWriteTextAndAfterWriteText_NonAscii:
         // 'wörld' is 77 F6 72 6C 64 00).
-        Value::Text(t) | Value::Code(t) if enc.encode_pinned(t) => {
-            let mut v = enc.encode(t);
+        // The text ends at its first NUL character (types/lt-variant-is-text-streams/LTP89StreamText.al:Text_BytesWritten `nul_char`).
+        Value::Text(t) | Value::Code(t) if enc.encode_pinned(t.split('\0').next().unwrap_or_default()) => {
+            let mut v = enc.encode(t.split('\0').next().unwrap_or_default());
             v.extend(std::iter::repeat_n(0, enc.unit()));
             v
         }

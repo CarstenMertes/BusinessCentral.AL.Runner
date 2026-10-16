@@ -1900,6 +1900,11 @@ impl Session {
                 // SetAutoCalcFields_SurvivesResetAndClear).
                 let mut r = rec.borrow_mut();
                 r.filters.clear();
+                // The filter group goes back to 0 (misc/lt-probes-needed-5/PnE08RecordMisc.al:RecordRef_FilterGroup `afterReset`).
+                r.filter_group = 0;
+                // Reset drops the marks too (record/lt-record-read/RcAMisc.al:ClearMarks_And_Reset `markAfterReset`).
+                r.marks.clear();
+                r.marked_only = false;
                 r.key = 0;
                 r.adhoc = None;
                 r.ascending = true;

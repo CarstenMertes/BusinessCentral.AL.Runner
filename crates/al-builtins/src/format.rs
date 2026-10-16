@@ -64,6 +64,9 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             2 | 9 if crate::sysenum::is_field_table_type(members) => FIELD_TABLE_TYPE_ORDINALS
                 .get(*o as usize)
                 .map_or_else(|| o.to_string(), |v| v.to_string()),
+            2 | 9 if crate::sysenum::platform_ordinal(members, *o).is_some() => {
+                crate::sysenum::platform_ordinal(members, *o).unwrap_or(*o).to_string()
+            }
             2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
             // `Option` declared without members is the one empty name: it shows the number
             // (types/lt-scalars/ScT70062.al:Option_Defaults `nomembers_len`, `nomembers_3`).
@@ -188,12 +191,19 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // the key values in it; the layout is docs/probes-needed.md).
         Value::Library(crate::library_kind::LibraryKind::RecordId, l) => match &*l.borrow() {
             crate::value::LibraryValue::RecordId { name, key, .. } => {
-                // A text key that is empty or holds a comma is quoted (record/TestProbeRecordRefContracts.al:RecordId_FormatForms).
+                // The numbers 3 to 8 do not exist for a RecordId; 2 and 9 format the key values with that number (types/
+                // lt-implicit-conversions/P79RecordId.al:CodeKey_FormatNumbers, DateKey_FormatNumbers).
+                if (3..=8).contains(&standard) {
+                    return Err(no_such_format(standard, "RecordID"));
+                }
+                let key_standard = if matches!(standard, 2 | 9) { standard } else { 0 };
+                // A key that is empty or holds a comma is quoted (record/TestProbeRecordRefContracts.al:RecordId_FormatForms;
+                // P79RecordId.al:NeverRead_BlankRecordId, a blank Date too).
                 let key = key
                     .iter()
                     .map(|k| {
-                        format_value(k, 0, 0, ctx).map(|t| {
-                            if matches!(k, Value::Text(_) | Value::Code(_)) && (t.is_empty() || t.contains(',')) {
+                        format_value(k, 0, key_standard, ctx).map(|t| {
+                            if t.is_empty() || (matches!(k, Value::Text(_) | Value::Code(_)) && t.contains(',')) {
                                 format!("\"{t}\"")
                             } else {
                                 t
@@ -227,7 +237,14 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
     // A text longer than the length is cut to it (text/lt-label-textbuilder/TxCLabel.al:Label_Value_And_Format `Format(Plain, 5)`).
     if matches!(
         v,
-        Value::Text(_) | Value::Code(_) | Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)
+        Value::Text(_)
+            | Value::Code(_)
+            | Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Decimal(_)
+            | Value::Date(..)
+            | Value::Time(_)
+            | Value::DateTime(_)
     ) && length > 0
         && s.chars().count() > length as usize
     {

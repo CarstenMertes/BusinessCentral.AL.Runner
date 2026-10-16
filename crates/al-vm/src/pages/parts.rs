@@ -145,12 +145,15 @@ impl Session {
         // (misc/lt-probes-needed-7/PnGPartTriggers.al:HiddenPartExpression); only a literal `Visible = false` leaves it out
         // (testpart/TestPartNotOnThePage, which never creates the part).
         let found = found.or_else(|| {
+            // Test code finds it only when the Visible expression hid it; a part a literal `Visible = false` left out, which page
+            // code created on first reach, stays "not found" (misc/lt-probes-needed-9/P99InvisiblePart.al:P99_StaticInvisible).
             let hidden = st
                 .borrow()
                 .hidden_parts
                 .iter()
                 .find(|(i, _)| *i == control)
-                .map(|(_, c)| c.clone());
+                .map(|(_, c)| c.clone())
+                .filter(|_| runtime || !self.control_eliminated(st, control));
             if hidden.is_some() && runtime {
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::InvisiblePartForPageCode);
             }
@@ -204,6 +207,19 @@ impl Session {
                 ))
             }
         }
+    }
+
+    /// A part hidden by a Visible expression reads its rows once, when the host opens, after the parts in the tree; it does not follow
+    /// the host afterwards (pages/lt-page-filtergroup-assumptions/P99InvisiblePart.al:P99_FlagFalseAtOpen; PnGPartTriggers.al:
+    /// OpenOrderOfHostWithSixParts). A part a literal `Visible = false` left out reads nothing (:P99_StaticInvisible).
+    pub(super) fn sync_hidden_parts(&mut self, st: &St) -> Result<(), Signal> {
+        let hidden = st.borrow().hidden_parts.clone();
+        for (i, child) in hidden {
+            if !self.control_eliminated(st, i) {
+                self.sync_part(st, i, &child)?;
+            }
+        }
+        Ok(())
     }
 
     /// Reads the link of every part off the host's current row and loads the parts' first rows.

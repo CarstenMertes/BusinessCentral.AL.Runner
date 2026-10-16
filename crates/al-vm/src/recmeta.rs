@@ -611,6 +611,12 @@ impl Session {
                 d.ascending = s.ascending;
                 d.field_descending = s.field_descending;
                 d.position = s.position;
+                // The marks come over with Copy, not with an assignment (record/lt-record-read/RcAMisc.al:
+                // Mark_Separate_Variables_Do_Not_Share `copied`).
+                d.marks = s.marks;
+                d.marked_only = s.marked_only;
+                // SetLoadFields comes over with Copy (record/lt-record-read/RcAMisc.al:SetLoadFields_Copy_And_Assignment).
+                d.load.request = s.load.request;
                 d.load.buffer = s.load.buffer;
                 d.load.partial = s.load.partial;
                 if share && s.temporary {
@@ -701,8 +707,39 @@ impl Session {
                 }
             }
             Some(want) => {
-                let want = ops::convert(want.clone(), &t.fields[pos].ty)?;
-                if ops::compare(&current, &want)? != Ordering::Equal {
+                // Text against a text field and a number against a number field are compared as given, without converting to the
+                // field's type: a Code field is not upper-cased or trimmed, a Text longer than the field raises no overflow, a Decimal
+                // against an Integer field is not an overflow (record/lt-testfield-fielderror-typed/P96Text.al, P96LongText.al,
+                // P96Numbers.al). The message shows the value as given.
+                let text_pair = matches!(
+                    (&current, want),
+                    (Value::Text(_) | Value::Code(_), Value::Text(_) | Value::Code(_))
+                );
+                let number_pair = matches!(
+                    (&current, want),
+                    (
+                        Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_),
+                        Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)
+                    )
+                );
+                let want = if text_pair || number_pair {
+                    want.clone()
+                } else {
+                    ops::convert(want.clone(), &t.fields[pos].ty)?
+                };
+                let equal = if text_pair {
+                    // Exact, case and trailing blanks included; a Code field reads the value as Code does upper-cased
+                    // (P96Text.al: `cd_lower` is equal, `cd_trailing_blank` and `txt_case` are not).
+                    let (a, b) = (
+                        al_builtins::native::text_of(&current),
+                        al_builtins::native::text_of(&want),
+                    );
+                    let code_field = matches!(t.fields[pos].ty, RtType::Code(_));
+                    matches!((a, b), (Some(a), Some(b)) if if code_field { a == b.to_uppercase() } else { a == b })
+                } else {
+                    ops::compare(&current, &want)? == Ordering::Equal
+                };
+                if !equal {
                     let key = self.key_text(t, &row)?;
                     // record/TestRecordRuntimeTextsAndViews.al:Record_TestField_MismatchTexts: the
                     // wanted and the current value are quoted, and two spaces precede "in".
@@ -1043,18 +1080,37 @@ impl Session {
         // and leaves the ErrorInfo as it was; a collectible one is collected in a collecting scope as a copy
         // that holds the full text (handlers/PWRefusedBuiltins.al:113-168, BC 27.5).
         let mut info = None;
-        let what = match args.get(1) {
+        // No text, an empty text and an ErrorInfo with an empty message all say what is wrong with the value: a blank Text, Date or
+        // DateTime "You must specify <field>", any other value "<field> must not be <value>" (record/lt-testfield-fielderror-typed/
+        // P96FieldError.al:FieldError_NoText_Empty_Row; P96LongText.al:LongText_FieldError_Message `fe_empty`).
+        let mut what = match args.get(1) {
             Some(v) => match (al_builtins::native::text_of(v), al_builtins::errorinfo::message_of(v)) {
-                (Some(text), _) => text.into_string(),
+                (Some(text), _) => Some(text.into_string()),
                 (None, Some(message)) => {
                     info = Some(v.clone());
-                    message
+                    Some(message)
                 }
                 _ => return unsupported("FieldError with an argument that is neither text nor an ErrorInfo"),
             },
-            None => format!("must not be {}", self.message_value(&row[pos])?),
+            None => None,
+        }
+        .filter(|w| !w.is_empty());
+        let blank_value =
+            is_blank(&row[pos])? && matches!(row[pos], Value::Text(_) | Value::Date(..) | Value::DateTime(_));
+        let full = match what.take() {
+            Some(w) => format!("{} {w} in {} {key}.", self.field_caption(t, pos), self.caption(t)),
+            None if blank_value => format!(
+                "You must specify {} in {} {key}.",
+                self.field_caption(t, pos),
+                self.caption(t)
+            ),
+            None => format!(
+                "{} must not be {} in {} {key}.",
+                self.field_caption(t, pos),
+                self.message_value(&row[pos])?,
+                self.caption(t)
+            ),
         };
-        let full = format!("{} {what} in {} {key}.", self.field_caption(t, pos), self.caption(t));
         if let Some(info) = info {
             if let Some(copy) = al_builtins::errorinfo::copy_of(&info) {
                 let collectible = al_builtins::errorinfo::set_message_of(&copy, &full);

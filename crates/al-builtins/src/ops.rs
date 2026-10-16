@@ -520,7 +520,7 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                             "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.Int64.",
                             d.normalize()
                         ),
-                        "",
+                        "ConversionCast",
                     );
                 }
                 other => int_of(other),
@@ -671,7 +671,7 @@ fn text_like(v: &Value) -> Option<&crate::text::Txt> {
 
 fn whole_days(v: &Value) -> Option<i64> {
     match v {
-        Value::Decimal(d) if d.fract().is_zero() => i64::try_from(d.trunc().mantissa() / 10i128.pow(d.scale())).ok(),
+        Value::Decimal(d) if d.fract().is_zero() => d.trunc().to_i64(),
         other => int_of(other),
     }
 }

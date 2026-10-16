@@ -231,7 +231,10 @@ fn path_of(h: &Handle) -> String {
     while let Some(p) = parent_of(&cur) {
         let seg = with_node(&p, |n| match n {
             JsonNode::Object(kids) => kids.iter().find(|(_, c)| Rc::ptr_eq(c, &cur)).map(|(k, _)| {
-                if !k.is_empty() && k.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                // An empty key adds nothing to the path (json/lt-json-overloads/P88ObjectPathYaml.al:Path_SpecialKeys).
+                if k.is_empty() {
+                    String::new()
+                } else if k.chars().all(|c| c.is_alphanumeric() || c == '_') {
                     format!(".{k}")
                 } else {
                     format!("['{}']", k.replace('\'', "\\'"))

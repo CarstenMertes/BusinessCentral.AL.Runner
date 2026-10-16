@@ -113,6 +113,27 @@ impl Session {
                 if method == PageOp::PageRunModalStatic {
                     st.borrow_mut().lookup = true;
                 }
+                // A record of another table than the page's is refused before anything opens, and so is a field number the table
+                // lacks (a negative one or 0 goes on; pages/lt-page-run-overloads-testpart/P106RunErrors.al: Err_WrongTableRecord,
+                // Err_FieldNoNotExisting).
+                if let (Some(r), true) = (&record, self.has_source(&st)) {
+                    self.page_instance(&st)?;
+                    if self.page_rec(&st).borrow().table != r.borrow().table {
+                        return Err(error_code("The table IDs do not match.", "TableIdMismatch"));
+                    }
+                    if let Some(Value::Integer(no)) = args.get(2) {
+                        let table = self.table(r)?;
+                        if *no > 0 && !table.fields.iter().any(|f| i64::from(f.id) == i64::from(*no)) {
+                            return Err(error_code(
+                                format!(
+                                    "The supplied field number '{no}' cannot be found in the '{}' table.",
+                                    self.caption(&table)
+                                ),
+                                "FieldNotFound",
+                            ));
+                        }
+                    }
+                }
                 self.run_page_ui_with(&st, record, method == PageOp::PageRunModalStatic, field)
             }
             Some(Value::TestPage(st)) => {

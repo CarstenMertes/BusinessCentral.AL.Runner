@@ -128,6 +128,7 @@ fn with_response<R>(r: Option<&mut Value>, f: impl FnOnce(&mut HttpResponseState
 /// (network/lt-http/TestHttpMessages.al:FreshTestResponse).
 pub fn fresh_test_response() -> TestHttpResponseState {
     TestHttpResponseState {
+        request_failed: false,
         status: 200,
         reason: "OK".into(),
         success: true,
@@ -844,6 +845,10 @@ fn send(c: &mut dyn Ctx, method: &str, url: String, response: Option<&Value>) ->
     let Some(Value::Library(_, cell)) = response else {
         return unsupported("HttpClient call without a response variable");
     };
+    // A request that failed (a handler answered true: the real send, to an unresolvable host) answers false and leaves
+    // the response a call that got no answer has: status 0 (network/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest
+    // pins only that the status is not the one the handler set).
+    let failed = state.request_failed;
     *cell.borrow_mut() = LibraryValue::HttpResponse(HttpResponseState {
         status: state.status,
         reason: state.reason,
@@ -851,7 +856,7 @@ fn send(c: &mut dyn Ctx, method: &str, url: String, response: Option<&Value>) ->
         headers: state.headers,
         blocked: state.blocked,
     });
-    Ok(Value::Boolean(true))
+    Ok(Value::Boolean(!failed))
 }
 
 macro_rules! verb {

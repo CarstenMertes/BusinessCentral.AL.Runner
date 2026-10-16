@@ -5,10 +5,10 @@
 //! trigger or section it does not understand becomes a reason on the report, so a variable of
 //! that report is refused statically (hard rule 4) instead of running with a guessed behaviour.
 
+use crate::check::posmap::FxMap as HashMap;
 use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_ir as ir;
 use al_syntax::ast;
-use std::collections::HashMap;
 
 /// Report properties that change nothing a processing run can observe.
 const INERT_OBJECT_PROPERTIES: &[&str] = &[
@@ -680,7 +680,7 @@ impl<'a> Owner<'a> {
             .enumerate()
             .map(|(i, _)| (crate::pages::column_name(i), i))
             .collect();
-        let mut column_routines = HashMap::new();
+        let mut column_routines = HashMap::default();
         for r in ast::routines_in(obj.syntax()) {
             if let Some(&ordinal) = names.get(&r.name()) {
                 if let Some(idx) = routine_at.get(&(oi, usize::from(r.syntax().text_range().start()))) {

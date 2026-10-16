@@ -2,6 +2,7 @@
 //! builtins registry cannot express yet becomes a reason on the routine
 //! (`Routine::unsupported` in `Lowered`), never a guess.
 
+use crate::check::posmap::FxMap as HashMap;
 use crate::check::{CheckResult, Res};
 use crate::members::MemberTable;
 use crate::types::Ty;
@@ -9,7 +10,6 @@ use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_builtins::value::RtType;
 use al_ir as ir;
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
-use std::collections::HashMap;
 
 /// Wall time of the parts of a compile (`--timings`).
 #[derive(Debug, Clone, Copy, Default)]
@@ -236,14 +236,11 @@ pub(crate) struct FileLines {
 
 impl FileLines {
     fn new(ws: &Workspace, file: usize) -> FileLines {
-        let text = ws.text(file).as_bytes();
-        let mut starts = vec![0u32];
-        starts.extend(
-            text.iter()
-                .enumerate()
-                .filter(|(_, b)| **b == b'\n')
-                .map(|(i, _)| i as u32 + 1),
-        );
+        let text = ws.text(file);
+        let mut starts = Vec::with_capacity(text.len() / 32 + 1);
+        starts.push(0u32);
+        // `match_indices` with a char searches by memchr.
+        starts.extend(text.match_indices('\n').map(|(i, _)| i as u32 + 1));
         FileLines {
             file: file as u32,
             starts,

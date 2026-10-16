@@ -406,10 +406,10 @@ impl Lowerer<'_> {
                     // Interface_VarParameterAndReturnValue_CarryTheReference, `exit(Impl)`).
                     if let Some(decl @ Ty::Object(ObjKind::Interface, _)) = self.ret_decl.clone() {
                         return self
-                            .convert_to(&decl, &self.ty_of(e), v)
+                            .convert_to(&decl, self.ty_ref(e), v)
                             .map(|v| ir::Stmt::Exit(Some(v)));
                     }
-                    Ok(ir::Stmt::Exit(Some(match (&self.ty_of(e), &self.ret_ty) {
+                    Ok(ir::Stmt::Exit(Some(match (self.ty_ref(e), &self.ret_ty) {
                         (Ty::DotNet(a), Some(rt)) if a.is_empty() && !matches!(rt, RtType::DotNet(_)) => {
                             ir::Expr::DotNetCoerce(rt.clone(), Box::new(v))
                         }
@@ -448,7 +448,7 @@ impl Lowerer<'_> {
                 .rec_slot
                 .ok_or("CurrFieldNo outside code that has an implicit Rec")?;
             let value = self.expr(&kids[1])?;
-            let value = self.convert_to(&Ty::Integer, &self.ty_of(&kids[1]), value)?;
+            let value = self.convert_to(&Ty::Integer, self.ty_ref(&kids[1]), value)?;
             return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
                 id: ir::BuiltinId::of("Record.SetCurrFieldNo#1").ok_or("Record.SetCurrFieldNo#1 has no builtin id")?,
                 receiver: Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec)))),
@@ -601,7 +601,7 @@ impl Lowerer<'_> {
             _ => rhs,
         };
         let value = match op_kind {
-            Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, &self.ty_of(&kids[1]), value)?,
+            Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,
             Some(_) => ir::Expr::Convert(self.rt(&target_ty)?, Box::new(value)),
         };
         Ok(ir::Stmt::Assign(place, value))
@@ -684,7 +684,7 @@ impl Lowerer<'_> {
             SyntaxKind::IndexExpr => {
                 let kids: Vec<SyntaxNode> = n.children().collect();
                 // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index.
-                if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_of(&kids[0]), Ty::Array(..)) {
+                if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_ref(&kids[0]), Ty::Array(..)) {
                     if let ir::Place::Index(root, mut idx) = self.place(&kids[0])? {
                         self.assume(al_builtins::assumptions::Assumption::ChainedArrayIndex);
                         for k in &kids[1..] {
@@ -722,7 +722,7 @@ impl Lowerer<'_> {
                     let temporary = n.kind() == SyntaxKind::MemberExpr
                         && n.children()
                             .next()
-                            .is_some_and(|b| matches!(self.ty_of(&b), Ty::Record { temporary: true, .. }));
+                            .is_some_and(|b| matches!(self.ty_ref(&b), Ty::Record { temporary: true, .. }));
                     if temporary {
                         self.field_pos(table, id).ok_or_else(|| "field position".to_string())?;
                     } else {

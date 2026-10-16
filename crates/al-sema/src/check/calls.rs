@@ -226,8 +226,13 @@ impl<'a> Checker<'a> {
 
     /// Name lookup without reporting: None if the name does not resolve.
     pub(crate) fn lookup_name(&mut self, sc: &mut Scope, node: &SyntaxNode) -> Option<E> {
-        let n = name_of(node);
-        let key = n.to_lowercase();
+        // One copy of the name for the common case (a variable); the spelling as written only when it is not one.
+        let mut key = name_of(node);
+        if key.is_ascii() {
+            key.make_ascii_lowercase();
+        } else {
+            key = key.to_lowercase();
+        }
         if let Some(t) = sc.vars.iter().rev().find_map(|frame| frame.get(&key)) {
             let t = t.clone();
             self.record(sc, node, Res::Local(key));
@@ -239,11 +244,12 @@ impl<'a> Checker<'a> {
             self.record(sc, node, res);
             return Some(E::Val(t));
         }
+        let n = name_of(node);
         // `this` is the running instance of a codeunit (`this.EmitLengthWarning(..)`).
         if key == "this" && self.ws.objects[sc.oi].kind == ObjKind::Codeunit && sc.self_obj == sc.oi {
             return Some(E::Val(Ty::Object(
                 ObjKind::Codeunit,
-                self.ws.objects[sc.oi].name.clone(),
+                self.ws.objects[sc.oi].name.as_str().into(),
             )));
         }
         if sc.rec_unqualified {
@@ -304,7 +310,7 @@ impl<'a> Checker<'a> {
             return keyword;
         }
         if let Some(i) = self.resolve(sc, ObjKind::Enum, &n) {
-            return Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())));
+            return Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.as_str().into())));
         }
         if key == "action" {
             return Some(E::TypeName(Ty::Option(
@@ -326,7 +332,7 @@ impl<'a> Checker<'a> {
             return Some(E::TypeName(Ty::Option(crate::types::text_encoding_members())));
         }
         if self.system_enums.contains(&key) {
-            return Some(E::TypeName(Ty::Builtin(n)));
+            return Some(E::TypeName(Ty::Builtin(n.into())));
         }
         // Library types used statically: `JsonObject`, `NavApp`, `TaskScheduler`, ...
         if self
@@ -335,7 +341,7 @@ impl<'a> Checker<'a> {
             .iter()
             .any(|s| s.receiver.eq_ignore_ascii_case(&n))
         {
-            return Some(E::TypeName(Ty::Builtin(n)));
+            return Some(E::TypeName(Ty::Builtin(n.into())));
         }
         None
     }

@@ -21,10 +21,10 @@
 //! resolving it (`Workspace::restrict_to`), so code that needs it after all is
 //! refused with "outside the workspace" instead of running half-present (hard rule 4).
 
+use super::posmap::FxSet as HashSet;
 use super::*;
 use crate::workspace::Resolution;
 use al_ir as ir;
-use std::collections::HashSet;
 use std::rc::Rc;
 
 /// Base Application's `Company-Initialize`, which a new company runs once.
@@ -91,7 +91,7 @@ impl State {
     pub(super) fn new(objects: usize) -> State {
         State {
             level: vec![NONE; objects],
-            reached: HashSet::new(),
+            reached: HashSet::default(),
             queue: Vec::new(),
             fresh: Vec::new(),
             ops: vec![0; objects],
@@ -100,8 +100,8 @@ impl State {
             fresh_global: 0,
             recref_ops: 0,
             fresh_recref: 0,
-            ctxs: HashMap::new(),
-            routines: HashMap::new(),
+            ctxs: HashMap::default(),
+            routines: HashMap::default(),
             caption_class: false,
             catalogs: 0,
         }
@@ -1283,7 +1283,7 @@ pub struct SubscriberSite {
 /// The sites [`uncompiled_subscribers`] describes, in its order.
 pub fn uncompiled_subscriber_sites(ws: &Workspace, active: &dyn Fn(usize) -> bool) -> Vec<SubscriberSite> {
     let mut out = Vec::new();
-    let mut seen = HashSet::new();
+    let mut seen = HashSet::default();
     let mut add = |publisher: Option<usize>, platform: ir::PlatformPublisher, so: usize, si: usize| {
         let o = &ws.objects[so];
         if !ws.is_dependency(so) || active(so) || o.manual_subscribers {

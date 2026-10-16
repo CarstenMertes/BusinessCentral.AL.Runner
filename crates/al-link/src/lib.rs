@@ -15,59 +15,9 @@ use al_ir::walk::{ExpansionSite, RefVisitor, TableOf, walk_object, walk_page_con
 use al_ir::{Object, Program, SrcPos};
 use std::sync::OnceLock;
 
-/// An object whose references are already positions in the program it goes into (a dependency
-/// object taken from a compile cache before the cache holds symbolic objects). It is placed as it
-/// is. Other objects still refer to it by key.
-#[derive(Debug, Clone, PartialEq)]
-pub struct DenseObject {
-    pub key: ObjKey,
-    /// For an enum or enum extension: the implementations it declares and the ordinals of its values.
-    pub enum_impls: Vec<EnumImplDecl>,
-    pub enum_ordinals: Vec<u32>,
-    /// For a codeunit: the interfaces it implements, those it lists and the ones they extend.
-    pub implements: Vec<ObjKey>,
-    /// For a table: the number of each field, in the order of its field list. Used where `object`
-    /// is only a placeholder (a layer build marks the objects of the layers below as supplied and
-    /// never reads their lowered form).
-    pub fields: Vec<u32>,
-    /// For a page: the name of each control in lower case (ASCII), in order. Used like `fields`.
-    pub controls: Vec<String>,
-    pub object: Object,
-    /// Source positions numbered from 0, as in [`SymObject::positions`].
-    pub positions: Vec<SrcPos>,
-}
-
-/// One object to link.
-#[derive(Debug, Clone, PartialEq)]
-/// (The two variants differ in size; units are made once and moved, so boxing them would cost more.)
-#[allow(clippy::large_enum_variant)]
-pub enum Unit {
-    Sym(SymObject),
-    Dense(DenseObject),
-}
-
-impl Unit {
-    fn key(&self) -> &ObjKey {
-        match self {
-            Unit::Sym(s) => &s.key,
-            Unit::Dense(d) => &d.key,
-        }
-    }
-
-    fn object(&self) -> &Object {
-        match self {
-            Unit::Sym(s) => &s.object,
-            Unit::Dense(d) => &d.object,
-        }
-    }
-
-    fn position_count(&self) -> u32 {
-        match self {
-            Unit::Sym(s) => s.positions.len() as u32,
-            Unit::Dense(d) => d.positions.len() as u32,
-        }
-    }
-}
+/// One object to link. (An object a layer build only marks as supplied, whose lowered form is never read,
+/// is a [`SymObject`] with `placeholder` set and the facts the other objects ask of it.)
+pub type Unit = SymObject;
 
 /// Why a set of objects cannot be linked.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -196,47 +146,31 @@ impl Space for UnitSpace<'_, '_> {
         self.units.len()
     }
     fn key(&self, i: usize) -> &ObjKey {
-        self.units[i].key()
+        &self.units[i].key
     }
     fn routines(&self, i: usize) -> &[LocalKey] {
         (self.routines)(i)
     }
     fn object(&self, i: usize) -> &Object {
-        self.units[i].object()
+        &self.units[i].object
     }
     fn field_numbers(&self, i: usize) -> Option<&[u32]> {
-        match &self.units[i] {
-            Unit::Dense(d) if !d.fields.is_empty() => Some(&d.fields),
-            Unit::Sym(s) if !s.field_numbers.is_empty() => Some(&s.field_numbers),
-            _ => None,
-        }
+        Some(self.units[i].field_numbers.as_slice()).filter(|f| !f.is_empty())
     }
     fn control_names(&self, i: usize) -> Option<&[String]> {
-        match &self.units[i] {
-            Unit::Dense(d) if !d.controls.is_empty() => Some(&d.controls),
-            _ => None,
-        }
+        Some(self.units[i].control_names.as_slice()).filter(|c| !c.is_empty())
     }
     fn extra_field_numbers(&self, i: usize) -> &[u32] {
         self.extras.get(&i).map_or(&[], |v| v.as_slice())
     }
     fn implemented(&self, i: usize) -> &[ObjKey] {
-        match &self.units[i] {
-            Unit::Sym(s) => &s.implements,
-            Unit::Dense(d) => &d.implements,
-        }
+        &self.units[i].implements
     }
     fn enum_impls(&self, i: usize) -> &[EnumImplDecl] {
-        match &self.units[i] {
-            Unit::Sym(s) => &s.enum_impls,
-            Unit::Dense(d) => &d.enum_impls,
-        }
+        &self.units[i].enum_impls
     }
     fn enum_ordinals(&self, i: usize) -> &[u32] {
-        match &self.units[i] {
-            Unit::Sym(s) => &s.enum_ordinals,
-            Unit::Dense(d) => &d.enum_ordinals,
-        }
+        &self.units[i].enum_ordinals
     }
     fn enum_extensions(&self, i: usize) -> &[usize] {
         self.enum_exts.get(&i).map_or(&[], |v| v.as_slice())
@@ -246,20 +180,17 @@ impl Space for UnitSpace<'_, '_> {
             .get(&i)
             .into_iter()
             .flatten()
-            .filter_map(|&e| match &self.units[e] {
-                Unit::Sym(s) => s.contribution.page.as_ref().map(|p| (e, p)),
-                Unit::Dense(_) => None,
-            })
+            .filter_map(|&e| self.units[e].contribution.page.as_ref().map(|p| (e, p)))
             .collect()
     }
 }
 
 /// The page extensions of each page (and report with a request page), in the order they apply.
 fn page_extensions(units: &[Unit]) -> FxMap<usize, Vec<usize>> {
-    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (u.key(), i)).collect();
+    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (&u.key, i)).collect();
     let mut found: Vec<(usize, (u32, u32, u32), usize)> = Vec::new();
     for (i, u) in units.iter().enumerate() {
-        let Unit::Sym(s) = u else { continue };
+        let s = u;
         let Some(base) = s.extends.as_ref().and_then(|k| at.get(k)).copied() else {
             continue;
         };
@@ -277,10 +208,11 @@ fn page_extensions(units: &[Unit]) -> FxMap<usize, Vec<usize>> {
 
 /// The enum extensions of each enum, in program order.
 fn enum_extensions(units: &[Unit]) -> FxMap<usize, Vec<usize>> {
-    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (u.key(), i)).collect();
+    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (&u.key, i)).collect();
     let mut out: FxMap<usize, Vec<usize>> = FxMap::default();
     for (i, u) in units.iter().enumerate() {
-        if let Unit::Sym(s) = u {
+        {
+            let s = u;
             if s.object.kind == al_ir::ObjKind::EnumExtension {
                 if let Some(base) = s.extends.as_ref().and_then(|k| at.get(k)).copied() {
                     out.entry(base).or_default().push(i);
@@ -293,10 +225,10 @@ fn enum_extensions(units: &[Unit]) -> FxMap<usize, Vec<usize>> {
 
 /// The numbers of the fields the table extensions of each table add, in program order.
 fn extra_fields(units: &[Unit]) -> FxMap<usize, Vec<u32>> {
-    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (u.key(), i)).collect();
+    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (&u.key, i)).collect();
     let mut out: FxMap<usize, Vec<u32>> = FxMap::default();
     for u in units {
-        let Unit::Sym(s) = u else { continue };
+        let s = u;
         let (Some(base), Some(t)) = (
             s.extends.as_ref().and_then(|k| at.get(k)).copied(),
             s.contribution.table.as_ref(),
@@ -631,8 +563,8 @@ pub fn link<'k>(
         merges = Merges::collect(&units, &tables);
         subscribers = uncompiled_subscribers(&units, &tables)?;
         par_map(units.iter().collect(), workers, |_, u| match u {
-            Unit::Sym(s) => tables.resolve(s).map(Some),
-            Unit::Dense(_) => Ok(None),
+            s if s.placeholder => Ok(None),
+            s => tables.resolve(s).map(Some),
         })
         .into_iter()
         .collect::<Result<_, _>>()?
@@ -641,18 +573,12 @@ pub fn link<'k>(
     let mut pos_ranges = Vec::with_capacity(units.len());
     let mut next = 0u32;
     for u in &units {
-        let len = u.position_count();
+        let len = u.positions.len() as u32;
         pos_ranges.push((next, len));
         next += len;
     }
     let mut units = units;
-    let contributions: Vec<Contribution> = units
-        .iter_mut()
-        .map(|u| match u {
-            Unit::Sym(s) => std::mem::take(&mut s.contribution),
-            Unit::Dense(_) => Contribution::default(),
-        })
-        .collect();
+    let contributions: Vec<Contribution> = units.iter_mut().map(|u| std::mem::take(&mut u.contribution)).collect();
     let work: Vec<(Unit, Option<Resolved>, Contribution)> = units
         .into_iter()
         .zip(resolved)
@@ -663,10 +589,7 @@ pub fn link<'k>(
         work,
         workers,
         |i, (u, res, mut contribution)| -> Result<Done, Box<LinkError>> {
-            let (mut object, mut positions, key) = match u {
-                Unit::Sym(s) => (s.object, s.positions, s.key),
-                Unit::Dense(d) => (d.object, d.positions, d.key),
-            };
+            let (mut object, mut positions, key) = (u.object, u.positions, u.key);
             if let Some(res) = res {
                 rewrite(&mut object, &res, &key)?;
                 let mut w = Rewrite { res: &res, bad: None };
@@ -774,7 +697,7 @@ fn uncompiled_subscribers<S: Space + ?Sized>(
     use al_ir::PlatformPublisher as P;
     let mut found: Vec<(u8, usize, usize, u32, al_ir::UncompiledSubscriber)> = Vec::new();
     for (i, u) in units.iter().enumerate() {
-        let Unit::Sym(s) = u else { continue };
+        let s = u;
         for d in &s.subscribers {
             let (group, publisher, platform) = match &d.target {
                 SubscriberTarget::Object(k) => {
@@ -880,12 +803,12 @@ struct Merges {
 impl Merges {
     fn collect<S: Space + ?Sized>(units: &[Unit], tables: &Tables<'_, S>) -> Merges {
         let mut m = Merges {
-            symbolic: units.iter().map(|u| matches!(u, Unit::Sym(_))).collect(),
+            symbolic: units.iter().map(|u| !u.placeholder).collect(),
             at: tables.at.iter().map(|(k, &i)| ((*k).clone(), i)).collect(),
             ..Default::default()
         };
         for (i, u) in units.iter().enumerate() {
-            let Unit::Sym(s) = u else { continue };
+            let s = u;
             let Some(base) = s.extends.as_ref().and_then(|k| tables.at.get(k)).copied() else {
                 continue;
             };
@@ -1388,9 +1311,12 @@ mod tests {
     fn keys_of(units: &[Unit]) -> Vec<Vec<LocalKey>> {
         units
             .iter()
-            .map(|u| match u {
-                Unit::Sym(s) => s.routines.clone(),
-                Unit::Dense(_) => vec![local("first", 0), local("second", 0)],
+            .map(|u| {
+                if u.placeholder {
+                    vec![local("first", 0), local("second", 0)]
+                } else {
+                    u.routines.clone()
+                }
             })
             .collect()
     }
@@ -1490,35 +1416,27 @@ mod tests {
 
     #[test]
     fn a_call_finds_its_target_wherever_the_target_is() {
-        let a = link_all(vec![Unit::Sym(caller(1, 2)), Unit::Sym(callee(2))], 1).unwrap();
+        let a = link_all(vec![caller(1, 2), callee(2)], 1).unwrap();
         assert_eq!(call_of(&a.program, 0), (1, 1));
-        let b = link_all(
-            vec![Unit::Sym(callee(2)), Unit::Sym(callee(3)), Unit::Sym(caller(1, 2))],
-            1,
-        )
-        .unwrap();
+        let b = link_all(vec![callee(2), callee(3), caller(1, 2)], 1).unwrap();
         assert_eq!(call_of(&b.program, 2), (0, 1));
     }
 
     #[test]
     fn a_dependency_object_placed_as_it_is_can_still_be_called_by_key() {
-        let dense = DenseObject {
+        let dense = SymObject {
             key: key(2),
-            enum_impls: vec![],
-            enum_ordinals: vec![],
-            implements: vec![],
-            fields: vec![],
-            controls: vec![],
+            placeholder: true,
             object: object(2, vec![routine("First", vec![]), routine("Second", vec![])]),
-            positions: vec![],
+            ..Default::default()
         };
-        let linked = link_all(vec![Unit::Dense(dense), Unit::Sym(caller(1, 2))], 1).unwrap();
+        let linked = link_all(vec![dense, caller(1, 2)], 1).unwrap();
         assert_eq!(call_of(&linked.program, 1), (0, 1));
     }
 
     #[test]
     fn a_missing_target_is_an_error_that_names_it() {
-        let e = link_all(vec![Unit::Sym(caller(1, 2))], 1).err().unwrap();
+        let e = link_all(vec![caller(1, 2)], 1).err().unwrap();
         assert_eq!(
             *e,
             LinkError::UnknownObject {
@@ -1529,15 +1447,13 @@ mod tests {
         let mut c = callee(2);
         c.routines.truncate(1);
         c.object.routines.truncate(1);
-        let e = link_all(vec![Unit::Sym(caller(1, 2)), Unit::Sym(c)], 1).err().unwrap();
+        let e = link_all(vec![caller(1, 2), c], 1).err().unwrap();
         assert!(matches!(*e, LinkError::UnknownRoutine { .. }), "{e:?}");
     }
 
     #[test]
     fn two_objects_with_one_key_do_not_link() {
-        let e = link_all(vec![Unit::Sym(callee(2)), Unit::Sym(callee(2))], 1)
-            .err()
-            .unwrap();
+        let e = link_all(vec![callee(2), callee(2)], 1).err().unwrap();
         assert_eq!(*e, LinkError::DuplicateObject(key(2)));
     }
 
@@ -1545,7 +1461,7 @@ mod tests {
     fn a_reference_outside_the_table_is_an_error() {
         let mut c = caller(1, 2);
         c.refs.objects.clear();
-        let e = link_all(vec![Unit::Sym(c), Unit::Sym(callee(2))], 1).err().unwrap();
+        let e = link_all(vec![c, callee(2)], 1).err().unwrap();
         assert!(matches!(*e, LinkError::BadReference { .. }), "{e:?}");
     }
 
@@ -1574,7 +1490,7 @@ mod tests {
         } else {
             s.object.enum_values = vals;
         }
-        Unit::Sym(s)
+        s
     }
 
     #[test]
@@ -1671,9 +1587,9 @@ mod tests {
                     after_validate: vec![],
                 }],
             });
-            Unit::Sym(s)
+            s
         };
-        let units = vec![ext(11, 20, "B", None), Unit::Sym(table), ext(12, 30, "C", Some(1))];
+        let units = vec![ext(11, 20, "B", None), table, ext(12, 30, "C", Some(1))];
         let linked = link_all(units, 1).unwrap();
         let t = linked.program.objects[1].table.as_ref().unwrap();
         let ids: Vec<u32> = t.fields.iter().map(|f| f.id).collect();
@@ -1766,7 +1682,7 @@ mod tests {
         let mut b = callee(2);
         b.positions = vec![pos(7)];
         b.object.routines[1].pos = 0;
-        let linked = link_all(vec![Unit::Sym(a), Unit::Sym(b)], 1).unwrap();
+        let linked = link_all(vec![a, b], 1).unwrap();
         assert_eq!(linked.pos_ranges, vec![(0, 2), (2, 1)]);
         assert_eq!(linked.program.objects[1].routines[1].pos, 2);
         assert_eq!(linked.program.positions[2].line, 7);

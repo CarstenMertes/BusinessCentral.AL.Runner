@@ -434,6 +434,8 @@ pub(crate) fn localize(
             })
             .collect(),
         contribution,
+        placeholder: false,
+        control_names: Vec::new(),
         field_numbers: Vec::new(),
         object,
         positions,

@@ -64,6 +64,56 @@ impl<'a> Checker<'a> {
         self.diag(sc, rhs, "AL0122", message);
     }
 
+    /// AL0122 for the scalar pairs the must-not-compile corpus pins, where the source is a plain name (a variable,
+    /// parameter or field): Decimal and Integer to Boolean (0260, 0265), Date to Text (0261), Boolean, Text and
+    /// Decimal to Date (0262, 0264, 0268), Variant to an Enum (0263), a Record to an Integer (0266); and a
+    /// one-character text literal (a Char) to an Enum (0267). Other pairs are not judged.
+    pub(crate) fn al_scalar_assignment(&mut self, sc: &Scope, rhs: &SyntaxNode, target: &Ty, source: &Ty) {
+        if self.ws.is_dependency(sc.oi) {
+            return;
+        }
+        let pinned = match rhs.kind() {
+            SyntaxKind::NameRef => matches!(
+                (target, source),
+                (Ty::Boolean, Ty::Decimal | Ty::Integer)
+                    | (Ty::Text(_), Ty::Date)
+                    | (Ty::Date, Ty::Boolean | Ty::Text(_) | Ty::Decimal)
+                    | (Ty::Enum(_), Ty::Variant)
+                    | (Ty::Integer, Ty::Record { .. })
+            ),
+            SyntaxKind::Literal => {
+                matches!(target, Ty::Enum(_))
+                    && rhs
+                        .children_with_tokens()
+                        .filter_map(|e| e.into_token())
+                        .find(|t| t.kind() == SyntaxKind::StringLit)
+                        .is_some_and(|tok| {
+                            let text = tok.text();
+                            let inner = text
+                                .get(1..text.len().saturating_sub(1))
+                                .unwrap_or("")
+                                .replace("''", "'");
+                            inner.chars().count() == 1
+                        })
+            }
+            _ => false,
+        };
+        if !pinned {
+            return;
+        }
+        let from = if rhs.kind() == SyntaxKind::Literal {
+            "Char".to_string()
+        } else {
+            source.to_string()
+        };
+        self.diag(
+            sc,
+            rhs,
+            "AL0122",
+            format!("Cannot implicitly convert type '{from}' to '{target}'"),
+        );
+    }
+
     /// Infers `node` as a value, calling a parameterless callable.
     pub(crate) fn ty(&mut self, sc: &mut Scope, node: &SyntaxNode) -> Ty {
         let e = self.infer(sc, node);
@@ -71,6 +121,26 @@ impl<'a> Checker<'a> {
             E::Val(t) => t,
             E::Callable(c) => self.pick(sc, node, &c, &[], &name_of(node)),
             E::PartialObj(k, parts) => {
+                // AL0118 (corpus must-not-compile 0222, 0223): `Codeunit::"X"` names no codeunit. Only the plain
+                // one-segment name of a codeunit is judged (a namespace may qualify it; other object kinds can
+                // be platform objects the workspace does not carry).
+                if k == ObjKind::Codeunit
+                    && parts.len() == 1
+                    && parts[0].parse::<u32>().is_err()
+                    && node.kind() == SyntaxKind::ScopeExpr
+                    && !self.ws.names_object(sc.file, k, &parts)
+                {
+                    if let Some(n) = node.children().nth(1).filter(|n| n.kind() == SyntaxKind::NameRef) {
+                        if !self.ws.is_dependency(sc.oi) {
+                            self.diag(
+                                sc,
+                                node,
+                                "AL0118",
+                                format!("The name '{}' does not exist in the current context.", n.text()),
+                            );
+                        }
+                    }
+                }
                 self.diag(
                     sc,
                     node,
@@ -134,6 +204,19 @@ impl<'a> Checker<'a> {
         // - the name `Rec` (not a call) in a codeunit without `TableNo`.
         let is_callee =
             node.parent().is_some_and(|p| p.kind() == SyntaxKind::CallExpr) && node.prev_sibling().is_none();
+        // A bare name that is not a call (corpus must-not-compile 0200, 0205 to 0210): no variable, label,
+        // field, data item or column of the object, no system variable and no function of the platform. In a
+        // codeunit without an implicit record it is judged wherever it stands; in the other objects only as
+        // the target of `:=` in a trigger or procedure of the object itself (not in a data item, control
+        // or field trigger, whose implicit members are not all modelled).
+        let bare_value = !is_callee
+            && !SYSTEM_VARIABLES.iter().any(|s| s.eq_ignore_ascii_case(&name))
+            && !self.catalog.knows_name(&name)
+            && !self.has_named_section(sc.oi, &name)
+            && !self.sibling_extension_declares(sc.oi, &name);
+        let assigned =
+            node.parent().is_some_and(|p| p.kind() == SyntaxKind::AssignStmt) && node.prev_sibling().is_none();
+        let object_level = !node.ancestors().any(|a| a.kind() == SyntaxKind::Section);
         let judged = match kind {
             // A bare call can also be a method of the Codeunit type called on the running instance: `Run()`
             // runs the codeunit itself (it compiles in BC; NP Retail's scanner import codeunits call it).
@@ -142,11 +225,14 @@ impl<'a> Checker<'a> {
                     && ((is_callee
                         && self.catalog.overloads("Codeunit", &name).is_empty()
                         && self.catalog.hidden("Codeunit", &name).is_empty())
-                        || name.eq_ignore_ascii_case("Rec"))
+                        || name.eq_ignore_ascii_case("Rec")
+                        || bare_value)
             }
             ObjKind::Table | ObjKind::Page | ObjKind::Report | ObjKind::PageExtension => {
-                is_callee && !self.catalog.knows_name(&name) && !self.sibling_extension_declares(sc.oi, &name)
+                (is_callee && !self.catalog.knows_name(&name) && !self.sibling_extension_declares(sc.oi, &name))
+                    || (bare_value && assigned && object_level && kind != ObjKind::PageExtension)
             }
+            ObjKind::Query | ObjKind::XmlPort => bare_value && assigned && object_level,
             _ => false,
         };
         if judged {
@@ -201,21 +287,33 @@ impl<'a> Checker<'a> {
         );
     }
 
-    /// AL0132 (corpus must-not-compile 0107): `Length` on a Text or Code, which have no such method (`StrLen` is the
-    /// function). Only that name is judged: the catalog is not complete enough to reject other unknown methods.
-    pub(crate) fn al_text_has_no_length(&mut self, sc: &Scope, node: &SyntaxNode, base: &Ty, name: &str) {
-        if !matches!(base, Ty::Text(_) | Ty::Code(_))
-            || !name.eq_ignore_ascii_case("Length")
-            || self.ws.is_dependency(sc.oi)
+    /// AL0132 for a method that a library type does not have (corpus must-not-compile 0107 `Length` on a Text, 0224
+    /// `Contain` on a Text, 0225 `Length` on a List, 0226 `Size` on a Dictionary, 0228 `Put` on a JsonObject,
+    /// 0229 `Send2` on an HttpClient, 0230 `Fieldd` on a RecordRef, 0233 `Invert` on a Boolean, 0234 `Size` on a
+    /// Text, 0235 `GetName` on a JsonToken, 0236 `Add` on a TextBuilder). Only these types are judged, and only
+    /// when the catalog has no method of that name for the type in any runtime version: the catalog is not
+    /// complete enough for the others.
+    pub(crate) fn al_unknown_builtin_member(&mut self, sc: &Scope, node: &SyntaxNode, base: &Ty, name: &str) {
+        const JUDGED: &[&str] = &["JsonObject", "JsonToken", "HttpClient", "RecordRef", "TextBuilder"];
+        let shown = match base {
+            Ty::Text(_) => "Text".to_string(),
+            Ty::Code(_) => "Code".to_string(),
+            Ty::Boolean | Ty::List(_) | Ty::Dictionary(..) => base.to_string(),
+            Ty::Builtin(n) if JUDGED.iter().any(|j| j.eq_ignore_ascii_case(n)) => base.to_string(),
+            _ => return,
+        };
+        let Some(recv) = receiver_of(base) else { return };
+        if self.ws.is_dependency(sc.oi)
+            || !self.catalog.overloads(&recv, name).is_empty()
+            || !self.catalog.hidden(&recv, name).is_empty()
         {
             return;
         }
-        let shown = if matches!(base, Ty::Text(_)) { "Text" } else { "Code" };
         self.diag(
             sc,
             node,
             "AL0132",
-            format!("'{shown}' does not contain a definition for 'Length'"),
+            format!("'{shown}' does not contain a definition for '{name}'"),
         );
     }
 
@@ -544,7 +642,7 @@ impl<'a> Checker<'a> {
                     None => {
                         self.diag(sc, node, "AR1002", self.no_member(&mname, &base_ty));
                         self.al_unknown_record_member(sc, node, &base_ty, &mname);
-                        self.al_text_has_no_length(sc, node, &base_ty, &mname);
+                        self.al_unknown_builtin_member(sc, node, &base_ty, &mname);
                         E::Val(Ty::Unknown)
                     }
                 }
@@ -681,6 +779,16 @@ impl<'a> Checker<'a> {
                     {
                         let value = *v as i32;
                         self.record(sc, node, Res::EnumValue { object: ei, value });
+                    } else if !self.ws.is_dependency(sc.oi) && !self.ws.is_dependency(ei) {
+                        // AL0132 (corpus must-not-compile 0204): a value the enum, with the values of its
+                        // extensions, does not have. Only an enum of the workspace is judged.
+                        let shown = crate::alcodes::quoted_if_needed(&self.ws.objects[ei].name);
+                        self.diag(
+                            sc,
+                            node,
+                            "AL0132",
+                            format!("'{shown}' does not contain a definition for '{rhs}'"),
+                        );
                     }
                 }
             }

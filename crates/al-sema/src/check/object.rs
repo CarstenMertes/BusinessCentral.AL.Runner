@@ -373,9 +373,63 @@ impl<'a> Checker<'a> {
         }
     }
 
+    /// AL0132 (corpus must-not-compile 0212): a page field whose source is `Rec.Name`, where `Name` is no
+    /// field or procedure of the source table and no method of `Record`. Only a table of the workspace that no
+    /// extension adds to is judged, and only a plain `Rec.Name` source (the expression of a page control is
+    /// not checked as code, see `pages::is_synthetic`).
+    fn al_page_field_sources(&mut self, oi: usize, obj: &ast::Object) {
+        if self.ws.objects[oi].kind != ObjKind::Page || self.ws.is_dependency(oi) {
+            return;
+        }
+        let file = self.ws.objects[oi].file;
+        let Some(table) = self.source_table(oi) else { return };
+        let Some(ti) = self.resolve_quiet(file, ObjKind::Table, &table) else {
+            return;
+        };
+        if self.ws.is_dependency(ti) || !self.ws.extensions_of(ti).is_empty() {
+            return;
+        }
+        for sec in crate::pages::control_sections(obj) {
+            if !sec.name().eq_ignore_ascii_case("field") {
+                continue;
+            }
+            let Some(src) = sec.args_raw().get(1).cloned() else {
+                continue;
+            };
+            let Some(rest) = src
+                .get(..4)
+                .filter(|p| p.eq_ignore_ascii_case("Rec."))
+                .map(|_| src[4..].trim())
+            else {
+                continue;
+            };
+            let name = match rest.strip_prefix('"').and_then(|r| r.strip_suffix('"')) {
+                Some(q) if !q.contains('"') => q,
+                Some(_) => continue,
+                None if !rest.is_empty() && rest.chars().all(|c| c.is_alphanumeric() || c == '_') => rest,
+                None => continue,
+            };
+            if self.members[ti].field(name).is_some()
+                || !self.members[ti].procedures_named(name).is_empty()
+                || !self.catalog.overloads("Record", name).is_empty()
+                || !self.catalog.hidden("Record", name).is_empty()
+            {
+                continue;
+            }
+            let table_name = self.ws.objects[ti].name.clone();
+            self.diags.push(Diagnostic {
+                file: self.ws.files[file].path.clone(),
+                offset: usize::from(sec.syntax().text_range().start()),
+                code: "AL0132",
+                message: format!("'Record \"{table_name}\"' does not contain a definition for '{name}'"),
+            });
+        }
+    }
+
     pub(crate) fn check_object(&mut self, oi: usize) {
         let ctx = self.object_ctx(oi);
         let obj = self.ws.object_ast(oi);
+        self.al_page_field_sources(oi, &obj);
         for r in ast::routines_in(obj.syntax()) {
             let offset = usize::from(r.syntax().text_range().start());
             if self.ws.routine_unreached(oi, offset) {
@@ -561,6 +615,7 @@ impl<'a> Checker<'a> {
                 if plain {
                     self.al_enum_assignment(sc, rhs, target, source);
                     self.al_integer_text_assignment(sc, rhs, target, source);
+                    self.al_scalar_assignment(sc, rhs, target, source);
                 }
             }
             return;

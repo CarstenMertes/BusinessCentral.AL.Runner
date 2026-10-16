@@ -884,6 +884,15 @@ impl Workspace {
         self.resolve_in_scope(file, kind, parts, false, true)
     }
 
+    /// Whether any object of `kind` that `file` can see has the name (or id) `parts` says, whether or not
+    /// the compile includes it. `false` means the name is nowhere (AL0118).
+    pub fn names_object(&self, file: usize, kind: ObjKind, parts: &[String]) -> bool {
+        !matches!(
+            self.resolve_in_scope(file, kind, parts, false, false),
+            Resolution::Missing
+        )
+    }
+
     /// The id of the platform table `parts` names when nothing provides rows for it. The id is
     /// a constant of its declaration, so `Database::"X"` can name it.
     pub fn unprovided_platform_table_id(&self, file: usize, parts: &[String]) -> Option<i32> {

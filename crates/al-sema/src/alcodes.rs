@@ -25,11 +25,11 @@ use al_syntax::{SyntaxKind, SyntaxNode, ast};
 pub const IMPLEMENTED: &[(&str, &str)] = &[
     (
         "AL0118",
-        "a bare call of a name that is not a procedure or system function, in a codeunit",
+        "a bare call of a name that is not a procedure or system function, in a codeunit; an undeclared bare name in a codeunit, or assigned in a trigger of a table, page, report, query or xmlport; Codeunit::\"X\" or an event subscriber naming a codeunit nobody declares",
     ),
     (
         "AL0122",
-        "an enum assigned to an enum of another type whose target does not state AssignmentCompatibility = true; an Integer variable assigned to a Text; a text literal of two or more characters assigned to an Integer",
+        "an enum assigned to an enum of another type whose target does not state AssignmentCompatibility = true; an Integer variable assigned to a Text; a text literal of two or more characters assigned to an Integer; Decimal or Integer to Boolean, Date to Text, Boolean, Text or Decimal to Date, Variant or a one-character literal to an Enum, a Record to an Integer",
     ),
     (
         "AL0124",
@@ -37,7 +37,7 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ),
     (
         "AL0132",
-        "ExecutionMode::Install, Uninstall, Upgrade, Report, Profile; a field or method of a record that the table and the catalog lack; Length on a Text or Code",
+        "ExecutionMode::Install, Uninstall, Upgrade, Report, Profile; a field or method of a record that the table and the catalog lack; a method the catalog lacks on Text, Code, Boolean, List, Dictionary, JsonObject, JsonToken, HttpClient, RecordRef or TextBuilder; a value an enum of the workspace lacks; a page field Rec.X the source table lacks",
     ),
     (
         "AL0161",
@@ -365,6 +365,7 @@ pub fn check_workspace(ws: &Workspace) -> Vec<Diagnostic> {
             continue;
         }
         let obj = ws.object_ast(oi);
+        subscriber_publishers(ws, oi, &obj, &mut out);
         match o.kind {
             ObjKind::PageExtension => {
                 page_extension_triggers(ws, oi, &obj, &mut out);
@@ -378,6 +379,73 @@ pub fn check_workspace(ws: &Workspace) -> Vec<Diagnostic> {
         }
     }
     out
+}
+
+/// An object name as the compiler shows it in a message: quoted unless it is a plain identifier.
+pub(crate) fn quoted_if_needed(name: &str) -> String {
+    if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
+        name.to_string()
+    } else {
+        format!("\"{name}\"")
+    }
+}
+
+/// AL0118 (corpus must-not-compile 0222): `[EventSubscriber(ObjectType::Codeunit, Codeunit::"X", ...)]` names a
+/// codeunit that no app the file sees declares. Only a codeunit named by a plain name is judged.
+fn subscriber_publishers(ws: &Workspace, oi: usize, obj: &ast::Object, out: &mut Vec<Diagnostic>) {
+    let file = ws.objects[oi].file;
+    for r in ast::routines_in(obj.syntax()) {
+        for attr in r
+            .attributes()
+            .filter(|a| a.name().eq_ignore_ascii_case("EventSubscriber"))
+        {
+            let Some(args) = attr.args() else { continue };
+            let mut args = args.children();
+            let (Some(kind), Some(publisher)) = (args.next(), args.next()) else {
+                continue;
+            };
+            // `ObjectType::Codeunit, Codeunit::"Name"`: two scope expressions.
+            let scope = |n: &SyntaxNode| {
+                let mut k = n.children();
+                match (n.kind(), k.next(), k.next()) {
+                    (SyntaxKind::ScopeExpr, Some(l), Some(r)) if l.kind() == SyntaxKind::NameRef => Some((l, r)),
+                    _ => None,
+                }
+            };
+            let (Some((kl, kr)), Some((pl, pr))) = (scope(&kind), scope(&publisher)) else {
+                continue;
+            };
+            if !kl.text().to_string().eq_ignore_ascii_case("ObjectType")
+                || !kr.text().to_string().eq_ignore_ascii_case("Codeunit")
+                || !pl.text().to_string().eq_ignore_ascii_case("Codeunit")
+                || pr.kind() != SyntaxKind::NameRef
+            {
+                continue;
+            }
+            let name = pr
+                .children_with_tokens()
+                .filter_map(|e| e.into_token())
+                .find(|t| {
+                    matches!(
+                        t.kind(),
+                        SyntaxKind::Ident | SyntaxKind::QuotedIdent | SyntaxKind::Integer
+                    )
+                })
+                .map(|t| ast::ident_text(&t))
+                .unwrap_or_default();
+            if name.parse::<u32>().is_ok() || ws.names_object(file, ObjKind::Codeunit, &[name]) {
+                continue;
+            }
+            push(
+                out,
+                ws,
+                file,
+                offset_of(attr.syntax()),
+                "AL0118",
+                format!("The name '{}' does not exist in the current context.", pr.text()),
+            );
+        }
+    }
 }
 
 /// AL0197: one diagnostic for every declaration of a name that an app declares more than once for
@@ -1217,5 +1285,234 @@ mod tests {
         assert_eq!(codes(&[base, bad]), vec!["AL0161"]);
         let ok = "reportextension 50002 E extends R { trigger OnPreReport() begin Message(this.Shown); end; }";
         assert!(codes(&[base, ok]).is_empty());
+    }
+
+    // must-not-compile 0200 and 0205: an undeclared name in a codeunit (assigned, or passed as an argument).
+    // Declared variables, labels, procedures, system functions without parentheses and the implicit Rec of a
+    // codeunit with TableNo are names.
+    #[test]
+    fn al0118_undeclared_name_in_a_codeunit() {
+        let assign = "codeunit 50001 C { procedure Run1() begin Missing := 1; end; }";
+        assert_eq!(
+            messages(assign),
+            vec!["AL0118 The name 'Missing' does not exist in the current context."]
+        );
+        let arg = "codeunit 50001 C { procedure Run1() begin Error(MissingLbl); end; }";
+        assert_eq!(codes(&[arg]), vec!["AL0118"]);
+        let ok = "table 50000 T { fields { field(1; Id; Integer) { } } }
+            codeunit 50001 C { var G: Integer; Lbl: Label 'x';
+              procedure Run1(P: Integer): Integer var L: Integer; begin L := P + G; Error(Lbl); L := Today; exit(Helper()); end;
+              procedure Helper(): Integer begin exit(1); end; }
+            codeunit 50002 D { TableNo = T; trigger OnRun() begin Id := 1; end; }";
+        assert!(codes(&[ok]).is_empty(), "{:?}", messages(ok));
+    }
+
+    // must-not-compile 0206 to 0210: an undeclared name assigned in an object-level trigger of a table, page,
+    // report, query or xmlport. Fields, data items, columns and text elements of the object are names.
+    #[test]
+    fn al0118_undeclared_name_in_an_object_trigger() {
+        let t = "table 50000 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { Clustered = true; } } }";
+        let bodies = [
+            "table 50009 T2 { fields { field(1; Id; Integer) { } } trigger OnInsert() begin Undeclared := 5; end; }",
+            "page 50010 P { PageType = Card; trigger OnOpenPage() begin Undeclared := 5; end; }",
+            "report 50011 R { trigger OnPreReport() begin Undeclared := 5; end; }",
+            "query 50013 Q { elements { dataitem(Row; T) { column(Id; Id) { } } } trigger OnBeforeOpen() begin Undeclared := 5; end; }",
+            "xmlport 50014 X { trigger OnPreXmlPort() begin Undeclared := 5; end; }",
+        ];
+        for b in bodies {
+            assert_eq!(codes(&[t, b]), vec!["AL0118"], "{b}");
+        }
+        let ok = [
+            "table 50009 T2 { fields { field(1; Id; Integer) { } } trigger OnInsert() begin Id := 5; Rec.Id := 1; xRec.Id := 2; end; }",
+            "page 50010 P { PageType = Card; SourceTable = T; trigger OnOpenPage() begin Id := 5; end; }",
+            "report 50011 R { dataset { dataitem(Row; T) { } } trigger OnPreReport() begin Row.Id := 5; end; }",
+            "query 50013 Q { elements { dataitem(Row; T) { column(Id; Id) { } } } trigger OnBeforeOpen() begin SetFilter(Id, '1'); end; }",
+            "xmlport 50014 X { schema { textelement(Root) { } } trigger OnPreXmlPort() begin Root := 'x'; end; }",
+        ];
+        for b in ok {
+            assert!(codes(&[t, b]).is_empty(), "{b}: {:?}", messages(b));
+        }
+    }
+
+    // must-not-compile 0223 and 0222: a codeunit named by an id-or-name that does not exist.
+    #[test]
+    fn al0118_codeunit_that_does_not_exist() {
+        let run = "codeunit 50001 C { procedure Run1() begin Codeunit.Run(Codeunit::\"MNC No Such Codeunit\"); end; }";
+        assert_eq!(
+            messages(run),
+            vec!["AL0118 The name '\"MNC No Such Codeunit\"' does not exist in the current context."]
+        );
+        let sub = "codeunit 50001 C { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"MNC No Such Codeunit\", 'OnX', '', false, false)] local procedure Handle() begin end; }";
+        assert_eq!(codes(&[sub]), vec!["AL0118"]);
+        let ok =
+            "codeunit 50002 Other { } codeunit 50001 C { procedure Run1() begin Codeunit.Run(Codeunit::Other); end; }";
+        assert!(codes(&[ok]).is_empty());
+    }
+
+    // must-not-compile 0224 to 0226, 0228 to 0230, 0233 to 0236: a method the type does not have.
+    #[test]
+    fn al0132_method_that_a_library_type_does_not_have() {
+        let cases = [
+            (
+                "T: Text",
+                "T.Contain('x')",
+                "'Text' does not contain a definition for 'Contain'",
+            ),
+            ("T: Text", "T.Size()", "'Text' does not contain a definition for 'Size'"),
+            (
+                "L: List of [Text]",
+                "L.Length()",
+                "'List of [Text]' does not contain a definition for 'Length'",
+            ),
+            (
+                "D: Dictionary of [Text, Integer]",
+                "D.Size()",
+                "'Dictionary of [Text, Integer]' does not contain a definition for 'Size'",
+            ),
+            (
+                "J: JsonObject",
+                "J.Put('a', 1)",
+                "'JsonObject' does not contain a definition for 'Put'",
+            ),
+            (
+                "J: JsonToken",
+                "J.GetName()",
+                "'JsonToken' does not contain a definition for 'GetName'",
+            ),
+            (
+                "H: HttpClient; M: HttpRequestMessage; R: HttpResponseMessage",
+                "H.Send2(M, R)",
+                "'HttpClient' does not contain a definition for 'Send2'",
+            ),
+            (
+                "RR: RecordRef",
+                "RR.Fieldd(1)",
+                "'RecordRef' does not contain a definition for 'Fieldd'",
+            ),
+            (
+                "B: Boolean",
+                "B.Invert()",
+                "'Boolean' does not contain a definition for 'Invert'",
+            ),
+            (
+                "TB: TextBuilder",
+                "TB.Add('x')",
+                "'TextBuilder' does not contain a definition for 'Add'",
+            ),
+        ];
+        for (var, stmt, message) in cases {
+            let cu = format!("codeunit 50001 C {{ procedure Run1() var {var}; begin {stmt}; end; }}");
+            assert_eq!(messages(&cu), vec![format!("AL0132 {message}")], "{stmt}");
+        }
+        let ok = [
+            ("T: Text", "T.Contains('x')"),
+            ("L: List of [Text]", "L.Count()"),
+            ("D: Dictionary of [Text, Integer]", "D.ContainsKey('a')"),
+            ("J: JsonObject", "J.Add('a', 1)"),
+            ("J: JsonToken", "J.IsObject()"),
+            (
+                "H: HttpClient; M: HttpRequestMessage; R: HttpResponseMessage",
+                "H.Send(M, R)",
+            ),
+            ("RR: RecordRef", "RR.Field(1)"),
+            ("TB: TextBuilder", "TB.Append('x')"),
+        ];
+        for (var, stmt) in ok {
+            let cu = format!("codeunit 50001 C {{ procedure Run1() var {var}; begin {stmt}; end; }}");
+            assert!(codes(&[&cu]).is_empty(), "{stmt}: {:?}", messages(&cu));
+        }
+    }
+
+    // must-not-compile 0204: an enum value the enum does not have. A value an enum extension adds is one.
+    #[test]
+    fn al0132_enum_value_that_the_enum_does_not_have() {
+        let e = "enum 50006 \"MNC E204\" { Extensible = true; value(0; Red) { } value(1; Green) { } }";
+        let cu = |v: &str| {
+            format!(
+                "codeunit 50007 C {{ procedure Run1() var E: Enum \"MNC E204\"; begin E := \"MNC E204\"::{v}; end; }}"
+            )
+        };
+        let bad = cu("Purple");
+        assert_eq!(
+            messages(&format!("{e} {bad}")),
+            vec!["AL0132 '\"MNC E204\"' does not contain a definition for 'Purple'"]
+        );
+        assert!(codes(&[e, &cu("Green")]).is_empty());
+        let ext = "enumextension 50008 \"MNC E204 X\" extends \"MNC E204\" { value(50000; Purple) { } }";
+        assert!(codes(&[e, ext, &bad]).is_empty());
+    }
+
+    // must-not-compile 0212: a page field bound to a column the source table does not have.
+    #[test]
+    fn al0132_page_field_bound_to_a_column_the_table_does_not_have() {
+        let t = "table 50016 \"MNC T212\" { fields { field(1; Id; Integer) { } field(2; \"Long Name\"; Text[30]) { } }
+            procedure Calc(): Integer begin end; }";
+        let page = |src: &str| {
+            format!(
+                "page 50017 \"MNC P212\" {{ PageType = List; SourceTable = \"MNC T212\";
+                  layout {{ area(Content) {{ repeater(Rep) {{ field(X; {src}) {{ ApplicationArea = All; }} }} }} }} }}"
+            )
+        };
+        assert_eq!(
+            messages(&format!("{t} {}", page("Rec.NoSuchColumn"))),
+            vec!["AL0132 'Record \"MNC T212\"' does not contain a definition for 'NoSuchColumn'"]
+        );
+        for ok in [
+            "Rec.Id",
+            "Rec.\"Long Name\"",
+            "Rec.SystemId",
+            "Rec.Calc()",
+            "Id",
+            "Rec.Count",
+        ] {
+            assert!(codes(&[t, &page(ok)]).is_empty(), "{ok}");
+        }
+        let ext = "tableextension 50018 TE extends \"MNC T212\" { fields { field(50000; Extra; Integer) { } } }";
+        assert!(codes(&[t, ext, &page("Rec.Extra")]).is_empty());
+    }
+
+    // must-not-compile 0260 to 0268: a variable assigned to a variable of a type it does not convert to.
+    #[test]
+    fn al0122_variable_assigned_to_a_type_it_does_not_convert_to() {
+        let defs = "enum 50071 \"MNC E\" { value(0; A) { } }
+            table 50075 \"MNC T\" { fields { field(1; Id; Integer) { } } }";
+        let cases = [
+            ("B: Boolean; V: Decimal", "B := V", "Decimal", "Boolean"),
+            ("B: Boolean; V: Integer", "B := V", "Integer", "Boolean"),
+            ("B: Text; V: Date", "B := V", "Date", "Text"),
+            ("B: Date; V: Boolean", "B := V", "Boolean", "Date"),
+            ("B: Date; V: Text", "B := V", "Text", "Date"),
+            ("B: Date; V: Decimal", "B := V", "Decimal", "Date"),
+            ("B: Enum \"MNC E\"; V: Variant", "B := V", "Variant", "Enum \"MNC E\""),
+            (
+                "B: Integer; V: Record \"MNC T\"",
+                "B := V",
+                "Record \"MNC T\"",
+                "Integer",
+            ),
+            ("B: Enum \"MNC E\"", "B := 'A'", "Char", "Enum \"MNC E\""),
+        ];
+        for (vars, stmt, from, to) in cases {
+            let cu = format!("{defs} codeunit 50001 C {{ procedure Run1() var {vars}; begin {stmt}; end; }}");
+            assert_eq!(
+                messages(&cu),
+                vec![format!("AL0122 Cannot implicitly convert type '{from}' to '{to}'")],
+                "{vars}: {stmt}"
+            );
+        }
+        let ok = [
+            "B: Boolean; V: Boolean",
+            "B: Text; V: Text",
+            "B: Date; V: Date",
+            "B: Decimal; V: Integer",
+            "B: Variant; V: Date",
+            "B: Date; V: DateTime",
+        ];
+        for vars in ok {
+            let cu = format!("{defs} codeunit 50001 C {{ procedure Run1() var {vars}; begin B := V; end; }}");
+            assert!(codes(&[&cu]).is_empty(), "{vars}: {:?}", messages(&cu));
+        }
+        let text = format!("{defs} codeunit 50001 C {{ procedure Run1() var B: Text; begin B := 'A'; end; }}");
+        assert!(codes(&[&text]).is_empty());
     }
 }

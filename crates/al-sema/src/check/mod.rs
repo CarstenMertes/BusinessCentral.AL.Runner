@@ -168,6 +168,20 @@ const ABSENT_ENUM_MEMBERS: &[(&str, &[&str])] = &[(
     &["Install", "Uninstall", "Upgrade", "Report", "Profile"],
 )];
 
+/// Names the platform gives some objects as variables. A bare name like these is never judged unknown
+/// (not every object type models all of them).
+const SYSTEM_VARIABLES: &[&str] = &[
+    "this",
+    "rec",
+    "xrec",
+    "currfieldno",
+    "currpage",
+    "currreport",
+    "currxmlport",
+    "currquery",
+    "requestoptionspage",
+];
+
 pub fn check(ws: &Workspace, members: &MemberTable<'_>, catalog: &Catalog) -> CheckResult {
     check_with(ws, members, catalog, Roots::default())
 }

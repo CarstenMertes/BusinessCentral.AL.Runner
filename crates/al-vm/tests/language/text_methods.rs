@@ -105,3 +105,16 @@ fn a_one_character_literal_in_a_variant_is_a_char_and_clear_empties_a_variant() 
         "YesNoYes|NoYes|NoYes|No|YesNo"
     );
 }
+
+#[test]
+fn a_text_builder_has_a_capacity_of_16_that_can_be_set_and_that_clear_keeps() {
+    // text/lt-label-textbuilder/TxCTextBuilderBasics.al:Capacity_Defaults, Capacity_Setter, Clear_Basics.
+    let src = "codeunit 50100 C { procedure F(): Text var TB: TextBuilder; S: Text; begin
+        S += Format(TB.Capacity()); TB.Append('abc'); S += '|' + Format(TB.Capacity());
+        TB.Capacity(100); S += '|' + Format(TB.Capacity()); TB.Clear(); S += '|' + Format(TB.Capacity()) + '|' + TB.ToText() + '|' + Format(TB.Length());
+        exit(S); end; }";
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "16|16|100|100||0"
+    );
+}

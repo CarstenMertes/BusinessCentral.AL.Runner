@@ -505,6 +505,11 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
     }),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
+    ("Variant.IsInStream#1", |_, r, _| is(r, "InStream")),
+    ("Variant.IsOutStream#1", |_, r, _| is(r, "OutStream")),
+    // `IsBinary` is No for every value the corpus puts in a Variant: numbers, text, a record, a Blob field's value, an InStream,
+    // an OutStream, a TextBuilder, a FieldRef and an empty Variant (types/lt-variant-is-text-streams/LTP89IsMisc.al:Binary_*).
+    ("Variant.IsBinary#1", |_, _, _| Ok(Value::Boolean(false))),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),
     ("Variant.IsBigInteger#1", |_, r, _| is(r, "BigInteger")),
@@ -919,24 +924,43 @@ fn str_menu(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     )?))
 }
 
-/// `%1`..`%9` replaced by `Format(arg)`. A placeholder without an argument
-/// and `#n` fields are not pinned by the corpus yet: unsupported.
+/// `%n` replaced by `Format(arg n)`. A placeholder without an argument stays as written, `%0`, `%10` of one argument and a
+/// `%` at the end of the text too; an argument is not scanned again (types/lt-variant/VaTTextConst.al:TextConst_StrSubstNo
+/// `one_arg_only`, `no_args`, `pct10`, `pct0`, `pct5_not_given`, `pct_end`, `arg_has_percent`;
+/// text/TestTextProcessingContracts.al:StrSubstNo_FewerArgsThanPlaceholders_NoError). `#n` fields are not pinned.
 pub fn substitute(template: &str, args: &[Value], ctx: &dyn FormatCtx) -> Result<String, Signal> {
+    // `#1####` is a field of fixed width in BC (types/.../P86StrSubstNo.al:Sub_FieldWidth, text/SubstNoHash): not implemented, so
+    // refused rather than written as text.
+    if template
+        .as_bytes()
+        .windows(2)
+        .any(|w| w[0] == b'#' && w[1].is_ascii_digit())
+    {
+        return unsupported("StrSubstNo with a #n field (pinned by the corpus, not implemented)");
+    }
     let mut out = String::new();
-    let mut chars = template.chars().peekable();
-    while let Some(c) = chars.next() {
-        if c == '%' {
-            if let Some(d) = chars.peek().and_then(|d| d.to_digit(10)).filter(|d| *d >= 1) {
-                chars.next();
-                match args.get(d as usize - 1) {
-                    Some(v) => out.push_str(&try_format(v, 0, 0, ctx).map_err(Signal::Unsupported)?),
-                    None => return unsupported("StrSubstNo placeholder without an argument"),
-                }
-                continue;
+    let mut rest = template;
+    while let Some(at) = rest.find('%') {
+        out.push_str(&rest[..at]);
+        rest = &rest[at + 1..];
+        // A number that starts with 0 is no placeholder (`%0`, `%01`, `%001` stay as written:
+        // types/lt-evaluate-format-lasterror-setview/P86StrSubstNo.al:Sub_Percent t11, t19, t20).
+        let digits = if rest.starts_with('0') {
+            0
+        } else {
+            rest.bytes().take_while(u8::is_ascii_digit).count()
+        };
+        let n: usize = rest[..digits].parse().unwrap_or(0);
+        match args.get(n.wrapping_sub(1)).filter(|_| digits > 0 && n >= 1) {
+            Some(v) => out.push_str(&try_format(v, 0, 0, ctx).map_err(Signal::Unsupported)?),
+            None => {
+                out.push('%');
+                out.push_str(&rest[..digits]);
             }
         }
-        out.push(c);
+        rest = &rest[digits..];
     }
+    out.push_str(rest);
     Ok(out)
 }
 

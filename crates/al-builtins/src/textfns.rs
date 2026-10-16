@@ -214,10 +214,18 @@ fn last_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
 }
 
 fn index_of_any(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if a.len() > 1 {
-        return unsupported("IndexOfAny with a start index (not pinned)");
-    }
     let s = u16s(&recv_text(&r)?);
+    // The 1-based start index counts in the text: `'Hello, World'.IndexOfAny(['o', ','], 6)` is 6
+    // (types/lt-variant-is-text-streams/LTP89TextConst.al:IndexOfAny_Overloads). A start outside the text is not pinned.
+    let from = if a.len() > 1 {
+        let n = int(a, 1)?;
+        if n < 1 || n as usize > s.len() {
+            return unsupported("IndexOfAny with a start index outside the text (not pinned)");
+        }
+        n as usize - 1
+    } else {
+        0
+    };
     let set: Vec<u16> = match &a[0] {
         Value::List(items) => items
             .borrow()
@@ -233,8 +241,34 @@ fn index_of_any(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         },
     };
     Ok(Value::Integer(
-        s.iter().position(|c| set.contains(c)).map_or(0, |p| p as i32 + 1),
+        s[from..]
+            .iter()
+            .position(|c| set.contains(c))
+            .map_or(0, |p| (p + from) as i32 + 1),
     ))
+}
+
+/// `Remove(StartIndex [, Count])`: 1-based, `'Hello, World'.Remove(6)` is `Hello` and `Remove(6, 3)` is `Helloorld`
+/// (types/lt-variant-is-text-streams/LTP89TextConst.al:Edit_1). Arguments outside the text are not pinned.
+fn remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    let s = u16s(&recv_text(&r)?);
+    let start = int(a, 0)?;
+    if start < 1 || start as usize > s.len() {
+        return unsupported("Text.Remove with a start index outside the text (not pinned)");
+    }
+    let from = start as usize - 1;
+    let to = if a.len() > 1 {
+        let n = int(a, 1)?;
+        if n < 0 || from + n as usize > s.len() {
+            return unsupported("Text.Remove with a count outside the text (not pinned)");
+        }
+        from + n as usize
+    } else {
+        s.len()
+    };
+    let mut out = s[..from].to_vec();
+    out.extend_from_slice(&s[to..]);
+    Ok(Value::Text(from_u16(&out).into()))
 }
 
 // ---------------------------------------------------- transforming
@@ -814,21 +848,22 @@ fn bt_get_sub_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     let params: Vec<&str> = sig.params.iter().map(|p| p.ty.as_str()).collect();
     let f: NativeFn = match (sig.receiver.as_str(), sig.name.as_str(), params.as_slice()) {
-        ("Text", "Contains", [_]) => contains,
-        ("Text", "StartsWith", [_]) => starts_with,
-        ("Text", "EndsWith", [_]) => ends_with,
-        ("Text", "IndexOf", _) => index_of,
-        ("Text", "LastIndexOf", _) => last_index_of,
-        ("Text", "IndexOfAny", _) => index_of_any,
-        ("Text", "ToUpper", []) => to_upper,
-        ("Text", "ToLower", []) => to_lower,
-        ("Text", "Trim", []) => trim,
-        ("Text", "TrimStart", _) => trim_start,
-        ("Text", "TrimEnd", _) => trim_end,
-        ("Text", "Replace", [_, _]) => replace,
-        ("Text", "Substring", _) => substring,
-        ("Text", "PadLeft", _) => pad_left,
-        ("Text", "PadRight", _) => pad_right,
+        ("Text" | "Label", "Contains", [_]) => contains,
+        ("Text" | "Label", "StartsWith", [_]) => starts_with,
+        ("Text" | "Label", "EndsWith", [_]) => ends_with,
+        ("Text" | "Label", "IndexOf", _) => index_of,
+        ("Text" | "Label", "LastIndexOf", _) => last_index_of,
+        ("Text" | "Label", "IndexOfAny", _) => index_of_any,
+        ("Text" | "Label", "ToUpper", []) => to_upper,
+        ("Text" | "Label", "ToLower", []) => to_lower,
+        ("Text" | "Label", "Trim", []) => trim,
+        ("Text" | "Label", "TrimStart", _) => trim_start,
+        ("Text" | "Label", "TrimEnd", _) => trim_end,
+        ("Text" | "Label", "Replace", [_, _]) => replace,
+        ("Text" | "Label", "Remove", _) => remove,
+        ("Text" | "Label", "Substring", _) => substring,
+        ("Text" | "Label", "PadLeft", _) => pad_left,
+        ("Text" | "Label", "PadRight", _) => pad_right,
         // A Label has Split like a Text (corpus types/PVLabelSplitForeach.al, staging 8217373).
         ("Text" | "Label", "Split", _) => split,
         ("Text", "ConvertStr", [_, _, _]) => convert_str,

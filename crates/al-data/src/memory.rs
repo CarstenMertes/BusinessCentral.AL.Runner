@@ -1329,11 +1329,7 @@ mod tests {
             let ascending = round % 2 == 0;
             let lo = rnd(40) as i32;
             let filters = vec![
-                range(
-                    3,
-                    Some(Value::Integer(lo)),
-                    Some(Value::Integer(lo + (round % 4) as i32)),
-                ),
+                range(3, Some(Value::Integer(lo)), Some(Value::Integer(lo + (round % 4)))),
                 FieldFilter {
                     field: 1,
                     expr: FilterExpr::Ne(Value::Integer(7)),

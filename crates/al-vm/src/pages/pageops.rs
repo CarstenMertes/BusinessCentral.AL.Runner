@@ -165,9 +165,15 @@ impl Session {
         match method.method() {
             // `TestPart.Visible` / `.Enabled` read the part control of the host: a part that is
             // reachable at all is visible (corpus testpart/TestTestPart.al:TestPart_Visible_*).
+            // A part whose Visible expression came out false answers No (misc/lt-probes-needed-7/PnGPartTriggers.al:
+            // HiddenPartExpression).
             PageMethod::Visible if method.recv() == PageRecv::TestPart => {
                 self.require_open(st)?;
-                Ok(Value::Boolean(true))
+                let host = st.borrow().host.clone();
+                match host.and_then(|(h, i)| h.upgrade().map(|h| (h, i))) {
+                    Some((h, i)) => Ok(Value::Boolean(self.control_visible(&h, i)?)),
+                    None => Ok(Value::Boolean(true)),
+                }
             }
             PageMethod::Enabled if method.recv() == PageRecv::TestPart => {
                 self.require_open(st)?;

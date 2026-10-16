@@ -225,7 +225,12 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         ));
     }
     // A text longer than the length is cut to it (text/lt-label-textbuilder/TxCLabel.al:Label_Value_And_Format `Format(Plain, 5)`).
-    if matches!(v, Value::Text(_) | Value::Code(_)) && length > 0 && s.chars().count() > length as usize {
+    if matches!(
+        v,
+        Value::Text(_) | Value::Code(_) | Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)
+    ) && length > 0
+        && s.chars().count() > length as usize
+    {
         return Ok(s.chars().take(length as usize).collect());
     }
     Ok(pad(s, length))
@@ -269,21 +274,63 @@ pub(crate) fn pad(s: String, length: i32) -> String {
 /// (types/TestFormatEvaluateTextContracts.al:Format_Decimal_StandardFormats). Trailing zeros of the
 /// decimals are not printed. The other numbers are not pinned.
 fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, FormatFail> {
+    // A Decimal outside +-999,999,999,999,999.99 raises (misc/lt-system-functions/RandomFormat.al:Format_Decimal `af191`, `af193`).
+    if d.abs() > rust_decimal::Decimal::new(99_999_999_999_999_999, 2) {
+        let whole = d.round().to_string();
+        let (sign, digits) = whole.strip_prefix('-').map_or(("", whole.as_str()), |r| ("-", r));
+        let mut grouped = String::new();
+        for (i, c) in digits.chars().enumerate() {
+            if i > 0 && (digits.len() - i) % 3 == 0 {
+                grouped.push(',');
+            }
+            grouped.push(c);
+        }
+        return Err(FormatFail::Error {
+            message: format!(
+                "The value of Decimal parameter  is outside of the permitted range. The current value is: {sign}{grouped}. The permitted range is: from -999,999,999,999,999.99 to 999,999,999,999,999.99."
+            ),
+            code: "OutsidePermittedRange".into(),
+        });
+    }
+    // A Decimal keeps 18 significant digits: 123456789012345.123456 shows as 123456789012345.123 (types/lt-scalars/ScT70050.al:
+    // FormatNumbers_Large).
+    let int_digits = if d.trunc().is_zero() {
+        0
+    } else {
+        d.trunc().abs().to_string().len() as u32
+    };
+    let d = &if int_digits < 18 {
+        d.round_dp_with_strategy(18 - int_digits, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+    } else {
+        *d
+    };
     let n = d.normalize();
     let plain = n.to_string();
     if matches!(standard, 1 | 2 | 9) {
         return Ok(plain);
     }
-    // Formats 3 and 4 are formats 0 and 1 with a trailing blank (text/TestProbeTextDateFormatContracts.al:
-    // Format_FormatStrings_Number, `standard_format_3` and `standard_format_4`).
-    if standard == 4 {
-        return Ok(format!("{plain} "));
+    // Format 4 is format 1 and 3 is format 0 with the sign behind the number: a trailing blank when it is not negative, a
+    // trailing minus when it is (types/lt-evaluate-format-lasterror-setview/P86FormatDecimal.al:Num_*; text/
+    // TestProbeTextDateFormatContracts.al:Format_FormatStrings_Number). Numbers 5 to 8 do not exist for a Decimal.
+    if (5..=8).contains(&standard) {
+        return Err(no_such_format(standard, "Decimal"));
     }
-    if standard != 0 && standard != 3 {
+    if standard >= 10 {
+        return Err(no_such_format(standard, "Decimal"));
+    }
+    if standard != 0 && standard != 3 && standard != 4 {
         return Err(format!("Format of a Decimal with standard format {standard} (not pinned)").into());
     }
-    let tail = if standard == 3 { " " } else { "" };
     let (sign, digits) = plain.strip_prefix('-').map_or(("", plain.as_str()), |r| ("-", r));
+    if standard == 4 {
+        return Ok(format!("{digits}{}", if sign.is_empty() { " " } else { "-" }));
+    }
+    let tail = match (standard, sign) {
+        (3, "-") => "-",
+        (3, _) => " ",
+        _ => "",
+    };
+    let sign = if standard == 3 { "" } else { sign };
     let (int, frac) = digits.split_once('.').map_or((digits, None), |(i, f)| (i, Some(f)));
     let mut grouped = String::new();
     for (i, c) in int.chars().enumerate() {

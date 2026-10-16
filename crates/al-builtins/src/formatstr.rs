@@ -49,6 +49,8 @@ struct Numeric {
     filler: char,
     /// `<Precision,A:B>`: at least A and at most B decimals.
     precision: Option<(u32, u32)>,
+    /// The precision was written as `<Precision,N>`: at most N decimals, how many at least is not pinned.
+    precision_single: bool,
 }
 
 const CODE_NAMES: [&str; 19] = [
@@ -133,6 +135,11 @@ pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn Form
         pieces.push((false, &rest[..open]));
         let after = &rest[open + 1..];
         let Some(close) = after.find('>') else {
+            // `<Precision,2:2` on a Decimal is the invalid-format error (types/lt-evaluate-format-lasterror-setview/
+            // P86FormatDecimal.al:Str_Mid_5 `s46`); on other types it is not pinned.
+            if matches!(v, Value::Decimal(_) | Value::Integer(_) | Value::BigInteger(_)) {
+                return Err(format!("{INVALID_FORMAT_MARK}{template}"));
+            }
             return Err(format!("format string `{template}`: `<` without `>`"));
         };
         pieces.push((true, &after[..close]));
@@ -152,6 +159,8 @@ pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn Form
             out.push_str(&code(v, text, numeric.as_ref(), ctx).map_err(|e| {
                 if e == INVALID_FORMAT_MARK {
                     format!("{INVALID_FORMAT_MARK}{template}")
+                } else if e.starts_with(RAISE_MARK) {
+                    e
                 } else {
                     format!("format string `{template}`: {e}")
                 }
@@ -159,6 +168,13 @@ pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn Form
         } else {
             out.push_str(text);
         }
+    }
+    // A result longer than the length is cut to it (P86FormatDecimal.al:Len_WithFormatString `l4`).
+    if length > 0
+        && out.chars().count() > length as usize
+        && matches!(v, Value::Decimal(_) | Value::Integer(_) | Value::BigInteger(_))
+    {
+        return Ok(out.chars().take(length as usize).collect());
     }
     Ok(crate::format::pad(out, length))
 }
@@ -174,11 +190,14 @@ fn numeric_of(v: &Value, pieces: &[(bool, &str)]) -> Result<Option<Numeric>, Str
         value,
         filler: ' ',
         precision: None,
+        precision_single: false,
     };
+    let mut seen_integer = false;
     for (is_code, text) in pieces {
         if !is_code {
             continue;
         }
+        seen_integer |= *text == "Integer" || text.starts_with("Integer,");
         // `Filler Character 0` (a blank instead of the comma) is no code (Format_FormatStrings_Number).
         if text.starts_with("Filler Character") && !text.starts_with("Filler Character,") {
             return Err(INVALID_FORMAT_MARK.to_string());
@@ -188,13 +207,35 @@ fn numeric_of(v: &Value, pieces: &[(bool, &str)]) -> Result<Option<Numeric>, Str
             let (Some(f), None) = (it.next(), it.next()) else {
                 return Err(format!("code `<{text}>`"));
             };
-            n.filler = f;
+            // A filler before the integer code pads with blanks (P86FormatDecimal.al:Str_Mid_3 `s24`, `<Filler Character,#><Integer,8>`);
+            // after it, the character is used (`s23`, and the other corpus tests).
+            if seen_integer {
+                n.filler = f;
+            }
         } else if let Some(p) = text.strip_prefix("Precision,") {
-            let parsed = p
-                .split_once(':')
-                .and_then(|(a, b)| Some((a.parse::<u32>().ok()?, b.parse::<u32>().ok()?)))
-                .filter(|(a, b)| a <= b && *b <= 18);
-            n.precision = Some(parsed.ok_or_else(|| format!("code `<{text}>`"))?);
+            // Letters are an invalid format; digits and colons are accepted and a form that is not `A:B` shows nothing
+            // (P86FormatDecimal.al:Str_Mid_1 `<Precision,2>`, `<Precision,:2>`, Str_Mid_6 `<Precision,a:b>`).
+            if !p.bytes().all(|b| b.is_ascii_digit() || b == b':') {
+                return Err(INVALID_FORMAT_MARK.to_string());
+            }
+            n.precision = match p.split_once(':') {
+                Some((a, b)) if !a.is_empty() && !b.is_empty() => {
+                    let parsed = a
+                        .parse::<u32>()
+                        .ok()
+                        .zip(b.parse::<u32>().ok())
+                        .filter(|(a, b)| a <= b && *b <= 18);
+                    Some(parsed.ok_or_else(|| format!("code `<{text}>`"))?)
+                }
+                None => match p.parse::<u32>() {
+                    Ok(digits) if digits <= 18 => {
+                        n.precision_single = true;
+                        Some((0, digits))
+                    }
+                    _ => None,
+                },
+                _ => None,
+            };
         }
     }
     Ok(Some(n))
@@ -203,7 +244,8 @@ fn numeric_of(v: &Value, pieces: &[(bool, &str)]) -> Result<Option<Numeric>, Str
 fn width(code: &str, name: &str) -> Result<Option<usize>, String> {
     match code.strip_prefix(name).and_then(|r| r.strip_prefix(',')) {
         None => Ok(None),
-        Some(w) => w.parse().map(Some).map_err(|_| format!("code `<{code}>`")),
+        // `<Integer,5,>` is an invalid format on a number (P86FormatDecimal.al:Str_Mid_6 `s51`).
+        Some(w) => w.parse().map(Some).map_err(|_| INVALID_FORMAT_MARK.to_string()),
     }
 }
 
@@ -234,6 +276,10 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
     }
     if code == "Integer" || code.starts_with("Integer,") {
         let w = width(code, "Integer")?.unwrap_or(0);
+        // A number that does not fit shows stars (P86FormatDecimal.al:Str_NegBig_3 `s22`).
+        if w > 0 && int.len() > w {
+            return Ok("*".repeat(w));
+        }
         let pad: String = std::iter::repeat_n(n.filler, w.saturating_sub(int.len())).collect();
         return Ok(format!("{pad}{int}"));
     }
@@ -246,7 +292,7 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
             None => grouped,
         });
     }
-    if code == "Decimals" {
+    if code == "Decimals" || code == "Decimals,0" {
         // Without a width: the decimals the value has (`5.5` shows `.5`, a whole number nothing).
         let frac = abs.fract().normalize().to_string();
         return Ok(frac.strip_prefix('0').map(str::to_string).unwrap_or_default());
@@ -268,7 +314,8 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
     }
     if let Some(std) = code.strip_prefix("Standard Format,") {
         let std: i32 = std.trim().parse().map_err(|_| format!("code `<{code}>`"))?;
-        if let Some((min, max)) = n.precision {
+        // A Precision does not change an Integer (misc/lt-system-functions/RandomFormat.al:Format_Integer).
+        if let (Some((min, max)), Value::Decimal(_)) = (n.precision, v) {
             if std != 0 {
                 return refuse();
             }
@@ -277,6 +324,12 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
                 .round_dp_with_strategy(max, RoundingStrategy::MidpointAwayFromZero);
             let mut text = format_value(&Value::Decimal(rounded), 0, 0, ctx).map_err(fail)?;
             let have = text.split_once('.').map_or(0, |(_, f)| f.len() as u32);
+            // `<Precision,N>` on a value with fewer than N decimals: whether it pads is not pinned.
+            if n.precision_single && have < max {
+                return Err(format!(
+                    "code `<Precision,{max}>` on a value with fewer decimals (not pinned)"
+                ));
+            }
             if have < min {
                 if have == 0 {
                     text.push('.');
@@ -287,13 +340,23 @@ fn numeric_code(n: &Numeric, code: &str, v: &Value, ctx: &dyn FormatCtx) -> Resu
         }
         return format_value(v, 0, std, ctx).map_err(fail);
     }
+    // A name that is no code at all (`<Decimal Separator>`, `<1000 Separator>`, `<Unknown>`, `<Standard Format>`) is an invalid
+    // format (P86FormatDecimal.al:Str_Mid_2 to Str_Mid_5).
+    let name = code.split_once(',').map_or(code, |(n, _)| n);
+    if !CODE_NAMES.contains(&name) || code == "Standard Format" {
+        return Err(INVALID_FORMAT_MARK.to_string());
+    }
     refuse()
 }
+
+/// Marks an error string as one to raise with its own code: `<mark><code>\u{2}<message>`.
+pub const RAISE_MARK: char = '\u{2}';
 
 fn fail(f: crate::format::FormatFail) -> String {
     match f {
         crate::format::FormatFail::Unsupported(s) => s,
-        crate::format::FormatFail::Error { message, .. } => message,
+        // `<Standard Format,6>` raises the error of `Format(x, 0, 6)` (P86FormatDecimal.al:Str_Mid_3 `s30`).
+        crate::format::FormatFail::Error { message, code } => format!("{RAISE_MARK}{code}{RAISE_MARK}{message}"),
     }
 }
 

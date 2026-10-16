@@ -577,6 +577,9 @@ pub struct QueryItem {
     pub parent: Option<usize>,
     /// `SqlJoinType = LeftOuterJoin`, which is also the default of a nested dataitem.
     pub left_outer: bool,
+    /// `SqlJoinType = RightOuterJoin` or `FullOuterJoin`: the rows of this dataitem that no row above links to are kept too.
+    #[serde(default)]
+    pub right_outer: bool,
     /// `DataItemLink`: (field position in this table, field position in the linked item's table).
     pub link: Vec<(usize, usize)>,
     /// For each `link` pair, the enclosing dataitem whose current row it reads, when any pair reads an item

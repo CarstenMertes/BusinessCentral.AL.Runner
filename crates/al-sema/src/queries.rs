@@ -206,6 +206,7 @@ impl Builder<'_> {
             table,
             parent,
             left_outer: parent.is_some(),
+            right_outer: false,
             link: Vec::new(),
             link_items: Vec::new(),
             table_filter: Vec::new(),
@@ -228,6 +229,16 @@ impl Builder<'_> {
                     "crossjoin" if parent.is_some() => {
                         self.items[idx].left_outer = false;
                         cross = true;
+                    }
+                    // query/lt-outer-joins/P71JoinNone.al:Join_Right_NoFilter, Join_Full_NoFilter: a right join keeps the child rows
+                    // no parent links to, a full join keeps those and the parents without a child.
+                    "rightouterjoin" if parent.is_some() => {
+                        self.items[idx].left_outer = false;
+                        self.items[idx].right_outer = true;
+                    }
+                    "fullouterjoin" if parent.is_some() => {
+                        self.items[idx].left_outer = true;
+                        self.items[idx].right_outer = true;
                     }
                     other => self.reason(format!("dataitem {name}: SqlJoinType = {other} is not supported yet")),
                 },

@@ -522,6 +522,7 @@ impl Session {
         // The joined rows: one row of each dataitem's table.
         let mut joined: Vec<JoinedRow> = Vec::new();
         self.expand(def, &plan, 0, &mut Vec::new(), &mut joined)?;
+        self.expand_unlinked(def, &plan, &mut joined)?;
         if !plan.outer.is_empty() {
             let mut kept = Vec::new();
             for j in joined {
@@ -610,6 +611,18 @@ impl Session {
                 });
             }
         }
+        let has_right = def.items.iter().any(|i| i.right_outer);
+        // The table filter of a dataitem other than the right-joined one acts on the joined rows too: a Full join with a filter on
+        // the parent drops the child rows no kept parent links to (P71JoinParent.al:Parent_Full_GrpG1).
+        if has_right {
+            for i in 0..def.items.len() {
+                if !def.items[i].right_outer {
+                    for f in std::mem::take(&mut plan.scan[i]) {
+                        plan.outer.push((i, f.field, f.expr));
+                    }
+                }
+            }
+        }
         for (ci, c) in def.columns.iter().enumerate() {
             // A runtime filter on a column replaces the column's static ColumnFilter (corpus
             // query/TestQueryColumnFilter.al:62-100); a table filter combines with either
@@ -640,7 +653,9 @@ impl Session {
                 // Corpus query/TestQueryFlowFieldColumn.al:150-200: it sets the flow filter of the
                 // FlowFields of the dataitem; it never constrains the rows.
                 plan.flow[c.item].push(FieldFilter { field, expr, group: 0 });
-            } else if schema.stored && item.left_outer && item.parent.is_some() {
+            } else if schema.stored && ((item.left_outer && item.parent.is_some()) || has_right) {
+                // With a right or full outer join in the query a filter acts on the joined rows: a root row filtered before the join
+                // would turn the child rows it linked into unlinked ones (query/lt-outer-joins/P71FilterRightFull.al).
                 plan.outer.push((c.item, field, expr));
             } else if schema.stored {
                 plan.scan[c.item].push(FieldFilter { field, expr, group: 0 });
@@ -666,7 +681,20 @@ impl Session {
         chosen: &mut Vec<Vec<Value>>,
         out: &mut Vec<JoinedRow>,
     ) -> Result<(), Signal> {
-        if level == def.items.len() {
+        self.expand_to(def, plan, level, def.items.len(), chosen, out)
+    }
+
+    /// [`Self::expand`] down to the dataitems before `stop`.
+    fn expand_to(
+        &mut self,
+        def: &ir::Query,
+        plan: &Plan,
+        level: usize,
+        stop: usize,
+        chosen: &mut Vec<Vec<Value>>,
+        out: &mut Vec<JoinedRow>,
+    ) -> Result<(), Signal> {
+        if level == stop {
             out.push(chosen.clone());
             return Ok(());
         }
@@ -709,8 +737,58 @@ impl Session {
         }
         for row in rows {
             chosen.push(row);
-            self.expand(def, plan, level + 1, chosen, out)?;
+            self.expand_to(def, plan, level + 1, stop, chosen, out)?;
             chosen.pop();
+        }
+        Ok(())
+    }
+
+    /// The rows a right or full outer join adds: the rows of the dataitem that no row of the joined dataitems above links to, with
+    /// those at their defaults (query/lt-outer-joins/P71JoinNone.al:Join_Right_NoFilter, Join_Full_NoFilter; P71ShapeLocFromItem.al:
+    /// Shape_Full_ZoneN, with the dataitem below an inner join).
+    fn expand_unlinked(&mut self, def: &ir::Query, plan: &Plan, out: &mut Vec<JoinedRow>) -> Result<(), Signal> {
+        let rights: Vec<usize> = (0..def.items.len()).filter(|&i| def.items[i].right_outer).collect();
+        let Some(&level) = rights.first() else {
+            return Ok(());
+        };
+        if rights.len() != 1 || def.items[level].parent != Some(level - 1) || level + 1 != def.items.len() {
+            return unsupported("a right or full outer join that is not the innermost of a chain of dataitems (not pinned)");
+        }
+        let item = &def.items[level];
+        if !item.link_items.is_empty() {
+            return unsupported("a right or full outer join whose link reads a dataitem further out (not pinned)");
+        }
+        let mut prefix: Vec<JoinedRow> = Vec::new();
+        self.expand_to(def, plan, 0, level, &mut Vec::new(), &mut prefix)?;
+        let ct: Arc<TableDef> = self.engine.tables[item.table].clone().expect("table");
+        let cx = self.cx.clone();
+        let mut children: Vec<Vec<Value>> = Vec::new();
+        self.each_row(&cx, &ct, &plan.scan[level], |row| {
+            children.push(row.to_vec());
+            Ok(())
+        })?;
+        for c in children {
+            let mut linked = false;
+            for p in &prefix {
+                let parent = &p[level - 1];
+                if parent.is_empty() {
+                    continue;
+                }
+                let mut all = true;
+                for (own, theirs) in &item.link {
+                    let v = ops::convert(parent[*theirs].clone(), &ct.fields[*own].ty)?;
+                    all &= ops::compare(&v, &c[*own]).ok() == Some(Ordering::Equal);
+                }
+                if all {
+                    linked = true;
+                    break;
+                }
+            }
+            if !linked {
+                let mut row = vec![NO_MATCH; level];
+                row.push(c);
+                out.push(row);
+            }
         }
         Ok(())
     }

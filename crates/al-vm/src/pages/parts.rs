@@ -211,7 +211,14 @@ impl Session {
     pub(super) fn sync_parts(&mut self, st: &St) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
-        let parts = st.borrow().parts.clone();
+        // A part whose Visible came out false is in the test page and follows the host's row like the others (it answers
+        // First() in corpus misc/lt-probes-needed-7/PnGPartTriggers.al:HiddenPartExpression; its link is not pinned).
+        let mut parts = st.borrow().parts.clone();
+        let hidden = st.borrow().hidden_parts.clone();
+        if !hidden.is_empty() {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::HiddenPartFollowsLink);
+            parts.extend(hidden);
+        }
         let has_provider = |i: usize| {
             page.controls[i]
                 .part_link
@@ -347,7 +354,7 @@ impl Session {
     /// A field the host just changed is read by the link of some parts: they follow the new value
     /// (corpus handlers/TestPageOpenNewPartLink.al:OpenNew_NumberTyped_PartWriteCarriesTheNumber).
     pub(super) fn resync_parts_linked_by(&mut self, st: &St, control: usize) -> Result<(), Signal> {
-        if st.borrow().parts.is_empty() || !st.borrow().open {
+        if (st.borrow().parts.is_empty() && st.borrow().hidden_parts.is_empty()) || !st.borrow().open {
             return Ok(());
         }
         let engine = self.engine();
@@ -355,7 +362,8 @@ impl Session {
         let ir::Binding::Field(pos) = page.controls[control].binding else {
             return Ok(());
         };
-        let parts = st.borrow().parts.clone();
+        let mut parts = st.borrow().parts.clone();
+        parts.extend(st.borrow().hidden_parts.clone());
         for (i, child) in &parts {
             let reads = page.controls[*i].part_link.as_ref().is_some_and(|l| {
                 l.provider.is_none()
@@ -372,7 +380,8 @@ impl Session {
 
     /// Saves what was typed into the rows the parts stand on.
     pub(super) fn save_parts(&mut self, st: &St) -> Result<(), Signal> {
-        let parts = st.borrow().parts.clone();
+        let mut parts = st.borrow().parts.clone();
+        parts.extend(st.borrow().hidden_parts.clone());
         for (_, child) in parts {
             if child.borrow().open {
                 self.save_row(&child)?;

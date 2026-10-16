@@ -242,7 +242,17 @@ fn import_file(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     )
 }
 
+/// `Media.ExportFile` and `MediaSet.ExportFile`: a download to the client, in no corpus test (P102Media.al:5 skips it as
+/// OnPrem or not existing). Refused when it runs, not when it is lowered, so a page whose action calls it (Microsoft's
+/// "Fixed Asset Picture") does not refuse the tests that open the page and never run the action.
+fn export_file(_c: &mut dyn Ctx, r: Option<&mut Value>, _a: &mut [Value]) -> Out {
+    id_of(&r)?;
+    unsupported("Media.ExportFile: what the client download writes and answers is not pinned")
+}
+
 pub const REGISTRY: &[(&str, NativeFn)] = &[
+    ("Media.ExportFile#1", export_file),
+    ("MediaSet.ExportFile#1", export_file),
     ("Media.ImportFile#1", import_file),
     ("MediaSet.ImportFile#1", import_file),
     ("Media.HasValue#1", has_value),

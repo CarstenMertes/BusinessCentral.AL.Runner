@@ -72,6 +72,16 @@ impl Session {
         let (owner, routine) = match found.as_slice() {
             [one] => *one,
             [] if method == PageMethod::DrillDown => {
+                // A FlowField opens the page of its source table in BC: not pinned (a plain field's error is,
+                // handlers/TestPageFieldDrillDown_Tests.al:140-146).
+                if self
+                    .control_field(st, idx)
+                    .is_some_and(|f| f.calc.is_some() || f.calc_refusal.is_some())
+                {
+                    return unsupported(
+                        "DrillDown on a FlowField control with no OnDrillDown trigger: the page BC opens is not pinned",
+                    );
+                }
                 return Err(error("The NavDrilldownAction method is not supported."));
             }
             [] if method == PageMethod::Lookup => return self.field_lookup(st, idx),
@@ -389,7 +399,9 @@ impl Session {
         } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
             let before = (self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
                 .then(|| self.page_rec(st).borrow().fields.clone());
+            self.pages.action_depth += 1;
             let r = self.control_routine(st, idx, r);
+            self.pages.action_depth -= 1;
             if r.is_err() {
                 st.borrow_mut().refresh = false;
             }

@@ -8,7 +8,7 @@
 
 use crate::Session;
 use al_builtins::describe::Describe;
-use al_builtins::filter::{FieldFilter, FilterExpr, parse_filter_with};
+use al_builtins::filter::{FieldFilter, FilterExpr, parse_calc_formula_filter};
 use al_builtins::native::{AlError, Signal, text_of};
 use al_builtins::ops;
 use al_builtins::record_op::RecordOp;
@@ -431,7 +431,7 @@ impl Session {
         let src = &engine.program.objects[calc.table].table.as_ref().expect("table").fields;
         let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
         let parse = |text: &str, ty: &RtType| {
-            parse_filter_with(text, &[], ty, &enums)
+            parse_calc_formula_filter(text, ty, &enums)
                 .map_err(|e| Signal::Unsupported(format!("CalcFormula filter: {e}")))
         };
         // The flow filter the caller set on field `q`, if any.

@@ -28,6 +28,8 @@ pub const AL_CONFIG_SETTINGS: &str = "Microsoft.Dynamics.Nav.Types.ALConfigSetti
 pub const TENANT_SETTINGS_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.NavTenantSettingsHelper";
 /// `Microsoft.Dynamics.Nav.Runtime.NavTestExecution`.
 pub const TEST_EXECUTION: &str = "Microsoft.Dynamics.Nav.Runtime.NavTestExecution";
+/// `Microsoft.Dynamics.Nav.Client.Capabilities.CameraProvider`: the client's camera (System Application "Camera Page Impl.").
+pub const CAMERA_PROVIDER: &str = "Microsoft.Dynamics.Nav.Client.Capabilities.CameraProvider";
 /// `Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper`.
 /// Azure AD Graph's query object (System Application "Azure AD Graph Impl.").
 pub const GRAPH_QUERY: &str = "Microsoft.Dynamics.Nav.AzureADGraphClient.GraphQuery";
@@ -90,6 +92,7 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (USER_ACCOUNT_HELPER, "IsUserDelegatedAdmin", Ret::Boolean),
     (USER_ACCOUNT_HELPER, "GetEffectivePermissionForObject", Ret::Text),
     (TEST_EXECUTION, "IsInTestMode", Ret::Boolean),
+    (CAMERA_PROVIDER, "IsAvailable", Ret::Boolean),
     (GZIP_STREAM, "GZipStream", Ret::Object),
     (GZIP_STREAM, "CopyTo", Ret::Void),
     (GZIP_STREAM, "Dispose", Ret::Void),

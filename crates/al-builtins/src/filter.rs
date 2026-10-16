@@ -101,8 +101,36 @@ pub fn parse_filter_with(
     ty: &crate::value::RtType,
     enums: &dyn Fn(u32) -> Vec<(i32, String)>,
 ) -> Result<FilterExpr, String> {
+    parse_with(text, args, ty, enums, false)
+}
+
+/// A filter written in the `filter(...)` of a CalcFormula. It is compiled with the object, so a `0D` in it is the AL
+/// date literal, the empty date; in the text of `SetFilter` BC reads `0D` as today (corpus
+/// record/lt-loadfields-pagesource-validate/P81DateFilters.al:173-184). Microsoft's Fixed Asset.Acquired says
+/// `"Acquisition Date" = filter(<> 0D)` (assumption `calcformula-filter-date-literal`, not pinned for a CalcFormula).
+pub fn parse_calc_formula_filter(
+    text: &str,
+    ty: &crate::value::RtType,
+    enums: &dyn Fn(u32) -> Vec<(i32, String)>,
+) -> Result<FilterExpr, String> {
+    parse_with(text, &[], ty, enums, true)
+}
+
+fn parse_with(
+    text: &str,
+    args: &[crate::value::Value],
+    ty: &crate::value::RtType,
+    enums: &dyn Fn(u32) -> Vec<(i32, String)>,
+    date_literals: bool,
+) -> Result<FilterExpr, String> {
     let toks = tokenize(text, args)?;
-    let mut p = Parser { toks, i: 0, ty, enums };
+    let mut p = Parser {
+        toks,
+        i: 0,
+        ty,
+        enums,
+        date_literals,
+    };
     let e = p.or()?;
     if p.i != p.toks.len() {
         return Err(format!("unexpected {} in filter `{text}`", p.toks[p.i].describe()));
@@ -260,6 +288,8 @@ struct Parser<'a> {
     i: usize,
     ty: &'a crate::value::RtType,
     enums: &'a dyn Fn(u32) -> Vec<(i32, String)>,
+    /// Compiled filter text (a CalcFormula's): `0D` is the empty date.
+    date_literals: bool,
 }
 
 impl Parser<'_> {
@@ -346,6 +376,10 @@ impl Parser<'_> {
                     Some(v) => Value::Enum(*id, v),
                     None => return Err(format!("`{text}` is not a member of the enum")),
                 }
+            }
+            T::Date if self.date_literals && text.trim().eq_ignore_ascii_case("0D") => {
+                crate::assumptions::assume(crate::assumptions::Assumption::CalcFormulaFilterDateLiteral);
+                Value::Date(0, false)
             }
             // Text built with `Format` reads as `Evaluate` reads it (Microsoft's tests filter dates and Guids this way;
             // assumption `filter-text-read-as-evaluate`). A formula, an empty text or anything else stays refused.
@@ -513,6 +547,23 @@ pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Base Application's Fixed Asset field "Acquired" is `exist("FA Ledger Entry" where(... "Acquisition Date" = filter(<> 0D)))`
+    /// (FixedAsset.Table.al:293); 54 Tests-Fixed Asset tests reach it. The `0D` of a CalcFormula filter is the AL literal,
+    /// the empty date, unlike the `0D` of SetFilter text, which BC reads as today (corpus
+    /// record/lt-loadfields-pagesource-validate/P81DateFilters.al:173-184). Not pinned for a CalcFormula (assumption
+    /// `calcformula-filter-date-literal`).
+    #[test]
+    fn a_calcformula_date_filter_reads_0d_as_the_empty_date() {
+        use crate::value::RtType as T;
+        let f = parse_calc_formula_filter("<> 0D", &T::Date, &|_| Vec::new()).expect("<> 0D");
+        assert!(!f.matches(&Value::Date(0, false)));
+        assert!(f.matches(&Value::Date(crate::format::day_from_civil(2027, 1, 17), false)));
+        assert!(
+            parse_filter("0D", &[], &T::Date).is_err(),
+            "SetFilter text keeps its own reading"
+        );
+    }
 
     /// Microsoft's Tests-SCM and Tests-ERM filter Date and Guid fields with text they built with `Format`
     /// (`SetFilter("Posting Date", '..' + Format(D))`, `SetFilter(SystemId, Format(G))`): the text reads as `Evaluate`

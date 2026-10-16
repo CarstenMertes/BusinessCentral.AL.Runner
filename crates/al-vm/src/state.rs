@@ -53,6 +53,8 @@ pub(crate) struct PageClients {
     pub(crate) traps: Vec<Rc<RefCell<al_builtins::value::PageState>>>,
     /// A page background task worker is running: its parameters and the result it set.
     pub(crate) bg_worker: Option<pages::BgWorker>,
+    /// TestPage action triggers (`OnAction`) running right now.
+    pub(crate) action_depth: usize,
     /// The xRec fields the next `Modify` hands the table's triggers instead of the stored row: a
     /// page saving a row passes its own xRec (corpus
     /// handlers/TestPageActionRunObjectPageRec_Tests.al:HostSaveAfterTheTargetEditedTheRowCarriesXRec).

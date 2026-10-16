@@ -569,6 +569,7 @@ impl Session {
                 saved_values: std::collections::HashMap::new(),
                 traps: Vec::new(),
                 bg_worker: None,
+                action_depth: 0,
                 page_xrec: None,
                 curr_field_no: Vec::new(),
                 lenient_bind: false,

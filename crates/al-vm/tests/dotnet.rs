@@ -127,6 +127,7 @@ const DOTNET: &str = "dotnet { assembly(\"netstandard\") {
     type(\"Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper\"; \"NavUserAccountHelper\") { }
     type(\"Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper\"; \"PermissionTestHelper\") { }
     type(\"Microsoft.Dynamics.Nav.Runtime.NavTestExecution\"; \"NavTestExecution\") { }
+    type(\"Microsoft.Dynamics.Nav.Client.Capabilities.CameraProvider\"; \"CameraProvider\") { }
     type(\"Microsoft.Dynamics.Nav.AzureADGraphClient.GraphQuery\"; \"GraphQuery\") { }
     type(\"Microsoft.Dynamics.Nav.LicensingService.Model.UserInfo\"; \"UserInfo\") { }
     type(\"Microsoft.Dynamics.Nav.LicensingService.Model.TenantInfo\"; \"TenantInfo\") { }
@@ -1172,6 +1173,16 @@ fn is_in_test_mode_follows_the_running_test_codeunit() {
     assert_eq!(text(run(&no_host(), vars, body, ": Text")), "No");
 }
 
+/// System Application's "Camera Page Impl." asks the client's `CameraProvider` whether a camera exists; Base
+/// Application's "Fixed Asset Picture" does it in OnOpenPage, so the ~65 Tests-Fixed Asset tests that open it
+/// need an answer (assumption camera-provider-not-available: no camera on the test client).
+#[test]
+fn the_camera_provider_answers_that_no_camera_is_available_and_is_flagged() {
+    let vars = "C: DotNet CameraProvider;";
+    let body = "exit(Format(C.IsAvailable()));";
+    assert_eq!(text(run(&no_host(), vars, body, ": Text")), "No");
+}
+
 /// A SUPER session on table data: the four data rights, no Execute (corpus
 /// `session/TestSessionCompanyInfoExperienceClose.al`). Anything else is refused.
 #[test]
@@ -1322,7 +1333,10 @@ fn the_declared_result_types_match_the_registry() {
             assert!(
                 matches!(&m.pin, Pin::AlRunner(s) if s.starts_with("AL Runner v2 ") && s.contains("AlRunner/"))
                     || matches!(&m.pin, Pin::Probe(s) if s.contains("probe tests/al-language") && s.contains(".al"))
-                    || matches!(&m.pin, Pin::Corpus(s) if s.contains(".al:")),
+                    || matches!(&m.pin, Pin::Corpus(s) if s.contains(".al:"))
+                    // A Microsoft-test assumption (owner exception 2026-10-15): the member marks it when it runs.
+                    || matches!(&m.pin, Pin::Probe(s) if al_builtins::assumptions::Assumption::ALL.iter()
+                        .any(|a| s.starts_with(&format!("assumption {} ", a.info().id)))),
                 "{}.{}: {:?}",
                 t.clr_name,
                 m.name,

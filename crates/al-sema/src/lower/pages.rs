@@ -37,6 +37,20 @@ impl Lowerer<'_> {
                 obj,
             }
         };
+        // The offset `pages::expand` named a routine by: counted in the text before it added anything, from the
+        // start of the object. The routines it adds to the same object ahead of `at` (the columns of a report's
+        // dataset) are not in that text.
+        let original_offset = |ow: &Owner, at: usize| {
+            let file = self.ws.objects[ow.object].file;
+            let added: usize = self
+                .ws
+                .synthetic(file)
+                .iter()
+                .filter(|(s, e)| *s >= ow.base && *e <= at)
+                .map(|(s, e)| e - s)
+                .sum();
+            at - ow.base - added
+        };
         let routine_named =
             |ow: &Owner, name: &str| self.routine_nodes.get(ow.object).iter().position(|r| r.name() == name);
         let routine_of = |ow: &Owner, r: &ast::Routine| {
@@ -47,7 +61,7 @@ impl Lowerer<'_> {
         let prop_value = |ow: &Owner, p: &ast::Property, unsupported: &mut Vec<String>, control: &str| {
             let name = p.name().to_ascii_lowercase();
             let value = p.value_text();
-            let off = usize::from(p.syntax().text_range().start()) - ow.base;
+            let off = original_offset(ow, usize::from(p.syntax().text_range().start()));
             let dynamic = crate::pages::dynamic_type(&name).filter(|t| !crate::pages::is_literal(*t, &value));
             let val = match dynamic {
                 Some(_) => match routine_named(ow, &crate::pages::synthetic_name(&name, off)) {
@@ -175,7 +189,7 @@ impl Lowerer<'_> {
                         }
                     }
                     Some(crate::pages::Source::Expr) => {
-                        let off = usize::from(sec.syntax().text_range().start()) - ow.base;
+                        let off = original_offset(&ow, usize::from(sec.syntax().text_range().start()));
                         match routine_named(&ow, &crate::pages::synthetic_name("source", off)) {
                             Some(r) => binding = ir::Binding::Expr(r),
                             // A control of an extension that names a variable of the base object
@@ -205,7 +219,7 @@ impl Lowerer<'_> {
             // The routine that writes an expression source (`pages::expand` made it): kept with the triggers under a name
             // no AL trigger has.
             if matches!(binding, ir::Binding::Expr(_)) {
-                let off = usize::from(sec.syntax().text_range().start()) - ow.base;
+                let off = original_offset(&ow, usize::from(sec.syntax().text_range().start()));
                 if let Some(r) = routine_named(&ow, &crate::pages::synthetic_name("sourceset", off)) {
                     triggers.push(("__sourceset".into(), r));
                 }

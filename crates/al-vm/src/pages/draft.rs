@@ -258,7 +258,7 @@ impl Session {
         self.set_xrec(st);
         // The parts of a new host row link to it once it is stored, with the number its OnInsert
         // gave it (corpus handlers/TestPageOpenNewPartLink.al).
-        if !st.borrow().parts.is_empty() {
+        if !st.borrow().parts.is_empty() || !st.borrow().hidden_parts.is_empty() {
             self.sync_parts(st)?;
         }
         Ok(())

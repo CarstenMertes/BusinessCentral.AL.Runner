@@ -67,6 +67,24 @@ pub struct Info {
 }
 
 registry! {
+    HiddenPartFollowsLink => {
+        id: "hidden-part-follows-link",
+        assumed: "A part whose Visible expression came out false follows the host's current row through SubPageLink, like a visible part (its rows are those of the linked record, and the host's SetValue/Filter moves it).",
+        tests: "Fixed Asset Card part DepreciationBook (Visible = not Simple); about 20 Tests-Fixed Asset tests (ERM Fixed Assets Journal.AcquireFixedAssetNotification).",
+        probe: "A host with part(P; SubPageLink = F = field(K)) and Visible = Flag false: filter the host to the second row, read P's first row and a field of it; SetValue on it and read the record.",
+    },
+    CalcFormulaFilterDateLiteral => {
+        id: "calcformula-filter-date-literal",
+        assumed: "In the filter(...) of a CalcFormula, 0D is the AL date literal, the empty date (\"Acquisition Date\" = filter(<> 0D) excludes only empty dates), unlike 0D in SetFilter text, which BC reads as today.",
+        tests: "Fixed Asset.Acquired (FixedAsset.Table.al:293); 54 Tests-Fixed Asset tests (ERM Fixed Assets Journal.AcquireFixedAssetNotification).",
+        probe: "A FlowField exist(T where(D = filter(<> 0D))) over rows with an empty date and a dated row, read on a record; once with today's date as the dated row.",
+    },
+    CameraProviderNotAvailable => {
+        id: "camera-provider-not-available",
+        assumed: "CameraProvider.IsAvailable() on the client of a test session answers false (no camera).",
+        tests: "Fixed Asset Picture.OnOpenPage through Camera.IsAvailable(); about 65 Tests-Fixed Asset tests (ERM Fixed Assets Journal.AcquireFixedAssetGenJournalLinesAlreadyExist).",
+        probe: "Codeunit Camera.IsAvailable() in a test, and an [InternalEvent] subscriber of Camera Page Impl.OnIsCameraAvailable that logs its incoming value.",
+    },
     TransferFieldsEnumOption => {
         id: "transfer-fields-enum-option",
         assumed: "TransferFields moves the ordinal between an Enum field and an Option field of the same field number; an Option ordinal the Enum lacks is refused.",

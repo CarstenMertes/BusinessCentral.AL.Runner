@@ -16,7 +16,8 @@
 use super::registry::{MemberFn, MemberKind, MemberRefFn, Pin, RegistryMember, RegistryType};
 use crate::Session;
 use al_builtins::dotnet_sigs::{
-    AL_CONFIG_SETTINGS, GRAPH_QUERY, TENANT_INFO, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER,
+    AL_CONFIG_SETTINGS, CAMERA_PROVIDER, GRAPH_QUERY, TENANT_INFO, TENANT_SETTINGS_HELPER, TEST_EXECUTION,
+    USER_ACCOUNT_HELPER,
 };
 use al_builtins::native::Signal;
 use al_builtins::value::{DotNetKind, DotNetObject, Value};
@@ -288,6 +289,15 @@ fn is_in_test_mode(s: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) ->
     Ok(Value::Boolean(s.in_test_codeunit))
 }
 
+/// `CameraProvider.IsAvailable()`: the client of a test session has no camera. Unprobed (assumption
+/// camera-provider-not-available): Base Application's "Fixed Asset Picture" asks in OnOpenPage, and the tests that
+/// open it pass on real BC with whichever answer; nothing in them reads it.
+fn camera_is_available(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "CameraProvider.IsAvailable")?;
+    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::CameraProviderNotAvailable);
+    Ok(Value::Boolean(false))
+}
+
 const ENV_PROBE: &str = "probe tests/al-language/session/TestEnvironmentUserTenantContracts.al";
 
 fn member(name: &str, pin: Pin, f: MemberFn) -> RegistryMember {
@@ -527,6 +537,14 @@ fn own_types() -> Vec<RegistryType> {
                 .into_iter()
                 .map(|n| member(n, Pin::Corpus(TENANT_INFO_PIN.into()), tenant_info_empty_text))
                 .collect(),
+        },
+        RegistryType {
+            clr_name: CAMERA_PROVIDER.into(),
+            members: vec![member(
+                "IsAvailable",
+                Pin::Probe("assumption camera-provider-not-available (docs/probes-needed.md)".into()),
+                camera_is_available,
+            )],
         },
         RegistryType {
             clr_name: TEST_EXECUTION.into(),

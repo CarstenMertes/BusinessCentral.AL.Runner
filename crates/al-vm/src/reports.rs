@@ -771,6 +771,14 @@ impl Session {
             return Ok(false);
         }
         if self.in_write_transaction() {
+            // Pinned for AL code that runs the report (the corpus tests above). A TestPage action that does is another
+            // client call: whether the test's pending write is committed first is not pinned (Tests-Fixed Asset, Fixed
+            // Assets Plan-based E2E.DepreciateFixedAsset passes on real BC after writes).
+            if self.pages.action_depth > 0 {
+                return unsupported(
+                    "a report run by a TestPage action with a write pending: whether the transaction is stopped is not pinned",
+                );
+            }
             return Err(crate::transactions::transaction_stopped());
         }
         if self.tx.try_depth > 0 {

@@ -222,7 +222,7 @@ fn cmp_rows(t: &TableDef, key: usize, a: &[Value], b: &[Value]) -> Ordering {
 /// and both are prefixes of a position. The full `passes` check still runs on every row between them, so a bound
 /// that is too wide only costs time; a bound is only taken from what `key_cmp` order can answer exactly.
 #[derive(Default)]
-struct Seek {
+pub struct Seek {
     lo: Vec<Value>,
     hi: Vec<Value>,
     /// The fields of the position, as far as the bounds reach.
@@ -251,7 +251,7 @@ fn same_kind(a: &Value, b: &Value) -> bool {
 
 impl Seek {
     /// The bounds the filters give for key `key` of `t`; `None` when they give none.
-    fn of(t: &TableDef, key: usize, filters: &[FieldFilter], sample: Option<&Row>) -> Option<Seek> {
+    pub fn of(t: &TableDef, key: usize, filters: &[FieldFilter], sample: Option<&Row>) -> Option<Seek> {
         use al_builtins::filter::{FilterExpr as E, OR_GROUP};
         if filters.is_empty() {
             return None;
@@ -323,7 +323,7 @@ impl Seek {
     }
 
     /// The row is before the first row the filters allow.
-    fn before(&self, row: &[Value]) -> Option<bool> {
+    pub fn before(&self, row: &[Value]) -> Option<bool> {
         if self.lo.is_empty() {
             return Some(false);
         }
@@ -331,7 +331,7 @@ impl Seek {
     }
 
     /// The row is after the last row the filters allow.
-    fn after(&self, row: &[Value]) -> Option<bool> {
+    pub fn after(&self, row: &[Value]) -> Option<bool> {
         if self.hi.is_empty() {
             return Some(false);
         }

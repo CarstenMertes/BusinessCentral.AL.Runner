@@ -47,7 +47,26 @@ pub(crate) struct Mat {
     rows: Vec<Row>,
     poison: Vec<Option<String>>,
     known: Vec<usize>,
+    /// No row is poisoned. Only then are the values of the key columns all real, so the rows are in the order of
+    /// the key and the filters on its leading columns bound a scan (`band`).
+    clean: bool,
+    /// The rows that passed a set of filters, for a set seen before (`passing`): a lookup that scans a big listing
+    /// on a column the key does not cover (the fields that relate to a table) repeats with the same filters.
+    memo: std::sync::Mutex<Memo>,
 }
+
+/// The filter sets a big listing has been scanned with: how often, and for the repeated ones the indexes of the
+/// rows that pass, in order.
+#[derive(Default)]
+struct Memo {
+    seen: std::collections::HashMap<String, (u32, Option<std::sync::Arc<Vec<u32>>>)>,
+}
+
+/// Listings with fewer rows than this are walked each time.
+const MEMO_MIN_ROWS: usize = 2048;
+
+/// How many filter sets a listing remembers; a listing that is scanned with more kinds stops remembering new ones.
+const MEMO_MAX_SETS: usize = 256;
 
 /// A listing that several threads read. `Value` is not `Send` because some variants hold `Rc`
 /// handles; the rows of a listing are made of plain values only (checked when it is made), whose
@@ -78,7 +97,15 @@ impl std::ops::Deref for SharedMat {
 unsafe impl Send for SharedMat {}
 unsafe impl Sync for SharedMat {}
 
+#[cfg(test)]
+thread_local! {
+    /// How many rows `passes` looked at: the tests of the key band count what a scan reads.
+    static ROWS_LOOKED_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
+    #[cfg(test)]
+    ROWS_LOOKED_AT.with(|c| c.set(c.get() + 1));
     al_builtins::filter::row_passes(row, filters)
 }
 
@@ -111,7 +138,14 @@ impl Mat {
             poison.push(e.poison);
             known.push(e.known);
         }
-        Mat { rows, poison, known }
+        let clean = poison.iter().all(Option::is_none);
+        Mat {
+            rows,
+            poison,
+            known,
+            clean,
+            memo: Default::default(),
+        }
     }
 
     /// The same listing with every row changed by `f` (the key columns must stay as they are).
@@ -120,6 +154,8 @@ impl Mat {
             rows: self.rows.iter().map(f).collect(),
             poison: self.poison.clone(),
             known: self.known.clone(),
+            clean: self.clean,
+            memo: Default::default(),
         }
     }
 
@@ -133,6 +169,58 @@ impl Mat {
         })
     }
 
+    /// The indexes of the rows that can pass `filters`: those between the bounds the filters on the leading
+    /// primary key columns give (ADR-035, as in the store: a row of the band may still fail, a row outside it
+    /// cannot pass). The whole listing when the filters give no bound, or when a row is poisoned (its key
+    /// columns may be placeholders, which do not sort).
+    fn band(&self, t: &TableDef, filters: &[FieldFilter]) -> std::ops::Range<usize> {
+        let all = 0..self.rows.len();
+        if !self.clean {
+            return all;
+        }
+        let Some(seek) = al_data::memory::Seek::of(t, 0, filters, self.rows.first()) else {
+            return all;
+        };
+        let lo = self.rows.partition_point(|r| seek.before(r) == Some(true));
+        let hi = self.rows.partition_point(|r| seek.after(r) != Some(true));
+        lo..hi.max(lo)
+    }
+
+    /// The indexes of all rows that pass `filters`, once a big listing has been scanned twice with this set of
+    /// filters; `None` for the first scan, for a small listing and for one with a poisoned row. The result is the
+    /// same as testing each row: the listing never changes.
+    fn passing(&self, filters: &[FieldFilter]) -> Option<std::sync::Arc<Vec<u32>>> {
+        if !self.clean || self.rows.len() < MEMO_MIN_ROWS || filters.is_empty() {
+            return None;
+        }
+        let key = format!("{filters:?}");
+        {
+            let mut memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
+            if memo.seen.len() >= MEMO_MAX_SETS && !memo.seen.contains_key(&key) {
+                return None;
+            }
+            let entry = memo.seen.entry(key.clone()).or_insert((0, None));
+            if let Some(idx) = &entry.1 {
+                return Some(idx.clone());
+            }
+            entry.0 += 1;
+            if entry.0 < 2 {
+                return None;
+            }
+        }
+        let idx: std::sync::Arc<Vec<u32>> = std::sync::Arc::new(
+            (0..self.rows.len())
+                .filter(|&i| passes(&self.rows[i], filters))
+                .map(|i| i as u32)
+                .collect(),
+        );
+        let mut memo = self.memo.lock().unwrap_or_else(|e| e.into_inner());
+        if let Some(entry) = memo.seen.get_mut(&key) {
+            entry.1 = Some(idx.clone());
+        }
+        Some(idx)
+    }
+
     /// The first row at or after index `from` (walking towards `ascending`) that passes the
     /// filters; a row that cannot be worked out and might pass refuses.
     fn walk(
@@ -142,6 +230,19 @@ impl Mat {
         ascending: bool,
         filters: &[FieldFilter],
     ) -> Result<Option<Row>, StoreError> {
+        if let Some(idx) = self.passing(filters) {
+            // The rows that pass are known: the first one inside the range, from the side the scan comes from.
+            let pick = if ascending {
+                let k = idx.partition_point(|&i| (i as usize) < range.start);
+                idx.get(k).copied().filter(|&i| (i as usize) < range.end)
+            } else {
+                let k = idx.partition_point(|&i| (i as usize) < range.end);
+                k.checked_sub(1)
+                    .map(|k| idx[k])
+                    .filter(|&i| (i as usize) >= range.start)
+            };
+            return Ok(pick.map(|i| self.rows[i as usize].clone()));
+        }
         let at = |i: usize| -> Result<Option<Row>, StoreError> {
             let r = &self.rows[i];
             match &self.poison[i] {
@@ -186,8 +287,14 @@ impl Mat {
                     .rows
                     .partition_point(|r| key_cmp(&position(t, 0, r), a) != Ordering::Greater),
             };
+            let band = self.band(t, scan.filters);
             if scan.ascending {
-                return self.walk(t, start..self.rows.len(), true, scan.filters);
+                return self.walk(
+                    t,
+                    start.max(band.start)..self.rows.len().min(band.end),
+                    true,
+                    scan.filters,
+                );
             }
             let end = match scan.after {
                 None => self.rows.len(),
@@ -195,7 +302,7 @@ impl Mat {
                     .rows
                     .partition_point(|r| key_cmp(&position(t, 0, r), a) == Ordering::Less),
             };
-            return self.walk(t, 0..end, false, scan.filters);
+            return self.walk(t, band.start..end.min(band.end), false, scan.filters);
         }
         let mut best: Option<(Vec<Value>, &Row)> = None;
         for (i, r) in self.rows.iter().enumerate().filter(|(_, r)| later(r)) {
@@ -226,7 +333,8 @@ impl Mat {
 
     pub(crate) fn count(&self, t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError> {
         let mut n = 0;
-        for (i, r) in self.rows.iter().enumerate() {
+        let band = self.band(t, filters);
+        for (i, r) in self.rows.iter().enumerate().skip(band.start).take(band.len()) {
             match &self.poison[i] {
                 Some(why) if may_pass(t, r, self.known[i], filters) => return Err(refusal(t, why)),
                 Some(_) => {}
@@ -347,6 +455,141 @@ mod tests {
         // An ID filter that excludes 2 is decided by the known column.
         assert!(matches!(m.count(&t, &[id_filter(1, 1)]), Ok(1)));
         assert!(m.get(&t, &[Value::Integer(2), Value::Text("".into())]).is_err());
+    }
+
+    // ---- the band of the primary key (the walk of a listing starts and ends where the key filters say) ----
+
+    fn big() -> Mat {
+        big_of(1000)
+    }
+
+    fn big_of(n: i32) -> Mat {
+        Mat::new(
+            &table(),
+            (1..=n).map(|i| Entry::ok(row(i, &format!("n{}", i % 7)))).collect(),
+        )
+    }
+
+    fn looked_at(f: impl FnOnce() -> R) -> (R, usize)
+    where
+        R: Sized,
+    {
+        ROWS_LOOKED_AT.with(|c| c.set(0));
+        let r = f();
+        (r, ROWS_LOOKED_AT.with(|c| c.get()))
+    }
+
+    type R = Result<Option<Row>, al_data::StoreError>;
+
+    #[test]
+    fn a_scan_with_a_filter_on_the_leading_key_field_reads_only_the_band() {
+        let (t, m) = (table(), big());
+        let f = [id_filter(500, 502)];
+        let (r, n) = looked_at(|| m.next(&t, &scan(&f, None, true)));
+        assert!(matches!(r, Ok(Some(r)) if matches!(r[0], Value::Integer(500))));
+        assert!(n <= 3, "{n} rows looked at");
+        // The step past the last row of the band reads nothing of the 498 rows after it.
+        let last = position(&t, 0, &row(502, "n5"));
+        let (r, n) = looked_at(|| m.next(&t, &scan(&f, Some(&last), true)));
+        assert!(matches!(r, Ok(None)));
+        assert!(n <= 1, "{n} rows looked at");
+        // Descending starts at the top of the band.
+        let (r, n) = looked_at(|| m.next(&t, &scan(&f, None, false)));
+        assert!(matches!(r, Ok(Some(r)) if matches!(r[0], Value::Integer(502))));
+        assert!(n <= 3, "{n} rows looked at");
+        let (c, n) = looked_at(|| m.count(&t, &f).map(|c| Some(vec![Value::Integer(c as i32)])));
+        assert!(matches!(c, Ok(Some(r)) if matches!(r[0], Value::Integer(3))));
+        assert!(n <= 3, "{n} rows looked at");
+    }
+
+    #[test]
+    fn a_big_listing_scanned_again_with_the_same_filters_does_not_look_at_every_row_again() {
+        let (t, m) = (table(), big_of(5000));
+        let name3 = [FieldFilter {
+            field: 1,
+            expr: FilterExpr::Eq(Value::Text("n3".into())),
+            group: 0,
+        }];
+        // The first scan walks; the second builds the list of passing rows; the third and later read it.
+        let first = looked_at(|| m.next(&t, &scan(&name3, None, true)));
+        assert!(matches!(first.0, Ok(Some(r)) if matches!(r[0], Value::Integer(3))));
+        let _ = m.next(&t, &scan(&name3, None, true));
+        let (r, n) = looked_at(|| m.next(&t, &scan(&name3, None, true)));
+        assert!(matches!(r, Ok(Some(r)) if matches!(r[0], Value::Integer(3))));
+        assert_eq!(n, 0, "answered from the list of passing rows");
+        // The step past the last row that passes reads nothing either.
+        let last = position(&t, 0, &row(4994, "n3"));
+        let (r, n) = looked_at(|| m.next(&t, &scan(&name3, Some(&last), true)));
+        assert!(matches!(r, Ok(None)) && n == 0, "{n}");
+        let (r, n) = looked_at(|| m.next(&t, &scan(&name3, None, false)));
+        assert!(
+            matches!(r, Ok(Some(r)) if matches!(r[0], Value::Integer(4994))) && n == 0,
+            "{n}"
+        );
+    }
+
+    #[test]
+    fn the_band_changes_no_answer() {
+        use FilterExpr as E;
+        let (t, m) = (table(), big());
+        the_band_changes_no_answer_on(&t, &m);
+        // A listing big enough to remember: every chain of Next runs three times, the last two from the list.
+        let remembering = big_of(3000);
+        for _ in 0..3 {
+            the_band_changes_no_answer_on(&t, &remembering);
+        }
+        let _ = E::Eq(Value::Null);
+    }
+
+    fn the_band_changes_no_answer_on(t: &TableDef, m: &Mat) {
+        use FilterExpr as E;
+        let flt = |field, expr| FieldFilter { field, expr, group: 0 };
+        let int = |i| Value::Integer(i);
+        let cases: Vec<Vec<FieldFilter>> = vec![
+            vec![flt(0, E::Eq(int(7)))],
+            vec![flt(0, E::Gt(int(990)))],
+            vec![flt(0, E::Lt(int(4)))],
+            vec![flt(0, E::Range(None, Some(int(2))))],
+            vec![flt(0, E::Range(Some(int(1001)), None))],
+            vec![
+                flt(0, E::Range(Some(int(10)), Some(int(40)))),
+                flt(1, E::Eq(Value::Text("n3".into()))),
+            ],
+            vec![flt(1, E::Eq(Value::Text("n3".into())))],
+            vec![flt(0, E::Ne(int(1)))],
+            vec![flt(0, E::Range(Some(int(30)), Some(int(20))))],
+        ];
+        for f in &cases {
+            let want: Vec<i32> = m
+                .rows
+                .iter()
+                .filter(|r| passes(r, f))
+                .map(|r| match r[0] {
+                    Value::Integer(i) => i,
+                    _ => 0,
+                })
+                .collect();
+            let mut got = Vec::new();
+            let mut after: Option<Vec<Value>> = None;
+            while let Ok(Some(r)) = m.next(t, &scan(f, after.as_deref(), true)) {
+                if let Value::Integer(i) = r[0] {
+                    got.push(i);
+                }
+                after = Some(position(t, 0, &r));
+            }
+            assert_eq!(got, want, "ascending, {f:?}");
+            let mut back = Vec::new();
+            let mut after: Option<Vec<Value>> = None;
+            while let Ok(Some(r)) = m.next(t, &scan(f, after.as_deref(), false)) {
+                if let Value::Integer(i) = r[0] {
+                    back.push(i);
+                }
+                after = Some(position(t, 0, &r));
+            }
+            back.reverse();
+            assert_eq!(back, want, "descending, {f:?}");
+            assert!(matches!(m.count(t, f), Ok(n) if n == want.len()), "count, {f:?}");
+        }
     }
 }
 

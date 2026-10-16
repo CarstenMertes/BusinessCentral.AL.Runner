@@ -363,6 +363,11 @@ impl Parser<'_> {
                     }
                 }
             }
+            // The empty text is the empty formula (Microsoft's Library - ERM `GetDiscountPaymentTerm`).
+            T::DateFormula if text.trim().is_empty() => {
+                crate::assumptions::assume(crate::assumptions::Assumption::FilterEmptyTextDateFormula);
+                Value::DateFormula(String::new())
+            }
             other => {
                 return Err(format!(
                     "text filter value `{text}` for {other}: how BC reads the text (an empty `''`, a formula such as `1M`, a region's date format) is not pinned (docs/probes-needed.md)",
@@ -529,6 +534,20 @@ mod tests {
         assert!(closing.matches(&Value::Date(crate::format::day_from_civil(2027, 1, 17), true)));
         assert!(!closing.matches(&d), "the closing date is not the date");
         assert!(parse_filter("1M", &[], &T::Date).is_err(), "a formula stays refused");
+    }
+
+    /// Microsoft's Library - ERM `GetDiscountPaymentTerm` filters a DateFormula field with `<>` and the empty text: there the
+    /// empty text is the empty formula (assumption `filter-empty-text-dateformula`).
+    #[test]
+    fn a_date_formula_filter_reads_the_empty_text_as_the_empty_formula() {
+        use crate::value::RtType as T;
+        let not_blank = parse_filter("<>''", &[], &T::DateFormula).expect("<> the empty formula");
+        assert!(!not_blank.matches(&Value::DateFormula(String::new())));
+        assert!(not_blank.matches(&Value::DateFormula("<1M>".into())));
+        assert!(
+            parse_filter("1M", &[], &T::DateFormula).is_err(),
+            "a formula stays refused"
+        );
     }
 
     #[test]

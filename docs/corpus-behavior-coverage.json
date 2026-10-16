@@ -12722,7 +12722,7 @@
           "ms_uses": 25503,
           "name": "ParenExpr",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "_fixtures/Assert.al:176"
         },
         {

@@ -347,9 +347,25 @@ impl Parser<'_> {
                     None => return Err(format!("`{text}` is not a member of the enum")),
                 }
             }
+            // Text built with `Format` reads as `Evaluate` reads it (Microsoft's tests filter dates and Guids this way;
+            // assumption `filter-text-read-as-evaluate`). A formula, an empty text or anything else stays refused.
+            T::Date | T::Guid if !text.trim().is_empty() && !text.contains(['<', '>']) => {
+                match crate::evaluate::read_text(self.ty, text.trim()).ok_or(()) {
+                    Ok(v) => {
+                        crate::assumptions::assume(crate::assumptions::Assumption::FilterTextReadAsEvaluate);
+                        v
+                    }
+                    Err(_) => {
+                        return Err(format!(
+                            "text filter value `{text}` for {}: not a date, time or Guid in the form Format gives (formulas and other region formats are not pinned, docs/probes-needed.md)",
+                            self.ty.describe()
+                        ));
+                    }
+                }
+            }
             other => {
                 return Err(format!(
-                    "text filter value for {other}: how BC reads the text (an empty `''`, a formula such as `1M`, a region's date format) is not pinned (docs/probes-needed.md)",
+                    "text filter value `{text}` for {other}: how BC reads the text (an empty `''`, a formula such as `1M`, a region's date format) is not pinned (docs/probes-needed.md)",
                     other = other.describe()
                 ));
             }
@@ -492,6 +508,28 @@ pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Microsoft's Tests-SCM and Tests-ERM filter Date and Guid fields with text they built with `Format`
+    /// (`SetFilter("Posting Date", '..' + Format(D))`, `SetFilter(SystemId, Format(G))`): the text reads as `Evaluate`
+    /// reads it. Not pinned by a corpus test (assumption `filter-text-read-as-evaluate`, docs/probes-needed.md); a
+    /// formula or an empty text stays refused.
+    #[test]
+    fn a_date_or_guid_filter_reads_formatted_text_as_evaluate_does() {
+        use crate::value::RtType as T;
+        let date = parse_filter("01/17/27", &[], &T::Date).expect("a date in the region's short format");
+        let d = Value::Date(crate::format::day_from_civil(2027, 1, 17), false);
+        assert!(date.matches(&d));
+        assert!(!date.matches(&Value::Date(0, false)));
+        let range = parse_filter("..01/17/27", &[], &T::Date).expect("a range up to a date");
+        assert!(range.matches(&d));
+        let guid = parse_filter("{261C0957-2EC9-802F-F3FB-808A6781620E}", &[], &T::Guid).expect("a Guid with braces");
+        let g = Value::Guid(crate::ops::parse_guid("261C0957-2EC9-802F-F3FB-808A6781620E").unwrap());
+        assert!(guid.matches(&g));
+        let closing = parse_filter("C01/17/27", &[], &T::Date).expect("a closing date as Format writes it");
+        assert!(closing.matches(&Value::Date(crate::format::day_from_civil(2027, 1, 17), true)));
+        assert!(!closing.matches(&d), "the closing date is not the date");
+        assert!(parse_filter("1M", &[], &T::Date).is_err(), "a formula stays refused");
+    }
 
     #[test]
     fn range_and_comparisons() {

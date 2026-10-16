@@ -199,6 +199,12 @@ registry! {
         tests: "Base Application's Purchase Header, field Buy-from Vendor No. (Self-Billing Invoice); every Tests-SCM and Tests-ERM test that validates it.",
         probe: "A Boolean variable and an enum value joined with and, then in a set, with and without parentheses; a Boolean result for each.",
     },
+    FilterTextReadAsEvaluate => {
+        id: "filter-text-read-as-evaluate",
+        assumed: "A text value of a filter on a Date or Guid field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, a Guid with braces). A formula such as 1M, a Time or DateTime text and an empty text stay refused.",
+        tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
+        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; the same on a Guid field with Format(G); then GetFilter and Count.",
+    },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",
         assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",

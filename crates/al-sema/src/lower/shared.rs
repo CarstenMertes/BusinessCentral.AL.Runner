@@ -195,6 +195,7 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         report_reasons: &sh.report_reasons,
         memo: &tl.memo,
         ret_ty: None,
+        qcp_ret: None,
         ret_decl: None,
         routine_nodes: &tl.nodes,
         ext_slots: &sh.ext_slots,

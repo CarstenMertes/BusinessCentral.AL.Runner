@@ -57,3 +57,22 @@ codeunit 69860 OI
         "{v:?}"
     );
 }
+
+// Base Application's ServItemManagement loops `for x := 2 to ServLine."Qty. to Ship"` with a Decimal bound.
+#[test]
+fn a_decimal_with_a_whole_value_is_a_for_loop_bound() {
+    let src = r#"
+codeunit 69861 FD
+{
+    procedure F(): Integer
+    var x: Integer; q: Decimal; n: Integer;
+    begin
+        q := 3;
+        for x := 1 to q do n += 1;
+        exit(n);
+    end;
+}
+"#;
+    let v = al_testkit::run_in(src, "FD", "F");
+    assert!(matches!(&v, Ok(al_builtins::value::Value::Integer(3))), "{v:?}");
+}

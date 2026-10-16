@@ -306,15 +306,6 @@ impl Lowerer<'_> {
             Block => return self.stmts_of(n),
             // A try function called as a statement behaves like a normal method
             // (doc: TryFunction attribute), so its errors propagate.
-            // `continue;` (a statement of the AL language that Base Application's Inventory Adjustment uses): the
-            // checker sees a bare name that is no variable, procedure or field.
-            ExprStmt
-                if kids[0].kind() == NameRef
-                    && kids[0].text().to_string().trim().eq_ignore_ascii_case("continue")
-                    && self.res(&kids[0]).is_none() =>
-            {
-                Ok(ir::Stmt::Continue)
-            }
             ExprStmt => self.expr(&kids[0]).map(|e| match e {
                 ir::Expr::Builtin { id, receiver, args, .. } => ir::Stmt::Expr(ir::Expr::Builtin {
                     id,
@@ -418,6 +409,7 @@ impl Lowerer<'_> {
                 }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
+            ContinueStmt => Ok(ir::Stmt::Continue),
             AssertErrorStmt => Ok(ir::Stmt::AssertError(self.stmt_or_empty(kids.first()))),
             other => Err(format!("statement {other:?} is not lowered yet")),
         };

@@ -113,6 +113,19 @@ pub(crate) fn type_ref(p: &mut Parser) {
                 inline_property(p);
             }
         }
+        // `TextConst ENU = 'Hello', DEU = 'Hallo'`: one text per language, the language an identifier.
+        "textconst" => loop {
+            if p.at(Ident) && p.nth(1) == Eq {
+                p.bump_any();
+                p.bump_any();
+                p.expect(StringLit);
+            } else {
+                break;
+            }
+            if !p.eat(Comma) {
+                break;
+            }
+        },
         "option" => loop {
             // `Option` with no members ends a return type: the `var` or `begin` after it opens
             // the body (Base Application `FALedgerEntry.Table.al`, `ConvertPostingType(): Option`).
@@ -285,6 +298,16 @@ mod tests {
 
     fn t(src: &str) -> String {
         dump(src, type_ref)
+    }
+
+    #[test]
+    fn a_textconst_has_a_text_per_language() {
+        // Corpus types/lt-variant/VaTTextConst.al.
+        assert_eq!(t("TextConst ENU = 'Hello'"), "(TypeRef TextConst ENU = 'Hello')");
+        assert_eq!(
+            t("TextConst DEU = 'Hallo', ENU = 'It''s %1', FRA = ''"),
+            "(TypeRef TextConst DEU = 'Hallo' , ENU = 'It''s %1' , FRA = '')"
+        );
     }
 
     #[test]

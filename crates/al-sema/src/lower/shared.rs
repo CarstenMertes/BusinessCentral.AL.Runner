@@ -299,9 +299,10 @@ pub(crate) fn lower_object<'a>(
     }
     let obj = ws.object_ast(oi);
     let mut lw = make_lowerer(sh, tl, seq, oi);
-    // Positions only feed call stacks and error lines; for a dependency app they cost a third of
-    // lowering and no corpus test reads them, so its routines carry none (measured in ADR-013).
-    lw.lines = (sh.positions && !ws.is_dependency(oi)).then(|| {
+    // Positions feed call stacks and error lines. A dependency app's routines carry them too (ADR-041): Microsoft's Error
+    // Message Management reads `SessionInformation.Callstack` and every frame needs its line. `AL_NO_DEP_POSITIONS` turns
+    // that off (ADR-013 measured positions at a third of the lowering of a dependency app).
+    lw.lines = (sh.positions && (!ws.is_dependency(oi) || dependency_positions())).then(|| {
         line_cache
             .entry(o.file)
             .or_insert_with(|| std::rc::Rc::new(FileLines::new(ws, o.file)))
@@ -970,4 +971,9 @@ pub(crate) fn rewrite_quotes(raw: &str) -> String {
         }
     }
     out
+}
+
+/// Whether the routines of dependency apps carry source positions (ADR-041). On unless `AL_NO_DEP_POSITIONS` is set.
+pub fn dependency_positions() -> bool {
+    std::env::var_os("AL_NO_DEP_POSITIONS").is_none()
 }

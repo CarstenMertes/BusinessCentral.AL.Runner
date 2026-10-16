@@ -772,12 +772,24 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
                 dataitem(C; U) { DataItemLink = \"No.\" = A.\"No.\"; column(Y; Amount) { } } } } }",
             "several nested dataitems",
         );
-        // Right outer joins.
+        // A join type that does not exist.
         has(
             "query 50100 Q { elements { dataitem(A; T) { column(No; \"No.\") { }
-                dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; SqlJoinType = RightOuterJoin; column(X; Amount) { } } } } }",
-            "rightouterjoin",
+                dataitem(B; U) { DataItemLink = \"No.\" = A.\"No.\"; SqlJoinType = SidewaysJoin; column(X; Amount) { } } } } }",
+            "sidewaysjoin",
         );
+        // Right and full outer joins keep the child rows no parent links to (query/lt-outer-joins/P71JoinNone.al).
+        for (join, left, right) in [("RightOuterJoin", false, true), ("FullOuterJoin", true, true)] {
+            let l = layout_of(&format!(
+                "query 50100 Q {{ elements {{ dataitem(A; T) {{ column(No; \"No.\") {{ }}
+                dataitem(B; U) {{ DataItemLink = \"No.\" = A.\"No.\"; SqlJoinType = {join}; column(X; Amount) {{ }} }} }} }} }}"
+            ));
+            assert_eq!(l.reasons, Vec::<String>::new());
+            assert_eq!(
+                (l.query.items[1].left_outer, l.query.items[1].right_outer),
+                (left, right)
+            );
+        }
         // Query code: procedures, variables and an OnBeforeOpen run (query/TestQueryOnBeforeOpenVariablesContracts.al);
         // another trigger does not exist.
         assert!(

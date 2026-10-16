@@ -452,7 +452,7 @@ impl CorpusRuntime {
         opts: &RunOptions,
     ) -> CorpusRuntime {
         let Compiled {
-            ws,
+            ws: _,
             lowered,
             cache_report,
             baseline_wanted,
@@ -509,27 +509,6 @@ impl CorpusRuntime {
         let started = std::time::Instant::now();
         // With several test threads the tests get a second engine once the baseline has run (below).
         // It does not depend on the baseline, so it is built beside it, on another core.
-        // The baseline of an earlier run of the same program, when the compile cache is on and nothing outside the
-        // program can have changed what the install code reads (`baseline_key`).
-        let baseline_key = if baseline {
-            baseline_key(
-                ws,
-                lowered,
-                cache_report.as_ref(),
-                suites,
-                opts_only.as_deref(),
-                target,
-                &dotnet,
-                opts,
-            )
-        } else {
-            None
-        };
-        let kept = baseline_key
-            .as_ref()
-            .zip(opts.compile_cache.as_ref())
-            .and_then(|(key, cc)| crate::baseline_cache::read(&cc.dir, key));
-        let from_cache = kept.is_some();
         let (baseline_run, mut spare_engine) = std::thread::scope(|scope| {
             let spare = (baseline && workers > 1)
                 .then(|| {
@@ -540,20 +519,12 @@ impl CorpusRuntime {
                 })
                 .flatten();
             let run = if baseline {
-                kept.or_else(|| crate::baseline::run(&engine, lowered))
+                crate::baseline::run(&engine, lowered)
             } else {
                 None
             };
             (run, spare.map(|h| h.join().expect("the second engine is built")))
         });
-        if let (false, Some(key), Some(cc), Some(run)) = (
-            from_cache,
-            baseline_key.as_ref(),
-            opts.compile_cache.as_ref(),
-            baseline_run.as_ref(),
-        ) {
-            crate::baseline_cache::write(&cc.dir, key, run);
-        }
         // The tests run against an engine that knows which tables the install baseline could not
         // seed. The baseline itself ran before it knew; with several test threads, which each run
         // the baseline again (its data is not for sharing between threads), the engine that ran it
@@ -564,9 +535,6 @@ impl CorpusRuntime {
             .unwrap_or_default();
         let baseline_engine = (workers > 1 && baseline_run.is_some()).then(|| engine.clone());
         if let Some(b) = &baseline_run {
-            if from_cache {
-                eprintln!("baseline: read from the cache of an earlier run of this program");
-            }
             for n in &b.notes {
                 eprintln!("baseline: {n}");
             }
@@ -984,64 +952,4 @@ impl CorpusRuntime {
             .cloned()
             .unwrap_or_else(|| Outcome::NotRun("test procedure not found in the compiled corpus".into()))
     }
-}
-
-/// The key under which the install baseline of this run is kept on disk, or `None` when it must run every time.
-/// The baseline is what the install code of the dependency apps and `Company-Initialize` write, followed by the
-/// workspace's own install codeunits. It is the same for the same program and the same world around it, which is
-/// everything the key holds: this runtime build, the dependency layers (the key of the top layer holds every app of
-/// them and the target), the source of every other app, the test codeunits that were compiled, the BC target, the
-/// environment of the host and the day. The day is there because the rows carry the time the run began (`SystemClock`),
-/// and a test may ask how old one is.
-///
-/// Not kept at all: a run that reads test data, runs .NET, lets `File` use a real directory, reads the real clock as
-/// it goes, records, compares two executable forms or has a test runner of its own: what such a run does is not in
-/// the key.
-#[allow(clippy::too_many_arguments)]
-fn baseline_key(
-    ws: &al_sema::Workspace,
-    lowered: &Lowered,
-    report: Option<&crate::compile_cache::CacheReport>,
-    suites: &[SuiteRun],
-    only: Option<&[(usize, u32)]>,
-    target: Option<&al_version::Target>,
-    dotnet: &al_vm::dotnet::DotNetConfig,
-    opts: &RunOptions,
-) -> Option<String> {
-    use al_host::Clock;
-    let _ = lowered;
-    let report = report?;
-    opts.compile_cache.as_ref()?;
-    if opts.test_data.is_some()
-        || opts.trace
-        || opts.dual_run
-        || opts.execute
-        || opts.coverage
-        || suites.iter().any(|s| s.runner.is_some())
-        || dotnet.host.availability().is_ok()
-        || crate::host::uses_real_files()
-        || crate::host::real_clock()
-    {
-        return None;
-    }
-    let mut key = crate::baseline_cache::KeyBuilder::new();
-    key.bytes("runtime_build", &crate::compile_cache::runtime_build());
-    key.text("dependencies", &report.file.file_name()?.to_string_lossy());
-    for (i, app) in ws.apps.iter().enumerate() {
-        if ws.kinds.get(i) != Some(&al_sema::AppKind::Dependency) {
-            key.text("app", &app.id);
-            key.bytes("source", &crate::compile_cache::source_hash(app));
-        }
-    }
-    let only: Vec<String> = only.unwrap_or(&[]).iter().map(|(a, id)| format!("{a}/{id}")).collect();
-    key.text("only", &only.join(","));
-    key.text("only_set", if opts.only.is_some() { "yes" } else { "no" });
-    match target {
-        Some(t) => key.text("target", &format!("{}/{}", t.bc, t.runtime)),
-        None => key.text("target", "none"),
-    };
-    key.text("environment", crate::host::environment_text());
-    let day = crate::host::SystemClock.now_utc_millis().div_euclid(86_400_000);
-    key.text("day", &day.to_string());
-    Some(key.finish())
 }

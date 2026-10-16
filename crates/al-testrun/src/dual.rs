@@ -49,6 +49,11 @@ pub(crate) struct Side<'a> {
     pub digests: &'a [(String, Vec<(u32, u64)>)],
 }
 
+/// Whether the runner stopped the test at its CPU time limit (`--test-timeout-secs`).
+fn stopped_by_limit(o: &Outcome) -> bool {
+    matches!(o, Outcome::NotRun(m) if m.contains("time limit of") && m.contains("CPU time"))
+}
+
 /// The differences between two runs of one test codeunit; the first of each test only.
 pub(crate) fn compare(
     codeunit: u32,
@@ -73,9 +78,14 @@ pub(crate) fn compare(
             tests.push(t);
         }
     }
+    // The tests of a codeunit share one session, whose row version and system time stamps count on from test to
+    // test. Where the CPU time limit stops a test depends on the speed of the machine, so from the first test either
+    // run had stopped the counters, and with them the rows' system fields, differ: the state is not compared after it.
+    let mut limit_seen = false;
     for t in tests {
         let o_tree = tree.done.iter().find(|(n, _)| n == t).map(|(_, o)| o);
         let o_other = other.done.iter().find(|(n, _)| n == t).map(|(_, o)| o);
+        limit_seen |= o_tree.is_some_and(stopped_by_limit) || o_other.is_some_and(stopped_by_limit);
         let mut diff = |what: &'static str, a: String, b: String| {
             out.push(DualDiff {
                 codeunit,
@@ -88,6 +98,9 @@ pub(crate) fn compare(
         };
         if o_tree != o_other {
             diff("outcome", format!("{o_tree:?}"), format!("{o_other:?}"));
+        } else if o_tree.is_some_and(stopped_by_limit) {
+            // Where the CPU time limit stops a test depends on the speed of the machine: the data and the
+            // assumptions of two stopped runs are not comparable.
         } else if lookup(tree.stacks, t) != lookup(other.stacks, t) {
             diff(
                 "error stack",
@@ -100,7 +113,7 @@ pub(crate) fn compare(
                 format!("{:?}", marks(tree.hits, t)),
                 format!("{:?}", marks(other.hits, t)),
             );
-        } else if digest(tree.digests, t) != digest(other.digests, t) {
+        } else if !limit_seen && digest(tree.digests, t) != digest(other.digests, t) {
             // The first table (object index) whose rows differ, or that only one run holds.
             let (a, b) = (
                 digest(tree.digests, t).unwrap_or_default(),
@@ -115,13 +128,15 @@ pub(crate) fn compare(
             diff(
                 "state",
                 format!(
-                    "table {} rows hash {:?}",
+                    "table {} (object {}) rows hash {:?}",
                     first.map_or_else(String::new, table_name),
+                    first.unwrap_or(0),
                     a.iter().find(|(o, _)| Some(*o) == first).map(|(_, h)| h)
                 ),
                 format!(
-                    "table {} rows hash {:?}",
+                    "table {} (object {}) rows hash {:?}",
                     first.map_or_else(String::new, table_name),
+                    first.unwrap_or(0),
                     b.iter().find(|(o, _)| Some(*o) == first).map(|(_, h)| h)
                 ),
             );
@@ -133,6 +148,49 @@ pub(crate) fn compare(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn two_runs_stopped_by_the_cpu_time_limit_are_not_compared_beyond_the_outcome() {
+        // Where a test is stopped depends on the speed of the machine, so the data it leaves and the assumptions it
+        // reached are not the same twice; only that both were stopped is.
+        let stopped = vec![
+            (
+                "T".to_string(),
+                Outcome::NotRun(
+                    "the test used more than the time limit of 20 s of CPU time and was stopped (--test-timeout-secs)"
+                        .into(),
+                ),
+            ),
+            // A later test of the codeunit starts from the counters the stopped one left.
+            ("U".to_string(), Outcome::Pass),
+        ];
+        let a = vec![
+            ("T".to_string(), vec![(1u32, 1u64)]),
+            ("U".to_string(), vec![(1u32, 1u64)]),
+        ];
+        let b = vec![
+            ("T".to_string(), vec![(1u32, 2u64)]),
+            ("U".to_string(), vec![(1u32, 2u64)]),
+        ];
+        let d = compare(
+            7,
+            "C",
+            &side(&stopped, &[], &[], &a),
+            &side(&stopped, &[], &[], &b),
+            &|o| o.to_string(),
+        );
+        assert!(d.is_empty(), "{d:?}");
+        // One stopped and one not is still an outcome difference.
+        let passed = vec![("T".to_string(), Outcome::Pass), ("U".to_string(), Outcome::Pass)];
+        let d = compare(
+            7,
+            "C",
+            &side(&stopped, &[], &[], &a),
+            &side(&passed, &[], &[], &a),
+            &|o| o.to_string(),
+        );
+        assert_eq!((d.len(), d[0].what), (1, "outcome"));
+    }
 
     fn side<'a>(
         done: &'a [(String, Outcome)],

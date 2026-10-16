@@ -34,7 +34,11 @@ const KEPT: &[(&str, &str, &str)] = &[
         r#"format!("{:?}", marks(other.hits, t)),"#,
         "same",
     ),
-    ("al-testrun/src/dual.rs", r#""table {} rows hash {:?}","#, "same"),
+    (
+        "al-testrun/src/dual.rs",
+        r#""table {} (object {}) rows hash {:?}","#,
+        "same",
+    ),
     (
         "al-vm/src/exec/compile.rs",
         r#"eprintln!("  {i:3} {op:?}");"#,

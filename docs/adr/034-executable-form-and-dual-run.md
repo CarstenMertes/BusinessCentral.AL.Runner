@@ -78,9 +78,12 @@ runs the tree walker, so the harness is tested by finding no difference between 
 read one standing clock. Compared per test: the outcome (pass, failure text, refusal reason), the call stack of an AL
 error, the unprobed assumptions, and a hash of the rows of each table when the test ends (`MemStore::digest`); the first
 difference of a test is named, with the first table whose rows differ. Every difference is printed and the run fails.
-A difference the harness found on the tree walker itself: nine tests of Tests-ERM codeunit 137617 leave different
-rows in `No. Series Line` / `No. Series` between two runs (a source of non-determinism in the interpreter, not yet
-traced); they are the expected first entries of an allow list when the dual run joins CI.
+Traced (the nine tests of Tests-ERM codeunit 137617, and 131 in Tests-SCM): not an interpreter fault. Two tests of the
+codeunit hit the CPU time limit (`--test-timeout-secs`, 20 s) and are stopped where the machine's speed puts them. The
+tests after them share the session and start from the row-version and time-stamp counters the stopped test left, so
+their system fields (`SystemRowVersion`, `SystemModifiedAt`) differ between two runs. The comparison therefore skips the
+state of every test after the first one that either run stopped at the limit; outcome, error stack and assumptions are
+still compared. Two runs of one interpreter now show 0 differences on Tests-ERM 137617 and on the corpus.
 
 ## Consequences
 

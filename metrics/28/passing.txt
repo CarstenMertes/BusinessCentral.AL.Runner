@@ -6357,6 +6357,7 @@
 70115 TemporaryRecord_IsNotStamped
 70117 Duplicate_BufferIsIndependent
 70117 Duplicate_FiltersAndPositionAreIndependent
+70118 Other_Types
 70118 SeveralFields_Order
 70119 FieldType_Members_A
 70119 FieldType_Members_B
@@ -6706,6 +6707,7 @@
 70690 Static_Guarded_Success_ThenCallerWrite_ThenError
 70690 Static_Statement_PendingWrite_LastError
 70720 BlankFilter_Code
+70720 BlankFilter_Date
 70720 BlankFilter_Decimal_Boolean
 70720 BlankFilter_FilterGroup
 70720 BlankFilter_Integer
@@ -7457,6 +7459,7 @@
 71502 NotFound_Errors_Without_Error_Using_Boolean_Form
 71502 TestField_Extra_Overloads
 71502 TestField_Read_Related
+71503 SetRange_Blank_Clears_Filter
 71503 SetRange_Every_Field_Type
 71503 SetRange_Replaces_Previous_Filter_On_Same_Field
 71503 SetRange_Single_And_FromTo
@@ -7492,9 +7495,12 @@
 71506 SetRecFilter_Primary_Key
 71507 GetPosition_Key_Shapes
 71507 GetPosition_Primary_Key
+71507 GetView_Field_Types
 71507 GetView_SetView_Basics
 71507 SetPosition_Different_Key_And_Invalid
+71507 SetPosition_Roundtrip
 71507 SetPosition_Then_Next_And_Find
+71507 SetView_Roundtrip_And_Literal
 71508 AddLoadFields_Extends
 71508 AddLoadFields_Without_SetLoadFields
 71508 AreFieldsLoaded_Default

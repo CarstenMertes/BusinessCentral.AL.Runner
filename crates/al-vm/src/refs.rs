@@ -192,6 +192,45 @@ impl Session {
             LibraryValue::SystemTable(n) => unsupported(format!(
                 "{what} on a RecordRef opened on system table {n} (the platform's system tables are not modelled)"
             )),
+            // The methods below raise "The record is not open." on a RecordRef never opened or closed
+            // (recordref/lt-refs/RfTOpen.al:Closed_Errors, lt-recordref-fieldref-members/P92Position.al:GetPosition_UnopenedAndNotFound,
+            // P92Counts.al:CountApprox_Unopened, P92ReadIsolation.al:ReadIsolation_Unopened, P92Fields.al:FieldExist).
+            LibraryValue::Empty
+                if what.strip_prefix("RecordRef.").is_some_and(|m| {
+                    matches!(
+                        m,
+                        "Name"
+                            | "Caption"
+                            | "Count"
+                            | "IsEmpty"
+                            | "IsTemporary"
+                            | "Field"
+                            | "Find"
+                            | "Insert"
+                            | "Modify"
+                            | "Delete"
+                            | "DeleteAll"
+                            | "KeyCount"
+                            | "CurrentKeyIndex"
+                            | "Init"
+                            | "GetView"
+                            | "SetView"
+                            | "Reset"
+                            | "RecordId"
+                            | "GetPosition"
+                            | "SetPosition"
+                            | "CountApprox"
+                            | "ReadIsolation"
+                            | "FieldExist"
+                    )
+                }) =>
+            {
+                Err(Signal::Error(Box::new(AlError {
+                    message: "The record is not open.".into(),
+                    code: "RecordNotOpened".into(),
+                    call_stack: String::new(),
+                })))
+            }
             // BC's answer is not pinned by the corpus: the error text, and whether `Get(RecordId)` opens the
             // table of the RecordId (Base Application's Data Type Management does `if not Get(RecID) then
             // Open(RecID.TableNo)`). See docs/probes-needed.md.

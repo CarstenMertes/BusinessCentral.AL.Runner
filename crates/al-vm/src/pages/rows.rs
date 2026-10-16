@@ -17,8 +17,12 @@ impl Session {
             return Ok(rest.to_string());
         }
         let (area, expr) = text.split_once(',').unwrap_or(("", text));
-        if text.contains(',') && area.trim().parse::<u32>().is_ok() {
-            return unsupported(format!("CaptionClass `{text}` is resolved by the platform"));
+        // An empty area before the comma is not resolved either (P84Captions.al: c14 ',x', no event call).
+        if text.contains(',') && (area.trim().parse::<u32>().is_ok() || area.is_empty()) {
+            // A numeric area other than 3 (dimension, currency, county captions of Base Application) is not resolved here
+            // and raises no event: the caption stays as written, also when a subscriber would resolve it
+            // (pages/lt-page-report-events/P84Captions.al: Page_NoSubscriber c01..c13, Page_Resolve_A/B, BC 29).
+            return Ok(text.to_string());
         }
         let _ = st;
         self.raise_resolve_caption_class(area, expr, text)

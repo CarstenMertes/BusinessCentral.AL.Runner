@@ -434,6 +434,15 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         ("Month Text", Some((_, m, _)), _) => MONTHS[m as usize - 1].to_string(),
         ("Day", Some((_, _, d)), _) => format!("{d}"),
         ("Day,2", Some((_, _, d)), _) => format!("{d:02}"),
+        // The ISO 8601 week, as Date2DWY (pinned for 2024-01-17: types/lt-datetime/DateFuncs.al:418,433; the rule for
+        // other dates is assumed, assumption format-week-code-is-iso).
+        ("Week", Some(_), _) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::FormatWeekCodeIsIso);
+            let day = day_no.unwrap_or(1);
+            let thursday = day + (4 - ((day - 1).rem_euclid(7) + 1));
+            let (y, _, _) = civil_from_day(thursday);
+            format!("{}", (thursday - crate::format::day_from_civil(y, 1, 1)) / 7 + 1)
+        }
         ("Weekday Text", Some(_), _) => WEEKDAYS[((day_no.unwrap_or(1) - 1).rem_euclid(7)) as usize].to_string(),
         ("Hours24,2", _, Some(ms)) => format!("{:02}", ms / 3_600_000),
         ("Hours24", _, Some(ms)) => format!("{}", ms / 3_600_000),
@@ -521,6 +530,15 @@ mod tests {
         assert_eq!(text(fmt(Value::Date(day, false), "<Month Text,3>")), "Mar");
         assert_eq!(text(fmt(Value::Date(day, false), "<Month Text,10>")), "March     ");
         assert_eq!(text(fmt(Value::Date(day, false), "<Weekday Text,3>")), "Tue");
+    }
+
+    #[test]
+    fn week_code_is_the_iso_week() {
+        // 2024-01-17 gives 3 (types/lt-datetime/DateFuncs.al:418,433). The rule beyond the pinned dates is the ISO one,
+        // as Date2DWY (assumption format-week-code-is-iso).
+        assert_eq!(text(fmt(Value::Date(day_from_civil(2024, 1, 17), false), "<Week>")), "3");
+        assert_eq!(text(fmt(Value::Date(day_from_civil(2021, 1, 3), false), "<Week>.<Year4>")), "53.2021");
+        assert_eq!(text(fmt(Value::Date(day_from_civil(2024, 12, 30), false), "<Week>")), "1");
     }
 
     #[test]

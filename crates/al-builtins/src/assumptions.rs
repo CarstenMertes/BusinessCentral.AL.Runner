@@ -175,6 +175,12 @@ registry! {
         tests: "Microsoft's notification tests (Tests-Misc, for example Scenario1_AdminJobFailedTest01): 30 tests.",
         probe: "N.Id := '9a3203a3-35a5-4598-941b-2d6c9f1a2b3c', then Format(N.Id); the same with braces, with a text that is no Guid (error text), and with an empty text.",
     },
+    FormatWeekCodeIsIso => {
+        id: "format-week-code-is-iso",
+        assumed: "The picture code <Week> of Format on a Date is the ISO 8601 week number, without padding, as Date2DWY(D, 2) (the first week holds the year's first Thursday).",
+        tests: "Tests-Resource ResourceCapacityMatrixBalanceAtDate (format `<Week>.<Year4>`) and 2 more.",
+        probe: "Format(D, 0, '<Week>') for 2021-01-03, 2024-12-30, 2026-01-01 and 2020-12-31, compared with Date2DWY(D, 2); and <Week,2> for a week below 10.",
+    },
     DateToTextIsFormat => {
         id: "date-to-text-is-format",
         assumed: "A Date converted to a Text or Code (a Variant from FieldRef.Value into a Text parameter) is its default Format text, so an Evaluate of it reads the same date back.",

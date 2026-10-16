@@ -248,9 +248,7 @@ impl Seek {
                 hi = hi.or(h.filter(|v| fits(v)));
             }
             let point = match (lo, hi) {
-                (Some(l), Some(h)) => {
-                    same_kind(l, h) && al_builtins::ops::compare(l, h).ok() == Some(Ordering::Equal)
-                }
+                (Some(l), Some(h)) => same_kind(l, h) && al_builtins::ops::compare(l, h).ok() == Some(Ordering::Equal),
                 _ => false,
             };
             if !lo_open {
@@ -325,8 +323,16 @@ fn pk_band<'a>(
     let Some(seek) = Seek::of(t, 0, filters, table.values().next()) else {
         return Box::new(table.iter());
     };
-    let lower = if seek.lo.is_empty() { Unbounded } else { Included(Key(seek.lo.clone())) };
-    Box::new(table.range((lower, Unbounded)).take_while(move |(_, r)| seek.after(r) != Some(true)))
+    let lower = if seek.lo.is_empty() {
+        Unbounded
+    } else {
+        Included(Key(seek.lo.clone()))
+    };
+    Box::new(
+        table
+            .range((lower, Unbounded))
+            .take_while(move |(_, r)| seek.after(r) != Some(true)),
+    )
 }
 
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
@@ -956,7 +962,12 @@ mod tests {
         let mut s = MemStore::default();
         for a in 0..200 {
             for b in 0..100 {
-                let row = vec![Value::Integer(a), Value::Integer(b), Value::Code("X".into()), Value::Integer(b % 7)];
+                let row = vec![
+                    Value::Integer(a),
+                    Value::Integer(b),
+                    Value::Code("X".into()),
+                    Value::Integer(b % 7),
+                ];
                 s.insert(&cx(), &t, row).unwrap();
             }
         }
@@ -965,11 +976,24 @@ mod tests {
         let f = [range(0, Some(Value::Integer(150)), Some(Value::Integer(150)))];
         let before = looked();
         let first = s
-            .next(&cx(), &t, &Scan { key: 0, filters: &f, ascending: true, after: None })
+            .next(
+                &cx(),
+                &t,
+                &Scan {
+                    key: 0,
+                    filters: &f,
+                    ascending: true,
+                    after: None,
+                },
+            )
             .unwrap()
             .unwrap();
         assert_eq!(format!("{:?}", first[0]), "Integer(150)");
-        assert!(looked() - before <= 5, "primary key: {} rows looked at", looked() - before);
+        assert!(
+            looked() - before <= 5,
+            "primary key: {} rows looked at",
+            looked() - before
+        );
         // Another key (D, A, B): D = 6 holds one row in seven, and the scan has to find the first of them.
         let f = [
             range(3, Some(Value::Integer(6)), Some(Value::Integer(6))),
@@ -977,11 +1001,24 @@ mod tests {
         ];
         let before = looked();
         let first = s
-            .next(&cx(), &t, &Scan { key: 1, filters: &f, ascending: true, after: None })
+            .next(
+                &cx(),
+                &t,
+                &Scan {
+                    key: 1,
+                    filters: &f,
+                    ascending: true,
+                    after: None,
+                },
+            )
             .unwrap()
             .unwrap();
         assert_eq!(format!("{:?} {:?}", first[3], first[0]), "Integer(6) Integer(190)");
-        assert!(looked() - before <= 5, "other key: {} rows looked at", looked() - before);
+        assert!(
+            looked() - before <= 5,
+            "other key: {} rows looked at",
+            looked() - before
+        );
     }
 
     #[test]

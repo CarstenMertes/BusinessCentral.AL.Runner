@@ -100,6 +100,13 @@ pub(crate) fn role_of(r: &ast::Routine) -> u8 {
 }
 
 impl Lowerer<'_> {
+    /// Records a set the program decides and returns the index its site holds.
+    pub(crate) fn expansion(&self, e: localize::Expanded) -> usize {
+        let mut x = self.expansions.borrow_mut();
+        x.list.push(e);
+        x.list.len() - 1
+    }
+
     /// The reference an expression holds to control `name` of page `page`, which is at `pos` in
     /// the page's layout.
     pub(crate) fn control_ref(&self, page: usize, name: &str, pos: usize) -> usize {
@@ -170,6 +177,8 @@ pub(crate) struct Lowerer<'a> {
     field_refs: std::cell::RefCell<localize::FieldRefs>,
     /// The controls the expressions of the object name (`Expr::Control` holds an index into this list).
     control_refs: std::cell::RefCell<localize::ControlRefs>,
+    /// The sites that stand for sets only the whole program knows (`localize::Expanded`).
+    expansions: std::cell::RefCell<localize::Expansions>,
     /// Answers many routines ask for, computed once per program.
     memo: &'a Memo,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).

@@ -84,14 +84,19 @@ pub struct LocalKey {
     /// `field 7`, `control Name`, `action Name`, ...: the owning section of a trigger. Empty for
     /// a procedure and for a trigger of the object itself.
     pub section: String,
-    /// The parameter types, one text per parameter, joined by `,`.
-    pub sig: String,
+    /// The parameters, one text per parameter: the type as written in lower case without spaces or quotes,
+    /// after `var ` for a parameter passed by reference.
+    pub params: Vec<String>,
+    /// A procedure declared `local`.
+    pub local: bool,
+    /// A trigger.
+    pub trigger: bool,
     pub ordinal: u32,
 }
 
 impl std::fmt::Display for LocalKey {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        write!(f, "{}({})", self.name, self.sig)?;
+        write!(f, "{}({})", self.name, self.params.join(","))?;
         if !self.section.is_empty() {
             write!(f, " in {}", self.section)?;
         }
@@ -124,6 +129,22 @@ pub struct ControlKey {
     pub name: String,
 }
 
+/// A reference that stands for a set of objects or routines that only the whole program knows. Lowering writes
+/// a marker (`walk::EXPAND`) at the site and the index of the entry; link replaces the marker with the set.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Expansion {
+    /// `Expr::InterfaceCall`: the procedure of this shape in every codeunit that implements the interface.
+    InterfaceCall {
+        interface: ObjKey,
+        name: String,
+        params: Vec<String>,
+    },
+    /// `Expr::InterfaceTest`: every codeunit that implements the interface.
+    InterfaceTest { interface: ObjKey },
+    /// `Expr::EnumImpl`: the codeunit that implements the interface for each value of the enum.
+    EnumImpl { enum_: ObjKey, interface: ObjKey },
+}
+
 /// What a symbolic object refers to. A reference inside the object's IR is an index into one of
 /// these lists.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
@@ -132,11 +153,16 @@ pub struct Refs {
     pub routines: Vec<RoutineKey>,
     pub fields: Vec<FieldKey>,
     pub controls: Vec<ControlKey>,
+    pub expansions: Vec<Expansion>,
 }
 
 impl Refs {
     pub fn is_empty(&self) -> bool {
-        self.objects.is_empty() && self.routines.is_empty() && self.fields.is_empty() && self.controls.is_empty()
+        self.objects.is_empty()
+            && self.routines.is_empty()
+            && self.fields.is_empty()
+            && self.controls.is_empty()
+            && self.expansions.is_empty()
     }
 }
 
@@ -205,6 +231,8 @@ pub struct SymObject {
     /// empty (link asks for the keys of the objects that are called); a stored object fills it.
     pub routines: Vec<LocalKey>,
     pub refs: Refs,
+    /// For a codeunit: the interfaces it implements, those it lists and the ones they extend.
+    pub implements: Vec<ObjKey>,
     /// For an extension object: the object it extends, when it is in the program.
     pub extends: Option<ObjKey>,
     /// The lists of its base that the extension is in.

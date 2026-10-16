@@ -915,7 +915,9 @@ pub(crate) fn lower_core(
                     embeds: Vec::new(),
                     field_refs: Vec::new(),
                     control_refs: Vec::new(),
+                    expansions: Vec::new(),
                     key_owners: Vec::new(),
+                    implements: src.map_or_else(Vec::new, |s| s.facts(oi).implements.clone()),
                     fields: src.map_or_else(Vec::new, |s| s.facts(oi).fields.clone()),
                     controls: src.map_or_else(Vec::new, |s| s.facts(oi).controls.clone()),
                     key: src.map(|s| s.facts(oi).key.clone()),
@@ -938,6 +940,16 @@ pub(crate) fn lower_core(
             .collect(),
         shared.active.clone(),
     );
+    let implements = |cu: usize| implemented_interfaces(ws, cu);
+    let piece_keys: Vec<al_ir::sym::ObjKey> = pieces
+        .iter()
+        .map(|p| {
+            let p = p.as_ref().expect("every object is lowered");
+            p.key
+                .clone()
+                .unwrap_or_else(|| al_ir::sym::ObjKey::of(&p.object, &program.apps))
+        })
+        .collect();
     let mut exported = export.then(crate::provided::DepSet::default);
     let kinds: Vec<ObjKind> = ws.objects.iter().map(|o| o.kind).collect();
     let field_pos = |t: usize, id: u32| members.get(t).fields.iter().position(|f| f.id == id);
@@ -954,6 +966,7 @@ pub(crate) fn lower_core(
                     // run): the fields the expressions named are resolved here.
                     let mut object = piece.object.clone();
                     let mut u = Unembed {
+                        expansions: &piece.expansions,
                         list: &piece.field_refs,
                         controls: &piece.control_refs,
                         kinds: &kinds,
@@ -1007,6 +1020,7 @@ pub(crate) fn lower_core(
                 controls: piece.object.page.as_ref().map_or_else(Vec::new, |p| {
                     p.controls.iter().map(|c| c.name.to_ascii_lowercase()).collect()
                 }),
+                implements: implements(oi).into_iter().map(|i| piece_keys[i].clone()).collect(),
                 routine_keys: routine_keys.of(oi).to_vec(),
                 xml_reason: shared.xml_reasons[oi].clone(),
                 report_reason: shared.report_reasons[oi].clone(),
@@ -1022,6 +1036,8 @@ pub(crate) fn lower_core(
             key: piece.key,
             field_refs: piece.field_refs,
             control_refs: piece.control_refs,
+            expansions: piece.expansions,
+            implements: piece.implements,
             key_owners: piece.key_owners,
             table_contribution: None,
             fields: piece.fields,
@@ -1080,6 +1096,7 @@ pub(crate) fn lower_core(
         extends: &extends,
         join_order: &join_order,
         own_enum: &own_enum,
+        implements: &implements,
         own_field_properties: &own_field_properties,
         modify_properties: &modify_properties,
     };
@@ -1106,6 +1123,7 @@ struct Lookups<'a> {
     extends: &'a (dyn Fn(usize) -> Option<usize> + Sync),
     join_order: &'a (dyn Fn(usize, al_ir::sym::ListKind) -> (u32, u32, u32) + Sync),
     own_enum: &'a (dyn Fn(usize) -> super::localize::EnumOwn + Sync),
+    implements: &'a (dyn Fn(usize) -> Vec<usize> + Sync),
     /// The properties of the fields a table declares itself, in order.
     own_field_properties: &'a (dyn Fn(usize) -> Vec<Vec<(String, String)>> + Sync),
     /// The `modify(Field)` blocks of a table extension: field name and the properties it sets.
@@ -1115,6 +1133,7 @@ struct Lookups<'a> {
 /// For the check: turns the references the expressions of an object hold into the positions
 /// lowering used to write there.
 struct Unembed<'a> {
+    expansions: &'a [super::localize::Expanded],
     list: &'a [(usize, u32)],
     controls: &'a [(usize, String, usize)],
     kinds: &'a [ObjKind],
@@ -1124,6 +1143,9 @@ struct Unembed<'a> {
 impl al_ir::walk::RefVisitor for Unembed<'_> {
     fn object(&mut self, _: &mut usize) {}
     fn routine(&mut self, _: &mut usize, _: usize) {}
+    fn expansion(&mut self, index: usize, site: al_ir::walk::ExpansionSite<'_>) {
+        self.expansions[index].fill(site);
+    }
     fn control(&mut self, r: &mut usize) {
         *r = self.controls[*r].2;
     }
@@ -1284,6 +1306,39 @@ fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync)
     }
 }
 
+/// The interfaces codeunit `cu` implements: the ones it lists and the ones those extend, in workspace numbering.
+fn implemented_interfaces(ws: &Workspace, cu: usize) -> Vec<usize> {
+    let mut out = Vec::new();
+    if ws.objects[cu].kind != ObjKind::Codeunit {
+        return out;
+    }
+    let file = ws.objects[cu].file;
+    for p in &ws.objects[cu].implements {
+        if let Resolution::Found(j) = ws.resolve_ref(file, ObjKind::Interface, p) {
+            for k in std::iter::once(j).chain(ws.interface_bases(j)) {
+                if !out.contains(&k) {
+                    out.push(k);
+                }
+            }
+        }
+    }
+    out
+}
+
+/// Writes the sets lowering worked out where the markers are (the incremental compile does not leave them to
+/// link: the declarations did not change).
+struct FillSets<'a>(&'a [super::localize::Expanded]);
+
+impl al_ir::walk::RefVisitor for FillSets<'_> {
+    fn object(&mut self, _: &mut usize) {}
+    fn routine(&mut self, _: &mut usize, _: usize) {}
+    fn field(&mut self, _: &mut usize, _: al_ir::walk::TableOf) {}
+    fn control(&mut self, _: &mut usize) {}
+    fn expansion(&mut self, index: usize, site: al_ir::walk::ExpansionSite<'_>) {
+        self.0[index].fill(site);
+    }
+}
+
 /// A lowered object waiting to be linked.
 struct Staged {
     object: ir::Object,
@@ -1291,6 +1346,9 @@ struct Staged {
     key: Option<al_ir::sym::ObjKey>,
     field_refs: Vec<(usize, u32)>,
     control_refs: Vec<(usize, String, usize)>,
+    expansions: Vec<super::localize::Expanded>,
+    /// A provided codeunit: the interfaces it implements, from the cache's facts.
+    implements: Vec<al_ir::sym::ObjKey>,
     key_owners: Vec<usize>,
     /// What a table extension adds to its table, taken out of the table before the objects are made symbolic.
     table_contribution: Option<al_ir::sym::TableContribution>,
@@ -1328,6 +1386,7 @@ fn link_pieces(
             let mut object = s.object.clone();
             if !provided(oi) {
                 let mut u = Unembed {
+                    expansions: &s.expansions,
                     list: &s.field_refs,
                     controls: &s.control_refs,
                     kinds: &keys.iter().map(|k| k.kind).collect::<Vec<_>>(),
@@ -1355,6 +1414,7 @@ fn link_pieces(
         extends: lookups.extends,
         join_order: lookups.join_order,
         own_enum: lookups.own_enum,
+        implements: lookups.implements,
     };
     let workers = lower_workers();
     // The lists of extensions the objects hold, as the lists the extension objects are in.
@@ -1386,6 +1446,7 @@ fn link_pieces(
         if provided(oi) {
             Ok(al_link::Unit::Dense(al_link::DenseObject {
                 key: keys[oi].clone(),
+                implements: s.implements,
                 fields: s.fields,
                 controls: s.controls,
                 object: s.object,
@@ -1399,6 +1460,7 @@ fn link_pieces(
                 s.positions,
                 &s.field_refs,
                 &s.control_refs,
+                &s.expansions,
                 super::localize::Extras {
                     joins: &joins[oi],
                     table_contribution: s.table_contribution,
@@ -1540,6 +1602,7 @@ pub fn relower_objects(
         field_no: &field_no,
         report_item_table: &report_item_table,
         extends: &|e| ws.extension_target(e),
+        implements: &|cu| implemented_interfaces(ws, cu),
         join_order: &|_, _| (0, 0, 0),
         own_enum: &|i| {
             let m = members.own(i);
@@ -1550,7 +1613,8 @@ pub fn relower_objects(
         },
     };
     let mut replace = Vec::with_capacity(pieces.len());
-    for (oi, piece) in pieces {
+    for (oi, mut piece) in pieces {
+        al_ir::walk::walk_object(&mut piece.object, &mut FillSets(&piece.expansions));
         old.unsupported[oi] = piece.unsupported;
         old.calls[oi] = piece.calls;
         replace.push((
@@ -1562,6 +1626,7 @@ pub fn relower_objects(
                 piece.positions,
                 &piece.field_refs,
                 &piece.control_refs,
+                &[],
                 // The lists of extensions stay as they were: the declarations did not change.
                 super::localize::Extras {
                     joins: &[],
@@ -1623,8 +1688,12 @@ pub(crate) struct Piece {
     pub(crate) field_refs: Vec<(usize, u32)>,
     /// The controls the object's expressions name (`localize.rs`).
     pub(crate) control_refs: Vec<(usize, String, usize)>,
+    /// The sets that link works out for the object's sites (`localize::Expanded`).
+    pub(crate) expansions: Vec<super::localize::Expanded>,
     /// The object that declares each key of a table (the table or one of its extensions).
     pub(crate) key_owners: Vec<usize>,
+    /// A provided codeunit: the interfaces it implements, from the cache's facts.
+    pub(crate) implements: Vec<al_ir::sym::ObjKey>,
     /// A provided table: its field numbers, from the cache's facts.
     pub(crate) fields: Vec<u32>,
     /// A provided page: its control names, from the cache's facts.

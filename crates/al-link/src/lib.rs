@@ -7,8 +7,10 @@
 //! it unchanged.
 //!
 //! Core crate: no OS access (ADR-006).
-use al_ir::sym::{Contribution, ControlKey, FieldKey, FxMap, ListKind, LocalKey, ObjKey, RoutineKey, SymObject};
-use al_ir::walk::{RefVisitor, TableOf, walk_object, walk_table_contribution};
+use al_ir::sym::{
+    Contribution, ControlKey, Expansion, FieldKey, FxMap, ListKind, LocalKey, ObjKey, RoutineKey, SymObject,
+};
+use al_ir::walk::{ExpansionSite, RefVisitor, TableOf, walk_object, walk_table_contribution};
 use al_ir::{Object, Program, SrcPos};
 use std::sync::OnceLock;
 
@@ -18,6 +20,8 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, PartialEq)]
 pub struct DenseObject {
     pub key: ObjKey,
+    /// For a codeunit: the interfaces it implements, those it lists and the ones they extend.
+    pub implements: Vec<ObjKey>,
     /// For a table: the number of each field, in the order of its field list. Used where `object`
     /// is only a placeholder (a layer build marks the objects of the layers below as supplied and
     /// never reads their lowered form).
@@ -70,6 +74,12 @@ pub enum LinkError {
     UnknownObject { from: ObjKey, to: ObjKey },
     /// An object refers to a routine that the target object does not have.
     UnknownRoutine { from: ObjKey, to: RoutineKey },
+    /// A codeunit that implements an interface has no procedure of the shape of the one called.
+    NoImplementation {
+        from: ObjKey,
+        codeunit: ObjKey,
+        name: String,
+    },
     /// An object refers to a control that the target page does not have.
     UnknownControl { from: ObjKey, to: ControlKey },
     /// An object refers to a field that the target table does not have.
@@ -92,6 +102,12 @@ impl std::fmt::Display for LinkError {
             LinkError::UnknownObject { from, to } => write!(f, "{from} refers to {to}, which is not linked"),
             LinkError::UnknownRoutine { from, to } => {
                 write!(f, "{from} refers to routine {} of {}, which has none", to.local, to.obj)
+            }
+            LinkError::NoImplementation { from, codeunit, name } => {
+                write!(
+                    f,
+                    "{from} calls `{name}` through an interface, which {codeunit} does not implement"
+                )
             }
             LinkError::UnknownControl { from, to } => {
                 write!(f, "{from} refers to control {} of {}, which has none", to.name, to.page)
@@ -133,6 +149,10 @@ trait Space {
     /// A page's control names, in order, when `object` is only a placeholder.
     fn control_names(&self, _i: usize) -> Option<&[String]> {
         None
+    }
+    /// The interfaces codeunit `i` implements.
+    fn implemented(&self, _i: usize) -> &[ObjKey] {
+        &[]
     }
     /// The numbers of the fields that table extensions add to table `i`, in order.
     fn extra_field_numbers(&self, _i: usize) -> &[u32] {
@@ -177,6 +197,12 @@ impl Space for UnitSpace<'_, '_> {
     fn extra_field_numbers(&self, i: usize) -> &[u32] {
         self.extras.get(&i).map_or(&[], |v| v.as_slice())
     }
+    fn implemented(&self, i: usize) -> &[ObjKey] {
+        match &self.units[i] {
+            Unit::Sym(s) => &s.implements,
+            Unit::Dense(d) => &d.implements,
+        }
+    }
 }
 
 /// The numbers of the fields the table extensions of each table add, in program order.
@@ -203,6 +229,8 @@ struct Tables<'a, S: Space + ?Sized> {
     routine_at: Vec<OnceLock<FxMap<&'a LocalKey, usize>>>,
     field_at: Vec<OnceLock<FxMap<u32, usize>>>,
     control_at: Vec<OnceLock<FxMap<String, usize>>>,
+    /// Per interface: the codeunits that implement it, in program order.
+    implementers: OnceLock<FxMap<usize, Vec<usize>>>,
 }
 
 impl<'a, S: Space + ?Sized> Tables<'a, S> {
@@ -220,6 +248,7 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
             routine_at: (0..n).map(|_| OnceLock::new()).collect(),
             field_at: (0..n).map(|_| OnceLock::new()).collect(),
             control_at: (0..n).map(|_| OnceLock::new()).collect(),
+            implementers: OnceLock::new(),
         })
     }
 
@@ -285,6 +314,69 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
         })
     }
 
+    /// The codeunits that implement interface `iface`, in program order.
+    fn implementers(&self, iface: usize) -> &[usize] {
+        let all = self.implementers.get_or_init(|| {
+            let mut m: FxMap<usize, Vec<usize>> = FxMap::default();
+            for i in 0..self.space.len() {
+                for k in self.space.implemented(i) {
+                    if let Some(&j) = self.at.get(k) {
+                        m.entry(j).or_default().push(i);
+                    }
+                }
+            }
+            m
+        });
+        all.get(&iface).map_or(&[], |v| v.as_slice())
+    }
+
+    /// The set an expansion stands for.
+    fn expand(&self, from: &ObjKey, e: &Expansion) -> Result<Expanded, Box<LinkError>> {
+        match e {
+            Expansion::InterfaceTest { interface } => {
+                let i = self.object(from, interface)?;
+                Ok(Expanded::Test(self.implementers(i).iter().map(|&c| c as u32).collect()))
+            }
+            Expansion::InterfaceCall {
+                interface,
+                name,
+                params,
+            } => {
+                let i = self.object(from, interface)?;
+                let mut targets = Vec::new();
+                for &cu in self.implementers(i) {
+                    let shape = |k: &LocalKey| {
+                        !k.local
+                            && !k.trigger
+                            && k.name == *name
+                            && k.params.len() == params.len()
+                            && k.params
+                                .iter()
+                                .zip(params)
+                                .all(|(a, b)| a.starts_with("var ") == b.starts_with("var "))
+                    };
+                    let keys = self.space.routines(cu);
+                    let same: Vec<usize> = (0..keys.len()).filter(|&r| shape(&keys[r])).collect();
+                    let exact = same.iter().copied().find(|&r| keys[r].params == *params);
+                    let Some(r) = exact.or(same.first().copied()) else {
+                        return Err(Box::new(LinkError::NoImplementation {
+                            from: from.clone(),
+                            codeunit: self.space.key(cu).clone(),
+                            name: name.clone(),
+                        }));
+                    };
+                    targets.push((cu, r));
+                }
+                Ok(Expanded::Call(targets))
+            }
+            Expansion::EnumImpl { .. } => Err(Box::new(LinkError::BadReference {
+                object: from.clone(),
+                class: "enum implementation",
+                index: 0,
+            })),
+        }
+    }
+
     /// What the tables of symbolic object `s` mean here: the position of every key.
     fn resolve(&self, s: &SymObject) -> Result<Resolved, Box<LinkError>> {
         let mut objects = Vec::with_capacity(s.refs.objects.len());
@@ -328,11 +420,16 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
                 })
             })?);
         }
+        let mut expanded = Vec::with_capacity(s.refs.expansions.len());
+        for e in &s.refs.expansions {
+            expanded.push(self.expand(&s.key, e)?);
+        }
         Ok(Resolved {
             objects,
             routines,
             fields,
             controls,
+            expanded,
         })
     }
 }
@@ -750,6 +847,13 @@ struct Resolved {
     routines: Vec<usize>,
     fields: Vec<usize>,
     controls: Vec<usize>,
+    expanded: Vec<Expanded>,
+}
+
+/// A set that an expansion stood for.
+enum Expanded {
+    Call(Vec<(usize, usize)>),
+    Test(Vec<u32>),
 }
 
 struct Rewrite<'a> {
@@ -776,6 +880,14 @@ impl RefVisitor for Rewrite<'_> {
         match self.res.fields.get(*r) {
             Some(&p) => *r = p,
             None => self.bad = self.bad.or(Some(("field", *r))),
+        }
+    }
+
+    fn expansion(&mut self, index: usize, site: ExpansionSite<'_>) {
+        match (self.res.expanded.get(index), site) {
+            (Some(Expanded::Call(t)), ExpansionSite::InterfaceCall { targets }) => *targets = t.clone(),
+            (Some(Expanded::Test(o)), ExpansionSite::InterfaceTest { objects }) => *objects = o.clone(),
+            _ => self.bad = self.bad.or(Some(("expansion", index))),
         }
     }
 
@@ -899,7 +1011,9 @@ mod tests {
         LocalKey {
             name: name.into(),
             section: String::new(),
-            sig: String::new(),
+            params: Vec::new(),
+            local: false,
+            trigger: false,
             ordinal,
         }
     }
@@ -995,6 +1109,7 @@ mod tests {
     fn a_dependency_object_placed_as_it_is_can_still_be_called_by_key() {
         let dense = DenseObject {
             key: key(2),
+            implements: vec![],
             fields: vec![],
             controls: vec![],
             object: object(2, vec![routine("First", vec![]), routine("Second", vec![])]),

@@ -27,9 +27,33 @@ pub trait RefVisitor {
     fn routine(&mut self, r: &mut usize, object: usize);
     /// A field reference. `table` says which table the field is a field of.
     fn field(&mut self, r: &mut usize, table: TableOf);
+    /// A site that stands for a set only the program knows (`sym::Expansion`); `index` is the entry in the object's
+    /// `Refs::expansions`. `site` gives access to what link has to write.
+    fn expansion(&mut self, index: usize, site: ExpansionSite<'_>);
     /// A control reference of an expression: an index into the object's control references, which
     /// lowering wrote there (`Expr::Control`).
     fn control(&mut self, r: &mut usize);
+}
+
+/// The marker lowering writes in place of the set a site stands for: an object or routine position that no
+/// object has (`NO_OBJECT` is the position of "no table").
+pub const EXPAND: usize = usize::MAX - 1;
+/// The same marker in the `u32` list of `Expr::InterfaceTest` and as the ordinal in `Expr::EnumImpl`.
+pub const EXPAND_U32: u32 = u32::MAX - 1;
+pub const EXPAND_ORDINAL: i32 = i32::MIN;
+
+/// What a site that stands for a set holds.
+pub enum ExpansionSite<'a> {
+    InterfaceCall {
+        targets: &'a mut Vec<(usize, usize)>,
+    },
+    InterfaceTest {
+        objects: &'a mut Vec<u32>,
+    },
+    EnumImpl {
+        by_ordinal: &'a mut Vec<(i32, usize)>,
+        unknown: &'a mut Option<usize>,
+    },
 }
 
 /// Which table a field reference is a field of. Object references inside it have the value they
@@ -435,8 +459,13 @@ fn walk_expr<V: RefVisitor>(e: &mut Expr, v: &mut V) {
             args,
         } => {
             walk_expr(receiver, v);
-            for t in targets {
-                pair(v, t);
+            match targets.first() {
+                Some(&(EXPAND, index)) => v.expansion(index, ExpansionSite::InterfaceCall { targets }),
+                _ => {
+                    for t in targets {
+                        pair(v, t);
+                    }
+                }
             }
             walk_args(args, v);
         }
@@ -446,8 +475,16 @@ fn walk_expr<V: RefVisitor>(e: &mut Expr, v: &mut V) {
             cast: _,
         } => {
             walk_expr(value, v);
-            for o in objects {
-                object32(v, o);
+            match objects.first() {
+                Some(&EXPAND_U32) => {
+                    let index = objects[1] as usize;
+                    v.expansion(index, ExpansionSite::InterfaceTest { objects });
+                }
+                _ => {
+                    for o in objects {
+                        object32(v, o);
+                    }
+                }
             }
         }
         Expr::EnumImpl {
@@ -456,10 +493,15 @@ fn walk_expr<V: RefVisitor>(e: &mut Expr, v: &mut V) {
             unknown,
         } => {
             walk_expr(value, v);
-            for (_, o) in by_ordinal {
-                obj(v, o);
+            match by_ordinal.first() {
+                Some(&(EXPAND_ORDINAL, index)) => v.expansion(index, ExpansionSite::EnumImpl { by_ordinal, unknown }),
+                _ => {
+                    for (_, o) in by_ordinal {
+                        obj(v, o);
+                    }
+                    object_opt(v, unknown);
+                }
             }
-            object_opt(v, unknown);
         }
         Expr::Control {
             page,

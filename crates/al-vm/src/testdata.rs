@@ -536,11 +536,7 @@ impl TestBacking {
             stats.record(object, &obj.name, o);
         };
         // A temporary table has no rows in a database.
-        if obj
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary"))
-        {
+        if al_ir::ObjectFacts::of(obj).temporary() {
             return None;
         }
         if obj.id.unwrap_or(0) >= PLATFORM_FIRST {

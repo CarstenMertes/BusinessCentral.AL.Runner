@@ -114,12 +114,7 @@ impl Session {
             }
             let engine = self.engine.clone();
             let schema = engine.program.objects[r.table].table.as_ref().expect("table");
-            let field = &schema.fields[r.pos];
-            if field
-                .properties
-                .iter()
-                .any(|(k, v)| k.eq_ignore_ascii_case("ValidateTableRelation") && v.trim().eq_ignore_ascii_case("false"))
-            {
+            if !self.engine.field_facts[r.table][r.pos].validate_relation {
                 continue;
             }
             // The related field: the arm's, or the first primary key field.
@@ -173,9 +168,8 @@ impl Session {
                 // An `if` arm applies to rows whose conditions hold; a condition on a FlowFilter
                 // field is not evaluated.
                 let holds = r.arm.conditions.iter().all(|c| {
-                    schema.fields[c.field].properties.iter().any(|(k, v)| {
-                        k.eq_ignore_ascii_case("FieldClass") && v.trim().eq_ignore_ascii_case("FlowFilter")
-                    }) || ops::compare(&row[c.field], &crate::constant(&c.value)).ok() == Some(Ordering::Equal)
+                    ir::FieldFacts::of(&schema.fields[c.field]).class == ir::FieldClass::FlowFilter
+                        || ops::compare(&row[c.field], &crate::constant(&c.value)).ok() == Some(Ordering::Equal)
                 });
                 if !holds {
                     continue;

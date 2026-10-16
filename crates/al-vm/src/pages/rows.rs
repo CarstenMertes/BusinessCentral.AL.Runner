@@ -161,10 +161,7 @@ impl Session {
     /// handlers/TestPageControlEditableRoutes.al:Worksheet_RunModal_LookupMode).
     pub(super) fn is_list_page(&self, st: &St) -> bool {
         let object = st.borrow().object as usize;
-        self.engine.program.objects[object]
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case("PageType") && v.trim().eq_ignore_ascii_case("list"))
+        self.engine.object_facts[object].page_type == Some(al_ir::PageType::List)
     }
 
     pub(super) fn is_list(&self, st: &St) -> bool {
@@ -799,12 +796,7 @@ impl Session {
             let s = st.borrow();
             (s.lookup, s.object as usize)
         };
-        let page_type = self.engine.program.objects[object]
-            .properties
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("PageType"))
-            .map(|(_, v)| v.trim().to_ascii_lowercase())
-            .unwrap_or_default();
+        let page_type = self.engine.object_facts[object].page_type_lower().to_string();
         match page_type.as_str() {
             "standarddialog" | "promptdialog" | "confirmationdialog" => "Cancel",
             _ if lookup => "LookupCancel",

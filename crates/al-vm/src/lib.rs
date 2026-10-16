@@ -83,6 +83,10 @@ pub struct Engine {
     pub unevaluable_init: std::collections::HashMap<(u32, usize), String>,
     /// What the VM asks of a table on every record operation, worked out once (ADR-035 decision 4).
     pub(crate) table_facts: Vec<TableFacts>,
+    /// What the VM reads of each object's properties, worked out once (ADR-032 decision 5).
+    pub(crate) object_facts: Vec<ir::ObjectFacts>,
+    /// The same for each field of each table object, by field position.
+    pub(crate) field_facts: Vec<Vec<ir::FieldFacts>>,
     /// Names this engine among all those the process built: state shared between sessions of one
     /// engine is keyed by it.
     pub uid: u64,
@@ -209,18 +213,21 @@ impl Engine {
             .objects
             .iter()
             .map(|o| TableFacts {
-                temporary: o
-                    .properties
-                    .iter()
-                    .any(|(k, v)| k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("Temporary")),
-                crm: o
-                    .properties
-                    .iter()
-                    .any(|(k, v)| k.eq_ignore_ascii_case("TableType") && v.trim().eq_ignore_ascii_case("CRM")),
                 unresolved_init: o
                     .table
                     .as_ref()
                     .is_some_and(|t| t.fields.iter().any(|f| f.init_text.is_some() && f.init.is_none())),
+            })
+            .collect();
+        let object_facts: Vec<ir::ObjectFacts> = program.objects.iter().map(ir::ObjectFacts::of).collect();
+        let field_facts: Vec<Vec<ir::FieldFacts>> = program
+            .objects
+            .iter()
+            .map(|o| {
+                o.table
+                    .iter()
+                    .flat_map(|t| t.fields.iter().map(ir::FieldFacts::of))
+                    .collect()
             })
             .collect();
         let mut unevaluable_init = std::collections::HashMap::new();
@@ -242,6 +249,8 @@ impl Engine {
             test_data: None,
             unevaluable_init,
             table_facts,
+            object_facts,
+            field_facts,
             uid: NEXT_ENGINE_UID.fetch_add(1, std::sync::atomic::Ordering::Relaxed),
             delete_subscribed: Default::default(),
             profile_seeds: Default::default(),
@@ -589,14 +598,14 @@ impl Session {
             RtType::Record(table, temporary) => {
                 // A table declared `TableType = Temporary` is temporary for every variable
                 // (corpus record 60198 TempOnly_IsTemporary_AlwaysTrue).
-                let temporary = &(*temporary || self.engine.table_facts[*table as usize].temporary);
+                let temporary = &(*temporary || self.engine.object_facts[*table as usize].temporary());
                 let temp_id = temporary.then(|| self.new_temp_id());
                 Value::Record(Rc::new(RefCell::new(RecordState {
                     table: *table,
                     temporary: *temporary,
                     temp_id,
                     company: None,
-                    crm: self.engine.table_facts[*table as usize].crm,
+                    crm: self.engine.object_facts[*table as usize].crm(),
                     fields: self.initial_fields(*table as usize),
                     filters: Vec::new(),
                     filter_group: 0,
@@ -999,10 +1008,6 @@ pub(crate) type AdhocTables = std::collections::HashMap<(u32, Vec<usize>), Arc<a
 /// Facts about a table object that never change during a run.
 #[derive(Debug, Clone, Copy, Default)]
 pub(crate) struct TableFacts {
-    /// `TableType = Temporary`: every variable of the table is temporary.
-    pub(crate) temporary: bool,
-    /// `TableType = CRM`.
-    pub(crate) crm: bool,
     /// Some field has an `InitValue` text that did not evaluate at compile time.
     pub(crate) unresolved_init: bool,
 }

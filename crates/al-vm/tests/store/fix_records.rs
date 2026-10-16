@@ -274,3 +274,25 @@ fn a_temporary_record_has_no_system_id_and_the_duplicate_texts_are_pinned() {
         "{r}"
     );
 }
+
+#[test]
+fn delete_all_with_marked_only_deletes_the_marked_rows_and_no_other() {
+    // No corpus test pins DeleteAll under MarkedOnly (docs/probes-needed.md). Base Application's Post Inventory Cost to
+    // G/L marks the value entries it posts and ends with `MarkedOnly(true); DeleteAll()`, and the capacity entries it
+    // still has to post stay in the table for the loop after it. Microsoft Learn: MarkedOnly limits the records an
+    // operation works on to the marked ones, DeleteAll included. The same must hold with a filter and with triggers.
+    let src = kd("procedure F(): Text var K: Record Kd; R: Text; begin Seed();
+            K.\"Entry No.\" := 3; K.Name := 'c'; K.Amount := 7; K.Insert();
+            K.Get(1); K.Mark(true); K.Get(3); K.Mark(true);
+            K.MarkedOnly(true); R += Format(K.Count()) + '|';
+            K.DeleteAll();
+            K.MarkedOnly(false); R += Format(K.Count()) + '|';
+            if K.FindFirst() then R += Format(K.\"Entry No.\"); exit(R); end;
+        procedure WithAFilter(): Text var K: Record Kd; R: Text; begin Seed();
+            K.\"Entry No.\" := 3; K.Name := 'c'; K.Amount := 7; K.Insert();
+            K.FindSet(); repeat K.Mark(true); until K.Next() = 0;
+            K.SetFilter(\"Entry No.\", '2..3'); K.MarkedOnly(true); K.DeleteAll();
+            K.Reset(); exit(Format(K.Count())); end;");
+    assert_eq!(text(run(&src, "F")), "2|1|2");
+    assert_eq!(text(run(&src, "WithAFilter")), "1");
+}

@@ -55,12 +55,28 @@ fn other_call(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
     }
 }
 
+/// `UpdateAuditFields(Value)` and `UpdateAuditFields := Value`: accepted after `SetTables` even outside upgrade and install code,
+/// where the other staging calls raise (misc/W5DataTransferOutside.al:SetTables_Twice_AndUpdateAuditFields,
+/// misc/lt-probes-needed-2/PnBErrorsCollections.al:DataTransfer_OutsideInstall `op6`). Before `SetTables` and inside install code
+/// it is not pinned.
+fn update_audit_fields(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    let Some(Value::Library(_, cell)) = r else {
+        return unsupported("DataTransfer method without a receiver");
+    };
+    let staged = matches!(&*cell.borrow(), LibraryValue::DataTransfer(Some(_)));
+    if c.install_scope() || !staged {
+        return unsupported("DataTransfer.UpdateAuditFields before SetTables or inside install code (not pinned)");
+    }
+    Ok(Value::Null)
+}
+
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     if sig.receiver != "DataTransfer" {
         return None;
     }
     Some(match sig.name.as_str() {
         "SetTables" => set_tables,
+        "UpdateAuditFields" => update_audit_fields,
         "AddConstantValue"
         | "AddDestinationFilter"
         | "AddFieldValue"

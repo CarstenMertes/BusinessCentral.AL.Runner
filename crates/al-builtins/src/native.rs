@@ -913,12 +913,22 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
         },
         // A Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned by a corpus test; Microsoft's
         // manufacturing code does `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests).
+        other => return abs_other(other),
+    })
+}
+
+/// `Abs` of a Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned; Microsoft's manufacturing code does
+/// `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests; assumption abs-of-duration-is-decimal).
+#[cold]
+#[inline(never)]
+fn abs_other(v: &Value) -> Result<Value, Signal> {
+    match v {
         Value::Duration(ms) => {
             crate::assumptions::assume(crate::assumptions::Assumption::AbsOfDuration);
-            Value::Decimal(rust_decimal::Decimal::from(*ms).abs())
+            Ok(Value::Decimal(rust_decimal::Decimal::from(*ms).abs()))
         }
-        other => return unsupported(&format!("Abs of {}", other.describe())),
-    })
+        other => unsupported(&format!("Abs of {}", other.describe())),
+    }
 }
 
 fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

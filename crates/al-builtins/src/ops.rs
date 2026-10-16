@@ -713,6 +713,31 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
 /// character the collation has no weight for falls back to the code point order of the trimmed texts
 /// (record/lt-record-read/RcAGetFind.al:Get_Text_Key, Find_Text_Key_Case_Insensitive).
 pub fn text_key_order(a: &str, b: &str) -> Ordering {
+    // The common case first, without trimming or copying: byte-equal texts are equal, and two texts that first differ
+    // at an upper-case letter or a digit are ordered by that byte (the collation agrees with the code points there), or,
+    // when one is the start of the other, by what the longer one adds besides blanks.
+    let (ab, bb) = (a.as_bytes(), b.as_bytes());
+    let n = ab.iter().zip(bb).take_while(|(x, y)| x == y).count();
+    if n == ab.len() && n == bb.len() {
+        return Ordering::Equal;
+    }
+    let plain = |c: u8| c.is_ascii_uppercase() || c.is_ascii_digit();
+    if n < ab.len() && n < bb.len() && plain(ab[n]) && plain(bb[n]) {
+        return ab[n].cmp(&bb[n]);
+    }
+    if n == ab.len() || n == bb.len() {
+        let tail = if n == ab.len() { &bb[n..] } else { &ab[n..] };
+        if tail.iter().all(|c| *c == b' ') {
+            return Ordering::Equal;
+        }
+        if tail.iter().all(|c| c.is_ascii_graphic() || *c == b' ') && tail.iter().any(|c| *c != b' ') {
+            return if n == ab.len() {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
+    }
     let (a, b) = (a.trim_end_matches(' '), b.trim_end_matches(' '));
     if a == b {
         return Ordering::Equal;
@@ -742,13 +767,15 @@ pub fn text_key_order(a: &str, b: &str) -> Ordering {
 }
 
 /// [`compare`] for the values of a key: text follows [`text_key_order`].
+#[inline]
 pub fn compare_key_value(l: &Value, r: &Value) -> Result<Ordering, Signal> {
-    if let (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) = (l, r) {
-        if !a.has_marker() && !b.has_marker() {
-            return Ok(text_key_order(a, b));
+    match (l, r) {
+        (Value::Integer(a), Value::Integer(b)) => Ok(a.cmp(b)),
+        (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) if !a.has_marker() && !b.has_marker() => {
+            Ok(text_key_order(a, b))
         }
+        _ => compare(l, r),
     }
-    compare(l, r)
 }
 
 /// Ordering for `=`, `<>`, `<`, ... ; `None` when the values are not comparable.
@@ -892,6 +919,13 @@ mod tests {
         assert_eq!(text_key_order("ABD", "b"), Less);
         assert_eq!(text_key_order("a_b", "a1"), Less);
         assert_eq!(text_key_order("b", "ABD"), Greater);
+        // The fast paths: a first difference at a capital or digit, and a text that starts the other.
+        assert_eq!(text_key_order("A1", "A10"), Less);
+        assert_eq!(text_key_order("A9", "A10"), Greater);
+        assert_eq!(text_key_order("ABC", "ABC   "), Equal);
+        assert_eq!(text_key_order("ABC   ", "ABC"), Equal);
+        assert_eq!(text_key_order("ABC", "ABC X"), Less);
+        assert_eq!(text_key_order("ABC X", "ABC"), Greater);
     }
 
     use super::*;

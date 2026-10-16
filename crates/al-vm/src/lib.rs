@@ -567,7 +567,7 @@ impl Session {
             },
             pages: PageClients {
                 saved_values: std::collections::HashMap::new(),
-                trap: None,
+                traps: Vec::new(),
                 bg_worker: None,
                 page_xrec: None,
                 curr_field_no: Vec::new(),

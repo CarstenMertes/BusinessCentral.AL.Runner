@@ -12591,18 +12591,18 @@
       "dimension": "syntax",
       "items": [
         {
-          "corpus_uses": 417566,
+          "corpus_uses": 417608,
           "group": "expression",
-          "ms_uses": 1797674,
+          "ms_uses": 1808040,
           "name": "NameRef",
           "pinned": true,
           "runtime_reads": true,
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 157857,
+          "corpus_uses": 157869,
           "group": "expression",
-          "ms_uses": 473562,
+          "ms_uses": 474879,
           "name": "MemberExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -12627,18 +12627,18 @@
           "site": "ALTCallstackModuleInfos.al:26"
         },
         {
-          "corpus_uses": 19845,
+          "corpus_uses": 19860,
           "group": "statement",
-          "ms_uses": 183133,
+          "ms_uses": 187658,
           "name": "Block",
           "pinned": true,
           "runtime_reads": true,
           "site": "ALTCallstackModuleInfos.al:8"
         },
         {
-          "corpus_uses": 20474,
+          "corpus_uses": 20489,
           "group": "statement",
-          "ms_uses": 135336,
+          "ms_uses": 139861,
           "name": "AssignStmt",
           "pinned": true,
           "runtime_reads": false,
@@ -12663,9 +12663,9 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 29899,
+          "corpus_uses": 29902,
           "group": "expression",
-          "ms_uses": 74243,
+          "ms_uses": 77686,
           "name": "Literal:Integer",
           "pinned": true,
           "runtime_reads": true,
@@ -12728,7 +12728,7 @@
         {
           "corpus_uses": 2513,
           "group": "expression",
-          "ms_uses": 23438,
+          "ms_uses": 23439,
           "name": "Literal:true",
           "pinned": true,
           "runtime_reads": true,
@@ -12744,9 +12744,9 @@
           "site": "_fixtures/Assert.al:167"
         },
         {
-          "corpus_uses": 753,
+          "corpus_uses": 756,
           "group": "expression",
-          "ms_uses": 18099,
+          "ms_uses": 21542,
           "name": "IndexExpr",
           "pinned": true,
           "runtime_reads": true,
@@ -13212,7 +13212,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 368,
+        "line": 379,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13221,7 +13221,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 515,
+        "line": 526,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -13230,7 +13230,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 558,
+        "line": 569,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
@@ -13239,7 +13239,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 593,
+        "line": 604,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13248,7 +13248,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 619,
+        "line": 630,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13257,7 +13257,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 624,
+        "line": 635,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13410,7 +13410,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 539,
+        "line": 541,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds."
@@ -13419,7 +13419,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 558,
+        "line": 560,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -13428,7 +13428,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 667,
+        "line": 669,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds"
@@ -13437,7 +13437,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 686,
+        "line": 688,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."

@@ -127,14 +127,13 @@ impl Session {
         let mut target_state = Rc::new(RefCell::new(PageState::closed(target as u32)));
         let mut trapped = false;
         if !modal {
-            if let Some(trap) = self.pages.trap.take() {
-                if trap.borrow().object != target as u32 {
-                    return unsupported("a Trap() for another page than the one the action opens");
-                }
+            if let Some(trap) = self.take_trap(target as u32) {
                 trap.borrow_mut().trapping = false;
                 trap.borrow_mut().instance = None;
                 target_state = trap;
                 trapped = true;
+            } else if !self.pages.traps.is_empty() {
+                return unsupported("a Trap() for another page than the one the action opens");
             }
         }
         if target_state.borrow().open {

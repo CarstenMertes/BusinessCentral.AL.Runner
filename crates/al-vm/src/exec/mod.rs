@@ -190,6 +190,24 @@ pub(crate) enum Op {
         d: u16,
         a: u16,
     },
+    /// `asserterror`: the body is the code up to `end`; a caught error rolls back, anything else leaves as it would.
+    Assert {
+        end: u32,
+        from: u16,
+    },
+    /// `foreach`: evaluates the collection in `a` once into the items held in the site's register.
+    ForeachInit {
+        s: u32,
+    },
+    /// The next item into the loop variable, or a jump to `t` when the items are used up.
+    ForeachNext {
+        s: u32,
+        t: u32,
+    },
+    IfaceCall {
+        s: u32,
+        d: u16,
+    },
     /// Lets go of a temporary whose value nobody reads.
     Clear {
         a: u16,
@@ -218,7 +236,10 @@ pub(crate) struct CallSite {
 }
 
 pub(crate) struct BuiltinSite {
-    pub native: al_builtins::native::NativeFn,
+    pub id: al_builtins::builtin_id::BuiltinId,
+    /// A builtin the VM runs itself (`Session::vm_class_call`) instead of a registered native.
+    pub vm_class: bool,
+    pub native: Option<al_builtins::native::NativeFn>,
     pub class: al_builtins::builtin_id::Class,
     pub receiver: Option<u16>,
     pub receiver_arg: Option<ir::Arg>,
@@ -246,6 +267,21 @@ pub(crate) enum AuxSite {
     QueryColumn {
         column: usize,
     },
+}
+
+pub(crate) struct ForeachSite {
+    pub var: ir::Place,
+    pub coll: u16,
+    /// Registers that hold the items (a `Value::Array`) and the next position (an `Integer`).
+    pub items: u16,
+    pub at: u16,
+}
+
+pub(crate) struct IfaceSite {
+    pub targets: Vec<(usize, usize)>,
+    pub recv: u16,
+    pub arg_regs: Vec<u16>,
+    pub args: Vec<ir::Arg>,
 }
 
 pub(crate) struct AppendSite {
@@ -282,7 +318,7 @@ pub(crate) struct Chunk {
     pub exprs: Vec<ir::Expr>,
     pub stmts: Vec<ir::Stmt>,
     /// The node kind of each tree expression and statement, for the fallback report.
-    pub expr_kinds: Vec<&'static str>,
+    pub expr_kinds: Vec<String>,
     pub stmt_kinds: Vec<&'static str>,
     pub calls: Vec<CallSite>,
     pub builtins: Vec<BuiltinSite>,
@@ -291,6 +327,8 @@ pub(crate) struct Chunk {
     pub appends: Vec<AppendSite>,
     pub dotnets: Vec<DotNetSite>,
     pub aux: Vec<AuxSite>,
+    pub foreachs: Vec<ForeachSite>,
+    pub ifaces: Vec<IfaceSite>,
     /// Registers `0..nlocals` are the routine's locals.
     pub nlocals: u16,
     /// Temporaries after the locals.
@@ -349,7 +387,7 @@ pub(crate) struct Stats {
 /// How often each kind of node ran on the tree walker from inside bytecode (`AL_EXEC_REPORT=1`).
 pub(crate) static TREE_KINDS: std::sync::Mutex<Vec<(String, u64)>> = std::sync::Mutex::new(Vec::new());
 
-pub(crate) fn note_tree(kind: &'static str, stmt: bool) {
+pub(crate) fn note_tree(kind: &str, stmt: bool) {
     let key = format!("{}{kind}", if stmt { "stmt " } else { "expr " });
     if let Ok(mut v) = TREE_KINDS.lock() {
         match v.iter_mut().find(|(k, _)| *k == key) {

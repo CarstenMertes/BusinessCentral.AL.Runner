@@ -1039,6 +1039,7 @@ fn walk_report<V: RefVisitor>(r: &mut Report, v: &mut V) {
         about_title: _,
         about_text: _,
         layout: _,
+        labels: _,
         dataset_unsupported: _,
         layout_file_missing: _,
     } = r;
@@ -1063,6 +1064,7 @@ fn walk_report_ext<V: RefVisitor>(e: &mut ReportExt, v: &mut V) {
         modifies: _,
         added,
         adds,
+        labels: _,
     } = e;
     let base_report = *base;
     let added_tables: Vec<Option<usize>> = added.iter().map(|a| a.item.table).collect();

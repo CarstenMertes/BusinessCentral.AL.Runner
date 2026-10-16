@@ -287,6 +287,9 @@ pub struct Report {
     /// The kind of the layout the report renders with by default.
     #[serde(default)]
     pub layout: ReportLayout,
+    /// The `labels` section: (name, text) in declaration order. An empty text reads as the name.
+    #[serde(default)]
+    pub labels: Vec<(String, String)>,
     /// Why `Report.SaveAs(.., Xml, ..)` cannot write this report's dataset (a section or property
     /// whose effect on the dataset no test pins); empty = it can.
     #[serde(default)]
@@ -345,6 +348,9 @@ pub struct ReportExt {
     /// Columns the extension adds to base items with `add(Item)`.
     #[serde(default)]
     pub adds: Vec<ReportExtAdd>,
+    /// The `labels` section of the extension: (name, text) in declaration order.
+    #[serde(default)]
+    pub labels: Vec<(String, String)>,
 }
 
 /// The columns an `add(Item)` block of a reportextension gives a base item.

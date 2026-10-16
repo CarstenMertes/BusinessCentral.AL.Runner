@@ -37,6 +37,7 @@
 60035 RecursionDepth_PastTheCeiling_ReportsTheErrorText
 60035 RecursionDepth_WellInsideTheCeiling_Completes
 60037 ReportRun_FromBaseAppPageAction_HandlerCancelsTheRequestPage
+60037 ReportRun_FromBaseAppPageAction_HandlerConfirmsOk
 60037 ReportRun_FromBaseAppPageAction_HandlerErrorReachesTheTest
 60038 FieldRef_Caption_CaptionWithSemicolon_ReturnsWholeCaption
 60038 Query_ColumnCaption_CaptionStartingWithQuote_KeepsTheQuotes
@@ -5253,6 +5254,8 @@
 69349 GZip_Decompress_InvalidInput
 69349 GZip_EmptyInput
 69349 GZip_TextRoundTrip
+69350 LabelsOnly_ReportWithOnlyOneLabel
+69350 Labels_AreWrittenIntoTheDataset
 69350 NoLabels_NoLabelsElement
 69351 FieldRows_CountsOfTheTable_ByState
 69353 Find_InvalidDirection_ErrorText
@@ -6992,6 +6995,7 @@
 71200 PageVar_SetTableView_Filters
 71200 PageVar_SetTableView_Sorting
 71200 RunModal_List_CurrPageClose_Action
+71200 RunModal_UnknownPageNumber
 71200 RunModal_WithoutHandler
 71200 Run_NumberAndRecord_Modeless
 71200 Run_Number_Modeless
@@ -7338,7 +7342,13 @@
 72073 Sender_SecondInstanceDiffers
 72073 Sender_VarParameterWithSender
 72075 PageRun_VsRunModal
+72075 RunModal_EmptyRecAndMissingKey
+72075 RunModal_FieldArgument_Cancel
+72075 RunModal_FieldArgument_LookupOK
+72075 RunModal_FieldArgument_OK
 72075 RunModal_RecOnly
+72075 RunModal_UnknownPageId
+72075 RunModal_WithFilterOnRecord
 72079 Create_FourArguments
 72079 Create_LongValues
 72079 Create_NameOnly
@@ -7718,6 +7728,7 @@
 73079 Run_ListNoRecord
 73079 Run_ListWithFilteredRecord
 73079 Run_NumberOnly
+73079 Run_UnknownPageWithoutTry
 73079 Run_WithRecord
 73080 RunModal_RecordOnly_EachResponse
 73400 Create_Empty

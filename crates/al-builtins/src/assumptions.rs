@@ -482,12 +482,6 @@ registry! {
         tests: "Gen. Journal Management TemplateSelection (PAGE.RunModal(0, GenJnlTemplate) = ACTION::LookupOK, then GenJnlTemplate.Name): ERM Apply Sales/Receivables and about 9 more Tests-ERM tests.",
         probe: "Page.RunModal(Page::X, Rec) with a handler that does GoToKey and OK; read Rec; the same with Cancel; with a page variable's RunModal and GetRecord.",
     },
-    GetLastErrorTextExcludeCustomerContent => {
-        id: "get-last-error-text-exclude-customer-content",
-        assumed: "GetLastErrorText(true) answers the same text as GetLastErrorText() when the error text shows no values of a record; a text with identification values stays refused.",
-        tests: "Tests-Marketing and Tests-Misc helpers that call GetLastErrorText(true): about 320 tests.",
-        probe: "asserterror Error('plain'); GetLastErrorText(true); the same after Customer.Get of a missing record, after TestField and FieldError, and a Dialog error.",
-    },
 }
 
 thread_local! {

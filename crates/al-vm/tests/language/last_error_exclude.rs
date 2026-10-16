@@ -1,38 +1,35 @@
-//! `GetLastErrorText(ExcludeCustomerContent)`: Microsoft's Marketing and Misc tests call it through `Library - Assert` helpers
-//! (about 320 tests). A text that carries no customer content is the same text; a record's identification values are
-//! customer content, so such a text is refused. Assumption get-last-error-text-exclude-customer-content.
+//! `GetLastErrorText(true)` with no error pending answers the empty text (corpus
+//! types/lt-evaluate-format-lasterror-setview/P86LastError.al:ErrorInfo_CustomerContent `cleared_excl`). Microsoft's Marketing
+//! and Misc helpers call it that way. With an error pending the redaction depends on how the error was raised and stays refused.
 
 use al_builtins::native::Signal;
 use al_testkit::{run_in, text};
 
 const SRC: &str = r#"
-table 69840 "LE Row" { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
 codeunit 69841 "LE C"
 {
-    procedure Plain(): Text
+    procedure NoError(): Text
     begin
-        asserterror Error('plain error');
         exit(GetLastErrorText(true));
     end;
 
-    procedure WithValues(): Text
-    var R: Record "LE Row";
+    procedure Pending(): Text
     begin
-        asserterror R.Get(5);
+        asserterror Error('plain error');
         exit(GetLastErrorText(true));
     end;
 }
 "#;
 
 #[test]
-fn the_flag_leaves_a_text_without_customer_content_alone() {
-    assert_eq!(text(run_in(SRC, "LE C", "Plain")), "plain error");
+fn the_flag_with_no_error_pending_answers_the_empty_text() {
+    assert_eq!(text(run_in(SRC, "LE C", "NoError")), "");
 }
 
 #[test]
-fn a_text_with_identification_values_is_refused() {
-    match run_in(SRC, "LE C", "WithValues") {
-        Err(Signal::Unsupported(m)) => assert!(m.contains("customer content"), "{m}"),
+fn the_flag_with_an_error_pending_is_refused_because_the_redaction_depends_on_the_kind() {
+    match run_in(SRC, "LE C", "Pending") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("how the error was raised"), "{m}"),
         other => panic!("{other:?}"),
     }
 }

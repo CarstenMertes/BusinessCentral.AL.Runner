@@ -923,9 +923,11 @@ fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
     Ok(Value::Text(e.message.into()))
 }
 
-/// `GetLastErrorText(true)`: the text without customer content. A text that holds none is the same text (assumption
-/// `get-last-error-text-exclude-customer-content`, Microsoft's Marketing and Misc tests); the identification values of a record
-/// are customer content and what replaces them is not pinned, so such a text is refused.
+/// `GetLastErrorText(true)`: with no error pending it answers the empty text (corpus
+/// types/lt-evaluate-format-lasterror-setview/P86LastError.al:ErrorInfo_CustomerContent `cleared_excl`, PlainError_Exclude
+/// `empty_excl`). With an error pending the corpus pins a redaction that depends on how the error was raised (an ErrorInfo
+/// reads "This message had personal data removed ...", a formatted Error text a telemetry hint, TestField and FieldError
+/// their own redacted forms); the runtime does not keep how the error was raised, so that stays refused.
 fn get_last_error_text_without_customer_content(
     ctx: &mut dyn Ctx,
     r: Option<&mut Value>,
@@ -934,14 +936,12 @@ fn get_last_error_text_without_customer_content(
     if matches!(a.first(), Some(Value::Boolean(false))) {
         return get_last_error_text(ctx, r, &mut []);
     }
-    let e = ctx.last_error();
-    if e.message.contains("Identification fields and values") {
+    if !ctx.last_error().message.is_empty() {
         return unsupported(
-            "GetLastErrorText(true) of an error that shows the values of a record (customer content): what the flag removes is not pinned",
+            "GetLastErrorText(true) while an error is pending: the redacted text depends on how the error was raised (ErrorInfo, formatted Error, TestField, FieldError), which is not kept",
         );
     }
-    crate::assumptions::assume(crate::assumptions::Assumption::GetLastErrorTextExcludeCustomerContent);
-    get_last_error_text(ctx, r, &mut [])
+    Ok(Value::Text(String::new().into()))
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

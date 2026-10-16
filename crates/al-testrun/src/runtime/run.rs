@@ -169,6 +169,7 @@ pub(crate) fn run_codeunit_core(
 ) -> Vec<(String, Outcome)> {
     let obj = &lowered.program.objects[object];
     let mut session = Session::with_host(engine.clone(), crate::host::host_at(scratch.clock_start));
+    session.exec_mode = scratch.exec;
     if let Some(b) = baseline {
         session.restore_baseline(b);
     }
@@ -460,6 +461,9 @@ pub(crate) fn run_codeunit_core(
             scratch.captured.push((routine.name.clone(), c.clone()));
         }
         times.push((routine.name.clone(), took));
+        if scratch.digest {
+            scratch.digests.push((routine.name.clone(), session.state_digest()));
+        }
         let cov = if covering { session.take_coverage() } else { Vec::new() };
         if crate::events::wants_events() {
             crate::events::report(crate::events::TestEvent {

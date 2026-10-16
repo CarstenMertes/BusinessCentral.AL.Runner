@@ -30,6 +30,7 @@ mod companies;
 mod dataset;
 mod dispatch;
 pub mod dotnet;
+mod dual;
 mod errorcollect;
 pub mod events;
 mod faultsite;

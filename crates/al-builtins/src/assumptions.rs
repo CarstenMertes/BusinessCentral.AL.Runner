@@ -193,6 +193,12 @@ registry! {
         tests: "Backup Storage test library (array[20, 1000] of RecordRef); 43 Tests-Misc tests.",
         probe: "The chained form on a two-dimensional array, read and write.",
     },
+    InBindsTighterThanAnd => {
+        id: "in-binds-tighter-than-and",
+        assumed: "`a and b in [..]` (also `or`, `xor`) without parentheses is `a and (b in [..])`, not `(a and b) in [..]`.",
+        tests: "Base Application's Purchase Header, field Buy-from Vendor No. (Self-Billing Invoice); every Tests-SCM and Tests-ERM test that validates it.",
+        probe: "A Boolean variable and an enum value joined with and, then in a set, with and without parentheses; a Boolean result for each.",
+    },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",
         assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",

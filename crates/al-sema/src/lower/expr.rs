@@ -330,6 +330,18 @@ impl Lowerer<'_> {
             }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
+                // `a and b in [..]` is `a and (b in [..])` (grammar/expressions.rs): not pinned, Microsoft's
+                // Purchase Header needs it.
+                if matches!(op.as_str(), "and" | "or" | "xor")
+                    && kids.get(1).is_some_and(|r| {
+                        r.kind() == BinExpr
+                            && sig_tokens(r)
+                                .first()
+                                .is_some_and(|t| t.text().eq_ignore_ascii_case("in"))
+                    })
+                {
+                    self.assume(al_builtins::assumptions::Assumption::InBindsTighterThanAnd);
+                }
                 // How a settled DotNet operand may be used depends on the operator (ADR-024).
                 let operand_use = match op.as_str() {
                     "+" | "=" | "<>" => ir::OperandUse::Enum,

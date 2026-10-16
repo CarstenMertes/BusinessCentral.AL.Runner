@@ -11,6 +11,7 @@ mod erm_defects;
 mod errorcollect;
 mod events;
 mod exec;
+mod in_precedence;
 mod interfaces;
 mod pageworks_probes;
 mod text_append;

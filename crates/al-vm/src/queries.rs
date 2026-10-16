@@ -133,6 +133,9 @@ impl Session {
         recv: Option<&mut Value>,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
+        if method == "SaveAsCsvStatic" {
+            return self.query_save_csv_static(args);
+        }
         let qs: Qs = match recv {
             Some(Value::Query(q)) => q.clone(),
             other => return unsupported(format!("Query.{method} on {}", other.describe())),
@@ -298,6 +301,11 @@ impl Session {
                 }
             }
             "SaveAsXml" | "SaveAsJson" => self.query_save_as(def, &qs, method, args),
+            "SaveAsCsv" => {
+                let filters = qs.borrow().filters.clone();
+                let top = qs.borrow().top.unwrap_or(def.top);
+                self.query_save_csv(def, &filters, top, args)
+            }
             other => unsupported(format!("Query.{other}")),
         }
     }
@@ -377,6 +385,111 @@ impl Session {
                 out.push_str("</Result>");
             }
             out.push_str("</DataSet>");
+        }
+        al_builtins::stream::write_bytes(&blob, out.as_bytes());
+        Ok(Value::Boolean(true))
+    }
+
+    /// `Query.SaveAsCsv(Number, OutStream)`: the query of that id with no filters. An id no query has writes nothing and
+    /// raises nothing (xmlport/lt-xmlport-query-datatransfer/XpTQuerySave.al:SaveAsCsv_UnknownQueryId).
+    fn query_save_csv_static(&mut self, args: &[Value]) -> Result<Value, Signal> {
+        let id = match args.first() {
+            Some(Value::Integer(n)) => *n,
+            other => return unsupported(format!("Query.SaveAsCsv with {}", other.describe())),
+        };
+        let engine = self.engine.clone();
+        let Some(object) = engine
+            .program
+            .objects
+            .iter()
+            .position(|o| o.is_kind(al_ir::ObjKind::Query) && o.id == u32::try_from(id).ok())
+        else {
+            return Ok(Value::Boolean(false));
+        };
+        let def = engine.program.objects[object].query.as_ref().expect("a query object");
+        self.query_save_csv(def, &[], def.top, &args[1..])
+    }
+
+    /// The rows of a query as CSV: the column names, then a row per line, each line ended by a line feed. A text with a comma or a
+    /// quote is quoted, a Boolean reads True or False, (xmlport/lt-xmlport-query-datatransfer/XpTQuerySave.al).
+    /// Other column types are not pinned.
+    fn query_save_csv(
+        &mut self,
+        def: &ir::Query,
+        filters: &[(usize, FilterExpr)],
+        top: i32,
+        args: &[Value],
+    ) -> Result<Value, Signal> {
+        if args.len() > 1 {
+            return unsupported("Query.SaveAsCsv with a format or a format argument (not pinned)");
+        }
+        let Some(Value::Library(_, h)) = args.first() else {
+            return unsupported(format!("Query.SaveAsCsv with {}", args.first().describe()));
+        };
+        let blob = match &*h.borrow() {
+            al_builtins::value::LibraryValue::OutStream(blob, _) => blob.clone(),
+            _ => return unsupported("Query.SaveAsCsv to something that is not an OutStream"),
+        };
+        let cols: Vec<usize> = (0..def.columns.len())
+            .filter(|&c| !def.columns[c].filter_element)
+            .collect();
+        for &c in &cols {
+            if !matches!(
+                def.columns[c].ty,
+                RtType::Integer
+                    | RtType::BigInteger
+                    | RtType::Decimal
+                    | RtType::Boolean
+                    | RtType::Text(_)
+                    | RtType::Code(_)
+            ) {
+                return unsupported(format!(
+                    "Query.SaveAsCsv of the column {} of type {} (not pinned)",
+                    def.columns[c].name,
+                    def.columns[c].ty.describe()
+                ));
+            }
+        }
+        let (rows, _) = self.query_rows(def, filters)?;
+        // The file of query/W7QueryLifecycle.al:SaveAsCsv_NonIntegerColumns (a Date column and a text with an accent) is 83 bytes
+        // where this writes 81; which of the two accounts for the difference is not pinned, so neither is written.
+        if rows.iter().any(|r| {
+            r.columns
+                .iter()
+                .any(|v| matches!(v, Value::Text(s) | Value::Code(s) if !s.is_ascii()))
+        }) {
+            return unsupported("Query.SaveAsCsv of a text beyond ASCII (not pinned)");
+        }
+        let mut out = String::new();
+        let quote = |s: &str| {
+            if s.contains(',') || s.contains('"') {
+                format!("\"{}\"", s.replace('"', "\"\""))
+            } else {
+                s.to_string()
+            }
+        };
+        out.push_str(
+            &cols
+                .iter()
+                .map(|&c| quote(&def.columns[c].name))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        out.push('\n');
+        for r in rows.iter().take(if top > 0 { top as usize } else { usize::MAX }) {
+            let cells: Vec<String> = cols
+                .iter()
+                .map(|&c| match &r.columns[c] {
+                    Value::Integer(i) => i.to_string(),
+                    Value::BigInteger(i) => i.to_string(),
+                    Value::Decimal(d) => d.normalize().to_string(),
+                    Value::Boolean(b) => (if *b { "True" } else { "False" }).to_string(),
+                    Value::Text(s) | Value::Code(s) => quote(s),
+                    _ => String::new(),
+                })
+                .collect();
+            out.push_str(&cells.join(","));
+            out.push('\n');
         }
         al_builtins::stream::write_bytes(&blob, out.as_bytes());
         Ok(Value::Boolean(true))
@@ -752,7 +865,9 @@ impl Session {
             return Ok(());
         };
         if rights.len() != 1 || def.items[level].parent != Some(level - 1) || level + 1 != def.items.len() {
-            return unsupported("a right or full outer join that is not the innermost of a chain of dataitems (not pinned)");
+            return unsupported(
+                "a right or full outer join that is not the innermost of a chain of dataitems (not pinned)",
+            );
         }
         let item = &def.items[level];
         if !item.link_items.is_empty() {

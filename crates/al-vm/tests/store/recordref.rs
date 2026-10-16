@@ -753,3 +753,34 @@ fn filter_group_assigns_as_a_property_of_a_record_ref() {
     );
     assert_eq!(text(r), "0|2|0");
 }
+
+#[test]
+fn get_of_a_record_id_on_a_record_ref_never_opened_answers_false_and_leaves_it_closed() {
+    // System Application's Data Type Management: `if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`.
+    // Unprobed (assumption recordref-get-unopened).
+    let r = run(
+        "procedure F(): Text var RR: RecordRef; T: Record \"ALT T\"; Ok: Boolean; s: Text; begin
+            T.\"No.\" := 'A'; T.Insert();
+            Ok := RR.Get(T.RecordId());
+            s := Format(Ok) + '|' + Format(RR.Number());
+            if not RR.Get(T.RecordId()) then RR.Open(T.RecordId().TableNo());
+            exit(s + '|' + Format(RR.Get(T.RecordId())));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "No|0|Yes");
+}
+
+#[test]
+fn date_and_boolean_to_text_are_the_default_format() {
+    // Customer Mgt.CalcLastPaymentInfo: `Posting Date.ToText()`, `(a < b).ToText()`. Unprobed (primitive-totext-is-format).
+    let r = run(
+        "procedure F(): Text var D: Date; B: Boolean; begin D := DMY2Date(5, 3, 2024); B := true;
+            exit(D.ToText() + '|' + B.ToText() + '|' + Format(D)); end;",
+        "F",
+    );
+    let t = text(r);
+    let parts: Vec<&str> = t.split('|').collect();
+    assert_eq!(parts[0], parts[2], "{t}");
+    assert_eq!(parts[1], "Yes", "{t}");
+}

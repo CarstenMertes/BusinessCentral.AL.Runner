@@ -369,6 +369,18 @@ impl Session {
                     )
                 };
             }
+            // System Application's Data Type Management does `if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`, so
+            // Get(RecordId) on a RecordRef never opened answers false and does not open it (about 260 Tests-ERM tests,
+            // CheckICPartner among them). The error text of Get with the result unused, and Get of anything but a
+            // RecordId, stay refused (open_ref). Not pinned: assumption recordref-get-unopened.
+            "Get"
+                if matches!(&*lib.borrow(), LibraryValue::Empty)
+                    && self.ret_used
+                    && matches!(args.first(), Some(Value::Library(_, l)) if matches!(&*l.borrow(), LibraryValue::RecordId { .. })) =>
+            {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefGetUnopened);
+                return Ok(Value::Boolean(false));
+            }
             _ => {}
         }
         let rec = Self::open_ref(lib, &format!("RecordRef.{method}"))?;

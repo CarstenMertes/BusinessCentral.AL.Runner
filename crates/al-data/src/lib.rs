@@ -115,6 +115,10 @@ pub trait VirtualTables {
     fn write_refusal(&self, _t: &TableDef) -> Option<String> {
         None
     }
+    /// Whether a Modify of table `t` that writes back the row it already has is accepted and changes nothing.
+    fn accepts_unchanged_modify(&self, _t: &TableDef) -> bool {
+        false
+    }
     /// The reads take the store they are called through, so a provider can compose its rows from
     /// stored tables too (the Aggregate Permission Set lists the tenant's permission sets).
     fn get(

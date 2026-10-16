@@ -843,7 +843,22 @@ impl Store for MemStore {
     }
 
     fn modify(&mut self, cx: &AccessContext, t: &TableDef, row: Row) -> Result<WriteOutcome, StoreError> {
-        if self.virtual_of(t).is_some() {
+        if let Some(v) = self.virtual_of(t) {
+            // A row written back as it is changes nothing.
+            if v.accepts_unchanged_modify(t) {
+                // The system fields (Id, created and modified stamps) are the record's, not the row's.
+                let same = v.get(self, cx, t, &t.primary_key(&row))?.is_some_and(|old| {
+                    old.iter()
+                        .zip(&row)
+                        .zip(&t.fields)
+                        .filter(|(_, f)| f.id < 2_000_000_000)
+                        .all(|((a, b), _)| al_builtins::ops::compare(a, b).is_ok_and(|o| o == Ordering::Equal))
+                });
+                if same {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FeatureKeyUnchangedModify);
+                    return Ok(WriteOutcome::Done);
+                }
+            }
             return Err(self.read_only(t, "Modify"));
         }
         let k = Key(t.primary_key(&row));

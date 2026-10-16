@@ -135,7 +135,11 @@ fn outcomes_app(app_id: &str, main: &str, roots: al_sema::check::Roots) -> Vec<(
     for a in program.apps.iter_mut().filter(|a| a.version.is_empty()) {
         a.version = "1.0.0.0".into();
     }
-    let engine = Engine::new(std::sync::Arc::new(program), blocked);
+    let engine = Engine::with_target(
+        std::sync::Arc::new(program),
+        blocked,
+        Some(al_version::Target::for_bc(al_version::BcVersion::parse("27.5.0.0").unwrap())),
+    );
     let oi = l
         .program
         .objects
@@ -194,6 +198,24 @@ fn a_virtual_platform_table_is_read_but_cannot_be_written() {
     );
     let why = not_run(&o, "WritesTheIntegerTable");
     assert!(why.contains("virtual table 'Integer'"), "{why}");
+}
+
+// Microsoft's Tests-ERM `Initialize` sets a Feature Key to the value it already has and calls Modify (243 tests were
+// refused with "Modify on virtual table 'Feature Key'"). A Modify that changes nothing is accepted; a changed Enabled
+// is still refused, as its persistence is not pinned (docs/probes-needed.md).
+#[test]
+fn a_feature_key_modify_that_changes_nothing_is_accepted_and_a_change_is_refused() {
+    let o = outcomes(
+        r#"codeunit 50000 "T" { Subtype = Test;
+  [Test] procedure ModifyUnchanged() var K: Record "Feature Key"; begin K.FindFirst(); K.Enabled := K.Enabled; K.Modify(); end;
+  [Test] procedure ModifyChanged() var K: Record "Feature Key"; begin K.FindFirst(); if K.Enabled = K.Enabled::None then K.Enabled := K.Enabled::"All Users" else K.Enabled := K.Enabled::None; K.Modify(); end; }"#,
+    );
+    assert!(
+        o.iter().any(|(n, o)| n == "ModifyUnchanged" && *o == Outcome::Pass),
+        "{o:?}"
+    );
+    let why = not_run(&o, "ModifyChanged");
+    assert!(why.contains("virtual table 'Feature Key'"), "{why}");
 }
 
 #[test]

@@ -480,6 +480,11 @@ impl VirtualTables for Providers {
         self.served.get(t.object as usize).is_some_and(Option::is_some)
     }
 
+    // Microsoft's Tests-ERM `Initialize` writes a Feature Key back with the Enabled it has (docs/probes-needed.md, Feature Key).
+    fn accepts_unchanged_modify(&self, t: &TableDef) -> bool {
+        self.served.get(t.object as usize) == Some(&Some(Virtual::FeatureKey))
+    }
+
     fn write_refusal(&self, t: &TableDef) -> Option<String> {
         (self.served.get(t.object as usize) == Some(&Some(Virtual::Unprovided))).then(|| {
             format!(

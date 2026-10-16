@@ -1,6 +1,6 @@
 # ADR-036: One resolved tree from check to lower
 
-- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md). Amended 2026-10-16: the bound tree (decisions 1 and 3, migration steps 3 to 5) is not pursued; see the amendment at the end.
 - Date: 2026-10-15
 - Related: ADR-011 (typed IR), ADR-013 (demand-driven check), ADR-029 (incremental compile), ADR-033 (symbolic IR),
   review `docs/reviews/2026-10-compile-ir-review.md` (F1.1, R8)
@@ -68,3 +68,49 @@ keyed by byte offsets, so it cannot be reused when a file changes.
 ## Conformance
 
 `assert_same_program` and diagnostic equality in CI on the corpus; the differential tools.
+
+## Amendment 2026-10-16: the bound tree is not pursued
+
+**What was measured.** A profile of the cold compile (`perf record -e instructions:u` on `perf_budget`, BC corpus pin 12)
+showed no second name resolution of the size the review assumed ("about 45 % of CPU"). Parsing and the syntax tree
+are about 40 % of the instructions; the two position maps (`PosMap<Ty>`, `PosMap<Res>`: inserts, lookups, rehash,
+copies) are 5 to 9 %. Lowering reads the check's answers once; resolution already happens once.
+
+**What was done instead (merged).** Steps 1 and 2 as cheaper changes: `Ty` names are `Arc<str>` (a copy shares the
+name), the string-keyed maps of the check and the lowering use FxHash, a call's candidate list is borrowed, not cloned.
+With the type-table of ADR-036 step 0 included, the cold compile went from 2,105,730 to 1,958,345 instructions per
+object, under the old limit.
+
+**What was tried and dropped.** Replacing `PosMap` by per-routine sorted chunks (the check appends to an open buffer;
+a routine's end sorts it into a chunk; lookups binary-search the chunk, with a hint kept by the lowering). The share of
+the instructions spent in the maps fell from 9.2 % to 4.7 %, but the cold compile did not get cheaper: 608,370 to 628,000
+instructions per KiB of source with one thread per phase (+3.2 %), 627,128 to 632,886 with all threads (+0.9 %). The
+rest of the compile grew by more than the maps saved, and the cause was not found. A single shard in place of 16 gave
+-0.3 %. The chunk code is not kept in the repository.
+
+**Decision.** The tree (migration steps 3 to 5) is superseded: it would change where an answer is stored, not how often
+it is computed, its payoff is the 5 to 9 % of the maps, it costs 20 to 30 agent-days and raises the budget while it is
+built, and the native-code path (Cranelift) starts from the IR or the bytecode, not from a tree. Decisions 2 (types
+name objects without copies) and 4 and 5 stay as principles; the check stays the only place that resolves.
+
+### What a later bound tree would reuse
+
+Carries over unchanged:
+
+- The check's answers by node position (`CheckResult::types`, `resolutions`): a tree is built from them, node by node,
+  in one walk of the routine; nothing else resolves.
+- `Ty` with shared names, and (when it lands) object keys in place of names.
+- The type table of the lowered IR (`Routine::expr_tys`, `al_ir::types::ExprTypes`, `lower/tys.rs`): one type per IR
+  expression in post-order, with the check that every record is the record of its node (kind, number of children,
+  size). A tree node would hold the same type directly, and the table would then be dropped.
+- The compile-dump equality (`compile_dump` byte-identical, `AL_CHECK_LINK`, `demand_vs_eager`, `cache_vs_uncached`)
+  as the proof of each step.
+
+A tree would add:
+
+- Nodes with children and slots (local and global variable numbers instead of names), so lowering no longer asks the
+  CST anything; the `Cst` fallback by position in the design of `docs/reviews/2026-10-bound-tree-plan.md` for the
+  construct-by-construct migration.
+- A per-routine node index that does not depend on byte offsets, for an incremental unit that survives edits above
+  the routine (today the maps are keyed by offset, so an edit shifts every key below it).
+- A place for facts that are not types or resolutions (conversions to insert, the `Stmt::Assume` marks, refusal reasons).

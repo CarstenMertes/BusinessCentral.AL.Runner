@@ -644,6 +644,11 @@ impl Session {
         let (start, end) = Self::for_limits(from, to)?;
         f.locals[site.i as usize] = Value::BigInteger(start);
         f.locals[site.end as usize] = Value::BigInteger(end);
+        // A loop over an empty range still gives the counter the start value
+        // (misc/lt-system-functions/ControlFlow.al:ForLoop_VariableAfterLoop: `for i := 5 to 4` leaves 5).
+        if if site.down { start < end } else { start > end } {
+            self.for_set(site, f)?;
+        }
         Ok(())
     }
 

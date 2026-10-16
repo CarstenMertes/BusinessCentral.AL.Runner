@@ -82,32 +82,12 @@ fn every_corpus_table_field_has_a_known_type() {
 /// not a pass. A file with no gap left fails the test below, so the list only shrinks (ADR-007).
 const KNOWN_GAP_FILES: &[(&str, &str)] = &[
     (
-        "types/PUContinue.al",
-        "the checker does not resolve the continue statement (corpus bump 9)",
-    ),
-    (
-        "misc/lt-system-functions/ControlFlow.al",
-        "the checker does not resolve the continue statement (corpus bump 10)",
-    ),
-    (
-        "types/lt-variant/VaTTextConst.al",
-        "the checker does not resolve a TextConst variable used as a value (corpus bump 10)",
-    ),
-    (
-        "xml/XmlDocReadWrite.al",
-        "XmlReadOptions.PreserveWhitespace is not in the builtin catalog (corpus bump 10)",
-    ),
-    (
         "misc/lt-inferred-behaviors/P69PartPageControl.al",
         "the checker does not resolve a member of a part page's control (corpus bump 11)",
     ),
     (
         "misc/lt-probes-needed-6/PnF18ThisInTable.al",
         "the checker does not resolve `this` inside a table (corpus bump 11)",
-    ),
-    (
-        "types/lt-variant-is-text-streams/LTP89TextConst.al",
-        "the checker does not resolve a TextConst declared in a var section (PadSrc, SplitSrc; corpus bump 12)",
     ),
 ];
 

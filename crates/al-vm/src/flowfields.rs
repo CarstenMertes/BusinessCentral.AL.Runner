@@ -515,12 +515,28 @@ impl Session {
         cx: &al_data::AccessContext,
         t: &TableDef,
         filters: &[FieldFilter],
+        f: impl FnMut(&[Value]) -> Result<(), Signal>,
+    ) -> Result<(), Signal> {
+        self.each_row_of(None, cx, t, filters, f)
+    }
+
+    /// `each_row` over the rows `rec` reads: a temporary record has a table of its own (`store_for`), so its sums
+    /// are over those rows and not over the permanent table of the same number.
+    pub(crate) fn each_row_of(
+        &mut self,
+        rec: Option<&Rec>,
+        cx: &al_data::AccessContext,
+        t: &TableDef,
+        filters: &[FieldFilter],
         mut f: impl FnMut(&[Value]) -> Result<(), Signal>,
     ) -> Result<(), Signal> {
         let mut after: Option<Vec<Value>> = None;
         loop {
-            let next = self
-                .store
+            let store = match rec {
+                Some(r) => self.store_for(r),
+                None => &mut self.store,
+            };
+            let next = store
                 .next(
                     cx,
                     t,
@@ -560,7 +576,7 @@ impl Session {
         }
         let mut sums = vec![Decimal::ZERO; positions.len()];
         let cx = self.cx_for(rec, &t)?;
-        self.each_row(&cx, &t, &filters, |row| {
+        self.each_row_of(Some(rec), &cx, &t, &filters, |row| {
             for (s, &p) in sums.iter_mut().zip(positions) {
                 *s += number(&row[p]).ok_or_else(|| Signal::Unsupported("sum over a non-number".into()))?;
             }

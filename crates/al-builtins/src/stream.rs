@@ -594,7 +594,7 @@ fn is_unit(u: &[u8], c: u8) -> bool {
 /// `Read` into an Integer (4 bytes, little endian: streams/TestInOutStream.al
 /// InOutStream_Write_Integer_ReadInteger) or a Byte (one byte: the HexOf helper of
 /// streams/TestStreamsRuntimeContracts.al reads a stream byte by byte). Other types are not pinned.
-fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     // `Read(Text, Length)` on a single-byte stream takes Length bytes as one character each
     // (xml/TestXmlDocumentWriteToOutStreamContracts.al:LeadingBytes reads the bytes 239 187 191 of a
     // byte order mark into a Text[3]); bytes 128 to 159, other encodings and a used result are not pinned.
@@ -682,6 +682,22 @@ fn in_read(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
             ));
         }
     };
+    // At the end of a stream that holds data nothing is read: the result is 0 and the variable takes its default value
+    // (streams/lt-stream-read-write-media/P102ReadTyped.al: every `pastend_*`). A stream without any data keeps the error below.
+    let at_end = with_in(r.as_deref_mut(), |s| Ok(s.len() > 0 && s.pos >= s.len()))?;
+    if at_end {
+        a[0] = Value::default_for(&match &a[0] {
+            Value::Integer(_) => crate::value::RtType::Integer,
+            Value::Boolean(_) => crate::value::RtType::Boolean,
+            Value::Date(..) => crate::value::RtType::Date,
+            Value::Byte(_) => crate::value::RtType::Byte,
+            Value::Char(_) => crate::value::RtType::Char,
+            Value::BigInteger(_) => crate::value::RtType::BigInteger,
+            Value::Guid(_) => crate::value::RtType::Guid,
+            _ => crate::value::RtType::Decimal,
+        });
+        return Ok(Value::Integer(0));
+    }
     let bytes = with_in(r, |s| {
         let pos = s.pos;
         // Fewer bytes than the type needs, also none at all: the stream data error (streams/TestProbeStreamContracts.al:
@@ -872,7 +888,10 @@ fn out_write(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
                 "OutStream.Write with a length of something else than a Text and an Integer (not pinned)",
             );
         };
-        let cut: String = t.chars().take(usize::try_from(*n).unwrap_or(0)).collect();
+        // A negative length writes the whole text (streams/lt-stream-read-write-media/P102WriteTextLike.al:P102_Text `lenneg_ret`).
+        // A Code ignores the length and writes the whole text (:P102_Code `len2_ret` is 5).
+        let take = if *n < 0 || matches!(a[0], Value::Code(_)) { usize::MAX } else { usize::try_from(*n).unwrap_or(0) };
+        let cut: String = t.chars().take(take).collect();
         if !cut.is_ascii() {
             return unsupported("OutStream.Write(Text, Length) of non-ASCII characters (not pinned)");
         }

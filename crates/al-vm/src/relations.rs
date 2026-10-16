@@ -77,6 +77,16 @@ impl Session {
                     let al_ir::Const::Text(text) = &c.value else {
                         return unsupported("a filter condition of a TableRelation without its text");
                     };
+                    // The AL string of `filter('A|B')` is the filter text `A|B`; the blank `filter('')` stays the blank value
+                    // (query/lt-query-links-relations-httpstream/RelArms.al:P100_ZoneFilterArms).
+                    let unquoted;
+                    let text = match text.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
+                        Some(inner) if !inner.is_empty() && !inner.replace("''", "").contains('\'') => {
+                            unquoted = inner.replace("''", "'");
+                            &unquoted
+                        }
+                        _ => text,
+                    };
                     let engine = self.engine.clone();
                     let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
                     let expr = al_builtins::filter::parse_filter_with(text, &[], &t.fields[c.field].ty, &enums)
@@ -212,8 +222,12 @@ impl Session {
             ),
             // The related table "Field" (2000000041) answers DB:RecordNotFound (staging types/PZMisc.al:
             // Validate_TableRelation_MissingFieldNumber, BC 29.0); other tables DB:PrimRecordNotFound.
+            // A relation with a where() filter answers DB:NothingInsideFilter, whether the value is missing or fails the filter
+            // (query/lt-query-links-relations-httpstream/RelQuotedEnum.al:P100_Validate_EachKind).
             code: if self.engine.program.objects[related.object as usize].id == Some(2_000_000_041) {
                 "DB:RecordNotFound".into()
+            } else if !wheres.is_empty() {
+                "DB:NothingInsideFilter".into()
             } else {
                 "DB:PrimRecordNotFound".into()
             },

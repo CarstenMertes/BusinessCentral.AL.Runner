@@ -356,6 +356,39 @@ impl Lowerer<'_> {
                         ir::Arg::Ref(self.place(a)?)
                     } else if let Some(el) = elem {
                         ir::Arg::Value(ir::Expr::Convert(self.rt(&el)?, Box::new(self.expr(a)?)))
+                    // A Variant argument with a standard format number 3 to 8 raises an error that names the type
+                    // 'Variant' (corpus types/lt-scalars/ScT70052.al:Integer_Numbers, n3 to n8, and the other ScT Fmt
+                    // codeunits). The value in a Variant does not carry that, so the number is checked here.
+                    } else if id.starts_with("System.Format#")
+                        && i == 2
+                        && args.len() == 3
+                        && matches!(self.ty_of(&args[0]), Ty::Variant)
+                        && matches!(self.ty_of(a), Ty::Integer)
+                    {
+                        let number = self.expr(a)?;
+                        let literal = a.text().to_string().trim().parse::<i32>().ok();
+                        let simple = matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)));
+                        if literal.is_none() && !simple {
+                            return Err("Format of a Variant with a standard format number that is an expression: the error for a number the type lacks names the type 'Variant', which is checked only for a literal or a variable".into());
+                        }
+                        let mut guarded = number.clone();
+                        for n in (3..=8).rev() {
+                            guarded = ir::Expr::Ternary(
+                                Box::new(ir::Expr::Binary(
+                                    ir::BinOp::Eq,
+                                    Box::new(number.clone()),
+                                    Box::new(ir::Expr::Const(ir::Const::Integer(n))),
+                                )),
+                                Box::new(ir::Expr::Fail {
+                                    message: format!(
+                                        "Standard format number {n} does not exist for the type 'Variant'."
+                                    ),
+                                    code: "InvalidStandardFormat".into(),
+                                }),
+                                Box::new(guarded),
+                            );
+                        }
+                        ir::Arg::Value(guarded)
                     } else if id.starts_with("System.Format#") && i == 0 {
                         ir::Arg::Value(self.format_option_field(args.len() == 1, a)?)
                     // The substituted values of StrSubstNo, Message and Error are `Format`ted: an Option

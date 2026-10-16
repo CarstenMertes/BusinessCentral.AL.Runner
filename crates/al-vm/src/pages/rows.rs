@@ -873,14 +873,35 @@ impl Session {
         }
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
         st.borrow_mut().modal = modal && !trapped;
-        let handler = self.open_page(&st, PageMode::Edit, record, if trapped { None } else { Some(kind) })?;
+        let handler = self.open_page(
+            &st,
+            PageMode::Edit,
+            record.clone(),
+            if trapped { None } else { Some(kind) },
+        )?;
         let Some(handler) = handler else {
             return Ok(Value::Null);
         };
         if field {
             return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
         }
-        self.answer_page(&st, handler, modal)
+        let answer = self.answer_page(&st, handler, modal)?;
+        // A lookup page closed with LookupOK hands the record it ended on back to the caller's record variable
+        // (`if Page.RunModal(Page::"X List", Rec) = Action::LookupOK then ...Rec...`). Not pinned by a corpus test;
+        // Base Application's Req. Jnl. Management WkshTemplateSelection reads the chosen template this way
+        // (Tests-SCM-Planning OpenPlanningWorksheetOnRequisitionLine); assumption lookup-run-modal-returns-record.
+        if let (true, Some(r), Value::Option(o, _)) = (modal, &record, &answer) {
+            let ok = usize::try_from(*o)
+                .ok()
+                .and_then(|i| al_builtins::value::ACTION_MEMBERS.get(i))
+                .is_some_and(|m| *m == "LookupOK");
+            let picked = st.borrow_mut().lookup_pick.take();
+            if let (true, Some(selected)) = (ok, picked) {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::LookupRunModalReturnsRecord);
+                r.borrow_mut().fields = selected;
+            }
+        }
+        Ok(answer)
     }
 
     /// A `[ModalPageHandler]` typed as the Page itself (handlers/PSModalPageHandlerTyped.al): the handler gets the page

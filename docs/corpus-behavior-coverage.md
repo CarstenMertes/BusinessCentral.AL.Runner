@@ -9,7 +9,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
 | Triggers per object kind | 164 | 108 | 128 | 52 | 44 |
-| Object properties per object kind | 1110 | 261 | 1074 | 849 | 632 |
+| Object properties per object kind | 1110 | 261 | 1074 | 849 | 630 |
 | Platform and system events | 122 | 12 | 28 | 16 | 15 |
 | Statements and expressions | 59 | 54 | 53 | 0 | 0 |
 | Runtime error sites (text pinned) | 40 | 37 | - | 3 | - |
@@ -140,7 +140,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | tableextension/field | `MovedFrom` | 85 | no | 0 |
 | page/field | `AssistEdit` | 83 | yes | 0 |
 | xmlport/fieldattribute | `Occurrence` | 83 | no | 0 |
-| page/field | `NotBlank` | 82 | no | 0 |
+| page/field | `NotBlank` | 82 | yes | 0 |
 | report/field | `Importance` | 77 | no | 0 |
 | enum | `Access` | 75 | yes | 0 |
 | table/key | `MaintainSQLIndex` | 75 | no | 0 |
@@ -167,7 +167,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | page/group | `ObsoleteTag` | 41 | yes | 0 |
 | pageextension/action | `RunPageLink` | 41 | yes | 0 |
 | report/field | `Lookup` | 41 | yes | 0 |
-| report/field | `NotBlank` | 39 | no | 0 |
+| report/field | `NotBlank` | 39 | yes | 0 |
 | page | `ObsoleteReason` | 37 | yes | 0 |
 | page | `ObsoleteState` | 37 | yes | 0 |
 | page | `ObsoleteTag` | 37 | yes | 0 |

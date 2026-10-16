@@ -334,6 +334,9 @@ pub struct Session {
     guid_seed: i32,
     /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
     pub(crate) rng: al_host::random::NetRandom,
+    /// How many numbers `Random` has drawn in this session (a test that draws after tests that did not run sees another
+    /// sequence than BC's).
+    pub(crate) random_draws: u64,
     /// How many `Randomize()` calls without a seed the session has seen.
     pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
@@ -510,6 +513,7 @@ impl Session {
             next_guid: 0,
             guid_seed: random_seed,
             rng: al_host::random::NetRandom::new(random_seed),
+            random_draws: 0,
             unseeded_randomizes: 0,
             next_row_version: 0,
             autoinc: Default::default(),
@@ -697,6 +701,20 @@ impl Session {
                 } else {
                     (0..n).map(|_| self.default_value(el)).collect()
                 };
+                // The elements of an array of temporary records share one temporary table: Inventory Profile
+                // Offsetting keeps demand and supply in `InventoryProfile: array[2] of Record "Inventory Profile"
+                // temporary`, fills element 1 and plans with element 2 (Base Application, Microsoft's Tests-SCM-Planning
+                // need it). Not pinned by a corpus test (assumption temporary-record-array-shares-table).
+                if let Some(Value::Record(first)) = cells.first() {
+                    if let Some(id) = first.borrow().temp_id.clone() {
+                        for c in cells.iter().skip(1) {
+                            if let Value::Record(rc) = c {
+                                rc.borrow_mut().temp_id = Some(id.clone());
+                            }
+                        }
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TempRecordArrayShares);
+                    }
+                }
                 Value::Array(Rc::new(RefCell::new(cells)))
             }
             other => Value::default_for(other),
@@ -765,6 +783,11 @@ impl Session {
     /// The changes made to restored rows since install scope was last entered.
     pub fn restored_changes(&self) -> Vec<al_data::memory::RestoredChange> {
         self.store.restored_changes()
+    }
+
+    /// How many numbers `Random` has drawn in this session.
+    pub fn random_draws(&self) -> u64 {
+        self.random_draws
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {

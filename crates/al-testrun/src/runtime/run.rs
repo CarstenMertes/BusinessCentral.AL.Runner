@@ -265,6 +265,9 @@ pub(crate) fn run_codeunit_core(
     // Set by the first test that was refused while it ran: it stopped half way, so what it left in
     // the codeunit's AL state (globals, single-instance codeunits) is not what BC would have left.
     let mut refused_mid_run: Option<String> = None;
+    // Set by the first test of the codeunit that did not pass: it drew other numbers from `Random` than BC did, and the
+    // sequence is the session's.
+    let mut earlier_not_run: Option<String> = None;
     let mut panicked = false;
     for r in tests.iter().copied() {
         // A cancelled run starts no further test (the one running finishes).
@@ -272,6 +275,7 @@ pub(crate) fn run_codeunit_core(
             break;
         }
         let test_started = std::time::Instant::now();
+        let draws_before = session.random_draws();
         let routine = &obj.routines[r];
         let handlers = resolve_handlers(lowered, object, r);
         let mut committed = false;
@@ -408,6 +412,22 @@ pub(crate) fn run_codeunit_core(
                 }
             }
         };
+        let drew = session.random_draws() > draws_before;
+        let fresh_not_run = match &outcome {
+            Outcome::NotRun(why) => Some(
+                format!("{}: did not run ({why})", routine.name)
+                    .chars()
+                    .take(120)
+                    .collect::<String>(),
+            ),
+            Outcome::Fail(why) => Some(
+                format!("{}: failed ({why})", routine.name)
+                    .chars()
+                    .take(120)
+                    .collect::<String>(),
+            ),
+            _ => None,
+        };
         // A failure after a test that was refused mid-run is not trusted: the test may have set a
         // global (an "initialized" flag, a binding) whose setup was rolled back with it, and the
         // codeunit's tests share that state (TestIsolation keeps the instance). Passes stay.
@@ -417,6 +437,19 @@ pub(crate) fn run_codeunit_core(
             )),
             (o, _) => o,
         };
+        // A failure of a test that draws random numbers after a test that did not pass is not trusted: the sequence of
+        // `Random` is shared by the tests of the session (Library - Random seeds it once), BC drew the numbers of the test that
+        // did not run, so this test sees other numbers than it does in BC (Tests-SCM-Planning
+        // CalcPlanReqWkshForTransferLFLItem: a random end date before a random receipt date).
+        let outcome = match (outcome, &earlier_not_run) {
+            (Outcome::Fail(m), Some(first)) if drew => Outcome::NotRun(format!(
+                "a test before this one in the codeunit did not pass ({first}) and this test draws random numbers: a test that stopped early or did not run leaves other numbers of the shared sequence than BC's; this failure is not trusted: {m}"
+            )),
+            (o, _) => o,
+        };
+        if let Some(why) = fresh_not_run {
+            earlier_not_run.get_or_insert(why);
+        }
         // Whether a Commit() inside a test is kept or ignored under Function isolation is not
         // pinned (docs/probes-needed.md): a test that passed through one is not reported as run.
         let outcome = match outcome {

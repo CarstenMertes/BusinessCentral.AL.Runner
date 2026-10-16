@@ -1935,7 +1935,7 @@
           "ms_uses": 807,
           "name": "NotBlank",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "record/lt-record-write/RcBInit.al:93"
         },
         {
@@ -3177,7 +3177,7 @@
           "ms_uses": 82,
           "name": "NotBlank",
           "pinned": false,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": null
         },
         {
@@ -3681,7 +3681,7 @@
           "ms_uses": 39,
           "name": "NotBlank",
           "pinned": false,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": null
         },
         {
@@ -13365,7 +13365,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 868,
+        "line": 891,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:181",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."

@@ -155,6 +155,7 @@ impl Session {
             Some(Value::Integer(n)) => n.abs().max(1),
             other => return unsupported(format!("Random with {}", other.describe())),
         };
+        self.random_draws += 1;
         Ok(Value::Integer(self.rng.next_below(bound) + 1))
     }
 

@@ -253,6 +253,18 @@ registry! {
         tests: "Microsoft's Get Demand To Reserve with its Assembly extension, run by Reservation Worksheet tests.",
         probe: "A report with SaveValues whose first run confirms the default and whose second run sets the variable before RunModal; read the variable in OnPreReport.",
     },
+    TempRecordArrayShares => {
+        id: "temporary-record-array-shares-table",
+        assumed: "The elements of an array of temporary records of one table share one temporary table (each element has its own filters and position).",
+        tests: "Microsoft's Tests-SCM-Planning (Inventory Profile Offsetting keeps demand and supply in InventoryProfile: array[2] of Record \"Inventory Profile\" temporary).",
+        probe: "An array[2] of a temporary record: insert through element 1, count and read through element 2.",
+    },
+    LookupRunModalReturnsRecord => {
+        id: "lookup-run-modal-returns-record",
+        assumed: "Page.RunModal(Id, Rec) closed with LookupOK leaves the record the page ended on in Rec.",
+        tests: "Microsoft's Req. Jnl. Management WkshTemplateSelection (Tests-SCM-Planning).",
+        probe: "A lookup page of a table with three rows, a handler that moves to the second row and invokes OK: read the record variable after Page.RunModal.",
+    },
     ImplicitCategoryGroup => {
         id: "implicit-category-group",
         assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",

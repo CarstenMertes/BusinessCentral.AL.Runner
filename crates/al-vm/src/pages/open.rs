@@ -527,6 +527,16 @@ impl Session {
         // Close() and a platform close store too, docs/probes-needed.md).
         if !(via_action && matches!(action, "Cancel" | "LookupCancel" | "No")) {
             self.store_page_values(st);
+            // A lookup page closed with OK on a stored row hands that row to the caller's record variable (not on the blank
+            // new-line row: corpus misc/lt-page-run-overloads RunModal_NonTempRecord_ShowsDbRows keeps `Row.Code` = D1).
+            let on_row = {
+                let s = st.borrow();
+                s.lookup && s.cursor == Cursor::Row && !s.draft
+            };
+            if on_row && self.has_source(st) {
+                let fields = self.page_rec(st).borrow().fields.clone();
+                st.borrow_mut().lookup_pick = Some(fields);
+            }
         }
         self.mark_closed(st);
         st.borrow_mut().result = Some(action.to_string());

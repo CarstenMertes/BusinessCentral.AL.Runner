@@ -662,6 +662,15 @@ impl Lowerer<'_> {
     /// value and what it assigns to its parameter stays there. Whether BC writes the assignment back to
     /// `CurrFieldNo` is not pinned (docs/probes-needed.md).
     pub(crate) fn by_var_arg(&mut self, a: &SyntaxNode) -> L<ir::Arg> {
+        // `this` in a report, passed to a `var` parameter of the report's type: the parameter holds the running
+        // report (see `expr` for the assumption).
+        if a.kind() == SyntaxKind::NameRef
+            && crate::check::is_this_keyword(a)
+            && self.ws.objects[self.oi].kind == ObjKind::Report
+            && !self.globals.contains_key("this")
+        {
+            return Ok(ir::Arg::Value(self.expr(a)?));
+        }
         match self.place(a) {
             Ok(p) => Ok(ir::Arg::Ref(p)),
             Err(_)

@@ -193,6 +193,12 @@ registry! {
         tests: "Backup Storage test library (array[20, 1000] of RecordRef); 43 Tests-Misc tests.",
         probe: "The chained form on a two-dimensional array, read and write.",
     },
+    ReportThisPassedOn => {
+        id: "report-this-passed-on",
+        assumed: "`this` in a report can be passed on (to a var parameter of the report's type, in an event for example) and is the running report: its procedures, and those of the report extensions, work on it.",
+        tests: "Whse.-Source - Create Document raises OnAfterPostReport(..., this); about 960 tests of the Tests-SCM buckets.",
+        probe: "A report that passes this to an event in OnPostReport; a subscriber calls a procedure of the report and one of a reportextension on the parameter.",
+    },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",
         assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",

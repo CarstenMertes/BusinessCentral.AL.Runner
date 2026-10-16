@@ -504,6 +504,13 @@ impl Session {
 
     /// First use of an instance: its globals are made and, for a report, `OnInitReport` runs once.
     pub(crate) fn first_use(&mut self, inst: &Inst) -> Result<(), Signal> {
+        // A report variable a `Run` just reset starts again with its next call of anything but `Run`: `OnInitReport`
+        // runs again, so a procedure called after a Run sees what OnInitReport set (corpus
+        // pages/lt-page-report-events/P84ReportSender.al:Triggers_Run_SenderInEachTrigger: `GetMarker()` after `Run()` is
+        // `init`; report/TestProbeReportContracts.al:ReportVariable_RunTwice_GlobalsReset for the builtins).
+        if std::mem::take(&mut inst.borrow_mut().rerun) {
+            inst.borrow_mut().initialized = false;
+        }
         if inst.borrow().initialized {
             return Ok(());
         }

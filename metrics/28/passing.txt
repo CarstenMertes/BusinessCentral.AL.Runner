@@ -10,6 +10,7 @@
 60006 ReportVarRun_OnInitReportRunsOnceBeforeTheBody
 60006 ReportVarSetterBeforeRun_SurvivesOnInitReport
 60006 StaticReportRun_OnInitReportRunsOnce
+60008 BaseAppReport296_VATDateEnabledLeftFalse_VATDateIsHiddenAndReadOnly
 60008 BaseAppReport91_GroupBoundToFalseGlobal_HidesItsField
 60008 OwnReport_BothBoundToTrueGlobals_VisibleAndEditable
 60008 OwnReport_EditableBoundToFalseGlobal_IsReadOnly
@@ -7011,6 +7012,7 @@
 71105 BlobNotLoaded_AfterGet
 71105 FlowFilter_InTheText
 71105 TableFilterField_Unset
+71106 GlobalsAfterRun_AndInitReport
 71106 PreReportFilter_DiscardedOrKept
 71106 SecondExecute_OnOneVariable
 71106 UseRequestPage_Getter
@@ -7815,6 +7817,15 @@
 73040 Table_Resolve_A
 73040 Table_Resolve_B
 73040 Table_ResolvedOnly_Sel
+73044 Proc_NestedRaiseFromSubscriber
+73044 Proc_NotBound_NoSubscriber
+73044 Proc_SenderIsReportInstance
+73044 Proc_TwoInstances
+73044 Triggers_Run_AfterUnbind
+73044 Triggers_Run_NoRows
+73044 Triggers_Run_SenderInEachTrigger
+73044 Triggers_Run_SubscriberChangesMarker
+73044 Triggers_StaticRun_SubscriberStillSeesSender
 73049 BindOutside_NoTriggerBinding
 73049 DoubleBind_AcrossTriggers
 73049 Get_BindUnbind

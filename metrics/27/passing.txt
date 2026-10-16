@@ -1588,6 +1588,7 @@
 60181 Clear_List_ResetsToEmpty
 60181 Clear_Record_DoesNotDeleteFromDB
 60181 Clear_Record_ResetsAllFields
+60181 Clear_TextBuilder_ResetsToEmpty
 60181 Clear_Text_ResetsToEmpty
 60182 List_Passed_PreservesOrder
 60182 List_ValueParam_SharesReference
@@ -6276,6 +6277,9 @@
 70094 Time_MillisecondValues
 70095 DateTime_MillisecondValues
 70096 Format9_Values
+70097 Insert_Cases
+70097 Remove_Cases
+70097 Replace_Cases
 70098 ConvertStr_Cases
 70098 DelStr_Cases
 70098 IncStr_Cases
@@ -6895,6 +6899,7 @@
 71013 ToText_IsSnapshot
 71014 Assignment_Semantics
 71014 ByValue_SharesInstance
+71014 Clear_Variable
 71014 Reassign_Param
 71014 Uninitialized_Usable
 71015 Capacity_Large
@@ -7643,6 +7648,7 @@
 72519 ClearAll_Globals
 72519 ClearAll_Locals_And_Parameters
 72519 ClearLastError_Semantics
+72519 Clear_Collections
 72519 Clear_Record_ResetsInitValueAndFilters
 72519 Clear_Record_Temporary
 72519 Clear_SimpleTypes
@@ -8366,6 +8372,7 @@
 74000 ClearJson
 74001 ClearJsonShared
 74002 ClearCollections2
+74003 ClearTextBuilder
 74007 ClearArrays
 74013 ClearRecordField
 74014 ClearParameters

@@ -1231,6 +1231,8 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                     | "XmlDocument"
                     | "XmlDocumentType"
                     | "XmlDeclaration"
+                    // types/TestClearContracts.al:Clear_TextBuilder_ResetsToEmpty.
+                    | "TextBuilder"
                     | "JsonObject"
                     | "JsonArray"
                     | "JsonValue"

@@ -470,6 +470,12 @@ registry! {
         tests: "Service Item Line CalculateResponseDateTime through Calendar Management: about 820 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
         probe: "T + 1000.0 and T - 1000.0 for a Decimal variable holding a whole number, and 0.",
     },
+    DurationAddDuration => {
+        id: "duration-add-duration",
+        assumed: "A Duration plus or minus a Duration is a Duration of the summed or subtracted milliseconds; an overflow is refused. (Duration times a whole number, DateTime and Time with a Duration are pinned by types/TestDurationContracts.al and types/PUTimeArithmetic.al.)",
+        tests: "Match Bank Payments (the telemetry timers of MatchEntries) through Tests-Bank ERM Bank Reconciliation and ERM Cash Manager: about 268 tests.",
+        probe: "D1 + D2, D1 - D2 and a negative result for two Duration variables, Format(Result, 0, 9), and the overflow at the BigInteger edge.",
+    },
 }
 
 thread_local! {

@@ -488,6 +488,15 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::Duration)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
+        // Duration +/- Duration is a Duration in milliseconds. Assumed (registry entry duration-add-duration): Match Bank
+        // Payments adds the Durations of its telemetry timers.
+        (V::Duration(a), V::Duration(b)) if matches!(op, Arith::Add | Arith::Sub) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::DurationAddDuration);
+            let n = if op == Arith::Add { a.checked_add(*b) } else { a.checked_sub(*b) };
+            return n
+                .map(V::Duration)
+                .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
+        }
         // DateTime + Duration is a DateTime and DateTime - DateTime a Duration, in milliseconds
         // (types/TestDurationContracts.al:44-171, session/TestDateTimeContracts.al:52-90). The undefined
         // DateTime is not pinned.
@@ -823,6 +832,15 @@ pub fn truthy(v: &Value) -> Result<bool, Signal> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // Microsoft test exception (no corpus pin): Match Bank Payments adds the Durations of its telemetry timers.
+    #[test]
+    fn two_durations_add_and_subtract_as_milliseconds() {
+        let add = arith(Arith::Add, &Value::Duration(1500), &Value::Duration(500)).unwrap();
+        assert!(matches!(add, Value::Duration(2000)));
+        let sub = arith(Arith::Sub, &Value::Duration(500), &Value::Duration(1500)).unwrap();
+        assert!(matches!(sub, Value::Duration(-1000)));
+    }
 
     #[test]
     fn a_text_with_the_call_stack_marker_is_not_equal_to_the_empty_text() {

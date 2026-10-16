@@ -104,6 +104,14 @@ impl Lowerer<'_> {
                                 // record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9 pins it for a
                                 // CalcFormula filter; docs/probes-needed.md for the TableRelation).
                                 rewrite_quotes(text)
+                            } else if !text.is_empty()
+                                && text.trim().is_empty()
+                                && matches!(self.members[t].fields[p].ty, Ty::Enum(_))
+                            {
+                                // `filter(" ")` on an enum field is the blank member as a quoted term; as bare
+                                // blank space it would read as an empty filter (corpus
+                                // record/TestCalcFormulaQuotedFilterTests.Codeunit.al:158 pins it for a CalcFormula).
+                                "' '".to_string()
                             } else {
                                 text.clone()
                             };

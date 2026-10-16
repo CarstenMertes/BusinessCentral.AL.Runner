@@ -883,7 +883,16 @@ impl Session {
         };
         let mut flat = 0usize;
         for (d, e) in dims.iter().zip(idx) {
-            let i = int(&Self::index_value(e, f)?)?;
+            let i = match Self::index_value(e, f)? {
+                // An Option member indexes by its ordinal: Base Application ServContractManagement
+                // SetServLedgEntryAmounts `EntryAmount[AmountType::Amount]` (Tests-SCM-Service, codeunit
+                // 136100 Service Contract, any test that signs a contract). Unprobed.
+                Value::Option(ord, _) => {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ArrayIndexByOption);
+                    i64::from(ord)
+                }
+                v => int(&v)?,
+            };
             if i < 1 || i > i64::from(*d) {
                 return Err(Signal::Unsupported(
                     "array index out of bounds (error text not pinned yet)".into(),

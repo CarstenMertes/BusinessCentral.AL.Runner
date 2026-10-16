@@ -1228,6 +1228,28 @@ fn table_relation_where_filter_rewrites_double_quoted_names() {
 }
 
 #[test]
+fn table_relation_where_filter_on_the_blank_enum_member_keeps_the_blank_as_a_quoted_term() {
+    // Base Application "Service Contract Line"."Service Item No.": `TableRelation = "Service Item"
+    // where(Blocked = filter(" "))`. The blank member is a filter term of its own, quoted the way a
+    // CalcFormula `filter(" ")` is (corpus record/TestCalcFormulaQuotedFilterTests.Codeunit.al:158,
+    // record/TestCalcFormulaQuotedFilterHeader.Table.al:43); unquoting lost it (Tests-SCM-Service,
+    // `where() of a relation: empty filter term`, about 300 tests).
+    let (_, l) = lower_src(
+        "enum 50930 \"ALT Blocked\" { value(0; \" \") { } value(1; Ship) { } }
+         table 50931 \"ALT Svc Item\" { fields { field(1; \"No.\"; Code[20]) { } field(2; Blocked; Enum \"ALT Blocked\") { } } }
+         table 50932 \"ALT Svc Line\" { fields {
+            field(1; \"No.\"; Code[20]) { }
+            field(2; Item; Code[20]) { TableRelation = \"ALT Svc Item\" where(Blocked = filter(\" \")); }
+         } }",
+    );
+    let f = flow(&l, "ALT Svc Line", "Item");
+    match &f.relation_arms[0].wheres.as_ref().expect("wheres understood")[0] {
+        ir::RelationWhere::Value { text, .. } => assert_eq!(text, "' '"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
 fn calc_formula_filters_rewrite_double_quotes_and_flow_references_resolve() {
     let (_, l) = lower_src(FLOW_TABLES);
     let q = flow(&l, "ALT Head", "Quoted").calc.expect("lowered");

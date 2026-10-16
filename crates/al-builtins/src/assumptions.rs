@@ -440,6 +440,12 @@ registry! {
         tests: "Gen. Jnl.-Show CT Entries (Credit Transfer Register UT.TestShowCTEntriesForGenJnlLine and the Payment Export tests); Base Application filters written '''%1'''.",
         probe: "SetFilter(TextField, '''%1''|''%2''', '', 'A') on rows with blank and A, then GetFilter and Count; with an Integer and a Code argument.",
     },
+    ArrayIndexByOption => {
+        id: "array-index-by-option",
+        assumed: "An array indexed by an Option member reads and writes the element at the member's ordinal (`A[Opt::Amount]` with `Opt: Option ,Amount,DiscAmount` is `A[1]`).",
+        tests: "Service Contract Management SetServLedgEntryAmounts (EntryAmount[AmountType::Amount]) in Tests-SCM-Service, e.g. codeunit 136100 Service Contract ChangeGlobalDimensionInLockedServiceContract; about 200 tests that sign a service contract.",
+        probe: "An array[4] of Decimal indexed by option members of `Option ,A,B,C,D`, assigned and read back by Integer index; also a member beyond the array bound.",
+    },
     PageEventSender => {
         id: "page-event-sender",
         assumed: "The sender of an event a page publishes with IncludeSender is the page itself (a Page variable on the running instance), not the page's Rec.",

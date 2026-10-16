@@ -317,6 +317,29 @@ fn is_path_temporary(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) ->
     Ok(Value::Boolean(path(a, 0)?.starts_with(TEMP_DIR)))
 }
 
+/// `Download(FromFile, ...)` and `View(FromFile, ...)` send a file from the server to the client: the file is read
+/// first, so the output of a report that was never produced is refused before the round trip is.
+fn download_file(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let name = path(a, 0)?;
+    c.fs_exists(&name)?;
+    unsupported("File.Download needs a client (a browser round trip), which a headless run has not")
+}
+
+fn view_file(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let name = path(a, 0)?;
+    c.fs_exists(&name)?;
+    unsupported("File.View needs a client (a browser round trip), which a headless run has not")
+}
+
+/// `DownloadFromStream` and `ViewFromStream` send a stream to the client: the stream is read first.
+fn download_stream(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let _ = c;
+    if let Some(stream) = a.first_mut() {
+        crate::stream::refuse_pending_in(stream)?;
+    }
+    unsupported("File.DownloadFromStream needs a client (a browser round trip), which a headless run has not")
+}
+
 /// A call that needs a client on the other side of the browser.
 macro_rules! client_round_trip {
     ($name:literal) => {
@@ -352,10 +375,10 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         "IsPathTemporary" => is_path_temporary,
         "Upload" => client_round_trip!("File.Upload"),
         "UploadIntoStream" => client_round_trip!("File.UploadIntoStream"),
-        "Download" => client_round_trip!("File.Download"),
-        "DownloadFromStream" => client_round_trip!("File.DownloadFromStream"),
-        "View" => client_round_trip!("File.View"),
-        "ViewFromStream" => client_round_trip!("File.ViewFromStream"),
+        "Download" => download_file,
+        "DownloadFromStream" => download_stream,
+        "View" => view_file,
+        "ViewFromStream" => download_stream,
         _ => return None,
     };
     Some(f)

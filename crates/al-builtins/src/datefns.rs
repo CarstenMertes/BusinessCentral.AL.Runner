@@ -100,12 +100,14 @@ fn create_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> O
         }
         return raise("The date is not valid.", "DateInvalid");
     }
-    // A closing date counts as its day (text/TestProbeTextDateFormatContracts.al:Dates_CreateDateTimeClosingDate).
-    let day = match &a[0] {
-        Value::Date(n, _) if *n > 0 => *n,
+    // A closing date is its day plus 23:59: with 12:00 PM the result reads 11:59 AM of the next day, with 0T 11:59 PM of the same
+    // day (misc/lt-probes-needed-2/PnBDateFormat.al:CreateDateTime_ClosingDate; only the minutes are pinned, the seconds are
+    // assumed to be 0, docs/probes-needed.md).
+    let (day, closing) = match &a[0] {
+        Value::Date(n, c) if *n > 0 => (*n, *c),
         other => return plain_date(other, "CreateDateTime").map(|_| unreachable!()),
     };
-    let time_of_day = (t - 1).max(0);
+    let time_of_day = (t - 1).max(0) + if closing { 23 * 3_600_000 + 59 * 60_000 } else { 0 };
     Ok(Value::DateTime((i64::from(day) - 1) * MS_PER_DAY + time_of_day + 1))
 }
 

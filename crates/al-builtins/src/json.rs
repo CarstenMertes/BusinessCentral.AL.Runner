@@ -231,7 +231,10 @@ fn path_of(h: &Handle) -> String {
     while let Some(p) = parent_of(&cur) {
         let seg = with_node(&p, |n| match n {
             JsonNode::Object(kids) => kids.iter().find(|(_, c)| Rc::ptr_eq(c, &cur)).map(|(k, _)| {
-                if !k.is_empty() && k.chars().all(|c| c.is_alphanumeric() || c == '_') {
+                // An empty key adds nothing to the path (json/lt-json-overloads/P88ObjectPathYaml.al:Path_SpecialKeys).
+                if k.is_empty() {
+                    String::new()
+                } else if k.chars().all(|c| c.is_alphanumeric() || c == '_') {
                     format!(".{k}")
                 } else {
                     format!("['{}']", k.replace('\'', "\\'"))
@@ -612,12 +615,17 @@ fn write(h: &Handle, out: &mut String) -> Result<(), Signal> {
             // 12345678901234567890.0 is written 12345678901234567900.0).
             Value::Decimal(d) => {
                 let digits = d.abs().mantissa().to_string().len();
-                if digits > 18 {
+                let text = if digits > 18 {
                     let mut r = d.round_sf(18).unwrap_or(d);
                     r.rescale(d.scale());
-                    out.push_str(&r.to_string());
+                    r.to_string()
                 } else {
-                    out.push_str(&d.to_string());
+                    d.to_string()
+                };
+                // A whole decimal is written with `.0` (json/lt-json-typed-overloads/P101ArrayAdd.al:P101_Add_Decimal: 0 is `0.0`).
+                out.push_str(&text);
+                if !text.contains('.') {
+                    out.push_str(".0");
                 }
             }
             Value::Date(d, _) if d > 0 => {
@@ -649,7 +657,8 @@ fn write(h: &Handle, out: &mut String) -> Result<(), Signal> {
                 );
             }
             Value::Text(s) | Value::Code(s) => write_string(out, &s),
-            Value::Char(c) => write_string(out, &char::from_u32(u32::from(c)).map(String::from).unwrap_or_default()),
+            // A Char is its code (P101ArrayAdd.al:P101_Add_Char: `A` is 65).
+            Value::Char(c) => out.push_str(&c.to_string()),
             other => {
                 return unsupported(format!(
                     "serialising {} to JSON text (not pinned yet)",
@@ -759,12 +768,8 @@ fn as_decimal(s: &Scalar) -> Result<Value, Signal> {
 fn as_text(s: &Scalar) -> Result<Value, Signal> {
     match s {
         Scalar::Val(Value::Text(t) | Value::Code(t)) => Ok(Value::Text(t.clone())),
-        Scalar::Val(Value::Char(c)) => Ok(Value::Text(
-            char::from_u32(u32::from(*c))
-                .map(String::from)
-                .unwrap_or_default()
-                .into(),
-        )),
+        // A Char is a number in JSON, so its text is the code (P101ValueSetValue.al:P101_SetValue_Char `text0` = 65).
+        Scalar::Val(Value::Char(c)) => Ok(Value::Text(c.to_string().into())),
         Scalar::Null => Err(conversion(NAV_JSON_VALUE, "Microsoft.Dynamics.Nav.Runtime.NavText")),
         // json/TestProbeJsonContracts.al:TypedGetters_WrongKinds: a number and a Boolean read as text (`True`).
         Scalar::Val(Value::Integer(n)) => Ok(Value::Text(n.to_string().into())),
@@ -1064,6 +1069,7 @@ macro_rules! typed_getters {
         fn $arr(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
             array_typed(r, a, $coerce)
         }
+        #[allow(dead_code)]
         fn $val(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
             let h = recv(r)?;
             $coerce(&scalar_of(&h)?)
@@ -1084,6 +1090,15 @@ typed_getters! {
     obj_date, arr_date, val_date => as_date;
     obj_datetime, arr_datetime, val_datetime => as_datetime;
     obj_time, arr_time, val_time => as_time;
+}
+
+/// `JsonValue.AsText` of a Boolean is `true` or `false`, where `GetText` of a property or an element says `True`
+/// (json/lt-json-typed-overloads/P101ValueSetValue.al:P101_SetValue_Boolean against TestProbeJsonContracts.al:TypedGetters_WrongKinds).
+fn val_text_json(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    match scalar_of(&recv(r)?)? {
+        Scalar::Val(Value::Boolean(b)) => Ok(Value::Text((if b { "true" } else { "false" }).into())),
+        s => as_text(&s),
+    }
 }
 
 fn val_code(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -1678,7 +1693,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("JsonValue.AsOption", []) => val_option,
         ("JsonValue.AsDuration", []) => val_duration,
         ("JsonValue.AsDecimal", []) => val_decimal,
-        ("JsonValue.AsText", []) => val_text,
+        ("JsonValue.AsText", []) => val_text_json,
         ("JsonValue.AsCode", []) => val_code,
         ("JsonValue.AsChar", []) => val_char,
         ("JsonValue.AsDate", []) => val_date,

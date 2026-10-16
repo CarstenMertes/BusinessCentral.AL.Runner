@@ -13140,7 +13140,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 255,
+        "line": 257,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
         "template": "The date is not valid."
@@ -13149,7 +13149,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 289,
+        "line": 291,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
         "template": "The date is not valid."
@@ -13266,10 +13266,28 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 693,
+        "line": 592,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
+      },
+      {
+        "code": "InvalidStreamData",
+        "file": "crates/al-builtins/src/stream.rs",
+        "generic": false,
+        "line": 742,
+        "pinned": true,
+        "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
+        "template": "Invalid data encountered in stream, unable to read text."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/stream.rs",
+        "generic": false,
+        "line": 773,
+        "pinned": true,
+        "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
+        "template": "The date is not valid."
       },
       {
         "code": "AL:Overflow",
@@ -13383,7 +13401,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 1508,
+        "line": 1513,
         "pinned": true,
         "site": "record/TestPlatformTablesWritableContracts.al:107",
         "template": "It is not possible to delete any record in the Tenant License State table."
@@ -13401,7 +13419,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 340,
+        "line": 342,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnARecordRefDuplicate.al:174",
         "template": "The record is not open."
@@ -13410,7 +13428,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 552,
+        "line": 554,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds."
@@ -13419,7 +13437,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 571,
+        "line": 573,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -13428,7 +13446,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 680,
+        "line": 682,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds"
@@ -13437,7 +13455,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 699,
+        "line": 701,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -13488,7 +13506,7 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 37,
-    "sites": 40
+    "pinned": 39,
+    "sites": 42
   }
 }

@@ -833,6 +833,21 @@ impl Session {
         self.run_page_ui_with(st, record, modal, false)
     }
 
+    /// `Page.RunModal(Id, Rec)` leaves the row the lookup was closed on in `Rec` (Gen. Journal Management's template
+    /// selection reads it). Assumed, see Assumption::PageRunModalRecordTakesSelection.
+    fn hand_back_selection(&mut self, st: &St, handed: &Option<Rec>, answer: &Value) {
+        let lookup_ok = matches!(answer, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK"));
+        let picked = st.borrow_mut().selection.take();
+        if let (true, Some(r), Some(fields)) = (lookup_ok, handed, picked) {
+            if r.borrow().fields.len() == fields.len() {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::PageRunModalRecordTakesSelection,
+                );
+                r.borrow_mut().fields = fields;
+            }
+        }
+    }
+
     /// [`run_page_ui`](Self::run_page_ui); `field`: the call had a field argument (`Page.RunModal(Id, Rec, Rec.Field)`).
     /// With no handler for the page the field changes nothing: the unhandled-UI error is the same as without it
     /// (corpus errors/lt-last-error-and-events/P70_06RunModalField.al). What a handler sees and what the field
@@ -844,6 +859,7 @@ impl Session {
         modal: bool,
         field: bool,
     ) -> Result<Value, Signal> {
+        let handed = record.clone();
         let object = st.borrow().object;
         let mut st = st.clone();
         let mut trapped = false;
@@ -880,7 +896,9 @@ impl Session {
         if field {
             return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
         }
-        self.answer_page(&st, handler, modal)
+        let answer = self.answer_page(&st, handler, modal)?;
+        self.hand_back_selection(&st, &handed, &answer);
+        Ok(answer)
     }
 
     /// A `[ModalPageHandler]` typed as the Page itself (handlers/PSModalPageHandlerTyped.al): the handler gets the page

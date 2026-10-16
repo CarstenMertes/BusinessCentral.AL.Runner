@@ -709,7 +709,9 @@ page 60707 "PH NrCard"
 codeunit 60708 PhTrace { SingleInstance = true; var Log: Text; procedure Note(T: Text) begin Log += T + ';'; end; procedure Get(): Text begin exit(Log); end; procedure Reset() begin Log := ''; end; }
 page 60709 "PH Ro" { PageType = Card; SourceTable = "PH Row"; layout { area(Content) { field(NoCtl; Rec."No.") { } field(NoteCtl; Note) { } } } trigger OnOpenPage() begin CurrPage.Editable(false); end; var Note: Text[20]; }
 page 60710 "PH Desc" { PageType = List; SourceTable = "PH Row"; SourceTableView = sorting("No.") order(descending); layout { area(Content) { repeater(R) { field(NoCtl; Rec."No.") { } field(DescrCtl; Rec.Descr) { } } } } }
-table 60704 "PH Lk" { LookupPageId = "PH Card"; fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
+table 60704 "PH Lk" { LookupPageId = "PH LkCard"; fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } } keys { key(PK; "No.") { } } }
+// The lookup page of "PH Lk" has to show its table: a record of another table is refused (pages/lt-page-run-overloads-testpart/P106RunErrors.al).
+page 60713 "PH LkCard" { PageType = Card; SourceTable = "PH Lk"; layout { area(Content) { field(NoCtl; Rec."No.") { } } } }
 page 60705 "PH Saved" { PageType = StandardDialog; SaveValues = true; layout { area(Content) { field(Rem; RemTxt) { } } } var RemTxt: Text[30]; }
 page 60711 "PH Saved X" { PageType = StandardDialog; SaveValues = true; SourceTable = "PH Row"; layout { area(Content) { field(RemX; RemTxt) { } } } var RemTxt: Text[30]; }
 pageextension 60712 "PH Saved XE" extends "PH Saved X" { layout { addlast(Content) { field(DescX; Rec.Descr) { } } } }
@@ -777,7 +779,7 @@ codeunit 60703 PhT
     end;
 
     // handlers/TestPageRunModalLookupPageId_Tests.al: id 0 with a record resolves LookupPageId
-    [Test] [HandlerFunctions('OkModal')]
+    [Test] [HandlerFunctions('OkModalLk')]
     procedure IdZeroUsesLookupPageId()
     var K: Record "PH Lk"; R: Record "PH Row"; Res: Action;
     begin
@@ -875,6 +877,7 @@ codeunit 60703 PhT
         else begin Seen := P.RemX.Value(); P.Cancel().Invoke(); end;
     end;
     [ModalPageHandler] procedure OkModal(var P: TestPage "PH Card") begin P.OK().Invoke(); end;
+    [ModalPageHandler] procedure OkModalLk(var P: TestPage "PH LkCard") begin P.OK().Invoke(); end;
     [ModalPageHandler] procedure Nothing(var P: TestPage "PH Card") begin end;
     [ModalPageHandler] procedure CancelIt(var P: TestPage "PH Card") begin P.Cancel().Invoke(); end;
     [PageHandler] procedure SeePage(var P: TestPage "PH Card") begin Seen := P.DescrCtl.Value(); end;

@@ -269,7 +269,7 @@ impl Session {
                 return Ok(());
             }
             self.load_first_row(st, mode, record.is_some())?;
-            self.sync_parts(st)
+            self.sync_parts_at_open(st)
         })();
         if let Err(e) = result {
             // The open raises the error itself and leaves the variable closed
@@ -528,6 +528,10 @@ impl Session {
         if !(via_action && matches!(action, "Cancel" | "LookupCancel" | "No")) {
             self.store_page_values(st);
         }
+        if action == "LookupOK" && self.has_source(st) && st.borrow().cursor == Cursor::Row {
+            let fields = self.page_rec(st).borrow().fields.clone();
+            st.borrow_mut().selection = Some(fields);
+        }
         self.mark_closed(st);
         st.borrow_mut().result = Some(action.to_string());
         Ok(Value::Null)
@@ -685,7 +689,20 @@ impl Session {
         // handlers/TestPagePartOnNewRecordCount.al). A top-level list does the same, and both then
         // run OnAfterGetCurrRecord on the blank row (corpus testpart/TestPartTriggerOrderAndRefresh.al:
         // 258-273 TopLevelList_BlankLine_RunsOnNewRecord, Part_BlankLine_RunsOnNewRecord).
-        self.stamp_from_filters(st, true)?;
+        // A part whose host record is not saved yet (a card opened with OpenNew whose key was just typed) copies the link
+        // values without validating them: the host row they point to does not exist yet (Microsoft's Allocation Account
+        // page, 34 Tests-ERM tests failed on the table relation of "Allocation Account No."). Assumed, see
+        // Assumption::PartLinkNotValidatedForUnsavedHost.
+        let host_unsaved = st
+            .borrow()
+            .host
+            .as_ref()
+            .and_then(|(h, _)| h.upgrade())
+            .is_some_and(|h| h.borrow().draft);
+        if host_unsaved {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartLinkNotValidatedForUnsavedHost);
+        }
+        self.stamp_from_filters(st, !host_unsaved)?;
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;

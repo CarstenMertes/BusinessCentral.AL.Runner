@@ -950,6 +950,7 @@ fn walk_xmlport<V: RefVisitor>(x: &mut XmlPort, v: &mut V) {
         text_encoding_declared: _,
         utf8: _,
         format_evaluate_xml: _,
+        format_evaluate_declared: _,
         nodes,
         source_slot: _,
         destination_slot: _,

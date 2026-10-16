@@ -797,7 +797,7 @@ and the cached one.
    Tests-ERM took 0.2 to 1.1 s each, 2.8 s together. Overlapping the scan of the next layer with the compile of this one
    would save an estimated 0.6 s of that and costs a second workspace in memory; not built.
 
-## Amendment (Proposed, 2026-10-17): the install baseline is an entry of this cache (branch `baseline-in-compile-cache`)
+## Amendment (Accepted by the owner, 2026-10-16): the install baseline is an entry of this cache (branch `baseline-in-compile-cache`)
 
 Status of this amendment: **Proposed**. It needs the owner's acceptance. The code is on the branch and works; nothing
 here is merged.

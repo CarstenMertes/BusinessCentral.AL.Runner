@@ -123,6 +123,8 @@ pub struct CorpusRuntime {
     details: std::collections::HashMap<(usize, u32, String), TestDetail>,
     /// Every test the run decided, codeunit by codeunit.
     results: Vec<TestResult>,
+    /// With `RunOptions::dual_run`: where the tree walker and the executable form differ.
+    dual_diffs: Vec<crate::dual::DualDiff>,
     /// The unprobed assumptions each test ran through, same key as `outcomes`; tests with none are absent.
     marks: std::collections::HashMap<(usize, u32, String), Vec<Assumption>>,
     /// With `RunOptions::coverage`: every statement of the workspace's apps.
@@ -246,11 +248,19 @@ pub(crate) struct Unit {
     hooks: crate::events::Hooks,
     /// See `Scratch::clock_start`.
     clock_start: Option<i64>,
+    /// Run twice and compare (`RunOptions::dual_run`).
+    dual: bool,
 }
 
 /// What a scratch run or a capture leaves besides outcomes, per test.
 #[derive(Default)]
 pub(crate) struct Scratch {
+    /// The executor this run uses (`RunOptions::dual_run` runs a codeunit once per form).
+    exec: al_vm::ExecMode,
+    /// Keep a digest of the store after each test (`digests`), for the dual run.
+    digest: bool,
+    /// The digest of the store when each test ended.
+    digests: Vec<(String, Vec<(u32, u64)>)>,
     /// What to capture (`RunOptions::capture`).
     capture: al_vm::CaptureConfig,
     /// The apps of the program, as the caller numbered them (to place what a capture names).
@@ -282,6 +292,15 @@ pub(crate) struct UnitResult {
     result: Result<UnitOutcomes, String>,
     took: std::time::Duration,
     sidecar_start: std::time::Duration,
+    /// The differences between the two runs of the dual run (`RunOptions::dual_run`).
+    dual: Vec<crate::dual::DualDiff>,
+}
+
+fn panic_text(p: &Box<dyn std::any::Any + Send>) -> String {
+    p.downcast_ref::<String>()
+        .cloned()
+        .or_else(|| p.downcast_ref::<&str>().map(|s| s.to_string()))
+        .unwrap_or_default()
 }
 
 /// The `[Test]` routines of a codeunit.
@@ -301,6 +320,14 @@ fn run_unit(
     limit: Option<std::time::Duration>,
 ) -> UnitResult {
     let started = std::time::Instant::now();
+    // Both runs of a dual run read one standing clock, so what depends on the time is the same in both.
+    let clock_start = u.clock_start.or_else(|| {
+        u.dual.then(|| {
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .map_or(0, |d| d.as_millis() as i64)
+        })
+    });
     crate::dotnet::take_start_time();
     let baseline = baseline.filter(|_| !u.without_baseline);
     crate::events::install(u.hooks.clone());
@@ -321,6 +348,7 @@ fn run_unit(
             )),
             took: started.elapsed(),
             sidecar_start: std::time::Duration::ZERO,
+            dual: Vec::new(),
         };
     }
     let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
@@ -330,7 +358,9 @@ fn run_unit(
         let mut scratch = Scratch {
             capture: u.capture,
             order: u.order.clone(),
-            clock_start: u.clock_start,
+            clock_start: clock_start,
+            exec: al_vm::ExecMode::Tree,
+            digest: u.dual,
             ..Default::default()
         };
         if u.coverage {
@@ -402,14 +432,81 @@ fn run_unit(
             }
         }
     }
+    let took = started.elapsed();
+    let sidecar_start = crate::dotnet::take_start_time();
     crate::events::uninstall();
+    // The dual run: the same codeunit again on the executable form, without reporting to the hooks, and compared.
+    let mut dual = Vec::new();
+    if u.dual {
+        let name = lowered.program.objects[u.oi].name.as_str();
+        let second = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let (mut stacks, mut times, mut hits) = (Vec::new(), Vec::new(), Vec::new());
+            let mut scratch = Scratch {
+                order: u.order.clone(),
+                clock_start: clock_start,
+                exec: al_vm::ExecMode::Bytecode,
+                digest: true,
+                ..Default::default()
+            };
+            let done = run_codeunit_core(
+                engine,
+                lowered,
+                u.oi,
+                baseline,
+                u.isolation,
+                None,
+                &mut stacks,
+                &mut times,
+                &mut hits,
+                &mut scratch,
+                limit,
+                u.execute,
+            );
+            (done, stacks, hits, scratch.digests)
+        }));
+        let diff = |what: &'static str, tree: String, bytecode: String| crate::dual::DualDiff {
+            codeunit: u.id,
+            codeunit_name: name.to_string(),
+            test: String::new(),
+            what,
+            tree,
+            bytecode,
+        };
+        match (&result, second) {
+            (Ok((done, stacks, _, hits, _, scratch)), Ok((done2, stacks2, hits2, digests2))) => {
+                let tree = crate::dual::Side {
+                    done,
+                    stacks,
+                    hits,
+                    digests: &scratch.digests,
+                };
+                let other = crate::dual::Side {
+                    done: &done2,
+                    stacks: &stacks2,
+                    hits: &hits2,
+                    digests: &digests2,
+                };
+                dual = crate::dual::compare(u.id, name, &tree, &other, &|o| {
+                    lowered
+                        .program
+                        .objects
+                        .get(o as usize)
+                        .map_or_else(|| o.to_string(), |t| t.name.clone())
+                });
+            }
+            (Ok(_), Err(p)) => dual.push(diff("panic", "ran".into(), panic_text(&p))),
+            (Err(msg), Ok(_)) => dual.push(diff("panic", msg.clone(), "ran".into())),
+            (Err(_), Err(_)) => {}
+        }
+    }
     UnitResult {
         si: u.si,
         oi: u.oi,
         id: u.id,
         result,
-        took: started.elapsed(),
-        sidecar_start: crate::dotnet::take_start_time(),
+        took,
+        sidecar_start,
+        dual,
     }
 }
 

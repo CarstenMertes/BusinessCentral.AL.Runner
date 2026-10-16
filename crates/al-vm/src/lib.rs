@@ -28,6 +28,7 @@ mod companies;
 mod dataset;
 mod dispatch;
 pub mod dotnet;
+mod dual;
 mod errorcollect;
 pub mod events;
 mod faultsite;
@@ -41,6 +42,7 @@ mod pages;
 mod partial;
 mod platform;
 mod profile;
+pub use dual::ExecMode;
 mod queries;
 mod recmeta;
 mod records;
@@ -265,6 +267,8 @@ pub const STOPPED: &str = "the runner stopped the test";
 pub struct Session {
     pub engine: Arc<Engine>,
     pub last_error: AlError,
+    /// Which executor runs the AL code (`dual.rs`).
+    exec_mode: ExecMode,
     depth: usize,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
     /// `NavApp.GetCallerModuleInfo`).
@@ -432,6 +436,7 @@ impl Session {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
         }
         let mut session = Session {
+            exec_mode: ExecMode::default(),
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,

@@ -574,6 +574,7 @@ impl CorpusRuntime {
                         order: order_arc.clone(),
                         hooks: opts.hooks.clone(),
                         clock_start: None,
+                        dual: false,
                     });
                 }
                 continue;
@@ -598,6 +599,7 @@ impl CorpusRuntime {
                         order: order_arc.clone(),
                         hooks: opts.hooks.clone(),
                         clock_start: opts.clock_starts.as_ref().and_then(|m| m.get(&id).copied()),
+                        dual: opts.dual_run,
                     }),
                     Err(why) => {
                         for r in test_routines(o) {
@@ -706,7 +708,9 @@ impl CorpusRuntime {
             })
         };
         let mut suite_work: Vec<(usize, std::time::Duration)> = Vec::new();
+        let mut dual_diffs: Vec<crate::dual::DualDiff> = Vec::new();
         for r in results {
+            dual_diffs.extend(r.dual.iter().cloned());
             suite_work.push((r.si, r.took));
             codeunit_times.push(CodeunitTime {
                 id: r.id,
@@ -856,6 +860,7 @@ impl CorpusRuntime {
             },
             details,
             results: list,
+            dual_diffs,
             marks: marks_by_test,
             coverage_statements,
         }
@@ -863,6 +868,11 @@ impl CorpusRuntime {
 }
 
 impl CorpusRuntime {
+    /// With `RunOptions::dual_run`: the tests whose two runs differ, in the order of the codeunits.
+    pub fn dual_diffs(&self) -> &[crate::dual::DualDiff] {
+        &self.dual_diffs
+    }
+
     /// Every test the run decided, with its codeunit's name and app, codeunit by codeunit.
     pub fn results(&self) -> &[TestResult] {
         &self.results

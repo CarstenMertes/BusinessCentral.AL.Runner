@@ -504,6 +504,11 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         ))),
         other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
     }),
+    // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
+    // of [Text, Text]): taken as Format(value) with the default format. No corpus test calls them: assumption
+    // primitive-totext-is-format.
+    ("Date.ToText#1", |c, r, _| primitive_to_text(c, r, "Date")),
+    ("Boolean.ToText#1", |c, r, _| primitive_to_text(c, r, "Boolean")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
     // A Char is also a wide char; nothing else is (types/lt-variant-is-text-streams/LTP89IsMisc.al:WideChar_Variants: Char values
     // `WideChar,Char,`, a Byte, an Integer, a BigInteger, a Text and a two-character literal not).
@@ -1198,6 +1203,11 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                     | "WebServiceActionContext"
                     | "SessionSettings"
                     | "Notification"
+                    // A cleared XML document, document type or declaration is an unassigned one (xml/lt-xml-doctype-declaration/
+                    // DocTypeErrors.al:Uninitialised_*, DocTypeRead.al: `Clear(Doc)`).
+                    | "XmlDocument"
+                    | "XmlDocumentType"
+                    | "XmlDeclaration"
                     | "JsonObject"
                     | "JsonArray"
                     | "JsonValue"
@@ -1411,6 +1421,20 @@ fn is(receiver: Option<&mut Value>, kind: &str) -> Result<Value, Signal> {
 fn value_kind(v: &Value) -> String {
     let d = v.describe();
     d.split(|c: char| !c.is_alphanumeric()).next().unwrap_or("").to_string()
+}
+
+/// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
+fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<Value, Signal> {
+    match r.as_deref() {
+        Some(v @ (Value::Date(..) | Value::Boolean(_))) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
+            match crate::format::try_format(v, 0, 0, &*c) {
+                Ok(t) => Ok(Value::Text(t.into())),
+                Err(e) => Err(Signal::Unsupported(e)),
+            }
+        }
+        other => Err(Signal::Unsupported(format!("{what}.ToText on {}", other.describe()))),
+    }
 }
 
 #[cfg(test)]

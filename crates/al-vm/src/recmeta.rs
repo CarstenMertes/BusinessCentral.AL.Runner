@@ -152,6 +152,23 @@ impl Session {
         if t.fields[pos].id >= 2_000_000_000 && !has_caption {
             return unsupported(format!("the caption of system field {}", t.fields[pos].name));
         }
+        // A field with a CaptionClass: `3,<text>` reads as <text> ('3,' alone as the Caption); a numeric area other than 3
+        // or an empty area reads as the class text as written (pages/lt-page-report-events/P84Captions.al:
+        // Table_NoSubscriber f01..f14, Table_Log_* and Table_Resolve_* with no event call, BC 29). A non-numeric area is
+        // the platform's event and not pinned for FieldCaption: refused.
+        if let Some(class) = self
+            .field_property(t, pos, "CaptionClass")
+            .and_then(|v| string_literal(&v))
+        {
+            return match class.split_once(',') {
+                Some(("3", "")) => Ok(self.field_caption(t, pos)),
+                Some(("3", rest)) => Ok(rest.to_string()),
+                Some((area, _)) if area.is_empty() || area.trim().parse::<u32>().is_ok() => Ok(class),
+                _ => unsupported(format!(
+                    "FieldCaption of a field whose CaptionClass `{class}` has an area no built-in resolver claims (not pinned)"
+                )),
+            };
+        }
         Ok(self.field_caption(t, pos))
     }
 

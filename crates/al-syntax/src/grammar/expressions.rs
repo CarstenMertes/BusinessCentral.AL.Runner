@@ -153,9 +153,26 @@ fn additive(p: &mut Parser) {
     let cp = p.checkpoint();
     multiplicative(p);
     while matches!(p.current(), Plus | Minus) || p.at_kw("or") {
+        let boolean = p.at_kw("or");
         p.start_at(cp, BinExpr);
         p.bump_any();
+        let operand = p.checkpoint();
         multiplicative(p);
+        if boolean {
+            membership_of_operand(p, operand);
+        }
+        p.finish();
+    }
+}
+
+/// `a and b in [..]` is `a and (b in [..])` (Base Application's Purchase Header writes it, and Microsoft's compiler
+/// accepts it; the table of operators would read `(a and b) in [..]`, a Boolean and an enum). The operand of `and`,
+/// `or` and `xor` that starts at `operand` takes the `in` that follows it.
+fn membership_of_operand(p: &mut Parser, operand: crate::builder::Checkpoint) {
+    if p.at_kw("in") {
+        p.start_at(operand, BinExpr);
+        p.bump_any();
+        unary(p);
         p.finish();
     }
 }
@@ -164,9 +181,14 @@ fn multiplicative(p: &mut Parser) {
     let cp = p.checkpoint();
     unary(p);
     while matches!(p.current(), Star | Slash) || p.at_any_kw(&["and", "xor", "div", "mod"]) {
+        let boolean = p.at_any_kw(&["and", "xor"]);
         p.start_at(cp, BinExpr);
         p.bump_any();
+        let operand = p.checkpoint();
         unary(p);
+        if boolean {
+            membership_of_operand(p, operand);
+        }
         p.finish();
     }
 }
@@ -437,6 +459,35 @@ mod tests {
         assert_eq!(
             e("x in [1, 3..5, ..9]"),
             "(BinExpr (NameRef x) in (SetExpr [ (Literal 1) , (RangeExpr (Literal 3) .. (Literal 5)) , (RangeExpr .. (Literal 9)) ]))"
+        );
+    }
+
+    /// Base Application's Purchase Header, `"Self-Billing Invoice" := Vend."Self-Billing Agreement" and Rec."Document
+    /// Type" in [Order, Invoice];`, compiles in Microsoft's build, so the real parser reads `a and (b in [..])`, not
+    /// `(a and b) in [..]` (a Boolean and an enum). Only the right operand of `and`, `or` and `xor` takes an `in`;
+    /// `a in [..] and b` is unchanged. Not pinned by a corpus test (docs/probes-needed.md, assumption
+    /// `in-binds-tighter-than-and`).
+    #[test]
+    fn an_in_after_and_or_xor_belongs_to_the_right_operand() {
+        assert_eq!(
+            e("a and b in [1]"),
+            "(BinExpr (NameRef a) and (BinExpr (NameRef b) in (SetExpr [ (Literal 1) ])))"
+        );
+        assert_eq!(
+            e("a or b in [1]"),
+            "(BinExpr (NameRef a) or (BinExpr (NameRef b) in (SetExpr [ (Literal 1) ])))"
+        );
+        assert_eq!(
+            e("a xor b in [1]"),
+            "(BinExpr (NameRef a) xor (BinExpr (NameRef b) in (SetExpr [ (Literal 1) ])))"
+        );
+        assert_eq!(
+            e("(a and b) in [1]"),
+            "(BinExpr (ParenExpr ( (BinExpr (NameRef a) and (NameRef b)) )) in (SetExpr [ (Literal 1) ]))"
+        );
+        assert_eq!(
+            e("a + b in [1]"),
+            "(BinExpr (BinExpr (NameRef a) + (NameRef b)) in (SetExpr [ (Literal 1) ]))"
         );
     }
 

@@ -42,6 +42,13 @@ impl Session {
         Ok(())
     }
 
+    fn init_one_part(&mut self, child: &St) -> Result<(), Signal> {
+        if !std::mem::replace(&mut child.borrow_mut().inited, true) {
+            self.page_trigger(child, "oninit", vec![])?;
+        }
+        Ok(())
+    }
+
     /// Runs the OnInit of every part page that has not run it yet.
     pub(super) fn init_parts(&mut self, st: &St) -> Result<(), Signal> {
         let parts = st.borrow().parts.clone();
@@ -123,7 +130,7 @@ impl Session {
     }
 
     /// The page shown by part control `control` of `st`.
-    pub(super) fn part_page(&self, st: &St, control: usize, runtime: bool) -> Result<St, Signal> {
+    pub(super) fn part_page(&mut self, st: &St, control: usize, runtime: bool) -> Result<St, Signal> {
         self.require_open(st)?;
         let found = st
             .borrow()
@@ -152,6 +159,37 @@ impl Session {
                 })
                 .flatten()
         });
+        // A part the control tree dropped (Visible = false, or an ApplicationArea the session does not enable) is
+        // still there for the page's own code: Base Application's Sales Credit Memo calls
+        // `CurrPage.IncomingDocAttachFactBox.Page.LoadDataFromRecord(Rec)` in OnAfterGetCurrRecord. It is created and
+        // opened on the first such reach and kept out of the tree. Unprobed (InvisiblePartForPageCode).
+        let found = match found {
+            None if runtime => {
+                let engine = self.engine();
+                let part_page = page_of(&engine, st).controls[control].part_page;
+                match part_page {
+                    Some(pp) => {
+                        let child = Rc::new(RefCell::new(PageState::closed(pp as u32)));
+                        child.borrow_mut().host = Some((Rc::downgrade(st), control));
+                        self.page_instance(&child)?;
+                        st.borrow_mut().hidden_parts.push((control, child.clone()));
+                        let mode = if self.page_editable(st) {
+                            PageMode::Edit
+                        } else {
+                            PageMode::View
+                        };
+                        self.init_one_part(&child)?;
+                        self.open_page_as(&child, mode, None, None, true)?;
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::InvisiblePartForPageCode,
+                        );
+                        Some(child)
+                    }
+                    None => None,
+                }
+            }
+            other => other,
+        };
         match found {
             Some(c) => Ok(c),
             None => {

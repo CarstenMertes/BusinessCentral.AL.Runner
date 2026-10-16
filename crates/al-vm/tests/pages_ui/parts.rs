@@ -52,6 +52,51 @@ page 51002 "PT Host"
     }
 }
 
+page 51090 "PT Reach Part"
+{
+    PageType = ListPart;
+    SourceTable = "PT Row";
+    layout { area(Content) { repeater(Rows) { field(Grp; Rec.Grp) { } } } }
+    var Loaded: Text;
+    procedure Load(Name: Text) begin Loaded := Name; end;
+    procedure Seen(): Text begin exit(Loaded); end;
+}
+page 51091 "PT Reach Host"
+{
+    PageType = Card;
+    SourceTable = "PT Row";
+    layout
+    {
+        area(Content)
+        {
+            field(Grp; Rec.Grp) { }
+            part(Dropped; "PT Reach Part") { Visible = false; }
+        }
+    }
+    trigger OnAfterGetCurrRecord() begin CurrPage.Dropped.Page.Load('reached ' + Rec.Grp); end;
+    procedure Outcome(): Text begin exit('ok'); end;
+}
+
+page 51092 "PT Cap Card"
+{
+    PageType = Card;
+    SourceTable = "PT Row";
+    layout { area(Content) { field(Grp; Rec.Grp) { Caption = 'Plain'; CaptionClass = '5,1,GB'; } field(Dim; Rec.Descr) { Caption = 'Plain'; CaptionClass = '1,1,'; } field(Lit; Rec.Descr) { Caption = 'Plain'; CaptionClass = '3,Fixed'; } } }
+}
+
+table 51093 "PT Cap Rec"
+{
+    fields
+    {
+        field(1; Id; Integer) { Caption = 'Identifier'; }
+        field(2; A; Text[10]) { Caption = 'Tbl A'; CaptionClass = '1,1,x'; }
+        field(3; B; Text[10]) { Caption = 'Tbl B'; CaptionClass = '3,x'; }
+        field(4; C; Text[10]) { Caption = 'Tbl C'; CaptionClass = '3,'; }
+        field(5; D; Text[10]) { Caption = 'Tbl D'; CaptionClass = ',x'; }
+    }
+    keys { key(PK; Id) { } }
+}
+
 table 51020 "PT Rank"
 {
     fields { field(1; "Entry No."; Integer) { } field(2; Rank; Integer) { } field(3; Bucket; Code[10]) { } }
@@ -769,4 +814,41 @@ fn a_new_hosts_part_follows_the_header_once_it_is_stored() {
         "F",
     );
     assert_eq!(text(r), "N1/N1/20000");
+}
+
+// A part the control tree dropped (Visible = false) is still there for the page's own code: Base Application's Sales
+// Credit Memo calls `CurrPage.IncomingDocAttachFactBox.Page.LoadDataFromRecord(Rec)` in OnAfterGetCurrRecord (Tests-ERM
+// ExternalDocNoNotificationForCrMemo and about 230 more). Unprobed: assumption invisible-part-for-page-code.
+#[test]
+fn the_pages_own_code_reaches_a_part_the_control_tree_dropped() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PT Row\"; H: TestPage \"PT Reach Host\"; begin
+            R.Grp := 'A'; R.\"Line No.\" := 10; R.Insert();
+            H.OpenView(); exit('opened'); end;",
+        "F",
+    );
+    assert_eq!(text(r), "opened");
+}
+
+// pages/lt-page-report-events/P84Captions.al (Page_NoSubscriber c01..c13, BC 29): a CaptionClass of a numeric area other
+// than 3 stays as written and raises no event. Base Application's captions of this kind ('5,1,GB', '1,1,') stopped
+// about 770 Tests-ERM tests.
+#[test]
+fn a_numeric_caption_class_area_other_than_3_keeps_the_text_as_written() {
+    let r = run(
+        "procedure F(): Text var H: TestPage \"PT Cap Card\"; begin H.OpenView(); exit(H.Grp.Caption() + '|' + H.Dim.Caption() + '|' + H.Lit.Caption()); end;",
+        "F",
+    );
+    assert_eq!(text(r), "5,1,GB|1,1,|Fixed");
+}
+
+// pages/lt-page-report-events/P84Captions.al Table_NoSubscriber f01..f14 (BC 29): FieldCaption of a field with a CaptionClass.
+#[test]
+fn field_caption_of_a_field_with_a_caption_class_follows_the_pinned_forms() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PT Cap Rec\"; begin
+            exit(R.FieldCaption(A) + '|' + R.FieldCaption(B) + '|' + R.FieldCaption(C) + '|' + R.FieldCaption(D)); end;",
+        "F",
+    );
+    assert_eq!(text(r), "1,1,x|x|Tbl C|,x");
 }

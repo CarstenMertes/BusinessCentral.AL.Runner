@@ -1138,6 +1138,11 @@ fn int(v: &Value) -> Result<i64, Signal> {
         Value::BigInteger(i) => Ok(*i),
         Value::Byte(b) => Ok(i64::from(*b)),
         Value::Char(c) => Ok(i64::from(*c)),
+        // An Option member is its ordinal where an integer is wanted (an array index, a for-loop bound).
+        Value::Option(n, _) => Ok(i64::from(*n)),
+        // A Decimal with a whole value is a for-loop bound (`for x := 1 to ServLine."Qty. to Ship"`); a fractional one is not pinned.
+        Value::Decimal(d) if d.fract() == rust_decimal::Decimal::ZERO => rust_decimal::prelude::ToPrimitive::to_i64(d)
+            .ok_or_else(|| Signal::Unsupported(format!("Decimal {d} used as an integer"))),
         other => Err(Signal::Unsupported(format!("{} used as an integer", other.describe()))),
     }
 }

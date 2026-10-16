@@ -32,3 +32,47 @@ fn a_local_array_starts_with_default_elements() {
     assert!(matches!(run("exit(Zeroes());"), Value::Integer(0)));
     assert!(matches!(run("exit(X[1] + X[4]);"), Value::Integer(0)));
 }
+
+// Base Application's ServContractManagement writes `EntryAmount[AmountType::Amount] -= x` with `AmountType` an Option: an Option
+// member is an index (187 Tests-SCM-Service tests were refused with "Option member used as an integer").
+#[test]
+fn an_option_member_is_an_array_index_in_a_compound_assignment() {
+    let src = r#"
+codeunit 69860 OI
+{
+    var AmountType: Option ,Amount,UnitPrice,UnitCost;
+    procedure F(): Decimal
+    var A: array[3] of Decimal;
+    begin
+        A[AmountType::UnitPrice] += 5;
+        A[AmountType::UnitPrice] -= 2;
+        A[AmountType::Amount] += 1;
+        exit(A[2] * 10 + A[1]);
+    end;
+}
+"#;
+    let v = al_testkit::run_in(src, "OI", "F");
+    assert!(
+        matches!(&v, Ok(al_builtins::value::Value::Decimal(d)) if *d == rust_decimal::Decimal::from(31)),
+        "{v:?}"
+    );
+}
+
+// Base Application's ServItemManagement loops `for x := 2 to ServLine."Qty. to Ship"` with a Decimal bound.
+#[test]
+fn a_decimal_with_a_whole_value_is_a_for_loop_bound() {
+    let src = r#"
+codeunit 69861 FD
+{
+    procedure F(): Integer
+    var x: Integer; q: Decimal; n: Integer;
+    begin
+        q := 3;
+        for x := 1 to q do n += 1;
+        exit(n);
+    end;
+}
+"#;
+    let v = al_testkit::run_in(src, "FD", "F");
+    assert!(matches!(&v, Ok(al_builtins::value::Value::Integer(3))), "{v:?}");
+}

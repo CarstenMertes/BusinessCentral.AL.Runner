@@ -94,7 +94,11 @@ impl Session {
                 if al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal) {
                     self.filter_value_with(a, iso)?
                 } else {
-                    format!("{}..{}", self.filter_value_with(a, iso)?, self.filter_value_with(b, iso)?)
+                    format!(
+                        "{}..{}",
+                        self.filter_value_with(a, iso)?,
+                        self.filter_value_with(b, iso)?
+                    )
                 }
             }
             FilterExpr::Range(Some(a), None) => format!("{}..", self.filter_value_with(a, iso)?),

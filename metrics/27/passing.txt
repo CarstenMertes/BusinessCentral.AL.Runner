@@ -7422,11 +7422,13 @@
 71500 Find_SearchStrings_Equal
 71500 Find_SearchStrings_FirstLast
 71500 Find_SearchStrings_Neighbours
+71500 Find_Text_Key_Case_Insensitive
 71500 Find_Uses_Key_Fields_Only_Not_Other_Fields
 71500 Get_Code_Key_CaseAndBlank
 71500 Get_Composite_Key
 71500 Get_Decimal_Date_Bool_Option_Enum_Keys
 71500 Get_Integer_Key
+71500 Get_Text_Key
 71500 Get_Uses_Primary_Key_Not_Current_Key
 71501 FindFirst_Empty_Table_Error_Text
 71501 FindFirst_FindLast_Basic
@@ -7479,7 +7481,9 @@
 71506 Mark_Uses_Primary_Key_Of_Current_Values
 71506 MarkedOnly_Iteration
 71506 MarkedOnly_With_Find_Get_And_Order
+71506 SetRecFilter_On_Uninitialized_Record_And_Keeps_Other_Filters
 71506 SetRecFilter_Primary_Key
+71507 GetPosition_Key_Shapes
 71507 GetPosition_Primary_Key
 71507 GetView_SetView_Basics
 71507 SetPosition_Different_Key_And_Invalid

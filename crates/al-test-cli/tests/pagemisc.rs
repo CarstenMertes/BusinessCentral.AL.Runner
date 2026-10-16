@@ -143,6 +143,18 @@ page 62096 "PM Close List"
     layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } }
     trigger OnQueryClosePage(CloseAction: Action): Boolean var P: Codeunit "PM Probe"; begin P.Note('List ' + Format(CloseAction) + ';'); exit(true); end;
 }
+page 62099 "PM Event Card"
+{
+    PageType = Card; SourceTable = "PM Row";
+    layout { area(Content) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { trigger OnValidate() var P: Codeunit "PM Probe"; begin P.Note('V;'); end; } } }
+}
+codeunit 62097 "PM Event Subs"
+{
+    [EventSubscriber(ObjectType::Page, Page::"PM Event Card", 'OnBeforeValidateEvent', 'Descr', false, false)]
+    local procedure Before(var Rec: Record "PM Row") var P: Codeunit "PM Probe"; begin P.Note('B(' + Rec.Descr + ');'); end;
+    [EventSubscriber(ObjectType::Page, Page::"PM Event Card", 'OnAfterValidateEvent', 'Descr', false, false)]
+    local procedure After(var Rec: Record "PM Row") var P: Codeunit "PM Probe"; begin P.Note('A(' + Rec.Descr + ');'); end;
+}
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -752,5 +764,20 @@ fn current_page_update_on_a_page_with_on_find_record_and_row_triggers_finds_the_
             R.DeleteAll(); R.\"No.\" := 'F1'; R.Insert();
             C.OpenEdit(); C.GoToRecord(R); P.Reset(); C.Refresh.Invoke();
             Check('F=;G;', P.Trace()); Check('F1', C.\"No.\".Value); C.Close(); end;"
+    ));
+}
+
+// record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al: SetValue on a control raises the page's
+// OnBeforeValidateEvent and OnAfterValidateEvent for that control around the control's own OnValidate (80 Tests-ERM tests
+// were refused).
+#[test]
+fn set_value_raises_the_page_validate_events_around_the_control_trigger() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Events() var C: TestPage \"PM Event Card\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'E1'; R.Insert();
+            C.OpenEdit(); C.GoToRecord(R); P.Reset(); C.Descr.SetValue('hello');
+            Check('B(hello);V;A(hello);', P.Trace()); C.Close(); end;"
     ));
 }

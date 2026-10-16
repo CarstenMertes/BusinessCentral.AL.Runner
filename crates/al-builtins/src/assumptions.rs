@@ -139,6 +139,12 @@ registry! {
         tests: "System Application Data Type Management (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`): about 260 Tests-ERM tests (CheckICPartner).",
         probe: "RecordRef.Get(Rec.RecordId()) on a fresh RecordRef: the Boolean, then Number() and an Open on the same ref; with the result unused (PnE08RecordMisc.al asks the same row).",
     },
+    CookieSetterResult => {
+        id: "cookie-setter-result",
+        assumed: "Cookie.Name(NewName) and Cookie.Value(NewValue), with the result used, answer the new text.",
+        tests: "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al assigns the result to a Text it never reads (SetName_DoesNotTouchOtherMembers, Copy_AndClear).",
+        probe: "Format of the result of C.Name('n') and C.Value('v') on a cookie that had other values before.",
+    },
     PrimitiveToTextIsFormat => {
         id: "primitive-totext-is-format",
         assumed: "Date.ToText() and Boolean.ToText() give Format(value) with the default format (en-US).",
@@ -157,6 +163,12 @@ registry! {
         tests: "Purchase and Sales Order Statistics (`InvDiscountAmount_General`): ConfirmationOnInvDiscUpdateInPurchOrderWithInvoicedLine and about 55 more Tests-ERM tests.",
         probe: "A page field(Ctl; Arr[1].Amount) with an OnValidate; TestPage.Ctl.SetValue(5) then the global and the OnValidate effect; SetValue('x') on it.",
     },
+    DateToTextIsFormat => {
+        id: "date-to-text-is-format",
+        assumed: "A Date converted to a Text or Code (a Variant from FieldRef.Value into a Text parameter) is its default Format text, so an Evaluate of it reads the same date back.",
+        tests: "Incoming Document.FindByDocumentNoAndPostingDate(.., PostingDateFieldRef.Value) behind the Incoming Doc. Attach. FactBox: about 470 Tests-ERM tests.",
+        probe: "T := V where V is a Variant holding a Date: compare T with Format(D); Evaluate(D2, T); the same for a blank Date.",
+    },
     GuidToText => {
         id: "guid-to-text",
         assumed: "A Guid assigned to a Text or Code is its text form {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} in capitals, as Format gives it.",
@@ -168,6 +180,30 @@ registry! {
         assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment.",
         tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests.",
         probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G).",
+    },
+    ProcedureAssignIsCall => {
+        id: "procedure-assign-is-call",
+        assumed: "`Proc := value` for a procedure with one value parameter is the call `Proc(value)`.",
+        tests: "Service Line (`SetHideWarrantyWarning := true` in OnValidate of Fault Reason Code): T204_PostedServiceInvoiceContainsPriceCalcMethod and 178 more Tests-ERM tests.",
+        probe: "A codeunit procedure P(V: Boolean) and `P := true;`: does it compile and run P? The same with a var parameter, two parameters, a return value.",
+    },
+    DateFormulaSpacesBetweenTerms => {
+        id: "date-formula-spaces-between-terms",
+        assumed: "Spaces in a date formula are ignored, also between the terms: `<CM + 1D>` is `<CM+1D>` (the corpus pins spaces next to the brackets only).",
+        tests: "Tests-SCM Item.TestField(\"Next Counting Start Date\", CalcDate('<CM + 1D>', WorkDate())), Base Application's `<CM + 1D>` and 16 more Tests-ERM tests.",
+        probe: "CalcDate('<CM + 1D>', D), Evaluate(DF, '<1D + 1W>') and Format(DF), '<1 D>', '<- 1D>'.",
+    },
+    FeatureKeyEnabledModify => {
+        id: "feature-key-enabled-modify",
+        assumed: "Modify of a Feature Key with a changed Enabled (the only writable column) is kept for the rest of the run: later reads answer the new value, a rollback undoes it with the other writes.",
+        tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
+        probe: "Get a Feature Key, change Enabled, Modify; Get again and read Enabled; FindSet and Count; the same inside a test with TestIsolation, then in the next test.",
+    },
+    FeatureKeyUnchangedModify => {
+        id: "feature-key-unchanged-modify",
+        assumed: "Modify on a Feature Key row that was read and not changed (Enabled set to the value it has) succeeds and changes nothing.",
+        tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
+        probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback.",
     },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
@@ -210,6 +246,12 @@ registry! {
         assumed: "A page extension that adds only controls bound to Rec fields, labels, parts or actions changes nothing about what a SaveValues page stores.",
         tests: "Pages with SaveValues and page extensions in the buckets.",
         probe: "A SaveValues page extended by a control bound to a variable and by one bound to a field.",
+    },
+    SaveValuesCallerValueWins => {
+        id: "savevalues-caller-value-wins",
+        assumed: "On a report's request page with SaveValues, every variable keeps its value, over the one an earlier confirmed run stored, when the caller ran a procedure of the report variable (SetParameters) before the run.",
+        tests: "Microsoft's Get Demand To Reserve with its Assembly extension, run by Reservation Worksheet tests.",
+        probe: "A report with SaveValues whose first run confirms the default and whose second run sets the variable before RunModal; read the variable in OnPreReport.",
     },
     ImplicitCategoryGroup => {
         id: "implicit-category-group",

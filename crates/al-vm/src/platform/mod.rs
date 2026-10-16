@@ -349,6 +349,28 @@ impl Providers {
             .collect()
     }
 
+    /// The Feature Key rows: the served ones, with the rows a Modify stored (`Enabled`) over them.
+    fn feature_key_listing(&self, store: &MemStore, cx: &AccessContext, t: &TableDef) -> Result<Listed, StoreError> {
+        let stored = store.stored_rows(cx, t);
+        if stored.is_empty() {
+            return self.listed(t, Virtual::FeatureKey);
+        }
+        let mut entries = self.list_rows(t, Virtual::FeatureKey);
+        for e in &mut entries {
+            let key = t.primary_key(&e.row);
+            let same_key = |r: &&Row| {
+                t.primary_key(r)
+                    .iter()
+                    .zip(&key)
+                    .all(|(a, b)| al_builtins::ops::compare(a, b).is_ok_and(|o| o == std::cmp::Ordering::Equal))
+            };
+            if let Some(over) = stored.iter().find(same_key) {
+                e.row = over.clone();
+            }
+        }
+        Ok(Listed::Own(Rc::new(mat::Mat::new(t, entries))))
+    }
+
     /// The rows of a table that is listed in full.
     fn listed(&self, t: &TableDef, kind: Virtual) -> Result<Listed, StoreError> {
         if let Some(m) = self.listed.borrow().get(&kind) {
@@ -480,6 +502,17 @@ impl VirtualTables for Providers {
         self.served.get(t.object as usize).is_some_and(Option::is_some)
     }
 
+    // Enabled is the only writable column of a Feature Key (record/TestFeatureKeyTable.al:
+    // Record_FeatureKey_ModifyingAReadOnlyColumn_RaisesNamingTheField); that a change stays for the rest of the run is
+    // assumed (docs/probes-needed.md, Feature Key).
+    fn writable_columns(&self, t: &TableDef) -> &'static [u32] {
+        if self.served.get(t.object as usize) == Some(&Some(Virtual::FeatureKey)) {
+            &[2]
+        } else {
+            &[]
+        }
+    }
+
     fn write_refusal(&self, t: &TableDef) -> Option<String> {
         (self.served.get(t.object as usize) == Some(&Some(Virtual::Unprovided))).then(|| {
             format!(
@@ -517,6 +550,7 @@ impl VirtualTables for Providers {
             Virtual::EventSubscription => {
                 Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.get(t, pk)?))
             }
+            Virtual::FeatureKey => self.feature_key_listing(store, cx, t)?.get(t, pk),
             k => self.listed(t, k)?.get(t, pk),
         }
     }
@@ -541,6 +575,7 @@ impl VirtualTables for Providers {
                 }
                 Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.next(t, scan)?))
             }
+            Virtual::FeatureKey => self.feature_key_listing(store, cx, t)?.next(t, scan),
             k => self.listed(t, k)?.next(t, scan),
         }
     }
@@ -570,6 +605,7 @@ impl VirtualTables for Providers {
                 }
                 self.listed(t, Virtual::EventSubscription)?.count(t, filters)
             }
+            Virtual::FeatureKey => self.feature_key_listing(store, cx, t)?.count(t, filters),
             k => self.listed(t, k)?.count(t, filters),
         }
     }

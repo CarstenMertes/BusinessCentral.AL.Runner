@@ -161,6 +161,11 @@ impl Lowerer<'_> {
                             && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
                     }) {
                     "System.EvaluateVariableOption#1".to_string()
+                } else if id == "System.Format#1"
+                    && args.len() >= 3
+                    && args.first().is_some_and(|a| matches!(self.ty_of(a), Ty::Variant))
+                {
+                    "System.FormatVariant#1".to_string()
                 } else {
                     id.clone()
                 };

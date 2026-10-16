@@ -215,6 +215,11 @@ fn date(text: &str, number: i64, today: Option<i32>) -> Result<Parsed, Signal> {
             },
         );
     }
+    // The empty text leaves the date empty in format 0 as in format 9 (types/lt-datetime/Evaluate.al:Date_Default_Evaluate,
+    // oracle: Yes and an empty date).
+    if text.is_empty() {
+        return Ok(Parsed::Value(Value::Date(0, false)));
+    }
     if text.eq_ignore_ascii_case("t") {
         return match today {
             Some(d) => Ok(Parsed::Value(Value::Date(d, false))),
@@ -766,6 +771,12 @@ mod tests {
         assert_eq!(ms("12:00", 9), None);
         assert_eq!(ms("24:00:00", 0), None);
         assert_eq!(ms("12:00:60", 0), None);
+    }
+
+    // types/lt-datetime/Evaluate.al:Date_Default_Evaluate: the empty text reads as the empty date in format 0 too.
+    #[test]
+    fn the_empty_text_reads_as_the_empty_date_in_format_0() {
+        assert!(matches!(value(date("", 0, Some(5))), Some(Value::Date(0, _))));
     }
 
     // codeunit "LT P86 Eval Date"

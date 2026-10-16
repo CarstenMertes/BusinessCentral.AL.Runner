@@ -141,23 +141,20 @@ impl Session {
         // The page's own code reaches a part whose Visible came out false (Base Application's journals call
         // `CurrPage.WorkflowStatusBatch.PAGE.SetFilterOnWorkflowRecord` behind `Visible = <variable>`; Tests-General
         // Journal, 7 tests). Unprobed: docs/probes-needed.md "CurrPage.<Part> of an invisible part".
+        // A part whose Visible expression came out false is in the test page too, answering Visible() No and First() Yes
+        // (misc/lt-probes-needed-7/PnGPartTriggers.al:HiddenPartExpression); only a literal `Visible = false` leaves it out
+        // (testpart/TestPartNotOnThePage, which never creates the part).
         let found = found.or_else(|| {
-            runtime
-                .then(|| {
-                    st.borrow()
-                        .hidden_parts
-                        .iter()
-                        .find(|(i, _)| *i == control)
-                        .map(|(_, c)| c.clone())
-                })
-                .inspect(|c| {
-                    if c.is_some() {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::InvisiblePartForPageCode,
-                        );
-                    }
-                })
-                .flatten()
+            let hidden = st
+                .borrow()
+                .hidden_parts
+                .iter()
+                .find(|(i, _)| *i == control)
+                .map(|(_, c)| c.clone());
+            if hidden.is_some() && runtime {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::InvisiblePartForPageCode);
+            }
+            hidden
         });
         // A part the control tree dropped (Visible = false, or an ApplicationArea the session does not enable) is
         // still there for the page's own code: Base Application's Sales Credit Memo calls

@@ -372,6 +372,14 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
     // Brackets are optional on either side, and the letters may be lower case
     // (text/TestProbeTextDateFormatContracts.al:Dates_CalcDate_Formulas, DateFormula_EvaluateForms).
     let upper = text.trim().to_ascii_uppercase();
+    // Spaces are ignored: inside the brackets (types/lt-datetime/Evaluate.al:Format_Evaluate `< 1D >`) and, assumed,
+    // between the terms (Microsoft's `<CM + 1D>`, Tests-SCM Item.TestField("Next Counting Start Date", ..)).
+    let upper = if upper.contains(' ') {
+        crate::assumptions::assume(crate::assumptions::Assumption::DateFormulaSpacesBetweenTerms);
+        upper.replace(' ', "")
+    } else {
+        upper
+    };
     let body = upper.strip_prefix('<').unwrap_or(&upper);
     let body = body.strip_suffix('>').unwrap_or(body);
     let b = body.as_bytes();
@@ -1024,6 +1032,9 @@ mod tests {
         is_date(calc("<cm>", mon.clone()), 2024, 1, 31);
         is_date(calc("<1d>", mon.clone()), 2024, 1, 16);
         is_date(calc("<1D+1W>", mon.clone()), 2024, 1, 23);
+        // Spaces between the terms are ignored (Microsoft's Tests-SCM Item.TestField("Next Counting Start Date",
+        // CalcDate('<CM + 1D>', WorkDate())) and Base Application's `<CM + 1D>`; the corpus pins `< 1D >`).
+        is_date(calc("<1D + 1W>", mon.clone()), 2024, 1, 23);
         // A second term without a sign.
         let Err(Signal::Error(e)) = calc("<1D1W>", mon.clone()) else {
             panic!("a second term without a sign must raise");

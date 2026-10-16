@@ -98,6 +98,9 @@ impl Session {
                     }
                     None => return unsupported(format!("{}: IncludeSender on a page without CurrPage", r.name)),
                 },
+                // The sender of a report's event is the running report, as a Report variable: the subscriber calls the
+                // report's procedures and sees its state (pages/lt-page-report-events/P84ReportSender.al).
+                (al_ir::ObjKind::Report, _) => Some(Value::Codeunit(instance)),
                 (_, Some(slot)) => Some(instance.borrow().globals[slot].clone()),
                 _ => return unsupported(format!("{}: IncludeSender on a {}", r.name, o.kind)),
             }

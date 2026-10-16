@@ -148,6 +148,7 @@ impl Describe for LibraryValue {
             LibraryValue::Notification(_) => "Notification".into(),
             LibraryValue::ModuleInfo(_) => "ModuleInfo".into(),
             LibraryValue::DataTransfer(_) => "DataTransfer".into(),
+            LibraryValue::Cookie(_) => "Cookie".into(),
             LibraryValue::HttpRequest(_) => "HttpRequestMessage".into(),
             LibraryValue::HttpContent(_) => "HttpContent".into(),
             LibraryValue::HttpHeaders(_) => "HttpHeaders".into(),

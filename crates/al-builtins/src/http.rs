@@ -14,8 +14,8 @@ use crate::describe::Describe;
 use crate::native::{Ctx, HttpOutgoing, NativeFn, Signal, raise};
 use crate::signature::Signature;
 use crate::value::{
-    HeaderBag, HeaderKind, HttpClientState, HttpContentState, HttpHeaderList, HttpRequestState, HttpResponseState,
-    LibraryValue, TestHttpRequestState, TestHttpResponseState, Value, new_header_list,
+    CookieState, HeaderBag, HeaderKind, HttpClientState, HttpContentState, HttpHeaderList, HttpRequestState,
+    HttpResponseState, LibraryValue, TestHttpRequestState, TestHttpResponseState, Value, new_header_list,
 };
 use std::cell::RefCell;
 use std::rc::Rc;
@@ -1005,6 +1005,198 @@ fn file_upload_create_in(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]
     Ok(Value::Null)
 }
 
+// ------------------------------------------------------------------------------------------------ cookies
+
+/// The error of a Set-Cookie header the container refuses (P94Cookie.al:Response_AllAttributes).
+fn cookie_parse_error() -> Signal {
+    match raise::<()>(
+        "An error occurred when parsing the Cookie header for Uri 'https://bccookie.microsoft.com/'.",
+        "AL:Cookie",
+    ) {
+        Err(e) => e,
+        Ok(()) => unreachable!("raise fails"),
+    }
+}
+
+/// A `DateTime` value of an RFC 1123 date (`Wed, 21 Oct 2037 07:28:00 GMT`).
+fn parse_cookie_date(text: &str) -> Option<i64> {
+    let rest = text.split_once(',').map_or(text, |(_, r)| r).trim();
+    let mut it = rest.split_whitespace();
+    let day: u32 = it.next()?.parse().ok()?;
+    let month = [
+        "jan", "feb", "mar", "apr", "may", "jun", "jul", "aug", "sep", "oct", "nov", "dec",
+    ]
+    .iter()
+    .position(|m| it.clone().next().is_some_and(|x| x.eq_ignore_ascii_case(m)))?
+        + 1;
+    it.next();
+    let year: i32 = it.next()?.parse().ok()?;
+    let clock = it.next()?;
+    let zone = it.next()?;
+    if !zone.eq_ignore_ascii_case("GMT") {
+        return None;
+    }
+    let mut c = clock.split(':');
+    let (h, m, s): (i64, i64, i64) = (
+        c.next()?.parse().ok()?,
+        c.next()?.parse().ok()?,
+        c.next()?.parse().ok()?,
+    );
+    let d = i64::from(crate::format::day_from_civil(year, month as u32, day));
+    Some((d - 1) * 86_400_000 + ((h * 60 + m) * 60 + s) * 1000 + 1)
+}
+
+/// The cookies a response's Set-Cookie headers leave in a cookie container asked for `https://bccookie.microsoft.com/`, in the
+/// order they were set. A Domain attribute is refused, a cookie whose Path is not `/` is not sent to that address and an expired
+/// one is gone (platform/lt-xmlport-session-navapp-cookie/P94Cookie.al). SameSite and unknown attributes are ignored.
+fn response_cookies(ctx: &dyn Ctx, headers: &HttpHeaderList) -> Result<Vec<CookieState>, Signal> {
+    let values: Vec<String> = headers
+        .borrow()
+        .items
+        .iter()
+        .filter(|(k, _)| k.eq_ignore_ascii_case("Set-Cookie"))
+        .flat_map(|(_, v)| v.clone())
+        .collect();
+    let mut out: Vec<CookieState> = Vec::new();
+    for header in values {
+        let mut parts = header.split(';');
+        let first = parts.next().unwrap_or_default();
+        let (name, value) = match first.split_once('=') {
+            Some((n, v)) => (n.trim().to_string(), v.trim().to_string()),
+            None => (first.trim().to_string(), String::new()),
+        };
+        let mut c = CookieState {
+            name,
+            value,
+            path: "/".into(),
+            ..CookieState::default()
+        };
+        let mut path_ok = true;
+        let mut expired = false;
+        for attr in parts {
+            let (k, v) = attr
+                .split_once('=')
+                .map_or((attr.trim(), ""), |(k, v)| (k.trim(), v.trim()));
+            match k.to_ascii_lowercase().as_str() {
+                "domain" => return Err(cookie_parse_error()),
+                "path" => path_ok = v == "/",
+                "secure" => c.secure = true,
+                "httponly" => c.http_only = true,
+                "expires" => {
+                    let Some(at) = parse_cookie_date(v) else {
+                        return unsupported(format!("a cookie Expires of the form `{v}` (not pinned)"));
+                    };
+                    c.expires = at;
+                }
+                "max-age" => {
+                    let Ok(secs) = v.parse::<i64>() else {
+                        return unsupported(format!("a cookie Max-Age of `{v}` (not pinned)"));
+                    };
+                    let Some(now) = ctx.now_unix_millis() else {
+                        return unsupported("Max-Age of a cookie without a clock");
+                    };
+                    c.expires = unix_to_datetime(now + secs * 1000);
+                }
+                _ => {}
+            }
+        }
+        if let Some(now) = ctx.now_unix_millis() {
+            if c.expires != 0 && c.expires <= unix_to_datetime(now) {
+                expired = true;
+            }
+        }
+        out.retain(|o| !(o.name == c.name && path_ok));
+        if path_ok && !expired {
+            out.push(c);
+        }
+    }
+    Ok(out)
+}
+
+fn unix_to_datetime(ms: i64) -> i64 {
+    (i64::from(crate::format::day_from_civil(1970, 1, 1)) - 1) * 86_400_000 + ms + 1
+}
+
+fn response_cookie_names(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    let headers = with_response(r, |s| s.headers.clone())?;
+    let cookies = response_cookies(c, &headers)?;
+    let names: Vec<Value> = cookies.into_iter().map(|k| Value::Text(k.name.into())).collect();
+    Ok(Value::List(Rc::new(RefCell::new(names))))
+}
+
+fn response_get_cookie(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let name = text(a, 0)?;
+    let headers = with_response(r, |s| s.headers.clone())?;
+    let cookies = response_cookies(c, &headers)?;
+    match cookies.into_iter().find(|k| k.name == name) {
+        Some(k) if !name.is_empty() => {
+            a[1] = lib("Cookie", LibraryValue::Cookie(k));
+            Ok(Value::Boolean(true))
+        }
+        _ => Ok(Value::Boolean(false)),
+    }
+}
+
+fn with_cookie<R>(r: Option<&mut Value>, f: impl FnOnce(&mut CookieState) -> R) -> Result<R, Signal> {
+    let cell = receiver_cell(r, "Cookie")?;
+    let mut lib = cell.borrow_mut();
+    if matches!(&*lib, LibraryValue::Empty) {
+        *lib = LibraryValue::Cookie(CookieState::default());
+    }
+    match &mut *lib {
+        LibraryValue::Cookie(s) => Ok(f(s)),
+        other => unsupported(format!("Cookie method on {}", other.describe())),
+    }
+}
+
+fn cookie_name(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let new = if a.is_empty() { None } else { Some(text(a, 0)?) };
+    // What a setter answers is not pinned (assumption `cookie-setter-result`).
+    if new.is_some() && c.ret_used() {
+        crate::assumptions::assume(crate::assumptions::Assumption::CookieSetterResult);
+    }
+    with_cookie(r, |s| {
+        if let Some(n) = new {
+            s.name = n;
+        }
+        Value::Text(s.name.clone().into())
+    })
+}
+
+fn cookie_value(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let new = if a.is_empty() { None } else { Some(text(a, 0)?) };
+    // What a setter answers is not pinned (assumption `cookie-setter-result`).
+    if new.is_some() && c.ret_used() {
+        crate::assumptions::assume(crate::assumptions::Assumption::CookieSetterResult);
+    }
+    with_cookie(r, |s| {
+        if let Some(n) = new {
+            s.value = n;
+        }
+        Value::Text(s.value.clone().into())
+    })
+}
+
+fn cookie_domain(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    with_cookie(r, |s| Value::Text(s.domain.clone().into()))
+}
+
+fn cookie_path(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    with_cookie(r, |s| Value::Text(s.path.clone().into()))
+}
+
+fn cookie_secure(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    with_cookie(r, |s| Value::Boolean(s.secure))
+}
+
+fn cookie_http_only(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    with_cookie(r, |s| Value::Boolean(s.http_only))
+}
+
+fn cookie_expires(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
+    with_cookie(r, |s| Value::DateTime(s.expires))
+}
+
 pub fn native_for(sig: &Signature) -> Option<NativeFn> {
     let ty = |i: usize| sig.params.get(i).map(|p| p.ty.as_str()).unwrap_or("");
     let n = sig.params.len();
@@ -1058,6 +1250,15 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("TestHttpResponseMessage", "IsSuccessfulRequest") => Some(test_response_success),
         ("TestHttpResponseMessage", "Content") => Some(test_response_content),
         ("TestHttpResponseMessage", "Headers") => Some(test_response_headers),
+        ("HttpResponseMessage", "GetCookieNames") => Some(response_cookie_names),
+        ("HttpResponseMessage", "GetCookie") => Some(response_get_cookie),
+        ("Cookie", "Name") => Some(cookie_name),
+        ("Cookie", "Value") => Some(cookie_value),
+        ("Cookie", "Domain") => Some(cookie_domain),
+        ("Cookie", "Path") => Some(cookie_path),
+        ("Cookie", "Secure") => Some(cookie_secure),
+        ("Cookie", "HttpOnly") => Some(cookie_http_only),
+        ("Cookie", "Expires") => Some(cookie_expires),
         ("FileUpload", "FileName") => Some(file_upload_name),
         ("FileUpload", "CreateInStream") => Some(file_upload_create_in),
         _ => None,

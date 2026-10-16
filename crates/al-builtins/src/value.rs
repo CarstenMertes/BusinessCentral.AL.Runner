@@ -806,6 +806,19 @@ impl Default for HttpContentState {
     }
 }
 
+/// What a `Cookie` holds (platform/lt-xmlport-session-navapp-cookie/P94Cookie.al).
+#[derive(Debug, Clone, Default)]
+pub struct CookieState {
+    pub name: String,
+    pub value: String,
+    pub domain: String,
+    pub path: String,
+    pub secure: bool,
+    pub http_only: bool,
+    /// A `DateTime` value, 0 for none.
+    pub expires: i64,
+}
+
 /// What an `HttpResponseMessage` holds (network/lt-http/HttpResponse.al). A response nobody filled is
 /// 200 OK with an empty body.
 #[derive(Debug, Clone)]
@@ -975,6 +988,8 @@ pub enum LibraryValue {
     ModuleInfo(ModuleInfoState),
     /// A `DataTransfer` that `SetTables` staged: (source table, destination table).
     DataTransfer(Option<(i32, i32)>),
+    /// A `Cookie`: an untouched one is `Empty`, which reads as no name, no value and no attributes.
+    Cookie(CookieState),
     /// An `HttpRequestMessage` that was configured (an untouched one is `Empty`).
     HttpRequest(HttpRequestState),
     /// An `HttpContent` that was written to or asked for its headers (an untouched one is `Empty`).

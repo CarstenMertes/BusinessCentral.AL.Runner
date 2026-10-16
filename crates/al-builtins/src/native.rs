@@ -107,6 +107,10 @@ pub trait Ctx: FormatCtx {
     fn today_day(&self) -> Option<i32> {
         None
     }
+    /// The host clock in milliseconds since the Unix epoch; `None` where there is no host.
+    fn now_unix_millis(&self) -> Option<i64> {
+        None
+    }
     /// `Format` of a record variable, a `RecordRef` or a `FieldRef` (standard format 0): needs the
     /// table's fields. `None` where the context has no program.
     fn format_composite(&mut self, _v: &Value) -> Option<Result<String, Signal>> {
@@ -276,6 +280,7 @@ pub type NativeFn = fn(&mut dyn Ctx, Option<&mut Value>, &mut [Value]) -> Result
 const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
     ("System.Format#2", format_2),
+    ("System.FormatVariant#1", format_variant),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
         "System.EvaluateVariableOption#1",
@@ -432,6 +437,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.TableSeparator#1", vm_only),
     ("Xmlport.TextEncoding#1", vm_only),
     ("Xmlport.Filename#1", vm_only),
+    ("Xmlport.CurrentPath#1", vm_only),
+    ("Xmlport.Break#1", vm_only),
+    ("Xmlport.BreakUnbound#1", vm_only),
+    ("Xmlport.Quit#1", vm_only),
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
     // ids not listed (SaveAsPdf, SaveAsXml and the other file forms, Preview, the layout accessors, Skip, Break, ...) need
     // output or behaviour the corpus does not pin and are refused in lowering.
@@ -523,6 +532,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // primitive-totext-is-format.
     ("Date.ToText#1", |c, r, _| primitive_to_text(c, r, "Date")),
     ("Boolean.ToText#1", |c, r, _| primitive_to_text(c, r, "Boolean")),
+    ("Decimal.ToText#1", |c, r, _| primitive_to_text(c, r, "Decimal")),
     ("Variant.IsDefaultLayout#1", |_, r, _| is(r, "defaultlayout")),
     ("Variant.IsTestPermissions#1", |_, r, _| is(r, "testpermissions")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
@@ -796,6 +806,20 @@ fn text_arg(args: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
     )
 }
 
+/// `Format(V, Length, Number)` with `V` declared as a Variant: the standard format numbers 3 to 8 do not exist for a Variant
+/// (types/lt-scalars/ScT70050.al:FormatNumbers_*), though a Decimal variable has 3 and 4.
+fn format_variant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let std = int_arg(args, 2).unwrap_or(0) as i32;
+    if (3..=8).contains(&std) && !matches!(&args[0], Value::Null) {
+        return Err(Signal::Error(Box::new(AlError {
+            message: format!("Standard format number {std} does not exist for the type 'Variant'."),
+            code: "InvalidStandardFormat".into(),
+            call_stack: String::new(),
+        })));
+    }
+    format_1(ctx, r, args)
+}
+
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let len = int_arg(args, 1).unwrap_or(0) as i32;
     let std = int_arg(args, 2).unwrap_or(0) as i32;
@@ -847,7 +871,17 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
                 code: "InvalidFormatString".into(),
                 call_stack: String::new(),
             })),
-            None => Signal::Unsupported(e),
+            None => match e
+                .strip_prefix(crate::formatstr::RAISE_MARK)
+                .and_then(|r| r.split_once(crate::formatstr::RAISE_MARK))
+            {
+                Some((code, message)) => Signal::Error(Box::new(AlError {
+                    message: message.to_string(),
+                    code: code.to_string(),
+                    call_stack: String::new(),
+                })),
+                None => Signal::Unsupported(e),
+            },
         })
 }
 
@@ -1237,6 +1271,7 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                     | "XmlDeclaration"
                     // types/TestClearContracts.al:Clear_TextBuilder_ResetsToEmpty.
                     | "TextBuilder"
+                    | "Cookie"
                     | "JsonObject"
                     | "JsonArray"
                     | "JsonValue"
@@ -1277,6 +1312,9 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // The empty formula (types/TestDateFormulaDurationFormatContracts.al:38-42).
         Value::DateFormula(_) => Value::DateFormula(String::new()),
         Value::Option(_, m) => Value::Option(0, m.clone()),
+        // A cleared Enum is the enum's initial value, ordinal 0, as a variable that was never assigned (`default_for`;
+        // types/TestBlankEnumInitTests.Codeunit.al for the blank member reading as ordinal 0).
+        Value::Enum(id, _) => Value::Enum(*id, 0),
         // A cleared List or Dictionary is a new, empty one (types/TestClearContracts.al:130-150,
         // collections/TestListByRefContracts.al:155 through a `var` parameter).
         Value::List(_) => Value::List(Default::default()),
@@ -1455,7 +1493,7 @@ fn value_kind(v: &Value) -> String {
 /// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
 fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<Value, Signal> {
     match r.as_deref() {
-        Some(v @ (Value::Date(..) | Value::Boolean(_))) => {
+        Some(v @ (Value::Date(..) | Value::Boolean(_) | Value::Decimal(_))) => {
             crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
             match crate::format::try_format(v, 0, 0, &*c) {
                 Ok(t) => Ok(Value::Text(t.into())),
@@ -1630,7 +1668,7 @@ pub(crate) mod tests {
         let cat = crate::catalog::Catalog::load();
         let ids: Vec<String> = cat.signatures.iter().map(|s| cat.id(s)).collect();
         // Ids lowering picks for a call of a catalog overload that needs another implementation (`Evaluate` into an Option variable).
-        let derived = ["System.EvaluateVariableOption#1"];
+        let derived = ["System.EvaluateVariableOption#1", "System.FormatVariant#1"];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");
         }

@@ -65,8 +65,13 @@ impl ExprTy {
 /// Calls `f` on every expression of `body` in post-order (the order of the table).
 pub fn for_each_expr_post(body: &[Stmt], f: &mut dyn FnMut(&Expr)) {
     for s in body {
-        stmt(s, f);
+        stmt_roots(s, &mut |e| post(e, f));
     }
+}
+
+fn post(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+    children(e, &mut |c| post(c, f));
+    f(e);
 }
 
 /// The number of expression nodes in `body`.
@@ -79,42 +84,81 @@ pub fn count_exprs(body: &[Stmt]) -> usize {
 /// The number of expression nodes in `e`, itself included.
 pub fn count_expr(e: &Expr) -> usize {
     let mut n = 0;
-    expr(e, &mut |_| n += 1);
+    post(e, &mut |_| n += 1);
     n
 }
 
-/// The number of expression nodes in `p`.
-pub fn count_place(p: &Place) -> usize {
-    let mut n = 0;
-    place(p, &mut |_| n += 1);
-    n
+/// Calls `f` on every expression node of `e`, itself included, in post-order, with the number of nodes of its subtree.
+pub fn for_each_sized(e: &Expr, f: &mut dyn FnMut(&Expr, usize)) -> usize {
+    let mut size = 1;
+    children(e, &mut |c| size += for_each_sized(c, f));
+    f(e, size);
+    size
 }
 
-fn stmts(b: &[Stmt], f: &mut dyn FnMut(&Expr)) {
-    for s in b {
-        stmt(s, f);
+/// A number for the kind of an expression node (its variant), to compare a node with a record of it.
+pub fn kind_of(e: &Expr) -> u8 {
+    match e {
+        Expr::Const(_) => 0,
+        Expr::Load(_) => 1,
+        Expr::Unary(..) => 2,
+        Expr::Binary(..) => 3,
+        Expr::In(..) => 4,
+        Expr::Ternary(..) => 5,
+        Expr::Convert(..) => 6,
+        Expr::Call { .. } => 7,
+        Expr::InterfaceCall { .. } => 8,
+        Expr::BaseInstance => 9,
+        Expr::ThisInstance => 10,
+        Expr::Refused(_) => 11,
+        Expr::Fail { .. } => 12,
+        Expr::InterfaceTest { .. } => 13,
+        Expr::EnumImpl { .. } => 14,
+        Expr::Control { .. } => 15,
+        Expr::FieldOf(..) => 16,
+        Expr::QueryColumn { .. } => 17,
+        Expr::DotNet { .. } => 18,
+        Expr::CharAt(..) => 19,
+        Expr::DotNetCoerce(..) => 20,
+        Expr::DotNetOperand(..) => 21,
+        Expr::Builtin { .. } => 22,
     }
 }
 
-fn stmt(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
+/// Calls `f` on each expression a statement holds directly, in the order of the table, and on those of the
+/// statements nested in it (their statements follow the expressions that come before them in the walk).
+pub fn stmt_roots(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
+    stmt_roots_nested(s, &mut |e, _| f(e));
+}
+
+/// Like [`stmt_roots`]; the second argument of `f` is true for an expression of a nested statement.
+pub fn stmt_roots_nested(s: &Stmt, f: &mut dyn FnMut(&Expr, bool)) {
+    fn list(b: &[Stmt], f: &mut dyn FnMut(&Expr, bool)) {
+        for s in b {
+            stmt_roots_nested(s, &mut |e, _| f(e, true));
+        }
+    }
+    fn own(f: &mut dyn FnMut(&Expr, bool)) -> impl FnMut(&Expr) + '_ {
+        move |e| f(e, false)
+    }
     match s {
         Stmt::Assign(p, e) => {
-            place(p, f);
-            expr(e, f);
+            place_children(p, &mut own(f));
+            f(e, false);
         }
-        Stmt::Expr(e) => expr(e, f),
+        Stmt::Expr(e) => f(e, false),
         Stmt::If(c, a, b) => {
-            expr(c, f);
-            stmts(a, f);
-            stmts(b, f);
+            f(c, false);
+            list(a, f);
+            list(b, f);
         }
         Stmt::While(c, b) => {
-            expr(c, f);
-            stmts(b, f);
+            f(c, false);
+            list(b, f);
         }
         Stmt::Repeat(b, c) => {
-            stmts(b, f);
-            expr(c, f);
+            list(b, f);
+            f(c, false);
         }
         Stmt::For {
             var,
@@ -123,161 +167,161 @@ fn stmt(s: &Stmt, f: &mut dyn FnMut(&Expr)) {
             down: _,
             body,
         } => {
-            place(var, f);
-            expr(from, f);
-            expr(to, f);
-            stmts(body, f);
+            place_children(var, &mut own(f));
+            f(from, false);
+            f(to, false);
+            list(body, f);
         }
         Stmt::Foreach { var, collection, body } => {
-            place(var, f);
-            expr(collection, f);
-            stmts(body, f);
+            place_children(var, &mut own(f));
+            f(collection, false);
+            list(body, f);
         }
         Stmt::Case {
             scrutinee,
             branches,
             otherwise,
         } => {
-            expr(scrutinee, f);
+            f(scrutinee, false);
             for (elems, body) in branches {
                 for e in elems {
-                    set_elem(e, f);
+                    set_elem_children(e, &mut own(f));
                 }
-                stmts(body, f);
+                list(body, f);
             }
-            stmts(otherwise, f);
+            list(otherwise, f);
         }
         Stmt::Exit(e) => {
             if let Some(e) = e {
-                expr(e, f);
+                f(e, false);
             }
         }
-        Stmt::AssertError(b) => stmts(b, f),
+        Stmt::AssertError(b) => list(b, f),
         Stmt::Break | Stmt::Pos(_) | Stmt::Assume(_) | Stmt::Continue => {}
     }
 }
 
-fn set_elem(e: &SetElem, f: &mut dyn FnMut(&Expr)) {
+fn set_elem_children(e: &SetElem, f: &mut dyn FnMut(&Expr)) {
     match e {
-        SetElem::One(x) => expr(x, f),
+        SetElem::One(x) => f(x),
         SetElem::Range(a, b) => {
             if let Some(a) = a {
-                expr(a, f);
+                f(a);
             }
             if let Some(b) = b {
-                expr(b, f);
+                f(b);
             }
         }
     }
 }
 
-fn place(p: &Place, f: &mut dyn FnMut(&Expr)) {
+fn place_children(p: &Place, f: &mut dyn FnMut(&Expr)) {
     match p {
         Place::Local(_) | Place::Global(_) | Place::BaseGlobal(_) => {}
         Place::Index(base, idx) => {
-            place(base, f);
+            place_children(base, f);
             for e in idx {
-                expr(e, f);
+                f(e);
             }
         }
-        Place::Field(base, _) => place(base, f),
+        Place::Field(base, _) => place_children(base, f),
     }
 }
 
-fn arg(a: &Arg, f: &mut dyn FnMut(&Expr)) {
+fn arg_children(a: &Arg, f: &mut dyn FnMut(&Expr)) {
     match a {
-        Arg::Value(e) => expr(e, f),
-        Arg::Ref(p) => place(p, f),
+        Arg::Value(e) => f(e),
+        Arg::Ref(p) => place_children(p, f),
     }
 }
 
-fn args(a: &[Arg], f: &mut dyn FnMut(&Expr)) {
+fn args_children(a: &[Arg], f: &mut dyn FnMut(&Expr)) {
     for x in a {
-        arg(x, f);
+        arg_children(x, f);
     }
 }
 
-fn expr(e: &Expr, f: &mut dyn FnMut(&Expr)) {
+/// Calls `f` on the expressions directly inside `e` (through places, arguments and sets), in the order of the table.
+pub fn children(e: &Expr, f: &mut dyn FnMut(&Expr)) {
     match e {
         Expr::Const(_) | Expr::BaseInstance | Expr::ThisInstance | Expr::Refused(_) | Expr::Fail { .. } => {}
-        Expr::Load(p) => place(p, f),
-        Expr::Unary(_, x) | Expr::Convert(_, x) | Expr::DotNetCoerce(_, x) | Expr::DotNetOperand(x, _) => expr(x, f),
+        Expr::Load(p) => place_children(p, f),
+        Expr::Unary(_, x) | Expr::Convert(_, x) | Expr::DotNetCoerce(_, x) | Expr::DotNetOperand(x, _) => f(x),
         Expr::Binary(_, a, b) | Expr::CharAt(a, b) => {
-            expr(a, f);
-            expr(b, f);
+            f(a);
+            f(b);
         }
         Expr::In(x, set) => {
-            expr(x, f);
+            f(x);
             for s in set {
-                set_elem(s, f);
+                set_elem_children(s, f);
             }
         }
         Expr::Ternary(c, a, b) => {
-            expr(c, f);
-            expr(a, f);
-            expr(b, f);
+            f(c);
+            f(a);
+            f(b);
         }
         Expr::Call {
             object: _,
             routine: _,
             instance,
-            args: a,
+            args,
             try_call: _,
         } => {
             if let Some(i) = instance {
-                expr(i, f);
+                f(i);
             }
-            args(a, f);
+            args_children(args, f);
         }
         Expr::InterfaceCall {
             receiver,
             targets: _,
-            args: a,
+            args,
         } => {
-            expr(receiver, f);
-            args(a, f);
+            f(receiver);
+            args_children(args, f);
         }
         Expr::InterfaceTest {
             value,
             objects: _,
             cast: _,
-        } => expr(value, f),
+        } => f(value),
         Expr::EnumImpl {
             value,
             by_ordinal: _,
             unknown: _,
-        } => expr(value, f),
+        } => f(value),
         Expr::Control {
             page,
             control: _,
             runtime: _,
-        } => expr(page, f),
-        Expr::FieldOf(x, _) => expr(x, f),
-        Expr::QueryColumn { query, column: _ } => expr(query, f),
+        } => f(page),
+        Expr::FieldOf(x, _) => f(x),
+        Expr::QueryColumn { query, column: _ } => f(query),
         Expr::DotNet {
             ty: _,
             receiver,
             op: _,
-            args: a,
+            args,
         } => {
             if let Some(r) = receiver {
-                expr(r, f);
+                f(r);
             }
-            args(a, f);
+            args_children(args, f);
         }
         Expr::Builtin {
             id: _,
             receiver,
-            args: a,
+            args,
             ret_used: _,
         } => {
             if let Some(r) = receiver {
-                arg(r, f);
+                arg_children(r, f);
             }
-            args(a, f);
+            args_children(args, f);
         }
     }
-    f(e);
 }
 
 /// The types of the expressions of one routine, found by the address of the node.

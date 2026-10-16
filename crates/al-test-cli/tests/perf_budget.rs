@@ -48,7 +48,11 @@ fn compile_corpus() -> usize {
 /// day's value went from 1.936 to 1.999 million (+3.3 %), so the limit went from 1 990 000 to 2 060 000. The wall time
 /// did not grow (the walks run on all cores). Lowering that writes the symbolic form directly saves the first of the two
 /// walks.
-const LIMIT_INSTRUCTIONS_PER_OBJECT: u64 = 2_060_000;
+///
+/// ADR-036 step 0 (the side table of expression types, `lower/tys.rs`) costs another 2.3 % (2.059 to 2.106 million), so
+/// the limit is 2 120 000 for now. Decision recorded in docs/owner-review.md (2026-10-16). Bound-tree steps 1 and 2 must
+/// bring it back below 1 990 000; the limit goes down with them.
+const LIMIT_INSTRUCTIONS_PER_OBJECT: u64 = 2_120_000;
 const LIMIT_CPU_NS_PER_OBJECT: u64 = 2_000_000;
 const RUNS: usize = 3;
 

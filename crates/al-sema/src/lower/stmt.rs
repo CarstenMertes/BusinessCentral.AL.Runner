@@ -23,6 +23,8 @@ impl Lowerer<'_> {
         };
         self.locals.clear();
         self.local_labels.clear();
+        self.tys.clear();
+        self.tys_on = true;
         let mut locals = Vec::new();
         let mut by_var = Vec::new();
         let add = |lw: &mut Self, name: String, ty: Ty, locals: &mut Vec<ir::Slot>| match lw.rt(&ty) {
@@ -110,6 +112,8 @@ impl Lowerer<'_> {
                 r.name()
             ));
         }
+        let expr_tys = self.take_table(&body);
+        self.tys_on = false;
         let field = r
             .syntax()
             .ancestors()
@@ -141,7 +145,7 @@ impl Lowerer<'_> {
             pos,
             end_pos,
             begin_pos,
-            expr_tys: Vec::new(),
+            expr_tys,
         }
     }
 
@@ -279,7 +283,11 @@ impl Lowerer<'_> {
 
     pub(crate) fn stmt(&mut self, n: &SyntaxNode) -> Vec<ir::Stmt> {
         self.assumed.push(Vec::new());
+        let mark = self.tys.len();
         let mut out = self.stmt_plain(n);
+        if self.tys_on && n.kind() != SyntaxKind::Block {
+            self.seal_stmts(mark, &out);
+        }
         let marks = self.assumed.pop().unwrap_or_default();
         if !marks.is_empty() && !out.is_empty() {
             // After the position marker, which belongs to the statement that follows it.

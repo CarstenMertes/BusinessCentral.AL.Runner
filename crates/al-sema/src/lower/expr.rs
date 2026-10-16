@@ -278,6 +278,24 @@ impl Lowerer<'_> {
     }
 
     pub(crate) fn expr(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
+        // Parentheses are the expression inside, with its records.
+        if !self.tys_on || n.kind() == SyntaxKind::ParenExpr {
+            return self.expr_raw(n);
+        }
+        let mark = self.tys.len();
+        match self.expr_raw(n) {
+            Ok(e) => {
+                self.seal_expr(mark, n, &e);
+                Ok(e)
+            }
+            Err(m) => {
+                self.tys.truncate(mark);
+                Err(m)
+            }
+        }
+    }
+
+    fn expr_raw(&mut self, n: &SyntaxNode) -> L<ir::Expr> {
         use SyntaxKind::*;
         let kids: Vec<SyntaxNode> = n.children().collect();
         match n.kind() {

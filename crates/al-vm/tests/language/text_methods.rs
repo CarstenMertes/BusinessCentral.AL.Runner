@@ -79,3 +79,58 @@ fn a_hash_field_in_a_template_is_refused_not_written_as_text() {
         Err(al_builtins::native::Signal::Unsupported(_))
     ));
 }
+
+#[test]
+fn data_transfer_update_audit_fields_is_accepted_after_set_tables_outside_install_code() {
+    // misc/W5DataTransferOutside.al:SetTables_Twice_AndUpdateAuditFields (`DT.UpdateAuditFields := false`),
+    // misc/lt-probes-needed-2/PnBErrorsCollections.al:DataTransfer_OutsideInstall op6 (`UpdateAuditFields(true)`).
+    let src = "table 50101 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var DT: DataTransfer; begin DT.SetTables(Database::T, Database::T); DT.UpdateAuditFields := false; DT.UpdateAuditFields(true); exit('ok'); end; }";
+    assert_eq!(text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)), "ok");
+}
+
+#[test]
+fn a_one_character_literal_in_a_variant_is_a_char_and_clear_empties_a_variant() {
+    // types/lt-variant/VaTIs*.al:Is_Text_Code_Char_Byte (`V := 'a'` is Char; `'ab'`, `''` and a Text variable are Text),
+    // :Is_Empty_Variant (`V := 5; Clear(V)` leaves no type); LTP89IsMisc.al:WideChar_Variants and NearTypes (Abs keeps its type).
+    let src = "codeunit 50100 C { procedure F(): Text var V: Variant; T: Text; I: Integer; S: Text; begin
+        V := 'a'; S += Format(V.IsChar()) + Format(V.IsText()) + Format(V.IsWideChar()) + '|';
+        V := 'ab'; S += Format(V.IsChar()) + Format(V.IsText()) + '|';
+        T := 'a'; V := T; S += Format(V.IsChar()) + Format(V.IsText()) + '|';
+        V := 5; Clear(V); S += Format(V.IsInteger()) + '|';
+        I := -3; V := Abs(I); S += Format(V.IsInteger()) + Format(V.IsDecimal());
+        exit(S); end; }";
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "YesNoYes|NoYes|NoYes|No|YesNo"
+    );
+}
+
+#[test]
+fn a_text_builder_has_a_capacity_of_16_that_can_be_set_and_that_clear_keeps() {
+    // text/lt-label-textbuilder/TxCTextBuilderBasics.al:Capacity_Defaults, Capacity_Setter, Clear_Basics.
+    let src = "codeunit 50100 C { procedure F(): Text var TB: TextBuilder; S: Text; begin
+        S += Format(TB.Capacity()); TB.Append('abc'); S += '|' + Format(TB.Capacity());
+        TB.Capacity(100); S += '|' + Format(TB.Capacity()); TB.Clear(); S += '|' + Format(TB.Capacity()) + '|' + TB.ToText() + '|' + Format(TB.Length());
+        exit(S); end; }";
+    assert_eq!(
+        text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "16|16|100|100||0"
+    );
+}
+
+#[test]
+fn data_transfer_errors_carry_their_code_and_ensure_capacity_grows() {
+    // misc/W5DataTransferOutside.al (DB:Ok), text/lt-label-textbuilder/TxCTextBuilderBasics.al:EnsureCapacity_Basics.
+    let src = "table 50101 T { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 50100 C { procedure F(): Text var DT: DataTransfer; TB: TextBuilder; S: Text; begin
+        DT.SetTables(Database::T, Database::T); asserterror DT.CopyRows(); S := GetLastErrorCode();
+        TB.EnsureCapacity(50); S += '|' + Format(TB.Capacity() >= 50); asserterror TB.EnsureCapacity(2147483647 + 1);
+        exit(S); end; }";
+    let r = al_testkit::run_with(src, "C", "F", vec![]);
+    let s = match r {
+        Ok((al_builtins::value::Value::Text(s), _)) => s.to_string(),
+        other => panic!("{other:?}"),
+    };
+    assert_eq!(s, "DB:Ok|Yes");
+}

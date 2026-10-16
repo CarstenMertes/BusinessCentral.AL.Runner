@@ -147,6 +147,10 @@ impl Session {
             .first()
             .map(|&o| self.engine.program.objects[o].name.as_str())
             .unwrap_or_default();
+        // A page is opened by the client side of the test runner, which is what the error names
+        // (errors/lt-last-error-and-events/P70_06RunModalField.al:RunModal_UnknownPageId: Page.RunModal and Page.Run of
+        // an unknown id, and of id 0).
+        let caller = if kind == "Page" { "Test Runner - Mgt" } else { caller };
         let major = self.engine.target.as_ref().map_or(29, |t| t.bc.major);
         al_error_code(
             &format!(

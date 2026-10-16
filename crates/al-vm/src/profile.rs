@@ -30,11 +30,17 @@ pub(crate) fn init() {
         ON.store(true, Relaxed);
         std::thread::spawn(move || {
             let mut since_write = 0;
+            // AL_PROFILE_US: microseconds between samples (default 5000): a short test needs a finer tick.
+            let period = std::env::var("AL_PROFILE_US")
+                .ok()
+                .and_then(|v| v.parse().ok())
+                .unwrap_or(5000u64);
+            let per_write = (5_000_000 / period).max(1);
             loop {
-                std::thread::sleep(std::time::Duration::from_millis(5));
+                std::thread::sleep(std::time::Duration::from_micros(period));
                 TICK.store(true, Relaxed);
                 since_write += 1;
-                if since_write >= 1000 {
+                if since_write >= per_write {
                     since_write = 0;
                     write(&path);
                 }
@@ -82,6 +88,14 @@ impl Session {
                 format!("{} {}.{}", obj.kind, obj.name, r)
             })
             .collect();
+        // AL_PROFILE_ONLY=<text>: count only the samples whose stack has a frame containing the text (one test), and
+        // write the file as they come, since a short run may end before the periodic write.
+        let only = std::env::var("AL_PROFILE_ONLY").ok();
+        if let Some(o) = &only {
+            if !names.iter().any(|n| n.contains(o.as_str())) {
+                return;
+            }
+        }
         let mut c = counts.lock().unwrap();
         c.samples += 1;
         if let Some(last) = names.last() {
@@ -91,6 +105,12 @@ impl Session {
         for n in names {
             if seen.insert(n.clone()) {
                 *c.inclusive.entry(n).or_default() += 1;
+            }
+        }
+        if only.is_some() && c.samples % 20 == 0 {
+            if let Ok(path) = std::env::var("AL_PROFILE") {
+                drop(c);
+                write(&path);
             }
         }
     }

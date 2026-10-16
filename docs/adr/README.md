@@ -46,3 +46,4 @@ A superseded ADR stays in place with status `Superseded by ADR-NNN`.
 | [035](035-store-keys-and-rows.md) | Store internals: encoded keys with `memcmp` order equal to `key_cmp`, shared rows, company ids, precomputed table facts; the `Store` trait unchanged | Accepted |
 | [036](036-one-resolved-tree-from-check-to-lower.md) | The checker builds a bound tree; lowering reads it instead of the CST and position maps; `Ty` names objects by key | Accepted |
 | [037](037-code-structure-rules.md) | Code structure: file-size rule, splits of the largest files and of `Session`, one parser per grammar, an `al-testkit` crate, CLIs through `al-testrun` | Accepted |
+| [038](038-in-process-dotnet-stand-ins.md) | A closed set of pure .NET framework members (StringBuilder, byte[] access, Encoding, SHA/MD5, Convert Base64) served in process; the sidecar stays the oracle and keeps everything else | Accepted |

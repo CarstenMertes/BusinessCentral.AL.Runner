@@ -145,6 +145,12 @@ registry! {
         tests: "Customer Mgt.CalcLastPaymentInfo via the Customer Statistics FactBox: 49 Tests-ERM tests.",
         probe: "D.ToText() against Format(D) for a Date and a blank Date; B.ToText() for true and false.",
     },
+    FormatTextCodeWidthPads => {
+        id: "format-text-code-width-pads",
+        assumed: "In a Format picture, `<Month Text,N>` and `<Weekday Text,N>` give the name cut to N characters (pinned for N = 3) and, when it is shorter than N, padded with trailing spaces to N.",
+        tests: "Accounting Period names made with `<Month Text,10>` (Tests-ERM DefaultAccountingPeriodUT and 37 more).",
+        probe: "Format(DMY2Date(5,3,2024), 0, '<Month Text,10>') with its length and a visible delimiter; the same for <Weekday Text,10>.",
+    },
     GuidToText => {
         id: "guid-to-text",
         assumed: "A Guid assigned to a Text or Code is its text form {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} in capitals, as Format gives it.",
@@ -240,6 +246,12 @@ registry! {
         assumed: "A Boolean given where a Text or Code is expected (Record.Get(Boolean) on a Code key) converts as Format writes it: Yes or No, upper case for a Code.",
         tests: "Item Tracking Code Get(Serial) in the SCM kitting tests; about 90 tests of the Tests-SCM-Assembly bucket.",
         probe: "Get(true) on a table with a Code[10] key holding the rows 'Yes' and 'YES' and '1'; assign a Boolean to a Text and a Code variable.",
+    },
+    FormatCodeSpelling => {
+        id: "format-code-spelling",
+        assumed: "The codes of a Format string are read in any case (`<sign><integer>`) and with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`).",
+        tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets) and Base Application's percent texts.",
+        probe: "Format of an Integer, a Decimal and a Date with the same codes in capitals, small letters and with a blank after the comma; compare with the canonical spelling.",
     },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",

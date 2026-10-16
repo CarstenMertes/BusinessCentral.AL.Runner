@@ -693,6 +693,18 @@ impl Session {
         elem: &Elem,
         mut assigned: Option<&mut Vec<usize>>,
     ) -> Result<(), Signal> {
+        // A field attribute of the schema has to be there (xmlport/lt-xmlport-query-datatransfer/XpTImportOptions.al:
+        // Import_AttributesMissing, Import_AttributesAsElements); the first one the element lacks is named. For a text
+        // attribute this is not pinned.
+        for a in schema.children(node) {
+            let n = schema.node(a);
+            if n.kind == ir::XmlNodeKind::FieldAttr && !elem.attrs.iter().any(|(name, _)| *name == n.xml_name) {
+                return Err(schema_error(format!(
+                    "The required attribute '{}' is missing.",
+                    n.xml_name
+                )));
+            }
+        }
         for (name, value) in &elem.attrs {
             let Some(a) = Self::xp_child_named(schema, node, name, true) else {
                 return unsupported(format!(

@@ -337,6 +337,12 @@ registry! {
         tests: "Item Journal Line \"Bin Code\" (Bin.Code where(\"Item Filter\" = field(\"Item No.\"), \"Variant Filter\" = ...)): Tests-SCM and Tests-SCM-Manufacturing, about 10 tests.",
         probe: "A table relation whose where() names a FlowFilter of the target; Validate a value that exists; Validate one that does not.",
     },
+    QueryClosePageFallsThroughAsTrue => {
+        id: "query-close-page-falls-through-as-true",
+        assumed: "An OnQueryClosePage trigger with a Boolean return that reaches its end without giving a value lets the page close (its named return value starts as Yes).",
+        tests: "Item Tracking Lines OnQueryClosePage (its Result stays untouched when the availability check has no warning): about 1,100 tests of Tests-SCM, Tests-SCM-Manufacturing and Tests-SCM-Costing that close the page from a handler.",
+        probe: "A page with trigger OnQueryClosePage(CloseAction: Action) Result: Boolean that does not assign Result on one path; close it with OK from a handler; read the answer of RunModal.",
+    },
     ImplicitCategoryGroup => {
         id: "implicit-category-group",
         assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",

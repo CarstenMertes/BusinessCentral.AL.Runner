@@ -79,10 +79,46 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
+        // OnQueryClosePage with a Boolean return that ends without giving a value lets the page close. Not pinned (the corpus
+        // triggers all `exit(true)` or `exit(false)`); Item Tracking Lines' ends with `Result` untouched when the availability
+        // check finds nothing to warn about, and Microsoft's tests close it (Tests-SCM, about 1,100 tests; assumption
+        // query-close-page-falls-through-as-true). A named return value starts unassigned: a read of it before an assignment is
+        // refused, and the trigger's answer is Yes when it ends without an `exit(value)` and without an assignment.
+        let qcp =
+            r.is_trigger() && r.name().eq_ignore_ascii_case("onqueryclosepage") && matches!(ret, Some(RtType::Boolean));
+        if qcp {
+            if let Some(l) = ret_local {
+                let flag = locals.len();
+                locals.push(ir::Slot {
+                    name: "__assigned".into(),
+                    ty: RtType::Boolean,
+                });
+                self.qcp_ret = Some((l, flag));
+            }
+        }
         let mut body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
+        if qcp {
+            let assume = ir::Stmt::Assume(al_builtins::assumptions::Assumption::QueryClosePageFallsThroughAsTrue);
+            let yes = ir::Expr::Const(ir::Const::Boolean(true));
+            match self.qcp_ret.take() {
+                Some((l, flag)) => {
+                    let guard = vec![ir::Stmt::If(
+                        ir::Expr::Unary(ir::UnOp::Not, Box::new(ir::Expr::Load(ir::Place::Local(flag)))),
+                        vec![assume.clone(), ir::Stmt::Assign(ir::Place::Local(l), yes.clone())],
+                        Vec::new(),
+                    )];
+                    body = guard_exits(body, &guard);
+                    body.extend(guard);
+                }
+                None => {
+                    body.push(assume);
+                    body.push(ir::Stmt::Exit(Some(yes)));
+                }
+            }
+        }
         // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
         // would answer the default value of the return type, which is not what the platform answers.
         // A few have an implementation here (`platform_native`, pinned by the corpus); the others are refused.
@@ -678,6 +714,19 @@ impl Lowerer<'_> {
             Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,
             Some(_) => ir::Expr::Convert(self.rt(&target_ty)?, Box::new(value)),
         };
+        if let Some((l, flag)) = self.qcp_ret {
+            if place == ir::Place::Local(l) {
+                // An assignment to the named return value of an OnQueryClosePage notes that it has one.
+                return Ok(ir::Stmt::If(
+                    ir::Expr::Const(ir::Const::Boolean(true)),
+                    vec![
+                        ir::Stmt::Assign(place, value),
+                        ir::Stmt::Assign(ir::Place::Local(flag), ir::Expr::Const(ir::Const::Boolean(true))),
+                    ],
+                    Vec::new(),
+                ));
+            }
+        }
         Ok(ir::Stmt::Assign(place, value))
     }
 
@@ -838,4 +887,51 @@ fn member_ident(n: &SyntaxNode) -> Option<String> {
     let text = n.text().to_string();
     let last = text.rsplit('.').next()?.trim().trim_matches('"');
     (!last.is_empty()).then(|| last.to_string())
+}
+
+/// `body` with `guard` in front of every `exit` that gives no value (the named return value of an OnQueryClosePage).
+fn guard_exits(body: Vec<ir::Stmt>, guard: &[ir::Stmt]) -> Vec<ir::Stmt> {
+    use ir::Stmt as S;
+    let mut out = Vec::with_capacity(body.len());
+    for s in body {
+        match s {
+            S::Exit(None) => {
+                out.extend(guard.iter().cloned());
+                out.push(S::Exit(None));
+            }
+            S::If(c, a, b) => out.push(S::If(c, guard_exits(a, guard), guard_exits(b, guard))),
+            S::While(c, b) => out.push(S::While(c, guard_exits(b, guard))),
+            S::Repeat(b, c) => out.push(S::Repeat(guard_exits(b, guard), c)),
+            S::AssertError(b) => out.push(S::AssertError(guard_exits(b, guard))),
+            S::For {
+                var,
+                from,
+                to,
+                down,
+                body,
+            } => out.push(S::For {
+                var,
+                from,
+                to,
+                down,
+                body: guard_exits(body, guard),
+            }),
+            S::Foreach { var, collection, body } => out.push(S::Foreach {
+                var,
+                collection,
+                body: guard_exits(body, guard),
+            }),
+            S::Case {
+                scrutinee,
+                branches,
+                otherwise,
+            } => out.push(S::Case {
+                scrutinee,
+                branches: branches.into_iter().map(|(e, b)| (e, guard_exits(b, guard))).collect(),
+                otherwise: guard_exits(otherwise, guard),
+            }),
+            other => out.push(other),
+        }
+    }
+    out
 }

@@ -127,6 +127,24 @@ registry! {
         tests: "SMB Service Item TestItem_Reserve (and four siblings).",
         probe: "Modify, Commit, Modify, asserterror, Modify through the same buffer.",
     },
+    TextDigitsToInteger => {
+        id: "text-digits-to-integer",
+        assumed: "A Text or Code of digits (optional sign, surrounding spaces ignored) converts into an Integer or BigInteger where a Variant meets a number, such as the key of Get; a text with anything else stays refused.",
+        tests: "Incoming Document.FindFromIncomingDocumentEntryNo (`Get(Format(FieldRef.Value))`): about 400 Tests-ERM tests behind the Incoming Doc. Attach. FactBox.",
+        probe: "Rec.Get(Format(5)) on an Integer key; Get('5'); Get('x'); Get('') and Get(' 5 ') on an Integer and a BigInteger key.",
+    },
+    RecordRefGetUnopened => {
+        id: "recordref-get-unopened",
+        assumed: "RecordRef.Get(RecordId) on a RecordRef that was never opened, with the result used, answers false and leaves the ref closed.",
+        tests: "System Application Data Type Management (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`): about 260 Tests-ERM tests (CheckICPartner).",
+        probe: "RecordRef.Get(Rec.RecordId()) on a fresh RecordRef: the Boolean, then Number() and an Open on the same ref; with the result unused (PnE08RecordMisc.al asks the same row).",
+    },
+    PrimitiveToTextIsFormat => {
+        id: "primitive-totext-is-format",
+        assumed: "Date.ToText() and Boolean.ToText() give Format(value) with the default format (en-US).",
+        tests: "Customer Mgt.CalcLastPaymentInfo via the Customer Statistics FactBox: 49 Tests-ERM tests.",
+        probe: "D.ToText() against Format(D) for a Date and a blank Date; B.ToText() for true and false.",
+    },
     GuidToText => {
         id: "guid-to-text",
         assumed: "A Guid assigned to a Text or Code is its text form {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} in capitals, as Format gives it.",

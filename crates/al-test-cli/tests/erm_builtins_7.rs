@@ -39,8 +39,7 @@ fn names_the_open_question(why: &str, words: &[&str]) {
     }
 }
 
-// BC 28 and later pin the error (ErTRuntimeErrors.al:50-58, `#if BC28PLUS`): the default target is BC 29, so the test fails
-// with that text. BC 27 stays refused (language version_gates.rs).
+// The error is pinned on every version (record/lt-filters-keys-finds/P68C_EmptyFinds.al:215-250), so the test fails with it.
 #[test]
 fn find_first_on_an_empty_set_without_the_result_raises_the_table_is_empty_error() {
     let (l, oi) = compile("[Test] procedure T1() var R: Record \"B7 Row\"; begin R.FindFirst(); end;");

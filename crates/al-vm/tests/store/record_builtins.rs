@@ -1002,3 +1002,21 @@ fn find_tries_the_directions_in_the_order_written() {
     );
     assert_eq!(text(r), "YesAYesA");
 }
+
+// record/lt-filters-keys-finds/P68C_EmptyFinds.al:215-250 (FindFirst, FindLast; the BC 27 oracle passes it too), ErTTriggerErrors.al:140-147
+// (FindSet): an unfiltered, empty table.
+#[test]
+fn find_first_last_and_set_on_an_empty_unfiltered_table_say_the_table_is_empty() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; s: Text; begin
+            R.DeleteAll();
+            asserterror R.FindFirst(); s := GetLastErrorText() + '|' + GetLastErrorCode();
+            asserterror R.FindLast(); s += '#' + GetLastErrorText() + '|' + GetLastErrorCode();
+            asserterror R.FindSet(); s += '#' + GetLastErrorText() + '|' + GetLastErrorCode();
+            exit(s);
+        end;",
+        "F",
+    );
+    let one = "The The Table table is empty.|DB:TableIsEmpty"; // the test table has no caption of its own
+    assert_eq!(text(r), format!("{one}#{one}#{one}"));
+}

@@ -48,15 +48,6 @@ codeunit 50100 C
     procedure MinMax(): Boolean
     var H: Record "VG Head";
     begin Seed(); H.Get('D1'); H.CalcFields(MaxRv, MinRv); exit(H.MaxRv > H.MinRv); end;
-    procedure EmptyFirst(): Text
-    var L: Record "VG Line";
-    begin L.DeleteAll(); asserterror L.FindFirst(); exit(GetLastErrorText() + '|' + GetLastErrorCode()); end;
-    procedure EmptyLast(): Text
-    var L: Record "VG Line";
-    begin L.DeleteAll(); asserterror L.FindLast(); exit(GetLastErrorText() + '|' + GetLastErrorCode()); end;
-    procedure EmptySet(): Text
-    var L: Record "VG Line";
-    begin L.DeleteAll(); asserterror L.FindSet(); exit(GetLastErrorText() + '|' + GetLastErrorCode()); end;
     procedure Look(): Boolean
     var H: Record "VG Head";
     begin Seed(); H.Get('D1'); H.CalcFields(LookRv); exit(H.LookRv > 0); end;
@@ -159,32 +150,5 @@ fn min_and_max_over_systemrowversion_calculate_before_bc_29_and_are_refused_from
 fn lookup_of_systemrowversion_calculates_on_every_version() {
     for bc in [Some("27.5"), Some("29.0"), None] {
         assert!(matches!(ok(run(bc, "Look")), Value::Boolean(true)), "BC {bc:?}");
-    }
-}
-
-// corpus errors/lt-error-handling/ErTRuntimeErrors.al:50-58 (#if BC28PLUS): FindFirst, FindLast and FindSet on an empty table
-// raise "The <table> table is empty." / DB:TableIsEmpty. ErTTriggerErrors.al:140-147 (no gate) pins FindSet on every
-// version; FindFirst and FindLast on BC 27 are not pinned and stay refused.
-#[test]
-fn find_on_an_empty_table_says_the_table_is_empty_and_first_and_last_are_refused_on_bc_27() {
-    for bc in [Some("27.5"), Some("28.5"), Some("29.0"), None] {
-        let v = ok(run(bc, "EmptySet"));
-        assert!(
-            matches!(&v, Value::Text(t) if &**t == "The VG Line table is empty.|DB:TableIsEmpty"),
-            "BC {bc:?}: {v:?}"
-        );
-    }
-    for routine in ["EmptyFirst", "EmptyLast"] {
-        for bc in [Some("28.5"), Some("29.0"), None] {
-            let v = ok(run(bc, routine));
-            assert!(
-                matches!(&v, Value::Text(t) if &**t == "The VG Line table is empty.|DB:TableIsEmpty"),
-                "{routine} BC {bc:?}: {v:?}"
-            );
-        }
-        assert!(
-            matches!(run(Some("27.5"), routine), Err(Signal::Unsupported(_))),
-            "{routine} on 27.5"
-        );
     }
 }

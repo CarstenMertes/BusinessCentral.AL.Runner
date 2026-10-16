@@ -930,6 +930,9 @@ pub struct Instance {
     /// index, made at the first call of an extension procedure or run of the variable and kept with the variable's
     /// state (a `Run` and `Clear` drop them). Empty for every other instance.
     pub exts: Vec<(u32, Rc<RefCell<Instance>>)>,
+    /// For the instance of an xmlport variable: the separators a program set (`FieldDelimiter(..)`, ...), as given, by
+    /// kind (see `al-vm/src/xmlports.rs` `SEPARATORS`). Empty until one is set.
+    pub xp_text: Vec<(u8, String)>,
 }
 
 /// State behind a library-type handle; grows with the builtins that need it.

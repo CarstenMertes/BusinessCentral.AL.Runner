@@ -418,6 +418,12 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.SetSource#1", vm_only),
     ("Xmlport.SetDestination#1", vm_only),
     ("Xmlport.SetTableView#1", vm_only),
+    ("Xmlport.FieldDelimiter#1", vm_only),
+    ("Xmlport.FieldSeparator#1", vm_only),
+    ("Xmlport.RecordSeparator#1", vm_only),
+    ("Xmlport.TableSeparator#1", vm_only),
+    ("Xmlport.TextEncoding#1", vm_only),
+    ("Xmlport.Filename#1", vm_only),
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
     // ids not listed (SaveAsPdf, SaveAsXml and the other file forms, Preview, the layout accessors, Skip, Break, ...) need
     // output or behaviour the corpus does not pin and are refused in lowering.

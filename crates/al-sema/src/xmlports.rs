@@ -37,6 +37,8 @@ pub struct Layout {
     pub field_separator: Option<String>,
     pub field_delimiter: Option<String>,
     pub record_separator: Option<String>,
+    pub table_separator: Option<String>,
+    pub text_encoding_declared: bool,
     pub utf8: bool,
     pub format_evaluate_xml: bool,
     pub reasons: Vec<String>,
@@ -94,6 +96,8 @@ pub fn layout(obj: &ast::Object) -> Layout {
         field_separator: None,
         field_delimiter: None,
         record_separator: None,
+        table_separator: None,
+        text_encoding_declared: false,
         utf8: false,
         format_evaluate_xml: false,
         reasons: Vec::new(),
@@ -119,9 +123,19 @@ pub fn layout(obj: &ast::Object) -> Layout {
             "userequestpage" => {}
             // xmlport/TestXmlPortTextFormatsContracts.al: VariableText and FixedText pin these; an Xml port's encoding is not pinned.
             "textencoding" if value.trim().eq_ignore_ascii_case("utf8") => out.utf8 = true,
+            "textencoding" => {
+                out.text_encoding_declared = true;
+                out.run_reasons
+                    .push(format!("xmlport property textencoding = {} is not pinned for a run", value.trim()));
+            }
             "fieldseparator" => out.field_separator = Some(crate::scan::unquote_xmlport(&value)),
             "fielddelimiter" => out.field_delimiter = Some(crate::scan::unquote_xmlport(&value)),
             "recordseparator" => out.record_separator = Some(crate::scan::unquote_xmlport(&value)),
+            "tableseparator" => {
+                // Kept for the getter; it separates two tables, and a text port with two is refused when it runs.
+                // A single table is assumed unaffected (docs/probes-needed.md, tableseparator).
+                out.table_separator = Some(crate::scan::unquote_xmlport(&value));
+            }
             // xmlport/TestXmlPortFormatEvaluateContracts.al: Legacy is the display text, Xml the XML forms.
             "formatevaluate" => match value.trim().to_ascii_lowercase().as_str() {
                 "legacy" => {}
@@ -425,6 +439,8 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         field_separator: layout.field_separator.clone(),
         field_delimiter: layout.field_delimiter.clone(),
         record_separator: layout.record_separator.clone(),
+        table_separator: layout.table_separator.clone(),
+        text_encoding_declared: layout.text_encoding_declared,
         utf8: layout.utf8,
         format_evaluate_xml: layout.format_evaluate_xml,
         nodes,

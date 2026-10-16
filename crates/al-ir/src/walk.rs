@@ -268,7 +268,8 @@ fn walk_const<V: RefVisitor>(c: &mut Const, v: &mut V) {
         | Const::Time(_)
         | Const::DateTime(_)
         | Const::Option(..)
-        | Const::DateFormula(_) => {}
+        | Const::DateFormula(_)
+        | Const::Guid(_) => {}
     }
 }
 

@@ -1100,6 +1100,8 @@ pub enum Const {
     Enum(u32, i32),
     /// A date formula as written (`1Y`), already checked to be one the runtime can calculate with.
     DateFormula(String),
+    /// A Guid (a `const('..')` of a CalcFormula on a Guid field).
+    Guid([u8; 16]),
     /// A field reference passed to a record method (`SetRange(Field, ...)`): its position.
     FieldPos(u32),
 }

@@ -215,6 +215,29 @@ fn datetime(text: &str, number: i64) -> Result<Parsed, Signal> {
     ))
 }
 
+/// The value of a Date or a Guid in the form `Evaluate` reads it (and `Format` writes it), for a reader that has no
+/// variable to evaluate into: `None` for any other type, a text that is no such value, or a form not pinned.
+pub fn read_text(ty: &crate::value::RtType, text: &str) -> Option<Value> {
+    use crate::value::RtType as T;
+    // `Format(ClosingDate(D))` is `C` and the date (corpus types/lt-datetime/DateFuncs.al:47 `C12/31/23`,
+    // misc/lt-system-functions/RandomFormat.al:432): the closing date of that day.
+    if let (T::Date, Some(rest)) = (ty, text.strip_prefix('C')) {
+        return match date(rest, 0).ok()? {
+            Parsed::Value(Value::Date(d, false)) => Some(Value::Date(d, true)),
+            _ => None,
+        };
+    }
+    let parsed = match ty {
+        T::Date => date(text, 0).ok()?,
+        T::Guid => guid(text).ok()?,
+        _ => return None,
+    };
+    match parsed {
+        Parsed::Value(v) => Some(v),
+        Parsed::Rejected => None,
+    }
+}
+
 pub fn evaluate(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
     let Some(text) = crate::native::text_of(&a[1]) else {
         return unsupported("Evaluate of a source that is not text");

@@ -153,7 +153,7 @@ impl Session {
                 }
                 if matches!(ty, RtType::Date) {
                     msg.push_str(&format!(
-                        " The format of the Date '{text}' does not match your device's date settings.\r\\\r\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
+                        " The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
                     ));
                 }
                 // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,

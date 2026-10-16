@@ -846,7 +846,7 @@ fn a_request_page_with_show_filter_false_opens_but_its_data_items_are_refused() 
 }
 
 // al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:SaveAsXml_ParametersFile_RawForm and
-// :TemporaryPath_EndsWithTheTempFolderAndABackslash: LF only, no line feed after the last element, the parameter names
+// :TemporaryPath_EndsWithTheTempFolderAndABackslash: CR LF line ends, no line end after the last element, the parameter names
 // followed by their fixed GUIDs, an execution time with seven fraction digits and +00:00.
 #[test]
 fn save_as_xml_writes_the_parameters_file_in_its_raw_form() {
@@ -862,7 +862,7 @@ fn save_as_xml_writes_the_parameters_file_in_its_raw_form() {
             while not Ins.EOS() do begin Ins.Read(B); One[1] := B; Raw += One; end;
             F.Close();
             Cr[1] := 13;
-            if Raw.Contains(Cr) then Error('CR');
+            if not Raw.Contains(Cr) then Error('no CR');
             if not Raw.EndsWith('</ArrayOfReportParameter>') then Error('end %1', CopyStr(Raw, StrLen(Raw) - 30));
             if not Raw.Contains('    <Name>NavUserIdAE6AEB42076449B78A3E78A5EE366751</Name>') then Error('user');
             if not Raw.Contains('    <Name>ExecutionTime7587CE19257C4965B7E6066BDFF21EE3</Name>') then Error('time');

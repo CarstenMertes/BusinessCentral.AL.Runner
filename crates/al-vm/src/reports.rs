@@ -1527,6 +1527,19 @@ impl Session {
     /// the variables as they are now, which they do on every read here, so nothing is left to do
     /// (handlers/TestReportRequestPageUpdateObjectIdContracts.al:RequestPageUpdate_RefreshesTheOtherControls:
     /// a handler sets Source to 21 and reads Derived 42 that the trigger set before it called Update(false)).
+    /// `RequestOptionsPage.Caption := x` in the code of a report (Base Application's Financial Report). The request page of
+    /// a run has no page object of its own to hold it, so the assignment is dropped; whether a request page handler
+    /// reads it back is not modelled (assumption request-page-caption-set).
+    pub(crate) fn request_page_caption(&mut self, args: &[Value]) -> Result<Value, Signal> {
+        match args {
+            [Value::Text(_) | Value::Code(_)] => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RequestPageCaptionSet);
+                Ok(Value::Null)
+            }
+            _ => unsupported("RequestPage.Caption read, or set with something that is not text"),
+        }
+    }
+
     pub(crate) fn request_page_update(&mut self, args: &[Value]) -> Result<Value, Signal> {
         match args.first() {
             // `true` shows the same: the handler reads the variables the trigger set, and the run sees them
@@ -1725,7 +1738,7 @@ impl Session {
     /// One column of a row: the value of its source, as the dataset writes it
     /// (handlers/TestReportSaveAsColumnTypesContracts.al:12-22 and :167-248, probed on BC 27.5): digits for
     /// Integer, BigInteger and Code, escaped text, `True`/`False`, `m/d/yyyy` for a Date (blank when
-    /// undefined), `h:mm:ss` plus U+202F plus AM/PM for a Time, both for a DateTime, an Option and an Enum
+    /// undefined), `h:mm:ss` plus a space plus AM/PM for a Time, both for a DateTime, an Option and an Enum
     /// as their captions, a Duration as words, a Guid without braces, and a Decimal in full with a
     /// `decimalformatter` attribute from `DecimalPlaces` of the column, else of the field. Every other
     /// type is refused. A column that asks for its caption adds to the Labels block.

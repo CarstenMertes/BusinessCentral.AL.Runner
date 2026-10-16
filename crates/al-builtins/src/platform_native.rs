@@ -147,7 +147,9 @@ fn member_name(v: &Value) -> Result<String, Signal> {
     }
 }
 
-fn encoding(encoding: &Value, codepage: &Value) -> Result<Enc, Signal> {
+/// `windows_text`: from BC 28 the Windows and MSDos members with code page 0 are code page 1252
+/// (`al_version::Gate::Base64TextIsWindows1252From28`, types/PVBase64.al:83,88).
+fn encoding(encoding: &Value, codepage: &Value, windows_text: bool) -> Result<Enc, Signal> {
     let Value::Integer(cp) = codepage else {
         return unsupported("a code page that is not an Integer");
     };
@@ -155,6 +157,7 @@ fn encoding(encoding: &Value, codepage: &Value) -> Result<Enc, Signal> {
     match *cp {
         0 => match name.to_ascii_lowercase().as_str() {
             "utf16" => Ok(Enc::Utf16),
+            "windows" | "msdos" if windows_text => Ok(Enc::Windows1252),
             "utf8" | "windows" | "msdos" => Ok(Enc::Utf8),
             other => unsupported(format!("TextEncoding::{other}")),
         },
@@ -301,13 +304,19 @@ fn flag(v: &Value) -> Result<bool, Signal> {
     }
 }
 
-fn to_base64_text(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let bytes = encode_text(&text_arg(&a[0])?, encoding(&a[2], &a[3])?)?;
+fn to_base64_text(c: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let bytes = encode_text(
+        &text_arg(&a[0])?,
+        encoding(&a[2], &a[3], c.gate(al_version::Gate::Base64TextIsWindows1252From28))?,
+    )?;
     Ok(Value::Text(b64_encode(&bytes, flag(&a[1])?).into()))
 }
 
-fn to_base64_text_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let bytes = encode_text(&text_arg(&a[0])?, encoding(&a[2], &a[3])?)?;
+fn to_base64_text_out(c: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let bytes = encode_text(
+        &text_arg(&a[0])?,
+        encoding(&a[2], &a[3], c.gate(al_version::Gate::Base64TextIsWindows1252From28))?,
+    )?;
     let text = b64_encode(&bytes, flag(&a[1])?);
     write_raw_bytes(&mut a[4], text.as_bytes())?;
     Ok(Value::Null)
@@ -327,14 +336,14 @@ fn to_base64_stream_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a
     Ok(Value::Null)
 }
 
-fn from_base64_text(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let enc = encoding(&a[1], &a[2])?;
+fn from_base64_text(c: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+    let enc = encoding(&a[1], &a[2], c.gate(al_version::Gate::Base64TextIsWindows1252From28))?;
     Ok(Value::Text(decode_bytes(&b64_decode(&text_arg(&a[0])?)?, enc)?.into()))
 }
 
-fn from_base64_text_enc_out(_: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn from_base64_text_enc_out(c: &mut dyn crate::native::Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     // The decoded bytes go out as they are; the encoding names the text, which is not built.
-    encoding(&a[1], &a[2])?;
+    encoding(&a[1], &a[2], c.gate(al_version::Gate::Base64TextIsWindows1252From28))?;
     let bytes = b64_decode(&text_arg(&a[0])?)?;
     write_raw_bytes(&mut a[3], &bytes)?;
     Ok(Value::Null)
@@ -365,7 +374,7 @@ mod tests {
     fn enc(name: &str, cp: i32) -> Result<Enc, Signal> {
         let members: std::sync::Arc<[String]> = ["MSDos", "UTF8", "UTF16", "Windows"].map(String::from).to_vec().into();
         let i = members.iter().position(|m| m == name).unwrap() as i32;
-        encoding(&Value::Option(i, members), &Value::Integer(cp))
+        encoding(&Value::Option(i, members), &Value::Integer(cp), false)
     }
 
     fn to(text: &str, name: &str, cp: i32) -> String {

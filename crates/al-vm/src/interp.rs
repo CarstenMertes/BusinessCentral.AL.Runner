@@ -41,6 +41,9 @@ impl Session {
         if id == ids::REQUESTPAGE_UPDATE_1 {
             return self.request_page_update(&values);
         }
+        if id == ids::REQUESTPAGE_CAPTION_1 {
+            return self.request_page_caption(&values);
+        }
         if class == Class::Report {
             self.ret_used = ret_used;
             return self.report_builtin(id, recv, &values, f.instance.clone());

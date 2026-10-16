@@ -1009,6 +1009,8 @@ struct Writer {
     /// Where the last text ended; a markup node starts on a new line when more was written since.
     text_end: usize,
     scope: Scope,
+    /// Line ends in text are written as CR LF (not in `InnerXml`).
+    crlf: bool,
 }
 
 impl Writer {
@@ -1021,34 +1023,46 @@ impl Writer {
             saved: Vec::new(),
             text_end: 0,
             scope: Vec::new(),
+            crlf: true,
         }
     }
 
     fn break_line(&mut self) {
         if self.indent && !self.mixed && self.out.len() != self.text_end {
-            self.out.push('\n');
+            self.out.push_str("\r\n");
             for _ in 0..self.level {
                 self.out.push_str("  ");
             }
         }
     }
 
+    /// Every line end the writer is given is written as CR LF, as .NET's writer replaces them (corpus
+    /// xml/TestXmlRuntimeContracts.al, misc/lt-probes-needed-1/PnAXmlWriteTo.al: `\r\n` where the source has `\n`).
+    fn push_text(&mut self, s: &str) {
+        if self.crlf && s.contains(['\n', '\r']) {
+            self.out
+                .push_str(&s.replace("\r\n", "\n").replace('\r', "\n").replace('\n', "\r\n"));
+        } else {
+            self.out.push_str(s);
+        }
+    }
+
     fn text(&mut self, s: &str) {
         self.mixed = true;
-        self.out.push_str(s);
+        self.push_text(s);
         self.text_end = self.out.len();
     }
 
     /// White space between the nodes of a document (outside the root): written as it is and not content of any element, so
     /// it does not make the root's content mixed (xml/TestXmlRuntimeContracts.al:XmlDocument_ReadFrom_KeepsWhiteSpaceInsideAndOutsideTheRoot).
     fn document_text(&mut self, s: &str) {
-        self.out.push_str(s);
+        self.push_text(s);
         self.text_end = self.out.len();
     }
 
     fn markup(&mut self, s: &str) {
         self.break_line();
-        self.out.push_str(s);
+        self.push_text(s);
     }
 
     fn node(&mut self, h: &Handle) -> Result<(), Signal> {
@@ -1310,6 +1324,8 @@ fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
 /// The content of `h` without indentation (`InnerXml`).
 fn serialize_inner(h: &Handle) -> Result<String, Signal> {
     let mut w = Writer::new(false);
+    // InnerXml keeps the line ends the content has (corpus/tests/al-language/xml/TestProbeXmlContracts.al: WriteTo_EscapesAndAttributes, `innerxml` has a bare line feed).
+    w.crlf = false;
     for c in children_of(h) {
         w.node(&c)?;
     }

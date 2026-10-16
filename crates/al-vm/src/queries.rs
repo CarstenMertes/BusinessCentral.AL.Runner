@@ -475,7 +475,7 @@ impl Session {
                 .collect::<Vec<_>>()
                 .join(","),
         );
-        out.push('\n');
+        out.push_str("\r\n");
         for r in rows.iter().take(if top > 0 { top as usize } else { usize::MAX }) {
             let cells: Vec<String> = cols
                 .iter()
@@ -489,7 +489,7 @@ impl Session {
                 })
                 .collect();
             out.push_str(&cells.join(","));
-            out.push('\n');
+            out.push_str("\r\n");
         }
         al_builtins::stream::write_bytes(&blob, out.as_bytes());
         Ok(Value::Boolean(true))
@@ -968,6 +968,39 @@ impl Session {
         rc
     }
 
+    /// The values a column's aggregate reads, one per joined row that has the dataitem. A FlowField is calculated per row
+    /// with the flow filters of its dataitem, as `project` does (Method over a FlowField is assumed to add those values,
+    /// see Assumption::QueryMethodOverFlowField).
+    fn aggregated_values(
+        &mut self,
+        def: &ir::Query,
+        plan: &Plan,
+        c: &ir::QueryColumn,
+        rows: &[JoinedRow],
+    ) -> Result<Vec<Value>, Signal> {
+        let field = c.field.expect("a column over a field");
+        let item = &def.items[c.item];
+        let stored = self.engine.program.objects[item.table]
+            .table
+            .as_ref()
+            .expect("table")
+            .fields[field]
+            .stored;
+        let mut out = Vec::new();
+        for j in rows.iter().filter(|j| !j[c.item].is_empty()) {
+            if stored {
+                out.push(j[c.item][field].clone());
+            } else {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryMethodOverFlowField);
+                let row = self.filled(item.table, &j[c.item]);
+                self.check_calc_field(item.table, field)?;
+                let probe = self.probe(item.table, &row, &plan.flow[c.item]);
+                out.push(self.calc_value(&probe, field, &mut Vec::new())?);
+            }
+        }
+        Ok(out)
+    }
+
     /// Groups the joined rows by the non-aggregated columns and aggregates the rest.
     fn group_rows(&mut self, def: &ir::Query, plan: &Plan, joined: Vec<JoinedRow>) -> Result<Vec<QueryRow>, Signal> {
         use ir::QueryMethod as M;
@@ -1012,13 +1045,12 @@ impl Session {
                 let Some(method) = c.method else { continue };
                 // A dataitem that had no match under a left outer join adds no row to its aggregates
                 // (query/TestQueryOuterJoinDescendingSaveAsContracts.al: `2/sum0/cnt0`).
-                let values = || -> Vec<Value> {
-                    let field = c.field.expect("a column over a field");
-                    rows.iter()
-                        .filter(|j| !j[c.item].is_empty())
-                        .map(|j| j[c.item][field].clone())
-                        .collect()
+                let all: Vec<Value> = if method == M::Count {
+                    Vec::new()
+                } else {
+                    self.aggregated_values(def, plan, c, &rows)?
                 };
+                let values = || all.clone();
                 let mut v = match method {
                     M::Count => Value::Integer(rows.iter().filter(|j| !j[c.item].is_empty()).count() as i32),
                     M::Sum | M::Average => {

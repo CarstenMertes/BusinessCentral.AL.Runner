@@ -47,25 +47,47 @@ workspace.
 
 ## Expression types for the bytecode compiler (lane A, ADR-034)
 
-Lane A needs each expression's static type after lowering and reads it through one function, `expr_ty`, so the source
-can change later without touching the bytecode compiler.
+Lane A needs each expression's static type after lowering. Decision (coordinator, 2026-10-16): the types come from the
+lowering itself, built together with the expression, never matched up afterwards. (Filling a table from `ty_of` in
+`expr()` completion order was rejected: IR nodes made inline, reordered or dropped by lowering make the table misalign
+without notice.)
 
-- **Form.** An additive side table on `ir::Routine`: `expr_tys: Vec<IrTy>` in the order the expressions appear in a
-  fixed walk of the routine body (the order `al_ir::walk` visits them), plus `expr_ty(routine, walk_index)`. A side
-  table needs no change to `Expr` (additive, no ADR, byte-identical `compile_dump` of the existing fields). `IrTy` is
-  the runtime type the IR already uses (`rt()` in `lower/convert.rs`), not the checker's `Ty`.
-- **Source, stage 1 (new step 0, before step 1).** Lowering fills the table from `ty_of(node)` at each `expr()` call,
-  since it already has the CST node and the checker's type there. This costs one push per expression and needs no
-  bound tree. Lane A can use it as soon as it merges.
-- **Source, stage 2.** From step 3 on, `BExpr::ty` fills the table; the interface does not change.
-- **Link.** The table holds no references, so `al-link` copies it unchanged; `relink` and the cache store it with the
-  routine (cache `FORMAT` bump; blocks grow by about one byte per expression, measured in step 0).
-- **Proof for step 0.** `compile_dump` byte-identical except the new field (the dump gets it as a separate section,
-  diffed against a golden file made by a second, independent walk in a test); expression count equals the walk's count
-  on the corpus; instruction count per object measured before and after (the push must stay under 0.5 percent).
-- **Open point.** Expressions lowering inserts (conversions, constants it folds) get the type of the result, set by
-  the lowering that creates them; where it cannot know, the entry is `Unknown`, and lane A falls back to the generic
-  instruction. Count of `Unknown` entries reported on the corpus and Tests-ERM.
+**Interface (al-ir, `al_ir::types`; lane A codes against it now).**
+
+```rust
+/// Static type of an expression, small and `Copy`. `Unknown` = not recorded; the reader uses the generic instruction.
+pub enum ExprTy { Unknown, Integer, BigInteger, Decimal, Boolean, Char, Byte, Text, Code, Date, Time, DateTime,
+                  Duration, Guid, Option, Enum, Record, Other }
+pub struct ExprTypes<'r> { .. }
+impl<'r> ExprTypes<'r> {
+    pub fn new(routine: &'r Routine) -> Self;     // one walk of the body
+    pub fn of(&self, e: &Expr) -> ExprTy;         // e must be a node of `routine.body`; Unknown otherwise
+}
+```
+
+`ExprTypes::of` is the `expr_ty` lane A wraps. A reader that gets `Unknown` must behave exactly as without the table
+(so lane A's own conservative inference can stay behind the same function and be dropped kind by kind).
+
+**Storage.** `Routine::expr_tys: Vec<ExprTy>` (`#[serde(default)]`), one entry per `Expr` node of the body in
+post-order (children in field order, then the node; statements in order; `Place` index expressions and `Arg`s
+included). An empty table means every node is `Unknown`. `ExprTypes::new` pairs the walk with the table by index, so
+its lookup by node address is valid while the routine is not mutated (a linked `Program` is not).
+
+**Construction (the sound rule).** Every lowering function that returns an `ir::Expr` returns `(ir::Expr, ExprTy)` and
+pushes the entries of the whole subtree it built, in post-order, onto `Lowerer::tys` as it builds it. A node made
+inline (a `Convert` wrapper, a folded constant) pushes its own entry where it is made. A function not converted yet
+is wrapped: it discards the entries pushed since it started and pushes `Unknown` for every node of what it returned
+(`node_count`). So a not-converted parent makes its subtree `Unknown`; it never misaligns. At the end of a routine the
+count must equal the body's node count (`debug_assert` always, test on the corpus), and `compile_dump` prints the table.
+
+**Order of conversion** (what lane A's typed ops need most): (1) `Const` and `Load` of a local or global, Integer and
+Boolean; (2) `Binary`/`Unary`/compare of Integer and Boolean, with the `Convert` the lowering inserts; (3) Decimal and
+Text/Code arithmetic and compares; (4) `Call`/`Builtin` results; (5) the rest (Record, field, control, DotNet,
+interface). After each slice: `compile_dump` identical except the table section, expression counts match, instructions
+per object not higher, and the share of non-`Unknown` entries on the corpus is reported.
+
+**Cache.** `Routine` gains the field, so the cache `FORMAT` is bumped; blocks grow by about one byte per expression
+(measured in slice 1).
 
 ## Migration order (each step merges green)
 
@@ -78,7 +100,7 @@ Each step keeps old and new paths side by side. The proof for every step is the 
 
 Steps:
 
-0. **Expression types after lowering** (section above). First, because lane A waits on it.
+0. **Expression types after lowering** (section above), converted in slices. First, because lane A waits on it. It is the first part of the bound tree: the types are built with the expressions.
 1. **`Ty` with object refs.** `Ty::Record/Enum/Object/TestPage/...` carry the resolved object next to the name.
    Lowering drops `resolve_obj` at the 16 sites that start from a `Ty`. Expected win: the second name resolution.
 2. **Slots for names.** `Res::Local(slot)`, `Res::Global(slot)`, `BaseGlobal`; lowering drops its name maps.

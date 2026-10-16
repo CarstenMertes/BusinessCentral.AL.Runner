@@ -1632,6 +1632,27 @@ impl Session {
                     (RecordOp::Find, None) => "=".to_string(),
                     _ => "-".to_string(),
                 };
+                // Only `-` or `+` alone, or one to three of `=`, `<` and `>` with none repeated, are directions; anything
+                // else, the empty text included, raises (record/PZFindDirections.al:Find_InvalidDirections and
+                // Find_InvalidDirection_ErrorText, Record and RecordRef alike; the text carries the backslashes as BC
+                // writes them).
+                let valid = match which.as_str() {
+                    "-" | "+" => true,
+                    w => {
+                        !w.is_empty()
+                            && w.chars().all(|c| matches!(c, '=' | '<' | '>'))
+                            && w.char_indices().all(|(i, c)| !w[i + 1..].contains(c))
+                    }
+                };
+                if !valid {
+                    return Err(Signal::Error(Box::new(AlError {
+                        message: format!(
+                            "There is an invalid character in the Find expression '{which}'.\\r\\\\r\\In Find expressions, you can use =, >, and < in combinations, where each sign can only appear once, or you can use - or +."
+                        ),
+                        code: "DB:BadSearchMethod".into(),
+                        call_stack: String::new(),
+                    })));
+                }
                 let found = match which.as_str() {
                     "-" => self.scan(rec, &t, asc, None)?,
                     "+" => self.scan(rec, &t, !asc, None)?,

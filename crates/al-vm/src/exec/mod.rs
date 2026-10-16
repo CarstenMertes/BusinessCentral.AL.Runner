@@ -445,16 +445,6 @@ pub fn report() -> String {
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn an_instruction_is_small() {
-        assert!(std::mem::size_of::<Op>() <= 16, "{}", std::mem::size_of::<Op>());
-    }
-}
-
 /// Whether any statement of `body` is a loop: one call of such a routine can run long.
 fn has_loop(body: &[ir::Stmt]) -> bool {
     use ir::Stmt as S;
@@ -467,4 +457,14 @@ fn has_loop(body: &[ir::Stmt]) -> bool {
         S::AssertError(b) => has_loop(b),
         _ => false,
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_instruction_is_small() {
+        assert!(std::mem::size_of::<Op>() <= 16, "{}", std::mem::size_of::<Op>());
+    }
 }

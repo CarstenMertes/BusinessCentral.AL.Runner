@@ -140,6 +140,13 @@ What was built, and where it differs from the text above. None of this changes a
   id, offset; report: id).
 - Lowering still builds the merged object. `localize` and `split_tables` take the contribution out of the base and
   put it into the extension; `AL_CHECK_LINK` compares the merge with the original, so a wrong split fails there.
-- Known impurity: a `modify` block that changes `TableRelation` or `CalcFormula` of a field changes what the base
-  lowering derives from those properties (`relation_arms`, `calc`). The base keeps the derived data, so adding
-  such an extension still changes the base. Properties as text are separated.
+- Interface calls, `is`/`as` tests and enum-to-interface casts hold a marker at the site (`walk::EXPAND`) and an entry
+  in `Refs::expansions`; link finds the implementing codeunits in the whole program and picks the procedure by
+  shape (`LocalKey::params`, `local`, `trigger`). The uncompiled event subscribers of shell objects are listed by
+  link. The cache holds an enum's merged values and implementations, because the extensions of a cached enum are
+  not linked as extensions.
+- The relations of a table's fields (`relation_arms`, `relation_runtime`, `relation_meta`) are worked out after link
+  from the properties the table and its extensions leave, so a `modify` of `TableRelation` no longer changes the
+  base object. (`calc` reads the field's own CalcFormula text; a `modify` of it was never applied.)
+- Not done: the control tree of pages. The merge of extension controls is on syntax (`pages.rs`); moving it into link
+  means lowering the base tree and each extension's operations apart and porting the merge to IR controls.

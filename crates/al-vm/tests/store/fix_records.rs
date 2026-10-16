@@ -225,7 +225,7 @@ fn set_view_replaces_filters_keeps_direction_and_rejects_garbage() {
     );
     assert_eq!(
         text(run(&src, "F")),
-        "VERSION(1) SORTING(Amount) ORDER(Descending) WHERE(Entry No.=FILTER(1..2))|Amount: 6|VERSION(1) SORTING(Entry No.) ORDER(Descending) WHERE(Amount=FILTER(6))|Invalid expression of type: table view.\r\\GARBAGE(|DB:Ok"
+        "VERSION(1) SORTING(Amount) ORDER(Descending) WHERE(Entry No.=FILTER(1..2))|Amount: 6|VERSION(1) SORTING(Entry No.) ORDER(Descending) WHERE(Amount=FILTER(6))|Invalid expression of type: table view.\\GARBAGE(|DB:Ok"
     );
 }
 
@@ -270,7 +270,7 @@ fn a_temporary_record_has_no_system_id_and_the_duplicate_texts_are_pinned() {
     let r = text(run(src, "F"));
     assert!(r.starts_with("Yes|There is already a record in table SF that has the same values in a unique index for the following fields: System ID='{"), "{r}");
     assert!(
-        r.ends_with("}'|DB:RecordExists|You cannot change the value of the SystemId field.\r\\\r\\Table: SF"),
+        r.ends_with("}'|DB:RecordExists|You cannot change the value of the SystemId field.\\\\Table: SF"),
         "{r}"
     );
 }

@@ -78,6 +78,9 @@ pub enum Gate {
     /// BigInteger/Integer FlowField type mismatch, the report dataset header bytes and lines and a second SaveAs on one variable,
     /// Report/Field metadata rows, Media import, BigInteger into an Enum field. Not consumed yet.
     ProbedValuesDifferFrom29,
+    /// `Base64Convert.ToBase64` of a Text with `TextEncoding::Windows` or `MSDos` and no code page gives the code page 1252
+    /// bytes from BC 28 (`äöü` is `5Pb8`); before, the UTF-8 bytes (`w6TDtsO8`) (types/PVBase64.al, corpus bump 13).
+    Base64TextIsWindows1252From28,
 }
 
 impl Gate {
@@ -99,6 +102,7 @@ impl Gate {
         Gate::InterfaceListCodeunitFrom29,
         Gate::ProbedValuesDifferFrom28,
         Gate::ProbedValuesDifferFrom29,
+        Gate::Base64TextIsWindows1252From28,
     ];
 
     /// The first BC major with the new behaviour.
@@ -120,7 +124,8 @@ impl Gate {
             | Gate::FromBase64InvalidTextRaises
             | Gate::TableFilterEvaluateError
             | Gate::ConversionErrorTextsFrom28
-            | Gate::ProbedValuesDifferFrom28 => 28,
+            | Gate::ProbedValuesDifferFrom28
+            | Gate::Base64TextIsWindows1252From28 => 28,
         }
     }
 
@@ -309,6 +314,10 @@ impl Gate {
                     lines: "31",
                 },
             ],
+            Gate::Base64TextIsWindows1252From28 => &[Evidence {
+                file: "types/PVBase64.al",
+                lines: "83,88,231",
+            }],
             Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
                 file: "types/W7Media.al",
                 lines: "134,141,146",

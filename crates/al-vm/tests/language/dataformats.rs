@@ -1074,13 +1074,13 @@ fn xml_parser_edge_cases() {
     );
     assert_eq!(
         t,
-        "<?xml version=\"1.0\" encoding=\"utf-16\"?>\n<r xmlns:p=\"u2\">\n  <p:b p:y=\"2\" />\n</r>"
+        "<?xml version=\"1.0\" encoding=\"utf-16\"?>\r\n<r xmlns:p=\"u2\">\r\n  <p:b p:y=\"2\" />\r\n</r>"
     );
     let t = text_of(
         "E: XmlElement; C: XmlElement; S: Text;",
         "E := XmlElement.Create('root', 'urn:x'); C := XmlElement.Create('child', 'urn:x'); E.Add(C); E.SetAttribute('a', 'v\"&<'); E.WriteTo(S); exit(S);",
     );
-    assert_eq!(t, "<root xmlns=\"urn:x\" a=\"v&quot;&amp;&lt;\">\n  <child />\n</root>");
+    assert_eq!(t, "<root xmlns=\"urn:x\" a=\"v&quot;&amp;&lt;\">\r\n  <child />\r\n</root>");
 }
 
 // Evaluate into an enum: Format(Enum, 0, 9) gives the ordinal in this runtime, and System

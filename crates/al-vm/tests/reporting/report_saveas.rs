@@ -843,15 +843,15 @@ fn an_option_is_written_as_its_caption_and_a_decimal_expression_keeps_its_scale(
     );
 }
 
-// handlers/TestReportSaveAsColumnTypesContracts.al:178-182: a Time is `h:mm:ss`, U+202F, AM or PM; an
+// handlers/TestReportSaveAsColumnTypesContracts.al:178-182: a Time is `h:mm:ss`, a plain space, AM or PM; an
 // undefined one is blank (not pinned, docs/probes-needed.md).
 #[test]
-fn a_time_column_is_written_in_the_en_us_form_with_a_narrow_no_break_space() {
+fn a_time_column_is_written_in_the_en_us_form_with_a_plain_space() {
     let text = f(
         "var H: Codeunit Helpers; Buf: Record \"Probe Rep Parent\"; P: Record \"Probe Rep Parent\"; Out: OutStream; begin H.Seed(); P.Get(1); P.At := 123456T; P.Modify(); Buf.Data.CreateOutStream(Out); Report.SaveAs(Report::\"Probe Time Report\", '', ReportFormat::Xml, Out); exit(H.Lines(Buf)); end;",
     );
     assert!(
-        text.contains("<Column name=\"AtCol\">12:34:56\u{202F}PM</Column>"),
+        text.contains("<Column name=\"AtCol\">12:34:56 PM</Column>"),
         "{text}"
     );
     assert!(text.contains("<Column name=\"AtCol\"></Column>"), "{text}");

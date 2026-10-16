@@ -68,6 +68,10 @@ pub trait Ctx: FormatCtx {
 
     fn last_error(&self) -> AlError;
     fn set_last_error(&mut self, e: AlError);
+    /// Whether the run has the newer behaviour of `gate` (ADR-015 3.4); a context with no target has every gate.
+    fn gate(&self, _gate: al_version::Gate) -> bool {
+        true
+    }
     /// Record methods (`Record.Insert`, ...) need the store, triggers and
     /// table metadata: the VM implements them. `method` is the catalog name.
     fn record(
@@ -838,7 +842,7 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
         .map_err(|e| match e.strip_prefix(crate::formatstr::INVALID_FORMAT_MARK) {
             Some(template) => Signal::Error(Box::new(AlError {
                 message: format!(
-                    "An invalid field or attribute has been specified for the 'Format' property.\r\\\r\\{template}"
+                    "An invalid field or attribute has been specified for the 'Format' property.\\\\{template}"
                 ),
                 code: "InvalidFormatString".into(),
                 call_stack: String::new(),

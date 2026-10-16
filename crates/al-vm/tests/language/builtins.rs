@@ -1395,7 +1395,7 @@ fn copy_filter_between_filter_groups_and_from_code_to_text() {
     };
     assert_eq!(
         got,
-        "NCLCSRTS:TableEqualValue|old|The type of the constant must be compatible with that of the TextF field, and the length of the constant must not exceed the length of the field.\r\\\r\\Type: Text <-- Code\r\\Field: TextF <-- CodeF\r\\Table: T|<>Z|[]"
+        "NCLCSRTS:TableEqualValue|old|The type of the constant must be compatible with that of the TextF field, and the length of the constant must not exceed the length of the field.\\\\Type: Text <-- Code\\Field: TextF <-- CodeF\\Table: T|<>Z|[]"
     );
 }
 

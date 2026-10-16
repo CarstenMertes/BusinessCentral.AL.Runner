@@ -213,7 +213,7 @@ codeunit 50100 C
 fn base64_convert_natives_answer_as_the_probe_did() {
     assert_eq!(
         text(run(BASE64, "Encoded")),
-        "SGVsbG8=|5AD2APwA|5Pb8|w6TDtsO8|164|äöü|äöü"
+        "SGVsbG8=|5AD2APwA|5Pb8|5Pb8|164|äöü|äöü"
     );
     assert_eq!(
         text(run(BASE64, "Invalid")),

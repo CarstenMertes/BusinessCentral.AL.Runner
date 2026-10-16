@@ -191,9 +191,10 @@ pub fn normalize_uri(input: &str) -> Result<String, bool> {
     if input.is_empty() {
         return Err(false);
     }
-    // A rooted path is a file path on this platform: file:///relative/path.
+    // A rooted path is not an absolute uri on the Windows tier (network/lt-http/HttpRequest.al:
+    // SetRequestUriRelativeAndInvalid); it is the invalid-url error.
     if input.starts_with('/') && !input.starts_with("//") {
-        return Ok(format!("file://{}", escape(input)));
+        return Err(false);
     }
     let Some(colon) = input.find(':') else {
         return if input.chars().any(char::is_whitespace) {
@@ -1131,12 +1132,12 @@ mod tests {
         ok("https://example.invalid/a b", "https://example.invalid/a%20b");
         ok("https://example.invalid/x#frag", "https://example.invalid/x#frag");
         ok("https://user@example.invalid/x", "https://user@example.invalid/x");
-        ok("/relative/path", "file:///relative/path");
         ok("https://example.invalid/ä", "https://example.invalid/%C3%A4");
         ok("javascript:alert(1)", "javascript:alert(1)");
         ok("ftp://example.invalid/x", "ftp://example.invalid/x");
         for bad in [
             "",
+            "/relative/path",
             "http://",
             "ht!tp://x",
             "https://exa mple.invalid/",

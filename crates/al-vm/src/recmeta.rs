@@ -534,7 +534,7 @@ impl Session {
                     ) {
                         return Err(error(
                             format!(
-                                "The type of the constant must be compatible with that of the {to_name} field, and the length of the constant must not exceed the length of the field.\r\\\r\\Type: Text <-- Code\r\\Field: {to_name} <-- {from_name}\r\\Table: {table}",
+                                "The type of the constant must be compatible with that of the {to_name} field, and the length of the constant must not exceed the length of the field.\\\\Type: Text <-- Code\\Field: {to_name} <-- {from_name}\\Table: {table}",
                                 to_name = dt.fields[to].name,
                                 from_name = t.fields[from].name,
                                 table = dt.name,

@@ -16,6 +16,10 @@ impl al_builtins::format::FormatCtx for Session {
 }
 
 impl al_builtins::native::Ctx for Session {
+    fn gate(&self, gate: al_version::Gate) -> bool {
+        self.has(gate)
+    }
+
     fn http_send(
         &mut self,
         request: al_builtins::native::HttpOutgoing,

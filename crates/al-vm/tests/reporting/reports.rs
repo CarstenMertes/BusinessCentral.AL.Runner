@@ -738,7 +738,9 @@ fn refusal(vars_and_body: &str) -> String {
 #[test]
 fn currreport_use_request_page_is_the_running_reports() {
     assert_eq!(
-        f("var R: Report \"RU Probe\"; L: Record \"RRE Log\"; begin R.UseRequestPage(false); R.Run(); L.FindLast(); exit(L.Marker); end;"),
+        f(
+            "var R: Report \"RU Probe\"; L: Record \"RRE Log\"; begin R.UseRequestPage(false); R.Run(); L.FindLast(); exit(L.Marker); end;"
+        ),
         "No"
     );
 }

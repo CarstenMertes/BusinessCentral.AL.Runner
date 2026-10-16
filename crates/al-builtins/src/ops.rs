@@ -838,7 +838,7 @@ mod tests {
         let d = Value::Date(crate::format::day_from_civil(2024, 3, 5), false);
         let want = crate::format::try_format(&d, 0, 0, &Plain).unwrap();
         assert!(matches!(convert(d.clone(), &RtType::Text(None)), Ok(Value::Text(t)) if t.as_str() == want));
-        assert!(matches!(convert(d, &RtType::Text(Some(3))), Err(_)));
+        assert!(convert(d, &RtType::Text(Some(3))).is_err());
     }
 
     struct Plain;

@@ -1191,6 +1191,11 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
                     | "WebServiceActionContext"
                     | "SessionSettings"
                     | "Notification"
+                    // A cleared XML document, document type or declaration is an unassigned one (xml/lt-xml-doctype-declaration/
+                    // DocTypeErrors.al:Uninitialised_*, DocTypeRead.al: `Clear(Doc)`).
+                    | "XmlDocument"
+                    | "XmlDocumentType"
+                    | "XmlDeclaration"
                     | "JsonObject"
                     | "JsonArray"
                     | "JsonValue"

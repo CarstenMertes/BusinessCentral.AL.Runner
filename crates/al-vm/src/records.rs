@@ -1034,11 +1034,12 @@ impl Session {
                 | RecordOp::CalcSums
         ) && !rec.borrow().temporary
             && self
+                .tx
                 .deferred_insert
                 .as_ref()
                 .is_some_and(|(o, _)| *o == t.object as usize)
         {
-            let (_, e) = self.deferred_insert.take().expect("checked");
+            let (_, e) = self.tx.deferred_insert.take().expect("checked");
             return Err(Signal::Error(Box::new(e)));
         }
         if let Some(schema) = self.engine.program.objects[t.object as usize]
@@ -1126,8 +1127,8 @@ impl Session {
             // A write call starts the transaction, also a DeleteAll that finds no row
             // (session/ProbeSystemEnumMembers.al:143-161, session/TestDatabaseExtended.al:
             // Database_CurrentTransactionType_SetAfterWriteOp_Throws over fixture DeleteAlls).
-            self.tx_phase = crate::transactions::TX_WRITE;
-        } else if self.tx_phase == crate::transactions::TX_FRESH
+            self.tx.tx_phase = crate::transactions::TX_WRITE;
+        } else if self.tx.tx_phase == crate::transactions::TX_FRESH
             && !rec.borrow().temporary
             && matches!(
                 method,
@@ -1145,7 +1146,7 @@ impl Session {
             )
         {
             // A read call starts it too (session/ProbeSystemEnumMembers.al:94-112).
-            self.tx_phase = crate::transactions::TX_READ;
+            self.tx.tx_phase = crate::transactions::TX_READ;
         }
         match method {
             RecordOp::Init => {
@@ -1328,7 +1329,7 @@ impl Session {
                         if !self.ret_used
                             && !has_blob
                             && auto.is_none()
-                            && !self.immediate_errors
+                            && !self.tx.immediate_errors
                             && !rec.borrow().temporary
                         {
                             if (run && !self.ext_triggers(&t, "OnAfterInsert").is_empty())
@@ -1341,7 +1342,7 @@ impl Session {
                             }
                             match self.fail(&t, &row, true) {
                                 Err(Signal::Error(e)) => {
-                                    self.deferred_insert.get_or_insert((t.object as usize, *e));
+                                    self.tx.deferred_insert.get_or_insert((t.object as usize, *e));
                                 }
                                 // A key whose format is not pinned stays a refusal.
                                 Err(other) => return Err(other),
@@ -1371,7 +1372,7 @@ impl Session {
                     // and passes in BC (assumed from that test; docs/probes-needed.md).
                     if !rec.borrow().temporary
                         && version(&mine) > version(&theirs)
-                        && version(&theirs) <= self.committed_row_version
+                        && version(&theirs) <= self.tx.committed_row_version
                     {
                         // Under the rule "a different version is stale" this write would have been refused.
                         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::StaleBufferNewerThanRow);
@@ -1379,7 +1380,7 @@ impl Session {
                     if !rec.borrow().temporary
                         && version(&mine) != 0
                         && version(&mine) < version(&theirs)
-                        && version(&theirs) <= self.committed_row_version
+                        && version(&theirs) <= self.tx.committed_row_version
                     {
                         let identification = self.identification(&t, &rec.borrow().fields)?;
                         return Err(Signal::Error(Box::new(AlError {
@@ -1410,7 +1411,11 @@ impl Session {
                 // same for the events). A row a page saves carries the page's own previous row
                 // (record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
                 let stored_row = stored.clone();
-                let before_image = self.page_xrec.take().unwrap_or_else(|| rec.borrow().fields.clone());
+                let before_image = self
+                    .pages
+                    .page_xrec
+                    .take()
+                    .unwrap_or_else(|| rec.borrow().fields.clone());
                 let xrec = Some(Self::xrec_handle(rec, before_image));
                 self.table_event(&t, "onbeforemodifyevent", rec, xrec.as_ref(), run, None)?;
                 if run {

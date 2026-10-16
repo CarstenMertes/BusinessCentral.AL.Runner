@@ -127,7 +127,7 @@ impl Session {
         let mut target_state = Rc::new(RefCell::new(PageState::closed(target as u32)));
         let mut trapped = false;
         if !modal {
-            if let Some(trap) = self.trap.take() {
+            if let Some(trap) = self.pages.trap.take() {
                 if trap.borrow().object != target as u32 {
                     return unsupported("a Trap() for another page than the one the action opens");
                 }
@@ -144,9 +144,9 @@ impl Session {
         let record = self.run_object_record(st, &target_state, ro, mode)?;
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
         // The handler is looked up after OnInit and OnOpenPage; a page nobody answers stops there.
-        self.lenient_bind = true;
+        self.pages.lenient_bind = true;
         let opened = self.open_page(&target_state, mode, record, if trapped { None } else { Some(kind) });
-        self.lenient_bind = false;
+        self.pages.lenient_bind = false;
         let handler = opened?;
         let answered = match handler {
             Some(h) => self.answer_page(&target_state, h, modal).map(|_| ()),

@@ -223,7 +223,7 @@ impl Session {
             self.init_parts(st)?;
             let mut unattended = false;
             if let Some(kind) = bind {
-                if self.lenient_bind {
+                if self.pages.lenient_bind {
                     // A RunObject action opens the page, runs OnInit and OnOpenPage, and only then
                     // looks for a handler; with none it goes no further, so the first row is never
                     // read (handlers/TestPageRunObjectContracts.al:330-346: "card.OnInit;card.OnOpenPage;").
@@ -358,12 +358,12 @@ impl Session {
             .map(|slot| (slot, inst.borrow().globals[slot].clone()))
             .collect();
         let object = st.borrow().object;
-        self.saved_values.insert(object, saved);
+        self.pages.saved_values.insert(object, saved);
     }
 
     pub(super) fn restore_page_values(&mut self, st: &St) {
         let object = st.borrow().object;
-        let Some(saved) = self.saved_values.get(&object).cloned() else {
+        let Some(saved) = self.pages.saved_values.get(&object).cloned() else {
             return;
         };
         let Some(inst) = st.borrow().instance.clone() else {
@@ -426,9 +426,9 @@ impl Session {
             let rec = self.page_rec(st);
             rec.borrow_mut().fields = fields;
             self.ret_used = false;
-            self.immediate_errors = true;
+            self.tx.immediate_errors = true;
             let inserted = self.record_op(RecordOp::Insert, &rec, &mut [Value::Boolean(true)]);
-            self.immediate_errors = false;
+            self.tx.immediate_errors = false;
             inserted?;
         }
         match self.save_row(st) {

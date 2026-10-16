@@ -220,9 +220,9 @@ impl Session {
         // The page saves the row on fresh table globals: what an action set in them is gone (corpus
         // record/PWTableGlobals.al:408-431: OnModify reads Counter 0 though the action set 7).
         self.reset_table_globals(&rec);
-        self.page_xrec = Some(self.page_xrec_fields(st));
+        self.pages.page_xrec = Some(self.page_xrec_fields(st));
         let modified = self.record_op(RecordOp::Modify, &rec, &mut [Value::Boolean(true)]);
-        self.page_xrec = None;
+        self.pages.page_xrec = None;
         modified?;
         st.borrow_mut().dirty = false;
         self.set_xrec(st);
@@ -245,9 +245,9 @@ impl Session {
         }
         self.auto_split_key(st)?;
         self.ret_used = false;
-        self.immediate_errors = true;
+        self.tx.immediate_errors = true;
         let inserted = self.record_op(RecordOp::Insert, &rec, &mut [Value::Boolean(true)]);
-        self.immediate_errors = false;
+        self.tx.immediate_errors = false;
         inserted?;
         {
             let mut s = st.borrow_mut();

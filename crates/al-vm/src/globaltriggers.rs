@@ -63,13 +63,13 @@ impl Session {
     /// The setup of table `t`, asking the subscribers the first time (BC caches it per session).
     pub(crate) fn global_setup(&mut self, t: &TableDef) -> Result<GlobalSetup, Signal> {
         let table = t.object as usize;
-        if let Some(s) = self.global_setups.get(&table) {
+        if let Some(s) = self.events.global_setups.get(&table) {
             return Ok(*s);
         }
         let key = self.engine.events.global_key;
         let id = self.engine.program.objects[table].id.unwrap_or(0) as i32;
         // A subscriber that writes the table it is asked about sees the table as not enabled.
-        self.global_setups.insert(table, GlobalSetup::default());
+        self.events.global_setups.insert(table, GlobalSetup::default());
         let mut setup = GlobalSetup::default();
         if self.engine.events.is_subscribed(key, "getglobaltabletriggermask") {
             let mut args = [Value::Integer(id), Value::Integer(0)];
@@ -83,18 +83,18 @@ impl Session {
                 sender: None,
             };
             if let Err(e) = self.raise(&call, &mut args) {
-                self.global_setups.remove(&table);
+                self.events.global_setups.remove(&table);
                 return Err(e);
             }
             let mask = match &args[1] {
                 Value::Integer(m) => *m,
                 other => {
-                    self.global_setups.remove(&table);
+                    self.events.global_setups.remove(&table);
                     return unsupported(format!("Global Triggers: mask {}", other.describe()));
                 }
             };
             if mask != 0 && mask != MASK_ALL {
-                self.global_setups.remove(&table);
+                self.events.global_setups.remove(&table);
                 return unsupported(format!(
                     "Global Triggers: table trigger mask {mask} for {} (only 0 and 15 are pinned; which bit is Rename is not)",
                     t.name
@@ -126,7 +126,7 @@ impl Session {
                 sender: None,
             };
             if let Err(e) = self.raise(&call, &mut args) {
-                self.global_setups.remove(&table);
+                self.events.global_setups.remove(&table);
                 return Err(e);
             }
             let on = |v: &Value| matches!(v, Value::Boolean(true));
@@ -135,7 +135,7 @@ impl Session {
             setup.delete = on(&args[3]);
             setup.rename = on(&args[4]);
         }
-        self.global_setups.insert(table, setup);
+        self.events.global_setups.insert(table, setup);
         Ok(setup)
     }
 

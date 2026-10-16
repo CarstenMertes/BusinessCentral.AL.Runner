@@ -131,7 +131,7 @@ impl Session {
             return error("Truncate is not supported when the field has Media and/or MediaSet fields.");
         }
         // Corpus record/TestRecordTruncateTryScope.al:34: the scope is inherited by called frames.
-        if self.try_depth > 0 {
+        if self.tx.try_depth > 0 {
             return error("Truncate is not supported in try functions.");
         }
         // A subscriber that was not compiled is a subscriber to BC all the same.

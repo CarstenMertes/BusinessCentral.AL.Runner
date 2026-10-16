@@ -69,13 +69,13 @@ impl Session {
     /// Counts one run of the statement at position `id`.
     #[inline]
     pub(crate) fn coverage_hit(&mut self, id: u32) {
-        let hits = &mut self.recorder.hits;
+        let hits = &mut self.coverage.recorder.hits;
         let id = id as usize;
         if hits.len() <= id {
             hits.resize(self.engine.program.positions.len().max(id + 1), 0);
         }
         hits[id] += 1;
-        self.recorder.dirty = true;
+        self.coverage.recorder.dirty = true;
     }
 
     /// A routine starts while recording. Returns what to restore when it ends, if it started a test.
@@ -89,7 +89,7 @@ impl Session {
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
         let from_al = !self.frames.is_empty();
-        let rec = &mut self.recorder;
+        let rec = &mut self.coverage.recorder;
         rec.entered.insert(object);
         rec.dirty = true;
         if r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test")) {
@@ -108,14 +108,14 @@ impl Session {
 
     /// A rollback took the rows written by the last read: write what was recorded again at the next read.
     pub(crate) fn coverage_rolled_back(&mut self) {
-        let rec = &mut self.recorder;
+        let rec = &mut self.coverage.recorder;
         if !rec.entered.is_empty() || !rec.tests.is_empty() {
             rec.dirty = true;
         }
     }
 
     pub(crate) fn coverage_leave(&mut self, scope: TestScope) {
-        self.recorder.current_test = scope.0;
+        self.coverage.recorder.current_test = scope.0;
     }
 
     /// A read of a coverage table: what was recorded is in the tables first.
@@ -136,7 +136,7 @@ impl Session {
         if temporary || !filters.is_empty() {
             return;
         }
-        let rec = &mut self.recorder;
+        let rec = &mut self.coverage.recorder;
         match self.engine.program.objects[t.object as usize].id {
             Some(CODE_COVERAGE) => {
                 rec.hits.clear();
@@ -155,10 +155,10 @@ impl Session {
 
     /// Writes the recorded data into the three tables, replacing what they held.
     fn coverage_flush(&mut self) -> Result<(), Signal> {
-        if !self.recorder.dirty {
+        if !self.coverage.recorder.dirty {
             return Ok(());
         }
-        self.recorder.dirty = false;
+        self.coverage.recorder.dirty = false;
         let engine = self.engine.clone();
         let program = &engine.program;
         for (oi, o) in program.objects.iter().enumerate() {
@@ -215,7 +215,7 @@ impl Session {
     ///   Covered when all of them ran, Partially Covered when some did and Not Covered when none did.
     fn coverage_rows(&self, t: &TableDef) -> Vec<Row> {
         let program = &self.engine.program;
-        let rec = &self.recorder;
+        let rec = &self.coverage.recorder;
         let mut out = Vec::new();
         let mut row = |oi: usize, line: u32, text: Option<&str>, kind: &str, hits: u32, status: &str| {
             let o = &program.objects[oi];
@@ -299,7 +299,8 @@ impl Session {
 
     fn lookup_rows(&self, t: &TableDef) -> Vec<Row> {
         let program = &self.engine.program;
-        self.recorder
+        self.coverage
+            .recorder
             .lookups
             .iter()
             .filter_map(|&(test, oi, ri)| {
@@ -316,7 +317,8 @@ impl Session {
 
     fn tests_run_rows(&self, t: &TableDef) -> Vec<Row> {
         let program = &self.engine.program;
-        self.recorder
+        self.coverage
+            .recorder
             .tests
             .iter()
             .enumerate()

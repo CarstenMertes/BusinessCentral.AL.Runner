@@ -741,7 +741,7 @@ impl Session {
     /// A `Trap()` set on a TestPage that belongs to a routine ends with the routine; one set through
     /// a `var` parameter belongs to the caller (corpus handlers/TestPageTrapScope_Tests.al:1-15).
     pub(crate) fn end_trap_scope(&mut self, frame: &crate::Frame, params: usize, by_var: &[bool]) {
-        let Some(trap) = &self.trap else { return };
+        let Some(trap) = &self.pages.trap else { return };
         // The trap ends with the last variable holding the page. A by-var parameter hands its page
         // back to the caller, and a page another variable still holds keeps the trap alive (corpus
         // handlers/TestPageTrapSharedScope_Tests.al:87 TrapSharedByTwoLocalsSurvivesWhenOneIsAssignedOut,
@@ -764,7 +764,7 @@ impl Session {
         let outside = Rc::strong_count(trap).saturating_sub(1 + local_holders);
         if outside == 0 {
             trap.borrow_mut().trapping = false;
-            self.trap = None;
+            self.pages.trap = None;
         }
     }
 
@@ -812,7 +812,7 @@ impl Session {
         let mut st = st.clone();
         let mut trapped = false;
         if !modal {
-            if let Some(trap) = self.trap.take() {
+            if let Some(trap) = self.pages.trap.take() {
                 if trap.borrow().object != object {
                     return unsupported("a Trap() for another page than the one Page.Run opens");
                 }
@@ -891,14 +891,14 @@ impl Session {
             .iter()
             .map(|m| m.to_string())
             .collect();
-        self.page_handler_depth += 1;
+        self.ui_state.page_handler_depth += 1;
         let handled = self.call(
             hobject,
             hroutine,
             hinst,
             vec![Value::TestPage(st.clone()), Value::Option(none, members)],
         );
-        self.page_handler_depth -= 1;
+        self.ui_state.page_handler_depth -= 1;
         {
             let mut s = st.borrow_mut();
             s.typed_handler = false;
@@ -919,9 +919,9 @@ impl Session {
     pub(super) fn answer_page(&mut self, st: &St, handler: Handler, modal: bool) -> Result<Value, Signal> {
         let (hobject, hroutine, hinst) = handler;
         let st = st.clone();
-        self.page_handler_depth += 1;
+        self.ui_state.page_handler_depth += 1;
         let handled = self.call(hobject, hroutine, hinst, vec![Value::TestPage(st.clone())]);
-        self.page_handler_depth -= 1;
+        self.ui_state.page_handler_depth -= 1;
         if let Err(e) = handled {
             self.mark_closed(&st);
             return Err(e);

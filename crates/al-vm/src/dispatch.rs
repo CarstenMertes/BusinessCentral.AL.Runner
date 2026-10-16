@@ -121,9 +121,9 @@ impl Session {
             routine,
             pos: al_ir::NO_POS,
         });
-        self.publish_frame = true;
+        self.events.publish_frame = true;
         let raised = self.raise(&call, &mut values);
-        self.publish_frame = false;
+        self.events.publish_frame = false;
         let top = self.call_stack.pop();
         self.frames.pop();
         if let Err(e) = raised {
@@ -143,7 +143,7 @@ impl Session {
     /// Delivers the event to its subscribers. `var` parameters of subscribers are written
     /// back into `args`. Isolated events: see below.
     pub(crate) fn raise(&mut self, ev: &EventCall, args: &mut [Value]) -> Result<(), Signal> {
-        let from_publisher = std::mem::take(&mut self.publish_frame);
+        let from_publisher = std::mem::take(&mut self.events.publish_frame);
         // A table event (OnAfterInsertEvent and the others the platform raises) puts no frame of its own
         // between the subscriber and the code that raised it (session/TestSessionCallstackSourcesContracts.al:
         // Callstack_FromTablePageReportAndExtensionCode, `table event`); page events and Global Triggers are
@@ -156,11 +156,11 @@ impl Session {
                 .get(ev.object)
                 .is_none_or(|o| !o.is_kind(al_ir::ObjKind::Table));
         if unpinned {
-            self.unpinned_event_depth += 1;
+            self.events.unpinned_event_depth += 1;
         }
         let r = self.raise_to_subscribers(ev, args);
         if unpinned {
-            self.unpinned_event_depth -= 1;
+            self.events.unpinned_event_depth -= 1;
         }
         r
     }
@@ -207,6 +207,7 @@ impl Session {
             // error, and a subscriber that succeeds has its writes committed (corpus
             // record/TestTableEventSequenceContracts.al:IsolatedEvent_SubscriberError_BecomesTheLastError_...).
             *self
+                .events
                 .event_stats
                 .calls
                 .borrow_mut()
@@ -214,12 +215,12 @@ impl Session {
                 .or_insert(0) += 1;
             let isolate = isolated && !self.store.has_uncommitted();
             let before = isolate.then(|| self.store.clone());
-            let phase = self.tx_phase;
+            let phase = self.tx.tx_phase;
             let (_, finals) = match self.call(s.object, s.routine, inst, call_args) {
                 Err(Signal::Error(e)) if isolate => {
                     self.store = before.expect("snapshot taken when isolating");
                     // The subscriber's own transaction is gone with its writes.
-                    self.tx_phase = phase;
+                    self.tx.tx_phase = phase;
                     self.last_error = *e;
                     continue;
                 }
@@ -327,8 +328,9 @@ impl Session {
 
     /// Live bound instances of codeunit `object`, oldest binding first.
     fn bound_instances(&mut self, object: usize) -> Vec<Inst> {
-        self.bindings.retain(|b| b.instance.strong_count() > 0);
-        self.bindings
+        self.events.bindings.retain(|b| b.instance.strong_count() > 0);
+        self.events
+            .bindings
             .iter()
             .filter_map(|b| b.instance.upgrade())
             .filter(|i| i.borrow().object as usize == object)
@@ -337,14 +339,14 @@ impl Session {
 
     /// The bound instances per manual subscriber codeunit, for the Event Subscription table.
     fn sync_active_instances(&mut self) {
-        self.bindings.retain(|b| b.instance.strong_count() > 0);
+        self.events.bindings.retain(|b| b.instance.strong_count() > 0);
         let mut active = std::collections::HashMap::new();
-        for b in &self.bindings {
+        for b in &self.events.bindings {
             if let Some(i) = b.instance.upgrade() {
                 *active.entry(i.borrow().object as usize).or_insert(0) += 1;
             }
         }
-        *self.event_stats.active.borrow_mut() = active;
+        *self.events.event_stats.active.borrow_mut() = active;
     }
 
     /// `BindSubscription(Codeunit)` (`bind`) and `UnbindSubscription(Codeunit)`.
@@ -355,8 +357,9 @@ impl Session {
         let inst = self.shared_instance(rc);
         let object = inst.borrow().object as usize;
         let manual = self.engine.object_facts[object].manual_subscriber;
-        self.bindings.retain(|b| b.instance.strong_count() > 0);
+        self.events.bindings.retain(|b| b.instance.strong_count() > 0);
         let at = self
+            .events
             .bindings
             .iter()
             .position(|b| b.instance.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)));
@@ -386,7 +389,7 @@ impl Session {
                 };
             }
             self.ensure_initialized(&inst);
-            self.bindings.push(Binding {
+            self.events.bindings.push(Binding {
                 instance: Rc::downgrade(&inst),
             });
             self.sync_active_instances();
@@ -394,7 +397,7 @@ impl Session {
         } else if manual {
             // True even when it was never bound (Contract 6, "container-verified").
             if let Some(i) = at {
-                self.bindings.remove(i);
+                self.events.bindings.remove(i);
             }
             self.sync_active_instances();
             Ok(Value::Boolean(true))

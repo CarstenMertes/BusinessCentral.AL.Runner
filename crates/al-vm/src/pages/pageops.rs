@@ -358,7 +358,7 @@ impl Session {
                 // The next plain Page.Run of this page type opens into this variable
                 // (corpus handlers/TestPageRunHandler_Tests.al:TrapReceivesTheNonModalPageAndItStaysOpen).
                 st.borrow_mut().trapping = true;
-                self.trap = Some(st.clone());
+                self.pages.trap = Some(st.clone());
                 Ok(Value::Null)
             }
             PageMethod::LookupMode => match args.first() {

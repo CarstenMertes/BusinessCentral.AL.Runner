@@ -482,6 +482,12 @@ registry! {
         tests: "Gen. Journal Management TemplateSelection (PAGE.RunModal(0, GenJnlTemplate) = ACTION::LookupOK, then GenJnlTemplate.Name): ERM Apply Sales/Receivables and about 9 more Tests-ERM tests.",
         probe: "Page.RunModal(Page::X, Rec) with a handler that does GoToKey and OK; read Rec; the same with Cancel; with a page variable's RunModal and GetRecord.",
     },
+    FilterChangeLandsOnNewLine => {
+        id: "filter-change-lands-on-new-line",
+        assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",
+        tests: "Item Vendor Catalog (OpenNew, Filter.SetFilter(\"Item No.\"), then SetValue of the vendor): ERM Item Reference Purchase and about 12 more Tests-ERM tests.",
+        probe: "An editable list opened with OpenNew and with OpenEdit over an empty filtered result: SetValue of a non-key field and the stored row's key; Next() and the row triggers that run.",
+    },
 }
 
 thread_local! {

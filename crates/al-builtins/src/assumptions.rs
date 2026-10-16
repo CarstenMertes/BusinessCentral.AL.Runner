@@ -217,6 +217,18 @@ registry! {
         tests: "Backup Storage test library (array[20, 1000] of RecordRef); 43 Tests-Misc tests.",
         probe: "The chained form on a two-dimensional array, read and write.",
     },
+    InBindsTighterThanAnd => {
+        id: "in-binds-tighter-than-and",
+        assumed: "`a and b in [..]` (also `or`, `xor`) without parentheses is `a and (b in [..])`, not `(a and b) in [..]`.",
+        tests: "Base Application's Purchase Header, field Buy-from Vendor No. (Self-Billing Invoice); every Tests-SCM and Tests-ERM test that validates it.",
+        probe: "A Boolean variable and an enum value joined with and, then in a set, with and without parentheses; a Boolean result for each.",
+    },
+    FilterTextReadAsEvaluate => {
+        id: "filter-text-read-as-evaluate",
+        assumed: "A text value of a filter on a Date or Guid field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, a Guid with braces). A formula such as 1M, a Time or DateTime text and an empty text stay refused.",
+        tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
+        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; the same on a Guid field with Format(G); then GetFilter and Count.",
+    },
     ReportThisPassedOn => {
         id: "report-this-passed-on",
         assumed: "`this` in a report can be passed on (to a var parameter of the report's type, in an event for example) and is the running report: its procedures, and those of the report extensions, work on it.",

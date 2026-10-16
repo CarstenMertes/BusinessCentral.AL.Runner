@@ -22,7 +22,7 @@ mod interp;
 pub use baseline::Baseline;
 pub use capture::{CaptureConfig, Captured, ClosedBy, LoopRecord, MAX_RECORDS, MessageRecord, Rendered, ValueRecord};
 pub(crate) use ctx::base_slot_missing;
-pub use exec::{ExecMode, disassemble as exec_disassemble, report as exec_report};
+pub use exec::{disassemble as exec_disassemble, report as exec_report};
 pub use faultsite::FaultFrame;
 pub(crate) use interp::constant;
 mod callstack;
@@ -30,7 +30,6 @@ mod companies;
 mod dataset;
 mod dispatch;
 pub mod dotnet;
-mod dual;
 mod errorcollect;
 pub mod events;
 mod faultsite;
@@ -296,8 +295,6 @@ fn plain_default(t: &RtType) -> bool {
 
 pub struct Session {
     pub engine: Arc<Engine>,
-    /// Which form runs routines (`AL_EXEC`, default the tree walker).
-    pub exec_mode: ExecMode,
     pub last_error: AlError,
     depth: usize,
     /// The objects of the routines on the call stack, innermost last (builtins scoped to an app,
@@ -466,7 +463,6 @@ impl Session {
             store = store.with_backing(Rc::new(testdata::TestBacking::new(engine.clone(), td.clone())));
         }
         let mut session = Session {
-            exec_mode: ExecMode::from_env(),
             global_language: host.identity.global_language(),
             host,
             waited_ms: 0,
@@ -866,12 +862,8 @@ impl Session {
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
         // The bytecode, if the mode asks for it. Whether a capture watches the routine is only known once its frame is
-        // entered (`cap_enter_frame`); a capture watches the captured form of the bytecode (or the tree walker).
-        let chunk = if self.exec_mode == ExecMode::Tree {
-            None
-        } else {
-            engine.exec.chunk(&engine.program, object, routine)
-        };
+        // entered (`cap_enter_frame`); a capture watches the captured form of the bytecode.
+        let chunk = engine.exec.chunk(&engine.program, object, routine);
         let mut locals: Vec<Value> = Vec::with_capacity(r.locals.len() + chunk.map_or(0, |c| usize::from(c.temps)));
         for (i, s) in r.locals.iter().enumerate() {
             // The default of an array parameter that is passed in is never seen: the argument replaces it.
@@ -966,14 +958,9 @@ impl Session {
         if self.capture.is_some() {
             self.cap_enter_frame(object, r, &frame.locals);
         }
-        // A capture watches a tracked routine through its captured form (ADR-030); a routine that form cannot take runs on
-        // the tree walker.
+        // A capture watches a tracked routine through its captured form (ADR-030).
         let chunk = if self.capturing {
-            if self.exec_mode == ExecMode::Tree {
-                None
-            } else {
-                engine.exec.captured_chunk(&engine.program, object, routine)
-            }
+            engine.exec.captured_chunk(&engine.program, object, routine)
         } else {
             chunk
         };
@@ -988,16 +975,11 @@ impl Session {
                 .resize(r.locals.len() + usize::from(chunk.temps), Value::Null);
             self.run_chunk(chunk, &mut frame)
         } else {
-            if exec::counting() {
-                exec::STATS
-                    .tree_calls
-                    .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            }
-            if self.capturing {
-                self.exec_block::<true>(&r.body, &mut frame)
-            } else {
-                self.exec_block::<false>(&r.body, &mut frame)
-            }
+            // The bytecode names a register with 16 bits; a routine that needs more is refused, never run in part.
+            Err(Signal::Unsupported(format!(
+                "routine `{}` needs more than 65,535 registers (locals and temporaries); the executable form cannot name them",
+                r.name
+            )))
         };
         if self.capture.is_some() {
             self.cap_leave_frame(&outcome);

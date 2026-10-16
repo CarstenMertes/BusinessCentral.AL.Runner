@@ -18,8 +18,6 @@ pub struct Args {
     /// `--no-ratchet`: report only; do not compare with the baseline (for running the corpus
     /// without the dependency apps its baseline needs).
     pub no_ratchet: bool,
-    /// `--dual-run`: run every test codeunit twice, on the tree walker and on the executable form, and compare.
-    pub dual_run: bool,
     /// Extra directories of `.app` packages, searched after the project's `.alpackages`.
     pub deps: Vec<PathBuf>,
     /// Run without dependency apps (the corpus alone).
@@ -193,7 +191,6 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--junit" => a.junit = Some(text()?.into()),
             "--update-baseline" => a.update_baseline = true,
             "--no-ratchet" => a.no_ratchet = true,
-            "--dual-run" => a.dual_run = true,
             "--deps" => a.deps.push(text()?.into()),
             "--no-deps" => a.no_deps = true,
             "--all-versions" => a.all_versions = true,
@@ -323,8 +320,6 @@ BASELINE AND REPORTS
   --suite-baseline NAME=FILE  the ratchet file of an extra test app (repeatable)
   --update-baseline           rewrite the baseline files from this run (refused on any regression)
   --no-ratchet                report only; do not compare with the baseline
-  --dual-run                  run every test codeunit twice (tree walker, executable form), compare outcome, error
-                              stack, assumptions and the data left, print each difference and fail on any
   --json FILE                 write the pass-rate report as JSON
   --markdown FILE             write the pass-rate report as Markdown
   --junit FILE                write per-test outcomes and refusal reasons as JUnit XML

@@ -13329,7 +13329,7 @@
         "code": "AssertError",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 412,
+        "line": 421,
         "pinned": true,
         "site": "types/TestFormatEvaluateTextContracts.al:228",
         "template": "An error was expected inside an ASSERTERROR statement."
@@ -13347,7 +13347,7 @@
         "code": "InvalidOperation",
         "file": "crates/al-vm/src/interfaces.rs",
         "generic": false,
-        "line": 21,
+        "line": 20,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:85",
         "template": "Interface not initialized"
@@ -13356,7 +13356,7 @@
         "code": "UnableToCast",
         "file": "crates/al-vm/src/interfaces.rs",
         "generic": false,
-        "line": 37,
+        "line": 36,
         "pinned": true,
         "site": "codeunit/TestInterfaceIsAsContracts.al:81",
         "template": "The expression cannot be the target interface."
@@ -13365,25 +13365,16 @@
         "code": "ArgumentOutOfRange",
         "file": "crates/al-vm/src/interfaces.rs",
         "generic": false,
-        "line": 112,
+        "line": 100,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:103",
         "template": "Enum does not contain value %."
       },
       {
-        "code": "AssertError",
-        "file": "crates/al-vm/src/interp.rs",
-        "generic": false,
-        "line": 213,
-        "pinned": true,
-        "site": "types/TestFormatEvaluateTextContracts.al:228",
-        "template": "An error was expected inside an ASSERTERROR statement."
-      },
-      {
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 839,
+        "line": 835,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:181",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -13506,7 +13497,7 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 37,
-    "sites": 40
+    "pinned": 36,
+    "sites": 39
   }
 }

@@ -17,7 +17,7 @@ use std::process::ExitCode;
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    // The tree-walking VM recurses on the native stack per AL call; give it room.
+    // An AL call nests native frames of the bytecode loop; give the runner thread room.
     let worker = std::thread::Builder::new()
         .stack_size(512 << 20)
         .spawn(real_main)

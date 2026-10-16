@@ -122,37 +122,7 @@ const TICKS_PER_MS: i64 = 10_000;
 const TICKS_PER_DAY: i64 = 864_000_000_000;
 
 impl Session {
-    /// Evaluates one `Expr::DotNet` (ADR-014 section 1: registry, then host, then refuse).
-    pub(crate) fn eval_dotnet(
-        &mut self,
-        ty: Option<usize>,
-        receiver: Option<&ir::Expr>,
-        op: &ir::DotNetOp,
-        args: &[ir::Arg],
-        f: &mut Frame,
-    ) -> Result<Value, Signal> {
-        let recv = match receiver {
-            Some(e) => self.eval(e, f)?,
-            None => Value::Null,
-        };
-        let mut values = Vec::with_capacity(args.len());
-        let mut places: Vec<Option<ir::Place>> = Vec::with_capacity(args.len());
-        for a in args {
-            match a {
-                ir::Arg::Value(e) => {
-                    values.push(self.eval(e, f)?);
-                    places.push(None);
-                }
-                ir::Arg::Ref(p) => {
-                    values.push(self.read(p, f)?);
-                    places.push(Some(p.clone()));
-                }
-            }
-        }
-        self.dotnet_apply(ty, recv, values, places, op, f)
-    }
-
-    /// A DotNet operation on evaluated operands (shared by the tree walker and the bytecode).
+    /// A DotNet operation on evaluated operands (the bytecode's `DotNet` instruction).
     pub(crate) fn dotnet_apply(
         &mut self,
         ty: Option<usize>,
@@ -313,30 +283,6 @@ impl Session {
                 ))
             }
         }
-    }
-
-    /// `foreach` over a `DotNet` value (ADR-024 section 4): `GetEnumerator`, then `MoveNext` and
-    /// `Current` as ordinary host calls, each `Current` settled into the loop variable. The error
-    /// texts and codes are pinned by tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al
-    /// (codeunit 61400, `Foreach_OverClrCollections`, `Foreach_Failures_HaveTheirTextsAndCodes`).
-    pub(crate) fn foreach_dotnet(
-        &mut self,
-        var: &ir::Place,
-        coll: Value,
-        collection: &ir::Expr,
-        body: &[ir::Stmt],
-        f: &mut Frame,
-    ) -> Result<(), Signal> {
-        let enumerator = self.foreach_dotnet_start(coll, Some(collection), f)?;
-        while let Some(item) = self.foreach_dotnet_next(var, &enumerator, f)? {
-            self.write(var, item, f)?;
-            match self.exec_block_dyn(body, f) {
-                Err(Signal::Break) => return Ok(()),
-                Err(Signal::Continue) => {}
-                r => r?,
-            }
-        }
-        Ok(())
     }
 
     /// `GetEnumerator` of a .NET collection (the value `foreach_dotnet_next` steps), or the error of a variable that was

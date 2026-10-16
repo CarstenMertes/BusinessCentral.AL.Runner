@@ -370,10 +370,6 @@ impl Session {
     }
 
     /// Statement `s` (marked `pos`) ended without an error: the locals of the routine it changed or wrote are recorded.
-    pub(crate) fn cap_after(&mut self, pos: u32, s: &ir::Stmt, f: &Frame) {
-        self.cap_after_writes(pos, &written_locals(s), f);
-    }
-
     /// The depth of the open statements (an `asserterror` that catches an error drops what the error left open).
     pub(crate) fn cap_stmt_depth(&self) -> usize {
         self.capture.as_ref().map_or(0, |c| c.stmt.len())
@@ -534,37 +530,6 @@ impl Session {
             loop_id,
             iteration,
         });
-    }
-
-    /// Runs a block with the capture's eyes on it: a marker and the statement after it are one statement.
-    #[inline(never)]
-    pub(crate) fn exec_block_captured(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
-        let mut i = 0;
-        while i < stmts.len() {
-            if let ir::Stmt::Pos(p) = &stmts[i] {
-                self.exec::<true>(&stmts[i], f)?;
-                self.cap_stmt_hit(*p);
-                // Markers of an assumption sit between the position and its statement.
-                let mut j = i + 1;
-                while let Some(m @ ir::Stmt::Assume(_)) = stmts.get(j) {
-                    self.exec::<true>(m, f)?;
-                    j += 1;
-                }
-                if let Some(next) = stmts.get(j) {
-                    self.cap_push_stmt(*p);
-                    let r = self.exec::<true>(next, f);
-                    self.cap_pop_stmt();
-                    r?;
-                    self.cap_after(*p, next, f);
-                    i = j + 1;
-                    continue;
-                }
-            } else {
-                self.exec::<true>(&stmts[i], f)?;
-            }
-            i += 1;
-        }
-        Ok(())
     }
 }
 

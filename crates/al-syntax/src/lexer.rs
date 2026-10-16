@@ -9,6 +9,9 @@ pub struct Token {
     pub len: u32,
 }
 
+/// U+FEFF in UTF-8.
+const BOM: [u8; 3] = [0xEF, 0xBB, 0xBF];
+
 pub fn lex(src: &str) -> Vec<Token> {
     let mut lx = Lexer {
         text: src,
@@ -107,8 +110,16 @@ impl Lexer<'_> {
                 self.push(Newline, start);
                 self.line_has_code = false;
             }
-            b' ' | b'\t' | b'\r' | 0x0c => {
-                self.eat_while(|b| matches!(b, b' ' | b'\t' | 0x0c));
+            // A byte order mark (U+FEFF, bytes EF BB BF) between tokens is white space, as in BC's compiler.
+            b' ' | b'\t' | b'\r' | 0x0c | 0xEF if c != 0xEF || self.src[self.pos..].starts_with(&BOM) => {
+                loop {
+                    self.eat_while(|b| matches!(b, b' ' | b'\t' | 0x0c));
+                    if self.src[self.pos..].starts_with(&BOM) {
+                        self.pos += 3;
+                    } else {
+                        break;
+                    }
+                }
                 if self.pos == start {
                     self.pos += 1; // lone \r
                 }
@@ -449,6 +460,36 @@ mod tests {
     #[test]
     fn bom_is_its_own_trivia_token() {
         assert_eq!(kinds("\u{FEFF}x"), vec![(Bom, "\u{FEFF}"), (Ident, "x")]);
+    }
+
+    // Microsoft's BC 29 Base Application has pages (Sales/Reminder/ReminderLevels.Page.al, ReminderTerms.Page.al,
+    // ReminderTermsTranslation.Page.al, ReminderText.Page.al) with a byte order mark at the start of line 2; BC compiles
+    // them, so a U+FEFF between tokens is white space.
+    #[test]
+    fn a_byte_order_mark_between_tokens_is_white_space() {
+        assert_eq!(
+            kinds("page 1 P\n\u{FEFF}{ x }\n \u{FEFF} \u{FEFF}y"),
+            vec![
+                (Ident, "page"),
+                (Whitespace, " "),
+                (Integer, "1"),
+                (Whitespace, " "),
+                (Ident, "P"),
+                (Newline, "\n"),
+                (Whitespace, "\u{FEFF}"),
+                (LBrace, "{"),
+                (Whitespace, " "),
+                (Ident, "x"),
+                (Whitespace, " "),
+                (RBrace, "}"),
+                (Newline, "\n"),
+                (Whitespace, " \u{FEFF} \u{FEFF}"),
+                (Ident, "y"),
+            ]
+        );
+        // Inside a string or a comment it is part of the text.
+        assert_eq!(significant("'a\u{FEFF}b'"), vec![(StringLit, "'a\u{FEFF}b'")]);
+        assert_eq!(kinds("// a\u{FEFF}b"), vec![(LineComment, "// a\u{FEFF}b")]);
     }
 
     #[test]

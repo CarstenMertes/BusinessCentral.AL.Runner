@@ -1,7 +1,6 @@
 //! The executable form of a routine: register bytecode (ADR-034, `docs/reviews/2026-10-bytecode-design.md`).
 //!
-//! A routine's registers are its locals followed by temporaries. Instructions call the helpers the tree walker
-//! calls, so a result is the same by construction. Every statement and expression of the IR has instructions: the
+//! A routine's registers are its locals followed by temporaries. Instructions call the shared helpers of the VM. Every statement and expression of the IR has instructions: the
 //! compiler returns `None` only when a routine needs more registers than an instruction can name. A value capture runs
 //! the captured form (`compile(.., true)`), which adds the statement and loop instructions of ADR-030.
 
@@ -14,28 +13,6 @@ use std::sync::OnceLock;
 use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) use compile::compile;
-
-/// Which form runs routines (`AL_EXEC=tree|bytecode|dual`; bytecode is the default since ADR-034 step 4, the tree walker
-/// stays as the oracle of the dual run).
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
-pub enum ExecMode {
-    Tree,
-    #[default]
-    Bytecode,
-    Dual,
-}
-
-impl ExecMode {
-    /// The mode `AL_EXEC` names, read once.
-    pub fn from_env() -> ExecMode {
-        static MODE: OnceLock<ExecMode> = OnceLock::new();
-        *MODE.get_or_init(|| match std::env::var("AL_EXEC").as_deref() {
-            Ok("tree") => ExecMode::Tree,
-            Ok("dual") => ExecMode::Dual,
-            _ => ExecMode::Bytecode,
-        })
-    }
-}
 
 /// An instruction. Registers are `u16`, side-table indexes `u32`. `NONE` marks "no target".
 #[derive(Debug, Clone, Copy)]
@@ -273,17 +250,21 @@ pub(crate) enum Op {
         old: u16,
         a: u16,
     },
-    /// Jumps to `t` unless the value in `a` matches one of the labels `l` (a `case` branch).
-    MatchAny {
+    /// Jumps to `t` when `ops::compare(a, b)` is Equal / Less / Greater (the tests of a `case` label and of `in [...]`).
+    JumpEq {
         a: u16,
-        l: u32,
+        b: u16,
         t: u32,
     },
-    /// `d := a in [labels l]`.
-    InSet {
-        d: u16,
+    JumpLt {
         a: u16,
-        l: u32,
+        b: u16,
+        t: u32,
+    },
+    JumpGt {
+        a: u16,
+        b: u16,
+        t: u32,
     },
     DotNet {
         s: u32,
@@ -390,7 +371,7 @@ pub(crate) enum Op {
     RetVal {
         a: u16,
     },
-    /// A `break` or `continue` outside every loop of this routine: the signal goes to the caller as in the tree walker.
+    /// A `break` or `continue` outside every loop of this routine: the signal goes to the caller.
     RaiseBreak,
     RaiseContinue,
 }
@@ -514,7 +495,6 @@ pub(crate) struct Chunk {
     pub calls: Vec<CallSite>,
     pub builtins: Vec<BuiltinSite>,
     pub fors: Vec<ForSite>,
-    pub labels: Vec<Vec<ir::SetElem>>,
     pub appends: Vec<AppendSite>,
     pub dotnets: Vec<DotNetSite>,
     pub aux: Vec<AuxSite>,
@@ -580,7 +560,6 @@ pub(crate) fn counting() -> bool {
 pub(crate) struct Stats {
     pub routines: AtomicU64,
     pub bytecode_calls: AtomicU64,
-    pub tree_calls: AtomicU64,
     /// Typed instructions that met an operand of another kind (a local that holds a value of another kind than its declared one, for example an Integer variable that a List Get filled with a BigInteger; the generic path gives the result).
     pub typed_fallbacks: AtomicU64,
 }
@@ -588,7 +567,6 @@ pub(crate) struct Stats {
 pub(crate) static STATS: Stats = Stats {
     routines: AtomicU64::new(0),
     bytecode_calls: AtomicU64::new(0),
-    tree_calls: AtomicU64::new(0),
     typed_fallbacks: AtomicU64::new(0),
 };
 
@@ -596,10 +574,9 @@ pub(crate) static STATS: Stats = Stats {
 pub fn report() -> String {
     let g = |a: &AtomicU64| a.load(Ordering::Relaxed);
     format!(
-        "exec: {} routines compiled; calls: {} bytecode, {} tree; typed fallbacks: {}",
+        "exec: {} routines compiled; calls: {} bytecode; typed fallbacks: {}",
         g(&STATS.routines),
         g(&STATS.bytecode_calls),
-        g(&STATS.tree_calls),
         g(&STATS.typed_fallbacks),
     )
 }

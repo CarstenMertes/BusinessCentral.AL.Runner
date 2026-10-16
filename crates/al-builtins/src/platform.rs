@@ -37,6 +37,8 @@ pub enum Virtual {
     TimeZone,
     WindowsLanguage,
     NavAppInstalledApp,
+    NavAppExtra,
+    InstalledApplication,
     PublishedApplication,
     /// Known to exist, not pinned: lowers, and every read is refused.
     ApiWebhookEntity,
@@ -115,6 +117,16 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
         2_000_000_153,
         "NAV App Installed App",
         Provider::Virtual(Virtual::NavAppInstalledApp),
+    ),
+    (
+        2_000_000_157,
+        "NAV App Extra",
+        Provider::Virtual(Virtual::NavAppExtra),
+    ),
+    (
+        2_000_000_212,
+        "Installed Application",
+        Provider::Virtual(Virtual::InstalledApplication),
     ),
     (
         2_000_000_206,
@@ -274,8 +286,15 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     (2_000_000_153, &[1, 2, 3, 4, 5, 6, 7, 8]),
     // Published Application: install/TestRetenPolAllowedTables_Tests.al reads the package ids through System Application code;
     // the identity and version columns mirror NAV App Installed App. "Tenant ID" (12) is read only through the filter
-    // `'' | TenantId` that the same test passes through (see apps.rs).
-    (2_000_000_206, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 12]),
+    // `'' | TenantId` that the same test passes through (see apps.rs). Installed (13), "Tenant Visible" (30) and
+    // "PerTenant Or Installed" (31): record/TestPublishedApplicationSysTable.al:275-365 (true for every listed app).
+    (2_000_000_206, &[1, 2, 3, 4, 5, 6, 7, 8, 9, 12, 13, 30, 31]),
+    // NAV App Extra: "Runtime Package ID" (1), "Tenant Visible" (2), "PerTenant Or Installed" (3), the targets of the Lookup
+    // FlowFields of Published Application (record/TestPublishedApplicationSysTable.al:294-365). "Package ID" (4) is not read.
+    (2_000_000_157, &[1, 2, 3]),
+    // Installed Application: "Runtime Package ID" (1), the match column of the Exist FlowField Published Application.Installed
+    // (record/TestPublishedApplicationSysTable.al:275-290, :342-365). "Package ID" (2) and "Tenant ID" (3) are not read.
+    (2_000_000_212, &[1]),
     // Metadata Permission Set: permissions/TestMetadataPermissionSet.al, TestPermissionSetUndeclaredAssignable.al.
     (2_000_000_250, &[1, 2, 3, 4]),
     // Permission Set: permissions/TestPermissionSetTable.al.

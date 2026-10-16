@@ -333,8 +333,10 @@ bump.
 
 **Stays refused**
 
-3. **Published Application, "Tenant Visible" (column 30)**, 44. Measure it for an app published by the test (this
-   corpus app), for System Application, Base Application and the platform `System` app, and with `Installed` true and false.
+3. **Published Application, "Tenant Visible" (column 30)** is pinned and implemented (true for every listed app,
+   record/TestPublishedApplicationSysTable.al:294-365); a probe for an unlisted or per-tenant app is still wanted.
+   **FindFirst and FindLast on an empty table, BC 27**, 1. BC 28 and later say "The <table> table is empty."
+   (errors/lt-error-handling/ErTRuntimeErrors.al:50-58, `#if BC28PLUS`); BC 27 is not pinned and stays refused.
 9. **Permission, "Security Filter" (11)**, 3; **Metadata Permission, column 14**, 10; **All Profile, "Disable Personalization" (13)**, 1;
     **Published Application, Description (15, a Blob)**, 1.
 10. **Tables with no provider** (reads and writes of their persistent rows are refused; a temporary record works):

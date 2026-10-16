@@ -1779,6 +1779,21 @@ impl Session {
                     // with a filter): the text lists the filters; without one it is not pinned.
                     None => {
                         let filters = self.get_filters(rec, &t)?;
+                        // Without a filter the table itself is empty. FindSet: errors/lt-error-handling/ErTTriggerErrors.al:140-147
+                        // (every BC major); FindFirst, FindLast and FindSet: ErTRuntimeErrors.al:50-58 (`#if BC28PLUS`, so
+                        // FindFirst and FindLast on 27 stay refused).
+                        let major = self.engine.target.as_ref().map_or(29, |t| t.bc.major);
+                        if filters.is_empty()
+                            && (matches!(method, RecordOp::FindSet)
+                                || (major >= 28 && matches!(method, RecordOp::FindFirst | RecordOp::FindLast)))
+                        {
+                            return Err(Signal::Error(Box::new(AlError {
+                                message: format!("The {} table is empty.", self.caption(&t)),
+                                code: "DB:TableIsEmpty".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
+                        }
                         if filters.is_empty()
                             || !matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
                         {

@@ -900,6 +900,7 @@ fn walk_query<V: RefVisitor>(q: &mut Query, v: &mut V) {
             table,
             parent: _,
             left_outer: _,
+            right_outer: _,
             link,
             link_items,
             table_filter,

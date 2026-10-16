@@ -120,6 +120,20 @@ impl<'a> Checker<'a> {
                     }
                 }
                 if !procs.is_empty() {
+                    // A page's own procedure of the name of a platform method (Service Lines declares `SetSelectionFilter()`
+                    // and calls `CurrPage.SetSelectionFilter(ServiceLine)`): the platform overloads whose arity the
+                    // page's procedures do not take are candidates too.
+                    if *kind == ObjKind::Page {
+                        if let Some(recv) = receiver_of(t) {
+                            let platform = self.catalog_cands(&recv, name, true, t);
+                            let own: Vec<(usize, usize)> = procs.iter().map(|p| (p.min, p.max)).collect();
+                            procs.extend(
+                                platform
+                                    .into_iter()
+                                    .filter(|b| !own.iter().any(|(lo, hi)| *lo <= b.max && b.min <= *hi)),
+                            );
+                        }
+                    }
                     return Some(E::Callable(procs));
                 }
                 // `Rep.Run()`, `Xp.Import()`: the platform's methods of a report or XML port run its

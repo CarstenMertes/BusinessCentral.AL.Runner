@@ -194,6 +194,45 @@ impl Session {
             LibraryValue::SystemTable(n) => unsupported(format!(
                 "{what} on a RecordRef opened on system table {n} (the platform's system tables are not modelled)"
             )),
+            // The methods below raise "The record is not open." on a RecordRef never opened or closed
+            // (recordref/lt-refs/RfTOpen.al:Closed_Errors, lt-recordref-fieldref-members/P92Position.al:GetPosition_UnopenedAndNotFound,
+            // P92Counts.al:CountApprox_Unopened, P92ReadIsolation.al:ReadIsolation_Unopened, P92Fields.al:FieldExist).
+            LibraryValue::Empty
+                if what.strip_prefix("RecordRef.").is_some_and(|m| {
+                    matches!(
+                        m,
+                        "Name"
+                            | "Caption"
+                            | "Count"
+                            | "IsEmpty"
+                            | "IsTemporary"
+                            | "Field"
+                            | "Find"
+                            | "Insert"
+                            | "Modify"
+                            | "Delete"
+                            | "DeleteAll"
+                            | "KeyCount"
+                            | "CurrentKeyIndex"
+                            | "Init"
+                            | "GetView"
+                            | "SetView"
+                            | "Reset"
+                            | "RecordId"
+                            | "GetPosition"
+                            | "SetPosition"
+                            | "CountApprox"
+                            | "ReadIsolation"
+                            | "FieldExist"
+                    )
+                }) =>
+            {
+                Err(Signal::Error(Box::new(AlError {
+                    message: "The record is not open.".into(),
+                    code: "RecordNotOpened".into(),
+                    call_stack: String::new(),
+                })))
+            }
             // BC's answer is not pinned by the corpus: the error text, and whether `Get(RecordId)` opens the
             // table of the RecordId (Base Application's Data Type Management does `if not Get(RecID) then
             // Open(RecID.TableNo)`). See docs/probes-needed.md.
@@ -385,17 +424,25 @@ impl Session {
                     )
                 };
             }
-            // System Application's Data Type Management does `if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`, so
-            // Get(RecordId) on a RecordRef never opened answers false and does not open it (about 260 Tests-ERM tests,
-            // CheckICPartner among them). The error text of Get with the result unused, and Get of anything but a
-            // RecordId, stay refused (open_ref). Not pinned: assumption recordref-get-unopened.
-            "Get"
-                if matches!(&*lib.borrow(), LibraryValue::Empty)
-                    && self.ret_used
-                    && matches!(args.first(), Some(Value::Library(_, l)) if matches!(&*l.borrow(), LibraryValue::RecordId { .. })) =>
-            {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefGetUnopened);
-                return Ok(Value::Boolean(false));
+            // `Get(RecordId)` on a RecordRef never opened opens the table of the RecordId and answers whether the row is
+            // there; when it is not, the ref stays closed (Number answers 0) so that Data Type Management's
+            // `if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)` opens it (misc/lt-probes-needed-4 batch 4:
+            // W4 RecRef Get Tests, Get_OnUnopenedRecordRef_ExistingRow and _MissingRow, GetOrOpen_Pattern_OfDataTypeManagement).
+            // With the result unused the error of a missing row is not pinned (open_ref refuses).
+            "Get" if matches!(&*lib.borrow(), LibraryValue::Empty) && self.ret_used => {
+                let table_no = match args.first() {
+                    Some(Value::Library(_, l)) => match &*l.borrow() {
+                        LibraryValue::RecordId { table_no, .. } => *table_no,
+                        _ => return Self::open_ref(lib, "RecordRef.Get").map(|_| Value::Null),
+                    },
+                    _ => return Self::open_ref(lib, "RecordRef.Get").map(|_| Value::Null),
+                };
+                self.rr_open(lib, &[Value::Integer(table_no as i32)])?;
+                let found = self.recordref_op("Get", lib, args);
+                if !matches!(found, Ok(Value::Boolean(true))) {
+                    *lib.borrow_mut() = LibraryValue::Empty;
+                }
+                return found;
             }
             _ => {}
         }

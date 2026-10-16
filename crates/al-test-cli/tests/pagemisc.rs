@@ -171,6 +171,16 @@ page 62303 "PM Host Card" { PageType = ListPlus; SourceTable = "PM Host";
 table 62304 "PM Pick" { LookupPageId = "PM Pick List"; fields { field(1; Id; Code[10]) { } field(2; Grp; Integer) { } } keys { key(PK; Id) { } } }
 page 62305 "PM Pick List" { PageType = List; SourceTable = "PM Pick"; Editable = false;
   layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } } }
+table 62306 "PM Cat" { fields { field(1; Item; Code[10]) { } field(2; Vend; Code[10]) { } field(3; Info; Code[10]) { } } keys { key(PK; Item, Vend) { } } }
+page 62307 "PM Cat List" { PageType = List; SourceTable = "PM Cat";
+  layout { area(Content) { repeater(R) { field(Item; Rec.Item) { } field(Vend; Rec.Vend) { } field(Info; Rec.Info) { } } } } }
+page 62308 "PM Selection Own"
+{
+    PageType = Worksheet; SourceTable = "PM Row";
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } }
+    actions { area(Processing) { action(Pick) { trigger OnAction() var S: Record "PM Row"; begin CurrPage.SetSelectionFilter(S); if S.FindFirst() then; end; } } }
+    procedure SetSelectionFilter() begin end;
+}
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -842,5 +852,37 @@ fn page_run_modal_with_a_record_hands_back_the_selected_row_on_lookup_ok() {
             R.DeleteAll(); R.Id := 'A'; R.Grp := 1; R.Insert(); R.Id := 'B'; R.Grp := 1; R.Insert(); R.Id := 'C'; R.Grp := 2; R.Insert();
             T.SetRange(Grp, 1); A := Page.RunModal(0, T); Check('LookupOK', Format(A)); Check('B', T.Id); end;
         [ModalPageHandler] procedure Pick(var L: TestPage \"PM Pick List\") begin L.GoToKey('B'); L.OK().Invoke(); end;"
+    ));
+}
+
+// Microsoft's "Item Vendor Catalog" tests open a list with OpenNew, set a filter on the first key field and type the other key
+// field: the list shows the blank line and the filter value is on it (2 Tests-ERM tests failed with "The row does not exist on the
+// TestPage"). The corpus pins the blank line of an editable list (handlers/TestPageNewRowLine_Tests.al) and that a new row takes
+// a single-valued filter (handlers/TestPageNewRowFilters_Tests.al); that a filter change brings the blank line back is assumed
+// (filter-change-lands-on-new-line, docs/probes-needed.md).
+#[test]
+fn a_filter_that_leaves_an_editable_list_empty_lands_on_the_blank_line_carrying_the_filter_value() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure AfterOpenNew() var P: TestPage \"PM Cat List\"; R: Record \"PM Cat\"; begin
+            R.DeleteAll(); P.OpenNew(); P.Filter.SetFilter(Item, 'X1'); P.Vend.SetValue('V1'); P.Info.SetValue('i');
+            if not R.Get('X1', 'V1') then Error('not stored'); P.Close(); end;
+        [Test]
+        procedure AfterOpenEdit() var P: TestPage \"PM Cat List\"; R: Record \"PM Cat\"; begin
+            R.DeleteAll(); P.OpenEdit(); P.Filter.SetFilter(Item, 'X2'); P.Vend.SetValue('V2'); P.Info.SetValue('i');
+            if not R.Get('X2', 'V2') then Error('not stored'); P.Close(); end;"
+    ));
+}
+
+// Base Application's Service Lines page declares `SetSelectionFilter()` and calls `CurrPage.SetSelectionFilter(ServiceLine)`:
+// the platform method of another arity is still a candidate (154 Tests-SCM-Service tests were refused with "has no callee").
+#[test]
+fn a_page_procedure_named_like_a_platform_method_leaves_the_other_overload_to_the_platform() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Selection() var C: TestPage \"PM Selection Own\"; R: Record \"PM Row\"; begin
+            R.DeleteAll(); R.\"No.\" := 'S1'; R.Insert(); C.OpenEdit(); C.Pick.Invoke(); Check('S1', C.\"No.\".Value); C.Close(); end;"
     ));
 }

@@ -549,8 +549,15 @@ impl<'a> Checker<'a> {
         }
         if node.kind() == SyntaxKind::AssignStmt {
             let mut tys = Vec::new();
+            let plain_assign = node.children_with_tokens().any(|t| t.kind() == SyntaxKind::Assign);
+            let exprs: Vec<SyntaxNode> = node.children().filter(|c| is_expr(c.kind())).collect();
             for child in node.children() {
                 if is_expr(child.kind()) {
+                    if plain_assign && exprs.len() == 2 && child == exprs[0] && child.kind() == SyntaxKind::MemberExpr {
+                        let t = self.assign_target_ty(sc, &child, &exprs[1]);
+                        tys.push((t, child));
+                        continue;
+                    }
                     tys.push((self.ty(sc, &child), child));
                 } else {
                     self.walk(sc, &child);

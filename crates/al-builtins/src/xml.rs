@@ -469,7 +469,18 @@ impl Parser<'_> {
             self.i += c.len_utf8();
         }
         if self.i == start {
-            Err(ParseError::Invalid)
+            match self.peek() {
+                // .NET names the character that cannot start a name and where it stands
+                // (xml/XmlDocReadWrite.al:ReadFrom_Invalid, badname and lt_in_text).
+                Some(c) => self.fail_at(
+                    &format!(
+                        "Name cannot begin with the '{c}' character, hexadecimal value 0x{:02X}.",
+                        u32::from(c)
+                    ),
+                    start,
+                ),
+                None => Err(ParseError::Invalid),
+            }
         } else {
             Ok(self.s[start..self.i].to_string())
         }
@@ -480,64 +491,103 @@ impl Parser<'_> {
     /// position of an undeclared entity.
     fn decode(&self, raw: &str, attr: bool, base: usize) -> PResult<String> {
         let mut out = String::with_capacity(raw.len());
-        let mut chars = raw.chars().peekable();
-        let mut off = 0usize;
-        while let Some(c) = chars.next() {
-            let here = off;
-            off += c.len_utf8();
+        let mut i = 0usize;
+        while let Some(c) = raw[i..].chars().next() {
+            let here = i;
+            i += c.len_utf8();
             match c {
-                '&' => {
-                    let mut ent = String::new();
-                    loop {
-                        match chars.next() {
-                            Some(';') => {
-                                off += 1;
-                                break;
-                            }
-                            Some(x) if ent.len() < 12 => {
-                                off += x.len_utf8();
-                                ent.push(x);
-                            }
-                            _ => return Err(ParseError::Invalid),
-                        }
-                    }
-                    match ent.as_str() {
-                        "lt" => out.push('<'),
-                        "gt" => out.push('>'),
-                        "amp" => out.push('&'),
-                        "quot" => out.push('"'),
-                        "apos" => out.push('\''),
-                        e if e.starts_with("#x") => out.push(
-                            u32::from_str_radix(&e[2..], 16)
-                                .ok()
-                                .and_then(char::from_u32)
-                                .ok_or(ParseError::Invalid)?,
-                        ),
-                        e if e.starts_with('#') => out.push(
-                            e[1..]
-                                .parse::<u32>()
-                                .ok()
-                                .and_then(char::from_u32)
-                                .ok_or(ParseError::Invalid)?,
-                        ),
-                        e => {
-                            return self.fail_at(&format!("Reference to undeclared entity '{e}'."), base + here + 1);
-                        }
-                    }
-                }
+                '&' => i = self.reference(raw, i, base, &mut out)?,
                 '<' if attr => return Err(ParseError::Invalid),
                 '\r' => {
-                    if chars.peek() == Some(&'\n') {
-                        chars.next();
-                        off += 1;
+                    if raw[i..].starts_with('\n') {
+                        i += 1;
                     }
                     out.push(if attr { ' ' } else { '\n' });
                 }
                 '\n' | '\t' if attr => out.push(' '),
                 c => out.push(c),
             }
+            let _ = here;
         }
         Ok(out)
+    }
+
+    /// The reference whose `&` precedes byte `i` of `raw`; returns the offset after its `;`. The error texts and places
+    /// are .NET's (xml/XmlEntitiesMisc.al:Entities_CharRefs).
+    fn reference(&self, raw: &str, i: usize, base: usize, out: &mut String) -> PResult<usize> {
+        let unexpected = |at: usize| match self.s[base + at..].chars().next() {
+            Some(x) => self.fail_at(
+                &format!("'{x}' is an unexpected token. The expected token is ';'."),
+                base + at,
+            ),
+            None => Err(ParseError::Invalid),
+        };
+        if raw[i..].starts_with('#') {
+            let hex = raw[i + 1..].starts_with('x');
+            let d = i + 1 + usize::from(hex);
+            let digits: String = raw[d..]
+                .chars()
+                .take_while(|x| if hex { x.is_ascii_hexdigit() } else { x.is_ascii_digit() })
+                .collect();
+            if digits.is_empty() {
+                let kind = if hex { "hexadecimal" } else { "decimal" };
+                return self.fail_at(
+                    &format!("Invalid syntax for a {kind} numeric entity reference."),
+                    base + d,
+                );
+            }
+            let end = d + digits.len();
+            if !raw[end..].starts_with(';') {
+                return unexpected(end);
+            }
+            let v = u32::from_str_radix(&digits, if hex { 16 } else { 10 }).unwrap_or(u32::MAX);
+            let valid = matches!(v, 0x9 | 0xA | 0xD | 0x20..=0xD7FF | 0xE000..=0xFFFD | 0x10000..=0x10FFFF);
+            // An XmlPort import does not check characters (xmlport/lt-xmlport-query-datatransfer/XpTEncoding.al:
+            // Encoding_ImportControlCharacterEntity: `&#1;` reads).
+            if !valid && self.dom {
+                // A value past the last code point is reported as the high surrogate .NET computes for it.
+                let shown = if v > 0x10FFFF && v < 0x10000 + (0x10_0000 << 1) {
+                    0xD800 + ((v - 0x10000) >> 10)
+                } else {
+                    v
+                };
+                let text = if shown == 0 {
+                    ".".to_string()
+                } else if shown < 0x20 || (0xD800..=0xDFFF).contains(&shown) || shown > 0xFFFF || shown >= 0xFFFE {
+                    format!("\\u{shown:04X}")
+                } else {
+                    char::from_u32(shown).map(String::from).unwrap_or_default()
+                };
+                return self.fail_at(
+                    &format!("'{text}', hexadecimal value 0x{shown:02X}, is an invalid character."),
+                    base + d,
+                );
+            }
+            out.push(char::from_u32(v).unwrap_or('\u{fffd}'));
+            return Ok(end + 1);
+        }
+        let name: String = raw[i..]
+            .chars()
+            .enumerate()
+            .take_while(|(n, x)| if *n == 0 { is_name_start(*x) } else { is_name_char(*x) })
+            .map(|(_, x)| x)
+            .collect();
+        if name.is_empty() {
+            return self.fail_at("An error occurred while parsing EntityName.", base + i);
+        }
+        let end = i + name.len();
+        if !raw[end..].starts_with(';') {
+            return unexpected(end);
+        }
+        match name.as_str() {
+            "lt" => out.push('<'),
+            "gt" => out.push('>'),
+            "amp" => out.push('&'),
+            "quot" => out.push('"'),
+            "apos" => out.push('\''),
+            e => return self.fail_at(&format!("Reference to undeclared entity '{e}'."), base + i),
+        }
+        Ok(end + 1)
     }
 
     fn quoted(&mut self) -> PResult<String> {
@@ -572,9 +622,16 @@ impl Parser<'_> {
             self.skip_ws();
             self.expect("=")?;
             self.skip_ws();
+            let value_at = self.i + 1;
             let v = self.quoted()?;
             match n.as_str() {
-                "version" => version = v,
+                "version" => {
+                    // xml/XmlDocReadWrite.al:ReadFrom_Invalid_Leading (bad_version): the place is the value's first character.
+                    if v != "1.0" {
+                        return self.fail_at(&format!("Version number '{v}' is invalid."), value_at);
+                    }
+                    version = v;
+                }
                 "encoding" => encoding = v,
                 "standalone" => standalone = v,
                 _ => return Err(ParseError::Invalid),
@@ -601,8 +658,12 @@ impl Parser<'_> {
             );
         };
         let body = self.s[self.i..self.i + end].to_string();
-        if body.contains("--") {
-            return Err(ParseError::Invalid);
+        if let Some(n) = body.find("--") {
+            // xml/XmlEntitiesMisc.al:Comments_And_PI_Roundtrip (bad_comment): the place is the first of the two hyphens.
+            return self.fail_at(
+                "An XML comment cannot contain '--', and '-' cannot be the last character.",
+                self.i + n,
+            );
         }
         self.bump(end + 3);
         Ok(new_node(XData::Comment(body)))
@@ -610,7 +671,15 @@ impl Parser<'_> {
 
     fn pi(&mut self) -> PResult<Handle> {
         self.expect("<?")?;
+        let target_at = self.i;
         let target = self.name()?;
+        if target == "xml" {
+            // xml/XmlDocReadWrite.al:ReadFrom_Invalid_Leading (leading_space_decl): the place is the target's.
+            return self.fail_at(
+                "Unexpected XML declaration. The XML declaration must be the first node in the document, and no whitespace characters are allowed to appear before it.",
+                target_at,
+            );
+        }
         if target.eq_ignore_ascii_case("xml") {
             return Err(ParseError::Invalid);
         }
@@ -624,7 +693,7 @@ impl Parser<'_> {
         Ok(new_node(XData::Pi { target, data }))
     }
 
-    fn resolve(&self, prefix: &str, is_attr: bool) -> PResult<String> {
+    fn resolve(&self, prefix: &str, is_attr: bool, at: usize) -> PResult<String> {
         let declared = |p: &str| self.scope.iter().rev().find(|(sp, _)| sp == p).map(|(_, u)| u.clone());
         match prefix {
             // An unprefixed attribute is in no namespace; an unprefixed element is in the default one.
@@ -632,7 +701,10 @@ impl Parser<'_> {
             "" => Ok(declared("").unwrap_or_default()),
             "xml" => Ok(XML_URI.to_string()),
             "xmlns" => Ok(XMLNS_URI.to_string()),
-            p => declared(p).ok_or(ParseError::Invalid),
+            p => match declared(p) {
+                Some(u) => Ok(u),
+                None => self.fail_at(&format!("'{p}' is an undeclared prefix."), at),
+            },
         }
     }
 
@@ -645,7 +717,7 @@ impl Parser<'_> {
         let name_at = self.i;
         let qn = self.name()?;
         self.open.push(qn.clone());
-        let mut raw_attrs: Vec<(String, String)> = Vec::new();
+        let mut raw_attrs: Vec<(String, String, usize)> = Vec::new();
         let self_closed = loop {
             let had_ws = self.skip_ws();
             if self.starts("/>") {
@@ -665,14 +737,14 @@ impl Parser<'_> {
             self.expect("=")?;
             self.skip_ws();
             let av = self.quoted()?;
-            if raw_attrs.iter().any(|(n, _)| *n == an) {
+            if raw_attrs.iter().any(|(n, _, _)| *n == an) {
                 return self.fail_at(&format!("'{an}' is a duplicate attribute name."), an_at);
             }
-            raw_attrs.push((an, av));
+            raw_attrs.push((an, av, an_at));
         };
         // Namespace declarations first, so the element's own name sees them.
         let scope_mark = self.scope.len();
-        for (n, v) in &raw_attrs {
+        for (n, v, _) in &raw_attrs {
             if n == "xmlns" {
                 self.scope.push((String::new(), v.clone()));
             } else if let Some(p) = n.strip_prefix("xmlns:") {
@@ -687,10 +759,10 @@ impl Parser<'_> {
         if local.contains(':') || !is_ncname(&local) || (!prefix.is_empty() && !is_ncname(&prefix)) {
             return Err(ParseError::Invalid);
         }
-        let ns = self.resolve(&prefix, false)?;
+        let ns = self.resolve(&prefix, false, name_at)?;
         let mut attrs = Vec::new();
         let mut seen: Vec<(String, String)> = Vec::new();
-        for (n, v) in raw_attrs {
+        for (n, v, n_at) in raw_attrs {
             let (ap, al, ans) = if n == "xmlns" {
                 (String::new(), "xmlns".to_string(), XMLNS_URI.to_string())
             } else if let Some(p) = n.strip_prefix("xmlns:") {
@@ -700,7 +772,7 @@ impl Parser<'_> {
                 if l.contains(':') || !is_ncname(&l) || (!p.is_empty() && !is_ncname(&p)) {
                     return Err(ParseError::Invalid);
                 }
-                let u = self.resolve(&p, true)?;
+                let u = self.resolve(&p, true, n_at)?;
                 (p, l, u)
             };
             if seen.contains(&(ans.clone(), al.clone())) {
@@ -854,9 +926,6 @@ impl Parser<'_> {
     }
 
     fn document(&mut self) -> PResult<Handle> {
-        if self.starts("\u{feff}") {
-            self.bump(3);
-        }
         let mut decl = None;
         if self.starts("<?xml") && self.rest()[5..].starts_with([' ', '\t', '\r', '\n']) {
             decl = Some(self.declaration()?);
@@ -896,8 +965,18 @@ impl Parser<'_> {
                 // (xml/TestProbeXmlContracts.al:DocumentType_ReadWithDoctype).
                 self.skip_doctype()?;
             } else if self.starts("<") && !root_seen {
-                if !self.rest()[1..].chars().next().is_some_and(is_name_start) {
-                    return self.fail_at("Data at the root level is invalid.", self.i);
+                match self.rest()[1..].chars().next() {
+                    Some(c) if !is_name_start(c) => {
+                        return self.fail_at(
+                            &format!(
+                                "Name cannot begin with the '{c}' character, hexadecimal value 0x{:02X}.",
+                                u32::from(c)
+                            ),
+                            self.i + 1,
+                        );
+                    }
+                    None => return self.fail_at("Data at the root level is invalid.", self.i),
+                    Some(_) => {}
                 }
                 self.root_at = self.i;
                 children.push(self.element()?);
@@ -967,6 +1046,19 @@ pub(crate) fn escape_text(s: &str, out: &mut String) {
             '<' => out.push_str("&lt;"),
             '>' => out.push_str("&gt;"),
             '\r' => out.push_str("&#xD;"),
+            c => out.push(c),
+        }
+    }
+}
+
+/// Text of a DOM node: a carriage return stays as it is, and the writer turns every line end into CR LF
+/// (xml/XmlEntitiesMisc.al:Entities_CharRefs, `&#13;` writes `\r\n`).
+fn escape_dom_text(s: &str, out: &mut String) {
+    for c in s.chars() {
+        match c {
+            '&' => out.push_str("&amp;"),
+            '<' => out.push_str("&lt;"),
+            '>' => out.push_str("&gt;"),
             c => out.push(c),
         }
     }
@@ -1100,7 +1192,7 @@ impl Writer {
             },
             XData::Text(t) => {
                 let mut s = String::new();
-                escape_text(t, &mut s);
+                escape_dom_text(t, &mut s);
                 Plan::Text(s)
             }
             // An end marker inside the text splits the section (xml/XmlNodes.al:CData_Create `contains_end`: `a]]>b` is written
@@ -1326,7 +1418,7 @@ fn serialize_with(h: &Handle, indent: bool) -> Result<String, Signal> {
             }) {
                 Some(s) => {
                     let mut esc = String::new();
-                    escape_text(&s, &mut esc);
+                    escape_dom_text(&s, &mut esc);
                     w.document_text(&esc);
                 }
                 None => w.node(&c)?,
@@ -1562,7 +1654,12 @@ fn detached_is_invalid(h: &Handle) -> bool {
     with(h, |d| {
         matches!(
             d,
-            XData::Text(_) | XData::CData(_) | XData::Comment(_) | XData::Pi { .. } | XData::DocType { .. }
+            XData::Text(_)
+                | XData::CData(_)
+                | XData::Comment(_)
+                | XData::Pi { .. }
+                | XData::DocType { .. }
+                | XData::Declaration { .. }
         )
     })
 }
@@ -1580,6 +1677,11 @@ fn position_in_parent(h: &Handle) -> Result<(Handle, usize), Signal> {
     let pos = children_of(&p).iter().position(|c| Rc::ptr_eq(c, h));
     match pos {
         Some(i) => Ok((p, i)),
+        // A declaration is no child of its document (xml/lt-xml-remaining-node-methods/P104TreeBDecl.al:P104_ReplaceWith_*).
+        None if with(h, |d| matches!(d, XData::Declaration { .. })) => Err(error(
+            "The requested operation cannot be performed in this context.",
+            "InvalidOperation",
+        )),
         None => unsupported("a sibling operation on an attribute or declaration"),
     }
 }
@@ -2516,7 +2618,20 @@ fn read_text_into(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value], out: 
             a[out] = tagged("XmlDocument", doc);
             Ok(Value::Boolean(true))
         }
-        Err(_) if c.ret_used() => Ok(Value::Boolean(false)),
+        Err(f) if c.ret_used() => {
+            // The text stays in GetLastErrorText (xml/XmlDocReadWrite.al:94-95, ReadFrom_Invalid).
+            if let Some(f) = f {
+                c.set_last_error(crate::native::AlError {
+                    message: format!(
+                        "The following exception was encountered when processing XML data: '{}' at line {} and position {}.",
+                        f.message, f.line, f.pos
+                    ),
+                    code: "Xml:Xml".into(),
+                    call_stack: String::new(),
+                });
+            }
+            Ok(Value::Boolean(false))
+        }
         Err(Some(Failure {
             message,
             line,
@@ -3278,7 +3393,7 @@ fn get_document_type(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
 }
 
 fn get_document(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let h = recv(r)?;
+    let h = recv_or_uninit(r, "XmlNode")?;
     let root = root_of(&h);
     // A declaration belongs to no document as far as GetDocument goes (xml/lt-xml-remaining-node-methods/P104TreeBDecl.al:
     // P104_Remove_InDoc `document1`).
@@ -3294,7 +3409,7 @@ fn get_document(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
 }
 
 fn get_parent(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let h = recv(r)?;
+    let h = recv_or_uninit(r, "XmlNode")?;
     match parent_of(&h).filter(|p| with(p, |d| matches!(d, XData::Element { .. }))) {
         Some(p) => {
             a[0] = tagged("XmlElement", p);

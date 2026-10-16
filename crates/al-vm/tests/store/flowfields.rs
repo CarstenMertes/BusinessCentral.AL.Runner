@@ -581,6 +581,31 @@ fn calcsums_sums_the_filtered_rows_into_the_record() {
     assert_eq!(text(r), "125/21|30|0");
 }
 
+// Microsoft test exception (no corpus pin): Bank Acc. Recon. Test.GetTotalOutstanding sets a filter on the
+// "Check Ledger Entries" FlowField of the Bank Account Ledger Entry and calls CalcSums. Assumed: the sum is over
+// the rows whose FlowField value passes the filter (registry entry calcsums-flowfield-filter).
+#[test]
+fn calcsums_with_a_filter_on_a_flowfield_sums_the_rows_that_pass() {
+    let r = run_with(
+        PARENT_CHILD,
+        "procedure F(): Text
+        var P: Record \"ALT Parent\"; C: Record \"ALT Child\";
+        begin
+            P.\"Entry No.\" := 1; P.Insert();
+            P.\"Entry No.\" := 2; P.Insert();
+            P.\"Entry No.\" := 4; P.Insert();
+            C.\"Entry No.\" := 1; C.\"Parent Entry No.\" := 2; C.Insert();
+            C.\"Entry No.\" := 2; C.\"Parent Entry No.\" := 4; C.Insert();
+            C.\"Entry No.\" := 3; C.\"Parent Entry No.\" := 4; C.Insert();
+            P.SetFilter(\"Child Count\", '<>0');
+            P.CalcSums(\"Entry No.\");
+            exit(Format(P.\"Entry No.\"));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "6");
+}
+
 /// Tables with an AutoIncrement key (corpus record/TestAutoIncrement*.al fixtures, compacted).
 /// `Payload` steers the OnInsert trigger: 'refuse' raises an error, 'assign' sets the key to 500.
 const AUTO: &str = r#"

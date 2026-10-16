@@ -572,17 +572,31 @@ impl Session {
             }
         }
         let (filters, flow_field_filters) = self.split_filters(rec);
-        if !flow_field_filters.is_empty() {
-            return unsupported("CalcSums with a filter on a FlowField");
-        }
         let mut sums = vec![Decimal::ZERO; positions.len()];
         let cx = self.cx_for(rec, &t)?;
-        self.each_row_of(Some(rec), &cx, &t, &filters, |row| {
+        let mut add = |row: &[Value]| -> Result<(), Signal> {
             for (s, &p) in sums.iter_mut().zip(positions) {
                 *s += number(&row[p]).ok_or_else(|| Signal::Unsupported("sum over a non-number".into()))?;
             }
             Ok(())
-        })?;
+        };
+        if flow_field_filters.is_empty() {
+            self.each_row_of(Some(rec), &cx, &t, &filters, &mut add)?;
+        } else {
+            // Assumed (calcsums-flowfield-filter): the sum is over the rows whose FlowField value passes the filter.
+            // Microsoft test: Bank Acc. Recon. Test.GetTotalOutstanding (filter on "Check Ledger Entries").
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::CalcSumsFlowFieldFilter);
+            let mut rows = Vec::new();
+            self.each_row_of(Some(rec), &cx, &t, &filters, |row| {
+                rows.push(row.to_vec());
+                Ok(())
+            })?;
+            for row in rows {
+                if self.passes_flow_field_filters(rec, &row, &flow_field_filters)? {
+                    add(&row)?;
+                }
+            }
+        }
         // The sums land in the record's fields only once all are known.
         let mut out = Vec::new();
         for (s, &p) in sums.into_iter().zip(positions) {

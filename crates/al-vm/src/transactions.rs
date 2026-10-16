@@ -342,6 +342,18 @@ impl Session {
                 // In a page background worker the run's transaction is the worker's own and holds
                 // no change, so there is nothing to commit: the caller's pending rows stay pending
                 // (handlers/TestPageBgTaskTx_Tests.al:RunPageBackgroundTask_WorkerCommitLeavesCallersRowsUncommitted).
+                // A duplicate-key Insert that was deferred comes out of that commit: the run fails with its error
+                // (xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:Import_DuplicateKeyExisting, through a guarded run).
+                if let Some((_, e)) = self.tx.deferred_insert.take() {
+                    let mut e = Box::new(e);
+                    self.add_top_frame(&mut e);
+                    if self.pages.bg_worker.is_none() {
+                        self.rollback_transaction();
+                    }
+                    self.error_finals = None;
+                    self.last_error = *e;
+                    return Ok(Value::Boolean(false));
+                }
                 if self.pages.bg_worker.is_none() {
                     self.commit_transaction();
                 }

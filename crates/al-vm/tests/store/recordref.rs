@@ -330,11 +330,15 @@ fn clear_closes_the_ref() {
 }
 
 #[test]
-fn a_ref_that_is_not_open_is_refused_not_guessed() {
-    let m = unsupported(run(
+fn a_ref_that_is_not_open_raises_record_not_opened_where_the_corpus_pins_it() {
+    // recordref/lt-refs/RfTOpen.al:Closed_Errors (Count, Name, Find, ...), P92Position.al:GetPosition_UnopenedAndNotFound.
+    let m = err(run(
         "procedure F(): Integer var RR: RecordRef; begin exit(RR.Count()); end;",
         "F",
     ));
+    assert_eq!(m, "The record is not open.");
+    // A method the corpus does not pin on a ref never opened is refused.
+    let m = unsupported(run("procedure F() var RR: RecordRef; begin RR.ClearMarks(); end;", "F"));
     assert!(m.contains("not open"), "{m}");
 }
 
@@ -773,20 +777,23 @@ fn filter_group_assigns_as_a_property_of_a_record_ref() {
 }
 
 #[test]
-fn get_of_a_record_id_on_a_record_ref_never_opened_answers_false_and_leaves_it_closed() {
-    // System Application's Data Type Management: `if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`.
-    // Unprobed (assumption recordref-get-unopened).
+fn get_of_a_record_id_on_a_record_ref_never_opened_opens_it_when_the_row_exists() {
+    // misc/lt-probes-needed-4 batch 4 (W4 RecRef Get Tests): Get_OnUnopenedRecordRef_ExistingRow and _MissingRow.
     let r = run(
         "procedure F(): Text var RR: RecordRef; T: Record \"ALT T\"; Ok: Boolean; s: Text; begin
             T.\"No.\" := 'A'; T.Insert();
             Ok := RR.Get(T.RecordId());
-            s := Format(Ok) + '|' + Format(RR.Number());
+            s := Format(Ok) + '|' + Format(RR.Number() = T.RecordId().TableNo());
+            T.\"No.\" := 'MISSING';
+            Clear(RR);
+            Ok := RR.Get(T.RecordId());
+            s += '|' + Format(Ok) + '|' + Format(RR.Number());
             if not RR.Get(T.RecordId()) then RR.Open(T.RecordId().TableNo());
-            exit(s + '|' + Format(RR.Get(T.RecordId())));
+            exit(s + '|' + Format(RR.Number() = T.RecordId().TableNo()));
         end;",
         "F",
     );
-    assert_eq!(text(r), "No|0|Yes");
+    assert_eq!(text(r), "Yes|Yes|No|0|Yes");
 }
 
 #[test]

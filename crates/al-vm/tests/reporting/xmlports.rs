@@ -1360,3 +1360,20 @@ fn format_evaluate_decides_the_form_an_import_reads() {
     assert_eq!(imp(60061, display_row), "Yes||1|2024-03-051234.5");
     assert_eq!(imp(60061, xml_row), "No|The date is not valid.|0|0");
 }
+
+// xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:Import_DuplicateKeyExisting
+#[test]
+fn an_import_of_a_key_that_is_stored_raises_the_table_error() {
+    let r = run(
+        IMPORT_VARS,
+        &format!(
+            "U.\"Entry No.\" := 1; U.Insert(); Commit(); Clear(U);
+             H.Stage(B, InStr, {TWO_ROWS}); XmlPort.Import(60023, InStr);
+             exit(Format(U.Count()));"
+        ),
+    );
+    match r {
+        Err(Signal::Error(e)) => assert!(e.message.contains("already exists"), "{}", e.message),
+        other => panic!("the second import must raise: {other:?}"),
+    }
+}

@@ -898,6 +898,21 @@ impl Session {
         }
         let answer = self.answer_page(&st, handler, modal)?;
         self.hand_back_selection(&st, &handed, &answer);
+        // After a LookupOK the page variable holds the row the page closed on, and the next run of the variable opens on it;
+        // after OK it does not (pages/lt-page-run-overloads-testpart/P106RunInstance.al:P106_Inst_RunModal_LookupMode,
+        // P106_Inst_RunModal_List).
+        if modal && matches!(&answer, Value::Option(o, m) if m.get(*o as usize).is_some_and(|n| n == "LookupOK")) {
+            let instance = st.borrow().instance.clone();
+            let slot = self.engine.program.objects[object as usize].rec_slot;
+            if let (Some(inst), Some(slot)) = (instance, slot) {
+                let global = inst.borrow().globals[slot].clone();
+                if let Value::Record(src) = global {
+                    let mut copy = src.borrow().clone();
+                    copy.filters.clear();
+                    st.borrow_mut().set_record = Some(Rc::new(RefCell::new(copy)));
+                }
+            }
+        }
         Ok(answer)
     }
 

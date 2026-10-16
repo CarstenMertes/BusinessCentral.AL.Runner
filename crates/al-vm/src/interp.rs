@@ -197,6 +197,22 @@ impl Session {
         match set {
             None => Ok(Value::Text(self.application_areas.clone().into())),
             Some(Value::Text(t) | Value::Code(t)) => {
+                // Tags are `#` and letters or digits, separated by commas (platform/lt-platform-members/PlTSession.al:
+                // ApplicationArea_SetTwiceAndInvalid); whether a well-formed tag exists is not pinned.
+                let well_formed = t.split(',').all(|tag| {
+                    let tag = tag.trim();
+                    tag.strip_prefix('#')
+                        .is_some_and(|n| !n.is_empty() && n.chars().all(|c| c.is_ascii_alphanumeric()))
+                });
+                if !t.is_empty() && !well_formed {
+                    return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                        message: format!(
+                            "'{t}' is not a valid value for the APPLICATIONAREA function parameter.\\\\    The value must be a text string that contains one or more application area tags.\\    A tag must start with # and can be followed by any combination of letters (Aa-Zz) and numbers (0-9).\\    Use a comma to separate multiple tags. Example: #Basic,#Suite"
+                        ),
+                        code: "Argument".into(),
+                        call_stack: String::new(),
+                    })));
+                }
                 self.application_areas = t.to_string();
                 Ok(Value::Null)
             }

@@ -493,6 +493,14 @@ impl Lowerer<'_> {
                 ret_used: false,
             }));
         }
+        // `Part.PAGE.Proc := value`: the checker picked the one-parameter procedure and recorded it on the target.
+        if kids[0].kind() == SyntaxKind::MemberExpr
+            && matches!(self.res(&kids[0]), Some(Res::Proc { .. }))
+            && sig_tokens(n).iter().any(|t| t.kind() == SyntaxKind::Assign)
+        {
+            self.assume(al_builtins::assumptions::Assumption::ProcedureAssignIsCall);
+            return self.call(&kids[0], &kids[0], &kids[1..2]).map(ir::Stmt::Expr);
+        }
         // `Proc := value` calls a procedure of this object that takes one value parameter (Base Application's Service
         // Line writes `SetHideWarrantyWarning := true`). Assumed, see ProcedureAssignIsCall. The checker leaves the
         // name unresolved (it looks for a call with no arguments), so the procedure is found here by its name.

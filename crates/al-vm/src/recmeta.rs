@@ -786,19 +786,24 @@ impl Session {
         Ok(Value::Null)
     }
 
-    /// `GetPosition`: the primary key fields, whatever the current key is, as `Name=CONST(value)`
-    /// (`Field<n>=0(value)` with `UseNames = false`); corpus
-    /// record/TestRecordRuntimeTextsAndViews.al:RecordId_Format_And_GetPosition.
+    /// `GetPosition`: the primary key fields, whatever the current key is, as `Caption=CONST(value)`
+    /// (`Field<n>=0(value)` with `UseNames = false`); corpus record/TestRecordRuntimeTextsAndViews.al:
+    /// RecordId_Format_And_GetPosition, recordref/lt-recordref-fieldref-members/P92Position.al:GetPosition_NamesAndDefault
+    /// (the field's caption, else its name). A value with a parenthesis is written in double quotes; a comma and an
+    /// apostrophe stay as they are (:GetPosition_CompositeKey, :GetPosition_SpecialCharactersInKey).
     fn get_position(&self, rec: &Rec, t: &TableDef, use_names: bool) -> Result<String, Signal> {
         let r = rec.borrow();
         let mut parts = Vec::new();
         for &p in &t.keys[0] {
-            let value = self.message_value(&r.fields[p])?;
-            if value.contains([')', ',', '\'', '"']) {
-                return unsupported("a position value that needs quoting");
+            let mut value = self.message_value(&r.fields[p])?;
+            if value.contains('"') {
+                return unsupported("a position value with a double quote");
+            }
+            if value.contains(['(', ')']) {
+                value = format!("\"{value}\"");
             }
             if use_names {
-                parts.push(format!("{}=CONST({value})", t.fields[p].name));
+                parts.push(format!("{}=CONST({value})", self.field_caption(t, p)));
             } else {
                 parts.push(format!("Field{}=0({value})", t.fields[p].id));
             }
@@ -806,35 +811,89 @@ impl Session {
         Ok(parts.join(","))
     }
 
-    /// `SetPosition`: puts the key values of a position into the buffer (the row is not read).
+    /// `SetPosition`: puts the key values of a position into the buffer (the row is not read). The text is a list of
+    /// `Name=CONST(value)` or `Field<n>=0(value)` items; a value with a parenthesis is in double quotes. A text that
+    /// is no such list is an "Invalid expression of type: position" error; a list that is not exactly the primary key
+    /// fields in order is "not a valid position specification" (both code DB:Ok); then each value is evaluated into its
+    /// field (recordref/lt-recordref-fieldref-members/P92Position.al:SetPosition_Malformed, :SetPosition_FromOtherTable).
     fn set_position(&self, rec: &Rec, t: &TableDef, text: &str) -> Result<(), Signal> {
-        let mut values = Vec::new();
-        for item in text.split(',') {
-            let (name, rest) = item
-                .split_once('=')
-                .ok_or_else(|| Signal::Unsupported(format!("position `{text}`")))?;
-            let value = rest
-                .trim()
+        let db_ok = |message: String| {
+            Signal::Error(Box::new(al_builtins::native::AlError {
+                message,
+                code: "DB:Ok".into(),
+                call_stack: String::new(),
+            }))
+        };
+        let invalid = || db_ok(format!("Invalid expression of type: position.\\{text}"));
+        let mut items: Vec<(String, String)> = Vec::new();
+        let mut rest = text;
+        while !rest.is_empty() {
+            let (name, after) = rest.split_once('=').ok_or_else(invalid)?;
+            let after = after
                 .strip_prefix("CONST(")
-                .or_else(|| rest.trim().strip_prefix("0("))
-                .and_then(|v| v.strip_suffix(')'))
-                .ok_or_else(|| Signal::Unsupported(format!("position `{text}`")))?;
-            let name = name.trim();
-            let pos = t
-                .fields
-                .iter()
-                .position(|f| f.name.eq_ignore_ascii_case(name))
-                .or_else(|| {
-                    name.strip_prefix("Field")
-                        .and_then(|n| n.parse::<u32>().ok())
-                        .and_then(|id| t.fields.iter().position(|f| f.id == id))
-                })
-                .ok_or_else(|| Signal::Unsupported(format!("position field `{name}`")))?;
-            let expr = self
-                .parse_filter_text(value, &t.fields[pos].ty)
-                .map_err(|e| Signal::Unsupported(format!("SetPosition: {e}")))?;
-            let al_builtins::filter::FilterExpr::Eq(v) = expr else {
-                return unsupported(format!("position value `{value}`"));
+                .or_else(|| after.strip_prefix("0("))
+                .ok_or_else(invalid)?;
+            let (value, after) = if let Some(quoted) = after.strip_prefix('"') {
+                let (v, tail) = quoted.split_once('"').ok_or_else(invalid)?;
+                (v, tail.strip_prefix(')').ok_or_else(invalid)?)
+            } else {
+                after.split_once(')').ok_or_else(invalid)?
+            };
+            items.push((name.to_string(), value.to_string()));
+            rest = match after.strip_prefix(',') {
+                Some(more) if !more.is_empty() => more,
+                Some(_) => return Err(invalid()),
+                None if after.is_empty() => "",
+                None => return Err(invalid()),
+            };
+        }
+        let key = &t.keys[0];
+        let mut matched = items.len() == key.len();
+        if matched {
+            for ((name, _), &p) in items.iter().zip(key) {
+                let by_id = name
+                    .strip_prefix("Field")
+                    .and_then(|n| n.parse::<u32>().ok())
+                    .is_some_and(|id| id == t.fields[p].id);
+                let caption = self.field_caption(t, p);
+                if !by_id && !name.eq_ignore_ascii_case(&caption) {
+                    if name.eq_ignore_ascii_case(&t.fields[p].name) {
+                        return unsupported(format!("position with the field name `{name}`, not its caption"));
+                    }
+                    matched = false;
+                }
+            }
+        }
+        if !matched {
+            return Err(db_ok(format!(
+                "'{text}' is not a valid position specification for the {} table. The position must contain all the primary key fields, in order, and only primary key fields.",
+                self.caption(t)
+            )));
+        }
+        let mut values = Vec::new();
+        for ((_, value), &pos) in items.iter().zip(key) {
+            let ty = &t.fields[pos].ty;
+            let v = match ty {
+                RtType::Text(_) | RtType::Code(_) => ops::convert(Value::Text(value.as_str().into()), ty)?,
+                _ if value.is_empty() => Value::default_for(ty),
+                RtType::Integer | RtType::BigInteger | RtType::Decimal => match self.parse_filter_text(value, ty) {
+                    Ok(al_builtins::filter::FilterExpr::Eq(v)) => v,
+                    _ => {
+                        let name = match ty {
+                            RtType::Integer => "Integer",
+                            RtType::BigInteger => "BigInteger",
+                            _ => "Decimal",
+                        };
+                        return Err(error(
+                            format!("The value \"{value}\" can't be evaluated into type {name}."),
+                            "Evaluate",
+                        ));
+                    }
+                },
+                _ => match self.parse_filter_text(value, ty) {
+                    Ok(al_builtins::filter::FilterExpr::Eq(v)) => v,
+                    _ => return unsupported(format!("position value `{value}`")),
+                },
             };
             values.push((pos, v));
         }

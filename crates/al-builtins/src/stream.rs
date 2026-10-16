@@ -529,21 +529,22 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     }
     let mut enc_used = Encoding::Windows;
     let text = with_in(r, |s| {
-        // A UTF-16 byte order mark at the start decides the encoding, whatever the stream was created with:
-        // the XmlPort export is UTF-16 with a mark, and the corpus reads it back with the default encoding
-        // (xmlport/TestXmlPortObject.al:ReadBlobText). A UTF-8 mark is taken as one only by a stream created with
-        // `TextEncoding::UTF8` (handlers/TestReportSaveAsDatasetContracts.al:DatasetLines); a stream with the default
-        // encoding reads it as the three characters 239, 187, 191 (al-language-onprem/handlers/
-        // TestRequestPageSaveAsXmlContracts.al:FileText).
+        // A UTF-8 mark is taken as one only by a stream created with `TextEncoding::UTF8` (handlers/
+        // TestReportSaveAsDatasetContracts.al:DatasetLines); a stream with the default encoding reads it as the three
+        // characters 239, 187, 191 (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:FileText). A UTF-16 mark
+        // is no mark to ReadText: the default encoding reads `FF FE` as two characters (misc/lt-probes-needed-3/
+        // PnC19XmlPort.al:Export_BothFormatEvaluates, ` þ`).
         if s.pos == 0 {
             let utf8 = s.enc == Encoding::Utf8;
+            let s_enc = s.enc;
             let bom = s.with_data(|d| {
                 // A stream created as UTF-8 does not take a UTF-16 mark: it reads the bytes as UTF-8 and fails on them (xmlport/
                 // lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_ThreeRows).
-                if !utf8 && d.starts_with(&[0xFF, 0xFE]) {
-                    Some((Encoding::Utf16, 2))
-                } else if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
+                if utf8 && d.starts_with(&[0xEF, 0xBB, 0xBF]) {
                     Some((Encoding::Utf8, 3))
+                } else if s_enc == Encoding::Utf16 && d.starts_with(&[0xFF, 0xFE]) {
+                    // A stream created as UTF-16 skips the mark (xmlport/TestXmlPortExportImportContracts.al:ExportedText).
+                    Some((Encoding::Utf16, 2))
                 } else {
                     None
                 }
@@ -561,11 +562,15 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         let text = s.with_data(|data| {
             let rest = &data[pos.min(data.len())..];
             let mut end = 0;
-            while end + unit <= rest.len() && end / unit < max_chars && !is_unit(&rest[end..end + unit], b'\n') {
+            // A NUL ends the text like a line feed does and is consumed with it: the UTF-16 bytes of an export read one
+            // character per call (xmlport/lt-xmlport-query-datatransfer/XpTExportBasic.al:Export_StaticWithRecordNoRows,
+            // misc/lt-probes-needed-3/PnC19XmlPort.al:Export_BothFormatEvaluates, streams/StTEncodings.al:CrossEncodingMsDosAndUtf16).
+            let ends = |u: &[u8]| is_unit(u, b'\n') || u.iter().all(|b| *b == 0);
+            while end + unit <= rest.len() && end / unit < max_chars && !ends(&rest[end..end + unit]) {
                 end += unit;
             }
             // Stopping on the length leaves the line feed unread.
-            let at_lf = end + unit <= rest.len() && is_unit(&rest[end..end + unit], b'\n');
+            let at_lf = end + unit <= rest.len() && ends(&rest[end..end + unit]);
             let line: Vec<u8> = rest[..end]
                 .chunks(unit)
                 .filter(|u| !is_unit(u, b'\r'))
@@ -804,7 +809,16 @@ fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
 /// :WriteTo_OutStream_MsDos_AsciiAndNonAscii).
 pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<(), Signal> {
     let (b, _) = out_buf(Some(stream))?;
+    // The stream does not move: a second `WriteTo` on the same stream writes over the first one's bytes, and the
+    // blob is not emptied (misc/lt-probes-needed-3/PnC20JsonStreams.al:WriteTo_DefaultStream_And_Appending,
+    // `[1,2]1}`). Pinned only for a stream nothing was written to; after other writes it is refused.
+    if b.borrow().write_pos != 0 {
+        return unsupported(
+            "JSON WriteTo(OutStream) on a stream that was written to (the place it writes at is not pinned)",
+        );
+    }
     write_bytes(&b, text.as_bytes());
+    b.borrow_mut().write_pos = 0;
     Ok(())
 }
 
@@ -819,7 +833,7 @@ pub fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
 /// `ReadFrom`). The bytes are read as UTF-8 whatever the encoding of the stream, and a UTF-8 byte
 /// order mark is skipped (streams/ProbeJsonAndInStreamBytes.al:ReadFrom_InStream_WithBomAndWithout, on a
 /// default, Windows-encoded stream). That is the inverse of [`write_serialised_text`]; bytes that are not
-/// UTF-8 are refused. The stream moves to its end.
+/// UTF-8 are refused. The stream does not move.
 pub(crate) fn read_serialised_text(stream: &mut Value) -> Result<String, Signal> {
     with_in(Some(stream), |st| {
         let bytes = st.rest();
@@ -831,7 +845,8 @@ pub(crate) fn read_serialised_text(stream: &mut Value) -> Result<String, Signal>
                 "reading bytes with NUL characters (UTF-16 text?) from an InStream as UTF-8 (not pinned)".into(),
             ));
         }
-        st.drain();
+        // The stream does not move: `EOS` stays false after the read (misc/lt-probes-needed-3/PnC20JsonStreams.al:
+        // ReadFrom_RestOfStream, `eosAfter` = No), as for `XmlDocument.ReadFrom`.
         Ok(text.strip_prefix('\u{FEFF}').map(str::to_owned).unwrap_or(text))
     })
 }

@@ -1425,7 +1425,10 @@ impl Session {
         }
         let enters = self.report_enter_world(&schema, false)?;
         let outer = self.report.dataset.replace(Dataset::default());
-        self.dataset_labels(&schema);
+        if let Err(e) = self.dataset_labels(&schema) {
+            self.report.dataset = outer;
+            return Err(e);
+        }
         self.report.report_preview_pinned.push(false);
         let ran = self.report_in_world(enters, |s| s.report_body(&inst, &schema, false, Some(&parameters)));
         self.report.report_preview_pinned.pop();
@@ -1595,8 +1598,24 @@ impl Session {
     /// (handlers/TestReportSaveAsColumnDetailsContracts.al:LabelsAreWrittenForAnEmptyDataItem,
     /// handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll). Items nested in another are added when a
     /// row reaches them: whether an unreached nested item writes its labels is not pinned.
-    fn dataset_labels(&mut self, schema: &Schema) {
+    fn dataset_labels(&mut self, schema: &Schema) -> Result<(), Signal> {
         let engine = self.engine.clone();
+        // The labels the report and its extensions declare come first, base report then extensions, in declaration
+        // order (report/PZReportLabels.al: Labels_AreWrittenIntoTheDataset). Whether a column's caption label comes
+        // before or after them is not pinned, so a report with both is refused.
+        let mut declared: Vec<(String, String)> = schema.report().labels.clone();
+        for &e in &schema.report().extensions {
+            if let Some(x) = engine.program.objects[e].report_ext.as_ref() {
+                declared.extend(x.labels.iter().cloned());
+            }
+        }
+        let has_declared = !declared.is_empty();
+        self.report
+            .dataset
+            .as_mut()
+            .expect("a SaveAs run has a dataset")
+            .labels
+            .extend(declared);
         for item in schema.report().items.iter().filter(|i| i.parent.is_none()) {
             let Some(t) = item.table.and_then(|t| engine.tables.get(t)).and_then(|t| t.clone()) else {
                 continue;
@@ -1610,12 +1629,18 @@ impl Session {
                     continue;
                 };
                 let label = (format!("{name}Caption"), self.field_caption(&t, pos));
+                if has_declared {
+                    return unsupported(
+                        "a report with declared labels and a column with IncludeCaption (the order of the two kinds of label is not pinned)",
+                    );
+                }
                 let ds = self.report.dataset.as_mut().expect("a SaveAs run has a dataset");
                 if !ds.labels.contains(&label) {
                     ds.labels.push(label);
                 }
             }
         }
+        Ok(())
     }
 
     /// The table id and the lower case GUID of the row `rec` stands on.

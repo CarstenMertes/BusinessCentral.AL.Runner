@@ -1,6 +1,6 @@
 # ADR-040: A report run without rendered output
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-16, with the allow-list of reports)
 - Date: 2026-10-16
 - Related: ADR-009 (observable equivalence), ADR-013 (external objects), ADR-006 (core purity); CLAUDE.md hard rules 3, 4 and 6
 - Research: `~/.cache/al-runtime/orchestration/report-rendering-options.md` (counts below come from it)

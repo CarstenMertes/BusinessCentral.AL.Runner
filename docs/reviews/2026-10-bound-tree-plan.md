@@ -154,3 +154,21 @@ Steps 1 and 2: about 4 agent-days. Steps 3 and 4: 12 to 18. Step 5: 2 to 3. Matc
 - Cost: cold compile 2,058,982 -> 2,105,730 instructions per object (+2.3 %). The records cost about 1.5 % and the
   per-statement and `Convert` checks the rest. It is over the limit of 2,060,000 (the tree before this slice was
   already 1,000 under it). Steps 1 and 2 (no second name resolution, no `ty_of` clones) have to bring it back.
+
+## Result of the groundwork before step 3 (2026-10-16)
+
+The profile of the cold compile showed no large second name resolution; the cost sat in copies and hashing. Changes
+(none alters the lowered output; `compile_dump` is byte-identical, hashes included), instructions per object:
+
+| change | per object |
+|---|---|
+| slice 2 | 2,105,730 |
+| line starts by memchr, type lookups without a copy | 2,087,492 |
+| `Ty` names are `Arc<str>` (a clone shares the name) | 2,064,651 |
+| Fx-hashed maps in the check scope and lowering (`Fx` hash of a string reads 8 bytes at a time) | 2,045,937 |
+| one copy of the name in `lookup_name` | 2,038,005 |
+| Fx-hashed maps in the checker, workspace, reports and xmlports | 2,009,388 |
+| candidate list of a call borrowed, not copied | 1,958,345 |
+
+The limit in `perf_budget` is back at 1,990,000. Steps 3 to 5 (the bound tree, `PosMap` removed) are still to do and
+are no longer needed for the budget.

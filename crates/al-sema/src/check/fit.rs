@@ -165,9 +165,9 @@ pub(crate) fn catalog_ty(s: &str, recv: &Ty) -> Ty {
 
 pub(crate) fn subst(t: Ty, recv: &Ty) -> Ty {
     match (&t, recv) {
-        (Ty::Builtin(n), Ty::List(el)) if n == "T" => (**el).clone(),
-        (Ty::Builtin(n), Ty::Dictionary(k, _)) if n == "TKey" => (**k).clone(),
-        (Ty::Builtin(n), Ty::Dictionary(_, v)) if n == "TValue" => (**v).clone(),
+        (Ty::Builtin(n), Ty::List(el)) if &**n == "T" => (**el).clone(),
+        (Ty::Builtin(n), Ty::Dictionary(k, _)) if &**n == "TKey" => (**k).clone(),
+        (Ty::Builtin(n), Ty::Dictionary(_, v)) if &**n == "TValue" => (**v).clone(),
         (Ty::List(el), _) => Ty::List(Box::new(subst((**el).clone(), recv))),
         (Ty::Dictionary(k, v), _) => Ty::Dictionary(
             Box::new(subst((**k).clone(), recv)),

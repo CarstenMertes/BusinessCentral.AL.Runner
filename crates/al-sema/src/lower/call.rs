@@ -261,7 +261,7 @@ impl Lowerer<'_> {
                     // A bare control name in a field position of a test page method.
                     if a.kind() == SyntaxKind::NameRef
                         && self.res(a).is_none()
-                        && matches!(self.ty_ref(a), Ty::Builtin(b) if b == "TestField")
+                        && matches!(self.ty_ref(a), Ty::Builtin(b) if &**b == "TestField")
                         && receiver_node.as_ref().is_some_and(|r| {
                             matches!(
                                 self.ty_of(r),

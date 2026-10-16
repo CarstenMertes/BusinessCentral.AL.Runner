@@ -8,7 +8,7 @@ use crate::workspace::{Diagnostic, ObjKind, Resolution, Workspace};
 use al_builtins::catalog::Catalog;
 use al_builtins::signature::Signature;
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
-use std::collections::{HashMap, HashSet};
+use posmap::{FxMap as HashMap, FxSet as HashSet};
 
 pub mod demand;
 
@@ -329,8 +329,8 @@ fn unreached_routines(ws: &Workspace, skip: &dyn Fn(usize) -> bool) -> HashSet<(
             .collect()
     };
     // Free procedures by lower-case name; the rest are roots.
-    let mut free: HashMap<String, Vec<(usize, usize, HashSet<String>)>> = HashMap::new();
-    let mut wanted: HashSet<String> = HashSet::new();
+    let mut free: HashMap<String, Vec<(usize, usize, HashSet<String>)>> = HashMap::default();
+    let mut wanted: HashSet<String> = HashSet::default();
     for oi in 0..ws.objects.len() {
         if ws.is_dependency(oi) || skip(oi) {
             continue;
@@ -356,7 +356,7 @@ fn unreached_routines(ws: &Workspace, skip: &dyn Fn(usize) -> bool) -> HashSet<(
             }
         }
     }
-    let mut reached: HashSet<(usize, usize)> = HashSet::new();
+    let mut reached: HashSet<(usize, usize)> = HashSet::default();
     let mut queue: Vec<String> = wanted.iter().cloned().collect();
     let mut asked: HashSet<String> = wanted;
     while let Some(name) = queue.pop() {
@@ -415,7 +415,7 @@ fn contains_ignore_case(haystack: &str, needle: &[u8]) -> bool {
 /// whose values are written `Verbosity::Normal`.
 fn system_enums(catalog: &Catalog) -> HashSet<String> {
     let receivers: HashSet<String> = catalog.signatures.iter().map(|s| s.receiver.to_lowercase()).collect();
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     for s in &catalog.signatures {
         for t in s.params.iter().map(|p| p.ty.as_str()).chain([s.ret.as_str()]) {
             let t = t.to_lowercase();
@@ -484,9 +484,9 @@ pub(crate) struct Scope {
     oi: usize,
     file: usize,
     /// The object's variables, shared by the routines of the object.
-    globals: std::rc::Rc<HashMap<String, Ty>>,
+    globals: std::rc::Rc<posmap::FxMap<String, Ty>>,
     /// The routine's own frames (parameters and locals), the last first.
-    vars: Vec<HashMap<String, Ty>>,
+    vars: Vec<posmap::FxMap<String, Ty>>,
     /// The implicit record of table/page code (and `Rec` in codeunits with TableNo).
     rec: Option<Ty>,
     /// Whether the implicit record's fields and methods can be used unqualified.
@@ -536,7 +536,7 @@ type Resolved = HashMap<(usize, ObjKind), HashMap<String, Option<usize>>>;
 pub(crate) struct ObjCtx {
     oi: usize,
     file: usize,
-    globals: std::rc::Rc<HashMap<String, Ty>>,
+    globals: std::rc::Rc<posmap::FxMap<String, Ty>>,
     rec: Option<Ty>,
     rec_unqualified: bool,
     self_obj: usize,
@@ -667,7 +667,7 @@ fn binary_ty(op: &str, l: &Ty, r: &Ty) -> Ty {
             }
             // An operand whose type is known only when the code runs gives a result of the same
             // kind (ADR-024); the VM's operators decide from the settled kinds.
-            (Ty::DotNet(_), _) | (_, Ty::DotNet(_)) => Ty::DotNet(String::new()),
+            (Ty::DotNet(_), _) | (_, Ty::DotNet(_)) => Ty::DotNet("".into()),
             (Ty::Date, Ty::Date) if op == "-" => Ty::Integer,
             (Ty::Date, _) => Ty::Date,
             (Ty::DateTime, Ty::DateTime) if op == "-" => Ty::Duration,
@@ -719,7 +719,7 @@ fn receiver_of(t: &Ty) -> Option<String> {
             Ty::List(_) => "List",
             Ty::Dictionary(..) => "Dictionary",
             Ty::Variant => "Variant",
-            Ty::Builtin(n) => return Some(n.clone()),
+            Ty::Builtin(n) => return Some(n.to_string()),
             _ => return None,
         }
         .to_string(),
@@ -747,7 +747,7 @@ mod fit;
 mod infer;
 mod member;
 mod object;
-mod posmap;
+pub(crate) mod posmap;
 #[cfg(test)]
 mod tests;
 

@@ -7,11 +7,11 @@ impl<'a> Checker<'a> {
         let sec = self.named_section(oi, name)?;
         Some(E::Val(match sec.name().to_ascii_lowercase().as_str() {
             "dataitem" => match crate::types::section_object_name(&sec, 1) {
-                Some(table) => Ty::TestFilter(table),
+                Some(table) => Ty::TestFilter(table.into()),
                 None => Ty::Unknown,
             },
             "part" => match crate::types::section_object_name(&sec, 1) {
-                Some(page) => Ty::TestPart(page),
+                Some(page) => Ty::TestPart(page.into()),
                 None => Ty::Unknown,
             },
             "systempart" => Ty::Builtin("TestPart".into()),
@@ -48,13 +48,13 @@ impl<'a> Checker<'a> {
                     .resolve_dotnet(sc.file, alias)
                     .and_then(|i| al_builtins::dotnet_sigs::lookup(&self.ws.dotnet[i].decl.type_name, name))
                     .map_or_else(
-                        || Ty::DotNet(String::new()),
+                        || Ty::DotNet("".into()),
                         |r| match r {
                             al_builtins::dotnet_sigs::Ret::Boolean => Ty::Boolean,
                             al_builtins::dotnet_sigs::Ret::Integer => Ty::Integer,
                             al_builtins::dotnet_sigs::Ret::Text => Ty::Text(None),
                             al_builtins::dotnet_sigs::Ret::Object | al_builtins::dotnet_sigs::Ret::Void => {
-                                Ty::DotNet(String::new())
+                                Ty::DotNet("".into())
                             }
                         },
                     );
@@ -138,7 +138,7 @@ impl<'a> Checker<'a> {
                     if let Some(sec) = self.named_section(oi, name) {
                         if sec.name().eq_ignore_ascii_case("part") {
                             if let Some(page) = crate::types::section_object_name(&sec, 1) {
-                                return Some(E::Val(Ty::TestPart(page)));
+                                return Some(E::Val(Ty::TestPart(page.into())));
                             }
                         }
                     }
@@ -173,7 +173,7 @@ impl<'a> Checker<'a> {
                     // `TP.Filter` filters the page's source table.
                     let filter = resolved
                         .and_then(|o| self.source_table(o))
-                        .map(Ty::TestFilter)
+                        .map(|t| Ty::TestFilter(t.into()))
                         .unwrap_or(Ty::Unknown);
                     for cand in &mut c {
                         if cand.ret == Ty::Builtin("TestFilter".into()) {
@@ -238,7 +238,7 @@ impl<'a> Checker<'a> {
                 self.field_of(
                     sc,
                     &Ty::Record {
-                        table,
+                        table: table.into(),
                         temporary: false,
                     },
                     name,

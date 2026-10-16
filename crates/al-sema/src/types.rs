@@ -3,6 +3,9 @@
 use crate::workspace::ObjKind;
 use al_syntax::ast::TypeRef;
 
+/// A name a type carries. Cloning a type clones this, so it is shared, not copied.
+pub type Name = std::sync::Arc<str>;
+
 #[derive(Debug, Clone, PartialEq, Eq, Hash, serde::Serialize, serde::Deserialize)]
 pub enum Ty {
     Integer,
@@ -20,29 +23,29 @@ pub enum Ty {
     DateFormula,
     Guid,
     Option(Vec<String>),
-    Enum(String),
+    Enum(Name),
     Record {
-        table: String,
+        table: Name,
         temporary: bool,
     },
     /// Codeunit, Page, Report, Query, XmlPort, Interface variables.
-    Object(ObjKind, String),
-    TestPage(String),
-    TestRequestPage(String),
+    Object(ObjKind, Name),
+    TestPage(Name),
+    TestRequestPage(Name),
     /// A part on a test page, carrying the page it hosts.
-    TestPart(String),
+    TestPart(Name),
     /// `TestPage.Filter` or a request page data item: a filter on this table.
-    TestFilter(String),
+    TestFilter(Name),
     List(Box<Ty>),
     Dictionary(Box<Ty>, Box<Ty>),
     Array(Vec<u32>, Box<Ty>),
     Label,
     Variant,
     /// A library type from the builtins catalog: `RecordRef`, `JsonObject`, `InStream`, ...
-    Builtin(String),
+    Builtin(Name),
     /// A `DotNet` value (ADR-014): the alias (as written; compare case-insensitively) a `dotnet { }` block declares, or the
     /// empty string for the result of a `DotNet` member, whose type is only known at run time.
-    DotNet(String),
+    DotNet(Name),
     /// The type could not be determined; errors on it are not reported again.
     Unknown,
 }
@@ -117,20 +120,20 @@ impl Ty {
                     .collect(),
             ),
             "textencoding" => Ty::Option(text_encoding_members()),
-            "enum" => Ty::Enum(obj()),
+            "enum" => Ty::Enum(obj().into()),
             "record" => Ty::Record {
-                table: obj(),
+                table: obj().into(),
                 temporary: t.is_temporary(),
             },
-            "testpage" => Ty::TestPage(obj()),
-            "testrequestpage" => Ty::TestRequestPage(obj()),
+            "testpage" => Ty::TestPage(obj().into()),
+            "testrequestpage" => Ty::TestRequestPage(obj().into()),
             "list" => Ty::List(arg(0)),
             "dictionary" => Ty::Dictionary(arg(0), arg(1)),
             "array" => Ty::Array(t.size_args(), arg(0)),
-            "dotnet" => Ty::DotNet(display_name(&obj())),
+            "dotnet" => Ty::DotNet(display_name(&obj()).into()),
             _ => match ObjKind::from_type_name(&name) {
-                Some(kind) => Ty::Object(kind, obj()),
-                None => Ty::Builtin(canonical_builtin(&name)),
+                Some(kind) => Ty::Object(kind, obj().into()),
+                None => Ty::Builtin(canonical_builtin(&name).into()),
             },
         }
     }

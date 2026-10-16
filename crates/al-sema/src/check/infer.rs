@@ -246,7 +246,7 @@ impl<'a> Checker<'a> {
                     Ty::Boolean
                 } else if matches!(t, Ty::DotNet(_)) {
                     // A DotNet operand is settled when it runs (ADR-024).
-                    Ty::DotNet(String::new())
+                    Ty::DotNet("".into())
                 } else {
                     t
                 })
@@ -260,10 +260,9 @@ impl<'a> Checker<'a> {
                 if op_token(node) == "is" {
                     E::Val(Ty::Boolean)
                 } else {
-                    E::Val(
-                        kids.get(1)
-                            .map_or(Ty::Unknown, |n| Ty::Object(ObjKind::Interface, type_name_text(n))),
-                    )
+                    E::Val(kids.get(1).map_or(Ty::Unknown, |n| {
+                        Ty::Object(ObjKind::Interface, type_name_text(n).into())
+                    }))
                 }
             }
             BinExpr => {
@@ -320,8 +319,8 @@ impl<'a> Checker<'a> {
                         let r = b.text_range();
                         self.types.get(&(sc.file, r.start().into(), r.end().into())).cloned()
                     });
-                let cands: Vec<Cand> = match &target {
-                    E::Callable(c) => c.iter().filter(|c| c.hidden.is_none()).cloned().collect(),
+                let cands: Vec<&Cand> = match &target {
+                    E::Callable(c) => c.iter().filter(|c| c.hidden.is_none()).collect(),
                     _ => Vec::new(),
                 };
                 let unknown_callee = matches!(target, E::Val(Ty::Unknown));
@@ -438,7 +437,7 @@ impl<'a> Checker<'a> {
                         Resolution::Found(i) if k == ObjKind::Enum => {
                             self.touch(i);
                             let qualified = self.ws.objects[i].name.clone();
-                            E::TypeName(Ty::Enum(qualified))
+                            E::TypeName(Ty::Enum(qualified.into()))
                         }
                         Resolution::Found(i) => {
                             self.reach_named_object(sc, node, k, i);
@@ -477,12 +476,7 @@ impl<'a> Checker<'a> {
                         };
                         let c = self.catalog_cands(recv, &mname, false, &Ty::Unknown);
                         return if c.is_empty() {
-                            self.diag(
-                                sc,
-                                node,
-                                "AR1002",
-                                self.no_member(&mname, &Ty::Builtin(recv.to_string())),
-                            );
+                            self.diag(sc, node, "AR1002", self.no_member(&mname, &Ty::Builtin(recv.into())));
                             E::Val(Ty::Unknown)
                         } else {
                             E::Callable(c)
@@ -592,7 +586,7 @@ impl<'a> Checker<'a> {
                     },
                     E::PartialObj(k, parts) => E::PartialObj(k, parts),
                     E::EnumKeyword => match self.resolve(sc, ObjKind::Enum, &rhs) {
-                        Some(i) => E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())),
+                        Some(i) => E::TypeName(Ty::Enum(self.ws.objects[i].name.as_str().into())),
                         // `Enum::Acme.Docs."Kind"`: the first segment is a namespace; the next
                         // `.` step resolves the whole name (the member branch above).
                         None if node.parent().is_some_and(|p| p.kind() == MemberExpr) => {
@@ -623,7 +617,7 @@ impl<'a> Checker<'a> {
                     E::Callable(_) if system_option_of_property(&kids[0], &rhs).is_some() => {
                         let (enum_name, i) = system_option_of_property(&kids[0], &rhs).expect("checked");
                         self.record(sc, node, Res::OptionValue(i as i32));
-                        E::Val(Ty::Builtin(enum_name.to_string()))
+                        E::Val(Ty::Builtin(enum_name.into()))
                     }
                     // `RecRef.SecurityFiltering::Ignored`: the member of the option a call answers
                     // (Base Application's "Find Record Management"). Its type is the option's.
@@ -669,7 +663,7 @@ impl<'a> Checker<'a> {
         match self.ws.resolve_ref(sc.file, ObjKind::Enum, &names) {
             Resolution::Found(i) => {
                 self.touch(i);
-                Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.clone())))
+                Some(E::TypeName(Ty::Enum(self.ws.objects[i].name.as_str().into())))
             }
             _ => None,
         }

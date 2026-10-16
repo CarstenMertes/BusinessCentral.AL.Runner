@@ -12,9 +12,15 @@ pub struct FxHasher(u64);
 
 impl Hasher for FxHasher {
     fn write(&mut self, bytes: &[u8]) {
-        for &b in bytes {
-            self.write_u64(b as u64);
+        let mut chunks = bytes.chunks_exact(8);
+        for c in &mut chunks {
+            self.write_u64(u64::from_le_bytes(c.try_into().expect("8 bytes")));
         }
+        let mut tail = 0u64;
+        for &b in chunks.remainder() {
+            tail = tail << 8 | b as u64;
+        }
+        self.write_u64(tail);
     }
     fn write_u64(&mut self, i: u64) {
         self.0 = (self.0.rotate_left(5) ^ i).wrapping_mul(0x517c_c1b7_2722_0a95);
@@ -30,6 +36,12 @@ impl Hasher for FxHasher {
 pub(crate) type PosKey = (usize, usize, usize);
 
 /// A `HashMap` keyed by node position, hashed with [`FxHasher`].
+/// A `HashMap` hashed with [`FxHasher`]: for the small string-keyed maps of the check and the lowering.
+pub(crate) type FxMap<K, V> = HashMap<K, V, BuildHasherDefault<FxHasher>>;
+
+/// A `HashSet` hashed with [`FxHasher`].
+pub(crate) type FxSet<K> = std::collections::HashSet<K, BuildHasherDefault<FxHasher>>;
+
 pub(crate) type RawPosMap<V> = HashMap<PosKey, V, BuildHasherDefault<FxHasher>>;
 
 /// How many maps a [`PosMap`] is split into. The workers of a parallel check each fill their own

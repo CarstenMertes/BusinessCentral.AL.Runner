@@ -551,7 +551,7 @@ impl Lowerer<'_> {
         let request = matches!(self.ty_ref(&recv), Ty::TestRequestPage(_));
         (matches!(self.ty_ref(&recv), Ty::TestPage(_) | Ty::TestPart(_)) || request)
             && (matches!(self.ty_ref(n), Ty::TestPart(_))
-                || matches!(self.ty_ref(n), Ty::Builtin(b) if b == "TestField" || b == "TestAction")
+                || matches!(self.ty_ref(n), Ty::Builtin(b) if &**b == "TestField" || &**b == "TestAction")
                 // A data item of a request page.
                 || (request && matches!(self.ty_ref(n), Ty::TestFilter(_))))
     }

@@ -2,6 +2,7 @@
 //! builtins registry cannot express yet becomes a reason on the routine
 //! (`Routine::unsupported` in `Lowered`), never a guess.
 
+use crate::check::posmap::FxMap as HashMap;
 use crate::check::{CheckResult, Res};
 use crate::members::MemberTable;
 use crate::types::Ty;
@@ -9,7 +10,6 @@ use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_builtins::value::RtType;
 use al_ir as ir;
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
-use std::collections::HashMap;
 
 /// Wall time of the parts of a compile (`--timings`).
 #[derive(Debug, Clone, Copy, Default)]

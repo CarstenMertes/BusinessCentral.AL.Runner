@@ -829,7 +829,7 @@ impl Parser<'_> {
             let c = self.s[next..].chars().next();
             let named_external = self.s[next..].starts_with("SYSTEM") || self.s[next..].starts_with("PUBLIC");
             if !(matches!(c, Some('>' | '[')) || named_external) {
-                return self.fail_at("Expecting external ID, '[' or '>'.", end.max(next.min(end + 0)));
+                return self.fail_at("Expecting external ID, '[' or '>'.", next);
             }
         }
         let mut depth = 0i32;

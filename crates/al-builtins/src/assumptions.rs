@@ -181,6 +181,12 @@ registry! {
         tests: "Service Line (`SetHideWarrantyWarning := true` in OnValidate of Fault Reason Code): T204_PostedServiceInvoiceContainsPriceCalcMethod and 178 more Tests-ERM tests.",
         probe: "A codeunit procedure P(V: Boolean) and `P := true;`: does it compile and run P? The same with a var parameter, two parameters, a return value.",
     },
+    DateFormulaSpacesBetweenTerms => {
+        id: "date-formula-spaces-between-terms",
+        assumed: "Spaces in a date formula are ignored, also between the terms: `<CM + 1D>` is `<CM+1D>` (the corpus pins spaces next to the brackets only).",
+        tests: "Tests-SCM Item.TestField(\"Next Counting Start Date\", CalcDate('<CM + 1D>', WorkDate())), Base Application's `<CM + 1D>` and 16 more Tests-ERM tests.",
+        probe: "CalcDate('<CM + 1D>', D), Evaluate(DF, '<1D + 1W>') and Format(DF), '<1 D>', '<- 1D>'.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

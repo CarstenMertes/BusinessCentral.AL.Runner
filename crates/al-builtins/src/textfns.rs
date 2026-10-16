@@ -33,9 +33,10 @@ fn text(a: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
         .ok_or_else(|| Signal::Unsupported(format!("text argument {i} of type {}", a.get(i).describe())))
 }
 
-fn recv_text(r: &Option<&mut Value>) -> Result<String, Signal> {
+/// The receiver of a text method: a shared handle, no copy of the text.
+fn recv_text(r: &Option<&mut Value>) -> Result<crate::text::Txt, Signal> {
     match r.as_deref().and_then(text_of) {
-        Some(s) => Ok(s.to_string()),
+        Some(s) => Ok(s),
         None => unsupported("Text method on something that is not text"),
     }
 }
@@ -125,7 +126,28 @@ const INT_MAX: &str = "2,147,483,647";
 
 /// 1-based, 0 when absent (TestTextExtended.al TextIndexOf_*).
 fn index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (s, sub) = (u16s(&recv_text(&r)?), u16s(&text(a, 0)?));
+    let (st, sb) = (recv_text(&r)?, text(a, 0)?);
+    // Text of ASCII only is searched where it lies, with no copy of it (the length and the flag are cached).
+    if st.is_ascii() && sb.is_ascii() {
+        let from = if a.len() > 1 {
+            let n = int(a, 1)?;
+            if n < 1 || n as usize > st.len() + 1 {
+                return Err(out_of_range(
+                    "Index was out of range. Must be non-negative and less than or equal to the size of the collection. (Parameter 'startIndex')",
+                ));
+            }
+            n as usize - 1
+        } else {
+            0
+        };
+        if sb.is_empty() {
+            return Ok(Value::Integer(from as i32 + 1));
+        }
+        return Ok(Value::Integer(
+            st[from..].find(sb.as_str()).map_or(0, |p| (p + from) as i32 + 1),
+        ));
+    }
+    let (s, sub) = (u16s(&st), u16s(&sb));
     let from = if a.len() > 1 {
         let n = int(a, 1)?;
         // A start outside 1 to the length plus one raises (text/TestProbeTextDateFormatContracts.al:Text_IndexOfAndTextBuilderEdges).
@@ -256,10 +278,14 @@ fn replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
 
 /// 1-based `StartIndex`; `Count` defaults to the rest. Out-of-range arguments are not pinned.
 fn substring(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let s = u16s(&recv_text(&r)?);
+    let st = recv_text(&r)?;
+    let ascii = st.is_ascii();
+    // Text of ASCII only is sliced where it lies; anything else goes through its UTF-16 units.
+    let s: Vec<u16> = if ascii { Vec::new() } else { u16s(&st) };
+    let len = if ascii { st.len() } else { s.len() };
     let start = int(a, 0)?;
     let count = if a.len() > 1 { Some(int(a, 1)?) } else { None };
-    if start > s.len() as i64 + 1 {
+    if start > len as i64 + 1 {
         // types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments.
         return raise(
             "startIndex cannot be larger than length of string. (Parameter 'startIndex')",
@@ -274,9 +300,12 @@ fn substring(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
         Some(c) if c < 0 => return Err(start_error("length", c)),
         // A count past the end is clamped (types/TestFormatEvaluateTextContracts.al:Text_OutOfRangeArguments:
         // 'hello'.Substring(2, 10) = 'ello').
-        Some(c) => s.len().min(from + c as usize),
-        None => s.len(),
+        Some(c) => len.min(from + c as usize),
+        None => len,
     };
+    if ascii {
+        return Ok(Value::Text(st[from..to].to_string().into()));
+    }
     Ok(Value::Text(from_u16(&s[from..to]).into()))
 }
 
@@ -297,7 +326,11 @@ fn pad(r: &Option<&mut Value>, a: &[Value], left: bool) -> NResult {
     let have = Value::text_len(&s);
     let missing = (width as usize).saturating_sub(have);
     let fill: String = std::iter::repeat_n(f, missing).collect();
-    Ok(Value::Text(if left { (fill + &s).into() } else { (s + &fill).into() }))
+    Ok(Value::Text(if left {
+        (fill + &s).into()
+    } else {
+        (s.to_string() + &fill).into()
+    }))
 }
 
 fn pad_left(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {

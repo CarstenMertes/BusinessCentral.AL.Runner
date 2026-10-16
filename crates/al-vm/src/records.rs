@@ -147,7 +147,8 @@ impl Session {
         let mut parts = Vec::new();
         for &i in &t.keys[0] {
             let v = al_builtins::format::try_format(&fields[i], 0, 0, self).map_err(Signal::Unsupported)?;
-            parts.push(format!("{}='{}'", t.fields[i].name, v));
+            // The field's caption names it (recordref/lt-recordref-fieldref-members + records/lt-record-meta: `Code Caption='A1'`).
+            parts.push(format!("{}='{}'", self.field_caption(t, i), v));
         }
         Ok(parts.join(","))
     }
@@ -2086,6 +2087,15 @@ impl Session {
                         }
                     }
                 }
+                // More values than the primary key has fields (recordref/lt-refs/RfTWrite.al:Rename_Variants `rename_too_many`).
+                if args.len() > t.keys[0].len() {
+                    return Err(Signal::Error(Box::new(AlError {
+                        message: "The number of field arguments does not match the primary key size.".into(),
+                        code: "RenameArgument".into(),
+                        call_stack: String::new(),
+                        ..Default::default()
+                    })));
+                }
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
                     if let Some(v) = args.get(n) {
@@ -2158,8 +2168,11 @@ impl Session {
                         rec.borrow_mut().fields = old.clone();
                         self.fail(&t, &old, false)
                     }
+                    // A rename that cannot be done raises whether or not the Boolean is used (RfTWrite.al:Rename_Variants
+                    // `rename_existing`: `B := RecRef.Rename('D2')`).
                     RenameOutcome::AlreadyExists => {
                         rec.borrow_mut().fields = old;
+                        self.ret_used = false;
                         self.fail(&t, &row, true)
                     }
                 }

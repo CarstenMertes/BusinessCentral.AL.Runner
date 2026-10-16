@@ -90,6 +90,18 @@ impl Session {
     /// does (`List of [BigInteger].Get(1, I)` leaves an Integer in `I`; an overflow raises the error of the conversion).
     #[inline]
     fn fit_ref_number(&self, p: &ir::Place, v: Value, f: &Frame) -> Result<Value, Signal> {
+        // A text a builtin stores in a bounded Text or Code variable is checked against its length, as an assignment is
+        // (json/JsonWriteTo.al:WriteToTextVariants `writeto_text10_overflow`).
+        if let Value::Text(t) = &v {
+            if let Some(ty @ (RtType::Text(Some(_)) | RtType::Code(Some(_)))) = self.place_ty(p, f) {
+                if let RtType::Text(Some(m)) | RtType::Code(Some(m)) = ty {
+                    if t.chars().count() > *m as usize {
+                        return al_builtins::ops::convert(v, ty);
+                    }
+                }
+            }
+            return Ok(v);
+        }
         if !matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
             return Ok(v);
         }
@@ -837,7 +849,7 @@ impl Session {
                 format!(
                     "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
                     units.len(),
-                    String::from_utf16_lossy(&units)
+                    ops::shown_in_length_error(&String::from_utf16_lossy(&units))
                 ),
                 "StringLengthExceeded",
             );

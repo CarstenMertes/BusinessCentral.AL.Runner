@@ -768,7 +768,16 @@ impl Session {
         let field = &t.fields[pos];
         match method {
             "Value" => match args.first() {
-                None => Ok(rec.borrow().fields[pos].clone()),
+                // An Option field reads with its OptionCaption, which Format shows (recordref/lt-refs/RfTWrite.al:Init_ClearsFields
+                // `after_opt` = Erste, recordref/lt-refs/RfTValue*.al:Value_Get_Defaults).
+                None => {
+                    let v = rec.borrow().fields[pos].clone();
+                    if let (Value::Option(o, _), Ok(Some((false, members)))) = (&v, self.members_of_field(&t, pos)) {
+                        let captions: std::sync::Arc<[String]> = members.iter().map(|m| m.2.clone()).collect::<Vec<_>>().into();
+                        return Ok(Value::Option(*o, captions));
+                    }
+                    Ok(v)
+                }
                 Some(v) => {
                     // Assigning Value does not run OnValidate (that is `Validate`).
                     let v = ops::convert(v.clone(), &field.ty)?;

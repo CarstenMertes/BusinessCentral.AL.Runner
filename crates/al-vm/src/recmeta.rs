@@ -463,12 +463,13 @@ impl Session {
                 Ok(Value::Text(
                     t.keys[key]
                         .iter()
-                        // The hidden key on SystemId (recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:101).
+                        // The hidden key on SystemId (recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:101); a field with
+                        // a Caption shows it (records/lt-record-meta/RcBMeta*.al:CurrentKey_Default_And_Set `Identifier`).
                         .map(|&p| {
                             if t.fields[p].id == 2_000_000_000 {
-                                "System ID"
+                                "System ID".to_string()
                             } else {
-                                t.fields[p].name.as_str()
+                                self.field_caption(t, p)
                             }
                         })
                         .collect::<Vec<_>>()

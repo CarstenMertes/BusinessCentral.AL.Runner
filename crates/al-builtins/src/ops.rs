@@ -163,12 +163,7 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             let cast_error = |to: &str| {
                 raise::<Value>(
                     format!(
-                        "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.{to}.",
-                        // Trailing zeros go, one decimal stays (3000000000.0, 7.5; types/PRDecimalToInteger.al, ScT70056.al).
-                        {
-                            let n = d.normalize();
-                            if n.scale() == 0 { format!("{n}.0") } else { n.to_string() }
-                        }
+                        "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.{to}."
                     ),
                     "ConversionCast",
                 )
@@ -365,13 +360,24 @@ fn fit_txt(s: crate::text::Txt, max: Option<u32>) -> Result<crate::text::Txt, Si
     }
 }
 
+/// The value an over-long text error shows: the first 200 characters and `...` after them (recordref/lt-refs/RfTValues.al:
+/// Value_Truncation_And_Length `text250_over`, misc/lt-system-functions/ErrorMessage.al `af235`).
+pub fn shown_in_length_error(s: &str) -> String {
+    if s.chars().count() > 200 {
+        format!("{}...", s.chars().take(200).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
 fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
     match max {
         // types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `too_long_11` (a Code[10] given 11 characters).
         Some(m) if Value::text_len(&s) > m as usize => crate::native::raise(
             format!(
-                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {s}",
-                Value::text_len(&s)
+                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                Value::text_len(&s),
+                shown_in_length_error(&s)
             ),
             "StringLengthExceeded",
         ),
@@ -721,6 +727,8 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Decimal(
                 a.checked_div(b)
                     .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+                    // A quotient carries no trailing zeros (types/lt-scalars/ScT70056.al:Integer_DivisionResult `value 3.5`).
+                    .map(|q| q.normalize())
                     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?,
             ));
         }

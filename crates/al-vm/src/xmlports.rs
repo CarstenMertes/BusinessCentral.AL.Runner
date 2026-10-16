@@ -826,7 +826,8 @@ impl Session {
                     // xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_ValueTooLongForField_Throws
                     return Err(xerr(
                         format!(
-                            "The length of the string is {n}, but it must be less than or equal to {m} characters. Value: {text}"
+                            "The length of the string is {n}, but it must be less than or equal to {m} characters. Value: {}",
+                            ops::shown_in_length_error(text)
                         ),
                         "StringLengthExceeded",
                     ));

@@ -41,6 +41,8 @@ pub struct Layout {
     pub text_encoding_declared: bool,
     pub utf8: bool,
     pub format_evaluate_xml: bool,
+    /// `FormatEvaluate` as declared.
+    pub format_evaluate_declared: Option<bool>,
     pub reasons: Vec<String>,
     /// Reasons only running the port refuses (see `ir::XmlPort::run_unsupported`).
     pub run_reasons: Vec<String>,
@@ -102,6 +104,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         text_encoding_declared: false,
         utf8: false,
         format_evaluate_xml: false,
+        format_evaluate_declared: None,
         reasons: Vec::new(),
         run_reasons: Vec::new(),
     };
@@ -142,8 +145,11 @@ pub fn layout(obj: &ast::Object) -> Layout {
             }
             // xmlport/TestXmlPortFormatEvaluateContracts.al: Legacy is the display text, Xml the XML forms.
             "formatevaluate" => match value.trim().to_ascii_lowercase().as_str() {
-                "legacy" => {}
-                "xml" => out.format_evaluate_xml = true,
+                "legacy" => out.format_evaluate_declared = Some(false),
+                "xml" => {
+                    out.format_evaluate_xml = true;
+                    out.format_evaluate_declared = Some(true);
+                }
                 other => out
                     .run_reasons
                     .push(format!("xmlport property formatevaluate = {other} is not pinned")),
@@ -447,6 +453,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
         text_encoding_declared: layout.text_encoding_declared,
         utf8: layout.utf8,
         format_evaluate_xml: layout.format_evaluate_xml,
+        format_evaluate_declared: layout.format_evaluate_declared.is_some(),
         nodes,
         source_slot: cx.source_slot,
         destination_slot: cx.destination_slot,

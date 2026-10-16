@@ -739,6 +739,8 @@ fn int_arg(args: &[Value], i: usize) -> Option<i64> {
         Value::BigInteger(n) => Some(*n),
         Value::Byte(n) => Some(i64::from(*n)),
         Value::Char(n) => Some(i64::from(*n)),
+        // An Option takes the place of an Integer (record/lt-record-conversion-assumptions/OptCopyStr_risky.al: CopyStr('abcdef', Opt)).
+        Value::Option(n, _) => Some(i64::from(*n)),
         _ => None,
     }
 }
@@ -831,6 +833,15 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
         if let Some(r) = ctx.format_dotnet(&args[0]) {
             return r.map(|s| Value::Text(s.into()));
         }
+    }
+    // The first day of the calendar (00010101D) is not a valid date to format with the numbers 0, 1, 4 and 9 (types/lt-datetime/
+    // Format.al:Date_Format_0D_And_Bounds); the keys and messages the runtime builds itself format it all the same.
+    if matches!(&args[0], Value::Date(1, _)) && matches!(std, 0 | 1 | 4 | 9) {
+        return Err(Signal::Error(Box::new(AlError {
+            message: "The date is not valid.".into(),
+            code: "DateInvalid".into(),
+            call_stack: String::new(),
+        })));
     }
     // A record as a whole, a RecordRef and a FieldRef need the table's schema.
     let composite = matches!(&args[0], Value::Record(_))

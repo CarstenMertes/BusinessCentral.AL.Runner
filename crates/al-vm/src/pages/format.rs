@@ -430,11 +430,12 @@ impl Session {
     pub(super) fn control_visible(&mut self, st: &St, idx: usize) -> Result<bool, Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
-        // Own Visible is the open-time value; a group's is live and so are the groups around the
+        // Own Visible is the open-time value; a group's and a part's are live (a part: pages/lt-page-filtergroup-assumptions/
+        // P99InvisiblePart.al:P99_FlagTrueInOnAfterGetCurrRecord) and so are the groups around the
         // control (corpus handlers/TestPageControlPropertyLiveness_Tests.al:56).
         let own = if matches!(
             page.controls[idx].kind,
-            ir::ControlKind::Group | ir::ControlKind::CueGroup
+            ir::ControlKind::Group | ir::ControlKind::CueGroup | ir::ControlKind::Part
         ) {
             self.prop_bool_now(st, idx, "visible", true)?
         } else {

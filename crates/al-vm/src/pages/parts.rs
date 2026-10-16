@@ -145,12 +145,15 @@ impl Session {
         // (misc/lt-probes-needed-7/PnGPartTriggers.al:HiddenPartExpression); only a literal `Visible = false` leaves it out
         // (testpart/TestPartNotOnThePage, which never creates the part).
         let found = found.or_else(|| {
+            // Test code finds it only when the Visible expression hid it; a part a literal `Visible = false` left out, which page
+            // code created on first reach, stays "not found" (misc/lt-probes-needed-9/P99InvisiblePart.al:P99_StaticInvisible).
             let hidden = st
                 .borrow()
                 .hidden_parts
                 .iter()
                 .find(|(i, _)| *i == control)
-                .map(|(_, c)| c.clone());
+                .map(|(_, c)| c.clone())
+                .filter(|_| runtime || !self.control_eliminated(st, control));
             if hidden.is_some() && runtime {
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::InvisiblePartForPageCode);
             }
@@ -209,9 +212,24 @@ impl Session {
     /// Reads the link of every part off the host's current row and loads the parts' first rows.
     /// Providers go first: a part linked through `Provider` reads the provider's current row.
     pub(super) fn sync_parts(&mut self, st: &St) -> Result<(), Signal> {
+        self.sync_parts_with(st, false)
+    }
+
+    /// [`Self::sync_parts`] as the host opens: the parts hidden by a Visible expression read their rows too, in the order of the
+    /// controls (pages/lt-page-filtergroup-assumptions/P99InvisiblePart.al:P99_FlagFalseAtOpen).
+    pub(super) fn sync_parts_at_open(&mut self, st: &St) -> Result<(), Signal> {
+        self.sync_parts_with(st, true)
+    }
+
+    fn sync_parts_with(&mut self, st: &St, opening: bool) -> Result<(), Signal> {
         let engine = self.engine();
         let page = page_of(&engine, st);
-        let parts = st.borrow().parts.clone();
+        let mut parts = st.borrow().parts.clone();
+        if opening {
+            let hidden = st.borrow().hidden_parts.clone();
+            parts.extend(hidden.into_iter().filter(|(i, _)| !self.control_eliminated(st, *i)));
+            parts.sort_by_key(|(i, _)| *i);
+        }
         let has_provider = |i: usize| {
             page.controls[i]
                 .part_link

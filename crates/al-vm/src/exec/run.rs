@@ -17,11 +17,45 @@ fn take(f: &mut Frame, r: u16, nl: u16) -> Value {
     }
 }
 
+/// Whether a value owns nothing (no text, no handle): letting go of it needs no drop glue.
+#[inline(always)]
+fn plain(v: &Value) -> bool {
+    matches!(
+        v,
+        Value::Null
+            | Value::Boolean(_)
+            | Value::Integer(_)
+            | Value::BigInteger(_)
+            | Value::Decimal(_)
+            | Value::Byte(_)
+            | Value::Char(_)
+            | Value::Date(..)
+            | Value::Time(_)
+            | Value::DateTime(_)
+            | Value::Duration(_)
+            | Value::Guid(_)
+            | Value::Enum(..)
+    )
+}
+
+/// `*slot = v` without the call to the drop glue when the old value owns nothing.
+#[inline(always)]
+fn set(slot: &mut Value, v: Value) {
+    if plain(slot) {
+        std::mem::forget(std::mem::replace(slot, v));
+    } else {
+        *slot = v;
+    }
+}
+
 /// Lets go of temporary `r` after an instruction read it by reference.
 #[inline(always)]
 fn release(f: &mut Frame, r: u16, nl: u16) {
     if r >= nl {
-        f.locals[r as usize] = Value::Null;
+        let slot = &mut f.locals[r as usize];
+        if !plain(slot) {
+            *slot = Value::Null;
+        }
     }
 }
 
@@ -53,26 +87,26 @@ impl Session {
             match op {
                 Op::Move { d, a } => {
                     let v = f.locals[a as usize].clone();
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::Const { d, k } => {
                     let v = self.constant_once(&chunk.consts[k as usize]);
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::LoadGlobal { d, i } => {
                     let v = f.instance.borrow().globals[i as usize].clone();
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::ReadPlace { d, p } => {
                     let v = self.read(&chunk.places[p as usize], f)?;
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::StoreLocal { i, a, p } => {
                     let v = take(f, a, nl);
                     if matches!(v, Value::Record(_) | Value::Library(..)) {
                         self.write(&chunk.places[p as usize], v, f)?;
                     } else {
-                        f.locals[i as usize] = v;
+                        set(&mut f.locals[i as usize], v);
                     }
                 }
                 Op::StorePlace { p, a } => {
@@ -83,7 +117,7 @@ impl Session {
                     let v = Self::binary_op(op, &f.locals[a as usize], &f.locals[b as usize])?;
                     release(f, a, nl);
                     release(f, b, nl);
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::ConstI { d, v } => f.locals[d as usize] = Value::Integer(v),
                 Op::BinI { op, d, a, b } => {
@@ -114,15 +148,15 @@ impl Session {
                     };
                     release(f, a, nl);
                     release(f, b, nl);
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::Un { op, d, a } => {
                     let v = Self::unary_op(op, take(f, a, nl))?;
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::Convert { d, a, t } => {
                     let v = ops::convert(take(f, a, nl), &chunk.types[t as usize])?;
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::Jump { t } => pc = t as usize,
                 Op::JumpIfNot { a, t } => {
@@ -161,11 +195,11 @@ impl Session {
                 Op::ForNext { s } => self.for_next(&chunk.fors[s as usize], f)?,
                 Op::Call { s, d } => {
                     let v = self.run_call(&chunk.calls[s as usize], f, nl)?;
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::Builtin { s, d } => {
                     let v = self.run_builtin(&chunk.builtins[s as usize], f, nl)?;
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::TreeExpr { e, d } => {
                     if counting() {
@@ -173,7 +207,7 @@ impl Session {
                         note_tree(&chunk.expr_kinds[e as usize], false);
                     }
                     let v = self.eval(&chunk.exprs[e as usize], f)?;
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::TreeStmt { s, brk, cont } => {
                     if counting() {
@@ -208,7 +242,7 @@ impl Session {
                 }
                 Op::IfaceCall { s, d } => {
                     let v = self.run_iface(&chunk.ifaces[s as usize], f, nl)?;
-                    f.locals[d as usize] = v;
+                    set(&mut f.locals[d as usize], v);
                 }
                 Op::Clear { a } => f.locals[a as usize] = Value::Null,
                 Op::Ret => return Err(Signal::Exit(None)),
@@ -294,7 +328,7 @@ impl Session {
         };
         release(f, a, nl);
         release(f, b, nl);
-        f.locals[d as usize] = v;
+        set(&mut f.locals[d as usize], v);
         Ok(())
     }
 
@@ -315,26 +349,26 @@ impl Session {
     fn op_in(&mut self, labels: &[ir::SetElem], f: &mut Frame, d: u16, a: u16, nl: u16) -> Result<(), Signal> {
         let v = take(f, a, nl);
         let hit = self.matches_any(&v, labels, f)?;
-        f.locals[d as usize] = Value::Boolean(hit);
+        set(&mut f.locals[d as usize], Value::Boolean(hit));
         Ok(())
     }
 
     #[inline(never)]
     fn op_dotnet(&mut self, site: &DotNetSite, f: &mut Frame, d: u16, nl: u16) -> Result<(), Signal> {
         let v = self.run_dotnet(site, f, nl)?;
-        f.locals[d as usize] = v;
+        set(&mut f.locals[d as usize], v);
         Ok(())
     }
 
     #[inline(never)]
     fn op_this(f: &mut Frame, d: u16) {
-        f.locals[d as usize] = Value::Codeunit(f.instance.clone());
+        set(&mut f.locals[d as usize], Value::Codeunit(f.instance.clone()));
     }
 
     #[inline(never)]
     fn op_base(&mut self, f: &mut Frame, d: u16) -> Result<(), Signal> {
         let v = Value::Codeunit(self.base_instance(f)?);
-        f.locals[d as usize] = v;
+        set(&mut f.locals[d as usize], v);
         Ok(())
     }
 
@@ -351,7 +385,7 @@ impl Session {
             }
             AuxSite::QueryColumn { column } => self.query_column(v, *column)?,
         };
-        f.locals[d as usize] = r;
+        set(&mut f.locals[d as usize], r);
         Ok(())
     }
 
@@ -371,7 +405,7 @@ impl Session {
             return Err(Signal::Unsupported("a for loop counter that is not set".into()));
         };
         if let (Some(v), Ok(n)) = (site.int_local, i32::try_from(i)) {
-            f.locals[v as usize] = Value::Integer(n);
+            set(&mut f.locals[v as usize], Value::Integer(n));
             return Ok(());
         }
         let slot_ty = self.place_type(&site.var, f);

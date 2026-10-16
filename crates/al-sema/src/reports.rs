@@ -42,7 +42,7 @@ const INERT_ITEM_PROPERTIES: &[&str] = &[
 ];
 
 /// Sections that only matter to a layout or a request page.
-const LAYOUT_SECTIONS: &[&str] = &["rendering", "labels", "wordlayout", "rdlclayout", "excellayout"];
+const LAYOUT_SECTIONS: &[&str] = &["rendering", "wordlayout", "rdlclayout", "excellayout"];
 
 /// Column properties that steer how a layout shows a number. The Base Application states
 /// `AutoFormatType` on most decimal columns, so a dataset that refused them would refuse nearly every
@@ -105,6 +105,48 @@ pub struct Layout {
     pub layout_file_missing: bool,
     /// Why `Report.SaveAs(.., Xml, ..)` cannot write this report's dataset.
     pub dataset_reasons: Vec<String>,
+    /// The `labels` section: (name, text).
+    pub labels: Vec<(String, String)>,
+}
+
+/// The entries of a `labels` section: `Name = 'text'` with optional `Comment`, `MaxLength` and `Locked` after a comma,
+/// none of which reaches the dataset; an empty text reads as the name (corpus report/PZReportLabels.al:
+/// Labels_AreWrittenIntoTheDataset). `Err` names an entry whose text is not one plain literal.
+fn label_entries(section: &ast::Section) -> Result<Vec<(String, String)>, String> {
+    let mut out = Vec::new();
+    for p in section.properties() {
+        let (name, value) = (p.name(), p.value_text());
+        let value = value.trim();
+        let Some(rest) = value.strip_prefix('\'') else {
+            return Err(format!("label {name} is not a text literal"));
+        };
+        // The literal ends at the first quote that is not doubled.
+        let mut text = String::new();
+        let mut chars = rest.char_indices().peekable();
+        let mut end = None;
+        while let Some((i, c)) = chars.next() {
+            if c == '\'' {
+                if chars.peek().is_some_and(|(_, n)| *n == '\'') {
+                    text.push('\'');
+                    chars.next();
+                } else {
+                    end = Some(i + 1);
+                    break;
+                }
+            } else {
+                text.push(c);
+            }
+        }
+        let Some(end) = end else {
+            return Err(format!("label {name} is not a text literal"));
+        };
+        let after = rest[end..].trim();
+        if !(after.is_empty() || after.starts_with(',')) {
+            return Err(format!("label {name} is not one text literal"));
+        }
+        out.push((name.clone(), if text.is_empty() { name } else { text }));
+    }
+    Ok(out)
 }
 
 /// The value of a property written as one text literal (`'it''s'`), unquoted.
@@ -204,6 +246,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
         default_layout: default_layout(obj),
         layout_file_missing: layout_file_missing(obj),
         dataset_reasons: Vec::new(),
+        labels: Vec::new(),
     };
     for p in obj.properties() {
         let (name, value) = (p.name().to_ascii_lowercase(), p.value_text());
@@ -279,12 +322,12 @@ pub fn layout(obj: &ast::Object) -> Layout {
                     }
                 }
             }
-            "labels" if top.sections().next().is_some() => {
-                out.dataset_reasons
-                    .push("the report declares labels (whether the dataset carries them is not pinned)".into());
-                out.output
-                    .push("report section labels (a layout) is not supported yet".into());
-            }
+            // Labels feed the layouts and the dataset a SaveAs writes (report/PZReportLabels.al); a run renders
+            // nothing from them.
+            "labels" => match label_entries(&top) {
+                Ok(l) => out.labels.extend(l),
+                Err(why) => out.dataset_reasons.push(why),
+            },
             n if LAYOUT_SECTIONS.contains(&n) => out
                 .output
                 .push(format!("report section {n} (a layout) is not supported yet")),
@@ -521,6 +564,8 @@ pub struct ExtLayout {
     /// `add(Item)` blocks (columns for a base item): the item's name and the block.
     pub adds: Vec<(String, ast::Section)>,
     pub reasons: Vec<String>,
+    /// The `labels` section of the extension.
+    pub labels: Vec<(String, String)>,
 }
 
 /// Walks reportextension `obj`. Only what the corpus pins is understood
@@ -533,6 +578,7 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
         items: Vec::new(),
         adds: Vec::new(),
         reasons: Vec::new(),
+        labels: Vec::new(),
     };
     for p in obj.properties() {
         let name = p.name().to_ascii_lowercase();
@@ -615,6 +661,11 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                 }
             }
             "requestpage" => {}
+            // Written after the base report's labels (report/PZReportLabels.al: Labels_AreWrittenIntoTheDataset).
+            "labels" => match label_entries(&top) {
+                Ok(l) => out.labels.extend(l),
+                Err(why) => out.reasons.push(format!("reportextension {why}")),
+            },
             other => out
                 .reasons
                 .push(format!("reportextension section {other} is not supported yet")),
@@ -918,6 +969,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         about_title: layout.about_title.clone(),
         about_text: layout.about_text.clone(),
         layout: layout.default_layout,
+        labels: layout.labels.clone(),
         dataset_unsupported: layout.dataset_reasons.clone(),
         layout_file_missing: layout.layout_file_missing,
     }
@@ -1083,6 +1135,7 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
             modifies,
             added,
             adds,
+            labels: cx.layout.labels.clone(),
         },
         reasons,
     )

@@ -732,3 +732,15 @@ fn format_of_a_record_ends_with_its_flow_filter_fields_at_their_value() {
         "1\tx\t0|1\tx\t0|1\tx\t0"
     );
 }
+
+// platform/lt-xmlport-session-navapp-cookie/P94Session.al: StopSession of an id no session has answers false; the running
+// session's own id is refused.
+#[test]
+fn stop_session_is_false_for_an_unknown_id_and_refused_for_the_running_session() {
+    let r = run("procedure F(): Boolean begin exit(Session.StopSession(99999)); end;");
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
+    let r = run("procedure F(): Boolean begin exit(Session.StopSession(0, 'why')); end;");
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
+    let r = run("procedure F(): Boolean begin exit(Session.StopSession(Database.SessionId())); end;");
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}

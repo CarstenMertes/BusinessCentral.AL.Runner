@@ -2,6 +2,8 @@ use super::*;
 use al_builtins::page_op::PageMethod;
 use al_builtins::record_op::RecordOp;
 
+const FIELD_ARGUMENT_WITH_HANDLER: &str = "Page.Run or Page.RunModal with a field argument and a handler for the page (what the handler sees and what the field takes is not pinned)";
+
 impl Session {
     /// The caption a CaptionClass text stands for. Area 3 is the literal text. Other numeric areas
     /// are the platform's resolvers, which are not modelled. An area that is not a number, or no
@@ -819,6 +821,20 @@ impl Session {
     /// calling AL, hands it to the bound handler (or to the `TestPage.Trap()` variable for a plain
     /// run), and for a modal run reports how it closed.
     pub(crate) fn run_page_ui(&mut self, st: &St, record: Option<Rec>, modal: bool) -> Result<Value, Signal> {
+        self.run_page_ui_with(st, record, modal, false)
+    }
+
+    /// [`run_page_ui`](Self::run_page_ui); `field`: the call had a field argument (`Page.RunModal(Id, Rec, Rec.Field)`).
+    /// With no handler for the page the field changes nothing: the unhandled-UI error is the same as without it
+    /// (corpus errors/lt-last-error-and-events/P70_06RunModalField.al). What a handler sees and what the field
+    /// takes when it answers OK is not pinned, so that is refused.
+    pub(crate) fn run_page_ui_with(
+        &mut self,
+        st: &St,
+        record: Option<Rec>,
+        modal: bool,
+        field: bool,
+    ) -> Result<Value, Signal> {
         let object = st.borrow().object;
         let mut st = st.clone();
         let mut trapped = false;
@@ -841,6 +857,9 @@ impl Session {
         }
         if modal {
             if let Some(handler) = self.take_typed_modal_handler(object) {
+                if field {
+                    return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
+                }
                 return self.answer_typed_modal(&st, record, handler);
             }
         }
@@ -850,6 +869,9 @@ impl Session {
         let Some(handler) = handler else {
             return Ok(Value::Null);
         };
+        if field {
+            return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
+        }
         self.answer_page(&st, handler, modal)
     }
 

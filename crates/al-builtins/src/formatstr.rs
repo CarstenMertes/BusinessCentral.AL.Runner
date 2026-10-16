@@ -51,8 +51,82 @@ struct Numeric {
     precision: Option<(u32, u32)>,
 }
 
+const CODE_NAMES: [&str; 19] = [
+    "Standard Format",
+    "Integer Thousand",
+    "Integer",
+    "Decimals",
+    "Sign",
+    "Filler Character",
+    "Precision",
+    "Year4",
+    "Year",
+    "Month Text",
+    "Month",
+    "Day",
+    "Weekday Text",
+    "Closing",
+    "Hours24",
+    "Hours12",
+    "Minutes",
+    "Seconds",
+    "AM/PM",
+];
+
+/// The codes of `template` spelled as this module knows them: a code name in any case, and blanks around the name and
+/// after the comma (`<precision, 2:2><standard format,0>` of Base Application's percent texts, `<sign><integer>` of
+/// Microsoft's test libraries). That BC reads codes this way is not pinned by a corpus test (assumption
+/// `format-code-spelling`); `None` when the template needs no change.
+fn canonical_template(template: &str) -> Option<String> {
+    let mut out = String::with_capacity(template.len());
+    let mut rest = template;
+    let mut changed = false;
+    while let Some(open) = rest.find('<') {
+        out.push_str(&rest[..open]);
+        let after = &rest[open + 1..];
+        let Some(close) = after.find('>') else {
+            out.push_str(&rest[open..]);
+            return changed.then_some(out);
+        };
+        let code = &after[..close];
+        let (name, arg) = match code.split_once(',') {
+            Some((n, a)) => (n, Some(a)),
+            None => (code, None),
+        };
+        let known = CODE_NAMES.iter().find(|c| c.eq_ignore_ascii_case(name.trim()));
+        let canon = match known {
+            Some(c) => {
+                let arg = arg.map(|a| {
+                    if *c == "Filler Character" {
+                        a.trim_start()
+                    } else {
+                        a.trim()
+                    }
+                });
+                match arg {
+                    Some(a) => format!("{c},{a}"),
+                    None => (*c).to_string(),
+                }
+            }
+            None => code.to_string(),
+        };
+        changed |= canon != code;
+        out.push('<');
+        out.push_str(&canon);
+        out.push('>');
+        rest = &after[close + 1..];
+    }
+    out.push_str(rest);
+    changed.then_some(out)
+}
+
 /// `Err` names the part of the format string that is not understood.
 pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -> Result<String, String> {
+    let canon = canonical_template(template);
+    if canon.is_some() {
+        crate::assumptions::assume(crate::assumptions::Assumption::FormatCodeSpelling);
+    }
+    let template = canon.as_deref().unwrap_or(template);
     let mut pieces: Vec<(bool, &str)> = Vec::new();
     let mut rest = template;
     while let Some(open) = rest.find('<') {
@@ -330,6 +404,25 @@ mod tests {
             Ok(Value::Text(s)) => s.to_string(),
             other => panic!("{other:?}"),
         }
+    }
+
+    /// Microsoft's code writes `<sign><integer>` and `<precision, 2:2><standard format,0>%`: codes in any case, blanks
+    /// after the comma. Not pinned by a corpus test (assumption `format-code-spelling`, docs/probes-needed.md).
+    #[test]
+    fn codes_are_read_in_any_case_and_with_blanks_after_the_comma() {
+        assert_eq!(text(fmt(Value::Integer(-5), "<sign><integer>")), "-5");
+        assert_eq!(text(fmt(Value::Integer(5), "<SIGN><INTEGER>")), "5");
+        assert_eq!(text(fmt(Value::Integer(10), "<integer, 4>")), "  10");
+        assert_eq!(
+            text(fmt(
+                Value::Decimal("0.5".parse().unwrap()),
+                "<precision, 2:2><standard format,0>%"
+            )),
+            text(fmt(
+                Value::Decimal("0.5".parse().unwrap()),
+                "<Precision,2:2><Standard Format,0>%"
+            ))
+        );
     }
 
     #[test]

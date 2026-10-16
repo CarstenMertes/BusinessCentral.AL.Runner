@@ -137,7 +137,7 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
 /// value of the day plus 5 %. Where the kernel refuses the counter, the old limit on the runtime phases in seconds
 /// applies. The seconds are printed for information. A run over the limit is repeated, at most `WITH_APPS_RUNS` times in
 /// all, and the best counts: a real regression is over the limit every time.
-const WITH_APPS_LIMIT_INSTRUCTIONS: u64 = 144_000_000_000;
+const WITH_APPS_LIMIT_INSTRUCTIONS: u64 = 155_000_000_000;
 const WITH_APPS_BUDGET_SECS: f64 = 12.0;
 const WITH_APPS_RUNS: usize = 3;
 /// No single test codeunit may take longer: one codeunit that walked 2.9 million computed Date

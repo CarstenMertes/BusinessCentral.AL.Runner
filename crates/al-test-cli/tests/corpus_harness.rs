@@ -449,11 +449,12 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // (27, guarded by `#if not BC28PLUS`) and thirty-one guarded by `#if BC28PLUS` or `#if BC29PLUS` (corpus bump 10: the
     // BigInteger FlowField and query aggregate tests, the Base64 and conversion error texts that differ on 27.0 and 27.3,
     // and the interface collection codeunit).
-    assert!(out.contains("oracle: 37 case(s) differ between versions"), "{out}");
+    assert!(out.contains("oracle: 42 case(s) differ between versions"), "{out}");
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
-    // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
-    // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.
-    assert!(out.contains("runtime: 1 case(s) differ between versions"), "{out}");
+    // cases every oracle has. Three differences are known and open (backlog): the runtime passes 71500
+    // Get_Uses_Primary_Key_Not_Current_Key (corpus bump 10) and, from corpus bump 13, 71203 Value_And_As_OnFilledRow and
+    // 72417 P106_AsDateTime_Values on BC 27 only (guarded probes whose gate is not consumed yet). A new difference would be listed here.
+    assert!(out.contains("runtime: 3 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
 }
 

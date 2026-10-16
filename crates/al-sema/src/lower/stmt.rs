@@ -583,7 +583,11 @@ impl Lowerer<'_> {
                             self.ws.objects[self.oi].kind,
                             ObjKind::Report | ObjKind::ReportExtension
                         )
-                        && recv.text().to_string().trim().eq_ignore_ascii_case("RequestOptionsPage");
+                        && recv
+                            .text()
+                            .to_string()
+                            .trim()
+                            .eq_ignore_ascii_case("RequestOptionsPage");
                     if !sig.instance || current_report || request_page {
                         None
                     } else {

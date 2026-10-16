@@ -1245,12 +1245,8 @@ impl Session {
         // A Text of ASCII only gets an ASCII character in place (a loop over a long text stays linear): the variable lets
         // go of its hold first so that nothing is copied.
         if let (false, Some(unit), true) = (is_code, unit.filter(|u| *u < 128), i >= 1) {
-            let slot = match base {
-                ir::Place::Local(l) => Some(&mut f.locals[*l]),
-                _ => None,
-            };
-            if let Some(slot) = slot {
-                if let Value::Text(t) = slot {
+            if let ir::Place::Local(l) = base {
+                if let Value::Text(t) = &mut f.locals[*l] {
                     let at = (i - 1) as usize;
                     if t.is_ascii() && at < t.len() {
                         t.set_ascii_byte(at, unit as u8);

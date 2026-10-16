@@ -48,3 +48,19 @@ fn a_character_written_into_a_text_is_seen_by_the_next_read_and_not_by_a_copy() 
     // After the write the text is still known to be ASCII; a write of a non-ASCII character goes the general way.
     assert_eq!(text("T := 'abc'; T[2] := 'x'; exit(T);"), "axc");
 }
+
+#[test]
+fn last_index_of_agrees_for_ascii_and_non_ascii_text() {
+    assert_eq!(
+        text(
+            "T := 'xabcabc'; exit(Format(T.LastIndexOf('b')) + ',' + Format(T.LastIndexOf('b', 5)) + ',' + Format(T.LastIndexOf('')));"
+        ),
+        "6,3,8"
+    );
+    assert_eq!(
+        text(
+            "T := 'x\u{e9}abcabc'; exit(Format(T.LastIndexOf('b')) + ',' + Format(T.LastIndexOf('b', 6)) + ',' + Format(T.LastIndexOf('')));"
+        ),
+        "7,4,9"
+    );
+}

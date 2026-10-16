@@ -173,7 +173,28 @@ fn index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
 /// `StartIndex` characters (`'hello'.LastIndexOf('l', 3) = 3`), both in
 /// types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
 fn last_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (s, sub) = (u16s(&recv_text(&r)?), u16s(&text(a, 0)?));
+    let (st, sb) = (recv_text(&r)?, text(a, 0)?);
+    // Text of ASCII only is searched where it lies, with no copy of it.
+    if st.is_ascii() && sb.is_ascii() {
+        let limit = if a.len() > 1 {
+            let n = int(a, 1)?;
+            if n < 1 || n as usize > st.len() {
+                return Err(out_of_range(
+                    "Index was out of range. Must be non-negative and less than the size of the collection. (Parameter 'startIndex')",
+                ));
+            }
+            n as usize
+        } else {
+            st.len()
+        };
+        if sb.is_empty() {
+            return Ok(Value::Integer(st.len() as i32 + 1));
+        }
+        return Ok(Value::Integer(
+            st[..limit].rfind(sb.as_str()).map_or(0, |p| p as i32 + 1),
+        ));
+    }
+    let (s, sub) = (u16s(&st), u16s(&sb));
     let limit = if a.len() > 1 {
         let n = int(a, 1)?;
         if n < 1 || n as usize > s.len() {

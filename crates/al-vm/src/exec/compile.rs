@@ -695,7 +695,7 @@ impl Compiler {
             }
             S::Foreach { var, collection, body }
                 if matches!(collection, ir::Expr::Load(ir::Place::Local(i))
-                    if matches!(self.locals_ty.get(*i), Some(RtType::List(_)))) =>
+                    if matches!(self.locals_ty.get(*i), Some(RtType::List(_) | RtType::Library(_)))) =>
             {
                 let coll = self.expr_copy(collection)?;
                 let items = self.alloc()?;

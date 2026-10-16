@@ -27,7 +27,10 @@ impl Ord for Key {
 }
 
 type Table = im::OrdMap<Key, Row>;
-type Tables = im::OrdMap<(String, u32), Table>;
+/// A table's place in the store: its company (empty for a table that is not per company) and its object. The company
+/// is a shared name, so building a slot for an operation copies a pointer, not a string.
+type Slot = (std::sync::Arc<str>, u32);
+type Tables = im::OrdMap<Slot, Table>;
 
 /// The rows of one table, built to be handed to a [`MemStore`] by a [`Backing`].
 #[derive(Clone)]
@@ -102,15 +105,15 @@ pub struct MemStore {
     committed: Tables,
     /// The value of `counter` when each table last changed. It follows `tables` through commit and
     /// rollback, so a table has the same stamp exactly when it has the same content history.
-    versions: im::OrdMap<(String, u32), u64>,
-    committed_versions: im::OrdMap<(String, u32), u64>,
+    versions: im::OrdMap<Slot, u64>,
+    committed_versions: im::OrdMap<Slot, u64>,
     /// The value of `counter` when the *shape* of each table last changed: a row was inserted, deleted or
     /// renamed, or a Modify changed a field some key is made of. It follows `tables` like `versions`, so
     /// equal stamps mean the same rows in the same places in every key.
-    shapes: im::OrdMap<(String, u32), u64>,
-    committed_shapes: im::OrdMap<(String, u32), u64>,
+    shapes: im::OrdMap<Slot, u64>,
+    committed_shapes: im::OrdMap<Slot, u64>,
     /// The primary keys of a big table in the order of one of its other keys, as of a shape stamp.
-    order_cache: std::cell::RefCell<std::collections::HashMap<(String, u32, usize), OrderEntry>>,
+    order_cache: std::cell::RefCell<std::collections::HashMap<(Slot, usize), OrderEntry>>,
     /// Handed out by writes; never goes back, so a stamp is never reused.
     counter: u64,
     /// Tables that have no stored rows (ADR-019).
@@ -135,12 +138,17 @@ pub struct RestoredChange {
     pub fields: Vec<String>,
 }
 
-fn slot(cx: &AccessContext, t: &TableDef) -> (String, u32) {
+thread_local! {
+    /// The company of a table that is not per company; one per thread, so threads do not share its count.
+    static NO_COMPANY: std::sync::Arc<str> = std::sync::Arc::from("");
+}
+
+fn slot(cx: &AccessContext, t: &TableDef) -> Slot {
     (
         if t.per_company {
-            cx.company.to_string()
+            cx.company.clone()
         } else {
-            String::new()
+            NO_COMPANY.with(|e| e.clone())
         },
         t.object,
     )
@@ -303,7 +311,7 @@ impl MemStore {
     pub fn has_company_rows(&self, company: &str) -> bool {
         self.tables
             .iter()
-            .any(|((c, _), t)| !c.is_empty() && c == company && !t.is_empty())
+            .any(|((c, _), t)| !c.is_empty() && &**c == company && !t.is_empty())
             || self
                 .backing
                 .as_ref()
@@ -316,11 +324,11 @@ impl MemStore {
             .tables
             .iter()
             .filter(|((c, o), t)| *o == object && !c.is_empty() && !t.is_empty())
-            .map(|((c, _), _)| c.clone())
+            .map(|((c, _), _)| c.to_string())
             .collect();
         if let Some(b) = &self.backing {
             let company = b.company();
-            let held = self.tables.contains_key(&(company.to_string(), object));
+            let held = self.tables.contains_key(&(std::sync::Arc::from(company), object));
             if !held && b.rows(company, object).is_some_and(|r| !r.is_empty()) {
                 out.push(company.to_string());
             }
@@ -331,10 +339,10 @@ impl MemStore {
     /// Removes every row of `company`'s tables, as deleting the company does. Part of the open
     /// transaction: a rollback puts the rows back.
     pub fn drop_company(&mut self, company: &str) {
-        let doomed: Vec<(String, u32)> = self
+        let doomed: Vec<Slot> = self
             .tables
             .keys()
-            .filter(|(c, _)| !c.is_empty() && c == company)
+            .filter(|(c, _)| !c.is_empty() && &**c == company)
             .cloned()
             .collect();
         for slot in doomed {
@@ -348,15 +356,15 @@ impl MemStore {
     /// Moves every row of company `old` to company `new`, as renaming the company does
     /// (record/TestChangeCompanyFiltersCopyDeleteContracts.al:170-212). Part of the open transaction.
     pub fn rename_company(&mut self, old: &str, new: &str) {
-        let moved: Vec<(String, u32)> = self
+        let moved: Vec<Slot> = self
             .tables
             .keys()
-            .filter(|(c, _)| !c.is_empty() && c == old)
+            .filter(|(c, _)| !c.is_empty() && &**c == old)
             .cloned()
             .collect();
         for slot in moved {
             if let Some(table) = self.tables.remove(&slot) {
-                let target = (new.to_string(), slot.1);
+                let target: Slot = (std::sync::Arc::from(new), slot.1);
                 self.tables.insert(target.clone(), table);
                 self.counter += 1;
                 self.versions.insert(slot.clone(), self.counter);
@@ -401,9 +409,9 @@ impl MemStore {
     }
 
     /// The primary keys of `table` in the order of key `key`, kept while the shape of the table stays.
-    fn order_of(&self, slot: &(String, u32), key: usize, t: &TableDef, table: &Table) -> std::rc::Rc<Vec<Key>> {
+    fn order_of(&self, slot: &Slot, key: usize, t: &TableDef, table: &Table) -> std::rc::Rc<Vec<Key>> {
         let shape = self.shapes.get(slot).copied().unwrap_or(0);
-        let ck = (slot.0.clone(), slot.1, key);
+        let ck = (slot.clone(), key);
         if let Some(e) = self.order_cache.borrow().get(&ck) {
             if e.shape == shape && e.rows == table.len() {
                 return e.order.clone();

@@ -121,6 +121,15 @@ impl<'a> MemberTable<'a> {
         }
     }
 
+    /// The members object `i` declares itself, without those of its extensions.
+    pub fn own(&self, i: usize) -> Members {
+        if self.ws.usable(i) {
+            own_members(self.ws, i)
+        } else {
+            Members::default()
+        }
+    }
+
     pub fn len(&self) -> usize {
         self.cells.len()
     }

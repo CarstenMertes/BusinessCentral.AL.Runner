@@ -7,8 +7,7 @@
 //! it unchanged.
 //!
 //! Core crate: no OS access (ADR-006).
-
-use al_ir::sym::{ControlKey, FieldKey, FxMap, LocalKey, ObjKey, RoutineKey, SymObject};
+use al_ir::sym::{Contribution, ControlKey, FieldKey, FxMap, ListKind, LocalKey, ObjKey, RoutineKey, SymObject};
 use al_ir::walk::{RefVisitor, TableOf, walk_object};
 use al_ir::{Object, Program, SrcPos};
 use std::sync::OnceLock;
@@ -334,12 +333,14 @@ pub fn link<'k>(
 ) -> Result<Linked, Box<LinkError>> {
     debug_assert!(base.objects.is_empty() && base.positions.is_empty());
     // What each symbolic object's tables mean in the program: the position of every key.
+    let merges;
     let resolved: Vec<Option<Resolved>> = {
         let space = UnitSpace {
             units: &units,
             routines,
         };
         let tables = Tables::new(&space)?;
+        merges = Merges::collect(&units, &tables);
         par_map(units.iter().collect(), workers, |_, u| match u {
             Unit::Sym(s) => tables.resolve(s).map(Some),
             Unit::Dense(_) => Ok(None),
@@ -355,6 +356,14 @@ pub fn link<'k>(
         pos_ranges.push((next, len));
         next += len;
     }
+    let mut units = units;
+    let contributions: Vec<Contribution> = units
+        .iter_mut()
+        .map(|u| match u {
+            Unit::Sym(s) => std::mem::take(&mut s.contribution),
+            Unit::Dense(_) => Contribution::default(),
+        })
+        .collect();
     let work: Vec<(Unit, Option<Resolved>)> = units.into_iter().zip(resolved).collect();
     let done = par_map(
         work,
@@ -385,6 +394,7 @@ pub fn link<'k>(
         base.positions.append(&mut positions);
         base.objects.push(object);
     }
+    merges.apply(&mut base.objects, &contributions);
     Ok(Linked {
         program: base,
         pos_ranges,
@@ -436,6 +446,74 @@ pub fn par_map<T: Send, R: Send>(items: Vec<T>, workers: usize, f: impl Fn(usize
     out.into_iter()
         .map(|m| m.into_inner().expect("a worker panicked").expect("every item is done"))
         .collect()
+}
+
+/// What the extension objects add to their bases (ADR-033 decision 3), found before the objects are
+/// consumed and applied after they are linked. Only a base that is symbolic takes it: an object a
+/// compile cache supplied already holds its lists.
+#[derive(Default)]
+struct Merges {
+    /// (base, list, order, extension)
+    lists: Vec<(usize, ListKind, (u32, u32, u32), usize)>,
+    /// (base, extension) of the extensions with values, in program order.
+    enums: Vec<(usize, usize)>,
+    symbolic: Vec<bool>,
+}
+
+impl Merges {
+    fn collect<S: Space + ?Sized>(units: &[Unit], tables: &Tables<'_, S>) -> Merges {
+        let mut m = Merges {
+            symbolic: units.iter().map(|u| matches!(u, Unit::Sym(_))).collect(),
+            ..Default::default()
+        };
+        for (i, u) in units.iter().enumerate() {
+            let Unit::Sym(s) = u else { continue };
+            let Some(base) = s.extends.as_ref().and_then(|k| tables.at.get(k)).copied() else {
+                continue;
+            };
+            for j in &s.joins {
+                m.lists.push((base, j.list, j.order, i));
+            }
+            if !s.contribution.enum_values.is_empty() || !s.contribution.enum_captions.is_empty() {
+                m.enums.push((base, i));
+            }
+        }
+        m.lists.sort();
+        m
+    }
+
+    fn apply(&self, objects: &mut [Object], contributions: &[Contribution]) {
+        for &(base, list, _, ext) in &self.lists {
+            if !self.symbolic[base] || objects[base].uncompiled {
+                continue;
+            }
+            let o = &mut objects[base];
+            match list {
+                ListKind::TableExtensions => {
+                    if let Some(t) = o.table.as_mut() {
+                        t.extensions.push(ext);
+                    }
+                }
+                ListKind::PageExtensions => {
+                    if let Some(p) = o.page.as_mut() {
+                        p.extensions.push(ext);
+                    }
+                }
+                ListKind::ReportExtensions => {
+                    if let Some(r) = o.report.as_mut() {
+                        r.extensions.push(ext);
+                    }
+                }
+            }
+        }
+        for &(base, ext) in &self.enums {
+            if self.symbolic[base] && !objects[base].uncompiled {
+                let c = &contributions[ext];
+                objects[base].enum_values.extend(c.enum_values.iter().cloned());
+                objects[base].enum_captions.extend(c.enum_captions.iter().cloned());
+            }
+        }
+    }
 }
 
 /// The objects of a linked program, as a [`Space`]: `keys` and `routines` say what the program
@@ -503,6 +581,19 @@ pub fn relink<'k>(
                     ..
                 } = s;
                 rewrite(&mut object, &res, &key)?;
+                // What the extensions add to the object is as it was: the declarations did not change.
+                let old = &program.objects[oi];
+                object.enum_values = old.enum_values.clone();
+                object.enum_captions = old.enum_captions.clone();
+                if let (Some(n), Some(o)) = (object.table.as_mut(), old.table.as_ref()) {
+                    n.extensions = o.extensions.clone();
+                }
+                if let (Some(n), Some(o)) = (object.page.as_mut(), old.page.as_ref()) {
+                    n.extensions = o.extensions.clone();
+                }
+                if let (Some(n), Some(o)) = (object.report.as_mut(), old.report.as_ref()) {
+                    n.extensions = o.extensions.clone();
+                }
                 let len = own.len() as u32;
                 for r in &mut object.routines {
                     r.shift_positions(cursor);
@@ -745,6 +836,7 @@ mod tests {
             },
             object: object(from, vec![routine("Run", vec![call])]),
             positions: vec![],
+            ..Default::default()
         }
     }
 
@@ -756,6 +848,7 @@ mod tests {
             field_numbers: vec![],
             object: object(id, vec![routine("First", vec![]), routine("Second", vec![])]),
             positions: vec![],
+            ..Default::default()
         }
     }
 
@@ -822,6 +915,51 @@ mod tests {
         c.refs.objects.clear();
         let e = link_all(vec![Unit::Sym(c), Unit::Sym(callee(2))], 1).err().unwrap();
         assert!(matches!(*e, LinkError::BadReference { class: "object", .. }), "{e:?}");
+    }
+
+    fn enum_unit(id: u32, kind: ObjKind, values: &[(i32, &str)], extends: Option<u32>) -> Unit {
+        let vals: Vec<(i32, String)> = values.iter().map(|(v, n)| (*v, n.to_string())).collect();
+        let mut s = SymObject {
+            key: ObjKey {
+                app: "app".into(),
+                kind,
+                name: ObjName::Id(id),
+            },
+            object: Object {
+                kind,
+                id: Some(id),
+                ..Default::default()
+            },
+            extends: extends.map(|b| ObjKey {
+                app: "app".into(),
+                kind: ObjKind::Enum,
+                name: ObjName::Id(b),
+            }),
+            ..Default::default()
+        };
+        if extends.is_some() {
+            s.contribution.enum_values = vals;
+        } else {
+            s.object.enum_values = vals;
+        }
+        Unit::Sym(s)
+    }
+
+    #[test]
+    fn extensions_add_their_enum_values_to_the_base_in_program_order() {
+        let units = vec![
+            enum_unit(10, ObjKind::EnumExtension, &[(5, "Five")], Some(1)),
+            enum_unit(1, ObjKind::Enum, &[(0, "Zero"), (1, "One")], None),
+            enum_unit(11, ObjKind::EnumExtension, &[(6, "Six")], Some(1)),
+        ];
+        let linked = link_all(units, 1).unwrap();
+        let names: Vec<&str> = linked.program.objects[1]
+            .enum_values
+            .iter()
+            .map(|(_, n)| n.as_str())
+            .collect();
+        assert_eq!(names, ["Zero", "One", "Five", "Six"]);
+        assert!(linked.program.objects[0].enum_values.is_empty());
     }
 
     #[test]

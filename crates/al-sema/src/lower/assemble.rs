@@ -1028,6 +1028,23 @@ pub(crate) fn lower_core(
     let check = cfg!(test) || std::env::var_os("AL_CHECK_LINK").is_some();
     let field_no = |t: usize, pos: usize| members.get(t).fields.get(pos).map(|f| f.id);
     let field_numbers = |t: usize| members.get(t).fields.iter().map(|f| f.id).collect::<Vec<u32>>();
+    let extends = |e: usize| ws.extension_target(e);
+    let join_order = |e: usize, list: al_ir::sym::ListKind| {
+        let o = &ws.objects[e];
+        let id = o.id.map_or(0, |x| x.saturating_add(1));
+        match list {
+            al_ir::sym::ListKind::TableExtensions => (0, 0, 0),
+            al_ir::sym::ListKind::PageExtensions => (ws.app_depth(o.app) as u32, id, o.offset as u32),
+            al_ir::sym::ListKind::ReportExtensions => (id, 0, 0),
+        }
+    };
+    let own_enum = |i: usize| {
+        let m = members.own(i);
+        (
+            m.enum_values.iter().map(|(v, n)| (*v as i32, n.clone())).collect(),
+            m.enum_captions.iter().map(|(v, c)| (*v as i32, c.clone())).collect(),
+        )
+    };
     let report_item_table = |r: usize, item: usize| {
         shared
             .report_irs
@@ -1042,6 +1059,9 @@ pub(crate) fn lower_core(
         field_pos: &field_pos,
         field_numbers: &field_numbers,
         report_item_table: &report_item_table,
+        extends: &extends,
+        join_order: &join_order,
+        own_enum: &own_enum,
     };
     let linked = link_pieces(staged, program, &prov, &routine_keys, &lookups, check)?;
     out.pos_ranges = linked.pos_ranges;
@@ -1063,6 +1083,9 @@ struct Lookups<'a> {
     /// The number of every field of table `table`, in order.
     field_numbers: &'a (dyn Fn(usize) -> Vec<u32> + Sync),
     report_item_table: &'a (dyn Fn(usize, usize) -> Option<usize> + Sync),
+    extends: &'a (dyn Fn(usize) -> Option<usize> + Sync),
+    join_order: &'a (dyn Fn(usize, al_ir::sym::ListKind) -> (u32, u32, u32) + Sync),
+    own_enum: &'a (dyn Fn(usize) -> (Vec<(i32, String)>, Vec<(i32, String)>) + Sync),
 }
 
 /// For the check: turns the references the expressions of an object hold into the positions
@@ -1164,8 +1187,35 @@ fn link_pieces(
         table_of: lookups.table_of,
         field_no: lookups.field_no,
         report_item_table: lookups.report_item_table,
+        extends: lookups.extends,
+        join_order: lookups.join_order,
+        own_enum: lookups.own_enum,
     };
     let workers = lower_workers();
+    // The lists of extensions the objects hold, as the lists the extension objects are in.
+    let mut joins: Vec<Vec<(al_ir::sym::ListKind, usize)>> = vec![Vec::new(); staged.len()];
+    for (b, s) in staged.iter().enumerate().filter(|(b, _)| !provided(*b)) {
+        let lists = [
+            (
+                al_ir::sym::ListKind::TableExtensions,
+                s.object.table.as_ref().map(|t| &t.extensions),
+            ),
+            (
+                al_ir::sym::ListKind::PageExtensions,
+                s.object.page.as_ref().map(|p| &p.extensions),
+            ),
+            (
+                al_ir::sym::ListKind::ReportExtensions,
+                s.object.report.as_ref().map(|r| &r.extensions),
+            ),
+        ];
+        for (kind, list) in lists {
+            for &e in list.into_iter().flatten() {
+                joins[e].push((kind, b));
+            }
+        }
+    }
+    let joins = &joins;
     let mut units: Vec<al_link::Unit> = al_link::par_map(staged, workers, |oi, s| {
         if provided(oi) {
             Ok(al_link::Unit::Dense(al_link::DenseObject {
@@ -1176,8 +1226,16 @@ fn link_pieces(
                 positions: s.positions,
             }))
         } else {
-            super::localize::localize(&tables, oi, s.object, s.positions, &s.field_refs, &s.control_refs)
-                .map(al_link::Unit::Sym)
+            super::localize::localize(
+                &tables,
+                oi,
+                s.object,
+                s.positions,
+                &s.field_refs,
+                &s.control_refs,
+                &joins[oi],
+            )
+            .map(al_link::Unit::Sym)
         }
     })
     .into_iter()
@@ -1312,6 +1370,15 @@ pub fn relower_objects(
         table_of: &shared.table_of,
         field_no: &field_no,
         report_item_table: &report_item_table,
+        extends: &|e| ws.extension_target(e),
+        join_order: &|_, _| (0, 0, 0),
+        own_enum: &|i| {
+            let m = members.own(i);
+            (
+                m.enum_values.iter().map(|(v, n)| (*v as i32, n.clone())).collect(),
+                m.enum_captions.iter().map(|(v, c)| (*v as i32, c.clone())).collect(),
+            )
+        },
     };
     let mut replace = Vec::with_capacity(pieces.len());
     for (oi, piece) in pieces {
@@ -1326,6 +1393,8 @@ pub fn relower_objects(
                 piece.positions,
                 &piece.field_refs,
                 &piece.control_refs,
+                // The lists of extensions stay as they were: the declarations did not change.
+                &[],
             )?,
         ));
     }

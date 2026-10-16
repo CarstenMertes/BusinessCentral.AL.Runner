@@ -331,6 +331,12 @@ registry! {
         tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets) and Base Application's percent texts.",
         probe: "Format of an Integer, a Decimal and a Date with the same codes in capitals, small letters and with a blank after the comma; compare with the canonical spelling.",
     },
+    TableExtensionBaseVars => {
+        id: "table-extension-base-vars",
+        assumed: "A table extension reads and writes the `protected var` variables of its base table, on the same per-record globals the base table's own code uses (a procedure of the extension sees what a trigger of the base set).",
+        tests: "tableextension 906 \"Asm. Requisition Line\" (Assembly) uses Requisition Line's Item, TempPlanningErrorLog, PlanningResiliency and MissingFieldValueErr; about 600 tests of the Tests-SCM-Planning bucket.",
+        probe: "A table with a protected var, a table extension procedure that reads and writes it, and a base trigger that reads it back; on one record variable and on a second one; with a Record and a Codeunit protected var.",
+    },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",
         assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",

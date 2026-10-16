@@ -58,3 +58,14 @@ fn a_placeholder_without_an_argument_stays_as_written() {
         "Value a and %2|Value %1 and %2|%10 and a|%0 and a|%5|end%|Value %2 and x|%01|%a"
     );
 }
+
+#[test]
+fn a_hash_field_in_a_template_is_refused_not_written_as_text() {
+    // BC reads `#1####` as a field of width six (SubstNoHash.al, P86StrSubstNo.al:Sub_FieldWidth); until it is implemented the
+    // template is refused.
+    let src = "codeunit 50100 C { procedure F(): Text begin exit(StrSubstNo('#1####', 'a')); end; }";
+    assert!(matches!(
+        al_testkit::run_with(src, "C", "F", vec![]),
+        Err(al_builtins::native::Signal::Unsupported(_))
+    ));
+}

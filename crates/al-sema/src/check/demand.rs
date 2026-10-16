@@ -82,6 +82,8 @@ pub(super) struct State {
     routines: HashMap<usize, Rc<Vec<ast::Routine>>>,
     /// The `OnResolveCaptionClass` subscribers are reached (a page with a `CaptionClass` is run).
     caption_class: bool,
+    /// The `CustomDocumentMergerEx` subscribers are reached (a report with a custom layout is compiled).
+    reporting_triggers: bool,
     /// Bits per object kind: the catalog tables that list the objects of that kind are used, and
     /// every object of the kind is compiled to its shape (`touch_object_catalog`).
     catalogs: u8,
@@ -103,6 +105,7 @@ impl State {
             ctxs: HashMap::default(),
             routines: HashMap::default(),
             caption_class: false,
+            reporting_triggers: false,
             catalogs: 0,
         }
     }
@@ -697,6 +700,33 @@ impl Checker<'_> {
                 if self.ws.objects[o].subscribers[k]
                     .event
                     .eq_ignore_ascii_case("OnResolveCaptionClass")
+                {
+                    self.reach_subscriber(o, k);
+                }
+            }
+        }
+    }
+
+    /// Object `i` (a report) declares a layout of `Type = Custom`: a render of it raises the platform's
+    /// `CustomDocumentMergerEx`, so its subscribers are reached.
+    pub(super) fn reach_reporting_triggers_if_used(&self, i: usize) {
+        if self.demand.borrow().is_none() || self.ws.objects[i].kind != ObjKind::Report {
+            return;
+        }
+        let text = self.ws.object_ast(i).syntax().text().to_string().to_ascii_lowercase();
+        if !text.contains("rendering") || !text.contains("custom") {
+            return;
+        }
+        let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
+            let first = !st.reporting_triggers;
+            st.reporting_triggers = true;
+            first
+        });
+        if first {
+            for (o, k) in self.ws.reporting_triggers_subscribers() {
+                if self.ws.objects[o].subscribers[k]
+                    .event
+                    .eq_ignore_ascii_case("CustomDocumentMergerEx")
                 {
                     self.reach_subscriber(o, k);
                 }
@@ -1315,6 +1345,14 @@ pub fn uncompiled_subscriber_sites(ws: &Workspace, active: &dyn Fn(usize) -> boo
             .eq_ignore_ascii_case("OnResolveCaptionClass")
         {
             add(None, ir::PlatformPublisher::CaptionClass, so, si);
+        }
+    }
+    for (so, si) in ws.reporting_triggers_subscribers() {
+        if ws.objects[so].subscribers[si]
+            .event
+            .eq_ignore_ascii_case("CustomDocumentMergerEx")
+        {
+            add(None, ir::PlatformPublisher::ReportingTriggers, so, si);
         }
     }
     out

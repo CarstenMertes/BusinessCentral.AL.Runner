@@ -706,6 +706,7 @@ fn uncompiled_subscribers<S: Space + ?Sized>(
                 }
                 SubscriberTarget::GlobalTriggers => (1, 0, P::GlobalTriggers),
                 SubscriberTarget::CaptionClass => (2, 0, P::CaptionClass),
+                SubscriberTarget::ReportingTriggers => (3, 0, P::ReportingTriggers),
             };
             found.push((
                 group,

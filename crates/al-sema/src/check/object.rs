@@ -390,6 +390,7 @@ impl<'a> Checker<'a> {
             ObjKind::Page | ObjKind::PageExtension | ObjKind::Report | ObjKind::ReportExtension
         ) {
             self.reach_caption_class_if_used(oi);
+            self.reach_reporting_triggers_if_used(oi);
         }
         if matches!(self.ws.objects[oi].kind, ObjKind::Page | ObjKind::PageExtension) {
             self.reach_run_objects(oi);

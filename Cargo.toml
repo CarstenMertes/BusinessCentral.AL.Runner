@@ -15,6 +15,7 @@ al-syntax = { path = "crates/al-syntax" }
 al-sema = { path = "crates/al-sema" }
 al-builtins = { path = "crates/al-builtins" }
 al-ir = { path = "crates/al-ir" }
+al-link = { path = "crates/al-link" }
 al-vm = { path = "crates/al-vm" }
 al-data = { path = "crates/al-data" }
 al-host = { path = "crates/al-host" }

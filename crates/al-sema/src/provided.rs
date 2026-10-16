@@ -21,6 +21,8 @@ use std::collections::{BTreeSet, HashSet};
 /// beside the block, so a run does not parse the object to learn it.
 #[derive(Debug, Clone, PartialEq, Default, Serialize, Deserialize)]
 pub struct DepFacts {
+    /// The key of the object (ADR-033).
+    pub key: ir::sym::ObjKey,
     /// Identity, checked against the object the run loaded at the same index.
     pub kind: Option<ObjKind>,
     pub id: Option<u32>,
@@ -45,6 +47,12 @@ pub struct DepFacts {
     pub routine_offsets: Vec<u32>,
     /// The role of every routine (`lower::ROLE_*`), in the same order.
     pub routine_roles: Vec<u8>,
+    /// For a table: the number of each field, in the order of the table's field list (ADR-033):
+    /// what the symbolic form of other objects names a field by.
+    pub fields: Vec<u32>,
+    /// The key of every routine, in the same order (ADR-033): what the symbolic form of other
+    /// objects names a routine of this one by.
+    pub routine_keys: Vec<ir::sym::LocalKey>,
     /// Why a variable of the xmlport or report is refused (the first reason), if it is.
     pub xml_reason: Option<String>,
     pub report_reason: Option<String>,
@@ -58,6 +66,7 @@ pub struct DepFacts {
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
 pub struct DepBlock {
     pub object: ir::Object,
+
     /// Per routine: why it cannot run (empty: it can).
     pub unsupported: Vec<Vec<String>>,
     /// Per routine: the routines it calls directly, as (object, routine). What a variable of a

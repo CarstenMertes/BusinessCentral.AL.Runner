@@ -99,6 +99,14 @@ pub(crate) fn role_of(r: &ast::Routine) -> u8 {
     role
 }
 
+impl Lowerer<'_> {
+    /// The reference an expression holds to field `id` of table `table` (a position in the
+    /// workspace's objects), to be turned into a key when the object is made symbolic.
+    pub(crate) fn field_ref(&self, table: usize, id: u32) -> usize {
+        self.field_refs.borrow_mut().intern(table, id)
+    }
+}
+
 impl Lowered {
     /// The routines routine `r` of object `o` can call: the ones its code names and the ones a
     /// variable of a page, report or xmlport type drives.
@@ -151,6 +159,9 @@ pub(crate) struct Lowerer<'a> {
     report_reasons: &'a [Option<String>],
     /// The objects whose extensions or implementers the lowering read (`provided.rs`).
     embeds: std::cell::RefCell<std::collections::BTreeSet<usize>>,
+    /// The fields the expressions of the object name, as (table, field number): `Place::Field`,
+    /// `Expr::FieldOf` and `Const::FieldPos` hold an index into this list (`localize.rs`).
+    field_refs: std::cell::RefCell<localize::FieldRefs>,
     /// Answers many routines ask for, computed once per program.
     memo: &'a Memo,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
@@ -347,6 +358,7 @@ mod compile;
 mod convert;
 mod dotnet;
 mod expr;
+mod localize;
 mod pages;
 mod shared;
 mod stmt;

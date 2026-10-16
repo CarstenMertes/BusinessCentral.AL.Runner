@@ -517,8 +517,9 @@ impl Lowerer<'_> {
                 Some(Res::Field { table, id })
                     if n.kind() == MemberExpr && kids.first().is_some_and(|b| b.kind() == SyntaxKind::CallExpr) =>
                 {
-                    let pos = self.readable_field_pos(table, id)?;
-                    Ok(ir::Expr::FieldOf(Box::new(self.expr(&kids[0])?), pos))
+                    self.readable_field_pos(table, id)?;
+                    let field = self.field_ref(table, id);
+                    Ok(ir::Expr::FieldOf(Box::new(self.expr(&kids[0])?), field))
                 }
                 _ => Ok(ir::Expr::Load(self.place(n)?)),
             },

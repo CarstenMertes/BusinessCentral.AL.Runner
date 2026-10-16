@@ -7,6 +7,8 @@ use serde::{Deserialize, Serialize};
 
 mod facts;
 mod objkind;
+pub mod sym;
+pub mod walk;
 pub use facts::{FieldClass, FieldFacts, ObjectFacts, PageType, TableType};
 pub use objkind::{ObjKind, UnknownKind};
 

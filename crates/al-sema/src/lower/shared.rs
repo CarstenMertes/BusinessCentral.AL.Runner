@@ -198,6 +198,7 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         ext_slots: &sh.ext_slots,
         page_extensions: &sh.driven.page_extensions,
         embeds: Default::default(),
+        field_refs: Default::default(),
         positions: Vec::new(),
         lines: None,
         emit_pos: false,
@@ -273,6 +274,10 @@ pub(crate) fn lower_object<'a>(
             calls: Vec::new(),
             direct: Vec::new(),
             embeds: Vec::new(),
+            routine_keys: Vec::new(),
+            key: None,
+            field_refs: Vec::new(),
+            fields: Vec::new(),
         };
     }
     let obj = ws.object_ast(oi);
@@ -601,6 +606,10 @@ pub(crate) fn lower_object<'a>(
         calls,
         direct,
         embeds,
+        routine_keys: super::localize::routine_keys(tl.nodes.get(oi)),
+        key: None,
+        field_refs: lw.field_refs.take().list,
+        fields: Vec::new(),
     }
 }
 

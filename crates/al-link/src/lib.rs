@@ -9,7 +9,7 @@
 //! Core crate: no OS access (ADR-006).
 use al_ir::sym::{
     Contribution, ControlKey, EnumImplDecl, Expansion, FieldKey, FxMap, ImplSlot, ListKind, LocalKey, ObjKey,
-    RoutineKey, SymObject,
+    RoutineKey, SubscriberTarget, SymObject,
 };
 use al_ir::walk::{ExpansionSite, RefVisitor, TableOf, walk_object, walk_table_contribution};
 use al_ir::{Object, Program, SrcPos};
@@ -545,6 +545,7 @@ pub fn link<'k>(
     debug_assert!(base.objects.is_empty() && base.positions.is_empty());
     // What each symbolic object's tables mean in the program: the position of every key.
     let merges;
+    let subscribers;
     let resolved: Vec<Option<Resolved>> = {
         let space = UnitSpace {
             units: &units,
@@ -554,6 +555,7 @@ pub fn link<'k>(
         };
         let tables = Tables::new(&space)?;
         merges = Merges::collect(&units, &tables);
+        subscribers = uncompiled_subscribers(&units, &tables)?;
         par_map(units.iter().collect(), workers, |_, u| match u {
             Unit::Sym(s) => tables.resolve(s).map(Some),
             Unit::Dense(_) => Ok(None),
@@ -626,6 +628,9 @@ pub fn link<'k>(
         contributions.push(contribution);
     }
     merges.apply(&mut base.objects, &mut contributions);
+    if !subscribers.is_empty() {
+        base.uncompiled_subscribers = subscribers;
+    }
     Ok(Linked {
         program: base,
         pos_ranges,
@@ -680,6 +685,45 @@ pub fn par_map<T: Send, R: Send>(items: Vec<T>, workers: usize, f: impl Fn(usize
     out.into_iter()
         .map(|m| m.into_inner().expect("a worker panicked").expect("every item is done"))
         .collect()
+}
+
+/// The event subscribers of the objects that were not compiled, as the program lists them: those of an object's
+/// events in the order of the objects, then those of the platform's codeunits; each group in the order of the
+/// subscribing objects.
+fn uncompiled_subscribers<S: Space + ?Sized>(
+    units: &[Unit],
+    tables: &Tables<'_, S>,
+) -> Result<Vec<al_ir::UncompiledSubscriber>, Box<LinkError>> {
+    use al_ir::PlatformPublisher as P;
+    let mut found: Vec<(u8, usize, usize, u32, al_ir::UncompiledSubscriber)> = Vec::new();
+    for (i, u) in units.iter().enumerate() {
+        let Unit::Sym(s) = u else { continue };
+        for d in &s.subscribers {
+            let (group, publisher, platform) = match &d.target {
+                SubscriberTarget::Object(k) => {
+                    let p = tables.object(&s.key, k)?;
+                    (0, p, P::None)
+                }
+                SubscriberTarget::GlobalTriggers => (1, 0, P::GlobalTriggers),
+                SubscriberTarget::CaptionClass => (2, 0, P::CaptionClass),
+            };
+            found.push((
+                group,
+                publisher,
+                i,
+                d.index,
+                al_ir::UncompiledSubscriber {
+                    publisher: (group == 0).then_some(publisher as u32),
+                    platform,
+                    event: d.event.clone(),
+                    element: d.element.clone(),
+                    subscriber: d.subscriber.clone(),
+                },
+            ));
+        }
+    }
+    found.sort_by_key(|f| (f.0, f.1, f.2, f.3));
+    Ok(found.into_iter().map(|f| f.4).collect())
 }
 
 /// What the extension objects add to their bases (ADR-033 decision 3), found before the objects are

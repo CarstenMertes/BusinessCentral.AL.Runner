@@ -280,6 +280,8 @@ pub(crate) struct Extras<'a> {
     pub joins: &'a [(ListKind, usize)],
     pub table_contribution: Option<TableContribution>,
     pub expansions: &'a [Expanded],
+    /// The uncompiled subscribers this object declares.
+    pub subscribers: Vec<al_ir::sym::SubscriberDecl>,
 }
 
 /// Makes the symbolic object of a lowered one. `Err` names a reference that points outside the
@@ -297,6 +299,7 @@ pub(crate) fn localize(
         joins,
         table_contribution,
         expansions,
+        subscribers,
     } = extras;
     let object_kind = object.kind;
     let (enum_impls, enum_ordinals) = if matches!(object_kind, ObjKind::Enum | ObjKind::EnumExtension) {
@@ -391,6 +394,7 @@ pub(crate) fn localize(
         } else {
             Vec::new()
         },
+        subscribers,
         enum_impls,
         enum_ordinals,
         extends,

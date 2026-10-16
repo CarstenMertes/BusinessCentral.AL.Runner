@@ -953,6 +953,25 @@ pub(crate) fn lower_core(
                 .unwrap_or_else(|| al_ir::sym::ObjKey::of(&p.object, &program.apps))
         })
         .collect();
+    // The subscribers of objects nothing compiled, per subscribing object (ADR-033).
+    let mut subscriber_decls: Vec<Vec<al_ir::sym::SubscriberDecl>> = vec![Vec::new(); n];
+    if shared.demand.is_some() {
+        for site in crate::check::demand::uncompiled_subscriber_sites(ws, &|oi| shared.active[oi]) {
+            let o = &ws.objects[site.object];
+            let sub = &o.subscribers[site.index];
+            subscriber_decls[site.object].push(al_ir::sym::SubscriberDecl {
+                target: match (site.publisher, site.platform) {
+                    (Some(p), _) => al_ir::sym::SubscriberTarget::Object(piece_keys[p].clone()),
+                    (None, ir::PlatformPublisher::CaptionClass) => al_ir::sym::SubscriberTarget::CaptionClass,
+                    (None, _) => al_ir::sym::SubscriberTarget::GlobalTriggers,
+                },
+                index: site.index as u32,
+                event: sub.event.to_lowercase(),
+                element: sub.element.clone(),
+                subscriber: format!("{} \"{}\"", o.kind.label(), o.name),
+            });
+        }
+    }
     let enum_facts = |oi: usize| -> (Vec<al_ir::sym::EnumImplDecl>, Vec<u32>) {
         if !matches!(ws.objects[oi].kind, ObjKind::Enum | ObjKind::EnumExtension) {
             return (Vec::new(), Vec::new());
@@ -1126,7 +1145,7 @@ pub(crate) fn lower_core(
         own_field_properties: &own_field_properties,
         modify_properties: &modify_properties,
     };
-    let linked = link_pieces(staged, program, &prov, &routine_keys, &lookups, check)?;
+    let linked = link_pieces(staged, program, &prov, &routine_keys, &lookups, subscriber_decls, check)?;
     out.pos_ranges = linked.pos_ranges;
     let program = linked.program;
     out.exported = exported;
@@ -1427,6 +1446,7 @@ fn link_pieces(
     provided: &(dyn Fn(usize) -> bool + Sync),
     routine_keys: &super::localize::RoutineKeys<'_>,
     lookups: &Lookups<'_>,
+    subscribers: Vec<Vec<al_ir::sym::SubscriberDecl>>,
     check: bool,
 ) -> Result<al_link::Linked, String> {
     use al_ir::sym::ObjKey;
@@ -1525,6 +1545,7 @@ fn link_pieces(
                     joins: &joins[oi],
                     table_contribution: s.table_contribution,
                     expansions: &s.expansions,
+                    subscribers: subscribers[oi].clone(),
                 },
             )
             .map(al_link::Unit::Sym)
@@ -1558,6 +1579,8 @@ fn link_pieces(
             }
         }
     }
+    let mut base = base;
+    base.uncompiled_subscribers.clear();
     let linked = al_link::link(units, base, workers, &routines_of).map_err(|e| format!("link: {e}"))?;
     if let Some((p, ranges)) = expected {
         if let Some(d) = al_link::first_difference(&p, &linked.program) {
@@ -1693,6 +1716,7 @@ pub fn relower_objects(
                     joins: &[],
                     table_contribution: None,
                     expansions: &[],
+                    subscribers: Vec::new(),
                 },
             )?,
         ));

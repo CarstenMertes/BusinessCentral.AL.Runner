@@ -147,6 +147,27 @@ pub struct EnumImplDecl {
     pub codeunit: Option<ObjKey>,
 }
 
+/// Whose event a subscriber subscribes to.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub enum SubscriberTarget {
+    Object(ObjKey),
+    GlobalTriggers,
+    CaptionClass,
+}
+
+/// An event subscriber of an object that was not compiled (a dependency object nothing reached): the runtime
+/// refuses to raise the event it subscribes to, because it has no code to run.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct SubscriberDecl {
+    pub target: SubscriberTarget,
+    /// The place of the subscriber among those the object declares.
+    pub index: u32,
+    pub event: String,
+    pub element: String,
+    /// `codeunit "Name"`, for the refusal text.
+    pub subscriber: String,
+}
+
 /// A reference that stands for a set of objects or routines that only the whole program knows. Lowering writes
 /// a marker (`walk::EXPAND`) at the site and the index of the entry; link replaces the marker with the set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -251,6 +272,8 @@ pub struct SymObject {
     pub refs: Refs,
     /// For a codeunit: the interfaces it implements, those it lists and the ones they extend.
     pub implements: Vec<ObjKey>,
+    /// For an object that was not compiled: its event subscribers.
+    pub subscribers: Vec<SubscriberDecl>,
     /// For an enum or enum extension: the implementations it declares and the ordinals of its values.
     pub enum_impls: Vec<EnumImplDecl>,
     pub enum_ordinals: Vec<u32>,

@@ -97,6 +97,23 @@ table 51093 "PT Cap Rec"
     keys { key(PK; Id) { } }
 }
 
+page 51094 "PT Expr Card"
+{
+    PageType = Card;
+    layout
+    {
+        area(Content)
+        {
+            field(Ctl; Totals[1].Descr) { trigger OnValidate() begin Seen += 1; end; }
+            field(Amt; Totals[2]."Line No.") { }
+            field(Fn; Format(Totals[1].Descr)) { }
+        }
+    }
+    var Totals: array[2] of Record "PT Row"; Seen: Integer;
+    trigger OnOpenPage() begin Totals[1].Descr := 'start'; Totals[2]."Line No." := 7; end;
+    procedure SeenCount(): Integer begin exit(Seen); end;
+}
+
 table 51020 "PT Rank"
 {
     fields { field(1; "Entry No."; Integer) { } field(2; Rank; Integer) { } field(3; Bucket; Code[10]) { } }
@@ -851,4 +868,29 @@ fn field_caption_of_a_field_with_a_caption_class_follows_the_pinned_forms() {
         "F",
     );
     assert_eq!(text(r), "1,1,x|x|Tbl C|,x");
+}
+
+// Tests-ERM `PurchaseOrderStatisticsTestPage.InvDiscountAmount_General.SetValue(...)`: the control shows
+// `TotalPurchLine[1]."Inv. Discount Amount"`. Unprobed (page-expression-control-setvalue).
+#[test]
+fn set_value_on_a_control_bound_to_an_assignable_expression_writes_it_and_validates() {
+    let r = run(
+        "procedure F(): Text var H: TestPage \"PT Expr Card\"; s: Text; begin
+            H.OpenEdit();
+            s := H.Ctl.Value() + '|' + H.Amt.Value();
+            H.Ctl.SetValue('changed'); H.Amt.SetValue(12);
+            s += '|' + H.Ctl.Value() + '|' + H.Amt.Value() + '|' + Format(H.Fn.Value());
+            exit(s); end;",
+        "F",
+    );
+    assert_eq!(text(r), "start|7|changed|12|changed");
+}
+
+#[test]
+fn set_value_on_a_control_bound_to_a_call_stays_read_only() {
+    let r = run(
+        "procedure F(): Text var H: TestPage \"PT Expr Card\"; begin H.OpenEdit(); H.Fn.SetValue('x'); exit('ran'); end;",
+        "F",
+    );
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }

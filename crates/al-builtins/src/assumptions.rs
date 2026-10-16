@@ -151,6 +151,12 @@ registry! {
         tests: "Accounting Period names made with `<Month Text,10>` (Tests-ERM DefaultAccountingPeriodUT and 37 more).",
         probe: "Format(DMY2Date(5,3,2024), 0, '<Month Text,10>') with its length and a visible delimiter; the same for <Weekday Text,10>.",
     },
+    PageExpressionControlSetValue => {
+        id: "page-expression-control-setvalue",
+        assumed: "TestPage.SetValue on a field control whose source is an assignable path (a record in an array, `Totals[1].\"Inv. Discount Amount\"`) assigns the path, then runs the control's OnValidate; the value is converted to the type of the value the path holds now. An entry the client would refuse is refused with the variable-control texts.",
+        tests: "Purchase and Sales Order Statistics (`InvDiscountAmount_General`): ConfirmationOnInvDiscUpdateInPurchOrderWithInvoicedLine and about 55 more Tests-ERM tests.",
+        probe: "A page field(Ctl; Arr[1].Amount) with an OnValidate; TestPage.Ctl.SetValue(5) then the global and the OnValidate effect; SetValue('x') on it.",
+    },
     GuidToText => {
         id: "guid-to-text",
         assumed: "A Guid assigned to a Text or Code is its text form {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} in capitals, as Format gives it.",

@@ -168,6 +168,11 @@ pub fn blocked_site(lowered: &Lowered, object: usize, routine: usize) -> Option<
         if !seen.insert((o, r)) {
             continue;
         }
+        // The routine that writes an expression-bound page control (`pages::expand`) is optional: when it cannot be
+        // lowered the control stays read-only, and a test that never sets the control is not refused for it.
+        if lowered.program.objects[o].routines[r].name.starts_with("__sourceset_") {
+            continue;
+        }
         if let Some(reason) = lowered.unsupported[o][r].first() {
             let name = &lowered.program.objects[o].routines[r].name;
             let obj = &lowered.program.objects[o].name;

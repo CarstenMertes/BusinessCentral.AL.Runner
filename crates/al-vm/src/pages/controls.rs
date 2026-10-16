@@ -280,6 +280,16 @@ impl Session {
                     let inst = self.owner_instance(st, owner);
                     inst.borrow_mut().globals[slot] = parsed.clone();
                 }
+                // A control bound to an expression that is a place (`Totals[1]."Inv. Discount Amount"`) is written through the
+                // routine `pages::expand` made. Unprobed: assumption page-expression-control-setvalue.
+                ir::Binding::Expr(_) if ctl.trigger("__sourceset").is_some() => {
+                    let w = ctl.trigger("__sourceset").expect("checked");
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::PageExpressionControlSetValue,
+                    );
+                    let owner = ctl.owner;
+                    self.owner_routine_with(st, owner, w, vec![parsed.clone()])?;
+                }
                 _ => return unsupported("SetValue on a read-only control"),
             }
             for (e, r) in &ext_before {
@@ -308,6 +318,8 @@ impl Session {
                 } else if let Some((slot, owner)) = ctl.binding.var_slot(ctl.owner) {
                     let inst = self.owner_instance(st, owner);
                     inst.borrow_mut().globals[slot] = current.clone();
+                } else if let (ir::Binding::Expr(_), Some(w)) = (&ctl.binding, ctl.trigger("__sourceset")) {
+                    let _ = self.owner_routine_with(st, ctl.owner, w, vec![current.clone()]);
                 }
                 Err(refuse(self, e.message))
             }

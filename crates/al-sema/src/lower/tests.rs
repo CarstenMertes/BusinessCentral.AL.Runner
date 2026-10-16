@@ -1707,3 +1707,43 @@ fn a_testpage_variable_is_typed_by_its_page_and_reaches_the_page_routines() {
         assert!(l.calls[cu][p].contains(&(page_oi, r)), "no edge to routine {r}");
     }
 }
+
+/// ADR-036 step 0: the types of the expressions of a routine, built with the expressions.
+#[test]
+fn integer_and_boolean_expressions_get_their_types() {
+    use al_ir::types::{ExprTy, ExprTypes};
+    let (_, l) = lower_src(
+        "codeunit 50100 C {
+    procedure P(a: Integer; b: Integer): Boolean
+    var c: Integer;
+    begin
+        c := a + b * 2;
+        exit((c > 3) and not (a = b));
+    end;
+}",
+    );
+    let r = l
+        .program
+        .objects
+        .iter()
+        .flat_map(|o| o.routines.iter())
+        .find(|r| r.name == "P")
+        .unwrap();
+    assert_eq!(
+        r.expr_tys.len(),
+        al_ir::types::count_exprs(&r.body),
+        "the table tiles the body"
+    );
+    let types = ExprTypes::new(r);
+    let mut seen = Vec::new();
+    for s in &r.body {
+        al_ir::types::stmt_roots(s, &mut |e| seen.push(types.of(e)));
+    }
+    // `c := a + b * 2` holds the sum; `exit(...)` holds the `and`.
+    assert_eq!(seen, [ExprTy::Integer, ExprTy::Boolean]);
+    let mut all = Vec::new();
+    for s in &r.body {
+        al_ir::types::stmt_roots(s, &mut |e| al_ir::types::children(e, &mut |c| all.push(types.of(c))));
+    }
+    assert!(all.iter().all(|t| *t != ExprTy::Unknown), "{all:?}");
+}

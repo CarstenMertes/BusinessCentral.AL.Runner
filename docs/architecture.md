@@ -172,6 +172,7 @@ that file's header and in `docs/probes-needed.md`.
 |---|---|---|
 | Cold compile of the corpus (`al-test-cli/tests/perf_budget.rs`) | ≤ 1 990 000 instructions per compiled object (the day's value plus 5 %); CPU-time fallback 2 000 000 ns per object. Wall time is printed, not budgeted: on shared CI runners the same code ranged from 0.8 to 1.0 s and from 2.4 to 3.0 s of CPU between runs | 1 886 000 instructions per object (6.0 G for 3 183 objects), ~0.5 s |
 | Interpreter, six programs of `al-test-cli/tests/vm-bench` (`perf_vm.rs`, ADR-031) | instructions per iteration, on the bytecode (the default since ADR-034 step 4): Integer loop 534, Decimal loop 1821, call 2686, text 6300, builtins 6353, records 16261 (the day's value plus 3 %; lowered by each fast path) | 518 / 1 768 / 2 608 / 6 117 / 6 168 / 15 787 |
+| Full corpus run with Microsoft's apps (`perf_budget.rs`, BC 29, whole process tree) | ≤ 144 G instructions (the day's value plus 5 %); fallback without the counter: 12 s for compile, install baseline and run. Seconds are printed, not budgeted: with the same code 12 s was exceeded at 21.5 s on a machine with load 25 | 137.1 G (stable to 0.02 % between runs) |
 | Serial parse throughput (`al-syntax/tests/perf_parse_throughput.rs`) | ≥ 50 MB/s | ~65–75 MB/s |
 
 `cargo run --release -p al-test-cli --example phases` prints timings per

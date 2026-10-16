@@ -10,6 +10,16 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-test-cli/src/behavior_coverage.rs",
+        r#"format!("{k:?}")"#,
+        "the grammar kind name as the catalog key of the behavior coverage map (SyntaxKind names are the item names)",
+    ),
+    (
+        "al-test-cli/src/behavior_coverage.rs",
+        r#"Some(t) => format!("Literal:{:?}", t.kind()),"#,
+        "the literal kind as a catalog key of the behavior coverage map",
+    ),
+    (
         "al-vm/src/exec/mod.rs",
         r#"Some(c.code.iter().map(|op| format!("{op:?}")).collect())"#,
         "the listing of the instructions of a routine (tests of instruction selection): for the developers of the compiler",

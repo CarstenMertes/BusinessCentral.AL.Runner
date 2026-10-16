@@ -136,3 +136,21 @@ Steps 1 and 2: about 4 agent-days. Steps 3 and 4: 12 to 18. Step 5: 2 to 3. Matc
 ## Needs the coordinator's decision
 
 - Whether to stop after steps 1 and 2 if the budget is met there (see stop rule). Otherwise nothing blocks coding.
+
+## Slice 2 result (2026-10-16)
+
+- Built: `lower/tys.rs`. `Lowerer::tys` holds one record (type, kind, number of expressions directly inside, size) per
+  node in post-order. `expr()` seals each node, `convert_to` seals the `Convert` it makes, `stmt()` checks the records
+  of each statement, `routine()` keeps the table when the records tile the body. A record is kept only when the kinds
+  and arities of the records below it match the node; otherwise the subtree is `Unknown`. In debug builds
+  (all tests) every record is also compared with its node (`exact`).
+- Filled (the type of the value the interpreter produces): `Const` (Boolean, Integer, BigInteger, Decimal, Text);
+  `Load` of a local, global or base global of type Integer, BigInteger, Decimal, Boolean, Char, Byte; `Unary Not`
+  (Boolean), `Unary Neg` of Integer; `Binary`: comparisons, `and`/`or`/`xor` (Boolean), `+ - * div mod` of two
+  Integers (Integer); `Convert` to Integer, BigInteger, Decimal, Boolean, Char, Byte. Everything else is `Unknown`:
+  field loads, calls and builtin results, Date/Time/Text/Code variables, `/`, Option, Enum, Record.
+- Measured (corpus, no dependencies): 15,566 of 15,566 routines have a table; 145,650 of 534,370 nodes typed (27 %;
+  107,798 of them Text constants). With the Microsoft apps: 421,390 of 1,686,563 nodes typed.
+- Cost: cold compile 2,058,982 -> 2,105,730 instructions per object (+2.3 %). The records cost about 1.5 % and the
+  per-statement and `Convert` checks the rest. It is over the limit of 2,060,000 (the tree before this slice was
+  already 1,000 under it). Steps 1 and 2 (no second name resolution, no `ty_of` clones) have to bring it back.

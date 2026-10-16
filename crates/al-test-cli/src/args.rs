@@ -72,6 +72,9 @@ pub struct Args {
     /// `--coverage-map [DIR]`: write `corpus-coverage.md` and `corpus-coverage.json` (which builtin
     /// overloads some corpus test calls) to DIR, else `docs/`, and stop.
     pub coverage_map: Option<Option<PathBuf>>,
+    /// `--behavior-coverage-map [DIR]`: write `corpus-behavior-coverage.md` and `.json` (triggers,
+    /// properties, platform events, syntax, runtime error sites) to DIR, else `docs/`, and stop.
+    pub behavior_coverage_map: Option<Option<PathBuf>>,
     /// `--explain TEST`: run one test and say why it ended as it did.
     pub explain: Option<String>,
     /// `--top-refusals [N]`: rank the refusal reasons; N entries (default 10).
@@ -114,6 +117,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 _ => None,
             };
             a.must_not_compile = Some(dir);
+            continue;
+        }
+        if flag == "--behavior-coverage-map" {
+            let dir = match it.peek() {
+                Some(v) if !v.starts_with("--") => it.next().map(PathBuf::from),
+                _ => None,
+            };
+            a.behavior_coverage_map = Some(dir);
             continue;
         }
         if flag == "--coverage-map" {
@@ -282,6 +293,8 @@ SELECTION (each flag repeats; the selection is their union; without one, everyth
   cases. --update-baseline refuses to run with a selection.
 
 DIAGNOSE
+  --behavior-coverage-map [DIR]  write corpus-behavior-coverage.md and .json to DIR (default docs/): which
+                              triggers, properties, platform events, syntax kinds and error sites the corpus pins
   --coverage-map [DIR]        write corpus-coverage.md and .json to DIR (default docs/): which builtin
                               methods and overloads of the catalog some corpus test calls, per type
   --must-not-compile [DIR]    check the corpus of AL files the real compiler rejects (DIR, else

@@ -8,7 +8,7 @@
 
 use al_ir as ir;
 use al_ir::sym::{
-    Contribution, ControlKey, FieldKey, Join, ListKind, LocalKey, ObjKey, Refs, RoutineKey, SymObject,
+    Contribution, ControlRef, FieldRef, Join, ListKind, LocalKey, ObjKey, Refs, RoutineRef, SymObject,
     TableContribution,
 };
 use al_ir::walk::{RefVisitor, TableOf, walk_object};
@@ -368,34 +368,35 @@ pub(crate) fn localize(
     contribution.table = table_contribution;
     contribution.page = page_contribution;
     let extends = (keys.extends)(own).map(|t| keys.objects[t].clone());
-    // The expressions' own references come first: they are already indices into this list.
-    let mut refs = Refs {
+    let refs = Refs {
         expansions: expansions.iter().map(|e| e.symbolic(keys.objects)).collect(),
         ..Default::default()
     };
-    let mut fields: FxMap<(usize, u32), usize> = FxMap::default();
-    for &(table, id) in field_refs {
-        fields.entry((table, id)).or_insert(refs.fields.len());
-        refs.fields.push(FieldKey {
-            table: keys.objects[table].clone(),
-            no: id,
-        });
-    }
-    for (page, name, _) in control_refs {
-        refs.controls.push(ControlKey {
-            page: keys.objects[*page].clone(),
-            name: name.clone(),
-        });
-    }
     let mut v = Localize {
         keys,
         own,
         refs,
         objects: FxMap::default(),
         routines: FxMap::default(),
-        fields,
+        fields: FxMap::default(),
         bad: None,
     };
+    // The expressions' own references come first: they are already indices into these lists.
+    for &(table, id) in field_refs {
+        let table_ix = v.object_index(table);
+        v.fields.entry((table, id)).or_insert(v.refs.fields.len());
+        v.refs.fields.push(FieldRef {
+            table: table_ix,
+            no: id,
+        });
+    }
+    for (page, name, _) in control_refs {
+        let page_ix = v.object_index(*page);
+        v.refs.controls.push(ControlRef {
+            page: page_ix,
+            name: name.clone(),
+        });
+    }
     walk_object(&mut object, &mut v);
     if let Some(t) = contribution.table.as_mut() {
         al_ir::walk::walk_table_contribution(t, &mut v);
@@ -450,6 +451,16 @@ struct Localize<'a, 'k> {
 }
 
 impl Localize<'_, '_> {
+    /// The place of object `at` (a position in the workspace) in the object's list of objects.
+    fn object_index(&mut self, at: usize) -> u32 {
+        let refs = &mut self.refs;
+        let keys = self.keys;
+        *self.objects.entry(at).or_insert_with(|| {
+            refs.objects.push(keys.objects[at].clone());
+            refs.objects.len() - 1
+        }) as u32
+    }
+
     /// The table object a field reference is a field of, in workspace numbering.
     fn table_object(&self, table: TableOf) -> Option<usize> {
         match table {
@@ -487,15 +498,16 @@ impl RefVisitor for Localize<'_, '_> {
                 .get_or_insert_with(|| format!("routine reference {} of object {object} does not exist", at.1));
             return;
         };
-        let refs = &mut self.refs;
-        let obj = &self.keys.objects[object];
-        *r = *self.routines.entry(at).or_insert_with(|| {
-            refs.routines.push(RoutineKey {
-                obj: obj.clone(),
-                local: local.clone(),
-            });
-            refs.routines.len() - 1
-        });
+        let local = local.clone();
+        if let Some(&known) = self.routines.get(&at) {
+            *r = known;
+            return;
+        }
+        let obj = self.object_index(object);
+        self.refs.routines.push(RoutineRef { obj, local });
+        let ix = self.refs.routines.len() - 1;
+        self.routines.insert(at, ix);
+        *r = ix;
     }
 
     fn expansion(&mut self, index: usize, _: al_ir::walk::ExpansionSite<'_>) {
@@ -530,14 +542,14 @@ impl RefVisitor for Localize<'_, '_> {
                 .get_or_insert_with(|| format!("field position {} is not a field of object {t}", *r));
             return;
         };
-        let refs = &mut self.refs;
-        let keys = self.keys;
-        *r = *self.fields.entry((t, no)).or_insert_with(|| {
-            refs.fields.push(FieldKey {
-                table: keys.objects[t].clone(),
-                no,
-            });
-            refs.fields.len() - 1
-        });
+        if let Some(&known) = self.fields.get(&(t, no)) {
+            *r = known;
+            return;
+        }
+        let table = self.object_index(t);
+        self.refs.fields.push(FieldRef { table, no });
+        let ix = self.refs.fields.len() - 1;
+        self.fields.insert((t, no), ix);
+        *r = ix;
     }
 }

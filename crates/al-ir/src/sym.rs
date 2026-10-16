@@ -184,14 +184,36 @@ pub enum Expansion {
     EnumImpl { enum_: ObjKey, interface: ObjKey },
 }
 
+/// A routine of another object, as an object holds it: the object is a place in [`Refs::objects`] (the keys of the
+/// objects are not repeated), the routine its key in that object.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RoutineRef {
+    pub obj: u32,
+    pub local: LocalKey,
+}
+
+/// A field of a table in [`Refs::objects`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FieldRef {
+    pub table: u32,
+    pub no: u32,
+}
+
+/// A control of a page in [`Refs::objects`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ControlRef {
+    pub page: u32,
+    pub name: String,
+}
+
 /// What a symbolic object refers to. A reference inside the object's IR is an index into one of
 /// these lists.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Refs {
     pub objects: Vec<ObjKey>,
-    pub routines: Vec<RoutineKey>,
-    pub fields: Vec<FieldKey>,
-    pub controls: Vec<ControlKey>,
+    pub routines: Vec<RoutineRef>,
+    pub fields: Vec<FieldRef>,
+    pub controls: Vec<ControlRef>,
     pub expansions: Vec<Expansion>,
 }
 

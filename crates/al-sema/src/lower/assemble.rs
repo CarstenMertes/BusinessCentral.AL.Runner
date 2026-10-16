@@ -1866,8 +1866,9 @@ fn link_pieces(
     for u in &units {
         if let al_link::Unit::Sym(s) = u {
             for f in &s.refs.fields {
-                if f.table.kind == ObjKind::Table {
-                    if let Some(&t) = at.get(&f.table) {
+                let table = &s.refs.objects[f.table as usize];
+                if table.kind == ObjKind::Table {
+                    if let Some(&t) = at.get(table) {
                         numbered.insert(t);
                     }
                 }

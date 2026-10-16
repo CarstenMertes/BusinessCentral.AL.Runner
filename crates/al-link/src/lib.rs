@@ -517,22 +517,36 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
         for k in &s.refs.objects {
             objects.push(self.object(&s.key, k)?);
         }
+        // An index into the object's list of objects: out of range is a defect of whoever made the object.
+        let place = |ix: u32, class: &'static str| -> Result<usize, Box<LinkError>> {
+            objects.get(ix as usize).copied().ok_or_else(|| {
+                Box::new(LinkError::BadReference {
+                    object: s.key.clone(),
+                    class,
+                    index: ix as usize,
+                })
+            })
+        };
+        let key_of = |ix: u32| s.refs.objects.get(ix as usize).cloned().unwrap_or_default();
         let mut routines = Vec::with_capacity(s.refs.routines.len());
         for k in &s.refs.routines {
-            let o = self.object(&s.key, &k.obj)?;
+            let o = place(k.obj, "routine")?;
             let r = *self.routine_table(o)?.get(&k.local).ok_or_else(|| {
                 Box::new(LinkError::UnknownRoutine {
                     from: s.key.clone(),
-                    to: k.clone(),
+                    to: al_ir::sym::RoutineKey {
+                        obj: key_of(k.obj),
+                        local: k.local.clone(),
+                    },
                 })
             })?;
             routines.push(r);
         }
         let mut fields = Vec::with_capacity(s.refs.fields.len());
         for k in &s.refs.fields {
-            let o = self.object(&s.key, &k.table)?;
+            let o = place(k.table, "field")?;
             // A query's column is named by its position, which is the number.
-            let pos = if k.table.kind == al_ir::ObjKind::Query {
+            let pos = if key_of(k.table).kind == al_ir::ObjKind::Query {
                 Some(k.no as usize)
             } else {
                 self.field_table(o).get(&k.no).copied()
@@ -540,17 +554,23 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
             fields.push(pos.ok_or_else(|| {
                 Box::new(LinkError::UnknownField {
                     from: s.key.clone(),
-                    to: k.clone(),
+                    to: al_ir::sym::FieldKey {
+                        table: key_of(k.table),
+                        no: k.no,
+                    },
                 })
             })?);
         }
         let mut controls = Vec::with_capacity(s.refs.controls.len());
         for k in &s.refs.controls {
-            let o = self.object(&s.key, &k.page)?;
+            let o = place(k.page, "control")?;
             controls.push(self.control_table(o).get(&k.name).copied().ok_or_else(|| {
                 Box::new(LinkError::UnknownControl {
                     from: s.key.clone(),
-                    to: k.clone(),
+                    to: al_ir::sym::ControlKey {
+                        page: key_of(k.page),
+                        name: k.name.clone(),
+                    },
                 })
             })?);
         }
@@ -1437,8 +1457,8 @@ mod tests {
             field_numbers: vec![],
             refs: Refs {
                 objects: vec![key(to)],
-                routines: vec![RoutineKey {
-                    obj: key(to),
+                routines: vec![al_ir::sym::RoutineRef {
+                    obj: 0,
                     local: local("second", 0),
                 }],
                 ..Default::default()
@@ -1526,7 +1546,7 @@ mod tests {
         let mut c = caller(1, 2);
         c.refs.objects.clear();
         let e = link_all(vec![Unit::Sym(c), Unit::Sym(callee(2))], 1).err().unwrap();
-        assert!(matches!(*e, LinkError::BadReference { class: "object", .. }), "{e:?}");
+        assert!(matches!(*e, LinkError::BadReference { .. }), "{e:?}");
     }
 
     fn enum_unit(id: u32, kind: ObjKind, values: &[(i32, &str)], extends: Option<u32>) -> Unit {
@@ -1609,10 +1629,8 @@ mod tests {
                 ..Default::default()
             },
             refs: Refs {
-                fields: vec![al_ir::sym::FieldKey {
-                    table: key(1, ObjKind::Table),
-                    no: 1,
-                }],
+                objects: vec![key(1, ObjKind::Table)],
+                fields: vec![al_ir::sym::FieldRef { table: 0, no: 1 }],
                 ..Default::default()
             },
             ..Default::default()
@@ -1627,15 +1645,10 @@ mod tests {
                     ..Default::default()
                 },
                 refs: Refs {
+                    objects: vec![key(1, ObjKind::Table)],
                     fields: vec![
-                        al_ir::sym::FieldKey {
-                            table: key(1, ObjKind::Table),
-                            no: field_id,
-                        },
-                        al_ir::sym::FieldKey {
-                            table: key(1, ObjKind::Table),
-                            no: 1,
-                        },
+                        al_ir::sym::FieldRef { table: 0, no: field_id },
+                        al_ir::sym::FieldRef { table: 0, no: 1 },
                     ],
                     ..Default::default()
                 },

@@ -390,34 +390,7 @@ impl Session {
                     return Err(Signal::Unsupported(format!("indexing {} as a text", t.describe())));
                 };
                 let i = int(&self.eval(index, f)?)?;
-                // types/TestProbeScalarContracts.al:TextChar_AssignByIndex: position 0 and below raise, the position after
-                // the last character reads as the character 0; further positions are not pinned.
-                if i < 1 {
-                    return al_builtins::native::raise(
-                        format!(
-                            "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
-                        ),
-                        "OutsidePermittedRange",
-                    );
-                }
-                if t.is_ascii() {
-                    // No copy of a long text for each character read.
-                    return match t.as_bytes().get(i as usize - 1) {
-                        Some(u) => Ok(Value::Char(u16::from(*u))),
-                        None if i as usize == t.len() + 1 => Ok(Value::Char(0)),
-                        None => Err(Signal::Unsupported(
-                            "a text read more than one position past its length (not pinned)".into(),
-                        )),
-                    };
-                }
-                let units: Vec<u16> = t.encode_utf16().collect();
-                match units.get(i as usize - 1) {
-                    Some(u) => Ok(Value::Char(*u)),
-                    None if i as usize == units.len() + 1 => Ok(Value::Char(0)),
-                    None => Err(Signal::Unsupported(
-                        "a text read more than one position past its length (not pinned)".into(),
-                    )),
-                }
+                Self::char_at(&t, i)
             }
             E::DotNetCoerce(t, e) => {
                 self.dotnet.clear_null_string();
@@ -657,6 +630,39 @@ impl Session {
             .rev()
             .find(|(w, _)| std::ptr::eq(w.as_ptr(), Rc::as_ptr(rec)))
             .map_or(0, |(_, n)| *n)
+    }
+
+    /// `Text[i]`: the UTF-16 code unit at position `i`.
+    #[inline]
+    pub(crate) fn char_at(t: &str, i: i64) -> Result<Value, Signal> {
+        // types/TestProbeScalarContracts.al:TextChar_AssignByIndex: position 0 and below raise, the position after
+        // the last character reads as the character 0; further positions are not pinned.
+        if i < 1 {
+            return al_builtins::native::raise(
+                format!(
+                    "The value of INDEXING parameter 1 is outside of the permitted range. The current value is: {i}. The permitted range is: from 1 to 2,147,483,647."
+                ),
+                "OutsidePermittedRange",
+            );
+        }
+        if t.is_ascii() {
+            // No copy of a long text for each character read.
+            return match t.as_bytes().get(i as usize - 1) {
+                Some(u) => Ok(Value::Char(u16::from(*u))),
+                None if i as usize == t.len() + 1 => Ok(Value::Char(0)),
+                None => Err(Signal::Unsupported(
+                    "a text read more than one position past its length (not pinned)".into(),
+                )),
+            };
+        }
+        let units: Vec<u16> = t.encode_utf16().collect();
+        match units.get(i as usize - 1) {
+            Some(u) => Ok(Value::Char(*u)),
+            None if i as usize == units.len() + 1 => Ok(Value::Char(0)),
+            None => Err(Signal::Unsupported(
+                "a text read more than one position past its length (not pinned)".into(),
+            )),
+        }
     }
 
     /// A binary operator on two evaluated operands. Shared by the tree walker and the bytecode.
@@ -977,6 +983,19 @@ impl Session {
     ) -> Result<(), Signal> {
         let old = self.read(p, f)?;
         let rv = self.eval(r, f)?;
+        self.append_finish(p, max, old, rv, f)
+    }
+
+    /// The append of `S += x` once the old value of `S` and `x` are known: in place when nothing else holds the text.
+    #[inline(always)]
+    pub(crate) fn append_finish(
+        &mut self,
+        p: &ir::Place,
+        max: Option<u32>,
+        old: Value,
+        rv: Value,
+        f: &mut Frame,
+    ) -> Result<(), Signal> {
         let v = match (old, &rv) {
             (Value::Text(mut t), Value::Text(x) | Value::Code(x))
                 if !t.has_marker()

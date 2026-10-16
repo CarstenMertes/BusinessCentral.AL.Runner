@@ -834,8 +834,9 @@ impl Session {
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
-        // A capture watches the tree walker only; otherwise a routine runs as bytecode when the mode asks for it.
-        let chunk = if self.capturing || self.exec_mode == ExecMode::Tree {
+        // The bytecode, if the mode asks for it. Whether a capture watches the routine is only known once its frame is
+        // entered (`cap_enter_frame`); a capture watches the tree walker only.
+        let chunk = if self.exec_mode == ExecMode::Tree {
             None
         } else {
             engine.exec.chunk(&engine.program, object, routine)
@@ -929,6 +930,7 @@ impl Session {
         if self.capture.is_some() {
             self.cap_enter_frame(object, r, &frame.locals);
         }
+        let chunk = if self.capturing { None } else { chunk };
         let mut outcome = if let Some(chunk) = chunk {
             if exec::counting() {
                 exec::STATS

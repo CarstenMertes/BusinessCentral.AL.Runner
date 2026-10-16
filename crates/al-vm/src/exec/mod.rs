@@ -148,6 +148,48 @@ pub(crate) enum Op {
         brk: u32,
         cont: u32,
     },
+    /// `d := a[b]` for a text `a` (the UTF-16 code unit at position `b`).
+    CharAt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    /// `S += x`: `old` holds the value `S` had before `x` was evaluated, `a` holds `x`.
+    AppendText {
+        s: u32,
+        old: u16,
+        a: u16,
+    },
+    /// Jumps to `t` unless the value in `a` matches one of the labels `l` (a `case` branch).
+    MatchAny {
+        a: u16,
+        l: u32,
+        t: u32,
+    },
+    /// `d := a in [labels l]`.
+    InSet {
+        d: u16,
+        a: u16,
+        l: u32,
+    },
+    DotNet {
+        s: u32,
+        d: u16,
+    },
+    /// `d := ThisInstance` (the running object).
+    ThisInstance {
+        d: u16,
+    },
+    /// `d := BaseInstance` (the base object of an extension).
+    BaseInstance {
+        d: u16,
+    },
+    /// An operation on one value whose other parameters are in the side table `aux`.
+    Aux {
+        s: u32,
+        d: u16,
+        a: u16,
+    },
     /// Lets go of a temporary whose value nobody reads.
     Clear {
         a: u16,
@@ -185,6 +227,40 @@ pub(crate) struct BuiltinSite {
     pub ret_used: bool,
 }
 
+pub(crate) enum AuxSite {
+    InterfaceTest {
+        objects: Vec<u32>,
+        cast: bool,
+    },
+    EnumImpl {
+        by_ordinal: Vec<(i32, usize)>,
+        unknown: Option<usize>,
+    },
+    Control {
+        control: usize,
+        runtime: bool,
+    },
+    FieldOf {
+        pos: usize,
+    },
+    QueryColumn {
+        column: usize,
+    },
+}
+
+pub(crate) struct AppendSite {
+    pub place: ir::Place,
+    pub max: Option<u32>,
+}
+
+pub(crate) struct DotNetSite {
+    pub ty: Option<usize>,
+    pub op: ir::DotNetOp,
+    pub recv: Option<u16>,
+    pub arg_regs: Vec<u16>,
+    pub args: Vec<ir::Arg>,
+}
+
 pub(crate) struct ForSite {
     pub var: ir::Place,
     pub down: bool,
@@ -211,6 +287,10 @@ pub(crate) struct Chunk {
     pub calls: Vec<CallSite>,
     pub builtins: Vec<BuiltinSite>,
     pub fors: Vec<ForSite>,
+    pub labels: Vec<Vec<ir::SetElem>>,
+    pub appends: Vec<AppendSite>,
+    pub dotnets: Vec<DotNetSite>,
+    pub aux: Vec<AuxSite>,
     /// Registers `0..nlocals` are the routine's locals.
     pub nlocals: u16,
     /// Temporaries after the locals.

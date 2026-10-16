@@ -149,6 +149,19 @@ impl Session {
                 }
             }
         }
+        self.dotnet_apply(ty, recv, values, places, op, f)
+    }
+
+    /// A DotNet operation on evaluated operands (shared by the tree walker and the bytecode).
+    pub(crate) fn dotnet_apply(
+        &mut self,
+        ty: Option<usize>,
+        recv: Value,
+        mut values: Vec<Value>,
+        places: Vec<Option<ir::Place>>,
+        op: &ir::DotNetOp,
+        f: &mut Frame,
+    ) -> Result<Value, Signal> {
         self.dotnet.null_string = false;
         let decl = ty.map(|i| {
             let d = &self.engine.program.dotnet_types[i];

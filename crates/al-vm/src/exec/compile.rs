@@ -21,6 +21,10 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
             calls: Vec::new(),
             builtins: Vec::new(),
             fors: Vec::new(),
+            labels: Vec::new(),
+            appends: Vec::new(),
+            dotnets: Vec::new(),
+            aux: Vec::new(),
             nlocals,
             temps: 0,
             tree_nodes: 0,
@@ -68,14 +72,6 @@ fn pure(e: &ir::Expr) -> bool {
     }
 }
 
-/// An expression the tree walker evaluates in the same order whatever the form (nothing observable between operands).
-fn simple(e: &ir::Expr) -> bool {
-    matches!(
-        e,
-        ir::Expr::Const(_) | ir::Expr::Load(ir::Place::Local(_) | ir::Place::Global(_))
-    )
-}
-
 /// The builtins the tree walker handles itself before the generic path; they stay on the tree walker.
 fn vm_run(id: al_builtins::builtin_id::BuiltinId) -> bool {
     let class = id.class();
@@ -116,7 +112,7 @@ impl Compiler {
 
     fn patch(&mut self, at: usize, to: u32) {
         match &mut self.chunk.code[at] {
-            Op::Jump { t } | Op::JumpIfNot { t, .. } | Op::ForTest { t, .. } => *t = to,
+            Op::Jump { t } | Op::JumpIfNot { t, .. } | Op::MatchAny { t, .. } | Op::ForTest { t, .. } => *t = to,
             Op::TreeStmt { .. } => unreachable!("tree statements are patched through patch_tree"),
             other => unreachable!("not a jump: {other:?}"),
         }
@@ -173,6 +169,12 @@ impl Compiler {
         let ra = if pure(b) { self.expr_any(a)? } else { self.expr_copy(a)? };
         let rb = self.expr_any(b)?;
         Ok((ra, rb))
+    }
+
+    fn aux(&mut self, site: AuxSite, d: u16, a: u16) {
+        self.chunk.aux.push(site);
+        let s = (self.chunk.aux.len() - 1) as u32;
+        self.emit(Op::Aux { s, d, a });
     }
 
     fn tree_expr(&mut self, e: &ir::Expr, d: u16) {
@@ -233,13 +235,7 @@ impl Compiler {
                 instance,
                 args,
                 try_call,
-            } if instance.is_none()
-                || (instance.as_deref().is_some_and(simple)
-                    && args.iter().all(|a| {
-                        matches!(a, ir::Arg::Value(v) if simple(v))
-                            || matches!(a, ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)))
-                    })) =>
-            {
+            } => {
                 let instance = match instance {
                     Some(i) => Some(self.expr_copy(i)?),
                     None => None,
@@ -286,6 +282,94 @@ impl Compiler {
                 });
                 let s = (self.chunk.builtins.len() - 1) as u32;
                 self.emit(Op::Builtin { s, d });
+            }
+            E::CharAt(text, index) => {
+                let (a, b) = self.pair(text, index)?;
+                self.emit(Op::CharAt { d, a, b });
+            }
+            E::In(v, set) => {
+                let a = self.expr_copy(v)?;
+                self.chunk.labels.push(set.clone());
+                let l = (self.chunk.labels.len() - 1) as u32;
+                self.emit(Op::InSet { d, a, l });
+            }
+            E::DotNet { ty, receiver, op, args } => {
+                let recv = match receiver.as_deref() {
+                    Some(r) => Some(self.expr_copy(r)?),
+                    None => None,
+                };
+                let arg_regs = self.arg_regs(args)?;
+                self.chunk.dotnets.push(DotNetSite {
+                    ty: *ty,
+                    op: op.clone(),
+                    recv,
+                    arg_regs,
+                    args: blank(args),
+                });
+                let s = (self.chunk.dotnets.len() - 1) as u32;
+                self.emit(Op::DotNet { s, d });
+            }
+            E::ThisInstance => {
+                self.emit(Op::ThisInstance { d });
+            }
+            E::BaseInstance => {
+                self.emit(Op::BaseInstance { d });
+            }
+            E::Ternary(c, a, b) => {
+                let cr = self.expr_any(c)?;
+                let jf = self.emit(Op::JumpIfNot { a: cr, t: 0 });
+                self.expr_into(a, d)?;
+                let jend = self.emit(Op::Jump { t: 0 });
+                let else_at = self.here();
+                self.patch(jf, else_at);
+                self.expr_into(b, d)?;
+                let end = self.here();
+                self.patch(jend, end);
+            }
+            E::InterfaceTest { value, objects, cast } => {
+                let a = self.expr_any(value)?;
+                self.aux(
+                    AuxSite::InterfaceTest {
+                        objects: objects.clone(),
+                        cast: *cast,
+                    },
+                    d,
+                    a,
+                );
+            }
+            E::EnumImpl {
+                value,
+                by_ordinal,
+                unknown,
+            } => {
+                let a = self.expr_any(value)?;
+                self.aux(
+                    AuxSite::EnumImpl {
+                        by_ordinal: by_ordinal.clone(),
+                        unknown: *unknown,
+                    },
+                    d,
+                    a,
+                );
+            }
+            E::Control { page, control, runtime } => {
+                let a = self.expr_any(page)?;
+                self.aux(
+                    AuxSite::Control {
+                        control: *control,
+                        runtime: *runtime,
+                    },
+                    d,
+                    a,
+                );
+            }
+            E::FieldOf(base, pos) => {
+                let a = self.expr_any(base)?;
+                self.aux(AuxSite::FieldOf { pos: *pos }, d, a);
+            }
+            E::QueryColumn { query, column } => {
+                let a = self.expr_any(query)?;
+                self.aux(AuxSite::QueryColumn { column: *column }, d, a);
             }
             other => self.tree_expr(other, d),
         }
@@ -387,7 +471,7 @@ impl Compiler {
             S::Pos(p) => {
                 self.emit(Op::Pos { p: *p });
             }
-            S::Assign(p, e) => self.assign(s, p, e)?,
+            S::Assign(p, e) => self.assign(p, e)?,
             S::Expr(e) => {
                 let d = self.alloc()?;
                 self.expr_into(e, d)?;
@@ -529,17 +613,57 @@ impl Compiler {
                     self.emit(Op::RaiseContinue);
                 }
             },
-            S::Foreach { .. } | S::Case { .. } | S::AssertError(_) | S::Assume(_) => self.tree_stmt(s),
+            S::Case {
+                scrutinee,
+                branches,
+                otherwise,
+            } => {
+                let a = self.expr_copy(scrutinee)?;
+                let mut ends = Vec::new();
+                for (labels, body) in branches {
+                    self.chunk.labels.push(labels.clone());
+                    let l = (self.chunk.labels.len() - 1) as u32;
+                    let miss = self.emit(Op::MatchAny { a, l, t: 0 });
+                    self.emit(Op::Clear { a });
+                    self.block(body)?;
+                    ends.push(self.emit(Op::Jump { t: 0 }));
+                    let next = self.here();
+                    self.patch(miss, next);
+                }
+                self.emit(Op::Clear { a });
+                self.block(otherwise)?;
+                let end = self.here();
+                for j in ends {
+                    self.patch(j, end);
+                }
+            }
+            S::Foreach { .. } | S::AssertError(_) | S::Assume(_) => self.tree_stmt(s),
         }
         Ok(())
     }
 
-    fn assign(&mut self, whole: &ir::Stmt, p: &ir::Place, e: &ir::Expr) -> R<()> {
+    fn assign(&mut self, p: &ir::Place, e: &ir::Expr) -> R<()> {
         // `S += x` and `S := S + x` on a text variable append in place: the tree walker's routine does it.
         if let (ir::Place::Local(_) | ir::Place::Global(_), ir::Expr::Convert(RtType::Text(_), inner)) = (p, e) {
             if let ir::Expr::Binary(ir::BinOp::Add, l, _) = &**inner {
                 if matches!(&**l, ir::Expr::Load(lp) if lp == p) {
-                    self.tree_stmt(whole);
+                    let ir::Expr::Convert(RtType::Text(max), inner) = e else {
+                        unreachable!("matched above")
+                    };
+                    let ir::Expr::Binary(_, _, r) = &**inner else {
+                        unreachable!("matched above")
+                    };
+                    // The old value is read before `x` is evaluated, as the tree walker does.
+                    let old = self.alloc()?;
+                    let pi = self.place(p);
+                    self.emit(Op::ReadPlace { d: old, p: pi });
+                    let a = self.expr_any(r)?;
+                    self.chunk.appends.push(AppendSite {
+                        place: p.clone(),
+                        max: *max,
+                    });
+                    let s = (self.chunk.appends.len() - 1) as u32;
+                    self.emit(Op::AppendText { s, old, a });
                     return Ok(());
                 }
             }

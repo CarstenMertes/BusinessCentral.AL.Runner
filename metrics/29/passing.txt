@@ -8110,6 +8110,7 @@
 72274 P105_SaveAsCsv_Stream_UnknownId
 72274 P105_SaveAsCsv_Stream_WithFilter
 72411 P106_Err_FieldNoNotExisting
+72411 P106_Err_FieldRefVariants
 72411 P106_Err_UnknownPage
 72411 P106_Err_WrongTableRecord
 72412 P106_Inst_RunModal_List

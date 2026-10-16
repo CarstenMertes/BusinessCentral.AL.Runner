@@ -1,0 +1,1825 @@
+Pass
+Some(
+    Captured {
+        truncated: false,
+        values: [
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    1,
+                ),
+                statement: 3,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    1,
+                ),
+                statement: 8,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    2,
+                ),
+                statement: 3,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    3,
+                ),
+                statement: 3,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    4,
+                ),
+                statement: 8,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    4,
+                ),
+                statement: 3,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    4,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    1,
+                ),
+                statement: 10,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    5,
+                ),
+                statement: 11,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    2,
+                ),
+                statement: 10,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    7,
+                ),
+                statement: 11,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    3,
+                ),
+                statement: 10,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    10,
+                ),
+                statement: 11,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    1,
+                ),
+                statement: 15,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    3,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    13,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    2,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    15,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    2,
+                ),
+                statement: 15,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    3,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    21,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    2,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    25,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    3,
+                ),
+                statement: 15,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    3,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    5,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    34,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    5,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    2,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    5,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    40,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    5,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "L",
+                value: Unrendered(
+                    "a List is not rendered yet",
+                ),
+                statement: 16,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "L",
+                value: Unrendered(
+                    "a List is not rendered yet",
+                ),
+                statement: 17,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "L",
+                value: Unrendered(
+                    "a List is not rendered yet",
+                ),
+                statement: 18,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "V",
+                value: Int(
+                    4,
+                ),
+                statement: 22,
+                loop_id: Some(
+                    6,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "T",
+                value: Text(
+                    "4",
+                ),
+                statement: 21,
+                loop_id: Some(
+                    6,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "V",
+                value: Int(
+                    5,
+                ),
+                statement: 22,
+                loop_id: Some(
+                    6,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "V",
+                value: Int(
+                    6,
+                ),
+                statement: 22,
+                loop_id: Some(
+                    6,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "T",
+                value: Text(
+                    "46",
+                ),
+                statement: 21,
+                loop_id: Some(
+                    6,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    1,
+                ),
+                statement: 26,
+                loop_id: Some(
+                    7,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    41,
+                ),
+                statement: 25,
+                loop_id: Some(
+                    7,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    2,
+                ),
+                statement: 26,
+                loop_id: Some(
+                    7,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "S",
+                value: Int(
+                    42,
+                ),
+                statement: 25,
+                loop_id: Some(
+                    7,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    3,
+                ),
+                statement: 26,
+                loop_id: Some(
+                    7,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+        ],
+        loops: [
+            LoopRecord {
+                id: 0,
+                scope: "OnRun",
+                statement: 9,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        3,
+                        5,
+                        7,
+                        8,
+                    ],
+                    [
+                        3,
+                        5,
+                        4,
+                    ],
+                    [
+                        3,
+                        5,
+                        7,
+                        8,
+                    ],
+                    [
+                        3,
+                        5,
+                        7,
+                        6,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 1,
+                scope: "OnRun",
+                statement: 12,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        10,
+                        11,
+                    ],
+                    [
+                        10,
+                        11,
+                    ],
+                    [
+                        10,
+                        11,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 2,
+                scope: "OnRun",
+                statement: 15,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        14,
+                        13,
+                    ],
+                    [
+                        14,
+                        13,
+                    ],
+                    [
+                        14,
+                        13,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 3,
+                scope: "OnRun",
+                statement: 14,
+                parent: Some(
+                    2,
+                ),
+                parent_iteration: Some(
+                    1,
+                ),
+                iterations: [
+                    [
+                        13,
+                    ],
+                    [
+                        13,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 4,
+                scope: "OnRun",
+                statement: 14,
+                parent: Some(
+                    2,
+                ),
+                parent_iteration: Some(
+                    2,
+                ),
+                iterations: [
+                    [
+                        13,
+                    ],
+                    [
+                        13,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 5,
+                scope: "OnRun",
+                statement: 14,
+                parent: Some(
+                    2,
+                ),
+                parent_iteration: Some(
+                    3,
+                ),
+                iterations: [
+                    [
+                        13,
+                    ],
+                    [
+                        13,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 6,
+                scope: "OnRun",
+                statement: 22,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        20,
+                        21,
+                    ],
+                    [
+                        20,
+                        19,
+                    ],
+                    [
+                        20,
+                        21,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 7,
+                scope: "OnRun",
+                statement: 26,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        24,
+                        25,
+                    ],
+                    [
+                        24,
+                        25,
+                    ],
+                    [
+                        24,
+                        23,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+        ],
+        messages: [
+            MessageRecord {
+                text: "done 42",
+                scope: "OnRun",
+                statement: Some(
+                    27,
+                ),
+                loop_id: None,
+                iteration: None,
+            },
+        ],
+    },
+)
+Pass
+Some(
+    Captured {
+        truncated: false,
+        values: [
+            ValueRecord {
+                scope: "Find",
+                variable: "K",
+                value: Int(
+                    1,
+                ),
+                statement: 5,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "Find",
+                variable: "K",
+                value: Int(
+                    2,
+                ),
+                statement: 5,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "Find",
+                variable: "K",
+                value: Int(
+                    3,
+                ),
+                statement: 5,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "Find",
+                variable: "K",
+                value: Int(
+                    4,
+                ),
+                statement: 5,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    4,
+                ),
+            },
+            ValueRecord {
+                scope: "Find",
+                variable: "K",
+                value: Int(
+                    5,
+                ),
+                statement: 5,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    5,
+                ),
+            },
+            ValueRecord {
+                scope: "Find",
+                variable: "K",
+                value: Int(
+                    6,
+                ),
+                statement: 5,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    6,
+                ),
+            },
+            ValueRecord {
+                scope: "Find",
+                variable: "K",
+                value: Int(
+                    7,
+                ),
+                statement: 5,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    7,
+                ),
+            },
+            ValueRecord {
+                scope: "Find",
+                variable: "K",
+                value: Int(
+                    8,
+                ),
+                statement: 5,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    8,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "A",
+                value: Int(
+                    8,
+                ),
+                statement: 20,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "Bump",
+                variable: "N",
+                value: Int(
+                    11,
+                ),
+                statement: 10,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "A",
+                value: Int(
+                    11,
+                ),
+                statement: 21,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "Bump",
+                variable: "N",
+                value: Int(
+                    15,
+                ),
+                statement: 10,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "A",
+                value: Int(
+                    15,
+                ),
+                statement: 22,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "C",
+                value: Text(
+                    "high",
+                ),
+                statement: 25,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "B",
+                value: Int(
+                    120,
+                ),
+                statement: 27,
+                loop_id: None,
+                iteration: None,
+            },
+            ValueRecord {
+                scope: "Bump",
+                variable: "N",
+                value: Int(
+                    20,
+                ),
+                statement: 10,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "A",
+                value: Int(
+                    20,
+                ),
+                statement: 28,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "B",
+                value: Int(
+                    121,
+                ),
+                statement: 29,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+        ],
+        loops: [
+            LoopRecord {
+                id: 0,
+                scope: "Find",
+                statement: 5,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        4,
+                    ],
+                    [
+                        4,
+                    ],
+                    [
+                        4,
+                    ],
+                    [
+                        4,
+                    ],
+                    [
+                        4,
+                    ],
+                    [
+                        4,
+                    ],
+                    [
+                        4,
+                    ],
+                    [
+                        4,
+                        3,
+                    ],
+                ],
+                closed_by: ScopeExit,
+            },
+            LoopRecord {
+                id: 1,
+                scope: "OnRun",
+                statement: 32,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        28,
+                        31,
+                        29,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+        ],
+        messages: [],
+    },
+)
+Pass
+Some(
+    Captured {
+        truncated: false,
+        values: [
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    1,
+                ),
+                statement: 18,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "Hits",
+                value: Int(
+                    1,
+                ),
+                statement: 10,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    0,
+                ),
+                statement: 12,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    1,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    2,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    2,
+                ),
+                statement: 18,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "Hits",
+                value: Int(
+                    2,
+                ),
+                statement: 10,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    0,
+                ),
+                statement: 12,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    1,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    2,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    3,
+                ),
+                statement: 18,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "Hits",
+                value: Int(
+                    3,
+                ),
+                statement: 10,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    0,
+                ),
+                statement: 12,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    1,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "J",
+                value: Int(
+                    2,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    1,
+                ),
+                statement: 22,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "Hits",
+                value: Int(
+                    4,
+                ),
+                statement: 19,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    2,
+                ),
+                statement: 22,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "Hits",
+                value: Int(
+                    5,
+                ),
+                statement: 19,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "Hits",
+                value: Int(
+                    15,
+                ),
+                statement: 24,
+                loop_id: Some(
+                    4,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+        ],
+        loops: [
+            LoopRecord {
+                id: 0,
+                scope: "OnRun",
+                statement: 18,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        9,
+                        8,
+                        11,
+                        10,
+                        12,
+                        17,
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                    [
+                        9,
+                        8,
+                        11,
+                        10,
+                        12,
+                        17,
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                    [
+                        9,
+                        8,
+                        11,
+                        10,
+                        12,
+                        17,
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 1,
+                scope: "OnRun",
+                statement: 17,
+                parent: Some(
+                    0,
+                ),
+                parent_iteration: Some(
+                    1,
+                ),
+                iterations: [
+                    [
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                    [
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 2,
+                scope: "OnRun",
+                statement: 17,
+                parent: Some(
+                    0,
+                ),
+                parent_iteration: Some(
+                    2,
+                ),
+                iterations: [
+                    [
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                    [
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 3,
+                scope: "OnRun",
+                statement: 17,
+                parent: Some(
+                    0,
+                ),
+                parent_iteration: Some(
+                    3,
+                ),
+                iterations: [
+                    [
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                    [
+                        13,
+                        16,
+                        15,
+                        14,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 4,
+                scope: "OnRun",
+                statement: 22,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        19,
+                        21,
+                    ],
+                    [
+                        19,
+                        21,
+                        20,
+                        24,
+                    ],
+                ],
+                closed_by: ScopeExit,
+            },
+        ],
+        messages: [],
+    },
+)
+Pass
+Some(
+    Captured {
+        truncated: false,
+        values: [
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    1,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "Sum",
+                variable: "I",
+                value: Int(
+                    1,
+                ),
+                statement: 4,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "Sum",
+                variable: "R",
+                value: Int(
+                    1,
+                ),
+                statement: 3,
+                loop_id: Some(
+                    1,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "T",
+                value: Int(
+                    1,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    2,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "Sum",
+                variable: "I",
+                value: Int(
+                    1,
+                ),
+                statement: 4,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "Sum",
+                variable: "R",
+                value: Int(
+                    1,
+                ),
+                statement: 3,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "Sum",
+                variable: "I",
+                value: Int(
+                    2,
+                ),
+                statement: 4,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "Sum",
+                variable: "R",
+                value: Int(
+                    3,
+                ),
+                statement: 3,
+                loop_id: Some(
+                    2,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "T",
+                value: Int(
+                    4,
+                ),
+                statement: 13,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "I",
+                value: Int(
+                    3,
+                ),
+                statement: 14,
+                loop_id: Some(
+                    0,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "K",
+                value: Int(
+                    1,
+                ),
+                statement: 15,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "T",
+                value: Int(
+                    5,
+                ),
+                statement: 18,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    1,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "K",
+                value: Int(
+                    2,
+                ),
+                statement: 15,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    2,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "K",
+                value: Int(
+                    3,
+                ),
+                statement: 15,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "T",
+                value: Int(
+                    8,
+                ),
+                statement: 18,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    3,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "K",
+                value: Int(
+                    4,
+                ),
+                statement: 15,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    4,
+                ),
+            },
+            ValueRecord {
+                scope: "OnRun",
+                variable: "T",
+                value: Int(
+                    12,
+                ),
+                statement: 18,
+                loop_id: Some(
+                    3,
+                ),
+                iteration: Some(
+                    4,
+                ),
+            },
+        ],
+        loops: [
+            LoopRecord {
+                id: 0,
+                scope: "OnRun",
+                statement: 14,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        12,
+                        13,
+                    ],
+                    [
+                        12,
+                        11,
+                        13,
+                    ],
+                    [
+                        12,
+                        11,
+                        10,
+                        9,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 1,
+                scope: "Sum",
+                statement: 4,
+                parent: Some(
+                    0,
+                ),
+                parent_iteration: Some(
+                    1,
+                ),
+                iterations: [
+                    [
+                        3,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 2,
+                scope: "Sum",
+                statement: 4,
+                parent: Some(
+                    0,
+                ),
+                parent_iteration: Some(
+                    2,
+                ),
+                iterations: [
+                    [
+                        3,
+                    ],
+                    [
+                        3,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+            LoopRecord {
+                id: 3,
+                scope: "OnRun",
+                statement: 19,
+                parent: None,
+                parent_iteration: None,
+                iterations: [
+                    [
+                        15,
+                        17,
+                        18,
+                    ],
+                    [
+                        15,
+                        17,
+                        16,
+                    ],
+                    [
+                        15,
+                        17,
+                        18,
+                    ],
+                    [
+                        15,
+                        17,
+                        18,
+                    ],
+                ],
+                closed_by: Exit,
+            },
+        ],
+        messages: [],
+    },
+)

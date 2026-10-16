@@ -1,4 +1,4 @@
-//! The bytecode loop. Every instruction does what the matching tree-walker node does, through the same helpers.
+//! The bytecode loop. Every instruction calls the helpers of its operation (`ops`, `Session::read`, `write`, ...).
 
 use super::*;
 use crate::{Frame, Session};
@@ -371,12 +371,21 @@ impl Session {
                 }
                 Op::CharAt { d, a, b } => self.op_char_at(f, d, a, b, nl)?,
                 Op::AppendText { s, old, a } => self.op_append(&chunk.appends[s as usize], f, old, a, nl)?,
-                Op::MatchAny { a, l, t } => {
-                    if !self.op_match(&chunk.labels[l as usize], f, a)? {
+                Op::JumpEq { a, b, t } => {
+                    if ops::compare(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Equal {
                         pc = t as usize;
                     }
                 }
-                Op::InSet { d, a, l } => self.op_in(&chunk.labels[l as usize], f, d, a, nl)?,
+                Op::JumpLt { a, b, t } => {
+                    if ops::compare(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Less {
+                        pc = t as usize;
+                    }
+                }
+                Op::JumpGt { a, b, t } => {
+                    if ops::compare(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Greater {
+                        pc = t as usize;
+                    }
+                }
                 Op::DotNet { s, d } => self.op_dotnet(&chunk.dotnets[s as usize], f, d, nl)?,
                 Op::ThisInstance { d } => Self::op_this(f, d),
                 Op::BaseInstance { d } => self.op_base(f, d)?,
@@ -416,7 +425,7 @@ impl Session {
             Ok(at) => Ok(at),
             Err(Signal::Error(mut e)) => {
                 self.rollback_transaction();
-                // The statements the error left open are closed, as the tree walker closes them while the error leaves them.
+                // The statements the error left open are closed.
                 self.cap_stmt_truncate(open);
                 self.add_top_frame(&mut e);
                 self.last_error = *e;
@@ -504,7 +513,7 @@ impl Session {
     fn op_foreach_init(&mut self, site: &ForeachSite, f: &mut Frame, nl: u16) -> Result<(), Signal> {
         let coll = take(f, site.coll, nl);
         // A .NET collection, or a DotNet variable that holds none (ADR-024 section 4); its enumerator takes the place of
-        // the items and the loop is not tracked (as on the tree walker).
+        // the items and the loop is not tracked (ADR-030).
         let dotnet_var = matches!(coll, Value::Null)
             && matches!(&site.collection, Some(ir::Expr::Load(p)) if matches!(self.place_type(p, f), al_builtins::value::RtType::DotNet(_)));
         if matches!(coll, Value::DotNet(_)) || dotnet_var {
@@ -564,7 +573,7 @@ impl Session {
         for &r in &site.arg_regs {
             values.push(take(f, r, nl));
         }
-        self.finish_call(object, routine, inst, &site.args, Some(values), false, f)
+        self.finish_call(object, routine, inst, &site.args, values, false, f)
     }
 
     #[inline(never)]
@@ -590,20 +599,6 @@ impl Session {
         let old = take(f, old, nl);
         let rv = take(f, a, nl);
         self.append_finish(&site.place, site.max, old, rv, f)
-    }
-
-    #[inline(never)]
-    fn op_match(&mut self, labels: &[ir::SetElem], f: &mut Frame, a: u16) -> Result<bool, Signal> {
-        let v = f.locals[a as usize].clone();
-        self.matches_any(&v, labels, f)
-    }
-
-    #[inline(never)]
-    fn op_in(&mut self, labels: &[ir::SetElem], f: &mut Frame, d: u16, a: u16, nl: u16) -> Result<(), Signal> {
-        let v = take(f, a, nl);
-        let hit = self.matches_any(&v, labels, f)?;
-        set(&mut f.locals[d as usize], Value::Boolean(hit));
-        Ok(())
     }
 
     #[inline(never)]
@@ -705,7 +700,7 @@ impl Session {
             site.routine,
             instance,
             &site.args,
-            Some(values),
+            values,
             site.try_call,
             f,
         )

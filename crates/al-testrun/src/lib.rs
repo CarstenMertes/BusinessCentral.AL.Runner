@@ -11,7 +11,6 @@ mod cpuclock;
 pub mod deps;
 pub mod discover;
 pub mod dotnet;
-pub mod dual;
 pub mod events;
 pub mod explain;
 pub mod flagged;

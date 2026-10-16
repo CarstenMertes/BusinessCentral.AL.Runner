@@ -438,26 +438,6 @@ impl MemStore {
         ))
     }
 
-    /// A hash of the rows of each table the store holds, committed or not, by table object (companies together, in
-    /// order). Equal stores give equal lists; the dual run compares the data two runs of a test leave and names the
-    /// first table that differs (a debugging aid, not a fast path).
-    pub fn digest(&self) -> Vec<(u32, u64)> {
-        use std::hash::{Hash, Hasher};
-        let mut by_table: std::collections::BTreeMap<u32, std::collections::hash_map::DefaultHasher> =
-            Default::default();
-        for ((company, object), table) in self.tables.iter() {
-            if table.is_empty() {
-                continue;
-            }
-            let h = by_table.entry(*object).or_default();
-            company.hash(h);
-            for (_, row) in table.iter() {
-                format!("{row:?}").hash(h);
-            }
-        }
-        by_table.into_iter().map(|(o, h)| (o, h.finish())).collect()
-    }
-
     /// Whether any write since the last commit or rollback is pending.
     pub fn has_uncommitted(&self) -> bool {
         !(self.tables.ptr_eq(&self.committed) || (self.tables.is_empty() && self.committed.is_empty()))

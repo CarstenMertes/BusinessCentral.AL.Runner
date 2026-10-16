@@ -35,36 +35,6 @@ const KEPT: &[(&str, &str, &str)] = &[
         "the report of a defect of the link step (AL_CHECK_LINK, tests): for the developers of the compiler",
     ),
     (
-        "al-data/src/memory.rs",
-        r#"format!("{row:?}").hash(h);"#,
-        "a hash input of the dual-run digest, never shown",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#""dual run: {} {} ({}): {}: tree walker {:?}, bytecode {:?}","#,
-        "the report of a difference between the two executors, for the developers of the executable form",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#"diff("outcome", format!("{o_tree:?}"), format!("{o_other:?}"));"#,
-        "same",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#"format!("{:?}", marks(tree.hits, t)),"#,
-        "same",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#"format!("{:?}", marks(other.hits, t)),"#,
-        "same",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#""table {} (object {}) rows hash {:?}","#,
-        "same",
-    ),
-    (
         "al-vm/src/exec/compile.rs",
         r#"eprintln!("  {i:3} {op:?}");"#,
         "the bytecode listing of AL_EXEC_DUMP, for the developers of the VM",

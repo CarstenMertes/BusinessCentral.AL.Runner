@@ -5,11 +5,10 @@
 //! types/TestEnumDefaultImplTests.Codeunit.al) and lists every implementing routine of an
 //! interface procedure; the VM only picks among them by the instance's object.
 
-use crate::{Frame, Session, Signal};
+use crate::{Session, Signal};
 use al_builtins::describe::Describe;
 use al_builtins::native::AlError;
 use al_builtins::value::{Instance, Value};
-use al_ir as ir;
 use std::cell::RefCell;
 use std::rc::Rc;
 
@@ -56,17 +55,6 @@ impl Session {
 
     /// The routine an interface call runs: the target belonging to the object of the instance
     /// the receiver holds, and that instance.
-    pub(crate) fn interface_target(
-        &mut self,
-        receiver: &ir::Expr,
-        targets: &[(usize, usize)],
-        f: &mut Frame,
-    ) -> Result<(usize, usize, Rc<RefCell<Instance>>), Signal> {
-        let v = self.eval(receiver, f)?;
-        self.interface_target_value(v, targets)
-    }
-
-    /// [`Session::interface_target`] for a receiver already evaluated (the bytecode).
     pub(crate) fn interface_target_value(
         &mut self,
         receiver: Value,

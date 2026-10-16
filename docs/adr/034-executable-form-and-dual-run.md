@@ -1,6 +1,6 @@
 # ADR-034: Executable form, checked against the current interpreter
 
-- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md)
+- Status: Accepted (2026-10-15, decided by the orchestrator on the owner's delegation; see docs/owner-review.md); amended 2026-10-16: tree walker retired
 - Date: 2026-10-15
 - Related: ADR-011 decision 4 (tree walker until a budget needs more; superseded in part), ADR-031 (VM budget),
   ADR-032 (typed ids), ADR-033 (link step), ADR-009, review `docs/reviews/2026-10-compile-ir-review.md` (R2, R6)
@@ -95,6 +95,36 @@ still compared. Two runs of one interpreter now show 0 differences on Tests-ERM 
 - Cost: 15 to 25 agent-days. Two interpreters to keep equal; the dual run is the guard, and it must stay in CI
   (owner decision D5: every merge or nightly).
 
+## Tree walker retired (owner decision 2026-10-16)
+
+Amendment. The bytecode is the only executor. The tree walker (`Session::eval`, `exec`, `exec_block`,
+`exec_block_captured`, `foreach_dotnet`, `eval_dotnet`, `interface_target`, `append_text`, `matches_any`), `ExecMode`,
+`AL_EXEC=tree|dual`, `--dual-run` in both command lines, the dual-run harness in `al-testrun` (`dual.rs`,
+`Session::state_digest`, `MemStore::digest`) and the dual-run CI job are deleted. Decisions 4 and 6 above, and the
+"Dual-run harness" section, describe what was removed.
+
+Why it was possible: the bytecode had no tree node left (statements and expressions all have instructions, the
+captured form runs value capture and loop tracking, every routine compiles at its first call), and the dual run showed
+0 differences on the corpus (27, 28, 29), Tests-ERM and Pageworks before the deletion.
+
+What checks the executor now: the corpus (expected results from real BC), the Microsoft suites (Tests-ERM and the
+others, outcome comparison against the previous main), Pageworks (812 of 1013 tests), the instruction budgets
+(`perf_vm`, `perf_budget`) and `crates/al-testrun/tests/capture_golden.txt` (a capture recorded from the tree walker).
+A difference between two executors can no longer be found by running both; a wrong instruction shows as a wrong corpus
+result.
+
+Two changes the deletion needed:
+
+- **Places with computed indexes.** The tree walker evaluated the index expressions of a place (`A[i + 1]`) when it read or
+  wrote it. The compiler now evaluates them into registers just before the instruction that uses the place, and the
+  place carries those registers. An index expression of a by-reference argument is evaluated once, before the call (it
+  was evaluated again for the write-back).
+- **`case` labels and `in [...]`** compile to compare-and-jump instructions (`JumpEq`, `JumpLt`, `JumpGt`) that evaluate a
+  label when it is reached, in order, as before.
+
+A routine that needs more than 65,535 registers (locals and temporaries) is refused with `Signal::Unsupported` when it
+is first called (hard rule 4), with a test; it is not run in part. None exists in the corpus, Tests-ERM or Pageworks.
+
 ## Conformance
 
-The dual-run job in CI; the ADR-031 budget.
+The ADR-031 budget; the corpus ratchet; Tests-ERM outcomes; Pageworks. (The dual-run job was removed with the tree walker, see the amendment above.)

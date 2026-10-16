@@ -171,6 +171,13 @@ page 62303 "PM Host Card" { PageType = ListPlus; SourceTable = "PM Host";
 table 62304 "PM Pick" { LookupPageId = "PM Pick List"; fields { field(1; Id; Code[10]) { } field(2; Grp; Integer) { } } keys { key(PK; Id) { } } }
 page 62305 "PM Pick List" { PageType = List; SourceTable = "PM Pick"; Editable = false;
   layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } } }
+page 62308 "PM Selection Own"
+{
+    PageType = Worksheet; SourceTable = "PM Row";
+    layout { area(Content) { repeater(Rows) { field("No."; Rec."No.") { } } } }
+    actions { area(Processing) { action(Pick) { trigger OnAction() var S: Record "PM Row"; begin CurrPage.SetSelectionFilter(S); if S.FindFirst() then; end; } } }
+    procedure SetSelectionFilter() begin end;
+}
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -842,5 +849,17 @@ fn page_run_modal_with_a_record_hands_back_the_selected_row_on_lookup_ok() {
             R.DeleteAll(); R.Id := 'A'; R.Grp := 1; R.Insert(); R.Id := 'B'; R.Grp := 1; R.Insert(); R.Id := 'C'; R.Grp := 2; R.Insert();
             T.SetRange(Grp, 1); A := Page.RunModal(0, T); Check('LookupOK', Format(A)); Check('B', T.Id); end;
         [ModalPageHandler] procedure Pick(var L: TestPage \"PM Pick List\") begin L.GoToKey('B'); L.OK().Invoke(); end;"
+    ));
+}
+
+// Base Application's Service Lines page declares `SetSelectionFilter()` and calls `CurrPage.SetSelectionFilter(ServiceLine)`:
+// the platform method of another arity is still a candidate (154 Tests-SCM-Service tests were refused with "has no callee").
+#[test]
+fn a_page_procedure_named_like_a_platform_method_leaves_the_other_overload_to_the_platform() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Selection() var C: TestPage \"PM Selection Own\"; R: Record \"PM Row\"; begin
+            R.DeleteAll(); R.\"No.\" := 'S1'; R.Insert(); C.OpenEdit(); C.Pick.Invoke(); Check('S1', C.\"No.\".Value); C.Close(); end;"
     ));
 }

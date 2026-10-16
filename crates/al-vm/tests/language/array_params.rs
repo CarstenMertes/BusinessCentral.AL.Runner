@@ -52,5 +52,8 @@ codeunit 69860 OI
 }
 "#;
     let v = al_testkit::run_in(src, "OI", "F");
-    assert!(matches!(&v, Ok(al_builtins::value::Value::Decimal(d)) if *d == rust_decimal::Decimal::from(31)), "{v:?}");
+    assert!(
+        matches!(&v, Ok(al_builtins::value::Value::Decimal(d)) if *d == rust_decimal::Decimal::from(31)),
+        "{v:?}"
+    );
 }

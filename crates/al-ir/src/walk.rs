@@ -56,6 +56,19 @@ pub enum TableOf {
 }
 
 impl TableOf {
+    /// Which table, in words, for the message of a defect.
+    pub fn describe(&self) -> &'static str {
+        match self {
+            TableOf::Own => "the table itself",
+            TableOf::Trigger => "the table of a field trigger",
+            TableOf::Object(_) => "a table the structure names",
+            TableOf::Embedded => "a field the expression names",
+            TableOf::PageSource => "the source table of the page",
+            TableOf::SourceOf(_) => "the source table of a page the structure names",
+            TableOf::BaseItem { .. } => "the table of a data item of the base report",
+            TableOf::Unknown => "no table",
+        }
+    }
     fn object(table: Option<usize>) -> TableOf {
         match table {
             Some(t) if t != NO_OBJECT => TableOf::Object(t),

@@ -93,24 +93,16 @@ impl std::fmt::Display for LinkError {
             LinkError::DuplicateObject(k) => write!(f, "two objects have the key {k}"),
             LinkError::UnknownObject { from, to } => write!(f, "{from} refers to {to}, which is not linked"),
             LinkError::UnknownRoutine { from, to } => {
-                write!(
-                    f,
-                    "{from} refers to routine {:?} of {}, which has none",
-                    to.local, to.obj
-                )
+                write!(f, "{from} refers to routine {} of {}, which has none", to.local, to.obj)
             }
             LinkError::UnknownControl { from, to } => {
-                write!(
-                    f,
-                    "{from} refers to control {:?} of {}, which has none",
-                    to.name, to.page
-                )
+                write!(f, "{from} refers to control {} of {}, which has none", to.name, to.page)
             }
             LinkError::UnknownField { from, to } => {
                 write!(f, "{from} refers to field {} of {}, which has none", to.no, to.table)
             }
             LinkError::DuplicateRoutine { object, key } => {
-                write!(f, "{object} has two routines with the key {key:?}")
+                write!(f, "{object} has two routines with the key {key}")
             }
             LinkError::BadReference { object, class, index } => {
                 write!(f, "{object} has {class} reference {index}, outside its table")
@@ -162,6 +154,7 @@ impl Space for [Unit] {
     fn field_numbers(&self, i: usize) -> Option<&[u32]> {
         match &self[i] {
             Unit::Dense(d) if !d.fields.is_empty() => Some(&d.fields),
+            Unit::Sym(s) if !s.field_numbers.is_empty() => Some(&s.field_numbers),
             _ => None,
         }
     }
@@ -648,6 +641,7 @@ mod tests {
         SymObject {
             key: key(from),
             routines: vec![local("run", 0)],
+            field_numbers: vec![],
             refs: Refs {
                 objects: vec![key(to)],
                 routines: vec![RoutineKey {
@@ -666,6 +660,7 @@ mod tests {
             key: key(id),
             routines: vec![local("first", 0), local("second", 0)],
             refs: Refs::default(),
+            field_numbers: vec![],
             object: object(id, vec![routine("First", vec![]), routine("Second", vec![])]),
             positions: vec![],
         }

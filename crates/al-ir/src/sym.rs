@@ -89,6 +89,19 @@ pub struct LocalKey {
     pub ordinal: u32,
 }
 
+impl std::fmt::Display for LocalKey {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        write!(f, "{}({})", self.name, self.sig)?;
+        if !self.section.is_empty() {
+            write!(f, " in {}", self.section)?;
+        }
+        if self.ordinal > 0 {
+            write!(f, " number {}", self.ordinal + 1)?;
+        }
+        Ok(())
+    }
+}
+
 /// The identity of a routine of any object.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize)]
 pub struct RoutineKey {
@@ -134,6 +147,10 @@ pub struct SymObject {
     /// The key of each routine of `object`, in the order of `object.routines`.
     pub routines: Vec<LocalKey>,
     pub refs: Refs,
+    /// For a table whose IR carries no field list (a dependency table that was not compiled) but
+    /// whose fields other objects use: the number of each field, in the order of the table's field
+    /// list. Empty otherwise.
+    pub field_numbers: Vec<u32>,
     /// The object. Every reference class that has moved into `refs` holds an index into it.
     pub object: Object,
     /// The source positions of the object's statements and routines, numbered from 0 (a statement

@@ -165,6 +165,7 @@ pub(crate) fn localize(
         key: keys.objects[own].clone(),
         routines: (keys.routines)(own).to_vec(),
         refs: v.refs,
+        field_numbers: Vec::new(),
         object,
         positions,
     })
@@ -245,7 +246,7 @@ impl RefVisitor for Localize<'_, '_> {
         }
         let Some(t) = self.table_object(table) else {
             self.bad
-                .get_or_insert_with(|| format!("field position {} has no table ({table:?})", *r));
+                .get_or_insert_with(|| format!("field position {} has no table ({})", *r, table.describe()));
             return;
         };
         let Some(no) = (self.keys.field_no)(t, *r) else {

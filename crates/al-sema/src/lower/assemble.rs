@@ -1022,6 +1022,7 @@ pub(crate) fn lower_core(
     }
     let check = cfg!(test) || std::env::var_os("AL_CHECK_LINK").is_some();
     let field_no = |t: usize, pos: usize| members.get(t).fields.get(pos).map(|f| f.id);
+    let field_numbers = |t: usize| members.get(t).fields.iter().map(|f| f.id).collect::<Vec<u32>>();
     let report_item_table = |r: usize, item: usize| {
         shared
             .report_irs
@@ -1034,6 +1035,7 @@ pub(crate) fn lower_core(
         table_of: &shared.table_of,
         field_no: &field_no,
         field_pos: &field_pos,
+        field_numbers: &field_numbers,
         report_item_table: &report_item_table,
     };
     let linked = link_pieces(staged, program, &prov, &lookups, check)?;
@@ -1053,6 +1055,8 @@ struct Lookups<'a> {
     field_no: &'a dyn Fn(usize, usize) -> Option<u32>,
     /// The position of field `id` in table `table`.
     field_pos: &'a dyn Fn(usize, u32) -> Option<usize>,
+    /// The number of every field of table `table`, in order.
+    field_numbers: &'a dyn Fn(usize) -> Vec<u32>,
     report_item_table: &'a dyn Fn(usize, usize) -> Option<usize>,
 }
 
@@ -1082,7 +1086,7 @@ impl al_ir::walk::RefVisitor for Unembed<'_> {
         } else {
             (self.field_pos)(t, id).unwrap_or_else(|| {
                 panic!(
-                    "field {id} of object {t} (kind {:?}), which the lowering named, is not in its members",
+                    "field {id} of object {t} (kind {}), which the lowering named, is not in its members",
                     self.kinds[t]
                 )
             })
@@ -1179,6 +1183,32 @@ fn link_pieces(
                 &s.control_refs,
             )?)
         });
+    }
+    // A table nothing compiled has no field list, but other objects may name its fields: they are
+    // counted from its members, for the tables that are named.
+    let at: HashMap<&ObjKey, usize> = keys.iter().enumerate().map(|(i, k)| (k, i)).collect();
+    let mut numbered = std::collections::HashSet::new();
+    for u in &units {
+        if let al_link::Unit::Sym(s) = u {
+            for f in &s.refs.fields {
+                if f.table.kind == ObjKind::Table {
+                    if let Some(&t) = at.get(&f.table) {
+                        numbered.insert(t);
+                    }
+                }
+            }
+        }
+    }
+    for t in numbered {
+        let (no_table, object_kind_table) = match &units[t] {
+            al_link::Unit::Sym(s) => (s.object.table.is_none(), true),
+            al_link::Unit::Dense(_) => (false, false),
+        };
+        if no_table && object_kind_table {
+            if let al_link::Unit::Sym(s) = &mut units[t] {
+                s.field_numbers = (lookups.field_numbers)(t);
+            }
+        }
     }
     let linked = al_link::link(units, base).map_err(|e| format!("link: {e}"))?;
     if let Some((p, ranges)) = expected {

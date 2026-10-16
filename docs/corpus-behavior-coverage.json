@@ -13374,7 +13374,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 835,
+        "line": 864,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:181",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."

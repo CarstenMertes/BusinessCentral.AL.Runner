@@ -2213,15 +2213,30 @@ fn read_from_text_options(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value
 }
 
 /// `XmlReadOptions.PreserveWhitespace(Value)`: the probes see no difference in what is read, so the setting changes
-/// nothing here.
+/// nothing there; the variable remembers it for the getter (xml/XmlDocReadWrite.al:215-217).
 fn read_options_preserve_whitespace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if !matches!(r, Some(Value::Library(..))) {
+    let Some(Value::Library(_, cell)) = r else {
         return unsupported("PreserveWhitespace on something that is not an XmlReadOptions");
-    }
-    let Some(Value::Boolean(_)) = a.first() else {
+    };
+    let Some(Value::Boolean(on)) = a.first() else {
         return unsupported("PreserveWhitespace with something that is not a Boolean");
     };
+    *cell.borrow_mut() = LibraryValue::XmlReadOptions {
+        preserve_whitespace: *on,
+    };
     Ok(Value::Null)
+}
+
+/// `XmlReadOptions.PreserveWhitespace()` and `XmlWriteOptions.PreserveWhitespace()`: No until set.
+fn options_preserve_whitespace_get(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
+    let Some(Value::Library(_, cell)) = r else {
+        return unsupported("PreserveWhitespace on something that is not an options value");
+    };
+    Ok(Value::Boolean(match &*cell.borrow() {
+        LibraryValue::XmlReadOptions { preserve_whitespace }
+        | LibraryValue::XmlWriteOptions { preserve_whitespace } => *preserve_whitespace,
+        _ => false,
+    }))
 }
 
 fn read_text_into(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value], out: usize) -> NResult {
@@ -3527,6 +3542,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         }
         ("XmlWriteOptions", "PreserveWhitespace", ["Boolean"]) => write_options_preserve_whitespace,
         ("XmlReadOptions", "PreserveWhitespace", ["Boolean"]) => read_options_preserve_whitespace,
+        ("XmlReadOptions" | "XmlWriteOptions", "PreserveWhitespace", []) => options_preserve_whitespace_get,
         ("XmlElement", "SetAttribute", ["Text", "Text"]) => set_attribute,
         ("XmlElement", "RemoveAttribute", ["Text"] | ["XmlAttribute"]) => remove_attribute,
         ("XmlElement", "RemoveAllAttributes", []) => remove_all_attributes,

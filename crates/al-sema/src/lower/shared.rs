@@ -418,9 +418,13 @@ pub(crate) fn lower_object<'a>(
     for v in obj.var_decls() {
         let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
         let label = v.type_ref().as_ref().and_then(label_text);
+        let refusal = v.type_ref().as_ref().and_then(textconst_refusal);
         for n in v.names() {
             if let Some(l) = &label {
                 lw.global_labels.insert(n.to_lowercase(), l.clone());
+            }
+            if let Some(why) = refusal {
+                global_reasons.push(format!("global `{n}`: {why}"));
             }
             match lw.rt(&ty) {
                 Ok(rt) => {
@@ -867,18 +871,46 @@ pub(crate) fn time_literal(text: &str) -> Option<i64> {
     Some(((h * 60 + m) * 60 + s) * 1000 + ms + 1)
 }
 
-/// The text of a `Label '...'` declaration, quotes undoubled.
+/// The text of a `Label '...'` declaration, quotes undoubled; of a `TextConst ENU = '...', DEU = '...'` declaration, the
+/// text of the language `ENU` (types/lt-variant/VaTTextConst.al:TextConst_To_Text_Basics: `multi` with DEU, ENU and FRA reads
+/// as the ENU text). A TextConst with no ENU entry has no text here: [`textconst_refusal`] refuses it.
 pub(crate) fn label_text(t: &ast::TypeRef) -> Option<String> {
-    if !t.type_name().eq_ignore_ascii_case("label") {
+    let unquote = |text: &str| text[1..text.len() - 1].replace("''", "'");
+    let kind = t.type_name();
+    if kind.eq_ignore_ascii_case("label") {
+        let tok = t
+            .syntax()
+            .descendants_with_tokens()
+            .filter_map(|e| e.into_token())
+            .find(|k| k.kind() == SyntaxKind::StringLit)?;
+        return Some(unquote(tok.text()));
+    }
+    if !kind.eq_ignore_ascii_case("textconst") {
         return None;
     }
-    let tok = t
+    let toks: Vec<_> = t
         .syntax()
         .descendants_with_tokens()
         .filter_map(|e| e.into_token())
-        .find(|k| k.kind() == SyntaxKind::StringLit)?;
-    let text = tok.text();
-    Some(text[1..text.len() - 1].replace("''", "'"))
+        .filter(|k| !k.kind().is_trivia())
+        .collect();
+    // Language, `=`, text: the text after the language ENU, else after the first language.
+    let texts: Vec<(&rowan::SyntaxToken<_>, &rowan::SyntaxToken<_>)> = toks
+        .windows(3)
+        .filter(|w| {
+            w[0].kind() == SyntaxKind::Ident && w[1].kind() == SyntaxKind::Eq && w[2].kind() == SyntaxKind::StringLit
+        })
+        .map(|w| (&w[0], &w[2]))
+        .collect();
+    let pick = texts.iter().find(|(lang, _)| lang.text().eq_ignore_ascii_case("ENU"))?;
+    Some(unquote(pick.1.text()))
+}
+
+/// The lowering reason of a declaration that cannot be read: a `TextConst` with no `ENU` text. Which text such a
+/// TextConst reads as is not pinned, so it is refused (hard rules 3 and 4; docs/probes-needed.md "TextConst").
+pub(crate) fn textconst_refusal(t: &ast::TypeRef) -> Option<&'static str> {
+    (t.type_name().eq_ignore_ascii_case("textconst") && label_text(t).is_none())
+        .then_some("TextConst without an ENU text (not pinned)")
 }
 
 /// A filter expression written in AL, with double-quoted names turned into

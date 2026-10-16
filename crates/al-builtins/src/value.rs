@@ -996,6 +996,10 @@ pub enum LibraryValue {
     /// An XmlNameTable (opaque).
     XmlNameTable,
     /// An `XmlWriteOptions` that has been set: `PreserveWhitespace`.
+    /// An `XmlReadOptions` that has been set: `PreserveWhitespace` (what is read does not depend on it).
+    XmlReadOptions {
+        preserve_whitespace: bool,
+    },
     XmlWriteOptions {
         preserve_whitespace: bool,
     },

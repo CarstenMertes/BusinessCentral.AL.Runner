@@ -335,7 +335,7 @@
           "ms_uses": 65,
           "name": "OnPreXmlItem",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:177"
         },
         {

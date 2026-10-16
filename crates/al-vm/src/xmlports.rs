@@ -156,6 +156,43 @@ impl Session {
                     }
                 }
             }
+            // Break, BreakUnbound and Quit end the trigger that calls them (platform/lt-xmlport-session-navapp-cookie/P94XpPathFlow.al:
+            // Export_Break, Export_BreakUnbound, Export_Quit); what the run does next is `xp_flow`. Called from a procedure the
+            // trigger called, the Exit leaves only that procedure: pinned only where the trigger ends with the call.
+            ids::XMLPORT_BREAK_1 | ids::XMLPORT_BREAKUNBOUND_1 | ids::XMLPORT_QUIT_1 => {
+                let inst = self.xp_instance(receiver)?;
+                let trigger_depth = inst
+                    .borrow()
+                    .xp_text
+                    .iter()
+                    .find(|(k, _)| *k == 9)
+                    .and_then(|(_, v)| v.parse::<usize>().ok());
+                match trigger_depth {
+                    Some(d) if self.depth == d + 1 || self.depth == d + 2 => {}
+                    _ => return unsupported(format!("{id} outside the triggers where it is pinned")),
+                }
+                let kind = match id {
+                    ids::XMLPORT_BREAK_1 => "1",
+                    ids::XMLPORT_BREAKUNBOUND_1 => "2",
+                    _ => "3",
+                };
+                let mut s = inst.borrow_mut();
+                s.xp_text.retain(|(k, _)| *k != 8);
+                s.xp_text.push((8, kind.to_string()));
+                Err(Signal::Exit(None))
+            }
+            // CurrentPath(): see `xp_run_trigger`.
+            ids::XMLPORT_CURRENTPATH_1 => {
+                let inst = self.xp_instance(receiver)?;
+                let path = inst
+                    .borrow()
+                    .xp_text
+                    .iter()
+                    .find(|(k, _)| *k == 7)
+                    .map(|(_, v)| v.clone())
+                    .unwrap_or_default();
+                Ok(Value::Text(path.into()))
+            }
             // Filename(): empty until set, per instance (P94XpFilename.al: Fresh_Empty, Set_ReadBack, Set_TwoInstancesIndependent).
             ids::XMLPORT_FILENAME_1 => {
                 let inst = self.xp_instance(receiver)?;
@@ -373,10 +410,13 @@ impl Session {
         // it for an export); the other object triggers are not pinned and refused.
         let routines = &schema.engine.program.objects[schema.object].routines;
         let mut pre = None;
+        let mut post = None;
         for (i, r) in routines.iter().enumerate().filter(|(_, r)| r.is_trigger) {
             if r.name.eq_ignore_ascii_case("OnPreXmlPort") {
                 pre = Some(i);
-            } else if r.name.eq_ignore_ascii_case("OnInitXmlPort") || r.name.eq_ignore_ascii_case("OnPostXmlPort") {
+            } else if r.name.eq_ignore_ascii_case("OnPostXmlPort") {
+                post = Some(i);
+            } else if r.name.eq_ignore_ascii_case("OnInitXmlPort") {
                 return unsupported(format!(
                     "XmlPort \"{}\": trigger {} is not supported yet",
                     schema.name(),
@@ -387,10 +427,34 @@ impl Session {
         if let Some(r) = pre {
             self.call(schema.object, r, inst.clone(), Vec::new())?;
         }
-        match dir {
+        Self::xp_clear_flow(inst);
+        let run = match dir {
             Dir::Export => self.xp_export(inst, &schema, ret_used),
             Dir::Import => self.xp_import(inst, &schema, ret_used, static_form),
+        };
+        // Quit ends the run at once: no OnPostXmlPort, and the run succeeded (Export_Quit).
+        if matches!(run, Err(Signal::Exit(None))) && Self::xp_flow(inst) == Some(Flow::Quit) {
+            Self::xp_clear_flow(inst);
+            return Ok(if ret_used { Value::Boolean(true) } else { Value::Null });
         }
+        let result = run?;
+        // A Break, BreakUnbound or Quit anywhere else is not pinned.
+        if Self::xp_flow(inst).is_some() {
+            Self::xp_clear_flow(inst);
+            return unsupported(
+                "Break, BreakUnbound or Quit in a trigger other than OnAfterGetRecord of an export (not pinned)",
+            );
+        }
+        // OnPostXmlPort runs after the data was passed, in both directions (platform/lt-xmlport-session-navapp-cookie/
+        // P94XpPathFlow.al and P94XpFilename.al log it last); after an error it does not run. After a guarded run that
+        // returned false it is not pinned.
+        if let Some(r) = post {
+            if matches!(result, Value::Boolean(false)) {
+                return unsupported("OnPostXmlPort after a guarded run that returned false (not pinned)");
+            }
+            self.call(schema.object, r, inst.clone(), Vec::new())?;
+        }
+        Ok(result)
     }
 
     // ---------------------------------------------------------------- import
@@ -526,9 +590,66 @@ impl Session {
 
     fn xp_run_trigger(&mut self, inst: &Inst, schema: &Schema, node: usize, name: &str) -> Result<(), Signal> {
         match schema.node(node).trigger(name) {
-            Some(r) => self.call(schema.object, r, inst.clone(), Vec::new()).map(|_| ()),
+            Some(r) => {
+                // `CurrentPath` in a trigger of an export is the path of the element; in an import and outside the triggers it
+                // is empty (platform/lt-xmlport-session-navapp-cookie/P94XpPathFlow.al: Export_PathsInTriggers,
+                // Import_PathsInTriggers).
+                let exporting = inst.borrow().xp_text.iter().any(|(k, _)| *k == 6);
+                if exporting {
+                    let path = Self::xp_node_path(schema, node);
+                    let mut s = inst.borrow_mut();
+                    s.xp_text.retain(|(k, _)| *k != 7);
+                    s.xp_text.push((7, path));
+                }
+                {
+                    let mut s = inst.borrow_mut();
+                    s.xp_text.retain(|(k, _)| *k != 9);
+                    s.xp_text.push((9, self.depth.to_string()));
+                }
+                let result = self.call(schema.object, r, inst.clone(), Vec::new()).map(|_| ());
+                inst.borrow_mut().xp_text.retain(|(k, _)| *k != 7 && *k != 9);
+                result
+            }
             None => Ok(()),
         }
+    }
+
+    /// What the trigger that just ended asked for with Break, BreakUnbound or Quit.
+    fn xp_flow(inst: &Inst) -> Option<Flow> {
+        let s = inst.borrow();
+        match s.xp_text.iter().find(|(k, _)| *k == 8).map(|(_, v)| v.as_str()) {
+            Some("1") => Some(Flow::Break),
+            Some("2") => Some(Flow::Unbound),
+            Some("3") => Some(Flow::Quit),
+            _ => None,
+        }
+    }
+
+    fn xp_clear_flow(inst: &Inst) {
+        inst.borrow_mut().xp_text.retain(|(k, _)| *k != 8);
+    }
+
+    /// `/Root/Item`, `/Root/Item/Id` and `/Root/Item[@Qty]`: the names of the elements above the node, an attribute last in brackets.
+    fn xp_node_path(schema: &Schema, node: usize) -> String {
+        let mut names = Vec::new();
+        let mut at = Some(node);
+        while let Some(n) = at {
+            let nd = schema.node(n);
+            let attr = matches!(nd.kind, ir::XmlNodeKind::TextAttr | ir::XmlNodeKind::FieldAttr);
+            names.push((nd.xml_name.clone(), attr));
+            at = nd.parent;
+        }
+        names.reverse();
+        let mut out = String::new();
+        for (name, attr) in names {
+            if attr {
+                out.push_str(&format!("[@{name}]"));
+            } else {
+                out.push('/');
+                out.push_str(&name);
+            }
+        }
+        out
     }
 
     /// The child of schema node `parent` that reads element `name` (`want_attr`: attribute).
@@ -572,6 +693,18 @@ impl Session {
         elem: &Elem,
         mut assigned: Option<&mut Vec<usize>>,
     ) -> Result<(), Signal> {
+        // A field attribute of the schema has to be there (xmlport/lt-xmlport-query-datatransfer/XpTImportOptions.al:
+        // Import_AttributesMissing, Import_AttributesAsElements); the first one the element lacks is named. For a text
+        // attribute this is not pinned.
+        for a in schema.children(node) {
+            let n = schema.node(a);
+            if n.kind == ir::XmlNodeKind::FieldAttr && !elem.attrs.iter().any(|(name, _)| *name == n.xml_name) {
+                return Err(schema_error(format!(
+                    "The required attribute '{}' is missing.",
+                    n.xml_name
+                )));
+            }
+        }
         for (name, value) in &elem.attrs {
             let Some(a) = Self::xp_child_named(schema, node, name, true) else {
                 return unsupported(format!(
@@ -1147,6 +1280,13 @@ impl Session {
     // ---------------------------------------------------------------- export
 
     fn xp_export(&mut self, inst: &Inst, schema: &Schema, guarded: bool) -> Result<Value, Signal> {
+        inst.borrow_mut().xp_text.push((6, String::new()));
+        let result = self.xp_export_inner(inst, schema, guarded);
+        inst.borrow_mut().xp_text.retain(|(k, _)| *k != 6 && *k != 7);
+        result
+    }
+
+    fn xp_export_inner(&mut self, inst: &Inst, schema: &Schema, guarded: bool) -> Result<Value, Signal> {
         let xp = schema.xp();
         // The document is written in its own encoding whatever the stream's own.
         let blob = match inst.borrow().globals[xp.destination_slot].clone() {
@@ -1336,10 +1476,36 @@ impl Session {
         let n = schema.node(node);
         let mut out = Vec::new();
         let mut rows = Vec::new();
+        self.xp_run_trigger(inst, schema, node, "onprexmlitem")?;
         self.xp_rows(inst, schema, node, &mut rows)?;
         let rec = self.xp_record(inst, n)?;
+        // A table element without rows still passes its fields once, without a row: OnBeforePassField runs and nothing is
+        // written (P94XpPathFlow.al:Export_PathsNoRows).
+        if rows.is_empty() {
+            for child in schema.children(node) {
+                if matches!(
+                    schema.node(child).kind,
+                    ir::XmlNodeKind::Field | ir::XmlNodeKind::FieldAttr
+                ) {
+                    self.xp_run_trigger(inst, schema, child, "onbeforepassfield")?;
+                }
+            }
+        }
         for row in rows {
             self.load(&rec, row)?;
+            self.xp_run_trigger(inst, schema, node, "onaftergetrecord")?;
+            match Self::xp_flow(inst) {
+                Some(Flow::Break) => {
+                    Self::xp_clear_flow(inst);
+                    break;
+                }
+                Some(Flow::Unbound) => {
+                    Self::xp_clear_flow(inst);
+                    continue;
+                }
+                Some(Flow::Quit) => return Err(Signal::Exit(None)),
+                None => {}
+            }
             let mut e = Elem::new(&n.xml_name);
             self.xp_export_content(inst, schema, node, &mut e)?;
             out.push(e);
@@ -1374,6 +1540,14 @@ impl Session {
 }
 
 /// Runs `body` once for every row of table element `node`, with the row loaded.
+/// What a trigger asked for: leave the table element's rows, skip the rest of the row, or end the run.
+#[derive(Clone, Copy, PartialEq)]
+enum Flow {
+    Break,
+    Unbound,
+    Quit,
+}
+
 fn for_each_row(
     me: &mut Session,
     inst: &Inst,
@@ -1382,10 +1556,24 @@ fn for_each_row(
     mut body: impl FnMut(&mut Session, &Inst, &Schema) -> Result<(), Signal>,
 ) -> Result<(), Signal> {
     let mut rows = Vec::new();
+    me.xp_run_trigger(inst, schema, node, "onprexmlitem")?;
     me.xp_rows(inst, schema, node, &mut rows)?;
     let rec = me.xp_record(inst, schema.node(node))?;
     for row in rows {
         me.load(&rec, row)?;
+        me.xp_run_trigger(inst, schema, node, "onaftergetrecord")?;
+        match Session::xp_flow(inst) {
+            Some(Flow::Break) => {
+                Session::xp_clear_flow(inst);
+                break;
+            }
+            Some(Flow::Unbound) => {
+                Session::xp_clear_flow(inst);
+                continue;
+            }
+            Some(Flow::Quit) => return Err(Signal::Exit(None)),
+            None => {}
+        }
         body(me, inst, schema)?;
     }
     Ok(())

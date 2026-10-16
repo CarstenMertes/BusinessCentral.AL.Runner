@@ -7063,6 +7063,7 @@
 72008 CalcSums_Multiple
 72008 CalcSums_Negative_Decimals
 72008 CalcSums_NonSumField_Compile_Runtime
+72008 CalcSums_OnTemporary
 72008 CalcSums_OverwritesField_NotRow
 72009 Captions_And_Names
 72009 ChangeCompany_TypeOnly

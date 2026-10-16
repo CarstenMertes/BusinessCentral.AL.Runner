@@ -70,6 +70,18 @@ the schema-clone fix); for computation-heavy AL, dispatch dominates, which favor
    control flow, record field access, then the rest. Each step: dual run 0 differences.
 4. Switch the default (decision 6).
 
+## Dual-run harness (step 2, implemented)
+
+`al-test-cli --dual-run` and `alrunner test --dual-run` run every test codeunit twice on equal fresh sessions: once with
+`Session::exec_mode` = `Tree`, once with `Bytecode` (`al_vm::ExecMode`; until the executable form runs, `Bytecode`
+runs the tree walker, so the harness is tested by finding no difference between two runs of one interpreter). Both runs
+read one standing clock. Compared per test: the outcome (pass, failure text, refusal reason), the call stack of an AL
+error, the unprobed assumptions, and a hash of the rows of each table when the test ends (`MemStore::digest`); the first
+difference of a test is named, with the first table whose rows differ. Every difference is printed and the run fails.
+A difference the harness found on the tree walker itself: nine tests of Tests-ERM codeunit 137617 leave different
+rows in `No. Series Line` / `No. Series` between two runs (a source of non-determinism in the interpreter, not yet
+traced); they are the expected first entries of an allow list when the dual run joins CI.
+
 ## Consequences
 
 - Unblocks: AL code at or near BC's speed on compute-heavy suites (expected 2 to 4 times on top of ADR-031,

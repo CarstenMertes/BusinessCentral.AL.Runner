@@ -24,7 +24,11 @@ fn main() -> ExitCode {
         .stack_size(512 << 20)
         .spawn(run)
         .expect("spawn runner thread");
-    match worker.join().expect("runner thread panicked") {
+    let result = worker.join().expect("runner thread panicked");
+    if std::env::var_os("AL_EXEC_REPORT").is_some() {
+        eprintln!("{}", al_vm::exec_report());
+    }
+    match result {
         Ok(code) => code,
         Err(e) => {
             eprintln!("error: {e}");
@@ -122,8 +126,14 @@ fn run() -> Result<ExitCode, String> {
     if runs.len() > 1 && !args.fetch_deps && !args.build_compile_cache {
         print!("{}", drift_summary(&runs));
     }
+    if DUAL_FAILED.load(std::sync::atomic::Ordering::Relaxed) {
+        code = code.max(1);
+    }
     Ok(ExitCode::from(code))
 }
+
+/// Set when the dual run (`--dual-run`) found a difference.
+static DUAL_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `--coverage-map`: which builtin overloads the corpus calls (`coverage.rs`).
 fn coverage_map(root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
@@ -522,6 +532,7 @@ fn run_version(
         capture: Default::default(),
         hooks: Default::default(),
         clock_starts: (!clocks.is_empty()).then(|| std::sync::Arc::new(clocks)),
+        dual_run: args.dual_run,
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(
@@ -534,6 +545,20 @@ fn run_version(
         &runs,
         &opts,
     )?;
+    if args.dual_run {
+        for d in rt.dual_diffs() {
+            println!("{d}");
+        }
+        println!(
+            "dual run: BC {}: {} test(s) compared, {} difference(s)",
+            version.bc_version,
+            rt.results().len(),
+            rt.dual_diffs().len()
+        );
+        if !rt.dual_diffs().is_empty() {
+            DUAL_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
+        }
+    }
     let p = &rt.phases;
     let sidecar_stats = sidecar_host.stats();
     sidecar_host.shutdown();

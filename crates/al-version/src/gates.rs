@@ -254,6 +254,26 @@ impl Gate {
                     file: "recordref/lt-recordref-fieldref-members/P92DirtyRef.al",
                     lines: "8",
                 },
+                Evidence {
+                    file: "misc/lt-open-overloads-collections-isolated/P107RecRefNames.al",
+                    lines: "99",
+                },
+                Evidence {
+                    file: "pages/lt-page-run-overloads-testpart/P106TestFieldAsDateTime.al",
+                    lines: "37",
+                },
+                Evidence {
+                    file: "record/lt-testfield-fielderror-typed/P96ErrorInfo.al",
+                    lines: "142",
+                },
+                Evidence {
+                    file: "record/lt-testfield-fielderror-typed/P96Temporal.al",
+                    lines: "171",
+                },
+                Evidence {
+                    file: "streams/StTCopyBlob.al",
+                    lines: "451,456,462,484",
+                },
             ],
             Gate::ProbedValuesDifferFrom29 => &[
                 Evidence {

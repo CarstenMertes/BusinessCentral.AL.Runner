@@ -217,6 +217,12 @@ registry! {
         tests: "Pages with SaveValues and page extensions in the buckets.",
         probe: "A SaveValues page extended by a control bound to a variable and by one bound to a field.",
     },
+    SaveValuesCallerValueWins => {
+        id: "savevalues-caller-value-wins",
+        assumed: "On a report's request page with SaveValues, every variable keeps its value, over the one an earlier confirmed run stored, when the caller ran a procedure of the report variable (SetParameters) before the run.",
+        tests: "Microsoft's Get Demand To Reserve with its Assembly extension, run by Reservation Worksheet tests.",
+        probe: "A report with SaveValues whose first run confirms the default and whose second run sets the variable before RunModal; read the variable in OnPreReport.",
+    },
     ImplicitCategoryGroup => {
         id: "implicit-category-group",
         assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",

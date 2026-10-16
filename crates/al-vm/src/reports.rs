@@ -35,13 +35,24 @@ pub(crate) enum Flow {
 }
 
 /// Which kind of report trigger is running: what `CurrReport.Skip`, `Break` and `Quit` may do there.
+///
+/// Pinned by handlers/TestReportRuntimeContracts.al:322-368 (a data item's `OnAfterGetRecord`) and
+/// report/W3ReportSkipBreakQuit.al (the others, also from a procedure the trigger calls):
+///
+/// | trigger | Skip | Break | Quit |
+/// |---|---|---|---|
+/// | OnAfterGetRecord | skips the row | ends the rows | ends the run |
+/// | OnPreReport | no effect | no effect | ends the run |
+/// | OnPreDataItem | no effect | no rows, OnPostDataItem still runs | ends the run |
+/// | OnPostDataItem | no effect | no effect | ends the run |
+/// | OnPostReport | no effect | no effect | no effect |
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub(crate) enum TrigKind {
-    /// A data item's `OnAfterGetRecord`: Skip, Break and Quit are pinned
-    /// (handlers/TestReportRuntimeContracts.al:322-368).
     Row,
-    /// `OnPreReport`: Quit is pinned (:355-358).
     Pre,
+    PreItem,
+    PostItem,
+    PostReport,
     /// Every other trigger: what the calls do there is not pinned.
     Other,
 }
@@ -195,7 +206,12 @@ impl Session {
                 // run" (handlers/TestReportSetTableView.al:17-22); a global read afterwards belongs
                 // to a new instance (handlers/TestReportRunWithRequestPage.al:32-36,
                 // handlers/TestReportOnInitReportTimingFixtures.al:3-5).
-                self.report_clear(&inst);
+                // `RunModal` does not clear it: a getter called after it reads what the run collected (corpus
+                // reportextensiontrigger/TestPrecompiledReportExtensionDataItems.al: "Run frees the variable's report
+                // instance when it ends ... RunModal keeps it", as Base Application's Reservation Worksheet relies on).
+                if id == ids::REPORT_RUN_1 {
+                    self.report_clear(&inst);
+                }
                 result.map(|()| Value::Null)
             }
             // The static forms run a fresh instance of the report with that id.
@@ -508,11 +524,27 @@ impl Session {
 
     /// First use of an instance: its globals are made and, for a report, `OnInitReport` runs once.
     pub(crate) fn first_use(&mut self, inst: &Inst) -> Result<(), Signal> {
+        // A report variable a `Run` just reset starts again with its next call of anything but `Run`: `OnInitReport`
+        // runs again, so a procedure called after a Run sees what OnInitReport set (corpus
+        // pages/lt-page-report-events/P84ReportSender.al:Triggers_Run_SenderInEachTrigger: `GetMarker()` after `Run()` is
+        // `init`; report/TestProbeReportContracts.al:ReportVariable_RunTwice_GlobalsReset for the builtins).
+        if std::mem::take(&mut inst.borrow_mut().rerun) {
+            inst.borrow_mut().initialized = false;
+        }
         if inst.borrow().initialized {
             return Ok(());
         }
         if self.report_init(inst)? {
             return unsupported("CurrReport.Quit in OnInitReport while a procedure first uses the report (not pinned)");
+        }
+        // A procedure the caller runs on the variable before the run (`SetParameters`) may set what the request page
+        // shows (`restore_page_values`).
+        if self.report.report_trigger.is_none()
+            && self.engine.program.objects[inst.borrow().object as usize]
+                .report
+                .is_some()
+        {
+            self.report.prepared.push(Rc::downgrade(inst));
         }
         Ok(())
     }
@@ -521,6 +553,11 @@ impl Session {
     /// whether the trigger quit the report.
     fn report_init(&mut self, inst: &Inst) -> Result<bool, Signal> {
         let first = !inst.borrow().initialized;
+        if first {
+            self.report
+                .prepared
+                .retain(|w| w.upgrade().is_some_and(|i| !Rc::ptr_eq(&i, inst)));
+        }
         self.ensure_initialized(inst);
         let object = inst.borrow().object as usize;
         let engine = self.engine.clone();
@@ -565,11 +602,10 @@ impl Session {
             let o = &self.engine.program.objects[object];
             o.is_kind(al_ir::ObjKind::Report) || o.is_kind(al_ir::ObjKind::ReportExtension)
         };
+        // From the trigger itself or from a procedure it calls (report/W3ReportSkipBreakQuit.al:
+        // *_InProcedureCalledFromOnAfterGetRecord); every other trigger kind is not pinned.
         let allowed = match self.report.report_trigger {
-            Some((depth, kind)) if on_report && depth == self.depth => match flow {
-                Flow::Skip | Flow::Break => kind == TrigKind::Row,
-                Flow::Quit => kind != TrigKind::Other,
-            },
+            Some((depth, kind)) if on_report && self.depth >= depth => kind != TrigKind::Other,
             _ => false,
         };
         if !allowed {
@@ -578,6 +614,10 @@ impl Session {
             ));
         }
         self.report.report_flow = Some(flow);
+        // The trigger ends, and the procedures between it and the call end with it (`call_inner`).
+        if let Some((depth, _)) = self.report.report_trigger {
+            self.report.flow_unwind = Some(depth);
+        }
         Err(Signal::Exit(None))
     }
 
@@ -593,6 +633,7 @@ impl Session {
         self.report.report_flow = None;
         let r = self.call(object, routine, inst, Vec::new());
         self.report.report_trigger = saved;
+        self.report.flow_unwind = None;
         let flow = self.report.report_flow.take();
         r?;
         Ok(flow)
@@ -983,7 +1024,7 @@ impl Session {
             }
         }
         if let Some(r) = report.on_post {
-            self.call(run.object, r, run.base.clone(), Vec::new())?;
+            self.report_trigger_call(run.object, r, run.base.clone(), TrigKind::PostReport)?;
         }
         for k in 0..run.exts.len() {
             let (ext_inst, e) = &run.exts[k];
@@ -1073,8 +1114,13 @@ impl Session {
                 self.call(*e, t, ext_inst.clone(), Vec::new())?;
             }
         }
+        let mut no_rows = false;
         if let Some(t) = item.on_pre {
-            self.call(object, t, owner.clone(), Vec::new())?;
+            match self.report_trigger_call(object, t, owner.clone(), TrigKind::PreItem)? {
+                Some(Flow::Quit) => return Ok(true),
+                Some(Flow::Break) => no_rows = true,
+                _ => {}
+            }
         }
         for &(k, m) in &modifies {
             if let Some(t) = m.after_pre {
@@ -1083,7 +1129,7 @@ impl Session {
             }
         }
         self.ret_used = true;
-        let mut more = matches!(self.record_op(RecordOp::FindSet, &rec, &mut [])?, Value::Boolean(true));
+        let mut more = !no_rows && matches!(self.record_op(RecordOp::FindSet, &rec, &mut [])?, Value::Boolean(true));
         'rows: while more {
             if run.dataset {
                 self.dataset_autocalc(run, r, &rec)?;
@@ -1136,7 +1182,9 @@ impl Session {
             }
         }
         if let Some(t) = item.on_post {
-            self.call(object, t, owner.clone(), Vec::new())?;
+            if self.report_trigger_call(object, t, owner.clone(), TrigKind::PostItem)? == Some(Flow::Quit) {
+                return Ok(true);
+            }
         }
         for &(k, m) in &modifies {
             if let Some(t) = m.after_post {

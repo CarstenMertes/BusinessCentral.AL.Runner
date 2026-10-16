@@ -7,6 +7,7 @@
 
 mod compile;
 mod run;
+mod types;
 
 use al_ir as ir;
 use std::sync::OnceLock;
@@ -87,6 +88,128 @@ pub(crate) enum Op {
     ConstI {
         d: u16,
         v: i32,
+    },
+    // ---- typed instructions: the compiler proved both operands Integer (or Boolean) from `types::ExprTypes` ----
+    // Each does the work on the unboxed value with no run-time dispatch on the operator. An operand of another kind
+    // (an unsound type) takes the generic path and is counted (`typed fallbacks` in `AL_EXEC_REPORT`), so a wrong type
+    // never changes a result.
+    /// `d := a + b` etc. on Integers; the errors are those of `ops::int_arith`.
+    AddInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    SubInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    MulInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    DivInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    ModInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    /// `d := a + k` (`a - k` is `a + (-k)` for any `k` but `i32::MIN`, which stays `SubInt`).
+    AddIntK {
+        d: u16,
+        a: u16,
+        k: i32,
+    },
+    /// `d := a = b` etc. on Integers, a Boolean.
+    EqInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    NeInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    LtInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    LeInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    GtInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    GeInt {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    /// Jumps to `t` unless `a = b` etc. on Integers (a compare and `JumpIfNot` in one, no Boolean register).
+    JumpUnlessEqInt {
+        a: u16,
+        b: u16,
+        t: u32,
+    },
+    JumpUnlessNeInt {
+        a: u16,
+        b: u16,
+        t: u32,
+    },
+    JumpUnlessLtInt {
+        a: u16,
+        b: u16,
+        t: u32,
+    },
+    JumpUnlessLeInt {
+        a: u16,
+        b: u16,
+        t: u32,
+    },
+    JumpUnlessGtInt {
+        a: u16,
+        b: u16,
+        t: u32,
+    },
+    JumpUnlessGeInt {
+        a: u16,
+        b: u16,
+        t: u32,
+    },
+    /// `JumpIfNot` on a register proven Boolean.
+    JumpIfNotBool {
+        a: u16,
+        t: u32,
+    },
+    NotBool {
+        d: u16,
+        a: u16,
+    },
+    AndBool {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    OrBool {
+        d: u16,
+        a: u16,
+        b: u16,
+    },
+    XorBool {
+        d: u16,
+        a: u16,
+        b: u16,
     },
     Un {
         op: ir::UnOp,
@@ -404,6 +527,8 @@ pub(crate) struct Stats {
     pub tree_calls: AtomicU64,
     pub tree_exprs_run: AtomicU64,
     pub tree_stmts_run: AtomicU64,
+    /// Typed instructions that met an operand of another kind (a local that holds a value of another kind than its declared one, for example an Integer variable that a List Get filled with a BigInteger; the generic path gives the result).
+    pub typed_fallbacks: AtomicU64,
 }
 
 /// How often each kind of node ran on the tree walker from inside bytecode (`AL_EXEC_REPORT=1`).
@@ -426,6 +551,7 @@ pub(crate) static STATS: Stats = Stats {
     tree_calls: AtomicU64::new(0),
     tree_exprs_run: AtomicU64::new(0),
     tree_stmts_run: AtomicU64::new(0),
+    typed_fallbacks: AtomicU64::new(0),
 };
 
 /// One line for the fallback report: routines compiled, how many keep a tree node, and the share of executed work.
@@ -435,15 +561,22 @@ pub fn report() -> String {
     kinds.sort_by_key(|(_, n)| std::cmp::Reverse(*n));
     let top: Vec<String> = kinds.iter().take(12).map(|(k, n)| format!("{k} {n}")).collect();
     format!(
-        "exec: {} routines compiled ({} with tree nodes); calls: {} bytecode, {} tree; tree nodes run: {} exprs, {} stmts; most run: {}",
+        "exec: {} routines compiled ({} with tree nodes); calls: {} bytecode, {} tree; tree nodes run: {} exprs, {} stmts; typed fallbacks: {}; most run: {}",
         g(&STATS.routines),
         g(&STATS.routines_with_tree),
         g(&STATS.bytecode_calls),
         g(&STATS.tree_calls),
         g(&STATS.tree_exprs_run),
         g(&STATS.tree_stmts_run),
+        g(&STATS.typed_fallbacks),
         top.join(", "),
     )
+}
+
+/// The instructions the bytecode compiler emits for a routine, one `Debug` text each (tests of instruction selection).
+pub fn disassemble(program: &ir::Program, object: usize, routine: usize) -> Option<Vec<String>> {
+    let c = compile(&program.objects[object].routines[routine])?;
+    Some(c.code.iter().map(|op| format!("{op:?}")).collect())
 }
 
 /// Whether any statement of `body` is a loop: one call of such a routine can run long.

@@ -3,12 +3,16 @@
 use super::*;
 use al_builtins::builtin_id::{Class, ids};
 use al_builtins::value::RtType;
+use types::{DeclaredTypes, ExprTypes, Ty, of_rt};
 
 /// Compiles `r`.
 pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
     let nlocals = u16::try_from(r.locals.len()).ok()?;
     let mut c = Compiler {
         locals_ty: r.locals.iter().map(|l| l.ty.clone()).collect(),
+        tys: DeclaredTypes {
+            locals: r.locals.iter().map(|l| l.ty.clone()).collect(),
+        },
         chunk: Chunk {
             code: Vec::new(),
             consts: Vec::new(),
@@ -55,6 +59,8 @@ struct LoopCtx {
 struct Compiler {
     /// The declared type of each local.
     locals_ty: Vec<RtType>,
+    /// Where the static types come from; the instruction selection asks only this.
+    tys: DeclaredTypes,
     chunk: Chunk,
     next: u16,
     max: u16,
@@ -128,6 +134,13 @@ impl Compiler {
         match &mut self.chunk.code[at] {
             Op::Jump { t }
             | Op::JumpIfNot { t, .. }
+            | Op::JumpIfNotBool { t, .. }
+            | Op::JumpUnlessEqInt { t, .. }
+            | Op::JumpUnlessNeInt { t, .. }
+            | Op::JumpUnlessLtInt { t, .. }
+            | Op::JumpUnlessLeInt { t, .. }
+            | Op::JumpUnlessGtInt { t, .. }
+            | Op::JumpUnlessGeInt { t, .. }
             | Op::MatchAny { t, .. }
             | Op::ForeachNext { t, .. }
             | Op::ForTest { t, .. } => *t = to,
@@ -206,6 +219,86 @@ impl Compiler {
         self.emit(Op::TreeExpr { e: idx, d });
     }
 
+    /// Emits the typed instruction for `l op r` when both operands are proven Integer (or both Boolean) and one exists.
+    fn typed_binary(&mut self, op: ir::BinOp, l: &ir::Expr, r: &ir::Expr, d: u16) -> R<bool> {
+        use ir::BinOp as B;
+        let (Some(tl), Some(tr)) = (self.tys.expr_ty(l), self.tys.expr_ty(r)) else {
+            return Ok(false);
+        };
+        if (tl, tr) == (Ty::Boolean, Ty::Boolean) {
+            if !matches!(op, B::And | B::Or | B::Xor) {
+                return Ok(false);
+            }
+            let (a, b) = self.pair(l, r)?;
+            self.emit(match op {
+                B::And => Op::AndBool { d, a, b },
+                B::Or => Op::OrBool { d, a, b },
+                _ => Op::XorBool { d, a, b },
+            });
+            return Ok(true);
+        }
+        if (tl, tr) != (Ty::Integer, Ty::Integer) {
+            return Ok(false);
+        }
+        if matches!(op, B::Add | B::Sub) {
+            if let ir::Expr::Const(ir::Const::Integer(k)) = r {
+                if op == B::Add || *k != i32::MIN {
+                    let a = self.expr_any(l)?;
+                    let k = if op == B::Add { *k } else { -*k };
+                    self.emit(Op::AddIntK { d, a, k });
+                    return Ok(true);
+                }
+            }
+        }
+        if !matches!(
+            op,
+            B::Add | B::Sub | B::Mul | B::IntDiv | B::Mod | B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge
+        ) {
+            return Ok(false);
+        }
+        let (a, b) = self.pair(l, r)?;
+        self.emit(match op {
+            B::Add => Op::AddInt { d, a, b },
+            B::Sub => Op::SubInt { d, a, b },
+            B::Mul => Op::MulInt { d, a, b },
+            B::IntDiv => Op::DivInt { d, a, b },
+            B::Mod => Op::ModInt { d, a, b },
+            B::Eq => Op::EqInt { d, a, b },
+            B::Ne => Op::NeInt { d, a, b },
+            B::Lt => Op::LtInt { d, a, b },
+            B::Le => Op::LeInt { d, a, b },
+            B::Gt => Op::GtInt { d, a, b },
+            _ => Op::GeInt { d, a, b },
+        });
+        Ok(true)
+    }
+
+    /// Evaluates the condition `c` and emits the jump taken when it is false, to be patched; returns the jump's index.
+    /// An Integer compare is fused with the jump.
+    fn cond_jump(&mut self, c: &ir::Expr, t: u32) -> R<usize> {
+        use ir::BinOp as B;
+        if let ir::Expr::Binary(op @ (B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge), l, r) = c {
+            if (self.tys.expr_ty(l), self.tys.expr_ty(r)) == (Some(Ty::Integer), Some(Ty::Integer)) {
+                let (a, b) = self.pair(l, r)?;
+                return Ok(self.emit(match op {
+                    B::Eq => Op::JumpUnlessEqInt { a, b, t },
+                    B::Ne => Op::JumpUnlessNeInt { a, b, t },
+                    B::Lt => Op::JumpUnlessLtInt { a, b, t },
+                    B::Le => Op::JumpUnlessLeInt { a, b, t },
+                    B::Gt => Op::JumpUnlessGtInt { a, b, t },
+                    _ => Op::JumpUnlessGeInt { a, b, t },
+                }));
+            }
+        }
+        let boolean = self.tys.expr_ty(c) == Some(Ty::Boolean);
+        let a = self.expr_any(c)?;
+        Ok(self.emit(if boolean {
+            Op::JumpIfNotBool { a, t }
+        } else {
+            Op::JumpIfNot { a, t }
+        }))
+    }
+
     fn expr_into(&mut self, e: &ir::Expr, d: u16) -> R<()> {
         use ir::Expr as E;
         let mark = self.next;
@@ -228,10 +321,15 @@ impl Compiler {
                 let p = self.place(p);
                 self.emit(Op::ReadPlace { d, p });
             }
+            E::Unary(ir::UnOp::Not, a) if self.tys.expr_ty(a) == Some(Ty::Boolean) => {
+                let a = self.expr_any(a)?;
+                self.emit(Op::NotBool { d, a });
+            }
             E::Unary(op, a) => {
                 let a = self.expr_any(a)?;
                 self.emit(Op::Un { op: *op, d, a });
             }
+            E::Binary(op, l, r) if self.typed_binary(*op, l, r, d)? => {}
             E::Binary(op, l, r) => {
                 let (a, b) = self.pair(l, r)?;
                 use ir::BinOp as B;
@@ -243,6 +341,10 @@ impl Compiler {
                 } else {
                     self.emit(Op::Bin { op: *op, d, a, b });
                 }
+            }
+            // A conversion to the type the operand is proven to have changes nothing.
+            E::Convert(t, a) if of_rt(t).is_some() && of_rt(t) == self.tys.expr_ty(a) => {
+                self.expr_into(a, d)?;
             }
             E::Convert(t, a) => {
                 let a = self.expr_any(a)?;
@@ -361,8 +463,7 @@ impl Compiler {
                 self.emit(Op::BaseInstance { d });
             }
             E::Ternary(c, a, b) => {
-                let cr = self.expr_any(c)?;
-                let jf = self.emit(Op::JumpIfNot { a: cr, t: 0 });
+                let jf = self.cond_jump(c, 0)?;
                 self.expr_into(a, d)?;
                 let jend = self.emit(Op::Jump { t: 0 });
                 let else_at = self.here();
@@ -523,8 +624,7 @@ impl Compiler {
                 self.emit(Op::Clear { a: d });
             }
             S::If(c, t, e) => {
-                let cr = self.expr_any(c)?;
-                let jf = self.emit(Op::JumpIfNot { a: cr, t: 0 });
+                let jf = self.cond_jump(c, 0)?;
                 self.block(t)?;
                 if e.is_empty() {
                     let end = self.here();
@@ -543,8 +643,7 @@ impl Compiler {
                 self.emit(Op::SavePos { d: saved });
                 let top = self.here();
                 let mark = self.next;
-                let cr = self.expr_any(c)?;
-                let jf = self.emit(Op::JumpIfNot { a: cr, t: 0 });
+                let jf = self.cond_jump(c, 0)?;
                 self.next = mark;
                 self.emit(Op::CheckStop);
                 self.loops.push(LoopCtx {
@@ -575,8 +674,7 @@ impl Compiler {
                 let cont = self.here();
                 self.emit(Op::RestorePos { a: saved });
                 let mark = self.next;
-                let cr = self.expr_any(until)?;
-                self.emit(Op::JumpIfNot { a: cr, t: top });
+                self.cond_jump(until, top)?;
                 self.next = mark;
                 let end = self.here();
                 self.patch_all(l.cont, cont);
@@ -764,6 +862,17 @@ impl Compiler {
             }
         }
         match p {
+            // A local of a typed kind takes a proven value of that kind straight into its register.
+            ir::Place::Local(i)
+                if self.locals_ty.get(*i).and_then(of_rt).is_some_and(|t| {
+                    let inner = if let ir::Expr::Convert(_, x) = e { x } else { e };
+                    self.tys.expr_ty(inner) == Some(t)
+                }) =>
+            {
+                let i = u16::try_from(*i).map_err(|_| ())?;
+                let inner = if let ir::Expr::Convert(_, x) = e { x } else { e };
+                self.expr_into(inner, i)?;
+            }
             ir::Place::Local(i) => {
                 let i = u16::try_from(*i).map_err(|_| ())?;
                 let a = self.expr_any(e)?;

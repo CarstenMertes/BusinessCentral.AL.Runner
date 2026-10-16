@@ -28,3 +28,29 @@ codeunit 69810 PA
 fn assigning_to_a_one_parameter_procedure_calls_it() {
     assert_eq!(int(run_in(SRC, "PA", "F")), 1);
 }
+
+const MEMBER: &str = r#"
+codeunit 69811 PB
+{
+    var Hidden: Boolean;
+    procedure SetHidden(Value: Boolean) begin Hidden := Value; end;
+    procedure IsHidden(): Boolean begin exit(Hidden); end;
+}
+codeunit 69812 PC
+{
+    procedure F(): Integer
+    var B: Codeunit PB;
+    begin
+        B.SetHidden := true;
+        if B.IsHidden() then exit(1);
+        exit(0);
+    end;
+}
+"#;
+
+// Base Application's Service Statistics writes `CurrPage.SubForm.PAGE.SetParentControl := PAGE::"Service Statistics"`: the same
+// assignment through a member (64 Tests-SCM-Service tests were refused with "is not assignable").
+#[test]
+fn assigning_to_a_one_parameter_procedure_of_another_object_calls_it() {
+    assert_eq!(int(run_in(MEMBER, "PC", "F")), 1);
+}

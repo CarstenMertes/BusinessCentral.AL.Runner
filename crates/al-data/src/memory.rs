@@ -184,7 +184,154 @@ fn cmp_rows(t: &TableDef, key: usize, a: &[Value], b: &[Value]) -> Ordering {
     Ordering::Equal
 }
 
+/// The part of the order of a key that the filters narrow down (ADR-035): the position tuple of the first row a scan
+/// can return, and of the last, as far as filters on the leading fields of the key say. Either may be empty (open),
+/// and both are prefixes of a position. The full `passes` check still runs on every row between them, so a bound
+/// that is too wide only costs time; a bound is only taken from what `key_cmp` order can answer exactly.
+#[derive(Default)]
+struct Seek {
+    lo: Vec<Value>,
+    hi: Vec<Value>,
+    /// The fields of the position, as far as the bounds reach.
+    fields: Vec<usize>,
+}
+
+/// A filter value a bound can be made of: not a blank text (the filter reads a text of spaces as '', which the key
+/// order does not), and not a value that does not compare.
+fn usable_bound(v: &Value) -> bool {
+    match v {
+        Value::Text(_) | Value::Code(_) => al_builtins::native::text_of(v).is_some_and(|t| !t.trim().is_empty()),
+        Value::Integer(_)
+        | Value::BigInteger(_)
+        | Value::Date(..)
+        | Value::Boolean(_)
+        | Value::Enum(..)
+        | Value::Option(..)
+        | Value::Decimal(_) => true,
+        _ => false,
+    }
+}
+
+fn same_kind(a: &Value, b: &Value) -> bool {
+    std::mem::discriminant(a) == std::mem::discriminant(b)
+}
+
+impl Seek {
+    /// The bounds the filters give for key `key` of `t`; `None` when they give none.
+    fn of(t: &TableDef, key: usize, filters: &[FieldFilter], sample: Option<&Row>) -> Option<Seek> {
+        use al_builtins::filter::{FilterExpr as E, OR_GROUP};
+        if filters.is_empty() {
+            return None;
+        }
+        let fields: Vec<usize> = if key == 0 {
+            t.keys[0].clone()
+        } else {
+            t.keys[key].iter().chain(&t.keys[0]).copied().collect()
+        };
+        let mut seek = Seek::default();
+        let (mut lo_open, mut hi_open) = (false, false);
+        for &fld in &fields {
+            // The first usable lower and upper value of the filters on this field (all of them apply at once).
+            let (mut lo, mut hi): (Option<&Value>, Option<&Value>) = (None, None);
+            for f in filters.iter().filter(|f| f.field == fld && f.group != OR_GROUP) {
+                let (l, h) = match &f.expr {
+                    E::Eq(x) => (Some(x), Some(x)),
+                    E::Range(l, h) => (l.as_ref(), h.as_ref()),
+                    // A strict bound is taken as a closed one: wider, so never wrong.
+                    E::Ge(x) | E::Gt(x) => (Some(x), None),
+                    E::Le(x) | E::Lt(x) => (None, Some(x)),
+                    _ => (None, None),
+                };
+                // Only a value of the kind the field holds in the rows: the order is the order of that kind.
+                let fits = |v: &Value| usable_bound(v) && sample.is_none_or(|r| same_kind(v, &r[fld]));
+                lo = lo.or(l.filter(|v| fits(v)));
+                hi = hi.or(h.filter(|v| fits(v)));
+            }
+            let point = match (lo, hi) {
+                (Some(l), Some(h)) => {
+                    same_kind(l, h) && al_builtins::ops::compare(l, h).ok() == Some(Ordering::Equal)
+                }
+                _ => false,
+            };
+            if !lo_open {
+                match lo {
+                    Some(l) => seek.lo.push(l.clone()),
+                    None => lo_open = true,
+                }
+                lo_open |= !point;
+            }
+            if !hi_open {
+                match hi {
+                    Some(h) => seek.hi.push(h.clone()),
+                    None => hi_open = true,
+                }
+                hi_open |= !point;
+            }
+            if lo_open && hi_open {
+                break;
+            }
+        }
+        seek.fields = fields;
+        (!seek.lo.is_empty() || !seek.hi.is_empty()).then_some(seek)
+    }
+
+    /// How `row` stands to the bound `bound` (a prefix of a position): `None` when a value does not compare, in
+    /// which case the caller does not trust the order and looks at the row.
+    fn cmp_to(&self, row: &[Value], bound: &[Value]) -> Option<Ordering> {
+        for (&i, b) in self.fields.iter().zip(bound) {
+            if !same_kind(&row[i], b) {
+                return None;
+            }
+            match al_builtins::ops::compare(&row[i], b) {
+                Ok(Ordering::Equal) => {}
+                Ok(o) => return Some(o),
+                Err(_) => return None,
+            }
+        }
+        Some(Ordering::Equal)
+    }
+
+    /// The row is before the first row the filters allow.
+    fn before(&self, row: &[Value]) -> Option<bool> {
+        if self.lo.is_empty() {
+            return Some(false);
+        }
+        self.cmp_to(row, &self.lo).map(|o| o == Ordering::Less)
+    }
+
+    /// The row is after the last row the filters allow.
+    fn after(&self, row: &[Value]) -> Option<bool> {
+        if self.hi.is_empty() {
+            return Some(false);
+        }
+        self.cmp_to(row, &self.hi).map(|o| o == Ordering::Greater)
+    }
+}
+
+#[cfg(test)]
+thread_local! {
+    /// How many rows `passes` looked at: the tests of the key seek count what a scan reads.
+    static ROWS_LOOKED_AT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) };
+}
+
+/// The rows of `table` (in primary key order) that can pass `filters`: those between the bounds the filters on the
+/// leading primary key fields give. A row of the band may still fail them, so the caller checks `passes`.
+fn pk_band<'a>(
+    table: &'a Table,
+    t: &TableDef,
+    filters: &[FieldFilter],
+) -> Box<dyn Iterator<Item = (&'a Key, &'a Row)> + 'a> {
+    use std::ops::Bound::{Included, Unbounded};
+    let Some(seek) = Seek::of(t, 0, filters, table.values().next()) else {
+        return Box::new(table.iter());
+    };
+    let lower = if seek.lo.is_empty() { Unbounded } else { Included(Key(seek.lo.clone())) };
+    Box::new(table.range((lower, Unbounded)).take_while(move |(_, r)| seek.after(r) != Some(true)))
+}
+
 fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
+    #[cfg(test)]
+    ROWS_LOOKED_AT.with(|c| c.set(c.get() + 1));
     al_builtins::filter::row_passes(row, filters)
 }
 
@@ -557,14 +704,23 @@ impl Store for MemStore {
         // In primary key order the table is already in the order of the scan: step to the first row past
         // the position and look at the rows from there on until one passes the filters.
         if scan.key == 0 {
-            use std::ops::Bound::{Excluded, Unbounded};
+            use std::ops::Bound::{Excluded, Included, Unbounded};
             let k = t.keys[0].len();
             let after = scan.after.map(|a| Key(a[..k.min(a.len())].to_vec()));
             if scan.ascending {
-                let lower = after.map_or(Unbounded, Excluded);
+                let seek = Seek::of(t, 0, scan.filters, table.values().next());
+                let from = seek.as_ref().filter(|s| !s.lo.is_empty()).map(|s| Key(s.lo.clone()));
+                let lower = match (after, from) {
+                    (Some(a), Some(f)) if key_cmp(&a.0, &f.0) == Ordering::Less => Included(f),
+                    (Some(a), _) => Excluded(a),
+                    (None, Some(f)) => Included(f),
+                    (None, None) => Unbounded,
+                };
                 return Ok(table
                     .range((lower, Unbounded))
                     .map(|(_, r)| r)
+                    // Past the last row the filters allow (a row that does not compare is looked at).
+                    .take_while(|r| seek.as_ref().is_none_or(|s| s.after(r) != Some(true)))
                     .find(|r| passes(r, scan.filters))
                     .cloned());
             }
@@ -582,13 +738,32 @@ impl Store for MemStore {
             let order = self.order_of(&slot, scan.key, t, &table);
             let row_at = |k: &Key| table.get(k);
             if order.len() == table.len() && order.iter().take(1).all(|k| row_at(k).is_some()) {
+                // The slice of the order the filters on the leading fields of the key leave (ADR-035).
+                let seek = Seek::of(t, scan.key, scan.filters, table.values().next());
+                let mut band = 0..order.len();
+                if let Some(sk) = &seek {
+                    let trusted = std::cell::Cell::new(true);
+                    let probe = |k: &Key, f: &dyn Fn(&[Value]) -> Option<bool>| match row_at(k).map(|r| f(r)) {
+                        Some(Some(b)) => b,
+                        _ => {
+                            trusted.set(false);
+                            false
+                        }
+                    };
+                    let start = order.partition_point(|k| probe(k, &|r| sk.before(r)));
+                    let end = order.partition_point(|k| !probe(k, &|r| sk.after(r)));
+                    // Rows that do not compare: the order cannot be trusted, so the whole of it is looked at.
+                    if trusted.get() && start <= end {
+                        band = start..end;
+                    }
+                }
                 let found = if scan.ascending {
                     let start = scan.after.map_or(0, |a| {
                         order.partition_point(|k| {
                             row_at(k).is_some_and(|r| cmp_row_to_position(t, scan.key, r, a) != Ordering::Greater)
                         })
                     });
-                    order[start..]
+                    order[start.max(band.start).min(band.end)..band.end]
                         .iter()
                         .filter_map(row_at)
                         .find(|r| passes(r, scan.filters))
@@ -598,7 +773,7 @@ impl Store for MemStore {
                             row_at(k).is_some_and(|r| cmp_row_to_position(t, scan.key, r, a) == Ordering::Less)
                         })
                     });
-                    order[..end]
+                    order[band.start.min(end)..end.min(band.end)]
                         .iter()
                         .rev()
                         .filter_map(row_at)
@@ -642,7 +817,7 @@ impl Store for MemStore {
         }
         Ok(self
             .table(cx, t)
-            .map_or(0, |m| m.values().filter(|r| passes(r, f)).count()))
+            .map_or(0, |m| pk_band(&m, t, f).filter(|(_, r)| passes(r, f)).count()))
     }
 
     fn delete_all(&mut self, cx: &AccessContext, t: &TableDef, f: &[FieldFilter]) -> Result<usize, StoreError> {
@@ -652,8 +827,7 @@ impl Store for MemStore {
         let doomed: Vec<Key> = self
             .table(cx, t)
             .map(|table| {
-                table
-                    .iter()
+                pk_band(&table, t, f)
                     .filter(|(_, r)| passes(r, f))
                     .map(|(k, _)| k.clone())
                     .collect()
@@ -700,6 +874,180 @@ impl SnapshotStore for MemStore {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    // ---- the key seek (ADR-035): a scan starts where the filters on the leading key fields start ----
+
+    use al_builtins::filter::{FieldFilter, FilterExpr};
+    use al_builtins::value::RtType;
+
+    fn seek_table(keys: Vec<Vec<usize>>) -> TableDef {
+        let f = |id, name: &str, ty| FieldDef {
+            id,
+            name: name.into(),
+            ty,
+            stored: true,
+        };
+        TableDef {
+            object: 9,
+            name: "Seek".into(),
+            fields: vec![
+                f(1, "A", RtType::Integer),
+                f(2, "B", RtType::Integer),
+                f(3, "C", RtType::Code(Some(10))),
+                f(4, "D", RtType::Integer),
+            ],
+            keys,
+            per_company: true,
+        }
+    }
+
+    fn cx() -> AccessContext {
+        AccessContext {
+            company: "C".into(),
+            user: "U".into(),
+        }
+    }
+
+    fn range(field: usize, lo: Option<Value>, hi: Option<Value>) -> FieldFilter {
+        FieldFilter {
+            field,
+            expr: FilterExpr::Range(lo, hi),
+            group: 0,
+        }
+    }
+
+    /// The rows a scan returns, one `next` after the other.
+    fn scan_all(s: &MemStore, t: &TableDef, key: usize, filters: &[FieldFilter], ascending: bool) -> Vec<Row> {
+        let mut out: Vec<Row> = Vec::new();
+        let mut after: Option<Vec<Value>> = None;
+        while let Some(r) = s
+            .next(
+                &cx(),
+                t,
+                &Scan {
+                    key,
+                    filters,
+                    ascending,
+                    after: after.as_deref(),
+                },
+            )
+            .unwrap()
+        {
+            after = Some(crate::position(t, key, &r));
+            out.push(r);
+        }
+        out
+    }
+
+    /// What the scan has to return, without any seek: every row, in the order of the key, that passes.
+    fn reference(s: &MemStore, t: &TableDef, key: usize, filters: &[FieldFilter], ascending: bool) -> Vec<Row> {
+        let mut rows: Vec<Row> = s.table(&cx(), t).unwrap().values().cloned().collect();
+        rows.sort_by(|a, b| cmp_rows(t, key, a, b));
+        if !ascending {
+            rows.reverse();
+        }
+        rows.retain(|r| al_builtins::filter::row_passes(r, filters));
+        rows
+    }
+
+    #[test]
+    fn a_filter_on_the_leading_key_fields_makes_the_scan_read_only_the_rows_near_it() {
+        let t = seek_table(vec![vec![0, 1], vec![3, 0, 1]]);
+        let mut s = MemStore::default();
+        for a in 0..200 {
+            for b in 0..100 {
+                let row = vec![Value::Integer(a), Value::Integer(b), Value::Code("X".into()), Value::Integer(b % 7)];
+                s.insert(&cx(), &t, row).unwrap();
+            }
+        }
+        let looked = || ROWS_LOOKED_AT.with(|c| c.get());
+        // Primary key: A = 150 is the 150th hundred of 20000 rows.
+        let f = [range(0, Some(Value::Integer(150)), Some(Value::Integer(150)))];
+        let before = looked();
+        let first = s
+            .next(&cx(), &t, &Scan { key: 0, filters: &f, ascending: true, after: None })
+            .unwrap()
+            .unwrap();
+        assert_eq!(format!("{:?}", first[0]), "Integer(150)");
+        assert!(looked() - before <= 5, "primary key: {} rows looked at", looked() - before);
+        // Another key (D, A, B): D = 6 holds one row in seven, and the scan has to find the first of them.
+        let f = [
+            range(3, Some(Value::Integer(6)), Some(Value::Integer(6))),
+            range(0, Some(Value::Integer(190)), None),
+        ];
+        let before = looked();
+        let first = s
+            .next(&cx(), &t, &Scan { key: 1, filters: &f, ascending: true, after: None })
+            .unwrap()
+            .unwrap();
+        assert_eq!(format!("{:?} {:?}", first[3], first[0]), "Integer(6) Integer(190)");
+        assert!(looked() - before <= 5, "other key: {} rows looked at", looked() - before);
+    }
+
+    #[test]
+    fn a_seek_returns_the_rows_a_walk_returns_in_the_same_order() {
+        let mut seed = 0x9E37_79B9_7F4A_7C15u64;
+        let mut rnd = move |n: u64| {
+            seed ^= seed << 13;
+            seed ^= seed >> 7;
+            seed ^= seed << 17;
+            seed % n
+        };
+        let codes = ["", "A", "B", "ab", "C", " ", "  ", "Z"];
+        for round in 0..60 {
+            let t = seek_table(vec![vec![0, 2, 1], vec![3, 2, 0, 1]]);
+            let mut s = MemStore::default();
+            let n = if round % 3 == 0 { 20 } else { 300 };
+            for _ in 0..n {
+                let row = vec![
+                    Value::Integer(rnd(6) as i32),
+                    Value::Integer(rnd(6) as i32),
+                    Value::Code(codes[rnd(codes.len() as u64) as usize].into()),
+                    Value::Integer(rnd(4) as i32),
+                ];
+                let _ = s.insert(&cx(), &t, row);
+            }
+            for _ in 0..40 {
+                let mut filters = Vec::new();
+                for _ in 0..rnd(4) {
+                    let field = rnd(4) as usize;
+                    let v = |r: u64| -> Value {
+                        if field == 2 {
+                            Value::Code(codes[(r % codes.len() as u64) as usize].into())
+                        } else {
+                            Value::Integer((r % 7) as i32)
+                        }
+                    };
+                    let expr = match rnd(9) {
+                        0 => FilterExpr::Eq(v(rnd(100))),
+                        1 => FilterExpr::Range(Some(v(rnd(100))), None),
+                        2 => FilterExpr::Range(None, Some(v(rnd(100)))),
+                        3 => FilterExpr::Range(Some(v(rnd(100))), Some(v(rnd(100)))),
+                        4 => FilterExpr::Gt(v(rnd(100))),
+                        5 => FilterExpr::Lt(v(rnd(100))),
+                        6 => FilterExpr::Ne(v(rnd(100))),
+                        7 => FilterExpr::Or(vec![FilterExpr::Eq(v(rnd(100))), FilterExpr::Eq(v(rnd(100)))]),
+                        _ => FilterExpr::Le(v(rnd(100))),
+                    };
+                    let group = [0, 0, 0, 2, -1][rnd(5) as usize];
+                    filters.push(FieldFilter { field, expr, group });
+                }
+                for key in 0..2 {
+                    for ascending in [true, false] {
+                        assert_eq!(
+                            format!("{:?}", scan_all(&s, &t, key, &filters, ascending)),
+                            format!("{:?}", reference(&s, &t, key, &filters, ascending)),
+                            "key {key} ascending {ascending} filters {filters:?}"
+                        );
+                    }
+                }
+                assert_eq!(
+                    s.count(&cx(), &t, &filters).unwrap(),
+                    reference(&s, &t, 0, &filters, true).len()
+                );
+            }
+        }
+    }
 
     #[test]
     fn passes_the_store_contract() {

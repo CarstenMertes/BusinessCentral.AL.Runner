@@ -6,5 +6,6 @@ mod query_outer_link;
 mod report_saveas;
 mod reportext_calls;
 mod reportext_currreport;
+mod reportext_this;
 mod reports;
 mod xmlports;

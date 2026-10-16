@@ -765,7 +765,7 @@ fn tb_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResu
     if n < len || n > i64::from(i32::MAX) {
         return unsupported("TextBuilder.Capacity set below the length or above the maximum (not pinned)");
     }
-    let s = with_string(&h, |s| std::mem::take(s));
+    let s = with_string(&h, std::mem::take);
     *h.borrow_mut() = LibraryValue::TextCap(s, n as i32);
     Ok(Value::Integer(n as i32))
 }
@@ -817,7 +817,7 @@ fn tb_ensure_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
         return crate::native::raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
     }
     if n > i64::from(capacity_of(&h)) {
-        let s = with_string(&h, |s| std::mem::take(s));
+        let s = with_string(&h, std::mem::take);
         *h.borrow_mut() = LibraryValue::TextCap(s, n as i32);
     }
     Ok(Value::Boolean(true))

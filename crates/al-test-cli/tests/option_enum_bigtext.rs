@@ -138,7 +138,7 @@ fn read_case(name: &str, bs: &[i32], enc: &str, length: i32, codes: &str) -> Str
 }
 
 // PEOptionEnumBigText.al:336-357 (UTF8), :360-381 (UTF8 with a byte order mark), :384-403 (default stream reads
-// Windows-1252), :406-440 (UTF16 with and without a mark), :443-460 (Windows), :499-515 (CR LF kept).
+// code page 437), :406-440 (UTF16 with and without a mark), :443-460 (Windows), :499-515 (CR LF kept).
 #[test]
 fn big_text_read_decodes_by_the_encoding_of_the_stream() {
     let t = [
@@ -155,7 +155,7 @@ fn big_text_read_decodes_by_the_encoding_of_the_stream() {
             &[104, 195, 169, 226, 130, 172],
             "",
             6,
-            "104 195 169 226 8218 172 ",
+            "104 8220 20 203 233 188 ",
         ),
         read_case("Utf16", &[97, 0, 98, 0], ", TextEncoding::UTF16", 2, "97 98 "),
         read_case(

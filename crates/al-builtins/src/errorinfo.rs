@@ -250,7 +250,7 @@ pub fn raise(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
         let g = c.new_guid();
         let id = crate::pagefmt::guid_text(&g);
         format!(
-            "An error has occurred. If the error persists, please contact your system administrator.\r\\Correlation ID: {id}"
+            "An error has occurred. If the error persists, please contact your system administrator.\\Correlation ID: {id}"
         )
     } else {
         message

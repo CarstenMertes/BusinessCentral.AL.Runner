@@ -59,7 +59,7 @@ fn model(direction: &str, start: i32, empty: bool) -> String {
     };
     if !valid {
         return format!(
-            "error There is an invalid character in the Find expression '{direction}'.\\r\\\\r\\In Find expressions, you can use =, >, and < in combinations, where each sign can only appear once, or you can use - or +.|DB:BadSearchMethod"
+            "error There is an invalid character in the Find expression '{direction}'.\\\\In Find expressions, you can use =, >, and < in combinations, where each sign can only appear once, or you can use - or +.|DB:BadSearchMethod"
         );
     }
     let mut found = None;

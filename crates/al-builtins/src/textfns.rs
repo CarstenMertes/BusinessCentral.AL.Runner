@@ -692,7 +692,8 @@ fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(true))
 }
 
-/// The line terminator is a line feed only (types/TestFormatEvaluateTextContracts.al:TextBuilder_AppendLine_EndsWithLineFeedOnly).
+/// The line terminator is a carriage return and a line feed (types/TestFormatEvaluateTextContracts.al:
+/// TextBuilder_AppendLine_EndsWithNewLineOnly, text/TestTextBuilder.al:TextBuilder_AppendLine_AddsNewline).
 fn tb_append_line(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = string_of(r)?;
     let t = if a.is_empty() {
@@ -702,7 +703,7 @@ fn tb_append_line(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
     };
     with_string(&h, |s| {
         s.push_str(&t);
-        s.push('\n');
+        s.push_str("\r\n");
     });
     Ok(Value::Boolean(true))
 }

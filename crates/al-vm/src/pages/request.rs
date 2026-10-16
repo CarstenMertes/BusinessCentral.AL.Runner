@@ -224,11 +224,11 @@ impl Session {
         );
         let one = |name: &str, value: &str| {
             format!(
-                "  <ReportParameter>\n    <Name>{name}</Name>\n    <Values>\n      <string>{value}</string>\n    </Values>\n    <Visible>true</Visible>\n  </ReportParameter>\n"
+                "  <ReportParameter>\r\n    <Name>{name}</Name>\r\n    <Values>\r\n      <string>{value}</string>\r\n    </Values>\r\n    <Visible>true</Visible>\r\n  </ReportParameter>\r\n"
             )
         };
         let text = format!(
-            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<ArrayOfReportParameter xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\n{}{}</ArrayOfReportParameter>",
+            "<?xml version=\"1.0\" encoding=\"utf-8\"?>\r\n<ArrayOfReportParameter xmlns:xsi=\"http://www.w3.org/2001/XMLSchema-instance\" xmlns:xsd=\"http://www.w3.org/2001/XMLSchema\">\r\n{}{}</ArrayOfReportParameter>",
             one(
                 "NavUserIdAE6AEB42076449B78A3E78A5EE366751",
                 &xml_escape(&self.host.identity.user_id())

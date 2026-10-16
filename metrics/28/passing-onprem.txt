@@ -51,6 +51,13 @@
 61261 PlatformTable_Chart
 61261 PlatformTable_ObjectOptions
 61261 PlatformTable_PrivacyNotice
+61268 P110_Copy
+61268 P110_EraseExistsReturnValues
+61268 P110_Rename
+61269 P110_CreateInStreamFromEmptyFile
+61269 P110_OutStreamThenInStream
+61270 P110_CreateTempFile_Encoding
+61270 P110_CreateTempFile_ReuseVar
 61290 Database_SID_Shape
 61293 EnvironmentInformation_SandboxAndProduction_ThroughTheTestLibrary
 61294 Media_ImportFile_MissingFile_AndMediaSet

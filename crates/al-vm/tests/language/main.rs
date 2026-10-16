@@ -14,6 +14,7 @@ mod erm_defects;
 mod errorcollect;
 mod events;
 mod exec;
+mod format_variant_number;
 mod in_precedence;
 mod interfaces;
 mod pageworks_probes;

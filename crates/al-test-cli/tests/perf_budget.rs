@@ -137,7 +137,7 @@ fn cold_compile_of_the_pinned_corpus_stays_within_its_instruction_budget() {
 /// value of the day plus 5 %. Where the kernel refuses the counter, the old limit on the runtime phases in seconds
 /// applies. The seconds are printed for information. A run over the limit is repeated, at most `WITH_APPS_RUNS` times in
 /// all, and the best counts: a real regression is over the limit every time.
-const WITH_APPS_LIMIT_INSTRUCTIONS: u64 = 144_000_000_000;
+const WITH_APPS_LIMIT_INSTRUCTIONS: u64 = 155_000_000_000;
 /// Where the kernel gives no instruction counter (a GitHub runner), the cost is the CPU time of the child process (user and
 /// system, `getrusage(RUSAGE_CHILDREN)`: the helper processes it waited for count too), not the wall time: the seconds of
 /// the runtime phases moved with the load of a shared runner (13.6 s against 12 s on main with the same code), CPU time

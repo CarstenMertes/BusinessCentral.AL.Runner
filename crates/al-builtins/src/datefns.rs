@@ -436,7 +436,7 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
                 if b.get(i + 2).is_some_and(|c| *c == b'8' || *c == b'9') {
                     return raise(
                         format!(
-                            "The date formula 'WD{}' contains a number that is too large.\r\\\r\\The number must be in the range 1 - 7.",
+                            "The date formula 'WD{}' contains a number that is too large.\\\\The number must be in the range 1 - 7.",
                             b[i + 2] as char
                         ),
                         "Evaluate",
@@ -648,7 +648,7 @@ fn calcdate(ctx: &dyn Ctx, formula: &str, base: Option<&Value>) -> Out {
         // types/TestDateRoundFormatStringContracts.al:CalcDate_UndefinedDate_Throws (CR and backslash line breaks).
         return raise(
             format!(
-                "You cannot base a date calculation on an undefined date.\r\\\r\\Date: 0D\r\\Formula: {}.",
+                "You cannot base a date calculation on an undefined date.\\\\Date: 0D\\Formula: {}.",
                 formula_text(formula)
             ),
             "Argument",
@@ -1103,7 +1103,7 @@ mod tests {
         };
         assert_eq!(
             e.message,
-            "You cannot base a date calculation on an undefined date.\r\\\r\\Date: 0D\r\\Formula: 1D."
+            "You cannot base a date calculation on an undefined date.\\\\Date: 0D\\Formula: 1D."
         );
         assert_eq!(e.code, "Argument");
     }

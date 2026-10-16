@@ -32,12 +32,21 @@ impl Default for ObjName {
 /// The app is part of the key because two apps of one program can declare the same kind and id
 /// (the Microsoft apps of one BC version do: a few tables and many permission sets exist twice).
 /// A reference resolved to one of them must not resolve to the other when the set of apps changes.
-#[derive(Debug, Clone, PartialEq, Eq, Hash, PartialOrd, Ord, Serialize, Deserialize, Default)]
+#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub struct ObjKey {
     /// The id of the declaring app (`AppInfo::id`).
     pub app: std::sync::Arc<str>,
     pub kind: ObjKind,
     pub name: ObjName,
+}
+
+// Hashed without the app: it is long, two objects with one kind and id in different apps are rare, and equality
+// still tells them apart.
+impl std::hash::Hash for ObjKey {
+    fn hash<H: std::hash::Hasher>(&self, state: &mut H) {
+        self.kind.hash(state);
+        self.name.hash(state);
+    }
 }
 
 impl ObjKey {
@@ -184,14 +193,36 @@ pub enum Expansion {
     EnumImpl { enum_: ObjKey, interface: ObjKey },
 }
 
+/// A routine of another object, as an object holds it: the object is a place in [`Refs::objects`] (the keys of the
+/// objects are not repeated), the routine its key in that object.
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct RoutineRef {
+    pub obj: u32,
+    pub local: LocalKey,
+}
+
+/// A field of a table in [`Refs::objects`].
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct FieldRef {
+    pub table: u32,
+    pub no: u32,
+}
+
+/// A control of a page in [`Refs::objects`].
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct ControlRef {
+    pub page: u32,
+    pub name: String,
+}
+
 /// What a symbolic object refers to. A reference inside the object's IR is an index into one of
 /// these lists.
 #[derive(Debug, Clone, PartialEq, Eq, Default, Serialize, Deserialize)]
 pub struct Refs {
     pub objects: Vec<ObjKey>,
-    pub routines: Vec<RoutineKey>,
-    pub fields: Vec<FieldKey>,
-    pub controls: Vec<ControlKey>,
+    pub routines: Vec<RoutineRef>,
+    pub fields: Vec<FieldRef>,
+    pub controls: Vec<ControlRef>,
     pub expansions: Vec<Expansion>,
 }
 
@@ -329,6 +360,11 @@ pub struct SymObject {
     pub joins: Vec<Join>,
     /// What it adds to its base.
     pub contribution: Contribution,
+    /// Only the facts other objects ask of it are here: a layer build marks the objects of the layers below as
+    /// supplied and never reads their lowered form.
+    pub placeholder: bool,
+    /// For a page of a placeholder: the name of each control in lower case, in order.
+    pub control_names: Vec<String>,
     /// For a table whose IR carries no field list (a dependency table that was not compiled) but
     /// whose fields other objects use: the number of each field, in the order of the table's field
     /// list. Empty otherwise.

@@ -179,3 +179,15 @@ build already in the local artifact cache wins over a newer published one. Missi
 - An explicit refresh command, and a line in each run saying which build was used and why.
 - Pipelines: with the pin in the repository, a CI cache keyed on the pinned build stays valid until the pin
   moves (for example weekly), instead of a rebuild per hotfix.
+
+## Parallel tests inside a codeunit under TestIsolation = Function (owner discussion, 2026-10-16)
+
+Today the unit of parallelism is the test codeunit: each runs on its own session and thread, so many small test
+codeunits use a many-core machine well, and the slowest codeunit sets the minimum wall time. Under
+TestIsolation = Function the database is rolled back after each test, but the tests of a codeunit still run in
+order on one thread. They cannot simply run in parallel: BC keeps the codeunit's global variables alive across
+its tests (Microsoft's `Initialize`/`IsInitialized` pattern relies on it), so fresh copies per test would be
+observable. Idea: run the tests of a Function-isolated codeunit in parallel, each on its own copy of the start
+state, when a static check shows no global written by one test is read by another (or the author declares it);
+otherwise keep the order. Advice for test design meanwhile: many small test codeunits, and expensive tests
+(heavy setup, pure computation) in codeunits of their own.

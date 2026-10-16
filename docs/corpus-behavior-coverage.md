@@ -9,7 +9,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
 | Triggers per object kind | 164 | 108 | 128 | 52 | 44 |
-| Object properties per object kind | 1110 | 261 | 1074 | 849 | 632 |
+| Object properties per object kind | 1110 | 261 | 1074 | 849 | 631 |
 | Platform and system events | 122 | 12 | 28 | 16 | 15 |
 | Statements and expressions | 59 | 54 | 53 | 0 | 0 |
 | Runtime error sites (text pinned) | 42 | 39 | - | 3 | - |
@@ -240,8 +240,8 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | table/field | `BlankNumbers` | 9 | yes | 0 |
 | report/group | `ShowCaption` | 9 | no | 0 |
 | report/labels | `PageCaption` | 9 | no | 0 |
+| report | `EnableHyperlinks` | 8 | yes | 0 |
 | entitlement | `GroupName` | 8 | no | 0 |
-| report | `EnableHyperlinks` | 8 | no | 0 |
 | report/labels | `PostingDateCaption` | 8 | no | 0 |
 | table | `MovedTo` | 8 | no | 0 |
 | table/field | `Locked` | 8 | no | 0 |

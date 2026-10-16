@@ -493,6 +493,44 @@ impl Lowerer<'_> {
                 ret_used: false,
             }));
         }
+        // `Proc := value` calls a procedure of this object that takes one value parameter (Base Application's Service
+        // Line writes `SetHideWarrantyWarning := true`). Assumed, see ProcedureAssignIsCall. The checker leaves the
+        // name unresolved (it looks for a call with no arguments), so the procedure is found here by its name.
+        if kids[0].kind() == SyntaxKind::NameRef
+            && self.res(&kids[0]).is_none()
+            && sig_tokens(n).iter().any(|t| t.kind() == SyntaxKind::Assign)
+        {
+            let name = kids[0].text().to_string();
+            let name = name.trim().trim_matches('"');
+            let found = self.members[self.oi]
+                .procedures
+                .iter()
+                .filter(|p| p.name.eq_ignore_ascii_case(name))
+                .map(|p| (p.offset, p.params.clone()))
+                .collect::<Vec<_>>();
+            if let [(offset, params)] = found.as_slice() {
+                if params.len() == 1 && !params[0].by_var {
+                    let routine = self.routine_at.get(&(self.oi, *offset)).ok_or("procedure not found")?;
+                    self.declared_in_both_proc(self.oi, *offset)?;
+                    self.assume(al_builtins::assumptions::Assumption::ProcedureAssignIsCall);
+                    let value = self.expr(&kids[1])?;
+                    let value = self.convert_to(&params[0].ty, self.ty_ref(&kids[1]), value)?;
+                    self.calls.push((self.oi, routine));
+                    let try_call = self
+                        .routine_nodes
+                        .get(self.oi)
+                        .get(routine)
+                        .is_some_and(|r| r.attributes().any(|a| a.name().eq_ignore_ascii_case("tryfunction")));
+                    return Ok(ir::Stmt::Expr(ir::Expr::Call {
+                        object: self.oi,
+                        routine,
+                        instance: None,
+                        args: vec![ir::Arg::Value(value)],
+                        try_call,
+                    }));
+                }
+            }
+        }
         // `FieldRef.Value := x` is the setter form of the `Value` method
         // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {

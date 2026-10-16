@@ -181,6 +181,30 @@ registry! {
         tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests.",
         probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G).",
     },
+    ProcedureAssignIsCall => {
+        id: "procedure-assign-is-call",
+        assumed: "`Proc := value` for a procedure with one value parameter is the call `Proc(value)`.",
+        tests: "Service Line (`SetHideWarrantyWarning := true` in OnValidate of Fault Reason Code): T204_PostedServiceInvoiceContainsPriceCalcMethod and 178 more Tests-ERM tests.",
+        probe: "A codeunit procedure P(V: Boolean) and `P := true;`: does it compile and run P? The same with a var parameter, two parameters, a return value.",
+    },
+    DateFormulaSpacesBetweenTerms => {
+        id: "date-formula-spaces-between-terms",
+        assumed: "Spaces in a date formula are ignored, also between the terms: `<CM + 1D>` is `<CM+1D>` (the corpus pins spaces next to the brackets only).",
+        tests: "Tests-SCM Item.TestField(\"Next Counting Start Date\", CalcDate('<CM + 1D>', WorkDate())), Base Application's `<CM + 1D>` and 16 more Tests-ERM tests.",
+        probe: "CalcDate('<CM + 1D>', D), Evaluate(DF, '<1D + 1W>') and Format(DF), '<1 D>', '<- 1D>'.",
+    },
+    FeatureKeyEnabledModify => {
+        id: "feature-key-enabled-modify",
+        assumed: "Modify of a Feature Key with a changed Enabled (the only writable column) is kept for the rest of the run: later reads answer the new value, a rollback undoes it with the other writes.",
+        tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
+        probe: "Get a Feature Key, change Enabled, Modify; Get again and read Enabled; FindSet and Count; the same inside a test with TestIsolation, then in the next test.",
+    },
+    FeatureKeyUnchangedModify => {
+        id: "feature-key-unchanged-modify",
+        assumed: "Modify on a Feature Key row that was read and not changed (Enabled set to the value it has) succeeds and changes nothing.",
+        tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
+        probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

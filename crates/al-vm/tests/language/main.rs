@@ -17,6 +17,7 @@ mod exec;
 mod in_precedence;
 mod interfaces;
 mod pageworks_probes;
+mod proc_assign;
 mod setter_call;
 mod text_append;
 mod text_methods;

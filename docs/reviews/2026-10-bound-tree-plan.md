@@ -1,5 +1,12 @@
 # Bound tree plan (ADR-036, decision D6: build fully)
 
+**Not pursued (2026-10-16).** Steps 3 to 5 and the design sections below were not built. The profile showed no second
+name resolution of the assumed size, the tree would raise the compile cost while it is built for a payoff of the 5 to 9 %
+the position maps cost, and a replacement of the maps by per-routine chunks measured no net gain. See the amendment at
+the end of `docs/adr/036-one-resolved-tree-from-check-to-lower.md`, which also lists what a later tree would reuse. What
+was built: step 0 (the type table) and cheaper copies and hashing (results below). The rest of this file is kept as the
+design record.
+
 Status: plan only, no code yet. Author: rework lane C. Date: 2026-10-16.
 Goal (owner-review, 2026-10-16): compile under 1,990,000 instructions per object (today about 2,014,000), then the
 limit in `perf_budget` goes back down from 2,060,000.

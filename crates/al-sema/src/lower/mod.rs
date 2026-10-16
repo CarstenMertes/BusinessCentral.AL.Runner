@@ -188,6 +188,8 @@ pub(crate) struct Lowerer<'a> {
     memo: &'a Memo,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
     ret_ty: Option<RtType>,
+    /// While an OnQueryClosePage with a named Boolean return is lowered: its return local and the local that notes an assignment to it.
+    qcp_ret: Option<(usize, usize)>,
     /// The declared return type of the routine being lowered (an interface result converts in `exit`).
     ret_decl: Option<Ty>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.

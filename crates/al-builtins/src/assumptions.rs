@@ -331,6 +331,24 @@ registry! {
         tests: "Microsoft's tests that set a view written by GetView after an ad hoc SetCurrentKey (Posting Preview and Item Journal tests): Tests-SCM and Tests-SCM-Manufacturing, about 110 tests.",
         probe: "SetCurrentKey on fields no key starts with, GetView, a second record SetView(that view): compare the order and CurrentKey().",
     },
+    DeleteAllSkipsRowsDeletedMeanwhile => {
+        id: "delete-all-skips-rows-deleted-meanwhile",
+        assumed: "DeleteAll(true) with triggers goes row by row and does not visit a row that an earlier row's OnDelete (or an event) deleted.",
+        tests: "Requisition Line OnDelete (deletes the lines of a higher level that follow) under Order Planning Mgt. PrepareRequisitionRecord: Tests-SCM-Manufacturing B42538_UserIDOnReqLine and Order Planning tests.",
+        probe: "A table whose OnDelete deletes the next row; DeleteAll(true) over three rows; count the rows and the OnDelete calls.",
+    },
+    RelationWhereOnTargetFlowFilter => {
+        id: "relation-where-on-a-flowfilter-of-the-target",
+        assumed: "A where() condition of a TableRelation on a FlowFilter field of the related table does not select rows when the relation is validated.",
+        tests: "Item Journal Line \"Bin Code\" (Bin.Code where(\"Item Filter\" = field(\"Item No.\"), \"Variant Filter\" = ...)): Tests-SCM and Tests-SCM-Manufacturing, about 10 tests.",
+        probe: "A table relation whose where() names a FlowFilter of the target; Validate a value that exists; Validate one that does not.",
+    },
+    QueryClosePageFallsThroughAsTrue => {
+        id: "query-close-page-falls-through-as-true",
+        assumed: "An OnQueryClosePage trigger with a Boolean return that reaches its end without giving a value lets the page close (its named return value starts as Yes).",
+        tests: "Item Tracking Lines OnQueryClosePage (its Result stays untouched when the availability check has no warning): about 1,100 tests of Tests-SCM, Tests-SCM-Manufacturing and Tests-SCM-Costing that close the page from a handler.",
+        probe: "A page with trigger OnQueryClosePage(CloseAction: Action) Result: Boolean that does not assign Result on one path; close it with OK from a handler; read the answer of RunModal.",
+    },
     ImplicitCategoryGroup => {
         id: "implicit-category-group",
         assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",
@@ -535,6 +553,12 @@ registry! {
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",
         tests: "Post Inventory Cost to G/L through Library - Costing and Library - Assembly PostInvtCostToGL (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch); Check.SaveAsPdf (ERM Cash Manager, Match Bank Rec. Scenarios).",
         probe: "A report on the list saved to a temp file and to a stream on a Windows tier: the answer, the order of the triggers, File.Exists and TempBlob.Length afterwards.",
+    },
+    HiddenPartUpdateIsNoop => {
+        id: "hidden-part-update-is-noop",
+        assumed: "CurrPage.Update (also with false) in the code of a part page that the host's code created without opening it (a literal Visible = false) does nothing and raises no error.",
+        tests: "Sales Invoice, Purchase Invoice and the other document pages call CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId) in OnAfterGetCurrRecord, which ends in CurrPage.Update(false): about 900 Tests-ERM, Tests-SCM and Tests-Misc tests.",
+        probe: "A host with part(P; ...) { Visible = false } whose OnAfterGetCurrRecord calls CurrPage.P.Page.Ping(), where Ping calls CurrPage.Update(false) and CurrPage.Update(true) and then reads Rec.",
     },
 }
 

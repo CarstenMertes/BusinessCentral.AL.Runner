@@ -150,7 +150,24 @@ impl Session {
 
     pub(super) fn test_page_op(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         let name = method.method();
-        let r = self.test_page_op_inner(method, st, args)?;
+        let r = match self.test_page_op_inner(method, st, args) {
+            // `CurrPage` and a `Page` variable are the page's own code, not a TestPage the test closed: BC does not raise
+            // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
+            // the call is refused instead of failing with the TestPage error (Posted Sales Document Lines.CopyLineToDoc reads
+            // `CurrPage.PostedShpts.PAGE` after its RunModal returned).
+            // `Run` and `RunModal` only pass on what their handler raised (handlers/TestPageModalSelfClose_Tests.al:104).
+            Err(Signal::Error(e))
+                if e.code == "TestPageNotOpened"
+                    && method.recv() == PageRecv::Page
+                    && !matches!(name, PageMethod::Run | PageMethod::RunModal) =>
+            {
+                return unsupported(format!(
+                    "{} called by the code of a page that is not open (what it does then is not pinned)",
+                    method.method()
+                ));
+            }
+            r => r?,
+        };
         // The client runs the page's background tasks before the call returns (corpus
         // handlers/TestPageBgTask_Tests.al:EnqueueBackgroundTask_CompletesBeforeOpenViewReturns).
         self.bg_drain(st)?;
@@ -554,6 +571,13 @@ impl Session {
                     // an index past the last error is assumed to raise the same (docs/probes-needed.md).
                     None => Err(error_code("Index out of bounds.", "IndexOutOfBounds")),
                 }
+            }
+            // A part the page's own code created without opening it (a literal `Visible = false`, `InvisiblePartForPageCode`) has no
+            // client to refresh: `CurrPage.Update` in its procedure does nothing. Base Application's Approval FactBox ends
+            // `UpdateApprovalEntriesFromSourceRecord` with it (assumption hidden-part-update-is-noop).
+            PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::HiddenPartUpdateIsNoop);
+                Ok(Value::Null)
             }
             PageMethod::Update | PageMethod::SaveRecord => {
                 self.require_open(st)?;

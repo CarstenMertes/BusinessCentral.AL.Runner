@@ -2,6 +2,7 @@
 
 use super::*;
 use crate::{Frame, Session};
+use al_builtins::describe::Describe;
 use al_builtins::native::Signal;
 use al_builtins::ops;
 use al_builtins::value::Value;
@@ -170,6 +171,18 @@ impl Session {
                         Err(e) => return Err(e),
                     }
                 }
+                Op::CharAt { d, a, b } => self.op_char_at(f, d, a, b, nl)?,
+                Op::AppendText { s, old, a } => self.op_append(&chunk.appends[s as usize], f, old, a, nl)?,
+                Op::MatchAny { a, l, t } => {
+                    if !self.op_match(&chunk.labels[l as usize], f, a)? {
+                        pc = t as usize;
+                    }
+                }
+                Op::InSet { d, a, l } => self.op_in(&chunk.labels[l as usize], f, d, a, nl)?,
+                Op::DotNet { s, d } => self.op_dotnet(&chunk.dotnets[s as usize], f, d, nl)?,
+                Op::ThisInstance { d } => Self::op_this(f, d),
+                Op::BaseInstance { d } => self.op_base(f, d)?,
+                Op::Aux { s, d, a } => self.op_aux(&chunk.aux[s as usize], f, d, a, nl)?,
                 Op::Clear { a } => f.locals[a as usize] = Value::Null,
                 Op::Ret => return Err(Signal::Exit(None)),
                 Op::RetVal { a } => return Err(Signal::Exit(Some(take(f, a, nl)))),
@@ -177,6 +190,81 @@ impl Session {
                 Op::RaiseContinue => return Err(Signal::Continue),
             }
         }
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn op_char_at(&mut self, f: &mut Frame, d: u16, a: u16, b: u16, nl: u16) -> Result<(), Signal> {
+        let v = {
+            let Some(t) = al_builtins::native::text_of(&f.locals[a as usize]) else {
+                return Err(Signal::Unsupported(format!(
+                    "indexing {} as a text",
+                    f.locals[a as usize].describe()
+                )));
+            };
+            let i = crate::int(&f.locals[b as usize])?;
+            Self::char_at(&t, i)?
+        };
+        release(f, a, nl);
+        release(f, b, nl);
+        f.locals[d as usize] = v;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn op_append(&mut self, site: &AppendSite, f: &mut Frame, old: u16, a: u16, nl: u16) -> Result<(), Signal> {
+        let old = take(f, old, nl);
+        let rv = take(f, a, nl);
+        self.append_finish(&site.place, site.max, old, rv, f)
+    }
+
+    #[inline(never)]
+    fn op_match(&mut self, labels: &[ir::SetElem], f: &mut Frame, a: u16) -> Result<bool, Signal> {
+        let v = f.locals[a as usize].clone();
+        self.matches_any(&v, labels, f)
+    }
+
+    #[inline(never)]
+    fn op_in(&mut self, labels: &[ir::SetElem], f: &mut Frame, d: u16, a: u16, nl: u16) -> Result<(), Signal> {
+        let v = take(f, a, nl);
+        let hit = self.matches_any(&v, labels, f)?;
+        f.locals[d as usize] = Value::Boolean(hit);
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn op_dotnet(&mut self, site: &DotNetSite, f: &mut Frame, d: u16, nl: u16) -> Result<(), Signal> {
+        let v = self.run_dotnet(site, f, nl)?;
+        f.locals[d as usize] = v;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn op_this(f: &mut Frame, d: u16) {
+        f.locals[d as usize] = Value::Codeunit(f.instance.clone());
+    }
+
+    #[inline(never)]
+    fn op_base(&mut self, f: &mut Frame, d: u16) -> Result<(), Signal> {
+        let v = Value::Codeunit(self.base_instance(f)?);
+        f.locals[d as usize] = v;
+        Ok(())
+    }
+
+    #[inline(never)]
+    fn op_aux(&mut self, site: &AuxSite, f: &mut Frame, d: u16, a: u16, nl: u16) -> Result<(), Signal> {
+        let v = take(f, a, nl);
+        let r = match site {
+            AuxSite::InterfaceTest { objects, cast } => self.interface_test(v, objects, *cast)?,
+            AuxSite::EnumImpl { by_ordinal, unknown } => self.enum_implementation(v, by_ordinal, *unknown)?,
+            AuxSite::Control { control, runtime } => self.page_control(v, *control, *runtime)?,
+            AuxSite::FieldOf { pos } => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldOfProcedureResult);
+                self.read_record_field(v, *pos)?
+            }
+            AuxSite::QueryColumn { column } => self.query_column(v, *column)?,
+        };
+        f.locals[d as usize] = r;
         Ok(())
     }
 
@@ -238,6 +326,24 @@ impl Session {
             site.try_call,
             f,
         )
+    }
+
+    #[inline(never)]
+    fn run_dotnet(&mut self, site: &DotNetSite, f: &mut Frame, nl: u16) -> Result<Value, Signal> {
+        let recv = match site.recv {
+            Some(r) => take(f, r, nl),
+            None => Value::Null,
+        };
+        let mut values = Vec::with_capacity(site.arg_regs.len());
+        let mut places = Vec::with_capacity(site.arg_regs.len());
+        for (&r, a) in site.arg_regs.iter().zip(&site.args) {
+            values.push(take(f, r, nl));
+            places.push(match a {
+                ir::Arg::Ref(p) => Some(p.clone()),
+                ir::Arg::Value(_) => None,
+            });
+        }
+        self.dotnet_apply(site.ty, recv, values, places, &site.op, f)
     }
 
     #[inline(never)]

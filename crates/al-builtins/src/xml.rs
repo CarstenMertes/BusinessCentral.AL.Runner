@@ -2628,6 +2628,7 @@ fn read_text_into(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value], out: 
                     ),
                     code: "Xml:Xml".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 });
             }
             Ok(Value::Boolean(false))

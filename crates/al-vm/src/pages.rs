@@ -347,6 +347,37 @@ impl Session {
         })
     }
 
+    /// `OnBeforeValidateEvent` / `OnAfterValidateEvent` of the control `element` of the page: raised around the control's own
+    /// OnValidate after the table field's events and trigger have run (corpus
+    /// record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al: `T.Name.After > P.Name.Before > P.Name.OnValidate >
+    /// P.Name.After`). The parameters are `Rec` and `xRec` (the corpus subscribers take `Rec` only).
+    pub(crate) fn page_validate_event(&mut self, st: &St, event: &str, element: &str) -> Result<(), Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        if !engine.events.is_subscribed(object, event) {
+            return Ok(());
+        }
+        let rec = Value::Record(self.page_rec(st));
+        let xrec = {
+            let inst = st.borrow().instance.clone().expect("open page");
+            let v = engine.program.objects[object]
+                .xrec_slot
+                .map(|x| inst.borrow().globals[x].clone());
+            v.unwrap_or(Value::Null)
+        };
+        let names = vec!["Rec".to_string(), "xRec".to_string()];
+        let mut args = vec![rec, xrec];
+        let call = crate::dispatch::EventCall {
+            object,
+            event,
+            element: Some(element),
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)
+    }
+
     /// Refuses a page some subscriber listens to for an event the client does not raise yet.
     fn check_page_events(&self, st: &St) -> Result<(), Signal> {
         let engine = self.engine();

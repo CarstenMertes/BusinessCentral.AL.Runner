@@ -157,6 +157,12 @@ registry! {
         tests: "Purchase and Sales Order Statistics (`InvDiscountAmount_General`): ConfirmationOnInvDiscUpdateInPurchOrderWithInvoicedLine and about 55 more Tests-ERM tests.",
         probe: "A page field(Ctl; Arr[1].Amount) with an OnValidate; TestPage.Ctl.SetValue(5) then the global and the OnValidate effect; SetValue('x') on it.",
     },
+    DateToTextIsFormat => {
+        id: "date-to-text-is-format",
+        assumed: "A Date converted to a Text or Code (a Variant from FieldRef.Value into a Text parameter) is its default Format text, so an Evaluate of it reads the same date back.",
+        tests: "Incoming Document.FindByDocumentNoAndPostingDate(.., PostingDateFieldRef.Value) behind the Incoming Doc. Attach. FactBox: about 470 Tests-ERM tests.",
+        probe: "T := V where V is a Variant holding a Date: compare T with Format(D); Evaluate(D2, T); the same for a blank Date.",
+    },
     GuidToText => {
         id: "guid-to-text",
         assumed: "A Guid assigned to a Text or Code is its text form {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} in capitals, as Format gives it.",

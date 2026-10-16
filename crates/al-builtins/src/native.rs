@@ -509,6 +509,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // primitive-totext-is-format.
     ("Date.ToText#1", |c, r, _| primitive_to_text(c, r, "Date")),
     ("Boolean.ToText#1", |c, r, _| primitive_to_text(c, r, "Boolean")),
+    ("Decimal.ToText#1", |c, r, _| primitive_to_text(c, r, "Decimal")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
     // A Char is also a wide char; nothing else is (types/lt-variant-is-text-streams/LTP89IsMisc.al:WideChar_Variants: Char values
     // `WideChar,Char,`, a Byte, an Integer, a BigInteger, a Text and a two-character literal not).
@@ -1426,7 +1427,7 @@ fn value_kind(v: &Value) -> String {
 /// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
 fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<Value, Signal> {
     match r.as_deref() {
-        Some(v @ (Value::Date(..) | Value::Boolean(_))) => {
+        Some(v @ (Value::Date(..) | Value::Boolean(_) | Value::Decimal(_))) => {
             crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
             match crate::format::try_format(v, 0, 0, &*c) {
                 Ok(t) => Ok(Value::Text(t.into())),

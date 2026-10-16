@@ -472,6 +472,27 @@ impl Lowerer<'_> {
                     .map(ir::Stmt::Expr);
             }
         }
+        // `Page.Control.SetValue := x` is the call `SetValue(x)` (Microsoft's Tests-ERM write it so, ERM Pmt. Tolerance VAT
+        // Appln.): a member without parentheses on a test page control that the checker leaves unresolved.
+        if kids[0].kind() == SyntaxKind::MemberExpr
+            && self.res(&kids[0]).is_none()
+            && matches!(kids[0].children().next().map(|b| self.ty_ref(&b)), Some(Ty::Builtin(t)) if t.as_ref() == "TestField")
+            && member_ident(&kids[0]).is_some_and(|m| m.eq_ignore_ascii_case("SetValue"))
+            && sig_tokens(n).iter().any(|t| t.kind() == SyntaxKind::Assign)
+        {
+            let recv = kids[0].children().next().ok_or("member base")?;
+            let receiver = match self.place(&recv) {
+                Ok(p) => ir::Arg::Ref(p),
+                Err(_) => ir::Arg::Value(self.expr(&recv)?),
+            };
+            let rhs = self.expr(&kids[1])?;
+            return Ok(ir::Stmt::Expr(ir::Expr::Builtin {
+                id: super::call::builtin_id("TestField.SetValue#1")?,
+                receiver: Some(Box::new(receiver)),
+                args: vec![ir::Arg::Value(rhs)],
+                ret_used: false,
+            }));
+        }
         // `FieldRef.Value := x` is the setter form of the `Value` method
         // (corpus recordref/TestRecordRefCRUD.al:20-23): not a place, a builtin call.
         if let Some(Res::Builtin(id)) = self.res(&kids[0]).cloned() {
@@ -751,4 +772,11 @@ impl Lowerer<'_> {
             },
         }
     }
+}
+
+/// The name after the last dot of a member expression.
+fn member_ident(n: &SyntaxNode) -> Option<String> {
+    let text = n.text().to_string();
+    let last = text.rsplit('.').next()?.trim().trim_matches('"');
+    (!last.is_empty()).then(|| last.to_string())
 }

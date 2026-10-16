@@ -93,3 +93,57 @@ paused. Record variables also rebuild their field defaults per call (`initial_fi
 - Already measured wins on the current tree-walker, for the 0-difference budget: `Result<Value, Signal>` from 72 to
   40 bytes (Signal 72 to 32), builtin lookup from a linear scan to one hash probe, Integer arithmetic and number
   conversion without `Decimal`, array dimensions read in place. Together about 15 % less CPU on Pageworks.
+
+## 6. Update 2026-10-16: two fixes, and ours against BC
+
+Two defects found with the same method (`perf record` on the full setup, then the routine view of `AL_PROFILE`):
+
+1. **Array parameters.** Pageworks' QR encoder passes `array[3249] of Boolean` by var through many procedures, and
+   `call_inner` built a default array for every parameter before the argument replaced it (23 % of the CPU time went
+   to building and dropping them). A parameter that is passed in no longer gets one; arrays of plain elements are
+   filled by copying one default. Pageworks 157.6 G to 83.2 G instructions on the part of the suite that ran then.
+2. **`Text[i]` lost its cached ASCII flag.** The split of `char_at` out of `eval` (bytecode step 3) passed a `&str`
+   instead of the `Txt`, so each `Text[i]` scanned the whole text for non-ASCII bytes. `DecodeBase64Bytes` in the font
+   code reads a multi-megabyte base64 text byte by byte: 84 % of all instructions sat in that one scan. It is
+   quadratic, and it made the install baseline 49 s and the run 131 s.
+
+Pageworks as the owner runs it (both apps as workspace, `alrunner test Pageworks Pageworks.Test`, the dependency
+`Spare Brained Licensing` from the feed): **812 of 1013 tests pass, 201 are not run, 0 fail**. Same machine, load
+average 23 (soft wall times; instructions are exact):
+
+| | tree walker | bytecode (ADR-034) | before the two fixes (tree) |
+|---|---|---|---|
+| tests passed / not run | 812 / 201 | 812 / 201 | 812 / 201 |
+| compile | 0.5 s | 0.5 s | 0.6 s |
+| install baseline | 5.8 s | 3.5 s | 49.7 s |
+| run | 14.7 s | 11.2 s | 131.1 s |
+| total wall | 21.0 s | 15.3 s | 181.4 s |
+| instructions (user) | 0.910 T | 0.708 T | 7.907 T |
+
+Against BC (the owner's CI, `pageworks-bc-times.txt`: 268 s for the whole job, 88 s in the test codeunits). Our time
+is the sum of the test times of the tests that ran; BC's is the time of the whole codeunit. Only codeunits that ran
+completely are compared (the others contain tests this runner does not run yet):
+
+| codeunit | ours s | ran / all | BC s | ratio |
+|---|---|---|---|---|
+| PageworksQrEncoderTest | 0.91 | 10/10 | 0.41 | 2.2 |
+| PageworksFontAssetTest | 0.88 | 11/11 | 0.44 | 2.0 |
+| PageworksImgDocOrderTest | 0.80 | 7/7 | 0.16 | 4.9 |
+| PageworksFontEmbedTest | 0.69 | 7/7 | 0.22 | 3.2 |
+| PageworksQrRenderE2ETest | 0.58 | 8/8 | 0.32 | 1.8 |
+| PageworksFontUploadFlowTest | 0.56 | 10/10 | 0.85 | 0.7 |
+| PageworksFontSubsetTest | 0.52 | 10/10 | 0.24 | 2.2 |
+| PageworksImgHorizOverAllocTest | 0.49 | 1/1 | 0.03 | 16.4 |
+| PageworksApiDatasetFieldTest | 0.43 | 11/11 | 0.54 | 0.8 |
+| PageworksBoxDeterminismTest | 0.42 | 5/5 | 0.10 | 4.3 |
+| all 88 codeunits that ran completely (571 tests) | 13.7 | | 13.3 | 1.03 |
+
+Tests that ran: 812 of 1013; our time for them: 23.4 s (sum of test times, 12 threads).
+
+In sum, a whole Pageworks run takes 15 s here against BC's 268 s job (the job builds, publishes and runs; only the 88 s
+are comparable with our run phase of 11 s on 12 threads). On the codeunits that ran completely we are at 1.03 of BC's
+time. The pure computation codeunits are still 2 to 5 times slower than BC's compiled code (QR encoder 2.2,
+font embedding 3.2); before the fixes the QR encoder was 19.7 times slower.
+
+Where the time goes now (bytecode, instructions): the interpreter loop 34 %, dropping values 13 %, text search
+(`StrPos`, `StrSearcher::new` 5 %), builtin calls 6 %, conversions 2.6 %.

@@ -1,7 +1,7 @@
 {
   "corpus_commit": "faf1c152e9026deea4f0420b33594bd9273374e3",
-  "overloads": 1729,
-  "pinned": 1269,
+  "overloads": 1731,
+  "pinned": 1271,
   "types": [
     {
       "methods": [
@@ -10765,12 +10765,18 @@
         {
           "id": "XmlReadOptions.PreserveWhitespace#1",
           "pinned": true,
+          "signature": "XmlReadOptions.PreserveWhitespace inst () -> Boolean",
+          "site": "xml/XmlDocReadWrite.al:215"
+        },
+        {
+          "id": "XmlReadOptions.PreserveWhitespace#2",
+          "pinned": true,
           "signature": "XmlReadOptions.PreserveWhitespace inst (Value: Boolean)",
           "site": "misc/W4XmlJsonHttp.al:18"
         }
       ],
-      "overloads": 1,
-      "pinned": 1,
+      "overloads": 2,
+      "pinned": 2,
       "type": "XmlReadOptions"
     },
     {
@@ -10887,12 +10893,18 @@
         {
           "id": "XmlWriteOptions.PreserveWhitespace#1",
           "pinned": true,
+          "signature": "XmlWriteOptions.PreserveWhitespace inst () -> Boolean",
+          "site": "xml/XmlDocReadWrite.al:399"
+        },
+        {
+          "id": "XmlWriteOptions.PreserveWhitespace#2",
+          "pinned": true,
           "signature": "XmlWriteOptions.PreserveWhitespace inst (Value: Boolean)",
           "site": "types/lt-variant-is-text-streams/LTP89IsXmlTypes.al:123"
         }
       ],
-      "overloads": 1,
-      "pinned": 1,
+      "overloads": 2,
+      "pinned": 2,
       "type": "XmlWriteOptions"
     },
     {

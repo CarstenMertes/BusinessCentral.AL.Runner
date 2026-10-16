@@ -495,6 +495,15 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Record.SetAutoCalcFields#1", |c, r, a| {
         c.record(RecordOp::SetAutoCalcFields, r, a)
     }),
+    // record/PZFindDirections.al:106 pins `ToText` of 5, 20, 25 and 35. Whether a larger value gets a thousands separator is
+    // not pinned, so it is refused (docs/probes-needed.md "Integer.ToText").
+    ("Integer.ToText#1", |_, r, _| match r.as_deref() {
+        Some(Value::Integer(n)) if n.unsigned_abs() < 1000 => Ok(Value::Text(n.to_string().into())),
+        Some(Value::Integer(n)) => Err(Signal::Unsupported(format!(
+            "Integer.ToText of {n}: whether the text has a thousands separator is not pinned (docs/probes-needed.md)"
+        ))),
+        other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
+    }),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
     ("Variant.IsBoolean#1", |_, r, _| is(r, "Boolean")),
     ("Variant.IsInteger#1", |_, r, _| is(r, "Integer")),

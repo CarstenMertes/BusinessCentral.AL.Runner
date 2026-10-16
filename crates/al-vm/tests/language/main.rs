@@ -2,6 +2,7 @@
 
 mod array_params;
 mod builtins;
+mod calc_const_guid;
 mod call_stack;
 mod continue_stmt;
 mod dataformats;

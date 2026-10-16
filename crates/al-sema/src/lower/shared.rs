@@ -727,6 +727,10 @@ pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
             let name = t.trim_matches('"');
             ir::Const::Option(m.iter().position(|x| x.eq_ignore_ascii_case(name))? as i32, m.clone())
         }
+        // The text of a Guid reads as `Evaluate` reads it (`parse_guid`); a `const('..')` of a CalcFormula on a Guid field.
+        Ty::Guid => ir::Const::Guid(al_builtins::ops::parse_guid(
+            t.strip_prefix('\'').and_then(|x| x.strip_suffix('\'')).unwrap_or(t),
+        )?),
         Ty::Date => ir::Const::Date(date_literal(t)?),
         Ty::Time => ir::Const::Time(time_literal(t)?),
         // The same reading as `Evaluate` into a DateFormula (types/TestBlankEnumInitTests.Codeunit.al:88-95

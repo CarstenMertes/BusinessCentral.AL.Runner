@@ -232,6 +232,8 @@ jobs:
             --junit ruled-junit.xml > ruled.log 2>&1 || status=1
           tools/baseline_rule_check.sh compare . || status=1
           exit $status
+      # Pageworks (the owner's private repository) is not in CI: its dual run is a local step, `alrunner test Pageworks
+      # Pageworks.Test --dual-run` on a checkout with the dependency apps from the feed (docs/reviews/2026-10-pageworks-profile.md).
       # ADR-034 decision 4, the dual run: every corpus test runs on the tree walker and on the executable form, and
       # the outcome, the error stack, the unprobed assumptions and the data left in the store must be equal. The exit
       # code is not 0 on any difference.

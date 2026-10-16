@@ -658,7 +658,7 @@ impl Session {
 
     /// `Text[i]`: the UTF-16 code unit at position `i`.
     #[inline]
-    pub(crate) fn char_at(t: &str, i: i64) -> Result<Value, Signal> {
+    pub(crate) fn char_at(t: &al_builtins::text::Txt, i: i64) -> Result<Value, Signal> {
         // types/TestProbeScalarContracts.al:TextChar_AssignByIndex: position 0 and below raise, the position after
         // the last character reads as the character 0; further positions are not pinned.
         if i < 1 {

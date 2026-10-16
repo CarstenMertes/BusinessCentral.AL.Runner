@@ -801,7 +801,14 @@ fn out_buf(r: Option<&mut Value>) -> Result<(BlobRef, Encoding), Signal> {
 /// :WriteTo_OutStream_MsDos_AsciiAndNonAscii).
 pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<(), Signal> {
     let (b, _) = out_buf(Some(stream))?;
+    // The stream does not move: a second `WriteTo` on the same stream writes over the first one's bytes, and the
+    // blob is not emptied (misc/lt-probes-needed-3/PnC20JsonStreams.al:WriteTo_DefaultStream_And_Appending,
+    // `[1,2]1}`). Pinned only for a stream nothing was written to; after other writes it is refused.
+    if b.borrow().write_pos != 0 {
+        return unsupported("JSON WriteTo(OutStream) on a stream that was written to (the place it writes at is not pinned)");
+    }
     write_bytes(&b, text.as_bytes());
+    b.borrow_mut().write_pos = 0;
     Ok(())
 }
 
@@ -816,7 +823,7 @@ pub fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
 /// `ReadFrom`). The bytes are read as UTF-8 whatever the encoding of the stream, and a UTF-8 byte
 /// order mark is skipped (streams/ProbeJsonAndInStreamBytes.al:ReadFrom_InStream_WithBomAndWithout, on a
 /// default, Windows-encoded stream). That is the inverse of [`write_serialised_text`]; bytes that are not
-/// UTF-8 are refused. The stream moves to its end.
+/// UTF-8 are refused. The stream does not move.
 pub(crate) fn read_serialised_text(stream: &mut Value) -> Result<String, Signal> {
     with_in(Some(stream), |st| {
         let bytes = st.rest();
@@ -828,7 +835,8 @@ pub(crate) fn read_serialised_text(stream: &mut Value) -> Result<String, Signal>
                 "reading bytes with NUL characters (UTF-16 text?) from an InStream as UTF-8 (not pinned)".into(),
             ));
         }
-        st.drain();
+        // The stream does not move: `EOS` stays false after the read (misc/lt-probes-needed-3/PnC20JsonStreams.al:
+        // ReadFrom_RestOfStream, `eosAfter` = No), as for `XmlDocument.ReadFrom`.
         Ok(text.strip_prefix('\u{FEFF}').map(str::to_owned).unwrap_or(text))
     })
 }

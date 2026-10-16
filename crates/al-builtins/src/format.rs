@@ -56,6 +56,18 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::BigInteger(i) => i.to_string(),
         // A Byte formats as the character of that code (streams/TestProbeStreamContracts.al:Read_IntoTypes,
         // `integer_into_byte`: 2 is `\u0002`).
+        // A byte from 0x80 up reads as the default (code page 437) stream encoding reads it: the bytes of a UTF-8 text
+        // `C3 A9 E2 82 AC` format as the characters `\u201C \u0014 \u00CB \u00E9 \u00BC` (misc/lt-probes-needed-3/
+        // PnC20JsonStreams.al:WriteTo_NonAscii_PerEncoding).
+        Value::Byte(b) if *b >= 0x80 => {
+            let enc = crate::stream::Encoding::MsDos;
+            if !enc.decode_pinned(&[*b]) {
+                return Err(FormatFail::Unsupported(format!(
+                    "Format of the Byte {b} (the character it reads as is not pinned)"
+                )));
+            }
+            enc.decode(&[*b])
+        }
         Value::Byte(b) => char::from(*b).to_string(),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         Value::Decimal(d) => format_decimal(d, standard)?,

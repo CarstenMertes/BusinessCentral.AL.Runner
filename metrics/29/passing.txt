@@ -5251,6 +5251,11 @@
 69349 GZip_TextRoundTrip
 69350 NoLabels_NoLabelsElement
 69351 FieldRows_CountsOfTheTable_ByState
+69353 Find_InvalidDirection_ErrorText
+69353 Find_InvalidDirections
+69353 Find_SingleDirections
+69353 Find_ThreeCharacterDirections
+69353 Find_TwoCharacterDirections
 69415 ExtensionOfTheBasePageRunsAndTheLocalPagesDoNot
 69415 ExtensionsOfTheLocalPageRunAndTheBasePagesDoesNot
 69415 ImportedAndQualifiedExtendsBothRunForAUniquelyNamedPage
@@ -6779,6 +6784,7 @@
 71100 BlankSpace_SetFilter
 71101 FindGreaterAndLess_HonourFilters
 71101 FindNeighbour_Forms
+71101 Find_InvalidSearchText
 71101 Find_OtherKey
 71102 FieldsNoKeyStartsWith
 71102 KeyAndFilter_Combine
@@ -6930,6 +6936,7 @@
 71207 RunModal_Twice_SameVariable
 71500 Find_Edges_Past_Ends
 71500 Find_Empty_Table_And_Filtered_Out
+71500 Find_Invalid_SearchStrings
 71500 Find_Respects_CurrentKey_Order
 71500 Find_SearchStrings_Equal
 71500 Find_SearchStrings_FirstLast
@@ -7431,6 +7438,7 @@
 72812 Order_Left_LocCodeDesc
 72812 Order_Left_LocCodeDesc_Filtered
 73020 FindSet_Variants
+73020 Find_Directions
 73020 Find_EmptyTable_And_Filters
 73020 Find_Relative_ToCurrent
 73020 GetBySystemId

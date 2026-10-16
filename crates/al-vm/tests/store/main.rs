@@ -1,6 +1,7 @@
 //! The tests of one area in one binary (ADR-037 item 5): fewer binaries to link. Each module is a file of store/.
 
 mod companies;
+mod find_directions;
 mod fix_records;
 mod flowfields;
 mod general_journal;

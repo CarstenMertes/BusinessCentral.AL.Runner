@@ -358,7 +358,7 @@ fn run_unit(
         let mut scratch = Scratch {
             capture: u.capture,
             order: u.order.clone(),
-            clock_start: clock_start,
+            clock_start,
             exec: al_vm::ExecMode::Tree,
             digest: u.dual,
             ..Default::default()
@@ -443,7 +443,7 @@ fn run_unit(
             let (mut stacks, mut times, mut hits) = (Vec::new(), Vec::new(), Vec::new());
             let mut scratch = Scratch {
                 order: u.order.clone(),
-                clock_start: clock_start,
+                clock_start,
                 exec: al_vm::ExecMode::Bytecode,
                 digest: true,
                 ..Default::default()

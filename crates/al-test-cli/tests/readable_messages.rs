@@ -10,6 +10,32 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-data/src/memory.rs",
+        r#"format!("{row:?}").hash(h);"#,
+        "a hash input of the dual-run digest, never shown",
+    ),
+    (
+        "al-testrun/src/dual.rs",
+        r#""dual run: {} {} ({}): {}: tree walker {:?}, bytecode {:?}","#,
+        "the report of a difference between the two executors, for the developers of the executable form",
+    ),
+    (
+        "al-testrun/src/dual.rs",
+        r#"diff("outcome", format!("{o_tree:?}"), format!("{o_other:?}"));"#,
+        "same",
+    ),
+    (
+        "al-testrun/src/dual.rs",
+        r#"format!("{:?}", marks(tree.hits, t)),"#,
+        "same",
+    ),
+    (
+        "al-testrun/src/dual.rs",
+        r#"format!("{:?}", marks(other.hits, t)),"#,
+        "same",
+    ),
+    ("al-testrun/src/dual.rs", r#""table {} rows hash {:?}","#, "same"),
+    (
         "al-testrun/src/runtime/compiled.rs",
         r#""the program differs (first object that differs: {:?}; positions equal: {}; counts {} and {})","#,
         "the report of a defect of the incremental update (ALRUNNER_CHECK_INCREMENTAL, tests): for the developers of the compiler",

@@ -950,7 +950,13 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
         // (types/lt-variant-is-text-streams/LTP89IsMisc.al:NearTypes_TextVsCode_IntegerVsBigInteger `abs_int`, `abs_bigint`).
         Value::Integer(i) => match i.checked_abs() {
             Some(n) => Value::Integer(n),
-            None => return unsupported("Abs of the smallest Integer (the overflow error is not pinned)"),
+            // types/lt-scalars/ScT70056.al:Integer_Overflow `abs_min`.
+            None => {
+                return raise(
+                    "Negating the minimum value of a twos complement number is invalid.",
+                    "AL:Overflow",
+                );
+            }
         },
         Value::BigInteger(i) => match i.checked_abs() {
             Some(n) => Value::BigInteger(n),
@@ -1560,7 +1566,7 @@ fn enum_receiver(ctx: &dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<(u3
 }
 
 fn list_of(items: Vec<Value>) -> Value {
-    Value::List(Rc::new(std::cell::RefCell::new(items)))
+    Value::List(Rc::new(std::cell::RefCell::new(items.into())))
 }
 
 /// `Enum.Names()`: every declared name, the blank ordinal included

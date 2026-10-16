@@ -972,7 +972,7 @@ fn object_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Resul
             .collect::<Vec<_>>()),
         _ => unsupported("JsonObject.Keys on a JSON value that is not an object"),
     })?;
-    Ok(Value::List(Rc::new(std::cell::RefCell::new(keys))))
+    Ok(Value::List(Rc::new(std::cell::RefCell::new(keys.into()))))
 }
 
 fn object_contains(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {

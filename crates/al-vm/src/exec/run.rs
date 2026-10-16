@@ -526,6 +526,12 @@ impl Session {
             }
             return Ok(());
         }
+        if let Value::List(l) = &coll {
+            f.locals[site.ver as usize] = Value::BigInteger(l.borrow().version as i64);
+            f.locals[site.watch as usize] = coll.clone();
+        } else {
+            f.locals[site.watch as usize] = Value::Null;
+        }
         let items = Self::foreach_items(coll)?;
         f.locals[site.items as usize] = Value::Array(std::rc::Rc::new(std::cell::RefCell::new(items)));
         f.locals[site.at as usize] = Value::Integer(0);
@@ -551,6 +557,16 @@ impl Session {
         let Value::Integer(i) = f.locals[site.at as usize] else {
             return Err(Signal::Unsupported("a foreach loop that is not set up".into()));
         };
+        if let (Value::List(l), Value::BigInteger(v)) = (&f.locals[site.watch as usize], &f.locals[site.ver as usize]) {
+            if l.borrow().version as i64 != *v {
+                return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                    message: "Collection was modified; enumeration operation may not execute.".into(),
+                    code: "AL:InvalidOperation".into(),
+                    call_stack: String::new(),
+                    ..Default::default()
+                })));
+            }
+        }
         let item = match &f.locals[site.items as usize] {
             Value::Array(items) => items.borrow().get(i as usize).cloned(),
             _ => None,

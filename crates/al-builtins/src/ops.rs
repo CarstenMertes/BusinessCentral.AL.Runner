@@ -163,7 +163,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             let cast_error = |to: &str| {
                 raise::<Value>(
                     format!(
-                        "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.{to}."
+                        "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.{to}.",
+                        // Trailing zeros go, one decimal stays (3000000000.0, 7.5; types/PRDecimalToInteger.al, ScT70056.al).
+                        {
+                            let n = d.normalize();
+                            if n.scale() == 0 { format!("{n}.0") } else { n.to_string() }
+                        }
                     ),
                     "ConversionCast",
                 )
@@ -406,7 +411,8 @@ pub fn int_arith(op: Arith, a: i32, b: i32) -> Result<i32, Signal> {
         Arith::Mul => a.checked_mul(b),
         Arith::IntDiv | Arith::Mod if b == 0 => return raise("Attempted to divide by zero.", "AL:DivideByZero"),
         Arith::IntDiv => a.checked_div(b),
-        Arith::Mod => Some(a.wrapping_rem(b)),
+        // The smallest Integer mod -1 overflows, as div does (types/lt-scalars/ScT70056.al:Integer_Overflow `min_mod_neg`).
+        Arith::Mod => a.checked_rem(b),
         Arith::Div => return Err(Signal::Unsupported("int_arith of the quotient operator".into())),
     };
     n.ok_or_else(arith_overflow)
@@ -657,7 +663,14 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Duration(a - b));
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
-        (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
+        // An undefined date has no difference, and the whole range is too wide a difference (types/lt-datetime/
+        // Arithmetic.al:Date_Plus_Minus_Integer `af30`, `af32`, `af34`).
+        (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => {
+            if *a == 0 || *b == 0 || (a - b).abs() >= 3_652_058 {
+                return date_invalid();
+            }
+            return Ok(V::Integer(a - b));
+        }
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
         // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
         // would round or truncate: not pinned, so it stays refused below (docs/probes-needed.md).
@@ -665,8 +678,20 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             if matches!(n, V::Decimal(_)) {
                 crate::assumptions::assume(crate::assumptions::Assumption::DateAddWholeDecimal);
             }
-            let n = whole_days(n).expect("whole") as i32;
-            return Ok(V::Date(if op == Arith::Add { a + n } else { a - n }, *c));
+            // The result stays within 0001-01-01 and 9999-12-31, an undefined date takes no days, and the sum of days is
+            // computed in 32 bits (Arithmetic.al:Date_Arithmetic_Errors, Date_Plus_Minus_Integer `af39`, `af41`).
+            let n = whole_days(n).expect("whole");
+            let Ok(n) = i32::try_from(n) else {
+                return raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+            };
+            let sum = if op == Arith::Add { a.checked_add(n) } else { a.checked_sub(n) };
+            let Some(sum) = sum else {
+                return raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+            };
+            if *a == 0 || !(1..=3_652_059).contains(&sum) {
+                return date_invalid();
+            }
+            return Ok(V::Date(sum, *c));
         }
         _ => {}
     }
@@ -703,7 +728,8 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         Arith::Mod => Some(a % b),
     }
     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
-    if any_dec && !matches!(op, Arith::IntDiv | Arith::Mod) {
+    // A Decimal mod keeps the fraction (types/lt-scalars/ScT70058.al:Decimal_Basic `mod_int`, Decimal_DivModTruncation `mod2`).
+    if any_dec && !matches!(op, Arith::IntDiv) {
         return Ok(V::Decimal(res));
     }
     let n = res.trunc().mantissa() / 10i128.pow(res.trunc().scale());
@@ -740,6 +766,21 @@ fn int_of(v: &Value) -> Option<i64> {
         Value::BigInteger(i) => Some(*i),
         _ => None,
     }
+}
+
+fn date_invalid<T>() -> Result<T, Signal> {
+    raise("The date is not valid.", "DateInvalid")
+}
+
+/// `=`, `<>`, `<`, ... on two values in AL code: as [`compare`], except that an undefined date against 0001-01-01 raises
+/// (types/lt-datetime/Arithmetic.al:Date_Comparisons `af72`, `af75`, `af79`).
+pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering, Signal> {
+    if let (Value::Date(a, _), Value::Date(b, _)) = (l, r) {
+        if (*a == 0 && *b == 1) || (*a == 1 && *b == 0) {
+            return date_invalid();
+        }
+    }
+    if ordered { compare_order(l, r) } else { compare(l, r) }
 }
 
 /// Ordering for `<`, `<=`, `>` and `>=`: as [`compare`], except that text follows the culture order

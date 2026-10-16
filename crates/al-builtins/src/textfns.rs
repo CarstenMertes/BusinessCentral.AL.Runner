@@ -444,7 +444,7 @@ fn split(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
         }
     }
     parts.push(Value::Text(from_u16(&s[start..]).into()));
-    Ok(Value::List(Rc::new(RefCell::new(parts))))
+    Ok(Value::List(Rc::new(RefCell::new(parts.into()))))
 }
 
 // -------------------------------------------------------- functions

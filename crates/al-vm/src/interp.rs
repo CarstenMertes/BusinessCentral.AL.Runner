@@ -268,7 +268,7 @@ impl Session {
     /// The items a `foreach` runs over (a List, a JSON array or an XPath result).
     pub(crate) fn foreach_items(coll: Value) -> Result<Vec<Value>, Signal> {
         Ok(match coll {
-            Value::List(l) => l.borrow().clone(),
+            Value::List(l) => l.borrow().to_vec(),
             // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
             other => match al_builtins::json::array_items(&other).or_else(|| al_builtins::xml::node_list_items(&other))
             {
@@ -292,12 +292,12 @@ impl Session {
             B::And => Value::Boolean(ops::truthy(l)? & ops::truthy(r)?),
             B::Or => Value::Boolean(ops::truthy(l)? | ops::truthy(r)?),
             B::Xor => Value::Boolean(ops::truthy(l)? ^ ops::truthy(r)?),
-            B::Eq => Value::Boolean(ops::compare(l, r)? == Ordering::Equal),
-            B::Ne => Value::Boolean(ops::compare(l, r)? != Ordering::Equal),
-            B::Lt => Value::Boolean(ops::compare_order(l, r)? == Ordering::Less),
-            B::Le => Value::Boolean(ops::compare_order(l, r)? != Ordering::Greater),
-            B::Gt => Value::Boolean(ops::compare_order(l, r)? == Ordering::Greater),
-            B::Ge => Value::Boolean(ops::compare_order(l, r)? != Ordering::Less),
+            B::Eq => Value::Boolean(ops::compare_operator(l, r, false)? == Ordering::Equal),
+            B::Ne => Value::Boolean(ops::compare_operator(l, r, false)? != Ordering::Equal),
+            B::Lt => Value::Boolean(ops::compare_operator(l, r, true)? == Ordering::Less),
+            B::Le => Value::Boolean(ops::compare_operator(l, r, true)? != Ordering::Greater),
+            B::Gt => Value::Boolean(ops::compare_operator(l, r, true)? == Ordering::Greater),
+            B::Ge => Value::Boolean(ops::compare_operator(l, r, true)? != Ordering::Less),
             B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(l, r)?),
             B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(l, r)?),
         })

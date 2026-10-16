@@ -169,6 +169,12 @@ registry! {
         tests: "Assert.RecordCount (TextBuilder.Append(RecRef.FieldIndex(i).Value())): Tests-Misc AssertTest and Tests-Marketing MarketingCampaignSegments; ERM Suggest Employee Payment (StartingDocumentNo.SetValue(RandInt(10)) on a Code[20] control) and ResourceGroupAllocatedPerJob in Tests-Resource.",
         probe: "T := V and C := V where V is a Variant holding an Integer, a BigInteger and a Decimal (also negative, and a Decimal with trailing zeros): compare with Format; TextBuilder.Append(V); a Code[2] that is too short.",
     },
+    NotificationIdFromGuidText => {
+        id: "notification-id-from-guid-text",
+        assumed: "Notification.Id := 'xxxxxxxx-xxxx-xxxx-xxxx-xxxxxxxxxxxx' (a text) sets the Guid the text reads as, as a Text assigned to a Guid does elsewhere. A text that is no Guid is refused.",
+        tests: "Microsoft's notification tests (Tests-Misc, for example Scenario1_AdminJobFailedTest01): 30 tests.",
+        probe: "N.Id := '9a3203a3-35a5-4598-941b-2d6c9f1a2b3c', then Format(N.Id); the same with braces, with a text that is no Guid (error text), and with an empty text.",
+    },
     DateToTextIsFormat => {
         id: "date-to-text-is-format",
         assumed: "A Date converted to a Text or Code (a Variant from FieldRef.Value into a Text parameter) is its default Format text, so an Evaluate of it reads the same date back.",

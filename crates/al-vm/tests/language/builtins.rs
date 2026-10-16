@@ -1436,3 +1436,11 @@ fn a_for_loop_over_an_integer_takes_option_bounds_by_ordinal() {
     );
     assert_eq!(r.unwrap(), "123321");
 }
+
+// Microsoft's Notification Lifecycle Mgt tests (Tests-Misc, 30 tests) assign a Guid text to Notification.Id;
+// assumption `notification-id-from-guid-text`.
+#[test]
+fn a_notification_id_takes_the_text_of_a_guid() {
+    let r = notification("n.Id := '9a3203a3-35a5-4598-941b-2d6c9f1a2b3c'; exit(Format(n.Id));");
+    assert_eq!(r.unwrap(), "{9A3203A3-35A5-4598-941B-2D6C9F1A2B3C}");
+}

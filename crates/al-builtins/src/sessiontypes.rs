@@ -213,6 +213,17 @@ fn n_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
             with_notification(r, |n| n.id = Some(g)).map(|()| Value::Null)
         }
         None => with_notification(r, |n| n.id.unwrap_or([0; 16])).map(Value::Guid),
+        // The text of a Guid (Microsoft's Notification Lifecycle Mgt tests, Tests-Misc: `Notification.Id := '9a32...'`);
+        // no corpus pin (assumption `notification-id-from-guid-text`). A text that is no Guid stays refused.
+        Some(Value::Text(t) | Value::Code(t)) => {
+            match crate::ops::convert(Value::Text(t.clone()), &crate::value::RtType::Guid) {
+                Ok(Value::Guid(g)) => {
+                    crate::assumptions::assume(crate::assumptions::Assumption::NotificationIdFromGuidText);
+                    with_notification(r, |n| n.id = Some(g)).map(|()| Value::Null)
+                }
+                _ => unsupported("Notification.Id with a text that is no Guid"),
+            }
+        }
         Some(other) => unsupported(format!("Notification.Id with {}", other.describe())),
     }
 }

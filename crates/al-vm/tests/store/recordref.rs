@@ -298,6 +298,24 @@ fn gettable_copies_the_record_in_settable_copies_it_out() {
     assert_eq!(text(r), "58");
 }
 
+// Microsoft's Tests-ERM SalesInvoiceTryPreview (Gen. Jnl.-Post Preview) passes a RecordRef to `GetTable`: the ref takes the
+// other ref's table, buffer and filters, which are not shared afterwards (recordref-gettable-of-recordref, docs/probes-needed.md).
+#[test]
+fn gettable_of_a_record_ref_copies_the_other_ref() {
+    let r = run(
+        "procedure F(): Text var A: RecordRef; B: RecordRef; s: Text; begin
+            A.Open(50900); A.Field(3).Value := 5;
+            B.GetTable(A);
+            s += Format(B.Field(3).Value());
+            A.Field(3).Value := 6;
+            s += Format(B.Field(3).Value());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "55");
+}
+
 #[test]
 fn clear_closes_the_ref() {
     // corpus recordref/TestRecordRefOpenCompilationTarget.al:70-81 (Clear(RecRef) then Open again)

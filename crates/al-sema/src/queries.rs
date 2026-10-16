@@ -676,20 +676,16 @@ table 50001 "U" { fields { field(1; "No."; Code[20]) { } field(2; Amount; Decima
     }
 
     // Corpus pins a FlowField column without a method (query/TestQueryJoinFlowFieldGroupBy.al, QffHeaderFlowField);
-    // an aggregate over a FlowField (Base Application's "Vend. Ledg. Entry Remain. Amt.") is in no corpus test.
+    // an aggregate over a FlowField (Base Application's "Cust. Ledg. Entry Remain. Amt.") is in no corpus test: it is
+    // accepted, assumed to add the per-row values (query-method-over-flowfield), and Count over one stays refused.
     #[test]
-    fn an_aggregate_over_a_flow_field_is_refused_with_the_open_question() {
+    fn an_aggregate_over_a_flow_field_is_accepted_as_assumed() {
         let l = layout_of("query 50100 Q { elements { dataitem(T; T) { column(S; Total) { Method = Sum; } } } }");
-        let all = l.reasons.join("; ");
-        assert!(
-            all.contains("FlowField")
-                && all.contains("Method")
-                && all.contains("not pinned")
-                && all.contains("probes-needed"),
-            "{all}"
-        );
+        assert!(l.reasons.is_empty(), "{:?}", l.reasons);
         let l = layout_of("query 50100 Q { elements { dataitem(T; T) { column(S; Total) { } } } }");
         assert!(l.reasons.is_empty(), "{:?}", l.reasons);
+        let l = layout_of("query 50100 Q { elements { dataitem(T; T) { column(S; Total) { Method = Count; } } } }");
+        assert!(!l.reasons.is_empty());
     }
 
     // corpus query/QJOrderSum.Query.al: the columns, their types and the OrderBy.

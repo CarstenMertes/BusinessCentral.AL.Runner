@@ -308,8 +308,19 @@ impl Session {
             // (recordref/TestRecordRefGetSetTableContracts.al:30-60).
             // A ref that was never opened takes its table from the record (Assert.RecordIsEmpty does this).
             "GetTable" => {
-                let Some(Value::Record(src)) = args.first() else {
-                    return unsupported(format!("RecordRef.GetTable of {}", args.first().describe()));
+                let src = match args.first() {
+                    Some(Value::Record(src)) => src.clone(),
+                    // A RecordRef as the source (Microsoft's Gen. Jnl.-Post Preview): the same copy of its record.
+                    Some(Value::Library(_, other)) => match &*other.borrow() {
+                        LibraryValue::RecordRef(r) => {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::RecordRefGetTableOfRecordRef,
+                            );
+                            r.clone()
+                        }
+                        _ => return unsupported("RecordRef.GetTable of a RecordRef that is not open"),
+                    },
+                    other => return unsupported(format!("RecordRef.GetTable of {}", other.describe())),
                 };
                 let copy = src.borrow().clone();
                 *lib.borrow_mut() = LibraryValue::RecordRef(Rc::new(RefCell::new(copy)));

@@ -211,6 +211,12 @@ registry! {
         tests: "Query \"Cust. Ledg. Entry Remain. Amt.\" (Sum of the FlowField \"Remaining Amt. (LCY)\"): T120_NotifyAboutMissingSalesSetupOnLineDiscountValidation and about 425 more Tests-ERM tests.",
         probe: "A query with column(Total; FlowFieldOfTheTable) { Method = Sum; } over three rows: the total; the same with Min, Max, Average, ReverseSign and a filter() element feeding the flow filter.",
     },
+    RecordRefGetTableOfRecordRef => {
+        id: "recordref-gettable-of-recordref",
+        assumed: "RecordRef.GetTable(OtherRecordRef) makes the ref a copy of the other ref's record: table, buffer, filters and current row, not shared afterwards.",
+        tests: "Tests-ERM SalesInvoiceTryPreview and the other posting preview tests (Gen. Jnl.-Post Preview): about 30 tests.",
+        probe: "B.GetTable(A) with A open on a table with a filter and a found row; change A, read B; with A not open; with B open on another table.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

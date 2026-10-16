@@ -183,7 +183,37 @@ impl Lowerer<'_> {
     /// codeunit that implements it (corpus codeunit/TestCodeunitInterface.al:14-26) or an enum
     /// that implements it (types/TestEnumDefaultImplTests.Codeunit.al:30-42); everything else
     /// is refused.
-    pub(crate) fn convert_to(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
+    pub(crate) fn convert_to(&mut self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
+        if !self.tys_on {
+            return self.convert_raw(target, src, value);
+        }
+        let inner = al_ir::types::kind_of(&value);
+        let e = self.convert_raw(target, src, value)?;
+        // A wrapper made here is one more node above the records of `value`.
+        if let ir::Expr::Convert(t, x) | ir::Expr::DotNetCoerce(t, x) = &e {
+            if let Some(top) = self.tys.last().copied() {
+                if al_ir::types::kind_of(x) == inner
+                    && top.kind == inner
+                    && top.size as usize == al_ir::types::count_expr(x)
+                {
+                    let ty = if matches!(e, ir::Expr::Convert(..)) {
+                        self.exact_ty(t)
+                    } else {
+                        al_ir::types::ExprTy::Unknown
+                    };
+                    self.tys.push(tys::TyRec {
+                        ty,
+                        kind: al_ir::types::kind_of(&e),
+                        arity: 1,
+                        size: top.size + 1,
+                    });
+                }
+            }
+        }
+        Ok(e)
+    }
+
+    fn convert_raw(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
         let slot = self.rt(target)?;
         // An identity conversion is not emitted (ADR-031 item 2.2): the value already has the slot's type. Only the
         // types whose conversion is the identity qualify; a Text or Code keeps its conversion (it checks the length of

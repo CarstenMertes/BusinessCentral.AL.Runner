@@ -206,6 +206,12 @@ pub(crate) struct Lowerer<'a> {
     routine_idx: usize,
     /// The assumptions the lowering of each statement being lowered rests on (innermost last).
     assumed: Vec<Vec<al_builtins::assumptions::Assumption>>,
+    /// The types of the expressions of the routine being lowered, one record per node (see `tys.rs`).
+    tys: Vec<tys::TyRec>,
+    /// Records are made (inside a routine only).
+    tys_on: bool,
+    /// Scratch for `seal_stmts`.
+    roots: Vec<tys::Shape>,
 }
 
 /// What lowering asks about an object again and again. Each answer is computed on first use and
@@ -387,6 +393,7 @@ mod stmt;
 mod tables;
 #[cfg(test)]
 mod tests;
+mod tys;
 
 pub use self::assemble::*;
 pub use self::compile::*;

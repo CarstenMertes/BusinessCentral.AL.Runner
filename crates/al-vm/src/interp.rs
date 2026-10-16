@@ -297,10 +297,50 @@ impl Session {
                 try_call,
             } => {
                 let inst = match instance {
-                    None => None,
-                    Some(e) => Some(self.eval(e, f)?),
+                    None => f.instance.clone(),
+                    Some(e) => match self.eval(e, f)? {
+                        // A procedure of a reportextension called through the report variable runs on the extension's
+                        // instance of that variable, which keeps the extension's globals and added data items
+                        // (reportext/W3RpExtProcedures.al:ExtensionProcedure_*).
+                        Value::Codeunit(i)
+                            if self.engine.program.objects[*object].report_ext.is_some()
+                                && i.borrow().object as usize != *object =>
+                        {
+                            self.report_extension_instance(&i, *object)?
+                        }
+                        Value::Codeunit(i) => self.shared_instance(i),
+                        // A table procedure runs with the record as its Rec, on the record
+                        // variable's own globals (ADR-021).
+                        Value::Record(rc) => {
+                            let (inst, saved) = self.enter_record(*object, rc, None)?;
+                            let r = self.finish_call(*object, *routine, inst.clone(), args, None, *try_call, f);
+                            Self::leave_record(&inst, saved);
+                            return r;
+                        }
+                        // A query procedure runs with the query it was called on as its own state.
+                        Value::Query(q) => self.query_instance(*object, q),
+                        // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which
+                        // is constructed at first use.
+                        Value::TestPage(st) => {
+                            let i = self.construct_page(&st)?;
+                            // A procedure a page extension declares runs on the extension's instance.
+                            let ext = st
+                                .borrow()
+                                .ext_instances
+                                .iter()
+                                .find(|(e, _)| e == object)
+                                .map(|(_, i)| i.clone());
+                            self.shared_instance(ext.unwrap_or(i))
+                        }
+                        other => {
+                            return Err(Signal::Unsupported(format!(
+                                "a procedure call on a {} value",
+                                value_kind(&other)
+                            )));
+                        }
+                    },
                 };
-                self.call_site(*object, *routine, inst, args, None, *try_call, f)
+                self.finish_call(*object, *routine, inst, args, None, *try_call, f)
             }
             E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
             E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
@@ -523,7 +563,7 @@ impl Session {
                 }
                 let native =
                     al_builtins::native::by_id(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
-                let recv = match receiver.as_deref() {
+                let mut recv = match receiver.as_deref() {
                     Some(ir::Arg::Value(e)) => Some(self.eval(e, f)?),
                     Some(ir::Arg::Ref(p)) => Some(self.read(p, f)?),
                     None => None,
@@ -535,15 +575,30 @@ impl Session {
                         ir::Arg::Ref(p) => self.read(p, f)?,
                     });
                 }
-                self.run_native(native, class, receiver.as_deref(), args, recv, values, *ret_used, f)
+                self.ret_used = *ret_used;
+                let ret = native(self, recv.as_mut(), &mut values)?;
+                if let (Some(ir::Arg::Ref(p)), Some(v)) = (receiver.as_deref(), recv) {
+                    self.write(p, v, f)?;
+                }
+                for (a, v) in args.iter().zip(values) {
+                    if let ir::Arg::Ref(p) = a {
+                        let v = if class == Class::InStreamRead {
+                            self.fit_stream_read(p, v, f)?
+                        } else {
+                            v
+                        };
+                        self.write(p, v, f)?;
+                    }
+                }
+                Ok(ret)
             }
         }
     }
 
-    /// Runs the native of a builtin on evaluated operands and writes the by-reference ones back. Shared by the tree
-    /// walker and the bytecode (`exec`).
+    /// Runs the native of a builtin on evaluated operands and writes the by-reference ones back. Used by the bytecode;
+    /// the tree walker's `E::Builtin` arm is the same logic kept inline (see `call_site`).
     #[allow(clippy::too_many_arguments)]
-    #[inline(always)]
+    #[inline(never)]
     pub(crate) fn run_native(
         &mut self,
         native: al_builtins::native::NativeFn,
@@ -711,9 +766,10 @@ impl Session {
         }
     }
 
-    /// A call of a procedure: `instance` is the value the procedure is called on (`None`: the running object). Shared by
-    /// the tree walker and the bytecode; `pre` holds the argument values when the caller already computed them.
-    #[inline(always)]
+    /// A call of a procedure: `instance` is the value the procedure is called on (`None`: the running object). Used by
+    /// the bytecode; `pre` holds the argument values it already computed. The tree walker's `E::Call` arm is the same
+    /// logic kept inline (the budget in `perf_vm` measures the tree walker); the dual run keeps the two equal.
+    #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn call_site(
         &mut self,

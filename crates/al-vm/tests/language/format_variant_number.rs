@@ -31,3 +31,33 @@ fn a_standard_format_number_a_variant_lacks_names_the_variant() {
         "12;Standard format number 3 does not exist for the type 'Variant'.;Standard format number 4 does not exist for the type 'Variant'.;12;"
     );
 }
+
+// Microsoft's Transform Rule and Payment Export tests format a Variant with a number they compute (41 Tests-ERM passes were lost
+// to a static refusal): the number is checked when it runs, once.
+const EXPR: &str = r#"
+codeunit 69721 C
+{
+    [TryFunction]
+    local procedure TryF(V: Variant; N: Integer; var R: Text)
+    begin
+        R := Format(V, 0, N + 1);
+    end;
+
+    procedure F(): Text
+    var T: Text; R: Text; N: Integer;
+    begin
+        for N := 1 to 3 do begin
+            if TryF(12, N, R) then T += R + ';' else T += GetLastErrorText() + ';';
+        end;
+        exit(T);
+    end;
+}
+"#;
+
+#[test]
+fn a_standard_format_number_given_as_an_expression_is_checked_when_it_runs() {
+    assert_eq!(
+        text(al_testkit::run_in(EXPR, "C", "F")),
+        "12;Standard format number 3 does not exist for the type 'Variant'.;Standard format number 4 does not exist for the type 'Variant'.;"
+    );
+}

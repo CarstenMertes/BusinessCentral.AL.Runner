@@ -495,13 +495,13 @@ impl MemStore {
 
     /// The table objects that hold a committed row in any company.
     /// The committed rows of every table the store holds an entry for, for a snapshot on disk or for
-    /// another thread (the rows are plain values; [`MemStore::from_exported`] is the way back). `None` when the
-    /// store reads rows from a backing (test data) or records changes to them: those are not in the store.
+    /// another thread (the rows are plain values; [`MemStore::from_exported`] is the way back).
+    /// A store with a backing (test data) exports the tables it holds: those a write reached, which
+    /// carry the backing's rows with the changes, and an emptied one stays empty. The tables it has
+    /// no entry for are the backing's and are not exported; the importer puts the same backing back
+    /// (`with_backing`). The record of changes to restored rows is a log and is not exported.
     /// Changes that are not committed are not exported.
     pub fn export_committed(&self) -> Option<Vec<ExportedTable>> {
-        if self.backing.is_some() || self.restored_log.is_some() {
-            return None;
-        }
         Some(
             self.committed
                 .iter()
@@ -1890,18 +1890,37 @@ mod tests {
     }
 
     #[test]
-    fn a_store_with_a_backing_has_no_export() {
-        struct B;
-        impl Backing for B {
-            fn company(&self) -> &str {
-                "C"
-            }
-            fn rows(&self, _: &str, _: u32) -> Option<Rows> {
-                None
-            }
-        }
-        let s = MemStore::default().with_backing(std::rc::Rc::new(B));
-        assert!(s.export_committed().is_none());
+    fn a_backed_store_exports_the_tables_it_holds_and_not_the_backing() {
+        let (mut s, b) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        let mut other = t.clone();
+        other.object = 8;
+        // Nothing wrote to table 9: it reads the backing and is not part of the export.
+        assert_eq!(s.count(&cx, &t, &[]).unwrap(), 3);
+        assert!(s.export_committed().expect("a backing is no obstacle").is_empty());
+        // A write copies the backing's rows into the store; deleting them all leaves an empty held table.
+        s.insert(&cx, &t, crate::contract::row("D", 4, 3)).unwrap();
+        s.delete(&cx, &t, &[Value::Code("A".into())]).unwrap();
+        s.commit();
+        let exported = s.export_committed().unwrap();
+        assert_eq!(exported.len(), 1);
+        assert_eq!(exported[0].rows.len(), 3, "B, C and D");
+        // The way back: the same backing, and the held table now says what it said.
+        let back = MemStore::from_exported(exported).with_backing(b);
+        assert_eq!(back.count(&cx, &t, &[]).unwrap(), 3);
+        assert!(back.get(&cx, &t, &[Value::Code("A".into())]).unwrap().is_none());
+        assert!(back.get(&cx, &t, &[Value::Code("D".into())]).unwrap().is_some());
+        assert_eq!(back.count(&cx, &other, &[]).unwrap(), 0);
+    }
+
+    #[test]
+    fn a_deleted_out_backed_table_stays_empty_after_the_way_back() {
+        let (mut s, b) = backed();
+        let (t, cx) = (crate::contract::table(), crate::contract::cx("C"));
+        s.delete_all(&cx, &t, &[]).unwrap();
+        s.commit();
+        let back = MemStore::from_exported(s.export_committed().unwrap()).with_backing(b);
+        assert_eq!(back.count(&cx, &t, &[]).unwrap(), 0, "not restored again");
     }
 }
 

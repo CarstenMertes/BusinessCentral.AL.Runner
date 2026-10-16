@@ -86,3 +86,25 @@ fn the_comparison_script_exists_and_compares_with_the_allow_list() {
     assert!(script.contains("demand-eager-known-differences.txt"));
     assert!(script.contains("runtime-junit-") && script.contains("cached-junit-"));
 }
+
+/// The GitHub cache has a limit; a push to main saves new entries, so a job at the end deletes the old ones. It must
+/// never fail the build.
+#[test]
+fn a_cleanup_job_keeps_the_github_cache_under_its_limit_and_cannot_fail_the_build() {
+    let ci = workflow();
+    let job = &ci[at(&ci, "\n  cache-cleanup:", 0)..];
+    for needle in [
+        "needs: [test, portable, corpus, release-tests]",
+        "github.event_name == 'push' && github.ref == 'refs/heads/main'",
+        "actions: write",
+        "--key compile-cache-",
+        ".[3:][].id",
+        "--key v0-rust-",
+        ".[1:][].id",
+    ] {
+        assert!(job.contains(needle), "the cleanup job lacks `{needle}`");
+    }
+    // The job and both steps are continue-on-error, and a failed delete does not stop the loop.
+    assert_eq!(job.matches("continue-on-error: true").count(), 3);
+    assert_eq!(job.matches("|| true").count(), 2);
+}

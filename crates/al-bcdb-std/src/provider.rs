@@ -29,6 +29,8 @@ pub struct BackupProvider {
     /// The company's name as AL sees it (`CRONUS International Ltd.`).
     company: String,
     source: String,
+    /// The backup file as the install baseline's key holds it (path, length, modification time).
+    identity: Option<String>,
     /// How the open went and what reads cost, for `--timings`.
     cost: Cost,
 }
@@ -47,6 +49,19 @@ struct Cost {
 struct FileIndexStore {
     file: PathBuf,
     saved: std::sync::atomic::AtomicBool,
+}
+
+/// The backup file's path, length and modification time: a new download or an edit changes it.
+fn file_identity(path: &Path) -> Option<String> {
+    let meta = std::fs::metadata(path).ok()?;
+    let mtime = meta
+        .modified()
+        .ok()?
+        .duration_since(std::time::UNIX_EPOCH)
+        .ok()?
+        .as_nanos();
+    let full = std::fs::canonicalize(path).unwrap_or_else(|_| path.to_path_buf());
+    Some(format!("{}|{}|{}", full.display(), meta.len(), mtime))
 }
 
 impl FileIndexStore {
@@ -170,6 +185,7 @@ impl BackupProvider {
             .file_name()
             .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
         let mut p = Self::from_source(src, company, file_name).map_err(|e| format!("{}: {e}", path.display()))?;
+        p.identity = file_identity(path).map(|f| format!("{f}|{}|{}", p.sql_company, p.company));
         p.cost.open = started.elapsed();
         p.cost.index = index;
         Ok(p)
@@ -192,6 +208,7 @@ impl BackupProvider {
             sql_company,
             company,
             source: file_name,
+            identity: None,
             cost: Cost::default(),
         })
     }
@@ -336,6 +353,10 @@ impl TableProvider for BackupProvider {
 
     fn source(&self) -> String {
         self.source.clone()
+    }
+
+    fn identity(&self) -> Option<String> {
+        self.identity.clone()
     }
 
     fn cost(&self) -> Option<String> {

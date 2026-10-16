@@ -452,7 +452,7 @@ impl CorpusRuntime {
         opts: &RunOptions,
     ) -> CorpusRuntime {
         let Compiled {
-            ws: _,
+            ws,
             lowered,
             cache_report,
             baseline_wanted,
@@ -509,6 +509,41 @@ impl CorpusRuntime {
         let started = std::time::Instant::now();
         // With several test threads the tests get a second engine once the baseline has run (below).
         // It does not depend on the baseline, so it is built beside it, on another core.
+        // The baseline of an earlier run of the same program, when the compile cache is on and nothing outside the
+        // program can have changed what the install code reads (`baseline_key`).
+        let baseline_key = if baseline {
+            baseline_key(
+                ws,
+                lowered,
+                cache_report.as_ref(),
+                suites,
+                opts_only.as_deref(),
+                target,
+                &dotnet,
+                opts,
+            )
+        } else {
+            None
+        };
+        // A kept baseline is taken only when the run clock can start at the instant its run began: the rows carry
+        // it. A clock that has started already at another instant (something read it, or an earlier run in this
+        // process began later) makes the file unusable here, and the install code runs.
+        let kept = baseline_key
+            .as_ref()
+            .zip(opts.compile_cache.as_ref())
+            // `--rebuild-compile-cache`: the file is not read, and the run writes a new one.
+            .filter(|(_, cc)| !cc.rebuild)
+            .and_then(|(key, cc)| crate::baseline_cache::read(&cc.dir, key))
+            .filter(|(_, at)| {
+                crate::host::SystemClock::begin_at(*at)
+                    || (crate::host::SystemClock::started() && crate::host::SystemClock::run_start() == *at)
+            })
+            // Over test data the file holds the tables the install code wrote to; the rest is the restored database.
+            .map(|(mut run, _)| {
+                run.baseline = run.baseline.backed_by(&engine);
+                run
+            });
+        let from_cache = kept.is_some();
         let (baseline_run, mut spare_engine) = std::thread::scope(|scope| {
             let spare = (baseline && workers > 1)
                 .then(|| {
@@ -519,12 +554,21 @@ impl CorpusRuntime {
                 })
                 .flatten();
             let run = if baseline {
-                crate::baseline::run(&engine, lowered)
+                kept.or_else(|| crate::baseline::run(&engine, lowered))
             } else {
                 None
             };
             (run, spare.map(|h| h.join().expect("the second engine is built")))
         });
+        if let (false, Some(key), Some(cc), Some(run)) = (
+            from_cache,
+            baseline_key.as_ref(),
+            opts.compile_cache.as_ref(),
+            baseline_run.as_ref(),
+        ) {
+            // The clock has started by now if the install code read it; if not, no row carries it and it starts here.
+            crate::baseline_cache::write(&cc.dir, key, run, crate::host::SystemClock::run_start());
+        }
         // The tests run against an engine that knows which tables the install baseline could not
         // seed. The baseline itself ran before it knew; with several test threads, which each run
         // the baseline again (its data is not for sharing between threads), the engine that ran it
@@ -535,6 +579,9 @@ impl CorpusRuntime {
             .unwrap_or_default();
         let baseline_engine = (workers > 1 && baseline_run.is_some()).then(|| engine.clone());
         if let Some(b) = &baseline_run {
+            if from_cache {
+                eprintln!("baseline: read from the cache of an earlier run of this program");
+            }
             for n in &b.notes {
                 eprintln!("baseline: {n}");
             }
@@ -703,12 +750,13 @@ impl CorpusRuntime {
                     let spawned = std::thread::Builder::new()
                         .stack_size(TEST_STACK)
                         .spawn_scoped(scope, || {
-                            // The baseline the first run left, as its snapshot says; only a baseline that has
-                            // no snapshot (it reads test data) is run again, once per thread.
+                            // The baseline the first run left, as its snapshot says (over the engine's test data, if
+                            // it has any); only a baseline that has no snapshot is run again, once per thread.
                             let own = baseline_engine.as_ref().and_then(|e| {
                                 snapshot
                                     .as_deref()
                                     .and_then(al_vm::Baseline::from_bytes)
+                                    .map(|b| b.backed_by(e))
                                     .or_else(|| crate::baseline::run(e, lowered).map(|b| b.baseline))
                             });
                             pull(own.as_ref())
@@ -952,4 +1000,90 @@ impl CorpusRuntime {
             .cloned()
             .unwrap_or_else(|| Outcome::NotRun("test procedure not found in the compiled corpus".into()))
     }
+}
+
+/// The key under which the install baseline of this run is kept on disk, or `None` when it must run every time.
+/// The baseline is what the install code of the dependency apps and `Company-Initialize` write, followed by the
+/// workspace's own install codeunits. It is the same for the same program and the same world around it, which is
+/// everything the key holds: this runtime build, the dependency layers (the key of the top layer holds every app of
+/// them and the target), the source of every other app, the test codeunits that were compiled, the BC target, the
+/// environment of the host and the day. The rows carry the time the run began (`SystemClock`), and a test may ask how
+/// old one is. The file therefore holds that instant, and a run that reads the file starts its own clock there, so
+/// the rows and the clock agree as they do in a run that began then and ran the install code. The day only bounds how
+/// far in the past a run may think it began.
+///
+/// Not kept at all: a run that reads test data, runs .NET, lets `File` use a real directory, reads the real clock as
+/// it goes, records, compares two executable forms or has a test runner of its own: what such a run does is not in
+/// the key.
+#[allow(clippy::too_many_arguments)]
+fn baseline_key(
+    ws: &al_sema::Workspace,
+    lowered: &Lowered,
+    report: Option<&crate::compile_cache::CacheReport>,
+    suites: &[SuiteRun],
+    only: Option<&[(usize, u32)]>,
+    target: Option<&al_version::Target>,
+    dotnet: &al_vm::dotnet::DotNetConfig,
+    opts: &RunOptions,
+) -> Option<String> {
+    let _ = lowered;
+    let report = report?;
+    opts.compile_cache.as_ref()?;
+    if opts.trace
+        || opts.execute
+        || opts.coverage
+        || suites.iter().any(|s| s.runner.is_some())
+        || crate::host::uses_real_files()
+        || crate::host::real_clock()
+    {
+        return None;
+    }
+    let mut key = crate::baseline_cache::KeyBuilder::new();
+    // The restored database: which backup, as the provider says (file, length, modification time, company). A
+    // provider that cannot say gets nothing kept.
+    match &opts.test_data {
+        Some(td) => key.text("test_data", &td.provider.identity()?),
+        None => key.text("test_data", ""),
+    };
+    // Whether `DotNet` calls of the install code could run. A baseline made without a usable .NET holds what the
+    // refused calls left out, and one made with it holds what they did.
+    key.text(
+        "dotnet",
+        if dotnet.host.availability().is_ok() {
+            "available"
+        } else {
+            "unavailable"
+        },
+    );
+    key.bytes("runtime_build", &crate::compile_cache::runtime_build());
+    key.text("dependencies", &report.file.file_name()?.to_string_lossy());
+    for (i, app) in ws.apps.iter().enumerate() {
+        if ws.kinds.get(i) != Some(&al_sema::AppKind::Dependency) {
+            key.text("app", &app.id);
+            key.text("app_name", &app.name);
+            key.text("app_dependencies", &app.dependencies.join(","));
+            // The preprocessor symbols the app was parsed with: they select the code that is compiled.
+            let symbols: Vec<&str> = ws.symbols_of(i).iter().map(String::as_str).collect();
+            key.text("app_symbols", &symbols.join(","));
+            key.bytes("source", &crate::compile_cache::source_hash(app));
+        }
+    }
+    let only: Vec<String> = only.unwrap_or(&[]).iter().map(|(a, id)| format!("{a}/{id}")).collect();
+    key.text("only", &only.join(","));
+    key.text("only_set", if opts.only.is_some() { "yes" } else { "no" });
+    match target {
+        Some(t) => key.text("target", &format!("{}/{}", t.bc, t.runtime)),
+        None => key.text("target", "none"),
+    };
+    key.text("environment", crate::host::environment_text());
+    // Read the wall clock without starting the run clock: a run that finds its baseline starts the clock at the
+    // instant the baseline's run began (`SystemClock::begin_at`).
+    let day = crate::host::SystemClock::wall().div_euclid(86_400_000);
+    key.text("day", &day.to_string());
+    // The lowering reads it (ADR-023), so the install code it produces depends on it.
+    key.text(
+        "base_access",
+        &std::env::var("AL_UNPINNED_BASE_ACCESS").unwrap_or_default(),
+    );
+    Some(key.finish())
 }

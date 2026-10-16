@@ -241,17 +241,17 @@ registry! {
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
     },
-    PartLinkNotValidatedForUnsavedHost => {
-        id: "part-link-not-validated-for-unsaved-host",
-        assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",
-        tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
-        probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again.",
+    SetTableViewKeepsSetRecordPosition => {
+        id: "set-table-view-keeps-set-record-position",
+        assumed: "On a Page variable, SetTableView(Rec) after SetRecord(Rec) takes the filters of the view and keeps the record SetRecord handed over as the position the page opens on, so OnOpenPage reads it as Rec.",
+        tests: "VendEntry-Apply Posted Entries / CustEntry-Apply Posted Entries (SetRecord then SetTableView, then Apply Vendor Entries OnOpenPage reads Rec.\"Vendor No.\"): about 39 Tests-ERM tests.",
+        probe: "A page variable with SetRecord(A) then SetTableView(B) where B has a filter and another position: the Rec OnOpenPage reads, the rows shown, and the same in the other order.",
     },
-    PageRunModalRecordTakesSelection => {
-        id: "page-run-modal-record-takes-selection",
-        assumed: "Page.RunModal(Id, Rec) that answers LookupOK leaves in Rec the row the page was closed on, and not its own filters or key.",
-        tests: "Gen. Journal Management TemplateSelection (PAGE.RunModal(0, GenJnlTemplate) = ACTION::LookupOK, then GenJnlTemplate.Name): ERM Apply Sales/Receivables and about 9 more Tests-ERM tests.",
-        probe: "Page.RunModal(Page::X, Rec) with a handler that does GoToKey and OK; read Rec; the same with Cancel; with a page variable's RunModal and GetRecord.",
+    FormatCurrencyPrefix => {
+        id: "format-currency-prefix",
+        assumed: "In a Format string the code `<C,CODE>` (the currency prefix of Base Application's Amount Auto Format) is accepted and writes nothing.",
+        tests: "Format(Amount, 0, AutoFormat.ResolveAutoFormat(AmountFormat, 'GBP')) in the Remittance Advice and Finance Charge Memo reports: about 28 Tests-ERM tests (FinanceChargeMemoAndApply).",
+        probe: "Format(123.45, 0, '<C,GBP><Precision,2:2><Standard Format,0>') and with the code after the others; Format(5, 0, '<C,GBP><Integer>'); '<C,>' and '<C>'.",
     },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
@@ -469,6 +469,18 @@ registry! {
         assumed: "A Time plus or minus a whole-number Decimal moves like an Integer. (A Time with an Integer, a Duration and a fractional Decimal is pinned by types/PUTimeArithmetic.al.)",
         tests: "Service Item Line CalculateResponseDateTime through Calendar Management: about 820 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
         probe: "T + 1000.0 and T - 1000.0 for a Decimal variable holding a whole number, and 0.",
+    },
+    PartLinkNotValidatedForUnsavedHost => {
+        id: "part-link-not-validated-for-unsaved-host",
+        assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",
+        tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
+        probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again.",
+    },
+    PageRunModalRecordTakesSelection => {
+        id: "page-run-modal-record-takes-selection",
+        assumed: "Page.RunModal(Id, Rec) that answers LookupOK leaves in Rec the row the page was closed on, and not its own filters or key.",
+        tests: "Gen. Journal Management TemplateSelection (PAGE.RunModal(0, GenJnlTemplate) = ACTION::LookupOK, then GenJnlTemplate.Name): ERM Apply Sales/Receivables and about 9 more Tests-ERM tests.",
+        probe: "Page.RunModal(Page::X, Rec) with a handler that does GoToKey and OK; read Rec; the same with Cancel; with a page variable's RunModal and GetRecord.",
     },
 }
 

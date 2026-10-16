@@ -17,6 +17,9 @@ pub struct CompileCache {
     pub dir: PathBuf,
     /// A miss is an error (CI: the measured run must be a hit).
     pub require: bool,
+    /// `--rebuild-compile-cache`: no entry is read, every one this run needs is built and written anew (the
+    /// layers, the source index and the install baseline). Other entries in the folder stay.
+    pub rebuild: bool,
 }
 
 impl CompileCache {
@@ -448,7 +451,10 @@ pub fn prune(dir: &Path, keep: &[PathBuf]) -> Vec<PathBuf> {
         .flatten()
         .filter_map(|e| e.ok())
         .map(|e| e.path())
-        .filter(|p| p.extension().is_some_and(|x| x == "alci"));
+        .filter(|p| {
+            p.extension()
+                .is_some_and(|x| x == "alci" || x == crate::baseline_cache::EXTENSION)
+        });
     for path in list(dir).into_iter().map(|(p, _)| p).chain(indexes) {
         if keep.contains(&path) {
             continue;
@@ -463,6 +469,32 @@ pub fn prune(dir: &Path, keep: &[PathBuf]) -> Vec<PathBuf> {
         }
     }
     removed
+}
+
+/// Removes every entry of the compile cache in `dir`: the layers (`alcc`), the source indexes (`alci`), the install
+/// baselines (`albr`) and the temporary files of a write that did not finish. Returns how many files went and
+/// how many bytes they held. Other files in the folder stay.
+pub fn clear(dir: &Path) -> (usize, u64) {
+    let (mut files, mut bytes) = (0, 0);
+    for e in std::fs::read_dir(dir).into_iter().flatten().filter_map(|e| e.ok()) {
+        let path = e.path();
+        let ours = path.extension().is_some_and(|x| {
+            x == "alcc"
+                || x == "alci"
+                || x == crate::baseline_cache::EXTENSION
+                || x.to_string_lossy().starts_with("tmp")
+        }) || path
+            .file_name()
+            .is_some_and(|n| n.to_string_lossy().starts_with('.') && n.to_string_lossy().contains(".tmp-"));
+        if ours {
+            let len = e.metadata().map(|m| m.len()).unwrap_or(0);
+            if std::fs::remove_file(&path).is_ok() {
+                files += 1;
+                bytes += len;
+            }
+        }
+    }
+    (files, bytes)
 }
 
 /// The entry files in `dir` and their sizes.
@@ -518,7 +550,8 @@ pub fn open_or_build_with(
     let mut entries: Vec<Option<Entry>> = Vec::new();
     for (range, key) in &planned {
         let file = cc.dir.join(key.file_name());
-        let found = match read_entry(&cc.dir, key) {
+        // `--rebuild-compile-cache`: nothing is read; the layers are built and written again.
+        let found = match if cc.rebuild { Ok(None) } else { read_entry(&cc.dir, key) } {
             Ok(Some((e, _))) => Some(e),
             Ok(None) => None,
             Err(note) => {

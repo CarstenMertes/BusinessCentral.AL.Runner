@@ -14,11 +14,12 @@ use std::sync::atomic::{AtomicU64, Ordering};
 
 pub(crate) use compile::compile;
 
-/// Which form runs routines (`AL_EXEC=tree|bytecode|dual`; `dual` is the hook of the dual-run harness).
+/// Which form runs routines (`AL_EXEC=tree|bytecode|dual`; bytecode is the default since ADR-034 step 4, the tree walker
+/// stays as the oracle of the dual run).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum ExecMode {
-    #[default]
     Tree,
+    #[default]
     Bytecode,
     Dual,
 }
@@ -28,9 +29,9 @@ impl ExecMode {
     pub fn from_env() -> ExecMode {
         static MODE: OnceLock<ExecMode> = OnceLock::new();
         *MODE.get_or_init(|| match std::env::var("AL_EXEC").as_deref() {
-            Ok("bytecode") => ExecMode::Bytecode,
+            Ok("tree") => ExecMode::Tree,
             Ok("dual") => ExecMode::Dual,
-            _ => ExecMode::Tree,
+            _ => ExecMode::Bytecode,
         })
     }
 }

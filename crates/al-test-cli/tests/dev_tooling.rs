@@ -61,7 +61,7 @@ fn total_of(args: &[&str]) -> u64 {
 }
 
 /// A test codeunit with a handful of tests that does not need the Microsoft apps.
-const SMALL_CU: u32 = 60895;
+const SMALL_CU: u32 = 71035;
 
 #[test]
 fn help_lists_every_flag_in_groups() {

@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::page_op::PageMethod;
 use al_builtins::record_op::RecordOp;
 
 impl Session {
@@ -15,7 +16,7 @@ impl Session {
         if insert_denied {
             return Err(error("New method failed because Insert is not allowed."));
         }
-        match self.leave_row(st, "New")? {
+        match self.leave_row(st, PageMethod::New)? {
             Left::Stay => Ok(Value::Null),
             Left::Go => self.start_draft(st, true).map(|_| Value::Null),
         }
@@ -25,11 +26,11 @@ impl Session {
     /// New(), Next() and Last() stay on it with one validation error on its key control; Previous()
     /// and First() move on and the insert fails again at Close()
     /// (corpus handlers/TestPageFailedInsert_Tests.al:1-30).
-    pub(super) fn leave_row(&mut self, st: &St, how: &str) -> Result<Left, Signal> {
+    pub(super) fn leave_row(&mut self, st: &St, how: PageMethod) -> Result<Left, Signal> {
         let r = self.save_row(st);
         match r {
             Err(Signal::Error(e)) if st.borrow().draft && st.borrow().dirty => match how {
-                "New" | "Next" | "Last" => {
+                PageMethod::New | PageMethod::Next | PageMethod::Last => {
                     let key_ctl = self.key_control(st);
                     let mut s = st.borrow_mut();
                     if !s.refused {
@@ -38,7 +39,7 @@ impl Session {
                     }
                     Ok(Left::Stay)
                 }
-                "Previous" | "First" => {
+                PageMethod::Previous | PageMethod::First => {
                     let fields = self.page_rec(st).borrow().fields.clone();
                     let mut s = st.borrow_mut();
                     s.pending = Some(fields);

@@ -11,6 +11,7 @@
 use super::*;
 use al_builtins::describe::Describe;
 use al_builtins::filter::FieldFilter;
+use al_builtins::page_op::PageOp;
 
 type Inst = Rc<RefCell<al_builtins::value::Instance>>;
 
@@ -272,7 +273,7 @@ impl Session {
     /// the parameters). Nothing here moves a row: a request page has none.
     pub(super) fn request_item_op(
         &mut self,
-        method: &str,
+        method: PageOp,
         st: &St,
         idx: usize,
         args: &mut [Value],
@@ -285,7 +286,7 @@ impl Session {
             other => unsupported(format!("TestFilter field argument {}", other.describe())),
         };
         match method {
-            "TestFilter.SetFilter" => {
+            PageOp::TestFilterSetFilter => {
                 let pos = field_arg(0)?;
                 let text = match args.get(1) {
                     Some(Value::Text(t) | Value::Code(t)) => t.clone(),
@@ -306,7 +307,7 @@ impl Session {
                 }
                 Ok(Value::Null)
             }
-            "TestFilter.GetFilter" => {
+            PageOp::TestFilterGetFilter => {
                 let pos = field_arg(0)?;
                 let first = rec.borrow().filters.iter().find(|f| f.field == pos).cloned();
                 match first {

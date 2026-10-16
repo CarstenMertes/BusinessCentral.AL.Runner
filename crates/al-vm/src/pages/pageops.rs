@@ -1,11 +1,12 @@
 use super::*;
+use al_builtins::page_op::{PageMethod, PageOp, PageRecv};
 use al_builtins::record_op::RecordOp;
 
 impl Session {
     /// The `TestPage.*` / `TestField.*` methods (ADR-012).
     pub(crate) fn page_op(
         &mut self,
-        method: &str,
+        method: PageOp,
         recv: Option<&mut Value>,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
@@ -13,7 +14,7 @@ impl Session {
         // transaction the page began has ended afterwards
         // (codeunit/TestWriteTxNoneModelContracts.al:200-216 and :163-185).
         if recv.is_none() && self.no_transaction() {
-            if matches!(method, "Page.RunStatic" | "Page.RunModalStatic") {
+            if matches!(method, PageOp::PageRunStatic | PageOp::PageRunModalStatic) {
                 return self.in_page_transaction(|s| s.page_op_inner(method, recv, args));
             }
             return unsupported(format!("{method} under TransactionModel::None (not pinned)"));
@@ -26,15 +27,19 @@ impl Session {
 
     pub(super) fn page_op_inner(
         &mut self,
-        method: &str,
+        method: PageOp,
         recv: Option<&mut Value>,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
         match recv {
-            None if matches!(method, "Page.GetBackgroundParameters" | "Page.SetBackgroundTaskResult") => {
+            None if matches!(
+                method,
+                PageOp::PageGetBackgroundParameters | PageOp::PageSetBackgroundTaskResult
+            ) =>
+            {
                 self.bg_static(method, args)
             }
-            None if method == "Page.RunStatic" || method == "Page.RunModalStatic" => {
+            None if method == PageOp::PageRunStatic || method == PageOp::PageRunModalStatic => {
                 let n = match args.first() {
                     Some(Value::Integer(n)) => *n,
                     other => return unsupported(format!("Page.Run with {} as the page", other.describe())),
@@ -101,10 +106,10 @@ impl Session {
                 // for the record overload;
                 // handlers/TestPageModalResultsAndTriggersContracts.al:206 RunModal_Dialog_StaticVersusVariable_ReportedAction
                 // and :240 RunModal_Card_StaticWithAndWithoutRecord_VersusVariable_ReportedAction for the others). A page variable reports OK and Cancel.
-                if method == "Page.RunModalStatic" {
+                if method == PageOp::PageRunModalStatic {
                     st.borrow_mut().lookup = true;
                 }
-                self.run_page_ui(&st, record, method == "Page.RunModalStatic")
+                self.run_page_ui(&st, record, method == PageOp::PageRunModalStatic)
             }
             Some(Value::TestPage(st)) => {
                 let st = st.clone();
@@ -118,8 +123,8 @@ impl Session {
         }
     }
 
-    pub(super) fn test_page_op(&mut self, method: &str, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
-        let name = method.split_once('.').map(|(_, m)| m).unwrap_or(method);
+    pub(super) fn test_page_op(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
+        let name = method.method();
         let r = self.test_page_op_inner(method, st, args)?;
         // The client runs the page's background tasks before the call returns (corpus
         // handlers/TestPageBgTask_Tests.al:EnqueueBackgroundTask_CompletesBeforeOpenViewReturns).
@@ -127,9 +132,16 @@ impl Session {
         // A move of the host re-points its parts; a move of a part re-points the parts that take
         // their link from it (corpus testpart/TestPartProviderMove.al).
         let moved = match name {
-            "First" | "Last" | "Next" | "Previous" | "GoToKey" | "GoToRecord" | "FindFirstField" | "FindNextField"
-            | "FindPreviousField" => !matches!(r, Value::Boolean(false)),
-            "New" => true,
+            PageMethod::First
+            | PageMethod::Last
+            | PageMethod::Next
+            | PageMethod::Previous
+            | PageMethod::GoToKey
+            | PageMethod::GoToRecord
+            | PageMethod::FindFirstField
+            | PageMethod::FindNextField
+            | PageMethod::FindPreviousField => !matches!(r, Value::Boolean(false)),
+            PageMethod::New => true,
             // CurrPage.Update leaves a host's parts as they are: they are not opened again (corpus
             // handlers/TestPageNoSrcPart_Tests.al:DirectOpen_NoSrcHost_HostWriteIsVisibleThroughTheSameInstance);
             // whether they read their rows again is docs/probes-needed.md.
@@ -145,15 +157,15 @@ impl Session {
         Ok(r)
     }
 
-    pub(super) fn test_page_op_inner(&mut self, method: &str, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
-        match method.split_once('.').map(|(_, m)| m).unwrap_or(method) {
+    pub(super) fn test_page_op_inner(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
+        match method.method() {
             // `TestPart.Visible` / `.Enabled` read the part control of the host: a part that is
             // reachable at all is visible (corpus testpart/TestTestPart.al:TestPart_Visible_*).
-            "Visible" if method.starts_with("TestPart.") => {
+            PageMethod::Visible if method.recv() == PageRecv::TestPart => {
                 self.require_open(st)?;
                 Ok(Value::Boolean(true))
             }
-            "Enabled" if method.starts_with("TestPart.") => {
+            PageMethod::Enabled if method.recv() == PageRecv::TestPart => {
                 self.require_open(st)?;
                 let host = st.borrow().host.clone();
                 match host.and_then(|(h, i)| h.upgrade().map(|h| (h, i))) {
@@ -163,11 +175,11 @@ impl Session {
             }
             // The id is a compiler-generated control id; the corpus pins only that a table field
             // number is not one (testpart/TestTestPart.al:TestPart_GetField_TakesAControlIdNotATableFieldNo).
-            "Filter" => {
+            PageMethod::Filter => {
                 self.require_open(st)?;
                 Ok(self.filter_handle(st))
             }
-            "GetField" => {
+            PageMethod::GetField => {
                 self.require_open(st)?;
                 match args.first() {
                     // Code: handlers/TestPageRuntimeContracts.al:274-275 (page and part).
@@ -178,36 +190,36 @@ impl Session {
                     _ => unsupported("TestPart.GetField without an id"),
                 }
             }
-            "OpenEdit" => self.page_open(st, PageMode::Edit),
-            "OpenView" => self.page_open(st, PageMode::View),
-            "OpenNew" => self.page_open(st, PageMode::New),
-            "Close" if !method.starts_with("Page.") => self.page_close(st),
-            m @ ("First" | "Last" | "Next" | "Previous") => {
+            PageMethod::OpenEdit => self.page_open(st, PageMode::Edit),
+            PageMethod::OpenView => self.page_open(st, PageMode::View),
+            PageMethod::OpenNew => self.page_open(st, PageMode::New),
+            PageMethod::Close if method.recv() != PageRecv::Page => self.page_close(st),
+            m @ (PageMethod::First | PageMethod::Last | PageMethod::Next | PageMethod::Previous) => {
                 self.require_open(st)?;
                 self.page_move(st, m)
             }
-            "GoToKey" => {
+            PageMethod::GoToKey => {
                 self.require_open(st)?;
                 self.page_go_to_key(st, args)
             }
-            m @ ("FindFirstField" | "FindNextField" | "FindPreviousField") => {
+            m @ (PageMethod::FindFirstField | PageMethod::FindNextField | PageMethod::FindPreviousField) => {
                 self.require_open(st)?;
                 self.page_find_field(st, m, args)
             }
             // A page that is not a tree has nothing to expand (docs only; the corpus calls them,
             // TestPageAdvanced.al:104, :283, asserting nothing about the answer).
-            "Expand" => {
+            PageMethod::Expand => {
                 self.require_open(st)?;
                 Ok(Value::Null)
             }
-            "IsExpanded" => {
+            PageMethod::IsExpanded => {
                 self.require_open(st)?;
                 Ok(Value::Boolean(false))
             }
-            "SaveAsXml" => self.request_save_as_xml(st, args),
-            m @ ("OK" | "Cancel" | "Yes" | "No") => {
+            PageMethod::SaveAsXml => self.request_save_as_xml(st, args),
+            m @ (PageMethod::OK | PageMethod::Cancel | PageMethod::Yes | PageMethod::No) => {
                 self.require_open(st)?;
-                if !self.builtin_offered(st, m) {
+                if !self.builtin_offered(st, m.name()) {
                     return Err(error(format!("The built-in action = {m} is not found on the page.")));
                 }
                 Ok(Value::TestControl(Rc::new(ControlRef {
@@ -215,7 +227,7 @@ impl Session {
                     target: ControlTarget::BuiltIn(m.to_string()),
                 })))
             }
-            m @ ("Edit" | "View") => {
+            m @ (PageMethod::Edit | PageMethod::View) => {
                 self.require_open(st)?;
                 Ok(Value::TestControl(Rc::new(ControlRef {
                     page: st.clone(),
@@ -226,7 +238,7 @@ impl Session {
             // the page has no Caption. Taken from the probed report form (handlers/PWRefusedBuiltins.al:78-107,
             // BC 27.5; the page form is pinned by handlers/PRPageObjectId.al). It reads the object, so
             // a page that has not run answers too.
-            "ObjectId" if method.starts_with("Page.") => {
+            PageMethod::ObjectId if method.recv() == PageRecv::Page => {
                 let names = match args.first() {
                     None => true,
                     Some(Value::Boolean(b)) => *b,
@@ -248,7 +260,7 @@ impl Session {
             }
             // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
             // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
-            "Caption" if method.starts_with("Page.") => {
+            PageMethod::Caption if method.recv() == PageRecv::Page => {
                 self.require_open(st)?;
                 match args.first() {
                     Some(v) => match al_builtins::native::text_of(v) {
@@ -263,7 +275,7 @@ impl Session {
             }
             // `ObjectId(UseNames)` (CurrPage and a Page variable alike, open or not): `Page <id>`, or with names, the
             // default, `Page <Caption>` and the object name when the page has no Caption (handlers/PRPageObjectId.al).
-            "ObjectId" if method.starts_with("Page.") => {
+            PageMethod::ObjectId if method.recv() == PageRecv::Page => {
                 let names = match args.first() {
                     None => true,
                     Some(v) => ops::truthy(v)?,
@@ -281,7 +293,7 @@ impl Session {
                     .unwrap_or_else(|| o.name.clone());
                 Ok(Value::Text(format!("Page {caption}").into()))
             }
-            "Caption" => {
+            PageMethod::Caption => {
                 self.require_open(st)?;
                 Ok(Value::Text(self.page_caption(st).into()))
             }
@@ -289,7 +301,7 @@ impl Session {
             // the pages of handlers/TbaPromptDeclared.Page.al and TbaPromptBare.Page.al do it in OnOpenPage
             // and the tests around them (TestPageBuiltInActions_Tests.al (a)-(j)) see an ordinary dialog.
             // The other modes are not pinned.
-            "PromptMode" => match args.first() {
+            PageMethod::PromptMode => match args.first() {
                 Some(Value::Option(n, members)) if members.get(*n as usize).is_some_and(|m| m == "Prompt") => {
                     Ok(Value::Null)
                 }
@@ -298,7 +310,7 @@ impl Session {
                 }
                 other => unsupported(format!("CurrPage.PromptMode with {}", other.describe())),
             },
-            "Editable" if method.starts_with("Page.") => {
+            PageMethod::Editable if method.recv() == PageRecv::Page => {
                 // A Page variable that has not run (Base App sets `Languages.Editable := false` before
                 // `RunModal`): no "not open" error. It reads true until set, and what it was set to is
                 // what the page opens with, for Run and RunModal alike
@@ -338,18 +350,18 @@ impl Session {
                     None => Ok(Value::Boolean(self.page_editable(st))),
                 }
             }
-            "Editable" => {
+            PageMethod::Editable => {
                 self.require_open(st)?;
                 Ok(Value::Boolean(self.page_editable(st)))
             }
-            "Trap" => {
+            PageMethod::Trap => {
                 // The next plain Page.Run of this page type opens into this variable
                 // (corpus handlers/TestPageRunHandler_Tests.al:TrapReceivesTheNonModalPageAndItStaysOpen).
                 st.borrow_mut().trapping = true;
                 self.trap = Some(st.clone());
                 Ok(Value::Null)
             }
-            "LookupMode" => match args.first() {
+            PageMethod::LookupMode => match args.first() {
                 Some(v) => {
                     st.borrow_mut().lookup = ops::truthy(v)?;
                     st.borrow_mut().lookup_set = true;
@@ -359,7 +371,7 @@ impl Session {
             },
             // `P.SetRecord(Rec)` hands the page variable the record it shows when it runs (corpus
             // handlers/TestPageSetRecord.al).
-            "SetRecord" => match args.first() {
+            PageMethod::SetRecord => match args.first() {
                 Some(Value::Record(r)) => {
                     // Inside a Page-typed modal handler the page holds the record already
                     // (handlers/PSModalPageHandlerTyped.al: GetRecord answers the record SetRecord handed).
@@ -377,7 +389,7 @@ impl Session {
             // `CurrPage.SetSelectionFilter(var Rec)` on a list the test client stands on a row of: the record is
             // filtered to that row (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:239-250). A
             // record that already has filters, and a page on no row, are not pinned.
-            "SetSelectionFilter" => {
+            PageMethod::SetSelectionFilter => {
                 let (Some(Value::Record(dst)), Some(inst)) = (args.first(), st.borrow().instance.clone()) else {
                     return unsupported("Page.SetSelectionFilter of a page that never ran (not pinned)");
                 };
@@ -407,7 +419,7 @@ impl Session {
             // `P.GetRecord(var Rec)` after the page ran: the row it stood on when it closed, the picked row after
             // OK and the last positioned row after Cancel too, without filters
             // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:250-285).
-            "GetRecord" => {
+            PageMethod::GetRecord => {
                 let (Some(Value::Record(dst)), Some(inst)) = (args.first(), st.borrow().instance.clone()) else {
                     return unsupported("Page.GetRecord of a page that never ran (not pinned)");
                 };
@@ -431,7 +443,7 @@ impl Session {
             // `P.SetTableView(Rec)` hands the page variable the view of Rec (filters and sorting) but not its
             // position, so the page opens on its first row (corpus handlers/TestPageModalNewRowLine_Tests.al:
             // ReEditable_LookupModeTrue_HasNoNewRowLine, Plain_LookupModeFalse_HasTheNewRowLine).
-            "SetTableView" => match args.first() {
+            PageMethod::SetTableView => match args.first() {
                 Some(Value::Record(r)) => {
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
                     let table = copy.borrow().table as usize;
@@ -442,40 +454,40 @@ impl Session {
                 }
                 other => unsupported(format!("Page.SetTableView with {}", other.describe())),
             },
-            "EnqueueBackgroundTask" => {
+            PageMethod::EnqueueBackgroundTask => {
                 self.require_open(st)?;
                 self.bg_enqueue(st, args)
             }
-            "CancelBackgroundTask" => {
+            PageMethod::CancelBackgroundTask => {
                 self.require_open(st)?;
                 self.bg_cancel(st, args)
             }
-            "RunPageBackgroundTask" => {
+            PageMethod::RunPageBackgroundTask => {
                 self.require_open(st)?;
                 self.bg_run_page_task(st, args)
             }
-            "Run" => {
+            PageMethod::Run => {
                 let record = st.borrow().set_record.clone();
                 self.run_page_ui(st, record, false)
             }
-            "RunModal" => {
+            PageMethod::RunModal => {
                 let record = st.borrow().set_record.clone();
                 self.run_page_ui(st, record, true)
             }
-            "Close" if method.starts_with("Page.") => {
+            PageMethod::Close if method.recv() == PageRecv::Page => {
                 self.require_open(st)?;
                 let a = self.close_action(st, "Close");
                 self.close_with(st, &a, false, false)
             }
-            "New" => {
+            PageMethod::New => {
                 self.require_open(st)?;
                 self.new_record(st)
             }
-            "ValidationErrorCount" => {
+            PageMethod::ValidationErrorCount => {
                 self.require_open(st)?;
                 Ok(Value::Integer(st.borrow().errors.len() as i32))
             }
-            "GetValidationError" => {
+            PageMethod::GetValidationError => {
                 self.require_open(st)?;
                 let i = match args.first() {
                     Some(Value::Integer(i)) => *i,
@@ -489,11 +501,11 @@ impl Session {
                     None => Err(error_code("Index out of bounds.", "IndexOutOfBounds")),
                 }
             }
-            "Update" | "SaveRecord" => {
+            PageMethod::Update | PageMethod::SaveRecord => {
                 self.require_open(st)?;
                 // CurrPage.Update() without an argument saves (the parameter defaults to true).
-                let save = method.ends_with("SaveRecord") || !matches!(args.first(), Some(Value::Boolean(false)));
-                if !method.ends_with("SaveRecord") {
+                let save = (method == PageOp::PageSaveRecord) || !matches!(args.first(), Some(Value::Boolean(false)));
+                if !(method == PageOp::PageSaveRecord) {
                     // The refresh lands after the trigger that asked for it returns (corpus
                     // pageupdate/TestPageUpdate.al: ValidateBegin;ValidateEnd;HostAGCR).
                     st.borrow_mut().refresh = true;
@@ -522,7 +534,7 @@ impl Session {
                 self.save_row(st)?;
                 Ok(Value::Null)
             }
-            "GoToRecord" => {
+            PageMethod::GoToRecord => {
                 self.require_open(st)?;
                 let Some(Value::Record(r)) = args.first() else {
                     return unsupported("GoToRecord without a record");

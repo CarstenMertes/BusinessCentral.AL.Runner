@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::page_op::PageMethod;
 use al_builtins::record_op::RecordOp;
 
 impl Session {
@@ -397,7 +398,7 @@ impl Session {
     }
 
     /// Moves the cursor; the Boolean the move methods return.
-    pub(super) fn page_move(&mut self, st: &St, how: &str) -> Result<Value, Signal> {
+    pub(super) fn page_move(&mut self, st: &St, how: PageMethod) -> Result<Value, Signal> {
         if !self.has_source(st) {
             return unsupported(format!("{how}() on a page without a source table"));
         }
@@ -411,7 +412,7 @@ impl Session {
         // handlers/ProbeTestPageForms.al:227-253, where a row with the last key, added below row 2,
         // is followed by row 3 and not by the blank line).
         let cursor_now = st.borrow().cursor;
-        if let ("Next", Some(anchor), Cursor::Row) = (how, anchor, cursor_now) {
+        if let (PageMethod::Next, Some(anchor), Cursor::Row) = (how, anchor, cursor_now) {
             if self.next_below_anchor(st, anchor)? {
                 st.borrow_mut().cursor = Cursor::Row;
                 self.arrive(st)?;
@@ -471,7 +472,7 @@ impl Session {
     /// List_ReadsAfterEachAction `next`, `last`, `first`; FindList_OnFindRecordAndOnNextRecord
     /// `next`, `last`, `previous`, `first`, pinned for a table of 3 rows). `None` when the move is not
     /// one of those.
-    pub(super) fn move_in_client_rows(&mut self, st: &St, how: &str) -> Result<Option<bool>, Signal> {
+    pub(super) fn move_in_client_rows(&mut self, st: &St, how: PageMethod) -> Result<Option<bool>, Signal> {
         let find_page = self.declares(st, "onfindrecord");
         if !self.declares(st, "onaftergetrecord")
             || !self.is_list(st)
@@ -491,13 +492,13 @@ impl Session {
             return Ok(None);
         };
         let target = match how {
-            "First" => 0,
-            "Last" => window.len() - 1,
-            "Next" if at + 1 < window.len() => at + 1,
-            "Previous" if at > 0 => at - 1,
+            PageMethod::First => 0,
+            PageMethod::Last => window.len() - 1,
+            PageMethod::Next if at + 1 < window.len() => at + 1,
+            PageMethod::Previous if at > 0 => at - 1,
             _ => return Ok(None),
         };
-        if how == "Last" && !find_page {
+        if how == PageMethod::Last && !find_page {
             self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
             self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         }
@@ -524,15 +525,15 @@ impl Session {
         Ok(())
     }
 
-    pub(super) fn page_move_inner(&mut self, st: &St, how: &str) -> Result<bool, Signal> {
+    pub(super) fn page_move_inner(&mut self, st: &St, how: PageMethod) -> Result<bool, Signal> {
         if let Some(r) = self.move_in_client_rows(st, how)? {
             return Ok(r);
         }
         let cursor = st.borrow().cursor;
         let landed = match how {
-            "First" => self.nav_find(st, "-")?,
-            "Last" => self.nav_find(st, "+")?,
-            "Next" => match cursor {
+            PageMethod::First => self.nav_find(st, "-")?,
+            PageMethod::Last => self.nav_find(st, "+")?,
+            PageMethod::Next => match cursor {
                 Cursor::Row => {
                     if self.nav_next(st, 1)? {
                         true
@@ -548,7 +549,7 @@ impl Session {
                 }
                 _ => false,
             },
-            "Previous" => match cursor {
+            PageMethod::Previous => match cursor {
                 Cursor::NewLine => self.nav_find(st, "+")?,
                 Cursor::Row => self.nav_next(st, -1)?,
                 Cursor::None => false,
@@ -688,7 +689,7 @@ impl Session {
     /// whose control shows `value`. The Variant is type-sensitive: a Text never matches an Integer
     /// field (corpus handlers/TestPageAdvanced.al:302 Page_FindPreviousField_StringValue_*). A miss
     /// leaves the cursor where it was (docs/probes-needed.md).
-    pub(super) fn page_find_field(&mut self, st: &St, how: &str, args: &mut [Value]) -> Result<Value, Signal> {
+    pub(super) fn page_find_field(&mut self, st: &St, how: PageMethod, args: &mut [Value]) -> Result<Value, Signal> {
         if !self.has_source(st) {
             return unsupported(format!("{how} on a page without a source table"));
         }
@@ -702,9 +703,9 @@ impl Session {
         let result_used = self.ret_used;
         let origin = self.row_key(&self.page_rec(st))?;
         let (first_step, step) = match how {
-            "FindFirstField" => ("First", "Next"),
-            "FindNextField" => ("Next", "Next"),
-            _ => ("Previous", "Previous"),
+            PageMethod::FindFirstField => (PageMethod::First, PageMethod::Next),
+            PageMethod::FindNextField => (PageMethod::Next, PageMethod::Next),
+            _ => (PageMethod::Previous, PageMethod::Previous),
         };
         let mut at = self.page_move(st, first_step)?;
         while matches!(at, Value::Boolean(true)) {

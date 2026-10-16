@@ -6,6 +6,7 @@
 
 use super::*;
 use al_builtins::describe::Describe;
+use al_builtins::page_op::PageOp;
 use al_builtins::value::Value as V;
 
 /// A worker codeunit that is running for a page background task.
@@ -147,11 +148,11 @@ impl Session {
     }
 
     /// `Page.GetBackgroundParameters()` and `Page.SetBackgroundTaskResult(Results)`, called by a worker.
-    pub(super) fn bg_static(&mut self, method: &str, args: &mut [Value]) -> Result<Value, Signal> {
+    pub(super) fn bg_static(&mut self, method: PageOp, args: &mut [Value]) -> Result<Value, Signal> {
         let Some(worker) = self.bg_worker.as_mut() else {
             return unsupported(format!("{method} outside a page background task (not pinned)"));
         };
-        if method == "Page.GetBackgroundParameters" {
+        if method == PageOp::PageGetBackgroundParameters {
             return Ok(copy_dictionary(&worker.params));
         }
         match args.first() {

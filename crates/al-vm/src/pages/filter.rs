@@ -5,6 +5,7 @@
 use super::*;
 use al_builtins::describe::Describe;
 use al_builtins::filter::FieldFilter;
+use al_builtins::page_op::PageMethod;
 
 impl Session {
     pub(super) fn filter_handle(&self, st: &St) -> Value {
@@ -15,7 +16,7 @@ impl Session {
     }
 
     /// The `TestFilter.*` methods on the page `st`.
-    pub(super) fn test_filter_op(&mut self, method: &str, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
+    pub(super) fn test_filter_op(&mut self, method: PageMethod, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         if !self.has_source(st) {
             return unsupported("TestFilter on a page without a source table");
         }
@@ -24,7 +25,7 @@ impl Session {
         match method {
             // The first filter on the field across the filter groups, in the order they were
             // written (corpus testfilter/TestTestFilterFilterGroups.al:3 and 4).
-            "GetFilter" => {
+            PageMethod::GetFilter => {
                 let pos = field_arg(args, 0)?;
                 let first = rec.borrow().filters.iter().find(|f| f.field == pos).cloned();
                 match first {
@@ -32,7 +33,7 @@ impl Session {
                     None => Ok(Value::Text(String::new().into())),
                 }
             }
-            "SetFilter" => {
+            PageMethod::SetFilter => {
                 let pos = field_arg(args, 0)?;
                 let text = match args.get(1) {
                     Some(Value::Text(t) | Value::Code(t)) => t.clone(),
@@ -60,12 +61,12 @@ impl Session {
                 self.filter_changed(st)?;
                 Ok(Value::Null)
             }
-            "CurrentKey" => {
+            PageMethod::CurrentKey => {
                 let key = rec.borrow().key;
                 let names: Vec<&str> = table.keys[key].iter().map(|&p| table.fields[p].name.as_str()).collect();
                 Ok(Value::Text(names.join(",").into()))
             }
-            "SetCurrentKey" => {
+            PageMethod::SetCurrentKey => {
                 let mut wanted = Vec::new();
                 for i in 0..args.len() {
                     wanted.push(field_arg(args, i)?);
@@ -81,7 +82,7 @@ impl Session {
                 self.filter_changed(st)?;
                 Ok(Value::Null)
             }
-            "Ascending" => match args.first() {
+            PageMethod::Ascending => match args.first() {
                 Some(v) => {
                     rec.borrow_mut().ascending = ops::truthy(v)?;
                     self.filter_changed(st)?;

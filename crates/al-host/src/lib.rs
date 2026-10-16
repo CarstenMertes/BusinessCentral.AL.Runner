@@ -16,6 +16,7 @@
 //! configure, so the date part of `CurrentDateTime` always equals `Today`.
 
 pub mod dotnet;
+pub mod inproc;
 pub mod random;
 pub mod testdata;
 

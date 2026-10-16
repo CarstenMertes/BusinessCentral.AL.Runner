@@ -246,6 +246,14 @@ impl Gate {
                     file: "misc/lt-probes-needed-5/PnE06Media.al",
                     lines: "65",
                 },
+                Evidence {
+                    file: "pages/lt-page-runtime/P82TestField.al",
+                    lines: "77,208",
+                },
+                Evidence {
+                    file: "recordref/lt-recordref-fieldref-members/P92DirtyRef.al",
+                    lines: "8",
+                },
             ],
             Gate::ProbedValuesDifferFrom29 => &[
                 Evidence {
@@ -275,6 +283,10 @@ impl Gate {
                 Evidence {
                     file: "misc/lt-probes-needed-5/PnE13EnumConv.al",
                     lines: "159",
+                },
+                Evidence {
+                    file: "recordref/lt-recordref-fieldref-members/P92Fields.al",
+                    lines: "31",
                 },
             ],
             Gate::MediaExportKeepsTheImportedBytes => &[Evidence {

@@ -4229,6 +4229,7 @@
 67768 ForBoolean_FalseToFalse_OnePass
 67768 ForBoolean_FalseToTrue
 67768 ForBoolean_TrueDowntoFalse
+67768 ForBoolean_TrueToFalse_NoPass
 67768 ReportLayoutType_MembersNamesAndOrdinals
 67812 XRecStamp_Delete_XRecHoldsStoredStampsInOnDelete
 67812 XRecStamp_Insert_RecAutoIncrementKeyNotYetAssignedInOnInsert
@@ -6707,6 +6708,7 @@
 71035 Format_Of_Duration_BigInteger_Char_Byte_Enum
 71035 Format_Of_Variants
 71036 Variant_Holds_Copy_Of_Record_And_Container
+71037 TextConst_To_Text_Basics
 71042 Format_AllValues
 71042 Format_Length
 71042 OrdinalsAndNames_Color
@@ -7320,6 +7322,7 @@
 72515 BooleanShortCircuit
 72515 Case_Semantics
 72515 ForLoop_BoundsAndModification
+72515 ForLoop_VariableAfterLoop
 72515 Foreach_Semantics
 72515 InOperator
 72515 WhileRepeat_Semantics
@@ -7553,6 +7556,7 @@
 73400 ReadFrom_NoDeclaration
 73400 ReadFrom_Simple
 73400 ReadFrom_Whitespace_Default
+73400 ReadFrom_Whitespace_Options
 73400 ReadFrom_WithDeclaration
 73401 AddAfterBefore_Self
 73401 Add_AlreadyParented_Node
@@ -8155,6 +8159,7 @@
 74635 NodeList_AttributeCollection
 74636 DocumentVsElement_RootAndParents
 74636 Near_TextWithXml
+74637 Split_Overloads
 74638 Split_Overloads
 74639 Split_Overloads
 74643 BigInteger_BytesWritten

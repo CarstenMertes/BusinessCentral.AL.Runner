@@ -27,7 +27,7 @@ fn stmt_list(p: &mut Parser, terminators: &[&str]) {
 }
 
 /// The keywords that start a statement, in the order `stmt` tests them.
-const STMT_KWS: [&str; 10] = [
+const STMT_KWS: [&str; 11] = [
     "begin",
     "if",
     "case",
@@ -38,15 +38,30 @@ const STMT_KWS: [&str; 10] = [
     "exit",
     "break",
     "asserterror",
+    "continue",
 ];
 
+/// The keyword that starts a statement. `continue` is one only where a statement of one word ends: before `;`, `end`,
+/// `else`, `until` or the end of the input; anywhere else it is a name (corpus types/PUContinue.al,
+/// misc/lt-system-functions/ControlFlow.al).
+fn stmt_kw(p: &Parser) -> Option<usize> {
+    match p.which_kw(&STMT_KWS) {
+        Some(10)
+            if !(matches!(p.nth(1), Semicolon | __Last) || ["end", "else", "until"].iter().any(|k| p.nth_kw(1, k))) =>
+        {
+            None
+        }
+        kw => kw,
+    }
+}
+
 fn at_stmt_start(p: &Parser) -> bool {
-    p.which_kw(&STMT_KWS).is_some() || at_expr_start(p)
+    stmt_kw(p).is_some() || at_expr_start(p)
 }
 
 pub(crate) fn stmt(p: &mut Parser) {
     // One look-ahead names the keyword; an expression statement (no keyword) goes straight to the last arm.
-    let kw = p.which_kw(&STMT_KWS);
+    let kw = stmt_kw(p);
     if kw == Some(0) {
         block(p);
     } else if kw == Some(1) {
@@ -109,6 +124,10 @@ pub(crate) fn stmt(p: &mut Parser) {
         p.finish();
     } else if kw == Some(8) {
         p.start(BreakStmt);
+        p.bump_any();
+        p.finish();
+    } else if kw == Some(10) {
+        p.start(ContinueStmt);
         p.bump_any();
         p.finish();
     } else if kw == Some(9) {
@@ -301,6 +320,14 @@ mod tests {
     #[test]
     fn break_statement() {
         assert_eq!(s("break"), "(BreakStmt break)");
+        assert_eq!(s("continue"), "(ContinueStmt continue)");
+        assert_eq!(s("begin continue; end"), "(Block begin (ContinueStmt continue) ; end)");
+        // Not at the end of a one-word statement it is a name.
+        assert_eq!(s("continue := 1"), "(AssignStmt (NameRef continue) := (Literal 1))");
+        assert_eq!(
+            s("continue(1)"),
+            "(ExprStmt (CallExpr (NameRef continue) (ArgList ( (Literal 1) ))))"
+        );
     }
 
     #[test]

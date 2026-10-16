@@ -68,9 +68,13 @@ impl Lowerer<'_> {
         for v in r.local_var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
+            let refusal = v.type_ref().as_ref().and_then(textconst_refusal);
             for n in v.names() {
                 if let Some(l) = &label {
                     self.local_labels.insert(n.to_lowercase(), l.clone());
+                }
+                if let Some(why) = refusal {
+                    self.reasons.push(format!("`{n}`: {why}"));
                 }
                 add(self, n, ty.clone(), &mut locals);
             }
@@ -306,15 +310,6 @@ impl Lowerer<'_> {
             Block => return self.stmts_of(n),
             // A try function called as a statement behaves like a normal method
             // (doc: TryFunction attribute), so its errors propagate.
-            // `continue;` (a statement of the AL language that Base Application's Inventory Adjustment uses): the
-            // checker sees a bare name that is no variable, procedure or field.
-            ExprStmt
-                if kids[0].kind() == NameRef
-                    && kids[0].text().to_string().trim().eq_ignore_ascii_case("continue")
-                    && self.res(&kids[0]).is_none() =>
-            {
-                Ok(ir::Stmt::Continue)
-            }
             ExprStmt => self.expr(&kids[0]).map(|e| match e {
                 ir::Expr::Builtin { id, receiver, args, .. } => ir::Stmt::Expr(ir::Expr::Builtin {
                     id,
@@ -418,6 +413,7 @@ impl Lowerer<'_> {
                 }),
             },
             BreakStmt => Ok(ir::Stmt::Break),
+            ContinueStmt => Ok(ir::Stmt::Continue),
             AssertErrorStmt => Ok(ir::Stmt::AssertError(self.stmt_or_empty(kids.first()))),
             other => Err(format!("statement {other:?} is not lowered yet")),
         };

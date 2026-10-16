@@ -97,16 +97,25 @@ it out and to report what is wrong. Do not gate a pipeline on it.
 - **alpha**: a numbered checkpoint (`3.0.0-alpha.N`). Pick this for a stable
   point you can name in a bug report.
 
-**Install** (Linux x64, Windows x64, macOS arm64). The scripts check the SHA-256 of
-the download. Replace `latest-alpha` with `edge` or a tag such as `v3.0.0-alpha.1`.
+**Install** (Linux x64, Windows x64, macOS arm64). One line, pointing at the newest
+build (`edge`). The scripts check the SHA-256 of the download. Replace `edge` with
+`latest-alpha` or a tag such as `v3.0.0-alpha.1` for a numbered checkpoint.
+
+Linux, macOS:
 
 ```
-curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- latest-alpha   # Linux, macOS
+curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- edge
 ```
 
-On Windows, download `install.ps1` from the `edge` release and run
-`./install.ps1 -Version latest-alpha` in PowerShell. (GitHub's "latest" link
-skips pre-releases, so the `edge` release is the stable place for the scripts.)
+Windows (PowerShell):
+
+```
+& ([scriptblock]::Create((irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1))) -Version edge
+```
+
+`irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1 | iex` also works and
+installs the latest numbered alpha. (GitHub's "latest" link skips pre-releases, so the
+`edge` release is the stable place for the scripts.)
 You can also download an archive from the releases page, check it against
 `SHA256SUMS`, and unpack it. Each archive holds the binary, `LICENSE` and a short
 `README.txt`. `gh attestation verify FILE --repo StefanMaron/al-runtime-rs`

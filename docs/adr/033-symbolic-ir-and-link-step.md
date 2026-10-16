@@ -148,5 +148,12 @@ What was built, and where it differs from the text above. None of this changes a
 - The relations of a table's fields (`relation_arms`, `relation_runtime`, `relation_meta`) are worked out after link
   from the properties the table and its extensions leave, so a `modify` of `TableRelation` no longer changes the
   base object. (`calc` reads the field's own CalcFormula text; a `modify` of it was never applied.)
-- Not done: the control tree of pages. The merge of extension controls is on syntax (`pages.rs`); moving it into link
-  means lowering the base tree and each extension's operations apart and porting the merge to IR controls.
+- Page extensions: the controls an extension adds, its `modify` blocks and its page triggers are part of the extension
+  object (`PageContribution`). Each added control names the control it follows in the list of all controls
+  (`pred`), its parent, its action target and its provider by id (`ControlId`: the page's own place, or the
+  extension and the place in its list). Lowering still builds the merged control tree (`pages.rs`); `split_pages`
+  takes the extension's part out, and link places the controls again (`place_controls`), applies the `modify`
+  blocks in extension order and makes every index inside the page again. A page whose own controls refer to an
+  extension's control is left merged. A control named by another object (`Expr::Control`) is found by name in the
+  page with its extensions placed. Impurity left: the page's `unsupported` reasons and `assumes` are the merged
+  ones, and the implicit action areas an extension creates stay in the base page.

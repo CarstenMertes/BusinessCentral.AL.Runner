@@ -743,7 +743,7 @@ fn walk_page<V: RefVisitor>(p: &mut Page, v: &mut V) {
     // another part).
     let part_pages: Vec<Option<usize>> = controls.iter().map(|c| c.part_page).collect();
     for c in controls {
-        walk_control(c, &part_pages, v);
+        walk_control(c, &part_pages, None, v);
     }
     for (_, ext, r) in ext_triggers {
         v.routine(r, *ext);
@@ -751,6 +751,35 @@ fn walk_page<V: RefVisitor>(p: &mut Page, v: &mut V) {
     }
     for e in extensions {
         obj(v, e);
+    }
+}
+
+/// Visits the references of what a page extension adds to its page. The routines of its controls are its own.
+pub fn walk_page_contribution<V: RefVisitor>(c: &mut crate::sym::PageContribution, v: &mut V) {
+    let crate::sym::PageContribution {
+        controls,
+        mods,
+        triggers: _,
+    } = c;
+    for c in controls {
+        let host = Some(match c.provider_page {
+            Some(p) => TableOf::source_of(Some(p)),
+            None => TableOf::PageSource,
+        });
+        walk_control(&mut c.control, &[], host, v);
+    }
+    for m in mods {
+        let crate::sym::ControlMod {
+            target: _,
+            props,
+            triggers: _,
+        } = m;
+        for (_, p) in props.iter_mut() {
+            if let PropVal::Ext(o, r) = p {
+                v.routine(r, *o);
+                obj(v, o);
+            }
+        }
     }
 }
 
@@ -771,7 +800,12 @@ fn walk_part_link<V: RefVisitor>(l: &mut PartLink, target: TableOf, host: TableO
     }
 }
 
-fn walk_control<V: RefVisitor>(c: &mut Control, part_pages: &[Option<usize>], v: &mut V) {
+fn walk_control<V: RefVisitor>(
+    c: &mut Control,
+    part_pages: &[Option<usize>],
+    host_override: Option<TableOf>,
+    v: &mut V,
+) {
     let Control {
         name: _,
         kind: _,
@@ -819,9 +853,10 @@ fn walk_control<V: RefVisitor>(c: &mut Control, part_pages: &[Option<usize>], v:
     }
     if let Some(l) = part_link {
         // The host field is a field of the page, or of the part named by `Provider`.
-        let host = match l.provider {
-            Some(p) => TableOf::source_of(part_pages.get(p).copied().flatten()),
-            None => TableOf::PageSource,
+        let host = match (host_override, l.provider) {
+            (Some(h), _) => h,
+            (None, Some(p)) => TableOf::source_of(part_pages.get(p).copied().flatten()),
+            (None, None) => TableOf::PageSource,
         };
         walk_part_link(l, TableOf::source_of(*part_page), host, v);
     }

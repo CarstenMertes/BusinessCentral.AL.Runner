@@ -180,6 +180,8 @@ pub(crate) struct Lowerer<'a> {
     /// The relations of a table's fields are worked out with the table (the cache build and the checks read them
     /// there); otherwise `lower_core` works them out after link, from the properties the extensions leave.
     early_relations: bool,
+    /// What the `modify` blocks of page extensions change in the controls of the page being lowered.
+    page_mods: std::cell::RefCell<localize::PageMods>,
     /// The sites that stand for sets only the whole program knows (`localize::Expanded`).
     expansions: std::cell::RefCell<localize::Expansions>,
     /// Answers many routines ask for, computed once per program.

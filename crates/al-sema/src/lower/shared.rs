@@ -11,6 +11,8 @@ pub(crate) struct Shared<'a> {
     pub(crate) demand: Option<&'a crate::check::demand::Demand>,
     /// Statements carry source positions (`lower_with_positions`).
     pub(crate) positions: bool,
+    /// See `Lowerer::early_relations`.
+    pub(crate) early_relations: bool,
     /// Per object: it is part of the compile (see `Workspace::restrict_to`).
     pub(crate) active: Vec<bool>,
     /// The table whose record is the implicit `Rec` of each object.
@@ -198,6 +200,10 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         ext_slots: &sh.ext_slots,
         page_extensions: &sh.driven.page_extensions,
         embeds: Default::default(),
+        field_refs: Default::default(),
+        control_refs: Default::default(),
+        expansions: Default::default(),
+        early_relations: sh.early_relations,
         positions: Vec::new(),
         lines: None,
         emit_pos: false,
@@ -273,6 +279,16 @@ pub(crate) fn lower_object<'a>(
             calls: Vec::new(),
             direct: Vec::new(),
             embeds: Vec::new(),
+            key: None,
+            field_refs: Vec::new(),
+            control_refs: Vec::new(),
+            expansions: Vec::new(),
+            implements: Vec::new(),
+            enum_impls: Vec::new(),
+            enum_ordinals: Vec::new(),
+            key_owners: Vec::new(),
+            fields: Vec::new(),
+            controls: Vec::new(),
         };
     }
     let obj = ws.object_ast(oi);
@@ -551,6 +567,12 @@ pub(crate) fn lower_object<'a>(
             properties.push((name, p.value_text()));
         }
     }
+    let (table, key_owners) = if o.kind == ObjKind::Table && ws.usable(oi) {
+        let (t, owners) = lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), routine_at);
+        (Some(t), owners)
+    } else {
+        (None, Vec::new())
+    };
     let object = ir::Object {
         kind: o.kind,
         uncompiled: false,
@@ -572,8 +594,7 @@ pub(crate) fn lower_object<'a>(
         // A table whose source cannot be used (a platform table nothing provides, a dependency
         // file that does not parse) has no members, so it has no schema: the Field and Key
         // tables report it as not compiled instead of reading fields it does not have.
-        table: (o.kind == ObjKind::Table && ws.usable(oi))
-            .then(|| lw.table_schema(oi, &obj, extensions.get(&oi).cloned().unwrap_or_default(), routine_at)),
+        table,
         rec_slot,
         xrec_slot,
         page,
@@ -601,6 +622,16 @@ pub(crate) fn lower_object<'a>(
         calls,
         direct,
         embeds,
+        key: None,
+        field_refs: lw.field_refs.take().list,
+        control_refs: lw.control_refs.take().list,
+        expansions: lw.expansions.take().list,
+        enum_impls: Vec::new(),
+        enum_ordinals: Vec::new(),
+        implements: Vec::new(),
+        key_owners,
+        fields: Vec::new(),
+        controls: Vec::new(),
     }
 }
 

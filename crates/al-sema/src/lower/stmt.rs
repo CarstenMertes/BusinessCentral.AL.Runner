@@ -713,16 +713,17 @@ impl Lowerer<'_> {
                         && n.children()
                             .next()
                             .is_some_and(|b| matches!(self.ty_of(&b), Ty::Record { temporary: true, .. }));
-                    let pos = if temporary {
-                        self.field_pos(table, id).ok_or_else(|| "field position".to_string())?
+                    if temporary {
+                        self.field_pos(table, id).ok_or_else(|| "field position".to_string())?;
                     } else {
-                        self.readable_field_pos(table, id)?
-                    };
+                        self.readable_field_pos(table, id)?;
+                    }
+                    let field = self.field_ref(table, id);
                     let base = match n.kind() {
                         SyntaxKind::MemberExpr => self.place(&n.children().next().ok_or("member base")?)?,
                         _ => ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
                     };
-                    Ok(ir::Place::Field(Box::new(base), pos))
+                    Ok(ir::Place::Field(Box::new(base), field))
                 }
                 _ if n.kind() == SyntaxKind::NameRef && n.text().to_string().trim().eq_ignore_ascii_case("this") => Err(
                     "`this` passed by reference (`BindSubscription(this)`) is not lowered: no corpus test passes the running instance as an argument"

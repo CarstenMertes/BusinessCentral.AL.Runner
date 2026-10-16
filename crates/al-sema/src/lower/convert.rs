@@ -266,10 +266,16 @@ impl Lowerer<'_> {
                 }
             }
         }
-        Ok(ir::Expr::EnumImpl {
-            value: Box::new(value),
+        let at = self.expansion(super::localize::Expanded::EnumImpl {
+            enum_: e,
+            interface: iface,
             by_ordinal,
             unknown,
+        });
+        Ok(ir::Expr::EnumImpl {
+            value: Box::new(value),
+            by_ordinal: vec![(ir::walk::EXPAND_ORDINAL, at)],
+            unknown: None,
         })
     }
 
@@ -286,9 +292,13 @@ impl Lowerer<'_> {
         let iface = self.resolve_obj(ObjKind::Interface, &name)?;
         let objects: Vec<u32> = self.implementers(iface).iter().map(|&cu| cu as u32).collect();
         let value = Box::new(self.expr(&kids[0])?);
+        let at = self.expansion(super::localize::Expanded::InterfaceTest {
+            interface: iface,
+            objects,
+        });
         Ok(ir::Expr::InterfaceTest {
             value,
-            objects,
+            objects: vec![ir::walk::EXPAND_U32, at as u32],
             cast: !is,
         })
     }
@@ -356,9 +366,22 @@ impl Lowerer<'_> {
                 out.push(ir::Arg::Value(self.convert_to(&p.ty, &self.ty_of(a), value)?));
             }
         }
+        let params = {
+            let node = ast::routines_in(self.ws.object_ast(iface).syntax())
+                .into_iter()
+                .find(|r| usize::from(r.syntax().text_range().start()) == offset)
+                .ok_or("interface procedure node")?;
+            super::localize::parameters_of(&node)
+        };
+        let at = self.expansion(super::localize::Expanded::InterfaceCall {
+            interface: iface,
+            name: sig.name.to_lowercase(),
+            params,
+            targets,
+        });
         Ok(ir::Expr::InterfaceCall {
             receiver,
-            targets,
+            targets: vec![(ir::walk::EXPAND, at)],
             args: out,
         })
     }

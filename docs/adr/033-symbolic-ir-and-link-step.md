@@ -95,3 +95,51 @@ The link step must produce **exactly today's `Program`**. That is a pure equalit
 
 `assert_same_program` in tests; `AL_CHECK_LINK=1` in CI on the corpus and one bucket; the existing differential
 tools.
+
+## Implementation notes (steps 1 to 3, in progress)
+
+What was built, and where it differs from the text above. None of this changes a decision.
+
+- **Per-object reference tables.** A symbolic object (`al_ir::sym::SymObject`) is an ordinary `ir::Object` whose
+  references are indices into its own `Refs` tables (`objects`, `routines`, `fields`, `controls`), each entry a stable
+  key. The IR types did not change. `al_ir::walk` visits every reference site (it destructures every IR struct without
+  `..`, so a new IR field stops the build there). `al-link` resolves the tables against the other objects and rewrites
+  the sites.
+- **Keys.** `ObjKey` is (app id, kind, id or qualified lower-case name). The app is part of the key: the Microsoft
+  apps of one BC version declare the same kind and id in two apps (8 tables, many permission sets), so (kind, id)
+  alone is not unique. `RoutineKey` is (object, `LocalKey`), and `LocalKey` is the lower-case name, the owning section
+  of a trigger (`field 7`), the parameter types as written, and an ordinal that separates equal keys (decision D2; the
+  ordinal replaces nothing, it only breaks ties). The keys of an object's routines come from its syntax, so a stub
+  (a routine nothing reached) has the key of the compiled routine. `FieldKey` is (table, field number); a query's
+  column is a field of the query with its position as the number. `ControlKey` is (page, control name).
+- **Where the keys are made.** Lowering still computes with workspace positions inside one compile. When all objects
+  are lowered, `lower/localize.rs` turns each into a symbolic object, and `al_link::link` is the only producer of the
+  `Program`. Expressions that name a field or a control (`Place::Field`, `Expr::FieldOf`, `Const::FieldPos`,
+  `Expr::QueryColumn`, `Expr::Control`) hold an index into the object's reference tables from the start, because only
+  the lowering knows the table there. Every other site is converted by the walk, which knows the table from the
+  structure it sits in (`al_ir::walk::TableOf`).
+- **Objects the cache supplies** (`provided.rs`) are placed as they are (`Unit::Dense`) with their keys taken from
+  `DepFacts` (`key`, `routine_keys`, and the field numbers and control names of the objects a layer build only
+  marks). A table nothing compiled gets its field numbers from the members when another object names one of its
+  fields.
+- **Duplicate field numbers.** A merged field list can hold a number twice (an app that extends a table redeclares a
+  field). A key resolves to the first, as the lowering did.
+- **Incremental compile.** `al_link::relink` puts new versions of some objects into a linked program and renumbers the
+  source positions; `relower_objects` uses it. `Routine::shift_positions` is called by `al-link` only.
+- **Proof.** `AL_CHECK_LINK=1` (always on in the unit tests of `al-sema`) builds every `Program` the way lowering
+  used to build it (every reference a position) next to the linked one and fails on the first difference
+  (`al_link::first_difference`). Checked: the corpus (27, 28, 29), the Microsoft apps for 27, 28 and 29 (complete
+  compile for the cache and demand-driven), Tests-ERM, Tests-SCM, NP Retail and Pageworks.
+
+### Contributions (step 2)
+
+- An extension object names its base (`SymObject::extends`) and what it adds (`SymObject::contribution`, `joins`);
+  `al_link::link` merges it into the base in program order. Done: the lists `Table::extensions`,
+  `Page::extensions` and `Report::extensions`; the values and captions of enum extensions; the fields, keys and
+  `modify` blocks of table extensions. The extension lists are ordered by the rule lowering used (page: app depth,
+  id, offset; report: id).
+- Lowering still builds the merged object. `localize` and `split_tables` take the contribution out of the base and
+  put it into the extension; `AL_CHECK_LINK` compares the merge with the original, so a wrong split fails there.
+- Known impurity: a `modify` block that changes `TableRelation` or `CalcFormula` of a field changes what the base
+  lowering derives from those properties (`relation_arms`, `calc`). The base keeps the derived data, so adding
+  such an extension still changes the base. Properties as text are separated.

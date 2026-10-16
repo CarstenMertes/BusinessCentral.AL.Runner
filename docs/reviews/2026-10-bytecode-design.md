@@ -136,3 +136,99 @@ events, and the store after the test. The first divergence names the test. This 
   only on the tree walker; `end_trap_scope` is checked by a test that a routine with temporaries traps like one
   without.
 - Two forms to keep equal: the dual run is the guard (ADR-034, owner decision D5).
+
+## Typed instructions (design note, 2026-10-16, lane A; proposed, not built)
+
+Goal: where the compiler knows both operand types, emit an op that does no run-time type dispatch. The generic op stays
+as the fallback, so a wrong or missing type never changes a result. Direction and later steps: `docs/ideas.md`, "Faster
+than BC at raw computation" (typed instructions, inline caches, superinstructions, Cranelift).
+
+### What exists today, and how much a typed op can win
+
+`BinI` already has an Integer fast path (two `Value::Integer` tags tested, `checked_*`, else `Session::binary_op`).
+So the gain of an `AddInt` is not "skip the generic op". It is smaller and has three parts:
+
+1. No tag test and no fallback branch on the hot path (the type is proven, so the op reads `i32` directly).
+2. No `release` of the operands and no drop of the old destination: an op that knows its registers hold plain values
+   does `locals[d] = Value::Integer(x)` with no drop glue (today `set()` still tests the old value).
+3. It is the form a Cranelift translation needs: a register with a proven type becomes an SSA value of that type.
+
+Expected size: Int loop 640 instructions per iteration should fall by roughly a quarter to a third; calls and records
+barely move. I will measure after the first op family and report, not promise.
+
+### Where the types come from
+
+The IR carries no expression types. It has only: `Convert(RtType, e)`, `Const`, and the declared `RtType` of locals
+(`Chunk.locals_ty`, already used for `For`/`Foreach`), globals, and routine returns. So the compiler infers a type with
+a pure function `static_ty(&Expr) -> Option<Ty>` (`Ty` = Integer, BigInteger, Decimal, Boolean, Text, Code, Date, Time,
+DateTime, Char, Option, ...), conservative: `None` means unknown and the generic op is emitted.
+
+- `Const(Integer/Decimal/Boolean/Text)`: its own type.
+- `Load(Local i)`: `locals_ty[i]` if it is a scalar. Not for `Variant`, not for a `var` parameter (a by-reference
+  place may hold another value kind; check how `read` resolves it), not for temporaries until step 3 below.
+- `Load(Global i)`: needs the global's type; the compiler sees only the routine today, so globals stay generic in step 1.
+- `Convert(t, _)`: `t`. `Binary` of two typed operands: by the same rules as `ops::arith` (Integer op Integer is
+  Integer except `/`, which is Decimal; Integer with Decimal is Decimal; comparisons are Boolean).
+- Calls and builtins: the declared return type, only if the callee's `RtType` is available at compile time. Not in step 1.
+- Temporaries: the register of a typed op's result has a known type, kept in a compile-time map register to `Ty` for the
+  life of the temporary.
+
+An unsound type would be a wrong result, so the dual run is the check, plus one rule: a typed op re-checks nothing but
+is only emitted from a proven type; in debug builds it `debug_assert!`s the tag, so the test suite and the dual run on
+the corpus trap an unsound inference instead of reading garbage. A local of declared type Integer must hold
+`Value::Integer` at every read. I will verify this (default values on frame set-up, `Clear`, `Evaluate`, by-reference
+write-back) and list each place where it can hold `Null` before any local is treated as typed. If one exists, that
+local stays generic.
+
+### Which ops, in order
+
+Step 1 (Integer, Boolean and compare/jump; the loop kernels):
+- `AddInt`, `SubInt`, `MulInt`, `ModInt`, `DivIntInt` (the `div` operator), each `d, a, b`; `AddIntK` and `SubIntK`
+  with an immediate (counters, indexes).
+- `CmpInt{Eq,Ne,Lt,Le,Gt,Ge}` producing a Boolean, and fused `JumpIfInt{Lt,...}` that skip the Boolean register
+  (superinstruction, step 3 of the vision, cheap once types exist).
+- `JumpIfFalseBool`, `NotBool`, `AndBool`/`OrBool`/`XorBool` (non-short-circuit, as AL's `and`/`or` evaluate both sides today;
+  keep whatever `binary_op` does).
+- `MoveInt`-style copies are not needed: `Move` of a plain value is already a copy; only the typed result matters.
+
+Step 2 (Decimal, Text, Date):
+- `AddDec`, `SubDec`, `MulDec`, `CmpDec*`; `CmpText*`; `ConcatText` (`Text + Text`, reusing the append buffer of
+  `AppendText` where the left side is dead); `CmpDate*`.
+- Date and Time arithmetic stay generic (rare, and the rules are subtle).
+
+Step 3: typed temporaries and typed calls/builtin returns, then fused load-and-compare on record fields.
+
+### Semantics stay identical: overflow, Decimal, text
+
+The rule is that a typed op calls the same helper or the same expression as the generic path, never a copy of its logic.
+
+- **Integer.** Overflow, divide by zero and `mod` use the one function body `ops::arith` uses for `(Integer, Integer)`.
+  I will extract that into `#[inline(always)] pub fn int_arith(op, a: i32, b: i32) -> Result<i32, Signal>` in
+  `al-builtins/src/ops.rs`; `arith`, `BinI` and the typed ops all call it. `MIN mod -1` is 0, errors are the two
+  existing texts, so a test that runs each of the five operators on a grid of edge values (MIN, MAX, -1, 0, 1) through
+  `arith` and through the typed op and compares both result and error is the guard. (I own al-builtins text functions; the
+  `ops.rs` edit is a pure move and I will tell lane D/owner of that file in the hand-back.)
+- **Decimal.** `rust_decimal`-style rounding, scale and overflow behavior stay inside `arith_general`. `AddDec` etc.
+  call one extracted `dec_arith(op, a: &Decimal, b: &Decimal)` taken verbatim from the Decimal branch of
+  `arith_general`; there is no second implementation. If the Decimal branch is not separable without changing behavior,
+  Decimal stays generic and I say so.
+- **Compare.** Integer and Decimal compares call `a.cmp(b)` exactly as the first arms of `ops::compare` do. Text
+  compares keep `collation::compare`; `CmpText` is generic compare with the type test removed, not a byte compare.
+- **Text concat.** `ConcatText` keeps the rule "an empty side leaves the other shared" and the maximum-length
+  `fit` after the `Convert`; it removes only the `text_like` dispatch.
+- **Errors and position.** Every typed op that can fail reports through the same `Signal` the generic op raises, at the
+  same statement position (`Pos` ops are unchanged), so error text, code and call stack match.
+
+### Proof and risk
+
+- Red/green: each op family starts with a test pair. The edge-value grid test is red until the helper exists. A test
+  that a typed op is emitted (chunk disassembly count) is red until the compiler emits it. A regression guard where
+  behavior is unchanged is labeled as such in the commit message.
+- `--dual-run` 0 differences on the corpus (27, 28, 29) and Pageworks (812 passing); `perf_vm` per benchmark with
+  lowered limits; Pageworks instructions before and after, same machine.
+- Risks: (1) an unsound static type, covered by the debug assert and the dual run; (2) a second code path for each
+  operator, covered by sharing the helpers; (3) code size of `run_range` (one loop, hot icache): measure, and put cold
+  arms `#[inline(never)]`; (4) typed ops are only worth it if a later Cranelift step uses them, so step 1 is kept small
+  (Integer and Boolean) and the numbers decide whether step 2 goes ahead.
+- Question for the owner before step 2: Decimal typed ops pay off only when Decimal arithmetic is hot, which perf_vm's
+  Decimal loop shows (1780 instructions per iteration); Pageworks (QR, fonts) is Integer and Boolean heavy.

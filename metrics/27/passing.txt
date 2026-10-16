@@ -4085,6 +4085,8 @@
 67566 CodeunitRun_TestCodeunitFromTest_Unguarded_Throws
 67566 CodeunitRun_TestCodeunitVariableFromTest_Throws
 67566 InnerRanObserver_Bound_SeesTheInnerEvent
+67575 Page_SetValueByCaption_SelectsThatOption
+67575 Page_ValueReadsTheOptionCaption
 67575 RequestPage_SetValueByCaption_SelectsThatOption
 67575 RequestPage_SetValueBySecondCaption_SelectsThatOption
 67575 RequestPage_SetValueByUnknownCaption_IsRefused
@@ -4115,6 +4117,7 @@
 67630 AssertEquals_Match_RaisesNothing
 67630 AssertEquals_Mismatch_NamesTheControl
 67630 PageExtensionControl_AssertEquals_Mismatch_NamesTheControl
+67630 PrecompiledPage_AssertEquals_Mismatch_NamesTheControl
 67630 PrecompiledPage_RecBoundControl_AssertEquals_Mismatch_NamesTheControl
 67630 SetValue_Refused_NamesTheControl
 67640 PageVariableBooleanControl_Refusal_NamesTheCaption
@@ -4122,6 +4125,7 @@
 67640 PageVariableControl_NoCaption_IsTheControlName
 67640 PageVariableOptionControl_DeclaredCaption_IsTheCaption
 67640 PageVariableOptionControl_Refusal_NamesTheCaption
+67640 PrecompiledPage_PageVariableControl_IsTheCaption
 67640 PrecompiledPage_PageVariableControl_NoCaption_IsTheControlName
 67640 PrecompiledPage_RecordFieldControl_DeclaredCaption_WinsOverFieldCaption
 67640 PrecompiledRequestPage_OptionRefusal_NamesTheCaption
@@ -4403,7 +4407,9 @@
 68073 RequestContent_IsCopyOrReference
 68073 WriteFromInStream_NonAsciiBytes
 68073 WriteFromText_HeadersAndRoundTrip
+68075 GetOrOpen_Pattern_OfDataTypeManagement
 68075 Get_AfterOpen_ForComparison
+68075 Get_OnUnopenedRecordRef_MissingRow
 68100 AutoRollback_Test01_ClearsTheFixture
 68100 AutoRollback_Test02_GuardedRunWithPendingWrite_IsRefused
 68100 AutoRollback_Test03_SuccessfulGuardedRun_WritesWithoutCommitting
@@ -6382,6 +6388,7 @@
 70310 SourceTableTemporaryPage_ShowsNoDbRows
 70315 Record_Validate_TableEventsOnly
 70315 TestPage_AssertEquals_And_Value_NoEvents
+70320 ToText_Zero
 70327 Run_WithRecord_Asserterror
 70327 Run_WithRecord_Error
 70327 Run_WithRecord_InMemory
@@ -6794,6 +6801,7 @@
 71032 Is_Codeunit_List_Dictionary
 71032 Is_Streams_Notification
 71033 DecimalVariant_To_Integer
+71034 Arithmetic_After_Conversion
 71034 Compare_After_Conversion_Numbers
 71034 Compare_After_Conversion_Text
 71034 Compare_Format_Of_Variants
@@ -7675,6 +7683,16 @@
 73034 Dialog_OpenUpdateClose
 73034 Session_LogMessage_NoError
 73034 Session_Relations
+73040 FieldRef_Captions
+73040 FieldRef_Resolved
+73040 Table_CaptionOnly_Sel
+73040 Table_Log_A
+73040 Table_Log_B
+73040 Table_NoSubscriber
+73040 Table_ReadTwice_CallCount
+73040 Table_Resolve_A
+73040 Table_Resolve_B
+73040 Table_ResolvedOnly_Sel
 73049 BindOutside_NoTriggerBinding
 73049 DoubleBind_AcrossTriggers
 73049 Get_BindUnbind
@@ -8068,6 +8086,7 @@
 73967 Temporary_RecordId
 73968 RecordId_Comparison
 73973 Page_VariableExpression
+73973 TableField_DimCaptionClass
 73999 ClearCodeunitVar
 74000 ClearJson
 74001 ClearJsonShared

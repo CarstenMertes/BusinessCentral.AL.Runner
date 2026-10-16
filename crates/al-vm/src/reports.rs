@@ -1623,9 +1623,10 @@ impl Session {
         .iter()
         .map(|n| n.to_string())
         .collect();
-        let payload = self.default_value(&al_builtins::value::RtType::Library(
-            al_builtins::library_kind::LibraryKind::JsonObject,
-        ));
+        // The payload keys are not pinned (corpus topic #176): any use of the object is refused.
+        let payload = al_builtins::json::unpinned_object(
+            "the ObjectPayload of a custom layout merger is not pinned (corpus topic #176)",
+        );
         let mut args = vec![
             Value::Integer(self.object_id_of(schema.object as u32) as i32),
             Value::Option(action, members),

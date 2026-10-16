@@ -4729,6 +4729,15 @@
           "site": "report/TestProbeReportContracts.al:19"
         },
         {
+          "corpus_uses": 0,
+          "group": "report",
+          "ms_uses": 8,
+          "name": "EnableHyperlinks",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
           "corpus_uses": 12,
           "group": "xmlport",
           "ms_uses": 8,
@@ -4742,15 +4751,6 @@
           "group": "entitlement",
           "ms_uses": 8,
           "name": "GroupName",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "report",
-          "ms_uses": 8,
-          "name": "EnableHyperlinks",
           "pinned": false,
           "runtime_reads": false,
           "site": null

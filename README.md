@@ -11,6 +11,147 @@ It is a Rust rewrite of the ideas behind
 That C# runner executes Microsoft's compiled code; this runtime compiles and
 runs AL source itself. The original spike brief and report are in `docs/history/`.
 
+## Getting started with your own project
+
+`alrunner` runs the tests of your AL app without a Business Central service tier. It is an
+alpha: many tests are refused ("not run", see below) and results may change between builds.
+Do not gate a pipeline on it yet.
+
+**1. Install.** Linux x64, Windows x64 and macOS arm64. The scripts check the SHA-256 of the download.
+
+Linux, macOS:
+
+```
+curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- edge
+```
+
+Windows (PowerShell):
+
+```
+& ([scriptblock]::Create((irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1))) -Version edge
+```
+
+The binary goes to `~/.local/bin` (Linux, macOS) or `%LOCALAPPDATA%\alrunner\bin` (Windows).
+Add that folder to your `PATH` if the script says so. More about builds and about the
+unsigned binaries is in "Try the alpha" below.
+
+**2. Run your tests.** Pass the app and its test app:
+
+```
+alrunner test ./MyApp ./MyApp.Test
+```
+
+Every test codeunit runs in its own session. Your apps are compiled on each run. Each app
+must carry its AL source.
+
+**3. Dependencies.** For the apps you name, `alrunner` looks for the apps they depend on
+(`app.json`) in this order:
+
+1. `--dep PATH`: a package file (`.app` or `*.Source.zip`), an app folder or a folder of
+   packages. You can repeat it.
+2. `--package-cache DIR`: a folder of `.app` files. You can repeat it.
+3. The `.alpackages` folder of each app you name.
+4. Microsoft's artifact feed. It supplies Microsoft's apps, the test libraries and the
+   platform `System.app`. `--no-download` turns the feed off.
+
+Microsoft's apps are compiled from their own source. A package that carries no AL source
+cannot be used, and tests that reach it are not run (the message names the app).
+Downloads are kept in a cache folder: `--cache-dir DIR`, or `$ALRUNNER_CACHE`.
+
+**4. Choose the BC version.** `--bc-version V` takes a major (`28`), a major and minor
+(`28.5`) or an exact build (four numbers). Without it, `alrunner` uses these in order: the
+build of the Microsoft packages in your `.alpackages` (if it is at or above the `application`
+and `platform` version in `app.json`), then the newest published build of the newest BC major
+the runtime is verified against (29). The corpus is checked against BC 27, 28 and 29.
+
+**5. Test data.** A run that uses Microsoft's apps restores the CRONUS demo company of the
+same BC build. It is on by default. The first run downloads about 520 MB into the cache; progress
+shows on stderr. If the backup cannot be had, test data is turned off and the run says why.
+`--no-test-data` turns it off yourself. Without test data, Microsoft's setup tables are empty.
+
+**6. .NET is optional.** Nothing in the core needs .NET. AL code that uses the `DotNet` type
+is served by a .NET 8 helper process. A few common types (for example `StringBuilder`,
+`byte[]`, `Encoding`, SHA and MD5 hashes, Base64) run inside `alrunner` and need no helper
+(ADR-038). Tests that reach any other `DotNet` call need the .NET 8 SDK. The binary carries the
+helper sources and builds the helper into the cache on first use. Without .NET those tests are
+not run, with a reason, and the exit code is 8. `--require-dotnet` makes a missing helper an
+error.
+
+**7. The compile cache.** Microsoft's apps are compiled completely once. The result is kept in
+`<cache dir>/compile/` (about 20 MB per set of apps) and loaded on later runs. The first run
+that needs it takes longer (about 10 s for Business Central). The cache also holds the state
+the install code of Microsoft's apps leaves in the database. Entries nothing used for 30 days
+are removed.
+
+- `alrunner cache clear` removes every entry. Use it when a cached result is in doubt.
+- `--rebuild-compile-cache` builds the entries this run needs again and overwrites them.
+- `--no-compile-cache` turns the cache off for one run.
+- `--require-compile-cache` fails when there is no usable entry. Use it in CI.
+
+**8. Exit codes.**
+
+| Code | Meaning |
+|---|---|
+| 0 | every selected test passed |
+| 1 | a test failed |
+| 2 | bad invocation, or the run could not start |
+| 6 | the selection matched no test |
+| 7 | some tests were not run (a refusal) |
+| 8 | some tests were not run because the .NET helper could not be used |
+
+When several apply, the order is 2, 6, 1, 8, 7. `--allow-not-run` makes 7 and 8 return 0.
+
+**9. "Not run" and how to see why.** "Not run" means `alrunner` refused the test and gave a
+reason, usually a feature that is missing. The test neither passed nor failed. The runtime
+never guesses.
+
+- `--verbose` prints one line per test, with the reason for each "NOT RUN".
+- `--top-refusals [N]` ranks the most common reasons (default 10).
+- `--explain TEST` runs one test and prints its outcome, and for a refusal the routine and
+  source line it stopped at.
+- `--filter TEXT` and `--codeunit ID` select tests. `--junit FILE` writes JUnit XML where a
+  test that did not run is `<skipped>` with its reason.
+
+**10. GitHub Actions.** A minimal job for a repository that holds `MyApp` and `MyApp.Test`.
+It uses only the install script and flags that `alrunner test --help` lists. This repository's
+own CI does not run it.
+
+```yaml
+name: AL tests
+on: [push, pull_request]
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    env:
+      ALRUNNER_CACHE: ${{ github.workspace }}/.alrunner-cache
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install alrunner
+        run: |
+          curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- edge
+          echo "$HOME/.local/bin" >> "$GITHUB_PATH"
+      - uses: actions/cache@v4
+        with:
+          path: .alrunner-cache
+          key: alrunner-${{ runner.os }}-${{ hashFiles('**/app.json') }}
+      - name: Run tests
+        run: alrunner test ./MyApp ./MyApp.Test --junit test-results.xml --allow-not-run
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: test-results
+          path: test-results.xml
+```
+
+`--allow-not-run` keeps refused tests from failing the job while the runtime is an alpha. Drop
+it when you want every test to run. Pin a numbered alpha (`v3.0.0-alpha.1`) instead of `edge`
+if the result must be repeatable.
+
+**11. Report a wrong result.** A test that passes or fails here and behaves differently on real
+Business Central is the most useful report. Open a GitHub issue with the "Alpha feedback"
+template. Include `alrunner --version`, the BC version, the test name, what you expected, and the
+output of `--explain TEST`.
+
 ## Why it is built on the language, not on BC's internals
 
 AL Runner v3 reproduces what AL code can observe: values, errors, data, and the order of
@@ -41,38 +182,35 @@ be better (ADR-009).
 
 ## Status
 
-Corpus commit `6219bf4`. Each major has its own oracle and its own baseline of
-cases that must keep passing (`metrics/<major>/passing.txt`).
+Measured on 2026-10-16 with `al-test-cli --root . --all-versions`, corpus commit `a7e4a5e`.
+Each major has its own oracle and its own baseline of cases that must keep passing
+(`metrics/<major>/passing.txt`).
 
 | BC version | Passing | Failing | Not run |
 |---|---|---|---|
-| 27.5 | 4913 / 5147 (95.5%) | 0 | 234 |
-| 28.5 | 4913 / 5147 (95.5%) | 0 | 234 |
-| 29.0 | 4913 / 5147 (95.5%) | 0 | 234 |
+| 27.5 | 9473 / 11689 (81.0%) | 320 | 1896 |
+| 28.5 | 9479 / 11705 (81.0%) | 322 | 1904 |
+| 29.0 | 9486 / 11725 (80.9%) | 330 | 1909 |
 
-Failing means the runtime gave a different answer than real BC. That count is 0.
-"Not run" means the runtime refused the test, with a stated reason, because a
-feature is missing. It never guesses. Per-area numbers and the roadmap are in
-`docs/status.md`. The corpus also has a smaller OnPrem test app (42 of 64
-passing on each version) and an isolation probe, reported separately.
+A test counts as passing only when it passes here and passed on real BC. "Failing" is a case
+where real BC passed and the runtime gave a different result or an error. None of the failing
+cases is in the baseline, and the baseline check exits 0. "Not run" means the runtime refused
+the test, with a stated reason, because a feature is missing. It never guesses. About 320
+passes on each version run through an unprobed assumption (counted as "flagged" in the
+summary). Per-area numbers and the roadmap are in `docs/status.md`, which is older than these
+numbers. The corpus also has a smaller OnPrem test app (66 of 189 on 27.5, 66 of 190 on 28.5,
+70 of 193 on 29.0) and two isolation probes, reported separately.
 
-On BC 28.5 and 29.0 the corpus compiles Microsoft's apps from the corpus's
-27.5 `.alpackages`. Only the test libraries come from the artifact of the
-matching version.
+On BC 27.5 the corpus compiles Microsoft's apps from the corpus's own `.alpackages`. The
+other versions take them from the artifact of the matching build.
 
-Time for the corpus on BC 29.0 on a shared 12-thread machine under load
-(`al-test-cli --timings`, total of load, compile, install baseline and run):
+Time: the command above, for all three versions, took 27 s of wall time on the main machine.
+`al-test-cli` compiles Base Application, System Application and the others from source on every
+run, only what the tests reach. `alrunner test` keeps their complete compile in a compile cache
+(ADR-022, `<cache dir>/compile/`) and loads it on later runs. `--no-compile-cache` turns it off,
+and `al-test-cli --compile-cache` turns it on for the corpus.
 
-- With Microsoft's apps: 2.9 to 6.2 s in six runs. `al-test-cli` compiles Base
-  Application, System Application and the others from source on every run, only
-  what the tests reach. `alrunner test` keeps their complete compile in a compile
-  cache (ADR-022, `<cache dir>/compile/`, about 13 MB per set of apps) and loads it
-  on later runs; the first run builds it (about 5 s, 4 GB). `--no-compile-cache`
-  turns it off, and `al-test-cli --compile-cache` turns it on for the corpus.
-- With `--no-deps` (the corpus alone; 4255 of 5147 tests pass): 0.4 to 0.9 s in
-  five runs.
-
-## Quick start
+## Working on the runtime
 
 Clone with `--recurse-submodules`; the corpus is a pinned submodule.
 
@@ -97,16 +235,25 @@ it out and to report what is wrong. Do not gate a pipeline on it.
 - **alpha**: a numbered checkpoint (`3.0.0-alpha.N`). Pick this for a stable
   point you can name in a bug report.
 
-**Install** (Linux x64, Windows x64, macOS arm64). The scripts check the SHA-256 of
-the download. Replace `latest-alpha` with `edge` or a tag such as `v3.0.0-alpha.1`.
+**Install** (Linux x64, Windows x64, macOS arm64). One line, pointing at the newest
+build (`edge`). The scripts check the SHA-256 of the download. Replace `edge` with
+`latest-alpha` or a tag such as `v3.0.0-alpha.1` for a numbered checkpoint.
+
+Linux, macOS:
 
 ```
-curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- latest-alpha   # Linux, macOS
+curl -fsSL https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.sh | sh -s -- edge
 ```
 
-On Windows, download `install.ps1` from the `edge` release and run
-`./install.ps1 -Version latest-alpha` in PowerShell. (GitHub's "latest" link
-skips pre-releases, so the `edge` release is the stable place for the scripts.)
+Windows (PowerShell):
+
+```
+& ([scriptblock]::Create((irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1))) -Version edge
+```
+
+`irm https://github.com/StefanMaron/al-runtime-rs/releases/download/edge/install.ps1 | iex` also works and
+installs the latest numbered alpha. (GitHub's "latest" link skips pre-releases, so the
+`edge` release is the stable place for the scripts.)
 You can also download an archive from the releases page, check it against
 `SHA256SUMS`, and unpack it. Each archive holds the binary, `LICENSE` and a short
 `README.txt`. `gh attestation verify FILE --repo StefanMaron/al-runtime-rs`
@@ -139,9 +286,7 @@ load it.
 - **"Not run"** means `alrunner` refused the test and said why, for example a
   feature it does not support yet. It never guesses. The test did not pass and
   did not fail. `--verbose` lists the reason for each test.
-- **Exit codes**: 0 all selected tests passed, 1 a test failed, 2 bad invocation
-  or the run could not start, 6 the selection matched no test, 7 some tests were
-  not run (`--allow-not-run` makes that 0).
+- **Exit codes**: see "Getting started with your own project" above.
 
 **Known limits**
 
@@ -149,7 +294,9 @@ load it.
   helper sources and builds the helper into the cache on first use. Without the
   SDK these tests are not run, with a reason.
 - Many features are missing. See `docs/status.md` and `docs/al-runner-v2-parity.md`.
-- No watch mode, no server mode, no coverage yet.
+- No watch mode and no debugger. `alrunner serve` (AL Runner v2's server protocol, one child
+  process per request, nothing kept between requests) and `--coverage` (Cobertura XML,
+  `--coverage-json`) exist.
 - Only three targets are built: Linux x64, Windows x64 and macOS arm64.
 
 **Report problems** as a GitHub issue, using the "Alpha feedback" template.
@@ -170,7 +317,7 @@ Some AL features are refused on purpose. A test that reaches one is reported as
 | Background jobs, `StartSession` | Tasks are created and never run. A second session is not started | Call the code the task would run |
 | Licensing, permission enforcement | Everything is granted. Denial paths cannot be tested | Use a real service tier |
 | Apps that ship without AL source | Not run. The message names the app | Provide an `.app` with source |
-| Server mode, watch mode, debugger, coverage | Deferred | Not available yet |
+| Watch mode, debugger | Not available | Not available yet |
 
 The full list, with reasons and open questions, is
 [ADR-027](docs/adr/027-scope.md) (Proposed).
@@ -197,9 +344,8 @@ alrunner test Tests-ERM.Source.zip                          # Microsoft's tests:
 alrunner test ./MyApp --no-test-data                        # without the CRONUS company
 ```
 
-Exit codes: 0 all selected tests passed, 1 a test failed, 2 bad invocation,
-6 the selection matched no test, 7 some tests were not run
-(`--allow-not-run` makes that 0). `alrunner test --help` lists the rest.
+Exit codes are in "Getting started with your own project" above. `alrunner test --help`
+lists every flag.
 
 ## Dependencies
 
@@ -238,20 +384,20 @@ missing setup data. Those failures are not trusted.
 ## DotNet
 
 The core needs no .NET. AL code that uses the `DotNet` type is served by an
-optional .NET 8 helper process (ADR-014). Without it, tests that reach a
-`DotNet` call are not run, with the reason stated. `--require-dotnet` turns
-that into an error, for CI.
+optional .NET 8 helper process (ADR-014). A closed set of pure .NET framework members
+(`StringBuilder`, `byte[]` access, `Encoding`, SHA and MD5 hashes, Convert Base64) runs inside
+`alrunner` and does not call the helper (ADR-038). Without the helper, tests that reach any
+other `DotNet` call are not run, with the reason stated, and the exit code is 8.
+`--require-dotnet` turns that into an error, for CI.
 
 ## Microsoft's test buckets
 
-`alrunner` can run Microsoft's own Base Application test buckets. Most of these
-tests are still refused, not run. On 2026-10-14, the 32 buckets together held
-40300 tests: 1083 passed, 858 failed and 38359 were not run. Those runs had no
-test data, so most of the failures are missing setup data. Test data fixes
-part of that: on Tests-ERM it raises the passes from 241 to 487, with 5
-failures. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
-the failure analysis. Speed numbers of such a run cannot be compared with other
-runners until many more of these tests run.
+`alrunner` can run Microsoft's own Base Application test buckets. Most of these tests are
+still refused, not run. The full run of 2026-10-16 (main `fae0c8df`, BC 27.5, all buckets
+together) held 40300 tests: 16848 passed, 2508 failed and 20944 were not run. It took 298 s on a
+12-thread Ryzen 5 5600X. `docs/alrunner-buckets.md` has the per-bucket numbers, the recipe and
+the failure analysis. Speed numbers of such a run cannot be compared with other runners until
+many more of these tests run.
 
 ## Documentation
 

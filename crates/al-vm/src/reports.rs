@@ -1527,6 +1527,19 @@ impl Session {
     /// the variables as they are now, which they do on every read here, so nothing is left to do
     /// (handlers/TestReportRequestPageUpdateObjectIdContracts.al:RequestPageUpdate_RefreshesTheOtherControls:
     /// a handler sets Source to 21 and reads Derived 42 that the trigger set before it called Update(false)).
+    /// `RequestOptionsPage.Caption := x` in the code of a report (Base Application's Financial Report). The request page of
+    /// a run has no page object of its own to hold it, so the assignment is dropped; whether a request page handler
+    /// reads it back is not modelled (assumption request-page-caption-set).
+    pub(crate) fn request_page_caption(&mut self, args: &[Value]) -> Result<Value, Signal> {
+        match args {
+            [Value::Text(_) | Value::Code(_)] => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RequestPageCaptionSet);
+                Ok(Value::Null)
+            }
+            _ => unsupported("RequestPage.Caption read, or set with something that is not text"),
+        }
+    }
+
     pub(crate) fn request_page_update(&mut self, args: &[Value]) -> Result<Value, Signal> {
         match args.first() {
             // `true` shows the same: the handler reads the variables the trigger set, and the run sees them

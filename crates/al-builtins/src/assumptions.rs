@@ -205,6 +205,36 @@ registry! {
         tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
         probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback.",
     },
+    TypedModalHandlerSkipsPageTriggers => {
+        id: "typed-modal-handler-skips-page-triggers",
+        assumed: "A [ModalPageHandler] typed as the Page itself stands in for the page: none of the page's triggers (OnInit, OnOpenPage, OnQueryClosePage, ...) run for that call.",
+        tests: "Tests-ERM `PaymentToleranceWarning` handler (`PaymentToleranceWarning.InitializeOption(OptionValue)`, page 591, whose OnOpenPage and OnQueryClosePage would overwrite the result) and about 47 more tests.",
+        probe: "A page with Trace logging in OnInit, OnOpenPage, OnQueryClosePage and OnClosePage, run with RunModal under a ModalPageHandler typed as the Page that logs and sets Response.",
+    },
+    QueryMethodOverFlowField => {
+        id: "query-method-over-flowfield",
+        assumed: "A query column over a FlowField with Method Sum, Average, Min or Max aggregates the value calculated for each joined row (with the flow filters of its dataitem), as a column without a method shows it.",
+        tests: "Query \"Cust. Ledg. Entry Remain. Amt.\" (Sum of the FlowField \"Remaining Amt. (LCY)\"): T120_NotifyAboutMissingSalesSetupOnLineDiscountValidation and about 425 more Tests-ERM tests.",
+        probe: "A query with column(Total; FlowFieldOfTheTable) { Method = Sum; } over three rows: the total; the same with Min, Max, Average, ReverseSign and a filter() element feeding the flow filter.",
+    },
+    RecordRefGetTableOfRecordRef => {
+        id: "recordref-gettable-of-recordref",
+        assumed: "RecordRef.GetTable(OtherRecordRef) makes the ref a copy of the other ref's record: table, buffer, filters and current row, not shared afterwards.",
+        tests: "Tests-ERM SalesInvoiceTryPreview and the other posting preview tests (Gen. Jnl.-Post Preview): about 30 tests.",
+        probe: "B.GetTable(A) with A open on a table with a filter and a found row; change A, read B; with A not open; with B open on another table.",
+    },
+    RequestPageCaptionSet => {
+        id: "request-page-caption-set",
+        assumed: "`RequestOptionsPage.Caption := Text` in the code of a report changes nothing a test can see: a request page handler's `TestRequestPage.Caption` is not changed by it.",
+        tests: "Financial Report (`RequestOptionsPage.Caption := FinancialReport.Description`): about 86 Tests-ERM tests.",
+        probe: "A report whose request page OnOpenPage sets RequestOptionsPage.Caption; a RequestPageHandler reads TestRequestPage.Caption.",
+    },
+    FilterEmptyTextDateFormula => {
+        id: "filter-empty-text-dateformula",
+        assumed: "In a filter on a DateFormula field the empty text is the empty formula, so a filter of not-equal and the empty text selects the rows that have a formula.",
+        tests: "Library - ERM GetDiscountPaymentTerm (PaymentTerms.SetFilter(Due Date Calculation, not-equal and the empty text)): about 170 Tests-ERM tests.",
+        probe: "Payment Terms rows with and without Due Date Calculation; SetFilter on it with the empty text, not-equal and the empty text, then Count.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

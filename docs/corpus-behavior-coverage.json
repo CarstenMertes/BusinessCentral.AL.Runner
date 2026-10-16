@@ -13401,7 +13401,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 329,
+        "line": 340,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnARecordRefDuplicate.al:174",
         "template": "The record is not open."
@@ -13410,7 +13410,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 541,
+        "line": 552,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds."
@@ -13419,7 +13419,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 560,
+        "line": 571,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -13428,7 +13428,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 669,
+        "line": 680,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds"
@@ -13437,7 +13437,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 688,
+        "line": 699,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."

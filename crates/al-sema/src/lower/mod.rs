@@ -338,6 +338,7 @@ fn is_property_setter(receiver: &str, name: &str) -> bool {
         ("FieldRef" | "TestField", "Value")
             | ("InStream" | "OutStream", "Position")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
+            | ("RequestPage", "Caption")
             | ("Notification", "Id" | "Message" | "Scope")
             | (
                 "ErrorInfo",

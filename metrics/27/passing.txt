@@ -4836,6 +4836,8 @@
 68512 Groups_NoOrderBy_RowsInsertedInAnotherOrder
 68512 Groups_NoOrderBy_TiedCounts
 68512 Groups_NoOrderBy_TwoGroupingColumns
+68512 MethodOverAFlowField_GroupedByTheRow
+68512 MethodOverAFlowField_SumAndCount
 68513 OnBeforeOpen_RunsInsideOpen_AfterTheFiltersSoFar
 68513 QueryProperties_AboutTitleAndAboutText_RowsAreTheSame
 68513 QueryVariables_AcrossOpenAndClose
@@ -7735,7 +7737,10 @@
 72028 Prec700000_DoesNotDivideADay
 72028 UndefinedDateTime
 72031 GetRecord_DeletedRow
+72031 GetRecord_DoesNotChangeTheSourceRecordFilters
+72031 GetRecord_ExistingRow
 72031 GetRecord_NeverInsertedKey
+72031 GetRecord_RowChangedAfterTakingTheId
 72031 GetRecord_UndefinedRecordId
 72033 RealRecord_ToVariantForComparison
 72033 TempRecord_AssignedToVariant_AndRead
@@ -7797,6 +7802,10 @@
 72075 RunModal_RecOnly
 72075 RunModal_UnknownPageId
 72075 RunModal_WithFilterOnRecord
+72078 Caption_ReportRunStatic
+72078 Caption_SetOnInitReport
+72078 Caption_SetOnOpenPage
+72078 Caption_StaticReportCaption
 72079 Create_FourArguments
 72079 Create_LongValues
 72079 Create_NameOnly
@@ -8014,6 +8023,7 @@
 72519 Clear_SimpleTypes
 72521 LargerAndEqualArray_VarParameter
 72540 DataItemLink_ParentAndGrandparent
+72540 MethodSum_OverFlowFields_Read
 72540 QueryWithAboutProperties_ReadsRows
 72553 ReadFrom_InnerWhitespace
 72553 ReadFrom_NewlinesAndText

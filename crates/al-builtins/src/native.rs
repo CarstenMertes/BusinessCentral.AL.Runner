@@ -78,7 +78,12 @@ pub trait Ctx: FormatCtx {
     ) -> Result<Value, Signal>;
     /// `TestPage` / `TestField` / `TestAction` methods: the VM's test client
     /// implements them (ADR-012). `method` is `Receiver.Name`.
-    fn page(&mut self, method: &str, _recv: Option<&mut Value>, _args: &mut [Value]) -> Result<Value, Signal> {
+    fn page(
+        &mut self,
+        method: crate::page_op::PageOp,
+        _recv: Option<&mut Value>,
+        _args: &mut [Value],
+    ) -> Result<Value, Signal> {
         Err(Signal::Unsupported(format!("{method} needs a page runtime")))
     }
 

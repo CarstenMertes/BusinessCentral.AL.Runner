@@ -61,7 +61,7 @@ bytes; decode is allocation work).
 
 1. (Done on branch objkind-ir, 2026-10-16.) `ObjKind` in `al-ir` (largest fan-out; do it first while few branches are open).
 2. (Done on branch builtin-id, 2026-10-16.) `BuiltinId` and the single registry. A checked-in generated table (`al-builtins/src/builtin_ids.rs`, `cargo run -p al-builtins --example gen_builtin_ids`, test `builtin_ids_current`) holds every catalog overload, registered native and invented id, sorted; one constant per id (`ids::RECORD_INSERT_2`) serves `match`. The cache stores the `u16` index; JSON dumps print the name. `native::by_id` is the array registry; the VM branches on `BuiltinId::class()` and the constants, with no id string in `al-vm`. Cache FORMAT 8.
-3. `RecordOp`, `PageOp`.
+3. (Done on branch record-op, 2026-10-16.) `RecordOp`, `PageOp`. Left as strings: RecordRef, Query and Report method names.
 4. `LibraryKind`.
 5. Typed schema facts, one property at a time.
 6. `CompanyId` in `MemStore`.

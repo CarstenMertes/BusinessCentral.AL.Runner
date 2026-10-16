@@ -2381,7 +2381,12 @@ impl al_builtins::native::Ctx for Session {
             ))),
         }
     }
-    fn page(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    fn page(
+        &mut self,
+        method: al_builtins::page_op::PageOp,
+        recv: Option<&mut Value>,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
         self.page_op(method, recv, args)
     }
 

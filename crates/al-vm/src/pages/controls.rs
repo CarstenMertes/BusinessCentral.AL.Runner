@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::page_op::{PageMethod, PageOp};
 use al_builtins::record_op::RecordOp;
 
 impl Session {
@@ -318,13 +319,13 @@ impl Session {
 
     pub(super) fn test_control_op(
         &mut self,
-        method: &str,
+        method: PageOp,
         c: &ControlRef,
         args: &mut [Value],
     ) -> Result<Value, Signal> {
         self.require_open(&c.page)?;
         let st = &c.page;
-        let m = method.split_once('.').map(|(_, m)| m).unwrap_or(method);
+        let m = method.method();
         let idx = match &c.target {
             ControlTarget::Control(i) => *i,
             ControlTarget::BuiltIn(name) if matches!(name.as_str(), "Edit" | "View") => {
@@ -358,10 +359,10 @@ impl Session {
                         (true, Some(target)) => self.card_allows_edit(target)?,
                     };
                     return match m {
-                        "Visible" => Ok(Value::Boolean(true)),
-                        "Enabled" => Ok(Value::Boolean(enabled)),
-                        "Invoke" if !enabled || card.is_none() => Ok(Value::Null),
-                        "Invoke" => self.list_card_action(st, edit),
+                        PageMethod::Visible => Ok(Value::Boolean(true)),
+                        PageMethod::Enabled => Ok(Value::Boolean(enabled)),
+                        PageMethod::Invoke if !enabled || card.is_none() => Ok(Value::Null),
+                        PageMethod::Invoke => self.list_card_action(st, edit),
                         other => unsupported(format!(
                             "TestAction.{other} of the built-in {name} action of a list page"
                         )),
@@ -370,9 +371,9 @@ impl Session {
                 let editable = st.borrow().mode != PageMode::View;
                 let applies = (name == "Edit") == !editable;
                 return match m {
-                    "Visible" => Ok(Value::Boolean(true)),
-                    "Enabled" => Ok(Value::Boolean(applies)),
-                    "Invoke" => {
+                    PageMethod::Visible => Ok(Value::Boolean(true)),
+                    PageMethod::Enabled => Ok(Value::Boolean(applies)),
+                    PageMethod::Invoke => {
                         if applies {
                             let mode = if name == "Edit" { PageMode::Edit } else { PageMode::View };
                             st.borrow_mut().mode = mode;
@@ -386,16 +387,15 @@ impl Session {
                 };
             }
             ControlTarget::Filter => {
-                let m = m.to_string();
-                return self.test_filter_op(&m, st, args);
+                return self.test_filter_op(m, st, args);
             }
-            ControlTarget::BuiltIn(name) if m == "Invoke" => {
+            ControlTarget::BuiltIn(name) if m == PageMethod::Invoke => {
                 // OK and Yes confirm, Cancel and No cancel; a refused save keeps the page open
                 // (corpus testpageclose/TestPageClosingActions.al).
                 return self.close_with(st, name, true, true);
             }
             // The built-in OK and Cancel are visible (report/TestProbeReportContracts.al:RequestPage_InvokeActionNotFound).
-            ControlTarget::BuiltIn(_) if m == "Visible" => return Ok(Value::Boolean(true)),
+            ControlTarget::BuiltIn(_) if m == PageMethod::Visible => return Ok(Value::Boolean(true)),
             _ => return unsupported(format!("{method} on a built-in control")),
         };
         // The data items and actions of a report's request page.
@@ -403,7 +403,7 @@ impl Session {
             let kind = page_of(&self.engine(), st).controls[idx].kind.clone();
             match kind {
                 ir::ControlKind::DataItem => return self.request_item_op(method, st, idx, args),
-                ir::ControlKind::Action if m == "Invoke" => return self.request_action_invoke(st, idx),
+                ir::ControlKind::Action if m == PageMethod::Invoke => return self.request_action_invoke(st, idx),
                 _ => {}
             }
         }
@@ -411,7 +411,7 @@ impl Session {
         // evaluated, on a control that is on the page or not (corpus
         // pageapplicationarea/TestPageDiscardedFieldValueCall.al: RemovedControl_DiscardedValueCall_RaisesNothing,
         // FoundControl_DiscardedValueCall_RaisesNothing).
-        if m == "Value" && args.is_empty() && !self.ret_used {
+        if m == PageMethod::Value && args.is_empty() && !self.ret_used {
             return Ok(Value::Null);
         }
         // A control whose Visible is the literal false, or that sits in a group whose Visible is,
@@ -451,7 +451,7 @@ impl Session {
         // reads Visible true when neither it nor its target states a Visible (corpus
         // pageapplicationarea/TestPageApplicationAreaExtensionActionPartRemoval.al:
         // ExtActionRef_TargetEnabled_IsFound, ExtActionRef_TargetNotEnabled_IsNotFound).
-        if m != "Invoke" {
+        if m != PageMethod::Invoke {
             let engine = self.engine();
             let page = page_of(&engine, st);
             let ctl = &page.controls[idx];
@@ -460,7 +460,7 @@ impl Session {
                     ir::ActionRef::Target(t) => page.controls[*t].prop("visible").is_none(),
                     ir::ActionRef::Unresolved(_) => false,
                 };
-                if m == "Visible" && target_plain && ctl.prop("visible").is_none() {
+                if m == PageMethod::Visible && target_plain && ctl.prop("visible").is_none() {
                     return Ok(Value::Boolean(true));
                 }
                 // handlers/TestPageRunObjectContracts.al:392-404: Visible and Enabled of an actionref answer Yes.
@@ -468,7 +468,7 @@ impl Session {
                     ir::ActionRef::Target(t) => page.controls[*t].prop("enabled").is_none(),
                     ir::ActionRef::Unresolved(_) => false,
                 };
-                if m == "Enabled" && target_enabled_plain && ctl.prop("enabled").is_none() {
+                if m == PageMethod::Enabled && target_enabled_plain && ctl.prop("enabled").is_none() {
                     return Ok(Value::Boolean(true));
                 }
                 return unsupported(format!("TestAction.{m} of an actionref"));
@@ -477,13 +477,13 @@ impl Session {
         match m {
             // `Ctl.Value := x` is the setter form of the property, and does what SetValue does
             // (corpus handlers/ProbeTestPageForms.al:109-131: OnValidate runs with the assigned text).
-            "Value" if !args.is_empty() && self.in_cue_group(st, idx) => Ok(Value::Null),
-            "Value" if !args.is_empty() => {
+            PageMethod::Value if !args.is_empty() && self.in_cue_group(st, idx) => Ok(Value::Null),
+            PageMethod::Value if !args.is_empty() => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
                 Ok(r)
             }
-            "Value" => {
+            PageMethod::Value => {
                 if self.shows_no_row(st, idx) {
                     return Ok(Value::Text(String::new().into()));
                 }
@@ -498,15 +498,15 @@ impl Session {
                 let text = self.control_text(st, idx, &v)?;
                 Ok(Value::Text(text.into()))
             }
-            "AsInteger" => self.control_as(st, idx, &RtType::Integer),
-            "AsDecimal" => self.control_as(st, idx, &RtType::Decimal),
-            "AsBoolean" => self.control_as(st, idx, &RtType::Boolean),
-            "AsDate" => self.control_as(st, idx, &RtType::Date),
-            "AsTime" => self.control_as(st, idx, &RtType::Time),
-            "AsDateTime" => self.control_as(st, idx, &RtType::DateTime),
-            "AssertEquals" => self.control_assert_equals(st, idx, args),
-            "Caption" => Ok(Value::Text(self.control_caption(st, idx)?.into())),
-            "OptionCount" | "GetOption" => {
+            PageMethod::AsInteger => self.control_as(st, idx, &RtType::Integer),
+            PageMethod::AsDecimal => self.control_as(st, idx, &RtType::Decimal),
+            PageMethod::AsBoolean => self.control_as(st, idx, &RtType::Boolean),
+            PageMethod::AsDate => self.control_as(st, idx, &RtType::Date),
+            PageMethod::AsTime => self.control_as(st, idx, &RtType::Time),
+            PageMethod::AsDateTime => self.control_as(st, idx, &RtType::DateTime),
+            PageMethod::AssertEquals => self.control_assert_equals(st, idx, args),
+            PageMethod::Caption => Ok(Value::Text(self.control_caption(st, idx)?.into())),
+            PageMethod::OptionCount | PageMethod::GetOption => {
                 let current = self.control_value(st, idx)?;
                 let engine = self.engine();
                 let members: Vec<i32> = match self.control_type(st, idx, &current) {
@@ -518,7 +518,7 @@ impl Session {
                         .collect(),
                     _ => return unsupported(format!("TestField.{m} on a control that is not an option")),
                 };
-                if m == "OptionCount" {
+                if m == PageMethod::OptionCount {
                     return Ok(Value::Integer(members.len() as i32));
                 }
                 let i = match args.first() {
@@ -540,39 +540,43 @@ impl Session {
                 Ok(Value::Text(self.control_text(st, idx, &v)?.into()))
             }
             // The properties as written; a computed one is not read (docs only).
-            "HideValue" | "ShowMandatory" => {
-                let name = if m == "HideValue" { "hidevalue" } else { "showmandatory" };
+            PageMethod::HideValue | PageMethod::ShowMandatory => {
+                let name = if m == PageMethod::HideValue {
+                    "hidevalue"
+                } else {
+                    "showmandatory"
+                };
                 let engine = self.engine();
                 match page_of(&engine, st).controls[idx].prop(name) {
                     // ShowMandatory is true when the page says nothing (handlers/TestProbePageHandlerContracts.al:
                     // TestPage_Members_ShowMandatoryHideValue_Defaults); HideValue is false.
-                    None => Ok(Value::Boolean(m == "ShowMandatory")),
+                    None => Ok(Value::Boolean(m == PageMethod::ShowMandatory)),
                     Some(ir::PropVal::Lit(l)) => Ok(Value::Boolean(unquote(l).eq_ignore_ascii_case("true"))),
                     Some(_) => unsupported(format!("TestField.{m} of a computed property")),
                 }
             }
-            "Editable" => Ok(Value::Boolean(self.control_editable(st, idx)?)),
-            "Enabled" => Ok(Value::Boolean(self.control_enabled(st, idx)?)),
-            "Visible" => Ok(Value::Boolean(self.control_visible(st, idx)?)),
-            "Invoke" => self.action_invoke(st, idx),
-            "DrillDown" | "AssistEdit" | "Lookup" => self.control_navigate(st, idx, m),
+            PageMethod::Editable => Ok(Value::Boolean(self.control_editable(st, idx)?)),
+            PageMethod::Enabled => Ok(Value::Boolean(self.control_enabled(st, idx)?)),
+            PageMethod::Visible => Ok(Value::Boolean(self.control_visible(st, idx)?)),
+            PageMethod::Invoke => self.action_invoke(st, idx),
+            PageMethod::DrillDown | PageMethod::AssistEdit | PageMethod::Lookup => self.control_navigate(st, idx, m),
             // SetValue on a field of a cuegroup does nothing and raises nothing
             // (handlers/TestPageCueGroupFixedGridContracts.al:CueGroup_SetValue_IsSilentlyIgnored).
-            "SetValue" if self.in_cue_group(st, idx) => Ok(Value::Null),
-            "SetValue" => {
+            PageMethod::SetValue if self.in_cue_group(st, idx) => Ok(Value::Null),
+            PageMethod::SetValue => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
                 Ok(r)
             }
-            "Activate" => {
+            PageMethod::Activate => {
                 self.activate(st, idx)?;
                 Ok(Value::Null)
             }
-            "ValidationErrorCount" => {
+            PageMethod::ValidationErrorCount => {
                 let n = st.borrow().errors.iter().filter(|(i, _)| *i == idx).count();
                 Ok(Value::Integer(n as i32))
             }
-            "GetValidationError" => {
+            PageMethod::GetValidationError => {
                 let i = match args.first() {
                     Some(Value::Integer(i)) => *i,
                     None => 1,

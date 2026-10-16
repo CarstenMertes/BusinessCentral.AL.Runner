@@ -1,4 +1,5 @@
 use super::*;
+use al_builtins::page_op::PageMethod;
 use al_builtins::record_op::RecordOp;
 
 impl Session {
@@ -49,13 +50,12 @@ impl Session {
     /// A DrillDown on a control with no trigger raises a fixed platform error (handlers/TestPageFieldDrillDown_Tests.al:
     /// FieldDrillDownWithNoTriggerIsRefused). What AssistEdit and Lookup do without a trigger (a table
     /// relation's lookup page) is not modelled.
-    pub(super) fn control_navigate(&mut self, st: &St, idx: usize, method: &str) -> Result<Value, Signal> {
+    pub(super) fn control_navigate(&mut self, st: &St, idx: usize, method: PageMethod) -> Result<Value, Signal> {
         let engine = self.engine();
         let ctl = &page_of(&engine, st).controls[idx];
-        let name = method.to_ascii_lowercase();
-        let name = match name.as_str() {
-            "drilldown" => "ondrilldown",
-            "assistedit" => "onassistedit",
+        let name = match method {
+            PageMethod::DrillDown => "ondrilldown",
+            PageMethod::AssistEdit => "onassistedit",
             _ => "onlookup",
         };
         let own = ctl.trigger(name).map(|r| (ctl.owner, r));
@@ -71,10 +71,10 @@ impl Session {
             .collect();
         let (owner, routine) = match found.as_slice() {
             [one] => *one,
-            [] if method == "DrillDown" => {
+            [] if method == PageMethod::DrillDown => {
                 return Err(error("The NavDrilldownAction method is not supported."));
             }
-            [] if method == "Lookup" => return self.field_lookup(st, idx),
+            [] if method == PageMethod::Lookup => return self.field_lookup(st, idx),
             [] => return unsupported(format!("TestField.{method} on a control with no {name} trigger")),
             _ => {
                 return unsupported(format!(
@@ -83,7 +83,7 @@ impl Session {
             }
         };
         st.borrow_mut().refresh = false;
-        let result = if method == "Lookup" {
+        let result = if method == PageMethod::Lookup {
             // OnLookup(var Text): Boolean. The text it writes back replaces the field's value, and
             // the Boolean says whether the user picked anything (corpus
             // handlers/TestPageFieldTableLookup.al:72 Lookup_ControlWithTrigger_WinsOverTheTableFieldsOnLookup,

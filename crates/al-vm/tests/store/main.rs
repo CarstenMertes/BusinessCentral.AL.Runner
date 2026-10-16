@@ -14,6 +14,7 @@ mod relations;
 mod rename;
 mod scm_round2;
 mod scm_service_41;
+mod set_view_adhoc;
 mod table_globals;
 mod temp_sums_by_ref;
 mod temp_tables;

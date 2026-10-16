@@ -20,6 +20,11 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     "tooltip",
     "tooltipml",
     "description",
+    // Compile-time obsolescence notes: a run shows nothing of them (Base Application's Calculate Subcontracts,
+    // Tests-SCM-Manufacturing, 34 tests).
+    "obsoletereason",
+    "obsoletestate",
+    "obsoletetag",
     // Feeds the client's Tell Me search only (docs/owner-review.md, 2026-10-14).
     "additionalsearchterms",
     "additionalsearchtermsml",

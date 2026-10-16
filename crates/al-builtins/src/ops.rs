@@ -308,6 +308,14 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             crate::assumptions::assume(crate::assumptions::Assumption::BooleanToTextAsFormat);
             Value::Code(fit(if b { "YES" } else { "NO" }.to_string(), *max)?.into())
         }
+        // A Date into a DateTime is that day at midnight, the blank Date the blank DateTime (as CreateDateTime(D, 0T)). Not
+        // pinned; Microsoft's production order code assigns a Date to a DateTime (Tests-SCM-Manufacturing, 20 tests;
+        // assumption date-to-datetime-is-midnight).
+        (Value::Date(0, false), T::DateTime) => Value::DateTime(0),
+        (Value::Date(n, false), T::DateTime) if n > 0 => {
+            crate::assumptions::assume(crate::assumptions::Assumption::DateToDateTime);
+            Value::DateTime((i64::from(n) - 1) * 86_400_000 + 1)
+        }
         (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     })
 }
@@ -487,6 +495,20 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .and_then(|n| n.checked_mul(*ms))
                 .map(V::Duration)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
+        }
+        // A whole number and a Duration add and subtract as milliseconds, into a Duration. Not pinned; Microsoft's
+        // routing code adds a day in milliseconds to a Duration (Tests-SCM-Manufacturing, 20 tests; assumption
+        // duration-arithmetic-with-number).
+        (V::Duration(d), n) | (n, V::Duration(d)) if matches!(op, Arith::Add | Arith::Sub) && int_of(n).is_some() => {
+            let k = int_of(n).unwrap_or(0);
+            let (a, b) = if matches!(l, V::Duration(_)) { (*d, k) } else { (k, *d) };
+            crate::assumptions::assume(crate::assumptions::Assumption::DurationArithmeticWithNumber);
+            return match op {
+                Arith::Add => a.checked_add(b),
+                _ => a.checked_sub(b),
+            }
+            .map(V::Duration)
+            .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
         // DateTime + Duration is a DateTime and DateTime - DateTime a Duration, in milliseconds
         // (types/TestDurationContracts.al:44-171, session/TestDateTimeContracts.al:52-90). The undefined

@@ -249,7 +249,11 @@ impl Session {
         self.isolated_storage = b.isolated_storage.clone();
         self.isolated_committed = b.isolated_storage.clone();
         self.sequences = b.sequences.clone();
-        self.last_stamp = b.last_stamp;
+        // The install ran on a clock that its own Sleep calls had moved forward (hours, in Business Central's install
+        // code); the session starts on the real clock again, and a stamp must not stay ahead of it: a row inserted by the
+        // first test would otherwise be stamped hours after CurrentDateTime (corpus record/TestSystemFieldStampsContracts.al:
+        // Insert_StampsBothFieldsWithTheUtcClock_SystemIdIsSetBeforeOnInsert).
+        self.last_stamp = b.last_stamp.min(self.now_millis());
         self.baseline_rows = b.nonempty_tables();
     }
 }

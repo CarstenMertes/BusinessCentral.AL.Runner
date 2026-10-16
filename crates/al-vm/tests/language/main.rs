@@ -1,5 +1,6 @@
 //! The tests of one area in one binary (ADR-037 item 5): fewer binaries to link. Each module is a file of language/.
 
+mod abs_duration;
 mod array_params;
 mod builtins;
 mod calc_const_guid;
@@ -7,6 +8,7 @@ mod call_stack;
 mod clear_enum;
 mod continue_stmt;
 mod dataformats;
+mod duration_date_arith;
 mod enum_in_set;
 mod erm_builtins;
 mod erm_builtins_2;

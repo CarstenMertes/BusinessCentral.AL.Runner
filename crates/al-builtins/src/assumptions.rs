@@ -307,6 +307,30 @@ registry! {
         tests: "Microsoft's Tests-SCM-Planning (Inventory Profile Offsetting keeps demand and supply in InventoryProfile: array[2] of Record \"Inventory Profile\" temporary).",
         probe: "An array[2] of a temporary record: insert through element 1, count and read through element 2.",
     },
+    AbsOfDuration => {
+        id: "abs-of-duration-is-decimal",
+        assumed: "Abs of a Duration takes the Decimal overload: the Duration counts as its milliseconds and the answer is a Decimal.",
+        tests: "Microsoft's production order and routing code (Abs of a DateTime difference): Tests-SCM-Manufacturing and Tests-SCM-Costing, about 230 tests.",
+        probe: "D: Duration := -5000; X := Abs(D) into a Decimal and into a Duration; Format both; Abs(D) > 4999.",
+    },
+    DateToDateTime => {
+        id: "date-to-datetime-is-midnight",
+        assumed: "A Date assigned or converted to a DateTime is that day at midnight; the blank Date is the blank DateTime.",
+        tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
+        probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
+    },
+    DurationArithmeticWithNumber => {
+        id: "duration-arithmetic-with-number",
+        assumed: "A whole number added to or subtracted from a Duration (or a Duration from a whole number) is a Duration, as milliseconds.",
+        tests: "Microsoft's routing code (a day in milliseconds added to a Duration): Tests-SCM-Manufacturing, about 20 tests.",
+        probe: "D: Duration; I: Integer; Format(D + I), Format(I + D), Format(D - I), Format(I - D).",
+    },
+    SetViewSortingWithoutKey => {
+        id: "set-view-sorting-without-a-key",
+        assumed: "SetView of a SORTING(...) that no key starts with orders the rows by those fields, then by the primary key, as SetCurrentKey of such fields does.",
+        tests: "Microsoft's tests that set a view written by GetView after an ad hoc SetCurrentKey (Posting Preview and Item Journal tests): Tests-SCM and Tests-SCM-Manufacturing, about 110 tests.",
+        probe: "SetCurrentKey on fields no key starts with, GetView, a second record SetView(that view): compare the order and CurrentKey().",
+    },
     ImplicitCategoryGroup => {
         id: "implicit-category-group",
         assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",

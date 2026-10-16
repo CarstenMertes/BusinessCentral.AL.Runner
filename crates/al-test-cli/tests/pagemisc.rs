@@ -699,3 +699,34 @@ fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_no
         [ModalPageHandler] procedure PageHandler(var P: Page \"PM Wizard\"; var Response: Action) begin Response := Action::OK; end;"
     ));
 }
+
+// Base Application's Financial Report sets `RequestOptionsPage.Caption := Description` while its request page opens
+// (86 Tests-ERM tests were refused with "is not assignable"). The corpus pins `CurrPage.Caption := x` on a page
+// (handlers/TestPageCaption_Page.al:44); for a request page the assignment is accepted and not shown to the handler
+// (request-page-caption-set, docs/probes-needed.md).
+#[test]
+fn a_request_page_caption_can_be_set_from_the_code_of_the_report() {
+    let src = format!(
+        "{OBJECTS}
+report 62200 \"PM Req Report\"
+{{
+    ProcessingOnly = true;
+    requestpage
+    {{
+        layout {{ area(Content) {{ field(Dummy; DummyValue) {{ ApplicationArea = All; }} }} }}
+        trigger OnOpenPage() begin SetCaption(); end;
+    }}
+    var DummyValue: Integer;
+    local procedure SetCaption() begin RequestOptionsPage.Caption := 'Custom caption'; end;
+}}
+codeunit 62201 T {{ Subtype = Test;
+    [Test] [HandlerFunctions('Handler')]
+    procedure CaptionIsSet() begin Report.Run(Report::\"PM Req Report\"); end;
+    [RequestPageHandler] procedure Handler(var R: TestRequestPage \"PM Req Report\") begin
+        R.Cancel().Invoke(); end;
+}}"
+    );
+    let o = al_testkit::outcomes_in(&src, "T");
+    assert_eq!(o.len(), 1, "{o:?}");
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+}

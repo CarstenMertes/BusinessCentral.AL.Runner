@@ -230,7 +230,10 @@ impl<'a> Checker<'a> {
                 rec = prop("TableNo").map(|t| Ty::Record {
                     table: unquote(t).into(),
                     temporary: false,
-                })
+                });
+                // The fields and methods of the implicit Rec can be used unqualified in a codeunit with TableNo
+                // (Microsoft's "Save Data Exch. Blob Sample": `"File Name" := ...; Find(); CalcFields(..)`).
+                rec_unqualified = rec.is_some();
             }
             ObjKind::Report | ObjKind::ReportExtension => {
                 // In a report extension `CurrReport` is the report run of the extended report, so its

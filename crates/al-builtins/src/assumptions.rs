@@ -217,6 +217,12 @@ registry! {
         tests: "Tests-ERM SalesInvoiceTryPreview and the other posting preview tests (Gen. Jnl.-Post Preview): about 30 tests.",
         probe: "B.GetTable(A) with A open on a table with a filter and a found row; change A, read B; with A not open; with B open on another table.",
     },
+    RequestPageCaptionSet => {
+        id: "request-page-caption-set",
+        assumed: "`RequestOptionsPage.Caption := Text` in the code of a report changes nothing a test can see: a request page handler's `TestRequestPage.Caption` is not changed by it.",
+        tests: "Financial Report (`RequestOptionsPage.Caption := FinancialReport.Description`): about 86 Tests-ERM tests.",
+        probe: "A report whose request page OnOpenPage sets RequestOptionsPage.Caption; a RequestPageHandler reads TestRequestPage.Caption.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

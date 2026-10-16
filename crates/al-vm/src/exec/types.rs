@@ -16,14 +16,16 @@ pub(crate) enum Ty {
     Boolean,
 }
 
-pub(crate) trait ExprTypes {
+pub(crate) trait ExprTypes<'a> {
     /// The type `e` always evaluates to, or `None` when that is not known.
-    fn expr_ty(&self, e: &ir::Expr) -> Option<Ty>;
+    fn expr_ty(&self, e: &'a ir::Expr) -> Option<Ty>;
 }
 
 /// Types read from what the routine declares.
-pub(crate) struct DeclaredTypes {
+pub(crate) struct DeclaredTypes<'a> {
     pub locals: Vec<RtType>,
+    /// The types lowering recorded (`al_ir::types`, ADR-036); consulted first. `Unknown` everywhere until lowering fills it.
+    pub lowered: al_ir::types::ExprTypes<'a>,
 }
 
 /// The typed-instruction type of a declared type, if it has one.
@@ -35,8 +37,16 @@ pub(crate) fn of_rt(t: &RtType) -> Option<Ty> {
     }
 }
 
-impl ExprTypes for DeclaredTypes {
-    fn expr_ty(&self, e: &ir::Expr) -> Option<Ty> {
+impl<'a> ExprTypes<'a> for DeclaredTypes<'a> {
+    fn expr_ty(&self, e: &'a ir::Expr) -> Option<Ty> {
+        use al_ir::types::ExprTy;
+        match self.lowered.of(e) {
+            ExprTy::Integer => return Some(Ty::Integer),
+            ExprTy::Boolean => return Some(Ty::Boolean),
+            ExprTy::Unknown => {}
+            // Known, and not a type that has a typed instruction.
+            _ => return None,
+        }
         use ir::BinOp as B;
         use ir::Expr as E;
         match e {

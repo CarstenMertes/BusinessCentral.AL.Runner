@@ -12,6 +12,7 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
         locals_ty: r.locals.iter().map(|l| l.ty.clone()).collect(),
         tys: DeclaredTypes {
             locals: r.locals.iter().map(|l| l.ty.clone()).collect(),
+            lowered: al_ir::types::ExprTypes::new(r),
         },
         chunk: Chunk {
             code: Vec::new(),
@@ -56,11 +57,11 @@ struct LoopCtx {
     cont: Vec<usize>,
 }
 
-struct Compiler {
+struct Compiler<'a> {
     /// The declared type of each local.
     locals_ty: Vec<RtType>,
     /// Where the static types come from; the instruction selection asks only this.
-    tys: DeclaredTypes,
+    tys: DeclaredTypes<'a>,
     chunk: Chunk,
     next: u16,
     max: u16,
@@ -120,7 +121,7 @@ fn blank(args: &[ir::Arg]) -> Vec<ir::Arg> {
         .collect()
 }
 
-impl Compiler {
+impl<'a> Compiler<'a> {
     fn emit(&mut self, op: Op) -> usize {
         self.chunk.code.push(op);
         self.chunk.code.len() - 1
@@ -174,7 +175,7 @@ impl Compiler {
 
     /// The register that holds the value of `e`, which may be a local itself: the caller must not let anything write
     /// that local before it reads the register.
-    fn expr_any(&mut self, e: &ir::Expr) -> R<u16> {
+    fn expr_any(&mut self, e: &'a ir::Expr) -> R<u16> {
         if let ir::Expr::Load(ir::Place::Local(i)) = e {
             return u16::try_from(*i).map_err(|_| ());
         }
@@ -184,7 +185,7 @@ impl Compiler {
     }
 
     /// The register that holds a copy of the value of `e` (a temporary), safe against later writes to locals.
-    fn expr_copy(&mut self, e: &ir::Expr) -> R<u16> {
+    fn expr_copy(&mut self, e: &'a ir::Expr) -> R<u16> {
         let r = self.expr_any(e)?;
         if self.is_local(r) {
             let d = self.alloc()?;
@@ -196,7 +197,7 @@ impl Compiler {
     }
 
     /// Operands `a` then `b`: `a` must be a copy when evaluating `b` could write a local.
-    fn pair(&mut self, a: &ir::Expr, b: &ir::Expr) -> R<(u16, u16)> {
+    fn pair(&mut self, a: &'a ir::Expr, b: &'a ir::Expr) -> R<(u16, u16)> {
         let ra = if pure(b) { self.expr_any(a)? } else { self.expr_copy(a)? };
         let rb = self.expr_any(b)?;
         Ok((ra, rb))
@@ -208,7 +209,7 @@ impl Compiler {
         self.emit(Op::Aux { s, d, a });
     }
 
-    fn tree_expr(&mut self, e: &ir::Expr, d: u16) {
+    fn tree_expr(&mut self, e: &'a ir::Expr, d: u16) {
         self.chunk.exprs.push(e.clone());
         self.chunk.expr_kinds.push(match e {
             ir::Expr::Builtin { id, .. } => format!("Builtin {id}"),
@@ -220,7 +221,7 @@ impl Compiler {
     }
 
     /// Emits the typed instruction for `l op r` when both operands are proven Integer (or both Boolean) and one exists.
-    fn typed_binary(&mut self, op: ir::BinOp, l: &ir::Expr, r: &ir::Expr, d: u16) -> R<bool> {
+    fn typed_binary(&mut self, op: ir::BinOp, l: &'a ir::Expr, r: &'a ir::Expr, d: u16) -> R<bool> {
         use ir::BinOp as B;
         let (Some(tl), Some(tr)) = (self.tys.expr_ty(l), self.tys.expr_ty(r)) else {
             return Ok(false);
@@ -275,7 +276,7 @@ impl Compiler {
 
     /// Evaluates the condition `c` and emits the jump taken when it is false, to be patched; returns the jump's index.
     /// An Integer compare is fused with the jump.
-    fn cond_jump(&mut self, c: &ir::Expr, t: u32) -> R<usize> {
+    fn cond_jump(&mut self, c: &'a ir::Expr, t: u32) -> R<usize> {
         use ir::BinOp as B;
         if let ir::Expr::Binary(op @ (B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge), l, r) = c {
             if (self.tys.expr_ty(l), self.tys.expr_ty(r)) == (Some(Ty::Integer), Some(Ty::Integer)) {
@@ -299,7 +300,7 @@ impl Compiler {
         }))
     }
 
-    fn expr_into(&mut self, e: &ir::Expr, d: u16) -> R<()> {
+    fn expr_into(&mut self, e: &'a ir::Expr, d: u16) -> R<()> {
         use ir::Expr as E;
         let mark = self.next;
         match e {
@@ -524,7 +525,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn arg_regs(&mut self, args: &[ir::Arg]) -> R<Vec<u16>> {
+    fn arg_regs(&mut self, args: &'a [ir::Arg]) -> R<Vec<u16>> {
         let mut regs = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
             let rest_pure = args[i + 1..].iter().all(arg_pure);
@@ -535,7 +536,7 @@ impl Compiler {
 
     /// The register of one call or builtin argument. A local is used in place when the arguments after it cannot write
     /// it; the register stays allocated until the instruction runs (the caller resets the temporaries per statement).
-    fn arg_reg(&mut self, a: &ir::Arg, rest_pure: bool) -> R<u16> {
+    fn arg_reg(&mut self, a: &'a ir::Arg, rest_pure: bool) -> R<u16> {
         match a {
             ir::Arg::Value(e) => {
                 if rest_pure {
@@ -568,7 +569,7 @@ impl Compiler {
 
     // ---- statements ----
 
-    fn block(&mut self, stmts: &[ir::Stmt]) -> R<()> {
+    fn block(&mut self, stmts: &'a [ir::Stmt]) -> R<()> {
         for s in stmts {
             let mark = self.next;
             self.stmt(s)?;
@@ -577,7 +578,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn tree_stmt(&mut self, s: &ir::Stmt) {
+    fn tree_stmt(&mut self, s: &'a ir::Stmt) {
         self.chunk.stmts.push(s.clone());
         self.chunk.stmt_kinds.push(stmt_kind(s));
         let idx = (self.chunk.stmts.len() - 1) as u32;
@@ -611,7 +612,7 @@ impl Compiler {
         }
     }
 
-    fn stmt(&mut self, s: &ir::Stmt) -> R<()> {
+    fn stmt(&mut self, s: &'a ir::Stmt) -> R<()> {
         use ir::Stmt as S;
         match s {
             S::Pos(p) => {
@@ -835,7 +836,7 @@ impl Compiler {
         Ok(())
     }
 
-    fn assign(&mut self, p: &ir::Place, e: &ir::Expr) -> R<()> {
+    fn assign(&mut self, p: &'a ir::Place, e: &'a ir::Expr) -> R<()> {
         // `S += x` and `S := S + x` on a text variable append in place: the tree walker's routine does it.
         if let (ir::Place::Local(_) | ir::Place::Global(_), ir::Expr::Convert(RtType::Text(_), inner)) = (p, e) {
             if let ir::Expr::Binary(ir::BinOp::Add, l, _) = &**inner {

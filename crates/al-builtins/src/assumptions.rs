@@ -241,6 +241,18 @@ registry! {
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
     },
+    SetTableViewKeepsSetRecordPosition => {
+        id: "set-table-view-keeps-set-record-position",
+        assumed: "On a Page variable, SetTableView(Rec) after SetRecord(Rec) takes the filters of the view and keeps the record SetRecord handed over as the position the page opens on, so OnOpenPage reads it as Rec.",
+        tests: "VendEntry-Apply Posted Entries / CustEntry-Apply Posted Entries (SetRecord then SetTableView, then Apply Vendor Entries OnOpenPage reads Rec.\"Vendor No.\"): about 39 Tests-ERM tests.",
+        probe: "A page variable with SetRecord(A) then SetTableView(B) where B has a filter and another position: the Rec OnOpenPage reads, the rows shown, and the same in the other order.",
+    },
+    FormatCurrencyPrefix => {
+        id: "format-currency-prefix",
+        assumed: "In a Format string the code `<C,CODE>` (the currency prefix of Base Application's Amount Auto Format) is accepted and writes nothing.",
+        tests: "Format(Amount, 0, AutoFormat.ResolveAutoFormat(AmountFormat, 'GBP')) in the Remittance Advice and Finance Charge Memo reports: about 28 Tests-ERM tests (FinanceChargeMemoAndApply).",
+        probe: "Format(123.45, 0, '<C,GBP><Precision,2:2><Standard Format,0>') and with the code after the others; Format(5, 0, '<C,GBP><Integer>'); '<C,>' and '<C>'.",
+    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

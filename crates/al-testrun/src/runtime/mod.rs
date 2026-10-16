@@ -359,7 +359,7 @@ fn run_unit(
             capture: u.capture,
             order: u.order.clone(),
             clock_start,
-            exec: al_vm::ExecMode::Tree,
+            exec: al_vm::ExecMode::from_env(),
             digest: u.dual,
             ..Default::default()
         };

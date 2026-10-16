@@ -340,7 +340,12 @@ pub(crate) struct Chunk {
 /// The chunks of a program, compiled the first time a routine is called.
 pub(crate) struct ExecProgram {
     chunks: Vec<Vec<OnceLock<Option<Box<Chunk>>>>>,
+    /// How often each routine was asked for: a routine that runs once (install and setup code) is not worth compiling.
+    calls: Vec<Vec<std::sync::atomic::AtomicU32>>,
 }
+
+/// A routine is compiled when it is called this many times, or at the first call if it has a loop.
+const HOT: u32 = 2;
 
 impl ExecProgram {
     pub(crate) fn new(program: &ir::Program) -> ExecProgram {
@@ -350,21 +355,37 @@ impl ExecProgram {
                 .iter()
                 .map(|o| o.routines.iter().map(|_| OnceLock::new()).collect())
                 .collect(),
+            calls: program
+                .objects
+                .iter()
+                .map(|o| {
+                    o.routines
+                        .iter()
+                        .map(|_| std::sync::atomic::AtomicU32::new(0))
+                        .collect()
+                })
+                .collect(),
         }
     }
 
     /// The chunk of routine `routine` of object `object`, if it compiles.
     pub(crate) fn chunk(&self, program: &ir::Program, object: usize, routine: usize) -> Option<&Chunk> {
-        self.chunks[object][routine]
-            .get_or_init(|| {
-                let c = compile(&program.objects[object].routines[routine])?;
-                STATS.routines.fetch_add(1, Ordering::Relaxed);
-                if c.tree_nodes > 0 {
-                    STATS.routines_with_tree.fetch_add(1, Ordering::Relaxed);
-                }
-                Some(Box::new(c))
-            })
-            .as_deref()
+        let cell = &self.chunks[object][routine];
+        if cell.get().is_none()
+            && self.calls[object][routine].fetch_add(1, Ordering::Relaxed) + 1 < HOT
+            && !has_loop(&program.objects[object].routines[routine].body)
+        {
+            return None;
+        }
+        cell.get_or_init(|| {
+            let c = compile(&program.objects[object].routines[routine])?;
+            STATS.routines.fetch_add(1, Ordering::Relaxed);
+            if c.tree_nodes > 0 {
+                STATS.routines_with_tree.fetch_add(1, Ordering::Relaxed);
+            }
+            Some(Box::new(c))
+        })
+        .as_deref()
     }
 }
 
@@ -432,4 +453,18 @@ mod tests {
     fn an_instruction_is_small() {
         assert!(std::mem::size_of::<Op>() <= 16, "{}", std::mem::size_of::<Op>());
     }
+}
+
+/// Whether any statement of `body` is a loop: one call of such a routine can run long.
+fn has_loop(body: &[ir::Stmt]) -> bool {
+    use ir::Stmt as S;
+    body.iter().any(|s| match s {
+        S::While(..) | S::Repeat(..) | S::For { .. } | S::Foreach { .. } => true,
+        S::If(_, a, b) => has_loop(a) || has_loop(b),
+        S::Case {
+            branches, otherwise, ..
+        } => branches.iter().any(|(_, b)| has_loop(b)) || has_loop(otherwise),
+        S::AssertError(b) => has_loop(b),
+        _ => false,
+    })
 }

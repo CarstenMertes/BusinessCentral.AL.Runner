@@ -28,12 +28,12 @@ fn release(f: &mut Frame, r: u16, nl: u16) {
 impl Session {
     /// Runs `chunk` on frame `f`. The frame's locals already hold the temporaries.
     pub(crate) fn run_chunk(&mut self, chunk: &Chunk, f: &mut Frame) -> Result<(), Signal> {
-        self.run_range(chunk, f, 0, chunk.code.len()).map(|_| ())
+        self.run_range::<false>(chunk, f, 0, chunk.code.len()).map(|_| ())
     }
 
     /// Runs the instructions `start..end` and returns where it stopped: `end` when the code ran off its end, otherwise
     /// the target of a jump that left the range (a `break` or `continue` out of an `asserterror` body).
-    pub(crate) fn run_range(
+    pub(crate) fn run_range<const RANGED: bool>(
         &mut self,
         chunk: &Chunk,
         f: &mut Frame,
@@ -43,7 +43,11 @@ impl Session {
         let nl = chunk.nlocals;
         let code = &chunk.code[..];
         let mut pc = start;
-        while pc.wrapping_sub(start) < end - start {
+        while if RANGED {
+            pc.wrapping_sub(start) < end - start
+        } else {
+            pc < end
+        } {
             let op = code[pc];
             pc += 1;
             match op {
@@ -195,32 +199,7 @@ impl Session {
                 Op::ThisInstance { d } => Self::op_this(f, d),
                 Op::BaseInstance { d } => self.op_base(f, d)?,
                 Op::Aux { s, d, a } => self.op_aux(&chunk.aux[s as usize], f, d, a, nl)?,
-                Op::Assert { end: stop, from } => {
-                    let stop = stop as usize;
-                    match self.run_range(chunk, f, pc, stop) {
-                        Ok(at) if at == stop => {
-                            return Err(Signal::Error(Box::new(al_builtins::native::AlError {
-                                message: "An error was expected inside an ASSERTERROR statement.".into(),
-                                code: "AssertError".into(),
-                                call_stack: String::new(),
-                            })));
-                        }
-                        Ok(at) => pc = at,
-                        Err(Signal::Error(mut e)) => {
-                            self.rollback_transaction();
-                            self.add_top_frame(&mut e);
-                            self.last_error = *e;
-                            // Temporaries of the body that the error left behind hold nothing alive.
-                            for r in from..(f.locals.len() as u16).max(from) {
-                                if r >= nl {
-                                    f.locals[r as usize] = Value::Null;
-                                }
-                            }
-                            pc = stop;
-                        }
-                        Err(other) => return Err(other),
-                    }
-                }
+                Op::Assert { end: stop, from } => pc = self.op_assert(chunk, f, pc, stop as usize, from)?,
                 Op::ForeachInit { s } => self.op_foreach_init(&chunk.foreachs[s as usize], f, nl)?,
                 Op::ForeachNext { s, t } => {
                     if !self.op_foreach_next(&chunk.foreachs[s as usize], f)? {
@@ -239,6 +218,31 @@ impl Session {
             }
         }
         Ok(pc)
+    }
+
+    /// `asserterror`: runs the body `pc..stop`; returns where the code goes on.
+    #[inline(never)]
+    fn op_assert(&mut self, chunk: &Chunk, f: &mut Frame, pc: usize, stop: usize, from: u16) -> Result<usize, Signal> {
+        let nl = chunk.nlocals;
+        match self.run_range::<true>(chunk, f, pc, stop) {
+            Ok(at) if at == stop => Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                message: "An error was expected inside an ASSERTERROR statement.".into(),
+                code: "AssertError".into(),
+                call_stack: String::new(),
+            }))),
+            Ok(at) => Ok(at),
+            Err(Signal::Error(mut e)) => {
+                self.rollback_transaction();
+                self.add_top_frame(&mut e);
+                self.last_error = *e;
+                // Temporaries of the body that the error left behind hold nothing alive.
+                for r in from.max(nl) as usize..f.locals.len() {
+                    f.locals[r] = Value::Null;
+                }
+                Ok(stop)
+            }
+            Err(other) => Err(other),
+        }
     }
 
     #[inline(never)]

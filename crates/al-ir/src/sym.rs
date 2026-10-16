@@ -129,6 +129,24 @@ pub struct ControlKey {
     pub name: String,
 }
 
+/// Where an enum declares that a codeunit implements an interface (`Implementation`, `DefaultImplementation`,
+/// `UnknownValueImplementation`).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum ImplSlot {
+    /// On the value with this ordinal.
+    Value(u32),
+    Default,
+    Unknown,
+}
+
+/// One `Interface = Codeunit` pair of an enum or enum extension, as lowering resolved the names (`None`: not found).
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct EnumImplDecl {
+    pub slot: ImplSlot,
+    pub interface: Option<ObjKey>,
+    pub codeunit: Option<ObjKey>,
+}
+
 /// A reference that stands for a set of objects or routines that only the whole program knows. Lowering writes
 /// a marker (`walk::EXPAND`) at the site and the index of the entry; link replaces the marker with the set.
 #[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
@@ -233,6 +251,9 @@ pub struct SymObject {
     pub refs: Refs,
     /// For a codeunit: the interfaces it implements, those it lists and the ones they extend.
     pub implements: Vec<ObjKey>,
+    /// For an enum or enum extension: the implementations it declares and the ordinals of its values.
+    pub enum_impls: Vec<EnumImplDecl>,
+    pub enum_ordinals: Vec<u32>,
     /// For an extension object: the object it extends, when it is in the program.
     pub extends: Option<ObjKey>,
     /// The lists of its base that the extension is in.

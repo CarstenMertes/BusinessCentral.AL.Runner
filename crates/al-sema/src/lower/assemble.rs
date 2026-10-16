@@ -918,6 +918,8 @@ pub(crate) fn lower_core(
                     expansions: Vec::new(),
                     key_owners: Vec::new(),
                     implements: src.map_or_else(Vec::new, |s| s.facts(oi).implements.clone()),
+                    enum_impls: src.map_or_else(Vec::new, |s| s.facts(oi).enum_impls.clone()),
+                    enum_ordinals: src.map_or_else(Vec::new, |s| s.facts(oi).enum_ordinals.clone()),
                     fields: src.map_or_else(Vec::new, |s| s.facts(oi).fields.clone()),
                     controls: src.map_or_else(Vec::new, |s| s.facts(oi).controls.clone()),
                     key: src.map(|s| s.facts(oi).key.clone()),
@@ -941,6 +943,7 @@ pub(crate) fn lower_core(
         shared.active.clone(),
     );
     let implements = |cu: usize| implemented_interfaces(ws, cu);
+    let enum_info = |i: usize| enum_info_of(ws, members, i);
     let piece_keys: Vec<al_ir::sym::ObjKey> = pieces
         .iter()
         .map(|p| {
@@ -950,6 +953,24 @@ pub(crate) fn lower_core(
                 .unwrap_or_else(|| al_ir::sym::ObjKey::of(&p.object, &program.apps))
         })
         .collect();
+    let enum_facts = |oi: usize| -> (Vec<al_ir::sym::EnumImplDecl>, Vec<u32>) {
+        if !matches!(ws.objects[oi].kind, ObjKind::Enum | ObjKind::EnumExtension) {
+            return (Vec::new(), Vec::new());
+        }
+        let (decls, ordinals) = enum_info(oi);
+        let key = |i: Option<usize>| i.map(|i| piece_keys[i].clone());
+        (
+            decls
+                .into_iter()
+                .map(|(slot, interface, codeunit)| al_ir::sym::EnumImplDecl {
+                    slot,
+                    interface: key(interface),
+                    codeunit: key(codeunit),
+                })
+                .collect(),
+            ordinals,
+        )
+    };
     let mut exported = export.then(crate::provided::DepSet::default);
     let kinds: Vec<ObjKind> = ws.objects.iter().map(|o| o.kind).collect();
     let field_pos = |t: usize, id: u32| members.get(t).fields.iter().position(|f| f.id == id);
@@ -1020,6 +1041,8 @@ pub(crate) fn lower_core(
                 controls: piece.object.page.as_ref().map_or_else(Vec::new, |p| {
                     p.controls.iter().map(|c| c.name.to_ascii_lowercase()).collect()
                 }),
+                enum_impls: enum_facts(oi).0,
+                enum_ordinals: enum_facts(oi).1,
                 implements: implements(oi).into_iter().map(|i| piece_keys[i].clone()).collect(),
                 routine_keys: routine_keys.of(oi).to_vec(),
                 xml_reason: shared.xml_reasons[oi].clone(),
@@ -1038,6 +1061,8 @@ pub(crate) fn lower_core(
             control_refs: piece.control_refs,
             expansions: piece.expansions,
             implements: piece.implements,
+            enum_impls: piece.enum_impls,
+            enum_ordinals: piece.enum_ordinals,
             key_owners: piece.key_owners,
             table_contribution: None,
             fields: piece.fields,
@@ -1097,6 +1122,7 @@ pub(crate) fn lower_core(
         join_order: &join_order,
         own_enum: &own_enum,
         implements: &implements,
+        enum_info: &enum_info,
         own_field_properties: &own_field_properties,
         modify_properties: &modify_properties,
     };
@@ -1124,6 +1150,7 @@ struct Lookups<'a> {
     join_order: &'a (dyn Fn(usize, al_ir::sym::ListKind) -> (u32, u32, u32) + Sync),
     own_enum: &'a (dyn Fn(usize) -> super::localize::EnumOwn + Sync),
     implements: &'a (dyn Fn(usize) -> Vec<usize> + Sync),
+    enum_info: &'a (dyn Fn(usize) -> super::localize::EnumInfo + Sync),
     /// The properties of the fields a table declares itself, in order.
     own_field_properties: &'a (dyn Fn(usize) -> Vec<Vec<(String, String)>> + Sync),
     /// The `modify(Field)` blocks of a table extension: field name and the properties it sets.
@@ -1306,6 +1333,35 @@ fn split_tables(staged: &mut [Staged], provided: &(dyn Fn(usize) -> bool + Sync)
     }
 }
 
+/// What enum (or enum extension) `i` declares itself: the implementations with their names resolved, and the
+/// ordinals of its values.
+fn enum_info_of(ws: &Workspace, members: &MemberTable<'_>, i: usize) -> super::localize::EnumInfo {
+    use crate::members::ImplSlot as M;
+    use al_ir::sym::ImplSlot as S;
+    let m = members.own(i);
+    let decls = m
+        .enum_impls
+        .iter()
+        .map(|im| {
+            let file = ws.objects[im.declared_in].file;
+            let found = |kind, parts: &[String]| match ws.resolve_ref(file, kind, parts) {
+                Resolution::Found(x) => Some(x),
+                _ => None,
+            };
+            (
+                match im.slot {
+                    M::Value(o) => S::Value(o),
+                    M::Default => S::Default,
+                    M::Unknown => S::Unknown,
+                },
+                found(ObjKind::Interface, &im.interface),
+                found(ObjKind::Codeunit, &im.codeunit),
+            )
+        })
+        .collect();
+    (decls, m.enum_values.iter().map(|(v, _)| *v).collect())
+}
+
 /// The interfaces codeunit `cu` implements: the ones it lists and the ones those extend, in workspace numbering.
 fn implemented_interfaces(ws: &Workspace, cu: usize) -> Vec<usize> {
     let mut out = Vec::new();
@@ -1349,6 +1405,8 @@ struct Staged {
     expansions: Vec<super::localize::Expanded>,
     /// A provided codeunit: the interfaces it implements, from the cache's facts.
     implements: Vec<al_ir::sym::ObjKey>,
+    enum_impls: Vec<al_ir::sym::EnumImplDecl>,
+    enum_ordinals: Vec<u32>,
     key_owners: Vec<usize>,
     /// What a table extension adds to its table, taken out of the table before the objects are made symbolic.
     table_contribution: Option<al_ir::sym::TableContribution>,
@@ -1415,6 +1473,7 @@ fn link_pieces(
         join_order: lookups.join_order,
         own_enum: lookups.own_enum,
         implements: lookups.implements,
+        enum_info: lookups.enum_info,
     };
     let workers = lower_workers();
     // The lists of extensions the objects hold, as the lists the extension objects are in.
@@ -1446,6 +1505,8 @@ fn link_pieces(
         if provided(oi) {
             Ok(al_link::Unit::Dense(al_link::DenseObject {
                 key: keys[oi].clone(),
+                enum_impls: s.enum_impls,
+                enum_ordinals: s.enum_ordinals,
                 implements: s.implements,
                 fields: s.fields,
                 controls: s.controls,
@@ -1460,10 +1521,10 @@ fn link_pieces(
                 s.positions,
                 &s.field_refs,
                 &s.control_refs,
-                &s.expansions,
                 super::localize::Extras {
                     joins: &joins[oi],
                     table_contribution: s.table_contribution,
+                    expansions: &s.expansions,
                 },
             )
             .map(al_link::Unit::Sym)
@@ -1603,6 +1664,7 @@ pub fn relower_objects(
         report_item_table: &report_item_table,
         extends: &|e| ws.extension_target(e),
         implements: &|cu| implemented_interfaces(ws, cu),
+        enum_info: &|i| enum_info_of(ws, &members, i),
         join_order: &|_, _| (0, 0, 0),
         own_enum: &|i| {
             let m = members.own(i);
@@ -1626,11 +1688,11 @@ pub fn relower_objects(
                 piece.positions,
                 &piece.field_refs,
                 &piece.control_refs,
-                &[],
                 // The lists of extensions stay as they were: the declarations did not change.
                 super::localize::Extras {
                     joins: &[],
                     table_contribution: None,
+                    expansions: &[],
                 },
             )?,
         ));
@@ -1694,6 +1756,8 @@ pub(crate) struct Piece {
     pub(crate) key_owners: Vec<usize>,
     /// A provided codeunit: the interfaces it implements, from the cache's facts.
     pub(crate) implements: Vec<al_ir::sym::ObjKey>,
+    pub(crate) enum_impls: Vec<al_ir::sym::EnumImplDecl>,
+    pub(crate) enum_ordinals: Vec<u32>,
     /// A provided table: its field numbers, from the cache's facts.
     pub(crate) fields: Vec<u32>,
     /// A provided page: its control names, from the cache's facts.

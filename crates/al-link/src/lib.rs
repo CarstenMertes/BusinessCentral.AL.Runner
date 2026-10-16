@@ -8,7 +8,8 @@
 //!
 //! Core crate: no OS access (ADR-006).
 use al_ir::sym::{
-    Contribution, ControlKey, Expansion, FieldKey, FxMap, ListKind, LocalKey, ObjKey, RoutineKey, SymObject,
+    Contribution, ControlKey, EnumImplDecl, Expansion, FieldKey, FxMap, ImplSlot, ListKind, LocalKey, ObjKey,
+    RoutineKey, SymObject,
 };
 use al_ir::walk::{ExpansionSite, RefVisitor, TableOf, walk_object, walk_table_contribution};
 use al_ir::{Object, Program, SrcPos};
@@ -20,6 +21,9 @@ use std::sync::OnceLock;
 #[derive(Debug, Clone, PartialEq)]
 pub struct DenseObject {
     pub key: ObjKey,
+    /// For an enum or enum extension: the implementations it declares and the ordinals of its values.
+    pub enum_impls: Vec<EnumImplDecl>,
+    pub enum_ordinals: Vec<u32>,
     /// For a codeunit: the interfaces it implements, those it lists and the ones they extend.
     pub implements: Vec<ObjKey>,
     /// For a table: the number of each field, in the order of its field list. Used where `object`
@@ -154,6 +158,17 @@ trait Space {
     fn implemented(&self, _i: usize) -> &[ObjKey] {
         &[]
     }
+    /// The implementations enum (or enum extension) `i` declares, the ordinals of its values, and the
+    /// enum extensions of an enum, in program order.
+    fn enum_impls(&self, _i: usize) -> &[EnumImplDecl] {
+        &[]
+    }
+    fn enum_ordinals(&self, _i: usize) -> &[u32] {
+        &[]
+    }
+    fn enum_extensions(&self, _i: usize) -> &[usize] {
+        &[]
+    }
     /// The numbers of the fields that table extensions add to table `i`, in order.
     fn extra_field_numbers(&self, _i: usize) -> &[u32] {
         &[]
@@ -165,6 +180,8 @@ struct UnitSpace<'u, 'k> {
     units: &'u [Unit],
     /// Per table: the numbers of the fields its extensions add.
     extras: FxMap<usize, Vec<u32>>,
+    /// Per enum: its extensions, in program order.
+    enum_exts: FxMap<usize, Vec<usize>>,
     routines: &'k (dyn Fn(usize) -> &'k [LocalKey] + Sync),
 }
 
@@ -203,6 +220,37 @@ impl Space for UnitSpace<'_, '_> {
             Unit::Dense(d) => &d.implements,
         }
     }
+    fn enum_impls(&self, i: usize) -> &[EnumImplDecl] {
+        match &self.units[i] {
+            Unit::Sym(s) => &s.enum_impls,
+            Unit::Dense(d) => &d.enum_impls,
+        }
+    }
+    fn enum_ordinals(&self, i: usize) -> &[u32] {
+        match &self.units[i] {
+            Unit::Sym(s) => &s.enum_ordinals,
+            Unit::Dense(d) => &d.enum_ordinals,
+        }
+    }
+    fn enum_extensions(&self, i: usize) -> &[usize] {
+        self.enum_exts.get(&i).map_or(&[], |v| v.as_slice())
+    }
+}
+
+/// The enum extensions of each enum, in program order.
+fn enum_extensions(units: &[Unit]) -> FxMap<usize, Vec<usize>> {
+    let at: FxMap<&ObjKey, usize> = units.iter().enumerate().map(|(i, u)| (u.key(), i)).collect();
+    let mut out: FxMap<usize, Vec<usize>> = FxMap::default();
+    for (i, u) in units.iter().enumerate() {
+        if let Unit::Sym(s) = u {
+            if s.object.kind == al_ir::ObjKind::EnumExtension {
+                if let Some(base) = s.extends.as_ref().and_then(|k| at.get(k)).copied() {
+                    out.entry(base).or_default().push(i);
+                }
+            }
+        }
+    }
+    out
 }
 
 /// The numbers of the fields the table extensions of each table add, in program order.
@@ -369,11 +417,44 @@ impl<'a, S: Space + ?Sized> Tables<'a, S> {
                 }
                 Ok(Expanded::Call(targets))
             }
-            Expansion::EnumImpl { .. } => Err(Box::new(LinkError::BadReference {
-                object: from.clone(),
-                class: "enum implementation",
-                index: 0,
-            })),
+            Expansion::EnumImpl { enum_, interface } => {
+                let e = self.object(from, enum_)?;
+                let order: Vec<usize> = std::iter::once(e)
+                    .chain(self.space.enum_extensions(e).iter().copied())
+                    .collect();
+                let decls: Vec<&EnumImplDecl> = order.iter().flat_map(|&o| self.space.enum_impls(o)).collect();
+                let missing = |_: &str| {
+                    Box::new(LinkError::BadReference {
+                        object: from.clone(),
+                        class: "enum implementation",
+                        index: 0,
+                    })
+                };
+                let find = |slot: ImplSlot| -> Result<Option<usize>, Box<LinkError>> {
+                    for d in decls.iter().filter(|d| d.slot == slot) {
+                        if d.interface.as_ref() != Some(interface) {
+                            continue;
+                        }
+                        return match d.codeunit.as_ref().and_then(|k| self.at.get(k)) {
+                            Some(&c) => Ok(Some(c)),
+                            None => Err(missing("codeunit")),
+                        };
+                    }
+                    Ok(None)
+                };
+                let default = find(ImplSlot::Default)?;
+                let unknown = find(ImplSlot::Unknown)?;
+                let mut by_ordinal = Vec::new();
+                for &o in &order {
+                    for &ordinal in self.space.enum_ordinals(o) {
+                        match find(ImplSlot::Value(ordinal))?.or(default) {
+                            Some(c) => by_ordinal.push((ordinal as i32, c)),
+                            None => return Err(missing("value")),
+                        }
+                    }
+                }
+                Ok(Expanded::Enum { by_ordinal, unknown })
+            }
         }
     }
 
@@ -468,6 +549,7 @@ pub fn link<'k>(
         let space = UnitSpace {
             units: &units,
             extras: extra_fields(&units),
+            enum_exts: enum_extensions(&units),
             routines,
         };
         let tables = Tables::new(&space)?;
@@ -854,6 +936,10 @@ struct Resolved {
 enum Expanded {
     Call(Vec<(usize, usize)>),
     Test(Vec<u32>),
+    Enum {
+        by_ordinal: Vec<(i32, usize)>,
+        unknown: Option<usize>,
+    },
 }
 
 struct Rewrite<'a> {
@@ -887,6 +973,16 @@ impl RefVisitor for Rewrite<'_> {
         match (self.res.expanded.get(index), site) {
             (Some(Expanded::Call(t)), ExpansionSite::InterfaceCall { targets }) => *targets = t.clone(),
             (Some(Expanded::Test(o)), ExpansionSite::InterfaceTest { objects }) => *objects = o.clone(),
+            (
+                Some(Expanded::Enum { by_ordinal, unknown }),
+                ExpansionSite::EnumImpl {
+                    by_ordinal: b,
+                    unknown: u,
+                },
+            ) => {
+                *b = by_ordinal.clone();
+                *u = *unknown;
+            }
             _ => self.bad = self.bad.or(Some(("expansion", index))),
         }
     }
@@ -1109,6 +1205,8 @@ mod tests {
     fn a_dependency_object_placed_as_it_is_can_still_be_called_by_key() {
         let dense = DenseObject {
             key: key(2),
+            enum_impls: vec![],
+            enum_ordinals: vec![],
             implements: vec![],
             fields: vec![],
             controls: vec![],

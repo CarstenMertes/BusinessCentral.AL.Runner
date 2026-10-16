@@ -266,10 +266,16 @@ impl Lowerer<'_> {
                 }
             }
         }
-        Ok(ir::Expr::EnumImpl {
-            value: Box::new(value),
+        let at = self.expansion(super::localize::Expanded::EnumImpl {
+            enum_: e,
+            interface: iface,
             by_ordinal,
             unknown,
+        });
+        Ok(ir::Expr::EnumImpl {
+            value: Box::new(value),
+            by_ordinal: vec![(ir::walk::EXPAND_ORDINAL, at)],
+            unknown: None,
         })
     }
 

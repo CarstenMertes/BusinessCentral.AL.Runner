@@ -240,6 +240,10 @@ pub(crate) struct Expansions {
     pub(crate) list: Vec<Expanded>,
 }
 
+/// The implementations an enum or enum extension declares (slot, interface, codeunit, in workspace numbering) and
+/// the ordinals of its values.
+pub(crate) type EnumInfo = (Vec<(al_ir::sym::ImplSlot, Option<usize>, Option<usize>)>, Vec<u32>);
+
 /// The values and the captions an enum declares.
 pub(crate) type EnumOwn = (Vec<(i32, String)>, Vec<(i32, String)>);
 
@@ -256,6 +260,8 @@ pub(crate) struct Keys<'a> {
     pub table_of: &'a [Option<usize>],
     /// The number of field `pos` of table `table`.
     pub field_no: &'a (dyn Fn(usize, usize) -> Option<u32> + Sync),
+    /// The implementations and value ordinals an enum or enum extension declares itself.
+    pub enum_info: &'a (dyn Fn(usize) -> EnumInfo + Sync),
     /// The interfaces codeunit `i` implements (those it lists and the ones they extend), in workspace numbering.
     pub implements: &'a (dyn Fn(usize) -> Vec<usize> + Sync),
     /// The object an extension object extends, when it is in the program.
@@ -273,6 +279,7 @@ pub(crate) struct Extras<'a> {
     /// The lists of its base that the object is in: (list, base).
     pub joins: &'a [(ListKind, usize)],
     pub table_contribution: Option<TableContribution>,
+    pub expansions: &'a [Expanded],
 }
 
 /// Makes the symbolic object of a lowered one. `Err` names a reference that points outside the
@@ -284,14 +291,31 @@ pub(crate) fn localize(
     positions: Vec<ir::SrcPos>,
     field_refs: &[(usize, u32)],
     control_refs: &[(usize, String, usize)],
-    expansions: &[Expanded],
     extras: Extras<'_>,
 ) -> Result<SymObject, String> {
     let Extras {
         joins,
         table_contribution,
+        expansions,
     } = extras;
     let object_kind = object.kind;
+    let (enum_impls, enum_ordinals) = if matches!(object_kind, ObjKind::Enum | ObjKind::EnumExtension) {
+        let (decls, ordinals) = (keys.enum_info)(own);
+        let key = |i: Option<usize>| i.map(|i| keys.objects[i].clone());
+        (
+            decls
+                .into_iter()
+                .map(|(slot, interface, codeunit)| al_ir::sym::EnumImplDecl {
+                    slot,
+                    interface: key(interface),
+                    codeunit: key(codeunit),
+                })
+                .collect(),
+            ordinals,
+        )
+    } else {
+        (Vec::new(), Vec::new())
+    };
     // What other objects add to this one is not part of it: link merges it again.
     match object.kind {
         ObjKind::Enum if !object.uncompiled => {
@@ -367,6 +391,8 @@ pub(crate) fn localize(
         } else {
             Vec::new()
         },
+        enum_impls,
+        enum_ordinals,
         extends,
         joins: joins
             .iter()

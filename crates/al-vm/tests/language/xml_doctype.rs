@@ -54,3 +54,17 @@ fn a_detached_text_cdata_comment_or_pi_raises_invalid_operation_for_sibling_oper
     );
     assert_eq!(r, format!("{msg}|{msg}|{msg}|{msg}"));
 }
+
+#[test]
+fn select_single_node_without_a_match_raises_in_the_statement_form_and_a_declaration_added_to_an_element_is_text() {
+    // xml/lt-xml-cdata-comment-pi-text/P90TextRead.al:SelectSingle_Absolute_2 `x2` (InvalidXPathSelection);
+    // P90CDataEdit.al:AfterSelf_Attached_InvalidKinds `k7`.
+    let src = "codeunit 50100 C { procedure F(): Text var Doc: XmlDocument; E: XmlElement; N: XmlNode; S: Text; T: Text; begin
+        Doc := XmlDocument.Create(); E := XmlElement.Create('r'); Doc.Add(E);
+        asserterror Doc.SelectSingleNode('/r/comment()', N); S := GetLastErrorText() + '|' + GetLastErrorCode();
+        E.Add(XmlDeclaration.Create('1.0', 'utf-8', 'yes')); E.WriteTo(T); exit(S + '|' + T); end; }";
+    assert_eq!(
+        al_testkit::text(al_testkit::run_with(src, "C", "F", vec![]).map(|(v, _)| v)),
+        "The XPath query '/r/comment()' does not match any nodes.|InvalidXPathSelection|<r>&lt;?xml version=\"1.0\" encoding=\"utf-8\" standalone=\"yes\"?&gt;</r>"
+    );
+}

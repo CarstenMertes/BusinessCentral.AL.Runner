@@ -1380,6 +1380,8 @@ fn check_fits(container: &Handle, node: &Handle, removed: &[Handle], at: Option<
             true
         }
         ("XmlElement", "XmlDocumentType") => return Err(nav_argument()),
+        // An XML declaration added to an element becomes its text (P90CDataEdit.al:AfterSelf_Attached_InvalidKinds `k7`).
+        ("XmlElement", "XmlDeclaration") => true,
         ("XmlDocument", "XmlElement") => {
             let has_root = children_of(container)
                 .iter()
@@ -1414,6 +1416,28 @@ fn insert(container: &Handle, at: Option<usize>, nodes: Vec<Handle>) -> Result<(
     for n in &nodes {
         check_fits(container, n, &[], at)?;
     }
+    // An XML declaration added to an element is written as text: its markup (escaped on output, P90CDataEdit.al `k7`).
+    let nodes: Vec<Handle> = if kind(container) == "XmlElement" {
+        nodes
+            .into_iter()
+            .map(|n| {
+                match with(&n, |d| match d {
+                    XData::Declaration {
+                        version,
+                        encoding,
+                        standalone,
+                        explicit,
+                    } => Some(declaration_text(version, encoding, standalone, *explicit)),
+                    _ => None,
+                }) {
+                    Some(markup) => new_node(XData::Text(markup)),
+                    None => n,
+                }
+            })
+            .collect()
+    } else {
+        nodes
+    };
     let mut at = at;
     for n in nodes {
         match kind(&n) {
@@ -3336,13 +3360,18 @@ fn select_single_node(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
 }
 
 fn single_result(c: &mut dyn Ctx, found: Option<Vec<Handle>>, a: &mut [Value], slot: usize) -> NResult {
+    let path = arg_text(a, 0)?;
     match found.and_then(|f| f.into_iter().next()) {
         Some(n) => {
             a[slot] = tagged("XmlNode", n);
             Ok(Value::Boolean(true))
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
-        None => unsupported("SelectSingleNode without a match, result unused (error text not pinned yet)"),
+        // The statement form raises (xml/lt-xml-cdata-comment-pi-text/P90*Read.al:SelectSingle_Absolute_2 `x2`).
+        None => Err(error(
+            format!("The XPath query '{path}' does not match any nodes."),
+            "InvalidXPathSelection",
+        )),
     }
 }
 

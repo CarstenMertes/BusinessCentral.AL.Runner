@@ -1092,6 +1092,73 @@ mod tests {
         assert!(codes(&[BASE, &ok]).is_empty());
     }
 
+    /// The codes of `files` compiled as an app that declares the dependency `dep`; `loaded` is the source of
+    /// that dependency, or `None` when it is declared but not loaded (`--no-deps`).
+    fn codes_with_dependency(files: &[&str], loaded: Option<&str>) -> Vec<String> {
+        let mut apps = vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec!["dep".into()],
+            files: files
+                .iter()
+                .enumerate()
+                .map(|(i, s)| (format!("f{i}.al"), s.to_string()))
+                .collect(),
+        }];
+        let mut kinds = vec![crate::workspace::AppKind::Workspace];
+        if let Some(src) = loaded {
+            apps.push(AppSource {
+                id: "dep".into(),
+                name: "dep".into(),
+                dependencies: vec![],
+                files: vec![("d.al".into(), src.to_string())],
+            });
+            kinds.push(crate::workspace::AppKind::Dependency);
+        }
+        let ws = Workspace::load_apps(apps, kinds, &Default::default());
+        let m = crate::members::build(&ws);
+        let r = crate::check::check(&ws, &m, &Catalog::load());
+        let mut v: Vec<String> = r
+            .diagnostics
+            .iter()
+            .filter(|d| d.code.starts_with("AL"))
+            .map(|d| d.code.to_string())
+            .collect();
+        v.sort();
+        v
+    }
+
+    #[test]
+    fn al0118_codeunit_name_is_not_judged_when_a_dependency_is_not_loaded() {
+        // Microsoft's "Global Triggers" lives in Base Application. Without the dependency (`--no-deps`) the
+        // name may exist, so neither the expression nor the subscriber is refused.
+        let user = "codeunit 50000 C { procedure P(): Integer begin exit(Codeunit::\"Global Triggers\"); end; }";
+        let sub = "codeunit 50001 S { [EventSubscriber(ObjectType::Codeunit, Codeunit::\"Global Triggers\", 'OnX', '', false, false)] local procedure H() begin end; }";
+        assert!(codes_with_dependency(&[user, sub], None).is_empty());
+        // The dependency is loaded and has no such codeunit: the name does not exist.
+        let other = "codeunit 60000 Other { }";
+        assert_eq!(codes_with_dependency(&[user], Some(other)), vec!["AL0118"]);
+        assert_eq!(codes_with_dependency(&[sub], Some(other)), vec!["AL0118"]);
+        // And it resolves when the dependency has it.
+        let gt = "codeunit 60001 \"Global Triggers\" { }";
+        assert!(codes_with_dependency(&[user, sub], Some(gt)).is_empty());
+    }
+
+    #[test]
+    fn al0118_bare_names_are_not_judged_when_a_dependency_is_not_loaded() {
+        // A codeunit with `TableNo` of a table of the missing dependency has an implicit `Rec`; a page with a
+        // source table of it assigns the table's fields by their bare names.
+        let cu = "codeunit 50000 C { TableNo = \"Sales Header\"; trigger OnRun() begin Rec.Foo := 1; end; }";
+        let page = "page 50001 P { PageType = Card; SourceTable = \"Sales Header\"; trigger OnOpenPage() begin Foo := 1; Bar(); end; }";
+        assert!(codes_with_dependency(&[cu, page], None).is_empty());
+        // With the dependency loaded (a table that has no such field) the page's names are judged.
+        let t = "table 60000 \"Sales Header\" { fields { field(1; Id; Integer) { } } }";
+        assert!(codes_with_dependency(&[page], Some(t)).contains(&"AL0118".to_string()));
+        // A page extension of a base page of the missing dependency calls the base page's procedure.
+        let ext = "pageextension 50002 PE extends \"Customer Card\" { trigger OnOpenPage() begin BaseProc(); Rec.Foo := 1; end; }";
+        assert!(codes_with_dependency(&[ext], None).is_empty());
+    }
+
     #[test]
     fn al0118_bare_call_of_an_unknown_name_in_a_codeunit() {
         let cu = "codeunit 50000 C { procedure Make(): Guid begin exit(CreateSequentialGuid()); end; }";

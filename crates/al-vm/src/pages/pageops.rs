@@ -150,7 +150,19 @@ impl Session {
 
     pub(super) fn test_page_op(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         let name = method.method();
-        let r = self.test_page_op_inner(method, st, args)?;
+        let r = match self.test_page_op_inner(method, st, args) {
+            // `CurrPage` and a `Page` variable are the page's own code, not a TestPage the test closed: BC does not raise
+            // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
+            // the call is refused instead of failing with the TestPage error (Posted Sales Document Lines.CopyLineToDoc reads
+            // `CurrPage.PostedShpts.PAGE` after its RunModal returned).
+            Err(Signal::Error(e)) if e.code == "TestPageNotOpened" && method.recv() == PageRecv::Page => {
+                return unsupported(format!(
+                    "{} called by the code of a page that is not open (what it does then is not pinned)",
+                    method.method()
+                ));
+            }
+            r => r?,
+        };
         // The client runs the page's background tasks before the call returns (corpus
         // handlers/TestPageBgTask_Tests.al:EnqueueBackgroundTask_CompletesBeforeOpenViewReturns).
         self.bg_drain(st)?;

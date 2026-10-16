@@ -6,7 +6,9 @@ use al_builtins::value::RtType;
 use types::{DeclaredTypes, ExprTypes, Ty, of_rt};
 
 /// Compiles `r`.
-pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
+/// `captured`: the form a value capture runs (ADR-030): statement and loop ops that tell the capture what the tree walker
+/// tells it. `None` for it also when a statement would need the tree walker.
+pub(crate) fn compile(r: &ir::Routine, captured: bool) -> Option<Chunk> {
     let nlocals = u16::try_from(r.locals.len()).ok()?;
     let mut c = Compiler {
         locals_ty: r.locals.iter().map(|l| l.ty.clone()).collect(),
@@ -16,6 +18,7 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
         },
         chunk: Chunk {
             code: Vec::new(),
+            cap_sites: Vec::new(),
             consts: Vec::new(),
             places: Vec::new(),
             types: Vec::new(),
@@ -39,8 +42,14 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
         next: nlocals,
         max: nlocals,
         loops: Vec::new(),
+        captured,
+        cap_depth: 0,
+        bail: false,
     };
     c.block(&r.body).ok()?;
+    if c.bail {
+        return None;
+    }
     c.chunk.temps = c.max - nlocals;
     if std::env::var_os("AL_EXEC_DUMP").is_some() {
         eprintln!("routine {} ({} locals, {} temps)", r.name, nlocals, c.chunk.temps);
@@ -52,6 +61,8 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
 }
 
 struct LoopCtx {
+    /// `cap_depth` at the loop statement: a `break` or `continue` closes the statements above it.
+    depth: u32,
     /// Jumps to patch to the loop's exit and to its next round.
     brk: Vec<usize>,
     cont: Vec<usize>,
@@ -66,6 +77,11 @@ struct Compiler<'a> {
     next: u16,
     max: u16,
     loops: Vec<LoopCtx>,
+    captured: bool,
+    /// The statements open at this point of the code (captured form only).
+    cap_depth: u32,
+    /// A statement needs the tree walker, which the captured form cannot take.
+    bail: bool,
 }
 
 type R<T> = Result<T, ()>;
@@ -570,6 +586,9 @@ impl<'a> Compiler<'a> {
     // ---- statements ----
 
     fn block(&mut self, stmts: &'a [ir::Stmt]) -> R<()> {
+        if self.captured {
+            return self.block_captured(stmts);
+        }
         for s in stmts {
             let mark = self.next;
             self.stmt(s)?;
@@ -578,7 +597,81 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
+    /// A block as the capture sees it: a marker and the statement after it are one statement (`exec_block_captured`).
+    fn block_captured(&mut self, stmts: &'a [ir::Stmt]) -> R<()> {
+        let mut i = 0;
+        while i < stmts.len() {
+            let mark = self.next;
+            if let ir::Stmt::Pos(p) = &stmts[i] {
+                self.stmt(&stmts[i])?;
+                self.emit(Op::CapHit { p: *p });
+                // Markers of an assumption sit between the position and its statement.
+                let mut j = i + 1;
+                while let Some(m @ ir::Stmt::Assume(_)) = stmts.get(j) {
+                    self.stmt(m)?;
+                    j += 1;
+                }
+                if let Some(next) = stmts.get(j) {
+                    self.emit(Op::CapBegin { p: *p });
+                    self.cap_depth += 1;
+                    self.stmt(next)?;
+                    self.cap_depth -= 1;
+                    self.chunk.cap_sites.push(CapSite {
+                        pos: *p,
+                        writes: crate::capture::written_locals(next),
+                    });
+                    let s = (self.chunk.cap_sites.len() - 1) as u32;
+                    self.emit(Op::CapEnd { s });
+                    self.next = mark;
+                    i = j + 1;
+                    continue;
+                }
+                self.next = mark;
+                i = j;
+                continue;
+            }
+            self.stmt(&stmts[i])?;
+            self.next = mark;
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// A loop statement starts: the register for the capture's id of it (captured form), after its `Enter` op.
+    fn cap_loop_enter(&mut self) -> R<Option<u16>> {
+        if !self.captured {
+            return Ok(None);
+        }
+        let d = self.alloc()?;
+        self.emit(Op::CapLoopEnter { d });
+        Ok(Some(d))
+    }
+
+    fn cap_loop_pass(&mut self, lid: Option<u16>) {
+        if let Some(a) = lid {
+            self.emit(Op::CapLoopPass { a });
+        }
+    }
+
+    fn cap_loop_exit(&mut self, lid: Option<u16>) {
+        if let Some(a) = lid {
+            self.emit(Op::CapLoopExit { a });
+        }
+    }
+
+    /// The pops a `break` or `continue` needs before it leaves the statements open inside the innermost loop.
+    fn cap_pops(&mut self) {
+        if let Some(depth) = self.loops.last().map(|l| l.depth) {
+            for _ in depth..self.cap_depth {
+                self.emit(Op::CapPop);
+            }
+        }
+    }
+
     fn tree_stmt(&mut self, s: &'a ir::Stmt) {
+        if self.captured {
+            self.bail = true;
+        }
         self.chunk.stmts.push(s.clone());
         self.chunk.stmt_kinds.push(stmt_kind(s));
         let idx = (self.chunk.stmts.len() - 1) as u32;
@@ -642,12 +735,15 @@ impl<'a> Compiler<'a> {
             S::While(c, body) => {
                 let saved = self.alloc()?;
                 self.emit(Op::SavePos { d: saved });
+                let lid = self.cap_loop_enter()?;
                 let top = self.here();
                 let mark = self.next;
                 let jf = self.cond_jump(c, 0)?;
                 self.next = mark;
                 self.emit(Op::CheckStop);
+                self.cap_loop_pass(lid);
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -657,6 +753,7 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::RestorePos { a: saved });
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                self.cap_loop_exit(lid);
                 self.patch(jf, end);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
@@ -664,9 +761,12 @@ impl<'a> Compiler<'a> {
             S::Repeat(body, until) => {
                 let saved = self.alloc()?;
                 self.emit(Op::SavePos { d: saved });
+                let lid = self.cap_loop_enter()?;
                 let top = self.here();
                 self.emit(Op::CheckStop);
+                self.cap_loop_pass(lid);
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -678,6 +778,7 @@ impl<'a> Compiler<'a> {
                 self.cond_jump(until, top)?;
                 self.next = mark;
                 let end = self.here();
+                self.cap_loop_exit(lid);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
             }
@@ -690,6 +791,7 @@ impl<'a> Compiler<'a> {
             } => {
                 let i = self.alloc()?;
                 let end_reg = self.alloc()?;
+                let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let (fr, tr) = self.pair(from, to)?;
                 let int_local = match var {
                     ir::Place::Local(v) if matches!(self.locals_ty.get(*v), Some(RtType::Integer)) => {
@@ -705,14 +807,19 @@ impl<'a> Compiler<'a> {
                     i,
                     end: end_reg,
                     int_local,
+                    cap_loop: lid,
                 });
                 let site = (self.chunk.fors.len() - 1) as u32;
                 self.emit(Op::ForInit { s: site });
+                if let Some(d) = lid {
+                    self.emit(Op::CapLoopEnter { d });
+                }
                 let top = self.here();
                 let test = self.emit(Op::ForTest { s: site, t: 0 });
                 self.emit(Op::CheckStop);
                 self.emit(Op::ForSet { s: site });
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -724,6 +831,9 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::ForNext { s: site });
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                if let Some(a) = lid {
+                    self.emit(Op::CapLoopExit { a });
+                }
                 self.patch(test, end);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
@@ -737,6 +847,7 @@ impl<'a> Compiler<'a> {
             }
             S::Break => match self.loops.last_mut() {
                 Some(_) => {
+                    self.cap_pops();
                     let at = self.emit(Op::Jump { t: 0 });
                     if let Some(l) = self.loops.last_mut() {
                         l.brk.push(at);
@@ -748,6 +859,7 @@ impl<'a> Compiler<'a> {
             },
             S::Continue => match self.loops.last_mut() {
                 Some(_) => {
+                    self.cap_pops();
                     let at = self.emit(Op::Jump { t: 0 });
                     if let Some(l) = self.loops.last_mut() {
                         l.cont.push(at);
@@ -792,17 +904,9 @@ impl<'a> Compiler<'a> {
                     *e = end;
                 }
             }
-            S::Foreach { var, collection, body }
-                if match collection {
-                    ir::Expr::Load(ir::Place::Local(i)) => {
-                        matches!(self.locals_ty.get(*i), Some(RtType::List(_) | RtType::Library(_)))
-                    }
-                    // A built-in method returns a library value (XmlElement.GetChildNodes, JsonArray ...), never a .NET one.
-                    ir::Expr::Builtin { .. } => true,
-                    _ => false,
-                } =>
-            {
+            S::Foreach { var, collection, body } =>            {
                 let coll = self.expr_copy(collection)?;
+                let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let items = self.alloc()?;
                 let at = self.alloc()?;
                 self.chunk.foreachs.push(ForeachSite {
@@ -810,12 +914,15 @@ impl<'a> Compiler<'a> {
                     coll,
                     items,
                     at,
+                    collection: matches!(collection, ir::Expr::Load(_)).then(|| collection.clone()),
+                    cap_loop: lid,
                 });
                 let site = (self.chunk.foreachs.len() - 1) as u32;
                 self.emit(Op::ForeachInit { s: site });
                 let top = self.here();
                 let next = self.emit(Op::ForeachNext { s: site, t: 0 });
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -825,13 +932,17 @@ impl<'a> Compiler<'a> {
                 let l = self.loops.pop().ok_or(())?;
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                if let Some(a) = lid {
+                    self.emit(Op::CapLoopExit { a });
+                }
                 self.emit(Op::Clear { a: items });
                 self.patch(next, end);
                 self.patch_all(l.cont, top);
                 self.patch_all(l.brk, end);
             }
-            S::Foreach { .. } => self.tree_stmt(s),
-            S::Assume(_) => self.tree_stmt(s),
+            S::Assume(a) => {
+                self.emit(Op::Assume { a: *a });
+            }
         }
         Ok(())
     }

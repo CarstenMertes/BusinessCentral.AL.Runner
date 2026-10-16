@@ -327,8 +327,27 @@ impl Session {
         body: &[ir::Stmt],
         f: &mut Frame,
     ) -> Result<(), Signal> {
+        let enumerator = self.foreach_dotnet_start(coll, Some(collection), f)?;
+        while let Some(item) = self.foreach_dotnet_next(var, &enumerator, f)? {
+            self.write(var, item, f)?;
+            match self.exec_block_dyn(body, f) {
+                Err(Signal::Break) => return Ok(()),
+                Err(Signal::Continue) => {}
+                r => r?,
+            }
+        }
+        Ok(())
+    }
+
+    /// `GetEnumerator` of a .NET collection (the value `foreach_dotnet_next` steps), or the error of a variable that was
+    /// never instantiated (`collection` is the loop's collection expression, a variable for that text).
+    pub(crate) fn foreach_dotnet_start(
+        &mut self,
+        coll: Value,
+        collection: Option<&ir::Expr>,
+        f: &mut Frame,
+    ) -> Result<Value, Signal> {
         let engine = self.engine.clone();
-        let var_ty = self.place_type(var, f);
         let (handle, clr_type) = match &coll {
             Value::DotNet(o) => match &o.kind {
                 DotNetKind::Host { handle, clr_type } => (*handle, clr_type.clone()),
@@ -342,7 +361,7 @@ impl Session {
             _ => {
                 // Null: the variable was never instantiated. The text names the variable's CLR
                 // type, the object and the procedure.
-                let ir::Expr::Load(place) = collection else {
+                let Some(ir::Expr::Load(place)) = collection else {
                     return unsupported("foreach over a null DotNet value that is not a variable");
                 };
                 let RtType::DotNet(i) = self.place_type(place, f) else {
@@ -378,65 +397,75 @@ impl Session {
         let Value::DotNet(en) = &enumerator else {
             return unsupported(format!("{clr_type}.GetEnumerator did not return an object"));
         };
+        if !matches!(&en.kind, DotNetKind::Host { .. }) {
+            return unsupported(format!("{clr_type}.GetEnumerator did not return a host object"));
+        }
+        Ok(enumerator)
+    }
+
+    /// The next element of an enumerator, converted to the loop variable's type; `None` when the collection is used up.
+    pub(crate) fn foreach_dotnet_next(
+        &mut self,
+        var: &ir::Place,
+        enumerator: &Value,
+        f: &mut Frame,
+    ) -> Result<Option<Value>, Signal> {
+        let var_ty = self.place_type(var, f);
+        let Value::DotNet(en) = enumerator else {
+            return unsupported("a foreach loop over a .NET collection that is not set up");
+        };
         let DotNetKind::Host {
             handle: en_handle,
             clr_type: en_type,
         } = &en.kind
         else {
-            return unsupported(format!("{clr_type}.GetEnumerator did not return a host object"));
+            return unsupported("a foreach loop over a .NET collection that is not set up");
         };
         let (en_handle, en_type) = (*en_handle, en_type.clone());
-        loop {
-            let more = self.host_call(DotNetTarget::Instance(en_handle), "MoveNext", &en_type, f);
-            let more = match more {
-                Ok(v) => v,
-                Err(MoveNextFailure::Exception(e)) if e.clr_type == "System.InvalidOperationException" => {
-                    return al_builtins::native::raise(
-                        format!("A call to {en_type}.MoveNext failed with this message: {}", e.message),
-                        "DotNetInvoke:InvalidOperation",
-                    );
-                }
-                Err(other) => return Err(other.signal(&en_type, "MoveNext")),
-            };
-            if !matches!(more, Value::Boolean(true)) {
-                return Ok(());
+        let more = self.host_call(DotNetTarget::Instance(en_handle), "MoveNext", &en_type, f);
+        let more = match more {
+            Ok(v) => v,
+            Err(MoveNextFailure::Exception(e)) if e.clr_type == "System.InvalidOperationException" => {
+                return al_builtins::native::raise(
+                    format!("A call to {en_type}.MoveNext failed with this message: {}", e.message),
+                    "DotNetInvoke:InvalidOperation",
+                );
             }
-            let current = self
-                .host_get(en_handle, "Current", &en_type, f)
-                .map_err(|e| e.signal(&en_type, "Current"))?;
-            let item = match self.dotnet_coerce(current.clone(), &var_ty) {
-                Ok(v) => v,
-                Err(unfit) => {
-                    return Err(match (&current, &var_ty) {
-                        (Value::Integer(_), RtType::Text(_) | RtType::Code(_)) => {
-                            match al_builtins::native::raise::<()>(
-                                "Invalid Conversion. Source: Int32, Destination: NavText.",
-                                "Argument",
-                            ) {
-                                Err(e) => e,
-                                Ok(()) => unreachable!(),
-                            }
-                        }
-                        (Value::Text(_), RtType::Date) => {
-                            match al_builtins::native::raise::<()>(
-                                "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavText to System.DateTime.",
-                                "Conversion",
-                            ) {
-                                Err(e) => e,
-                                Ok(()) => unreachable!(),
-                            }
-                        }
-                        _ => prefix(unfit, "foreach element"),
-                    });
-                }
-            };
-            self.write(var, item, f)?;
-            match self.exec_block_dyn(body, f) {
-                Err(Signal::Break) => return Ok(()),
-                Err(Signal::Continue) => {}
-                r => r?,
-            }
+            Err(other) => return Err(other.signal(&en_type, "MoveNext")),
+        };
+        if !matches!(more, Value::Boolean(true)) {
+            return Ok(None);
         }
+        let current = self
+            .host_get(en_handle, "Current", &en_type, f)
+            .map_err(|e| e.signal(&en_type, "Current"))?;
+        let item = match self.dotnet_coerce(current.clone(), &var_ty) {
+            Ok(v) => v,
+            Err(unfit) => {
+                return Err(match (&current, &var_ty) {
+                    (Value::Integer(_), RtType::Text(_) | RtType::Code(_)) => {
+                        match al_builtins::native::raise::<()>(
+                            "Invalid Conversion. Source: Int32, Destination: NavText.",
+                            "Argument",
+                        ) {
+                            Err(e) => e,
+                            Ok(()) => unreachable!(),
+                        }
+                    }
+                    (Value::Text(_), RtType::Date) => {
+                        match al_builtins::native::raise::<()>(
+                            "Unable to convert from Microsoft.Dynamics.Nav.Runtime.NavText to System.DateTime.",
+                            "Conversion",
+                        ) {
+                            Err(e) => e,
+                            Ok(()) => unreachable!(),
+                        }
+                    }
+                    _ => prefix(unfit, "foreach element"),
+                });
+            }
+        };
+        Ok(Some(item))
     }
 
     /// One host call for `foreach`: `member` with no arguments on `target`.

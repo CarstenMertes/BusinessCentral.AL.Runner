@@ -866,7 +866,7 @@ impl Session {
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
         // The bytecode, if the mode asks for it. Whether a capture watches the routine is only known once its frame is
-        // entered (`cap_enter_frame`); a capture watches the tree walker only.
+        // entered (`cap_enter_frame`); a capture watches the captured form of the bytecode (or the tree walker).
         let chunk = if self.exec_mode == ExecMode::Tree {
             None
         } else {
@@ -966,7 +966,17 @@ impl Session {
         if self.capture.is_some() {
             self.cap_enter_frame(object, r, &frame.locals);
         }
-        let chunk = if self.capturing { None } else { chunk };
+        // A capture watches a tracked routine through its captured form (ADR-030); a routine that form cannot take runs on
+        // the tree walker.
+        let chunk = if self.capturing {
+            if self.exec_mode == ExecMode::Tree {
+                None
+            } else {
+                engine.exec.captured_chunk(&engine.program, object, routine)
+            }
+        } else {
+            chunk
+        };
         let mut outcome = if let Some(chunk) = chunk {
             if exec::counting() {
                 exec::STATS

@@ -336,6 +336,23 @@ pub(crate) enum Op {
     Clear {
         a: u16,
     },
+    // ---- value capture and iteration tracking (ADR-030): only in the captured form of a routine ----
+    /// A statement marker ran: the statement is one of the open loops' pass.
+    CapHit { p: u32 },
+    /// The statement after the marker `p` begins.
+    CapBegin { p: u32 },
+    /// The statement ended without an error: the locals it wrote or changed are recorded (site `s`).
+    CapEnd { s: u32 },
+    /// A `break` or `continue` leaves a statement: it is no longer open, and nothing is recorded.
+    CapPop,
+    /// A loop statement starts; `d` gets its id (an Integer) or Null when nothing is tracked.
+    CapLoopEnter { d: u16 },
+    /// A pass of the loop in `a` starts.
+    CapLoopPass { a: u16 },
+    /// The loop in `a` ends.
+    CapLoopExit { a: u16 },
+    /// An assumption of an unprobed behavior ran (`Stmt::Assume`).
+    Assume { a: al_builtins::assumptions::Assumption },
     /// `Exit()`.
     Ret,
     /// `Exit(a)`.
@@ -399,6 +416,9 @@ pub(crate) struct ForeachSite {
     /// Registers that hold the items (a `Value::Array`) and the next position (an `Integer`).
     pub items: u16,
     pub at: u16,
+    /// The collection when it is a variable (the text of the error of a .NET variable that holds nothing).
+    pub collection: Option<ir::Expr>,
+    pub cap_loop: Option<u16>,
 }
 
 pub(crate) struct IfaceSite {
@@ -431,11 +451,20 @@ pub(crate) struct ForSite {
     pub end: u16,
     /// The counter is a local of type Integer: the round-trip through `write` and `read` is a plain store and load.
     pub int_local: Option<u16>,
+    /// The register that holds the capture's id of this loop (the captured form of a routine).
+    pub cap_loop: Option<u16>,
 }
 
 /// The compiled form of one routine.
+/// A statement a capture watches: its marker and the locals it writes by its shape.
+pub(crate) struct CapSite {
+    pub pos: u32,
+    pub writes: Vec<usize>,
+}
+
 pub(crate) struct Chunk {
     pub code: Vec<Op>,
+    pub cap_sites: Vec<CapSite>,
     pub consts: Vec<ir::Const>,
     pub places: Vec<ir::Place>,
     pub types: Vec<al_builtins::value::RtType>,
@@ -464,6 +493,8 @@ pub(crate) struct Chunk {
 /// The chunks of a program, compiled the first time a routine is called.
 pub(crate) struct ExecProgram {
     chunks: Vec<Vec<OnceLock<Option<Box<Chunk>>>>>,
+    /// The captured form of a routine (value capture and iteration tracking), built on first use by a capture.
+    captured: Vec<Vec<OnceLock<Option<Box<Chunk>>>>>,
     /// How often each routine was asked for: a routine that runs once (install and setup code) is not worth compiling.
     calls: Vec<Vec<std::sync::atomic::AtomicU32>>,
 }
@@ -475,6 +506,11 @@ impl ExecProgram {
     pub(crate) fn new(program: &ir::Program) -> ExecProgram {
         ExecProgram {
             chunks: program
+                .objects
+                .iter()
+                .map(|o| o.routines.iter().map(|_| OnceLock::new()).collect())
+                .collect(),
+            captured: program
                 .objects
                 .iter()
                 .map(|o| o.routines.iter().map(|_| OnceLock::new()).collect())
@@ -492,6 +528,13 @@ impl ExecProgram {
         }
     }
 
+    /// The captured form of routine `routine` of object `object` (no hot threshold: a capture runs a routine once or twice).
+    pub(crate) fn captured_chunk(&self, program: &ir::Program, object: usize, routine: usize) -> Option<&Chunk> {
+        self.captured[object][routine]
+            .get_or_init(|| compile(&program.objects[object].routines[routine], true).map(Box::new))
+            .as_deref()
+    }
+
     /// The chunk of routine `routine` of object `object`, if it compiles.
     pub(crate) fn chunk(&self, program: &ir::Program, object: usize, routine: usize) -> Option<&Chunk> {
         let cell = &self.chunks[object][routine];
@@ -502,7 +545,7 @@ impl ExecProgram {
             return None;
         }
         cell.get_or_init(|| {
-            let c = compile(&program.objects[object].routines[routine])?;
+            let c = compile(&program.objects[object].routines[routine], false)?;
             STATS.routines.fetch_add(1, Ordering::Relaxed);
             if c.tree_nodes > 0 {
                 STATS.routines_with_tree.fetch_add(1, Ordering::Relaxed);
@@ -575,7 +618,7 @@ pub fn report() -> String {
 
 /// The instructions the bytecode compiler emits for a routine, one `Debug` text each (tests of instruction selection).
 pub fn disassemble(program: &ir::Program, object: usize, routine: usize) -> Option<Vec<String>> {
-    let c = compile(&program.objects[object].routines[routine])?;
+    let c = compile(&program.objects[object].routines[routine], false)?;
     Some(c.code.iter().map(|op| format!("{op:?}")).collect())
 }
 

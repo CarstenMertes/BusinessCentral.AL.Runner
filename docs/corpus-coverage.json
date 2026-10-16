@@ -1,28 +1,28 @@
 {
-  "corpus_commit": "f716ca0a31a3f0511d26bfe33718311ce2a39388",
+  "corpus_commit": "faf1c152e9026deea4f0420b33594bd9273374e3",
   "overloads": 1729,
-  "pinned": 1074,
+  "pinned": 1269,
   "types": [
     {
       "methods": [
         {
           "id": "BigInteger.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "BigInteger.ToText inst () -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:263"
         }
       ],
       "overloads": 1,
-      "pinned": 0,
+      "pinned": 1,
       "type": "BigInteger"
     },
     {
       "methods": [
         {
           "id": "BigText.AddText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "BigText.AddText inst (String: BigText, ?Position: Integer)",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93BigText.al:22"
         },
         {
           "id": "BigText.AddText#2",
@@ -32,27 +32,27 @@
         },
         {
           "id": "BigText.GetSubText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "BigText.GetSubText inst (var Variable: BigText, Position: Integer, ?Length: Integer) -> Integer?",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93BigText.al:40"
         },
         {
           "id": "BigText.GetSubText#2",
           "pinned": true,
           "signature": "BigText.GetSubText inst (var Variable: Text, Position: Integer, ?Length: Integer) -> Integer?",
-          "site": "streams/StTBigText.al:40"
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:514"
         },
         {
           "id": "BigText.Length#1",
           "pinned": true,
           "signature": "BigText.Length inst () -> Integer",
-          "site": "streams/StTBigText.al:37"
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:512"
         },
         {
           "id": "BigText.Read#1",
           "pinned": true,
           "signature": "BigText.Read inst (InStream: InStream) -> Boolean?",
-          "site": "streams/StTBigText.al:292"
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:511"
         },
         {
           "id": "BigText.TextPos#1",
@@ -68,7 +68,7 @@
         }
       ],
       "overloads": 8,
-      "pinned": 6,
+      "pinned": 8,
       "type": "BigText"
     },
     {
@@ -118,38 +118,38 @@
       "methods": [
         {
           "id": "Boolean.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Boolean.ToText inst () -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:141"
         },
         {
           "id": "Boolean.ToText#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Boolean.ToText inst (?Invariant: Boolean) -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:142"
         }
       ],
       "overloads": 2,
-      "pinned": 0,
+      "pinned": 2,
       "type": "Boolean"
     },
     {
       "methods": [
         {
           "id": "Byte.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Byte.ToText inst () -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:185"
         },
         {
           "id": "Byte.ToText#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Byte.ToText inst (?Invariant: Boolean) -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:186"
         }
       ],
       "overloads": 2,
-      "pinned": 0,
+      "pinned": 2,
       "type": "Byte"
     },
     {
@@ -206,49 +206,49 @@
       "methods": [
         {
           "id": "Cookie.Domain#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Cookie.Domain inst () -> Text",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:46"
         },
         {
           "id": "Cookie.Expires#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Cookie.Expires inst () -> DateTime",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:46"
         },
         {
           "id": "Cookie.HttpOnly#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Cookie.HttpOnly inst () -> Boolean",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:46"
         },
         {
           "id": "Cookie.Name#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Cookie.Name inst (?Name: Text) -> Text",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:34"
         },
         {
           "id": "Cookie.Path#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Cookie.Path inst () -> Text",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:46"
         },
         {
           "id": "Cookie.Secure#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Cookie.Secure inst () -> Boolean",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:46"
         },
         {
           "id": "Cookie.Value#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Cookie.Value inst (?Value: Text) -> Text",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:41"
         }
       ],
       "overloads": 7,
-      "pinned": 0,
+      "pinned": 7,
       "type": "Cookie"
     },
     {
@@ -442,9 +442,9 @@
         },
         {
           "id": "Database.SerialNumber#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Database.SerialNumber static () -> Text",
-          "site": null
+          "site": "platform/lt-system-database-members/DbSerialNumber.al:23"
         },
         {
           "id": "Database.ServiceInstanceId#1",
@@ -496,16 +496,16 @@
         }
       ],
       "overloads": 30,
-      "pinned": 20,
+      "pinned": 21,
       "type": "Database"
     },
     {
       "methods": [
         {
           "id": "Date.Day#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Date.Day inst () -> Integer",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93Date.al:16"
         },
         {
           "id": "Date.DayOfWeek#1",
@@ -515,15 +515,15 @@
         },
         {
           "id": "Date.Month#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Date.Month inst () -> Integer",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93Date.al:16"
         },
         {
           "id": "Date.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Date.ToText inst (?Invariant: Boolean) -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93Date.al:24"
         },
         {
           "id": "Date.WeekNo#1",
@@ -533,38 +533,38 @@
         },
         {
           "id": "Date.Year#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Date.Year inst () -> Integer",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93Date.al:16"
         }
       ],
       "overloads": 6,
-      "pinned": 2,
+      "pinned": 6,
       "type": "Date"
     },
     {
       "methods": [
         {
           "id": "DateTime.Date#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "DateTime.Date inst () -> Date",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93DateTime.al:18"
         },
         {
           "id": "DateTime.Time#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "DateTime.Time inst () -> Time",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93DateTime.al:20"
         },
         {
           "id": "DateTime.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "DateTime.ToText inst (?Invariant: Boolean) -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93DateTime.al:22"
         }
       ],
       "overloads": 3,
-      "pinned": 0,
+      "pinned": 3,
       "type": "DateTime"
     },
     {
@@ -692,19 +692,19 @@
       "methods": [
         {
           "id": "Decimal.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Decimal.ToText inst () -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:18"
         },
         {
           "id": "Decimal.ToText#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Decimal.ToText inst (?Invariant: Boolean) -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93ScalarToText.al:20"
         }
       ],
       "overloads": 2,
-      "pinned": 0,
+      "pinned": 2,
       "type": "Decimal"
     },
     {
@@ -851,13 +851,13 @@
       "methods": [
         {
           "id": "Duration.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Duration.ToText inst (?Invariant: Boolean) -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93DateTime.al:52"
         }
       ],
       "overloads": 1,
-      "pinned": 0,
+      "pinned": 1,
       "type": "Duration"
     },
     {
@@ -1214,21 +1214,21 @@
         },
         {
           "id": "FieldRef.TestField#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "FieldRef.TestField inst (ErrorInfo: ErrorInfo)",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92ErrorInfoOverloads.al:82"
         },
         {
           "id": "FieldRef.TestField#3",
           "pinned": true,
           "signature": "FieldRef.TestField inst (Value: Any)",
-          "site": "recordref/lt-refs/RfTWrite.al:297"
+          "site": "recordref/lt-recordref-fieldref-members/P92TestField.al:28"
         },
         {
           "id": "FieldRef.TestField#4",
-          "pinned": false,
+          "pinned": true,
           "signature": "FieldRef.TestField inst (Value: Any, ErrorInfo: ErrorInfo)",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92ErrorInfoOverloads.al:85"
         },
         {
           "id": "FieldRef.TestField#5",
@@ -1442,7 +1442,7 @@
         }
       ],
       "overloads": 68,
-      "pinned": 33,
+      "pinned": 35,
       "type": "FieldRef"
     },
     {
@@ -1860,19 +1860,19 @@
         },
         {
           "id": "Guid.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Guid.ToText inst () -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93Guid.al:34"
         },
         {
           "id": "Guid.ToText#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Guid.ToText inst (?Invariant: Boolean) -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93Guid.al:35"
         }
       ],
       "overloads": 4,
-      "pinned": 1,
+      "pinned": 3,
       "type": "Guid"
     },
     {
@@ -1996,7 +1996,7 @@
           "id": "HttpContent.Clear#1",
           "pinned": true,
           "signature": "HttpContent.Clear inst ()",
-          "site": "network/lt-http/HttpContent.al:142"
+          "site": "network/lt-http-header-rules/P87Content.al:105"
         },
         {
           "id": "HttpContent.GetHeaders#1",
@@ -2117,7 +2117,7 @@
           "id": "HttpHeaders.Keys#1",
           "pinned": true,
           "signature": "HttpHeaders.Keys inst () -> List of [Text]",
-          "site": "network/lt-http/HttpClient.al:23"
+          "site": "network/lt-http-header-rules/P87Fixtures.al:146"
         },
         {
           "id": "HttpHeaders.Remove#1",
@@ -2135,7 +2135,7 @@
           "id": "HttpHeaders.TryAddWithoutValidation#2",
           "pinned": true,
           "signature": "HttpHeaders.TryAddWithoutValidation inst (Name: Text, Value: Text) -> Boolean?",
-          "site": "network/lt-http/HttpHeaders.al:404"
+          "site": "network/lt-http-header-rules/P87Fixtures.al:86"
         }
       ],
       "overloads": 14,
@@ -2166,7 +2166,7 @@
           "id": "HttpRequestMessage.GetHeaders#1",
           "pinned": true,
           "signature": "HttpRequestMessage.GetHeaders inst (var Headers: HttpHeaders) -> Boolean?",
-          "site": "network/lt-http/HttpHeaders.al:20"
+          "site": "network/lt-http-header-rules/P87Fixtures.al:35"
         },
         {
           "id": "HttpRequestMessage.GetRequestUri#1",
@@ -2227,25 +2227,25 @@
           "id": "HttpResponseMessage.Content#1",
           "pinned": true,
           "signature": "HttpResponseMessage.Content inst () -> HttpContent",
-          "site": "network/lt-http/HttpResponse.al:40"
+          "site": "network/lt-http-header-rules/P87Content.al:256"
         },
         {
           "id": "HttpResponseMessage.GetCookie#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "HttpResponseMessage.GetCookie inst (Name: Text, var Cookie: Cookie) -> Boolean?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:58"
         },
         {
           "id": "HttpResponseMessage.GetCookieNames#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "HttpResponseMessage.GetCookieNames inst () -> List of [Text]",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al:57"
         },
         {
           "id": "HttpResponseMessage.Headers#1",
           "pinned": true,
           "signature": "HttpResponseMessage.Headers inst () -> HttpHeaders",
-          "site": "network/lt-http/HttpResponse.al:58"
+          "site": "network/lt-http-header-rules/P87Content.al:264"
         },
         {
           "id": "HttpResponseMessage.HttpStatusCode#1",
@@ -2273,7 +2273,7 @@
         }
       ],
       "overloads": 8,
-      "pinned": 6,
+      "pinned": 8,
       "type": "HttpResponseMessage"
     },
     {
@@ -2535,9 +2535,9 @@
         },
         {
           "id": "JsonArray.Add#14",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Add inst (Value: Option)",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayAdd.al:121"
         },
         {
           "id": "JsonArray.Add#15",
@@ -2547,9 +2547,9 @@
         },
         {
           "id": "JsonArray.Add#16",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Add inst (Value: Time)",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayAdd.al:67"
         },
         {
           "id": "JsonArray.AsToken#1",
@@ -2601,9 +2601,9 @@
         },
         {
           "id": "JsonArray.GetChar#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.GetChar inst (Index: Integer) -> Char",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayGetCharTime.al:29"
         },
         {
           "id": "JsonArray.GetDate#1",
@@ -2655,9 +2655,9 @@
         },
         {
           "id": "JsonArray.GetTime#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.GetTime inst (Index: Integer) -> Time",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayGetCharTime.al:31"
         },
         {
           "id": "JsonArray.IndexOf#1",
@@ -2781,9 +2781,9 @@
         },
         {
           "id": "JsonArray.Insert#5",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Insert inst (Index: Integer, Value: Date) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayInsert.al:58"
         },
         {
           "id": "JsonArray.Insert#6",
@@ -2799,9 +2799,9 @@
         },
         {
           "id": "JsonArray.Insert#8",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Insert inst (Index: Integer, Value: Duration) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayInsert.al:85"
         },
         {
           "id": "JsonArray.Insert#9",
@@ -2829,15 +2829,15 @@
         },
         {
           "id": "JsonArray.Insert#13",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Insert inst (Index: Integer, Value: JsonValue) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayInsert.al:166"
         },
         {
           "id": "JsonArray.Insert#14",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Insert inst (Index: Integer, Value: Option) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayInsert.al:121"
         },
         {
           "id": "JsonArray.Insert#15",
@@ -2847,9 +2847,9 @@
         },
         {
           "id": "JsonArray.Insert#16",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Insert inst (Index: Integer, Value: Time) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayInsert.al:67"
         },
         {
           "id": "JsonArray.Path#1",
@@ -2895,9 +2895,9 @@
         },
         {
           "id": "JsonArray.Set#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Set inst (Index: Integer, Result: Boolean) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayIndex.al:84"
         },
         {
           "id": "JsonArray.Set#3",
@@ -2913,9 +2913,9 @@
         },
         {
           "id": "JsonArray.Set#5",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Set inst (Index: Integer, Result: Date) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArraySet.al:58"
         },
         {
           "id": "JsonArray.Set#6",
@@ -2931,9 +2931,9 @@
         },
         {
           "id": "JsonArray.Set#8",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Set inst (Index: Integer, Result: Duration) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArraySet.al:85"
         },
         {
           "id": "JsonArray.Set#9",
@@ -2943,15 +2943,15 @@
         },
         {
           "id": "JsonArray.Set#10",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Set inst (Index: Integer, Result: JsonArray) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArraySet.al:148"
         },
         {
           "id": "JsonArray.Set#11",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Set inst (Index: Integer, Result: JsonObject) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArraySet.al:157"
         },
         {
           "id": "JsonArray.Set#12",
@@ -2961,15 +2961,15 @@
         },
         {
           "id": "JsonArray.Set#13",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Set inst (Index: Integer, Result: JsonValue) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArraySet.al:166"
         },
         {
           "id": "JsonArray.Set#14",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Set inst (Index: Integer, Result: Option) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArraySet.al:121"
         },
         {
           "id": "JsonArray.Set#15",
@@ -2979,9 +2979,9 @@
         },
         {
           "id": "JsonArray.Set#16",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonArray.Set inst (Index: Integer, Result: Time) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArraySet.al:67"
         },
         {
           "id": "JsonArray.WriteTo#1",
@@ -2997,7 +2997,7 @@
         }
       ],
       "overloads": 90,
-      "pinned": 41,
+      "pinned": 58,
       "type": "JsonArray"
     },
     {
@@ -3082,9 +3082,9 @@
         },
         {
           "id": "JsonObject.Add#14",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Add inst (Key: Text, Value: Option) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectAdd.al:121"
         },
         {
           "id": "JsonObject.Add#15",
@@ -3148,9 +3148,9 @@
         },
         {
           "id": "JsonObject.GetChar#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.GetChar inst (Key: Text, ?DefaultIfNotFound: Boolean) -> Char",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectGetCharValues.al:26"
         },
         {
           "id": "JsonObject.GetDate#1",
@@ -3256,9 +3256,9 @@
         },
         {
           "id": "JsonObject.Replace#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Replace inst (Key: Text, Value: Boolean) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectKeys.al:99"
         },
         {
           "id": "JsonObject.Replace#3",
@@ -3274,9 +3274,9 @@
         },
         {
           "id": "JsonObject.Replace#5",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Replace inst (Key: Text, Value: Date) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectReplace.al:58"
         },
         {
           "id": "JsonObject.Replace#6",
@@ -3292,9 +3292,9 @@
         },
         {
           "id": "JsonObject.Replace#8",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Replace inst (Key: Text, Value: Duration) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectReplace.al:85"
         },
         {
           "id": "JsonObject.Replace#9",
@@ -3304,9 +3304,9 @@
         },
         {
           "id": "JsonObject.Replace#10",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Replace inst (Key: Text, Value: JsonArray) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectKeys.al:149"
         },
         {
           "id": "JsonObject.Replace#11",
@@ -3328,9 +3328,9 @@
         },
         {
           "id": "JsonObject.Replace#14",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Replace inst (Key: Text, Value: Option) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectReplace.al:121"
         },
         {
           "id": "JsonObject.Replace#15",
@@ -3340,9 +3340,9 @@
         },
         {
           "id": "JsonObject.Replace#16",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Replace inst (Key: Text, Value: Time) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectReplace.al:67"
         },
         {
           "id": "JsonObject.SelectToken#1",
@@ -3358,9 +3358,9 @@
         },
         {
           "id": "JsonObject.Values#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonObject.Values inst () -> List of [JsonToken]",
-          "site": null
+          "site": "json/lt-json-overloads/P88ObjectGetCharValues.al:50"
         },
         {
           "id": "JsonObject.WriteTo#1",
@@ -3400,7 +3400,7 @@
         }
       ],
       "overloads": 66,
-      "pinned": 41,
+      "pinned": 50,
       "type": "JsonObject"
     },
     {
@@ -3614,13 +3614,13 @@
           "id": "JsonValue.ReadFrom#2",
           "pinned": true,
           "signature": "JsonValue.ReadFrom inst (Data: Text) -> Boolean?",
-          "site": "misc/lt-probes-needed-1/PnAJsonReadKinds.al:31"
+          "site": "json/lt-json-overloads/P88ValueReadFrom.al:22"
         },
         {
           "id": "JsonValue.SelectToken#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonValue.SelectToken inst (Path: Text, var Result: JsonToken) -> Boolean?",
-          "site": null
+          "site": "json/lt-json-overloads/P88ValueReadFrom.al:135"
         },
         {
           "id": "JsonValue.SetValue#1",
@@ -3678,9 +3678,9 @@
         },
         {
           "id": "JsonValue.SetValue#10",
-          "pinned": false,
+          "pinned": true,
           "signature": "JsonValue.SetValue inst (Value: Option)",
-          "site": null
+          "site": "json/lt-json-overloads/P88ArrayIndex.al:226"
         },
         {
           "id": "JsonValue.SetValue#11",
@@ -3720,7 +3720,7 @@
         }
       ],
       "overloads": 37,
-      "pinned": 28,
+      "pinned": 30,
       "type": "JsonValue"
     },
     {
@@ -3776,9 +3776,9 @@
         },
         {
           "id": "Label.IndexOfAny#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Label.IndexOfAny inst (Values: List of [Char], ?StartIndex: Integer) -> Integer",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89LabelLocked.al:320"
         },
         {
           "id": "Label.IndexOfAny#2",
@@ -3830,9 +3830,9 @@
         },
         {
           "id": "Label.Split#3",
-          "pinned": false,
+          "pinned": true,
           "signature": "Label.Split inst (Separators: List of [Text]) -> List of [Text]",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89LabelLocked.al:290"
         },
         {
           "id": "Label.StartsWith#1",
@@ -3878,7 +3878,7 @@
         }
       ],
       "overloads": 20,
-      "pinned": 16,
+      "pinned": 18,
       "type": "Label"
     },
     {
@@ -4190,21 +4190,21 @@
       "methods": [
         {
           "id": "NavApp.DeleteArchiveData#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "NavApp.DeleteArchiveData static (TableNo: Integer)",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:87"
         },
         {
           "id": "NavApp.GetArchiveRecordRef#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "NavApp.GetArchiveRecordRef static (TableNo: Integer, var RecordRef: RecordRef) -> Boolean?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:26"
         },
         {
           "id": "NavApp.GetArchiveVersion#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "NavApp.GetArchiveVersion static () -> Text",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:20"
         },
         {
           "id": "NavApp.GetCallerCallstackModuleInfos#1",
@@ -4268,9 +4268,9 @@
         },
         {
           "id": "NavApp.IsUnlicensed#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "NavApp.IsUnlicensed static (?AppId: Guid) -> Boolean?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:200"
         },
         {
           "id": "NavApp.ListResources#1",
@@ -4280,19 +4280,19 @@
         },
         {
           "id": "NavApp.LoadPackageData#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "NavApp.LoadPackageData static (TableNo: Integer)",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:163"
         },
         {
           "id": "NavApp.RestoreArchiveData#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "NavApp.RestoreArchiveData static (TableNo: Integer, ?RunTrigger: Boolean) -> Boolean?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94NavApp.al:115"
         }
       ],
       "overloads": 17,
-      "pinned": 10,
+      "pinned": 16,
       "type": "NavApp"
     },
     {
@@ -4566,9 +4566,9 @@
       "methods": [
         {
           "id": "Page.Activate#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Page.Activate inst (?Refresh: Boolean) -> Boolean?",
-          "site": null
+          "site": "pages/lt-page-runtime/P82PageVar.al:48"
         },
         {
           "id": "Page.CancelBackgroundTask#1",
@@ -4740,7 +4740,7 @@
         }
       ],
       "overloads": 29,
-      "pinned": 20,
+      "pinned": 21,
       "type": "Page"
     },
     {
@@ -5611,13 +5611,13 @@
           "id": "RecordRef.AddLoadFields#1",
           "pinned": true,
           "signature": "RecordRef.AddLoadFields inst (?Fields: Integer*) -> Boolean?",
-          "site": "records/W4PlatformAndMeta.al:473"
+          "site": "recordref/lt-recordref-fieldref-members/P92LoadFields.al:56"
         },
         {
           "id": "RecordRef.AreFieldsLoaded#1",
           "pinned": true,
           "signature": "RecordRef.AreFieldsLoaded inst (Fields: Integer*) -> Boolean",
-          "site": "records/W4PlatformAndMeta.al:475"
+          "site": "recordref/lt-recordref-fieldref-members/P92LoadFields.al:47"
         },
         {
           "id": "RecordRef.Ascending#1",
@@ -5687,9 +5687,9 @@
         },
         {
           "id": "RecordRef.CountApprox#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.CountApprox inst () -> Integer",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92Counts.al:23"
         },
         {
           "id": "RecordRef.CurrentCompany#1",
@@ -5837,9 +5837,9 @@
         },
         {
           "id": "RecordRef.GetPosition#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.GetPosition inst (?UseNames: Boolean) -> Text",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92Open.al:189"
         },
         {
           "id": "RecordRef.GetTable#1",
@@ -5981,15 +5981,15 @@
         },
         {
           "id": "RecordRef.ReadConsistency#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.ReadConsistency inst () -> Boolean",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92Locking.al:59"
         },
         {
           "id": "RecordRef.ReadIsolation#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.ReadIsolation inst (?ReadIsolation: IsolationLevel) -> IsolationLevel?",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92ReadIsolation.al:20"
         },
         {
           "id": "RecordRef.ReadPermission#1",
@@ -6005,9 +6005,9 @@
         },
         {
           "id": "RecordRef.RecordLevelLocking#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.RecordLevelLocking inst () -> Boolean",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92Locking.al:21"
         },
         {
           "id": "RecordRef.Rename#1",
@@ -6023,9 +6023,9 @@
         },
         {
           "id": "RecordRef.SecurityFiltering#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.SecurityFiltering inst (?NewSecurityFiltering: SecurityFilter) -> SecurityFilter?",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92Locking.al:79"
         },
         {
           "id": "RecordRef.SetAutoCalcFields#1",
@@ -6047,9 +6047,9 @@
         },
         {
           "id": "RecordRef.SetPosition#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.SetPosition inst (String: Text)",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92Position.al:16"
         },
         {
           "id": "RecordRef.SetRecFilter#1",
@@ -6107,9 +6107,9 @@
         },
         {
           "id": "RecordRef.Truncate#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "RecordRef.Truncate inst (?ResetAutoIncrement: Boolean) -> Boolean?",
-          "site": null
+          "site": "recordref/lt-recordref-fieldref-members/P92Counts.al:134"
         },
         {
           "id": "RecordRef.WritePermission#1",
@@ -6119,7 +6119,7 @@
         }
       ],
       "overloads": 86,
-      "pinned": 67,
+      "pinned": 75,
       "type": "RecordRef"
     },
     {
@@ -6138,9 +6138,9 @@
         },
         {
           "id": "Report.CreateTotals#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.CreateTotals inst (var Var1: Decimal, ?var Var2: Decimal*)",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Inst.al:42"
         },
         {
           "id": "Report.DefaultLayout#1",
@@ -6162,9 +6162,9 @@
         },
         {
           "id": "Report.ExcelLayout#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.ExcelLayout static (Number: Integer, InStream: InStream) -> Boolean?",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Static.al:79"
         },
         {
           "id": "Report.Execute#1",
@@ -6192,9 +6192,9 @@
         },
         {
           "id": "Report.GetSubstituteReportId#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.GetSubstituteReportId static (ReportId: Integer) -> Integer",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Unsure.al:67"
         },
         {
           "id": "Report.IsReadOnly#1",
@@ -6210,15 +6210,15 @@
         },
         {
           "id": "Report.NewPage#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.NewPage inst ()",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Inst.al:84"
         },
         {
           "id": "Report.NewPagePerRecord#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.NewPagePerRecord inst (?SetNewPagePerRecord: Boolean) -> Boolean?",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Unsure.al:23"
         },
         {
           "id": "Report.ObjectId#1",
@@ -6258,9 +6258,9 @@
         },
         {
           "id": "Report.PrintOnlyIfDetail#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.PrintOnlyIfDetail inst (?SetPrintOnlyIfDetail: Boolean) -> Boolean?",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Inst.al:94"
         },
         {
           "id": "Report.Quit#1",
@@ -6276,9 +6276,9 @@
         },
         {
           "id": "Report.RdlcLayout#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.RdlcLayout static (Number: Integer, InStream: InStream) -> Boolean?",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Static.al:76"
         },
         {
           "id": "Report.Run#1",
@@ -6432,9 +6432,9 @@
         },
         {
           "id": "Report.TotalsCausedBy#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.TotalsCausedBy inst () -> Integer",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Inst.al:48"
         },
         {
           "id": "Report.UseRequestPage#1",
@@ -6462,9 +6462,9 @@
         },
         {
           "id": "Report.WordLayout#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Report.WordLayout static (Number: Integer, InStream: InStream) -> Boolean?",
-          "site": null
+          "site": "report/lt-report-members-testrequestpage/P91Static.al:79"
         },
         {
           "id": "Report.WordXmlPart#1",
@@ -6476,11 +6476,11 @@
           "id": "Report.WordXmlPart#2",
           "pinned": true,
           "signature": "Report.WordXmlPart static (Number: Integer, ?ExtendedFormat: Boolean) -> Text",
-          "site": "types/PZMisc.al:144"
+          "site": "report/lt-report-members-testrequestpage/P91Static.al:98"
         }
       ],
       "overloads": 59,
-      "pinned": 27,
+      "pinned": 36,
       "type": "Report"
     },
     {
@@ -6681,21 +6681,21 @@
         },
         {
           "id": "Session.StartSession#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "Session.StartSession static (var SessionId: Integer, CodeunitId: Integer, Company: Text, var Record: Record, Timeout: Duration) -> Boolean?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Session.al:159"
         },
         {
           "id": "Session.StartSession#3",
-          "pinned": false,
+          "pinned": true,
           "signature": "Session.StartSession static (var SessionId: Integer, CodeunitId: Integer, Timeout: Duration, ?Company: Text, ?var Record: Record) -> Boolean?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Session.al:32"
         },
         {
           "id": "Session.StopSession#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Session.StopSession static (SessionId: Integer, ?Comment: Text) -> Boolean?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Session.al:38"
         },
         {
           "id": "Session.UnbindSubscription#1",
@@ -6705,7 +6705,7 @@
         }
       ],
       "overloads": 22,
-      "pinned": 14,
+      "pinned": 17,
       "type": "Session"
     },
     {
@@ -6888,15 +6888,15 @@
         },
         {
           "id": "System.CodeCoverageInclude#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.CodeCoverageInclude static (var ObjectRecord: Record)",
-          "site": null
+          "site": "platform/lt-system-database-members/CodeCoverageIncludeObj.al:23"
         },
         {
           "id": "System.CodeCoverageLoad#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.CodeCoverageLoad static ()",
-          "site": null
+          "site": "platform/lt-system-database-members/CodeCoverageLoadOnly.al:23"
         },
         {
           "id": "System.CodeCoverageLog#1",
@@ -6906,9 +6906,9 @@
         },
         {
           "id": "System.CodeCoverageRefresh#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.CodeCoverageRefresh static ()",
-          "site": null
+          "site": "platform/lt-system-database-members/CodeCoverageRefreshOnly.al:23"
         },
         {
           "id": "System.CompressArray#1",
@@ -7106,13 +7106,13 @@
           "id": "System.GetUrl#1",
           "pinned": true,
           "signature": "System.GetUrl static (ClientType: ClientType, ?Company: Text, ?ObjectType: ObjectType, ?ObjectId: Integer, ?Record: Record, ?UseFilters: Boolean) -> Text",
-          "site": "session/TestFinalCoverage.al:110"
+          "site": "platform/lt-system-database-members/GetUrlCompany.al:38"
         },
         {
           "id": "System.GetUrl#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.GetUrl static (ClientType: ClientType, ?Company: Text, ?ObjectType: ObjectType, ?ObjectId: Integer, ?Record: Record, ?UseFilters: Boolean, ?Layout: Text) -> Text",
-          "site": null
+          "site": "platform/lt-system-database-members/GetUrlRecordLayout.al:72"
         },
         {
           "id": "System.GetUrl#3",
@@ -7278,7 +7278,7 @@
         }
       ],
       "overloads": 79,
-      "pinned": 57,
+      "pinned": 61,
       "type": "System"
     },
     {
@@ -7367,13 +7367,13 @@
           "id": "TestField.AsDate#1",
           "pinned": true,
           "signature": "TestField.AsDate inst () -> Date",
-          "site": "testpart/BnrBlankPart.al:181"
+          "site": "pages/lt-page-runtime/P82TestField.al:55"
         },
         {
           "id": "TestField.AsDateTime#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "TestField.AsDateTime inst () -> DateTime",
-          "site": null
+          "site": "pages/lt-page-runtime/P82TestField.al:57"
         },
         {
           "id": "TestField.AsDecimal#1",
@@ -7503,7 +7503,7 @@
         }
       ],
       "overloads": 25,
-      "pinned": 22,
+      "pinned": 23,
       "type": "TestField"
     },
     {
@@ -8341,13 +8341,13 @@
           "id": "TextBuilder.AppendLine#1",
           "pinned": true,
           "signature": "TextBuilder.AppendLine inst (?Text: Text) -> Boolean?",
-          "site": "text/TestTextBuilder.al:45"
+          "site": "platform/lt-system-database-members/ClearTextBuilder.al:24"
         },
         {
           "id": "TextBuilder.Capacity#1",
           "pinned": true,
           "signature": "TextBuilder.Capacity inst (?NewCapacity: Integer) -> Integer?",
-          "site": "text/lt-label-textbuilder/TxCTextBuilderBasics.al:91"
+          "site": "platform/lt-system-database-members/ClearTextBuilder.al:29"
         },
         {
           "id": "TextBuilder.Clear#1",
@@ -8569,22 +8569,22 @@
         },
         {
           "id": "Time.ToText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Time.ToText inst (?Invariant: Boolean) -> Text",
-          "site": null
+          "site": "types/lt-totext-bigtext-codeunit-run/P93DateTime.al:39"
         }
       ],
       "overloads": 5,
-      "pinned": 3,
+      "pinned": 4,
       "type": "Time"
     },
     {
       "methods": [
         {
           "id": "Variant.IsAction#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsAction inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsA.al:16"
         },
         {
           "id": "Variant.IsAutomation#1",
@@ -8600,9 +8600,9 @@
         },
         {
           "id": "Variant.IsBinary#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsBinary inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsMisc.al:16"
         },
         {
           "id": "Variant.IsBoolean#1",
@@ -8624,9 +8624,9 @@
         },
         {
           "id": "Variant.IsClientType#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsClientType inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsA.al:18"
         },
         {
           "id": "Variant.IsCode#1",
@@ -8642,9 +8642,9 @@
         },
         {
           "id": "Variant.IsDataClassification#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsDataClassification inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsA.al:20"
         },
         {
           "id": "Variant.IsDataClassificationType#1",
@@ -8678,9 +8678,9 @@
         },
         {
           "id": "Variant.IsDefaultLayout#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsDefaultLayout inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsA.al:22"
         },
         {
           "id": "Variant.IsDictionary#1",
@@ -8702,9 +8702,9 @@
         },
         {
           "id": "Variant.IsExecutionMode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsExecutionMode inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsA.al:24"
         },
         {
           "id": "Variant.IsFieldRef#1",
@@ -8720,9 +8720,9 @@
         },
         {
           "id": "Variant.IsFilterPageBuilder#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsFilterPageBuilder inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsFilterPageBuilder.al:16"
         },
         {
           "id": "Variant.IsGuid#1",
@@ -8780,9 +8780,9 @@
         },
         {
           "id": "Variant.IsObjectType#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsObjectType inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsB.al:16"
         },
         {
           "id": "Variant.IsOption#1",
@@ -8798,9 +8798,9 @@
         },
         {
           "id": "Variant.IsPromptMode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsPromptMode inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsPromptMode.al:16"
         },
         {
           "id": "Variant.IsRecord#1",
@@ -8822,9 +8822,9 @@
         },
         {
           "id": "Variant.IsReportFormat#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsReportFormat inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsB.al:18"
         },
         {
           "id": "Variant.IsSecurityFiltering#1",
@@ -8834,15 +8834,15 @@
         },
         {
           "id": "Variant.IsTableConnectionType#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsTableConnectionType inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsB.al:20"
         },
         {
           "id": "Variant.IsTestPermissions#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsTestPermissions inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsB.al:22"
         },
         {
           "id": "Variant.IsText#1",
@@ -8864,9 +8864,9 @@
         },
         {
           "id": "Variant.IsTextEncoding#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsTextEncoding inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsEnumsB.al:24"
         },
         {
           "id": "Variant.IsTime#1",
@@ -8882,9 +8882,9 @@
         },
         {
           "id": "Variant.IsWideChar#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsWideChar inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsMisc.al:18"
         },
         {
           "id": "Variant.IsXmlAttribute#1",
@@ -8894,39 +8894,39 @@
         },
         {
           "id": "Variant.IsXmlAttributeCollection#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlAttributeCollection inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:18"
         },
         {
           "id": "Variant.IsXmlCData#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlCData inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:20"
         },
         {
           "id": "Variant.IsXmlComment#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlComment inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:22"
         },
         {
           "id": "Variant.IsXmlDeclaration#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlDeclaration inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:24"
         },
         {
           "id": "Variant.IsXmlDocument#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlDocument inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:26"
         },
         {
           "id": "Variant.IsXmlDocumentType#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlDocumentType inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:28"
         },
         {
           "id": "Variant.IsXmlElement#1",
@@ -8936,55 +8936,55 @@
         },
         {
           "id": "Variant.IsXmlNameTable#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlNameTable inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:32"
         },
         {
           "id": "Variant.IsXmlNamespaceManager#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlNamespaceManager inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:34"
         },
         {
           "id": "Variant.IsXmlNode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlNode inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:36"
         },
         {
           "id": "Variant.IsXmlNodeList#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlNodeList inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:38"
         },
         {
           "id": "Variant.IsXmlProcessingInstruction#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlProcessingInstruction inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:40"
         },
         {
           "id": "Variant.IsXmlReadOptions#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlReadOptions inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:46"
         },
         {
           "id": "Variant.IsXmlText#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlText inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:42"
         },
         {
           "id": "Variant.IsXmlWriteOptions#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Variant.IsXmlWriteOptions inst () -> Boolean",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:44"
         }
       ],
       "overloads": 67,
-      "pinned": 37,
+      "pinned": 65,
       "type": "Variant"
     },
     {
@@ -9307,21 +9307,21 @@
       "methods": [
         {
           "id": "XmlCData.AddAfterSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.AddAfterSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:186"
         },
         {
           "id": "XmlCData.AddBeforeSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.AddBeforeSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:192"
         },
         {
           "id": "XmlCData.AsXmlNode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.AsXmlNode inst () -> XmlNode",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:81"
         },
         {
           "id": "XmlCData.Create#1",
@@ -9331,27 +9331,27 @@
         },
         {
           "id": "XmlCData.GetDocument#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.GetDocument inst (var Document: XmlDocument) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:1232"
         },
         {
           "id": "XmlCData.GetParent#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.GetParent inst (var Parent: XmlElement) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:651"
         },
         {
           "id": "XmlCData.Remove#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.Remove inst () -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:204"
         },
         {
           "id": "XmlCData.ReplaceWith#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.ReplaceWith inst (Node: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:198"
         },
         {
           "id": "XmlCData.SelectNodes#1",
@@ -9361,9 +9361,9 @@
         },
         {
           "id": "XmlCData.SelectNodes#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:239"
         },
         {
           "id": "XmlCData.SelectSingleNode#1",
@@ -9373,9 +9373,9 @@
         },
         {
           "id": "XmlCData.SelectSingleNode#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:245"
         },
         {
           "id": "XmlCData.Value#1",
@@ -9385,9 +9385,9 @@
         },
         {
           "id": "XmlCData.WriteTo#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlCData.WriteTo inst (OutStream: OutStream) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:367"
         },
         {
           "id": "XmlCData.WriteTo#2",
@@ -9409,28 +9409,28 @@
         }
       ],
       "overloads": 17,
-      "pinned": 3,
+      "pinned": 13,
       "type": "XmlCData"
     },
     {
       "methods": [
         {
           "id": "XmlComment.AddAfterSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.AddAfterSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentEdit.al:186"
         },
         {
           "id": "XmlComment.AddBeforeSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.AddBeforeSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentEdit.al:192"
         },
         {
           "id": "XmlComment.AsXmlNode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.AsXmlNode inst () -> XmlNode",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:75"
         },
         {
           "id": "XmlComment.Create#1",
@@ -9440,27 +9440,27 @@
         },
         {
           "id": "XmlComment.GetDocument#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.GetDocument inst (var Document: XmlDocument) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentEdit.al:1232"
         },
         {
           "id": "XmlComment.GetParent#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.GetParent inst (var Parent: XmlElement) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentEdit.al:651"
         },
         {
           "id": "XmlComment.Remove#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.Remove inst () -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentEdit.al:204"
         },
         {
           "id": "XmlComment.ReplaceWith#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.ReplaceWith inst (Node: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentEdit.al:198"
         },
         {
           "id": "XmlComment.SelectNodes#1",
@@ -9470,9 +9470,9 @@
         },
         {
           "id": "XmlComment.SelectNodes#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentRead.al:239"
         },
         {
           "id": "XmlComment.SelectSingleNode#1",
@@ -9482,9 +9482,9 @@
         },
         {
           "id": "XmlComment.SelectSingleNode#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentRead.al:245"
         },
         {
           "id": "XmlComment.Value#1",
@@ -9494,9 +9494,9 @@
         },
         {
           "id": "XmlComment.WriteTo#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlComment.WriteTo inst (OutStream: OutStream) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CommentRead.al:367"
         },
         {
           "id": "XmlComment.WriteTo#2",
@@ -9518,7 +9518,7 @@
         }
       ],
       "overloads": 17,
-      "pinned": 3,
+      "pinned": 13,
       "type": "XmlComment"
     },
     {
@@ -9537,9 +9537,9 @@
         },
         {
           "id": "XmlDeclaration.AsXmlNode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDeclaration.AsXmlNode inst () -> XmlNode",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:145"
         },
         {
           "id": "XmlDeclaration.Create#1",
@@ -9639,7 +9639,7 @@
         }
       ],
       "overloads": 19,
-      "pinned": 5,
+      "pinned": 6,
       "type": "XmlDeclaration"
     },
     {
@@ -9768,7 +9768,7 @@
           "id": "XmlDocument.NameTable#1",
           "pinned": true,
           "signature": "XmlDocument.NameTable inst () -> XmlNameTable",
-          "site": "xml/TestProbeXmlContracts.al:528"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:141"
         },
         {
           "id": "XmlDocument.ReadFrom#1",
@@ -9881,27 +9881,27 @@
       "methods": [
         {
           "id": "XmlDocumentType.AddAfterSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.AddAfterSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeNode.al:359"
         },
         {
           "id": "XmlDocumentType.AddBeforeSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.AddBeforeSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeNode.al:365"
         },
         {
           "id": "XmlDocumentType.AsXmlNode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.AsXmlNode inst () -> XmlNode",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:155"
         },
         {
           "id": "XmlDocumentType.Create#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.Create static (Name: Text) -> XmlDocumentType",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataEdit.al:154"
         },
         {
           "id": "XmlDocumentType.Create#2",
@@ -9911,63 +9911,63 @@
         },
         {
           "id": "XmlDocumentType.Create#3",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.Create static (Name: Text, PublicId: Text, SystemId: Text) -> XmlDocumentType",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCreate.al:63"
         },
         {
           "id": "XmlDocumentType.Create#4",
           "pinned": true,
           "signature": "XmlDocumentType.Create static (Name: Text, PublicId: Text, SystemId: Text, InternalSubSet: Text) -> XmlDocumentType",
-          "site": "xml/XmlEntitiesMisc.al:368"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlTypes.al:104"
         },
         {
           "id": "XmlDocumentType.GetDocument#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.GetDocument inst (var Document: XmlDocument) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeNode.al:384"
         },
         {
           "id": "XmlDocumentType.GetInternalSubset#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.GetInternalSubset inst (var Result: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:61"
         },
         {
           "id": "XmlDocumentType.GetName#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.GetName inst (var Result: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:37"
         },
         {
           "id": "XmlDocumentType.GetParent#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.GetParent inst (var Parent: XmlElement) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeNode.al:76"
         },
         {
           "id": "XmlDocumentType.GetPublicId#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.GetPublicId inst (var Result: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:45"
         },
         {
           "id": "XmlDocumentType.GetSystemId#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.GetSystemId inst (var Result: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:53"
         },
         {
           "id": "XmlDocumentType.Remove#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.Remove inst () -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeErrors.al:111"
         },
         {
           "id": "XmlDocumentType.ReplaceWith#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.ReplaceWith inst (Node: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeNode.al:64"
         },
         {
           "id": "XmlDocumentType.SelectNodes#1",
@@ -9977,9 +9977,9 @@
         },
         {
           "id": "XmlDocumentType.SelectNodes#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeNode.al:411"
         },
         {
           "id": "XmlDocumentType.SelectSingleNode#1",
@@ -9989,33 +9989,33 @@
         },
         {
           "id": "XmlDocumentType.SelectSingleNode#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeNode.al:413"
         },
         {
           "id": "XmlDocumentType.SetInternalSubset#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.SetInternalSubset inst (Value: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:77"
         },
         {
           "id": "XmlDocumentType.SetName#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.SetName inst (Value: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:20"
         },
         {
           "id": "XmlDocumentType.SetPublicId#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.SetPublicId inst (Value: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:75"
         },
         {
           "id": "XmlDocumentType.SetSystemId#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.SetSystemId inst (Value: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:76"
         },
         {
           "id": "XmlDocumentType.WriteTo#1",
@@ -10037,13 +10037,13 @@
         },
         {
           "id": "XmlDocumentType.WriteTo#4",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlDocumentType.WriteTo inst (var Text: Text) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-doctype-declaration/DocTypeCopy.al:194"
         }
       ],
       "overloads": 27,
-      "pinned": 1,
+      "pinned": 21,
       "type": "XmlDocumentType"
     },
     {
@@ -10136,7 +10136,7 @@
           "id": "XmlElement.GetDescendantElements#1",
           "pinned": true,
           "signature": "XmlElement.GetDescendantElements inst () -> XmlNodeList",
-          "site": "xml/TestXmlDeep.al:27"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:118"
         },
         {
           "id": "XmlElement.GetDescendantElements#2",
@@ -10390,7 +10390,7 @@
           "id": "XmlNamespaceManager.NameTable#1",
           "pinned": true,
           "signature": "XmlNamespaceManager.NameTable inst (?NewValue: XmlNameTable) -> XmlNameTable?",
-          "site": "xml/TestProbeXmlContracts.al:528"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:143"
         },
         {
           "id": "XmlNamespaceManager.PopScope#1",
@@ -10461,9 +10461,9 @@
         },
         {
           "id": "XmlNode.AsXmlDocumentType#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlNode.AsXmlDocumentType inst () -> XmlDocumentType",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:465"
         },
         {
           "id": "XmlNode.AsXmlElement#1",
@@ -10505,13 +10505,13 @@
           "id": "XmlNode.IsXmlCData#1",
           "pinned": true,
           "signature": "XmlNode.IsXmlCData inst () -> Boolean",
-          "site": "xml/TestXmlComplete.al:56"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:169"
         },
         {
           "id": "XmlNode.IsXmlComment#1",
           "pinned": true,
           "signature": "XmlNode.IsXmlComment inst () -> Boolean",
-          "site": "xml/TestXmlComplete.al:90"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:168"
         },
         {
           "id": "XmlNode.IsXmlDeclaration#1",
@@ -10523,25 +10523,25 @@
           "id": "XmlNode.IsXmlDocument#1",
           "pinned": true,
           "signature": "XmlNode.IsXmlDocument inst () -> Boolean",
-          "site": "xml/TestXmlNodeTypes.al:48"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:166"
         },
         {
           "id": "XmlNode.IsXmlDocumentType#1",
           "pinned": true,
           "signature": "XmlNode.IsXmlDocumentType inst () -> Boolean",
-          "site": "xml/XmlNodes.al:65"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:172"
         },
         {
           "id": "XmlNode.IsXmlElement#1",
           "pinned": true,
           "signature": "XmlNode.IsXmlElement inst () -> Boolean",
-          "site": "xml/TestXmlComplete.al:122"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:164"
         },
         {
           "id": "XmlNode.IsXmlProcessingInstruction#1",
           "pinned": true,
           "signature": "XmlNode.IsXmlProcessingInstruction inst () -> Boolean",
-          "site": "xml/XmlNodes.al:59"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:170"
         },
         {
           "id": "XmlNode.IsXmlText#1",
@@ -10587,9 +10587,9 @@
         },
         {
           "id": "XmlNode.WriteTo#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlNode.WriteTo inst (OutStream: OutStream) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:2146"
         },
         {
           "id": "XmlNode.WriteTo#2",
@@ -10611,7 +10611,7 @@
         }
       ],
       "overloads": 32,
-      "pinned": 26,
+      "pinned": 28,
       "type": "XmlNode"
     },
     {
@@ -10637,27 +10637,27 @@
       "methods": [
         {
           "id": "XmlProcessingInstruction.AddAfterSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.AddAfterSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIEdit.al:186"
         },
         {
           "id": "XmlProcessingInstruction.AddBeforeSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.AddBeforeSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIEdit.al:192"
         },
         {
           "id": "XmlProcessingInstruction.AsXmlNode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.AsXmlNode inst () -> XmlNode",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:84"
         },
         {
           "id": "XmlProcessingInstruction.Create#1",
           "pinned": true,
           "signature": "XmlProcessingInstruction.Create static (Target: Text, Data: Text) -> XmlProcessingInstruction",
-          "site": "xml/TestProbeXmlContracts.al:83"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:83"
         },
         {
           "id": "XmlProcessingInstruction.GetData#1",
@@ -10667,15 +10667,15 @@
         },
         {
           "id": "XmlProcessingInstruction.GetDocument#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.GetDocument inst (var Document: XmlDocument) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIEdit.al:1232"
         },
         {
           "id": "XmlProcessingInstruction.GetParent#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.GetParent inst (var Parent: XmlElement) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIEdit.al:651"
         },
         {
           "id": "XmlProcessingInstruction.GetTarget#1",
@@ -10685,15 +10685,15 @@
         },
         {
           "id": "XmlProcessingInstruction.Remove#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.Remove inst () -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIEdit.al:204"
         },
         {
           "id": "XmlProcessingInstruction.ReplaceWith#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.ReplaceWith inst (Node: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIEdit.al:198"
         },
         {
           "id": "XmlProcessingInstruction.SelectNodes#1",
@@ -10703,9 +10703,9 @@
         },
         {
           "id": "XmlProcessingInstruction.SelectNodes#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIRead.al:250"
         },
         {
           "id": "XmlProcessingInstruction.SelectSingleNode#1",
@@ -10715,9 +10715,9 @@
         },
         {
           "id": "XmlProcessingInstruction.SelectSingleNode#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIRead.al:256"
         },
         {
           "id": "XmlProcessingInstruction.SetData#1",
@@ -10733,9 +10733,9 @@
         },
         {
           "id": "XmlProcessingInstruction.WriteTo#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlProcessingInstruction.WriteTo inst (OutStream: OutStream) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90PIRead.al:378"
         },
         {
           "id": "XmlProcessingInstruction.WriteTo#2",
@@ -10757,7 +10757,7 @@
         }
       ],
       "overloads": 20,
-      "pinned": 6,
+      "pinned": 16,
       "type": "XmlProcessingInstruction"
     },
     {
@@ -10777,21 +10777,21 @@
       "methods": [
         {
           "id": "XmlText.AddAfterSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.AddAfterSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextEdit.al:186"
         },
         {
           "id": "XmlText.AddBeforeSelf#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.AddBeforeSelf inst (Content: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextEdit.al:192"
         },
         {
           "id": "XmlText.AsXmlNode#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.AsXmlNode inst () -> XmlNode",
-          "site": null
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNodes.al:78"
         },
         {
           "id": "XmlText.Create#1",
@@ -10801,27 +10801,27 @@
         },
         {
           "id": "XmlText.GetDocument#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.GetDocument inst (var Document: XmlDocument) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextEdit.al:1232"
         },
         {
           "id": "XmlText.GetParent#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.GetParent inst (var Parent: XmlElement) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextEdit.al:651"
         },
         {
           "id": "XmlText.Remove#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.Remove inst () -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextEdit.al:204"
         },
         {
           "id": "XmlText.ReplaceWith#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.ReplaceWith inst (Node: Any*) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextEdit.al:198"
         },
         {
           "id": "XmlText.SelectNodes#1",
@@ -10831,9 +10831,9 @@
         },
         {
           "id": "XmlText.SelectNodes#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.SelectNodes inst (XPath: Text, var NodeList: XmlNodeList) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextRead.al:239"
         },
         {
           "id": "XmlText.SelectSingleNode#1",
@@ -10843,21 +10843,21 @@
         },
         {
           "id": "XmlText.SelectSingleNode#2",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.SelectSingleNode inst (XPath: Text, var Node: XmlNode) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextRead.al:245"
         },
         {
           "id": "XmlText.Value#1",
           "pinned": true,
           "signature": "XmlText.Value inst (?NewValue: Text) -> Text?",
-          "site": "xml/XmlNodes.al:77"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlNear.al:74"
         },
         {
           "id": "XmlText.WriteTo#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "XmlText.WriteTo inst (OutStream: OutStream) -> Boolean?",
-          "site": null
+          "site": "xml/lt-xml-cdata-comment-pi-text/P90TextRead.al:367"
         },
         {
           "id": "XmlText.WriteTo#2",
@@ -10879,7 +10879,7 @@
         }
       ],
       "overloads": 17,
-      "pinned": 3,
+      "pinned": 13,
       "type": "XmlText"
     },
     {
@@ -10888,7 +10888,7 @@
           "id": "XmlWriteOptions.PreserveWhitespace#1",
           "pinned": true,
           "signature": "XmlWriteOptions.PreserveWhitespace inst (Value: Boolean)",
-          "site": "xml/TestXmlDocumentWriteToOutStreamContracts.al:92"
+          "site": "types/lt-variant-is-text-streams/LTP89IsXmlTypes.al:123"
         }
       ],
       "overloads": 1,
@@ -10901,19 +10901,19 @@
           "id": "Xmlport.Break#1",
           "pinned": true,
           "signature": "Xmlport.Break inst ()",
-          "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:347"
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:272"
         },
         {
           "id": "Xmlport.BreakUnbound#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.BreakUnbound inst ()",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:274"
         },
         {
           "id": "Xmlport.CurrentPath#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.CurrentPath inst () -> Text",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:214"
         },
         {
           "id": "Xmlport.Export#1",
@@ -10929,21 +10929,21 @@
         },
         {
           "id": "Xmlport.FieldDelimiter#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.FieldDelimiter inst (?Delimiter: Text) -> Text?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:353"
         },
         {
           "id": "Xmlport.FieldSeparator#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.FieldSeparator inst (?Separator: Text) -> Text?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:353"
         },
         {
           "id": "Xmlport.Filename#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.Filename inst (?FileName: Text) -> Text?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:314"
         },
         {
           "id": "Xmlport.Import#1",
@@ -10965,21 +10965,21 @@
         },
         {
           "id": "Xmlport.Quit#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.Quit inst ()",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:276"
         },
         {
           "id": "Xmlport.RecordSeparator#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.RecordSeparator inst (?Separator: Text) -> Text?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:353"
         },
         {
           "id": "Xmlport.Run#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.Run inst ()",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94XpPathFlow.al:288"
         },
         {
           "id": "Xmlport.Run#2",
@@ -11013,19 +11013,19 @@
         },
         {
           "id": "Xmlport.TableSeparator#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.TableSeparator inst (?Separator: Text) -> Text?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:353"
         },
         {
           "id": "Xmlport.TextEncoding#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "Xmlport.TextEncoding inst (?Encoding: TextEncoding) -> TextEncoding?",
-          "site": null
+          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:353"
         }
       ],
       "overloads": 21,
-      "pinned": 11,
+      "pinned": 21,
       "type": "Xmlport"
     }
   ]

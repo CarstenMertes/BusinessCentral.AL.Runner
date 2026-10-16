@@ -40,9 +40,6 @@ pub struct RunOptions {
     /// oracle recorded values derived from `Today` on the day real BC ran, so the harness starts each codeunit at the
     /// time of that codeunit's suite in the oracle.
     pub clock_starts: Option<Arc<std::collections::HashMap<u32, i64>>>,
-    /// Run every test codeunit twice, on the tree walker and on the executable form, and compare the two
-    /// (`dual::DualDiff`; `alrunner test --dual-run`).
-    pub dual_run: bool,
 }
 
 /// What the compile phase of a run leaves for its run phase (`CorpusRuntime::compile_suites`).

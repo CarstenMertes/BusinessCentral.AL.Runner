@@ -179,3 +179,27 @@ build already in the local artifact cache wins over a newer published one. Missi
 - An explicit refresh command, and a line in each run saying which build was used and why.
 - Pipelines: with the pin in the repository, a CI cache keyed on the pinned build stays valid until the pin
   moves (for example weekly), instead of a rebuild per hotfix.
+
+## Parallel tests inside a codeunit under TestIsolation = Function (owner discussion, 2026-10-16)
+
+Today the unit of parallelism is the test codeunit: each runs on its own session and thread, so many small test
+codeunits use a many-core machine well, and the slowest codeunit sets the minimum wall time. Under
+TestIsolation = Function the database is rolled back after each test, but the tests of a codeunit still run in
+order on one thread. They cannot simply run in parallel: BC keeps the codeunit's global variables alive across
+its tests (Microsoft's `Initialize`/`IsInitialized` pattern relies on it), so fresh copies per test would be
+observable. Idea: run the tests of a Function-isolated codeunit in parallel, each on its own copy of the start
+state, when a static check shows no global written by one test is read by another (or the author declares it);
+otherwise keep the order. Advice for test design meanwhile: many small test codeunits, and expensive tests
+(heavy setup, pure computation) in codeunits of their own.
+
+## Differential exploration against real BC, after the known gaps are closed (owner, 2026-10-16)
+
+The corpus is filled from three known sources: how the language is documented and works, Microsoft's test
+suites, and partner test suites. Once those are exhausted (every coverage map and refusal list closed), what is
+left is behavior no known test exercises: unusual combinations, edge values, orders of events across
+extensions, interactions of features. Idea for that phase: agents generate such combinations on purpose
+("try to break it"), run each one on a real BC container and on v3, and compare. Every difference is a new
+corpus case, found even though no existing test ever exercises it. The corpus writer's tooling (local
+container, compile legs, dupfinder) and the oracle comparison already exist; what is new is the generator:
+grammar- and catalog-driven programs over the pinned building blocks (types, triggers, events, record
+operations), kept small so a difference points at one cause, and deduplicated before they become cases.

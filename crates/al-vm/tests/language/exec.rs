@@ -548,3 +548,19 @@ fn a_for_loop_reads_its_counter_back_and_refuses_a_counter_beyond_integer() {
         other => panic!("{other:?}"),
     }
 }
+
+#[test]
+fn foreach_runs_over_a_json_array_variable() {
+    let src = cu(
+        "procedure F(): Integer var A: JsonArray; T: JsonToken; N: Integer; begin A.Add(1); A.Add(2); A.Add(3); foreach T in A do N += T.AsValue().AsInteger(); exit(N); end;",
+    );
+    assert_eq!(int(run(&src, "F", vec![])), 6);
+}
+
+#[test]
+fn foreach_runs_over_the_result_of_a_builtin_method() {
+    let src = cu(
+        "procedure F(): Integer var D: XmlDocument; E: XmlElement; N: XmlNode; C: Integer; begin XmlDocument.ReadFrom('<a><b/><c/><d/></a>', D); D.GetRoot(E); foreach N in E.GetChildNodes() do C += 1; exit(C); end;",
+    );
+    assert_eq!(int(run(&src, "F", vec![])), 3);
+}

@@ -80,7 +80,7 @@ before you open a source file.
   (the test `builtin_ids_current` fails while `builtin_ids.rs` is stale).
 - `./check.sh` before every commit: fmt, clippy -D warnings, all tests, and the
   corpus ratchet. It fails on the first error.
-- Perf budgets (cold compile of the corpus ≤ 1.99 M instructions per object; the full corpus run with Microsoft's apps ≤ 144 G instructions; wall time printed for information only; parser ≥ 50 MB/s) are
+- Perf budgets (cold compile of the corpus ≤ 660 000 instructions per KiB of corpus source; the full corpus run with Microsoft's apps ≤ 144 G instructions; wall time printed for information only; parser ≥ 50 MB/s) are
   `#[ignore]`d tests that need release:
   `cargo test --release --no-fail-fast -p al-syntax --test perf_parse_throughput -p al-test-cli --test perf_budget -p al-test-cli --test perf_vm -p al-data --lib -- --ignored --nocapture`.
   CI runs them. `cargo run --release -p al-test-cli --example phases` prints

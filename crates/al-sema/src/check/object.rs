@@ -23,7 +23,7 @@ impl<'a> Checker<'a> {
             demand: std::cell::RefCell::new(demand_mode.then(|| demand::State::new(ws.objects.len()))),
             prefetch: None,
             resolved: Default::default(),
-            panicked: HashMap::new(),
+            panicked: HashMap::default(),
         }
     }
 
@@ -126,7 +126,7 @@ impl<'a> Checker<'a> {
     pub(crate) fn object_ctx(&mut self, oi: usize) -> ObjCtx {
         let obj = self.ws.object_ast(oi);
         let o = &self.ws.objects[oi];
-        let mut globals = HashMap::new();
+        let mut globals = super::posmap::FxMap::default();
         for v in obj.var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             for n in v.names() {
@@ -143,7 +143,7 @@ impl<'a> Checker<'a> {
                     globals.insert(
                         name.to_lowercase(),
                         Ty::Record {
-                            table,
+                            table: table.into(),
                             temporary: false,
                         },
                     );
@@ -177,7 +177,7 @@ impl<'a> Checker<'a> {
         match o.kind {
             ObjKind::Table => {
                 rec = Some(Ty::Record {
-                    table: o.name.clone(),
+                    table: o.name.as_str().into(),
                     temporary: false,
                 });
                 rec_unqualified = true;
@@ -186,7 +186,7 @@ impl<'a> Checker<'a> {
                 if let Some(base) = obj.extends_parts() {
                     if let Some(t) = self.resolve_parts(o.file, ObjKind::Table, &base) {
                         rec = Some(Ty::Record {
-                            table: self.ws.objects[t].name.clone(),
+                            table: self.ws.objects[t].name.as_str().into(),
                             temporary: false,
                         });
                         self_obj = t;
@@ -198,11 +198,11 @@ impl<'a> Checker<'a> {
             }
             ObjKind::Page => {
                 rec = prop("SourceTable").map(|t| Ty::Record {
-                    table: unquote(t),
+                    table: unquote(t).into(),
                     temporary: false,
                 });
                 rec_unqualified = true;
-                globals.insert("currpage".into(), Ty::Object(ObjKind::Page, o.name.clone()));
+                globals.insert("currpage".into(), Ty::Object(ObjKind::Page, o.name.as_str().into()));
             }
             ObjKind::PageExtension => {
                 if let Some(base) = obj.extends_parts() {
@@ -212,12 +212,12 @@ impl<'a> Checker<'a> {
                             .properties()
                             .find(|x| x.name().eq_ignore_ascii_case("SourceTable"))
                             .map(|x| Ty::Record {
-                                table: unquote(x.value_text()),
+                                table: unquote(x.value_text()).into(),
                                 temporary: false,
                             });
                         globals.insert(
                             "currpage".into(),
-                            Ty::Object(ObjKind::Page, self.ws.objects[p].name.clone()),
+                            Ty::Object(ObjKind::Page, self.ws.objects[p].name.as_str().into()),
                         );
                     } else {
                         rec = Some(Ty::Unknown);
@@ -228,7 +228,7 @@ impl<'a> Checker<'a> {
             }
             ObjKind::Codeunit => {
                 rec = prop("TableNo").map(|t| Ty::Record {
-                    table: unquote(t),
+                    table: unquote(t).into(),
                     temporary: false,
                 })
             }
@@ -242,7 +242,7 @@ impl<'a> Checker<'a> {
                         .map_or_else(|| o.name.clone(), |r| self.ws.objects[r].name.clone()),
                     _ => o.name.clone(),
                 };
-                globals.insert("currreport".into(), Ty::Object(ObjKind::Report, report));
+                globals.insert("currreport".into(), Ty::Object(ObjKind::Report, report.into()));
                 globals.insert("requestoptionspage".into(), Ty::Builtin("RequestPage".into()));
                 // The request page of a report states a `SourceTable`: its triggers and controls name
                 // that table's current record as `Rec` (handlers/TestReportRequestPageSourceTable
@@ -259,23 +259,26 @@ impl<'a> Checker<'a> {
                         });
                     if let Some(table) = source {
                         rec = Some(Ty::Record {
-                            table,
+                            table: table.into(),
                             temporary: false,
                         });
                     }
                 }
             }
             ObjKind::XmlPort => {
-                globals.insert("currxmlport".into(), Ty::Object(ObjKind::XmlPort, o.name.clone()));
+                globals.insert(
+                    "currxmlport".into(),
+                    Ty::Object(ObjKind::XmlPort, o.name.as_str().into()),
+                );
             }
             // A query's procedures call the query's own methods unqualified and name its columns
             // and filters (query/TestQueryDataItemTableFilterDatabaseConst.al: `SetSourceFilter` of
             // Base App's query 522 does `SetRange(Source_Type, ..)`).
             ObjKind::Query => {
-                rec = Some(Ty::Object(ObjKind::Query, o.name.clone()));
+                rec = Some(Ty::Object(ObjKind::Query, o.name.as_str().into()));
                 rec_unqualified = true;
                 // `CurrQuery` is the running query in its triggers (query/TestQueryOnBeforeOpenVariablesContracts.al:75-77).
-                globals.insert("currquery".into(), Ty::Object(ObjKind::Query, o.name.clone()));
+                globals.insert("currquery".into(), Ty::Object(ObjKind::Query, o.name.as_str().into()));
             }
             _ => {}
         }
@@ -285,7 +288,7 @@ impl<'a> Checker<'a> {
         }
         // Report extensions see the base report's data items; `modify(X)` blocks
         // run with data item X as their record.
-        let mut base_items: HashMap<String, String> = HashMap::new();
+        let mut base_items: HashMap<String, String> = HashMap::default();
         if o.kind == ObjKind::ReportExtension {
             if let Some(base) = obj.extends_parts() {
                 if let Some(r) = self.resolve_parts(o.file, ObjKind::Report, &base) {
@@ -297,7 +300,7 @@ impl<'a> Checker<'a> {
                                 globals.insert(
                                     n.to_lowercase(),
                                     Ty::Record {
-                                        table: t,
+                                        table: t.into(),
                                         temporary: false,
                                     },
                                 );
@@ -310,7 +313,7 @@ impl<'a> Checker<'a> {
         // ADR-023: a page or report extension sees the base object's `protected var` variables
         // (those the extension does not declare itself) and its procedures.
         let mut base_obj = None;
-        let mut base_vars = std::collections::HashSet::new();
+        let mut base_vars = std::collections::HashSet::default();
         if crate::base_access::scope_enabled() {
             let base_kind = match o.kind {
                 ObjKind::PageExtension => Some(ObjKind::Page),
@@ -385,9 +388,9 @@ impl<'a> Checker<'a> {
         &self,
         file: usize,
         r: &ast::Routine,
-        locals: &HashMap<String, Ty>,
+        locals: &super::posmap::FxMap<String, Ty>,
     ) -> HashSet<String> {
-        let mut out = HashSet::new();
+        let mut out = HashSet::default();
         let Some(body) = r.body() else { return out };
         for (name, t) in locals {
             let Ty::Record { table, .. } = t else { continue };
@@ -450,7 +453,7 @@ impl<'a> Checker<'a> {
             let (rec, rec_unqualified) = match item_rec {
                 Some(t) => (
                     Some(Ty::Record {
-                        table: t,
+                        table: t.into(),
                         temporary: false,
                     }),
                     true,
@@ -468,7 +471,7 @@ impl<'a> Checker<'a> {
                 base_obj: *base_obj,
                 base_vars: base_vars.clone(),
             };
-            let mut locals = HashMap::new();
+            let mut locals = super::posmap::FxMap::default();
             for p in r.params() {
                 locals.insert(
                     p.name().to_lowercase(),

@@ -19,7 +19,7 @@ use std::time::{Duration, Instant};
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    // The tree-walking VM recurses on the native stack per AL call; give it room.
+    // An AL call nests native frames of the bytecode loop; give the runner thread room.
     let worker = std::thread::Builder::new()
         .stack_size(512 << 20)
         .spawn(run)
@@ -73,6 +73,9 @@ fn run() -> Result<ExitCode, String> {
         al_test_cli::host::set_files_dir(dir.clone());
     }
     let root = args.root.clone().unwrap_or_else(|| PathBuf::from("."));
+    if let Some(dir) = &args.behavior_coverage_map {
+        return behavior_coverage_map(&root, dir.as_deref());
+    }
     if let Some(dir) = &args.coverage_map {
         return coverage_map(&root, dir.as_deref());
     }
@@ -126,14 +129,8 @@ fn run() -> Result<ExitCode, String> {
     if runs.len() > 1 && !args.fetch_deps && !args.build_compile_cache {
         print!("{}", drift_summary(&runs));
     }
-    if DUAL_FAILED.load(std::sync::atomic::Ordering::Relaxed) {
-        code = code.max(1);
-    }
     Ok(ExitCode::from(code))
 }
-
-/// Set when the dual run (`--dual-run`) found a difference.
-static DUAL_FAILED: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
 
 /// `--coverage-map`: which builtin overloads the corpus calls (`coverage.rs`).
 fn coverage_map(root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
@@ -151,6 +148,36 @@ fn coverage_map(root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
         "corpus coverage: pinned {pinned} of {all} builtin overloads; written to {}",
         dir.display()
     );
+    Ok(ExitCode::SUCCESS)
+}
+
+/// `--behavior-coverage-map`: which language behavior the corpus pins (`behavior_coverage.rs`).
+fn behavior_coverage_map(root: &Path, dir: Option<&Path>) -> Result<ExitCode, String> {
+    let commit = git_head(&root.join("corpus"))?;
+    let map = al_test_cli::behavior_coverage::corpus_behavior_coverage(root, &commit)?;
+    let dir = dir.map(Path::to_path_buf).unwrap_or_else(|| root.join("docs"));
+    std::fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
+    let write = |name: &str, text: String| {
+        std::fs::write(dir.join(name), text).map_err(|e| format!("{}: {e}", dir.join(name).display()))
+    };
+    write(
+        "corpus-behavior-coverage.md",
+        al_test_cli::behavior_coverage::to_markdown(&map),
+    )?;
+    write(
+        "corpus-behavior-coverage.json",
+        al_test_cli::behavior_coverage::to_json(&map),
+    )?;
+    for d in al_test_cli::behavior_coverage::Dim::ALL {
+        let items = map.of(d);
+        println!(
+            "behavior coverage: {}: pinned {} of {}",
+            d.title(),
+            items.iter().filter(|i| i.site.is_some()).count(),
+            items.len()
+        );
+    }
+    println!("written to {}", dir.display());
     Ok(ExitCode::SUCCESS)
 }
 
@@ -532,7 +559,6 @@ fn run_version(
         capture: Default::default(),
         hooks: Default::default(),
         clock_starts: (!clocks.is_empty()).then(|| std::sync::Arc::new(clocks)),
-        dual_run: args.dual_run,
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(
@@ -545,20 +571,6 @@ fn run_version(
         &runs,
         &opts,
     )?;
-    if args.dual_run {
-        for d in rt.dual_diffs() {
-            println!("{d}");
-        }
-        println!(
-            "dual run: BC {}: {} test(s) compared, {} difference(s)",
-            version.bc_version,
-            rt.results().len(),
-            rt.dual_diffs().len()
-        );
-        if !rt.dual_diffs().is_empty() {
-            DUAL_FAILED.store(true, std::sync::atomic::Ordering::Relaxed);
-        }
-    }
     let p = &rt.phases;
     let sidecar_stats = sidecar_host.stats();
     sidecar_host.shutdown();

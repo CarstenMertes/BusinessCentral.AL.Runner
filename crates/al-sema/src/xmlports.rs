@@ -5,11 +5,11 @@
 //! not understand becomes a reason on the xmlport, so a variable of that xmlport is refused
 //! statically (hard rule 4) instead of running with a guessed behaviour.
 
+use crate::check::posmap::FxMap as HashMap;
 use crate::members::FieldClass;
 use crate::workspace::{ObjKind, Resolution, Workspace};
 use al_ir as ir;
 use al_syntax::ast;
-use std::collections::HashMap;
 
 /// Object properties that change nothing the runtime can observe.
 const INERT_OBJECT_PROPERTIES: &[&str] = &[

@@ -18,8 +18,6 @@ pub struct Args {
     /// `--no-ratchet`: report only; do not compare with the baseline (for running the corpus
     /// without the dependency apps its baseline needs).
     pub no_ratchet: bool,
-    /// `--dual-run`: run every test codeunit twice, on the tree walker and on the executable form, and compare.
-    pub dual_run: bool,
     /// Extra directories of `.app` packages, searched after the project's `.alpackages`.
     pub deps: Vec<PathBuf>,
     /// Run without dependency apps (the corpus alone).
@@ -72,6 +70,9 @@ pub struct Args {
     /// `--coverage-map [DIR]`: write `corpus-coverage.md` and `corpus-coverage.json` (which builtin
     /// overloads some corpus test calls) to DIR, else `docs/`, and stop.
     pub coverage_map: Option<Option<PathBuf>>,
+    /// `--behavior-coverage-map [DIR]`: write `corpus-behavior-coverage.md` and `.json` (triggers,
+    /// properties, platform events, syntax, runtime error sites) to DIR, else `docs/`, and stop.
+    pub behavior_coverage_map: Option<Option<PathBuf>>,
     /// `--explain TEST`: run one test and say why it ended as it did.
     pub explain: Option<String>,
     /// `--top-refusals [N]`: rank the refusal reasons; N entries (default 10).
@@ -114,6 +115,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
                 _ => None,
             };
             a.must_not_compile = Some(dir);
+            continue;
+        }
+        if flag == "--behavior-coverage-map" {
+            let dir = match it.peek() {
+                Some(v) if !v.starts_with("--") => it.next().map(PathBuf::from),
+                _ => None,
+            };
+            a.behavior_coverage_map = Some(dir);
             continue;
         }
         if flag == "--coverage-map" {
@@ -182,7 +191,6 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Parsed, String> {
             "--junit" => a.junit = Some(text()?.into()),
             "--update-baseline" => a.update_baseline = true,
             "--no-ratchet" => a.no_ratchet = true,
-            "--dual-run" => a.dual_run = true,
             "--deps" => a.deps.push(text()?.into()),
             "--no-deps" => a.no_deps = true,
             "--all-versions" => a.all_versions = true,
@@ -282,6 +290,8 @@ SELECTION (each flag repeats; the selection is their union; without one, everyth
   cases. --update-baseline refuses to run with a selection.
 
 DIAGNOSE
+  --behavior-coverage-map [DIR]  write corpus-behavior-coverage.md and .json to DIR (default docs/): which
+                              triggers, properties, platform events, syntax kinds and error sites the corpus pins
   --coverage-map [DIR]        write corpus-coverage.md and .json to DIR (default docs/): which builtin
                               methods and overloads of the catalog some corpus test calls, per type
   --must-not-compile [DIR]    check the corpus of AL files the real compiler rejects (DIR, else
@@ -310,8 +320,6 @@ BASELINE AND REPORTS
   --suite-baseline NAME=FILE  the ratchet file of an extra test app (repeatable)
   --update-baseline           rewrite the baseline files from this run (refused on any regression)
   --no-ratchet                report only; do not compare with the baseline
-  --dual-run                  run every test codeunit twice (tree walker, executable form), compare outcome, error
-                              stack, assumptions and the data left, print each difference and fail on any
   --json FILE                 write the pass-rate report as JSON
   --markdown FILE             write the pass-rate report as Markdown
   --junit FILE                write per-test outcomes and refusal reasons as JUnit XML

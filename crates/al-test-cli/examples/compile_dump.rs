@@ -12,6 +12,30 @@
 
 use al_test_cli::runtime;
 use std::io::Write;
+/// How many expression nodes have a recorded type (ADR-036 step 0), on stderr.
+fn table_stats(p: &al_ir::Program) {
+    let (mut routines, mut with, mut nodes, mut typed, mut by_ty) =
+        (0usize, 0usize, 0usize, 0usize, std::collections::BTreeMap::new());
+    for r in p.objects.iter().flat_map(|o| o.routines.iter()) {
+        let n = al_ir::types::count_exprs(&r.body);
+        if n == 0 {
+            continue;
+        }
+        routines += 1;
+        nodes += n;
+        if !r.expr_tys.is_empty() {
+            with += 1;
+            for t in &r.expr_tys {
+                if *t != al_ir::types::ExprTy::Unknown {
+                    typed += 1;
+                    *by_ty.entry(format!("{t:?}")).or_insert(0usize) += 1;
+                }
+            }
+        }
+    }
+    eprintln!("expr types: {with}/{routines} routines with a table, {typed}/{nodes} nodes typed {by_ty:?}");
+}
+
 fn main() {
     let root = std::path::PathBuf::from(std::env::args().nth(1).unwrap());
     let out = std::env::args().nth(2).unwrap();
@@ -28,6 +52,7 @@ fn main() {
     let members = al_sema::members::build(&ws);
     let checked = al_sema::check::check(&ws, &members, &al_builtins::catalog::Catalog::load());
     let lowered = al_sema::lower::lower(&ws, &members, &checked);
+    table_stats(&lowered.program);
     let mut f = std::io::BufWriter::new(std::fs::File::create(out).unwrap());
     writeln!(f, "files {}", ws.files.len()).unwrap();
     for x in &ws.files {
@@ -116,6 +141,7 @@ fn dump_with_deps(
     for d in &ws.diagnostics {
         writeln!(f, "wsdiag {d:?}").unwrap();
     }
+    table_stats(&lowered.program);
     for (i, o) in lowered.program.objects.iter().enumerate() {
         writeln!(f, "object {i} {} {:016x}", o.name, hash_of(o)).unwrap();
     }

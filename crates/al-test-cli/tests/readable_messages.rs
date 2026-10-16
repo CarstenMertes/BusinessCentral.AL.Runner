@@ -10,6 +10,21 @@ use std::path::{Path, PathBuf};
 /// `(file suffix, the trimmed source line, why the debug format is fine here)`.
 const KEPT: &[(&str, &str, &str)] = &[
     (
+        "al-test-cli/src/behavior_coverage.rs",
+        r#"format!("{k:?}")"#,
+        "the grammar kind name as the catalog key of the behavior coverage map (SyntaxKind names are the item names)",
+    ),
+    (
+        "al-test-cli/src/behavior_coverage.rs",
+        r#"Some(t) => format!("Literal:{:?}", t.kind()),"#,
+        "the literal kind as a catalog key of the behavior coverage map",
+    ),
+    (
+        "al-vm/src/exec/mod.rs",
+        r#"Some(c.code.iter().map(|op| format!("{op:?}")).collect())"#,
+        "the listing of the instructions of a routine (tests of instruction selection): for the developers of the compiler",
+    ),
+    (
         "al-link/src/lib.rs",
         r#""source position {at}: {:?} against {:?} ({} and {} positions)","#,
         "the report of a defect of the link step (AL_CHECK_LINK, tests): for the developers of the compiler",
@@ -18,36 +33,6 @@ const KEPT: &[(&str, &str, &str)] = &[
         "al-link/src/lib.rs",
         r#"let (x, y) = (format!("{a:?}"), format!("{b:?}"));"#,
         "the report of a defect of the link step (AL_CHECK_LINK, tests): for the developers of the compiler",
-    ),
-    (
-        "al-data/src/memory.rs",
-        r#"format!("{row:?}").hash(h);"#,
-        "a hash input of the dual-run digest, never shown",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#""dual run: {} {} ({}): {}: tree walker {:?}, bytecode {:?}","#,
-        "the report of a difference between the two executors, for the developers of the executable form",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#"diff("outcome", format!("{o_tree:?}"), format!("{o_other:?}"));"#,
-        "same",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#"format!("{:?}", marks(tree.hits, t)),"#,
-        "same",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#"format!("{:?}", marks(other.hits, t)),"#,
-        "same",
-    ),
-    (
-        "al-testrun/src/dual.rs",
-        r#""table {} (object {}) rows hash {:?}","#,
-        "same",
     ),
     (
         "al-vm/src/exec/compile.rs",

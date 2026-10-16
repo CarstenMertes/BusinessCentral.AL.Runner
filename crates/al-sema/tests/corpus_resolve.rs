@@ -105,6 +105,10 @@ const KNOWN_GAP_FILES: &[(&str, &str)] = &[
         "misc/lt-probes-needed-6/PnF18ThisInTable.al",
         "the checker does not resolve `this` inside a table (corpus bump 11)",
     ),
+    (
+        "types/lt-variant-is-text-streams/LTP89TextConst.al",
+        "the checker does not resolve a TextConst declared in a var section (PadSrc, SplitSrc; corpus bump 12)",
+    ),
 ];
 
 /// Milestone 1: every name, member and call in every corpus body resolves,

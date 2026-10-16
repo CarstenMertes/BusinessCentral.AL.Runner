@@ -3,37 +3,43 @@
 use super::*;
 use al_builtins::builtin_id::{Class, ids};
 use al_builtins::value::RtType;
+use types::{DeclaredTypes, ExprTypes, Ty, of_rt};
 
 /// Compiles `r`.
-pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
+/// `captured`: the form a value capture runs (ADR-030): statement and loop ops that tell the capture
+/// what a statement did.
+pub(crate) fn compile(r: &ir::Routine, captured: bool) -> Option<Chunk> {
     let nlocals = u16::try_from(r.locals.len()).ok()?;
     let mut c = Compiler {
         locals_ty: r.locals.iter().map(|l| l.ty.clone()).collect(),
+        tys: DeclaredTypes {
+            locals: r.locals.iter().map(|l| l.ty.clone()).collect(),
+            lowered: al_ir::types::ExprTypes::new(r),
+        },
         chunk: Chunk {
             code: Vec::new(),
+            cap_sites: Vec::new(),
             consts: Vec::new(),
             places: Vec::new(),
             types: Vec::new(),
-            exprs: Vec::new(),
-            stmts: Vec::new(),
-            expr_kinds: Vec::new(),
-            stmt_kinds: Vec::new(),
             calls: Vec::new(),
             builtins: Vec::new(),
             fors: Vec::new(),
-            labels: Vec::new(),
             appends: Vec::new(),
             dotnets: Vec::new(),
             aux: Vec::new(),
             foreachs: Vec::new(),
+            specials: Vec::new(),
+            faults: Vec::new(),
             ifaces: Vec::new(),
             nlocals,
             temps: 0,
-            tree_nodes: 0,
         },
         next: nlocals,
         max: nlocals,
         loops: Vec::new(),
+        captured,
+        cap_depth: 0,
     };
     c.block(&r.body).ok()?;
     c.chunk.temps = c.max - nlocals;
@@ -47,18 +53,25 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
 }
 
 struct LoopCtx {
+    /// `cap_depth` at the loop statement: a `break` or `continue` closes the statements above it.
+    depth: u32,
     /// Jumps to patch to the loop's exit and to its next round.
     brk: Vec<usize>,
     cont: Vec<usize>,
 }
 
-struct Compiler {
+struct Compiler<'a> {
     /// The declared type of each local.
     locals_ty: Vec<RtType>,
+    /// Where the static types come from; the instruction selection asks only this.
+    tys: DeclaredTypes<'a>,
     chunk: Chunk,
     next: u16,
     max: u16,
     loops: Vec<LoopCtx>,
+    captured: bool,
+    /// The statements open at this point of the code (captured form only).
+    cap_depth: u32,
 }
 
 type R<T> = Result<T, ()>;
@@ -74,8 +87,7 @@ fn pure(e: &ir::Expr) -> bool {
     }
 }
 
-/// The builtins the tree walker handles itself, with operands of their own kind, before anything else; they stay on
-/// the tree walker.
+/// The builtins the VM runs itself on operands it holds (`Op::Special`).
 fn special(id: al_builtins::builtin_id::BuiltinId) -> bool {
     matches!(
         id,
@@ -103,18 +115,16 @@ fn simple(e: &ir::Expr) -> bool {
     )
 }
 
-/// A copy of an argument list with the value expressions replaced by a constant: after a call only the places of
-/// by-reference arguments are used.
-fn blank(args: &[ir::Arg]) -> Vec<ir::Arg> {
-    args.iter()
-        .map(|a| match a {
-            ir::Arg::Value(_) => ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))),
-            ir::Arg::Ref(p) => ir::Arg::Ref(p.clone()),
-        })
-        .collect()
+/// Whether a place has an index expression that evaluating it would run.
+fn has_index(p: &ir::Place) -> bool {
+    match p {
+        ir::Place::Index(..) => true,
+        ir::Place::Field(base, _) => has_index(base),
+        _ => false,
+    }
 }
 
-impl Compiler {
+impl<'a> Compiler<'a> {
     fn emit(&mut self, op: Op) -> usize {
         self.chunk.code.push(op);
         self.chunk.code.len() - 1
@@ -128,10 +138,18 @@ impl Compiler {
         match &mut self.chunk.code[at] {
             Op::Jump { t }
             | Op::JumpIfNot { t, .. }
-            | Op::MatchAny { t, .. }
+            | Op::JumpIfNotBool { t, .. }
+            | Op::JumpUnlessEqInt { t, .. }
+            | Op::JumpUnlessNeInt { t, .. }
+            | Op::JumpUnlessLtInt { t, .. }
+            | Op::JumpUnlessLeInt { t, .. }
+            | Op::JumpUnlessGtInt { t, .. }
+            | Op::JumpUnlessGeInt { t, .. }
+            | Op::JumpEq { t, .. }
+            | Op::JumpLt { t, .. }
+            | Op::JumpGt { t, .. }
             | Op::ForeachNext { t, .. }
             | Op::ForTest { t, .. } => *t = to,
-            Op::TreeStmt { .. } => unreachable!("tree statements are patched through patch_tree"),
             other => unreachable!("not a jump: {other:?}"),
         }
     }
@@ -161,7 +179,7 @@ impl Compiler {
 
     /// The register that holds the value of `e`, which may be a local itself: the caller must not let anything write
     /// that local before it reads the register.
-    fn expr_any(&mut self, e: &ir::Expr) -> R<u16> {
+    fn expr_any(&mut self, e: &'a ir::Expr) -> R<u16> {
         if let ir::Expr::Load(ir::Place::Local(i)) = e {
             return u16::try_from(*i).map_err(|_| ());
         }
@@ -171,7 +189,7 @@ impl Compiler {
     }
 
     /// The register that holds a copy of the value of `e` (a temporary), safe against later writes to locals.
-    fn expr_copy(&mut self, e: &ir::Expr) -> R<u16> {
+    fn expr_copy(&mut self, e: &'a ir::Expr) -> R<u16> {
         let r = self.expr_any(e)?;
         if self.is_local(r) {
             let d = self.alloc()?;
@@ -183,7 +201,7 @@ impl Compiler {
     }
 
     /// Operands `a` then `b`: `a` must be a copy when evaluating `b` could write a local.
-    fn pair(&mut self, a: &ir::Expr, b: &ir::Expr) -> R<(u16, u16)> {
+    fn pair(&mut self, a: &'a ir::Expr, b: &'a ir::Expr) -> R<(u16, u16)> {
         let ra = if pure(b) { self.expr_any(a)? } else { self.expr_copy(a)? };
         let rb = self.expr_any(b)?;
         Ok((ra, rb))
@@ -195,18 +213,142 @@ impl Compiler {
         self.emit(Op::Aux { s, d, a });
     }
 
-    fn tree_expr(&mut self, e: &ir::Expr, d: u16) {
-        self.chunk.exprs.push(e.clone());
-        self.chunk.expr_kinds.push(match e {
-            ir::Expr::Builtin { id, .. } => format!("Builtin {id}"),
-            other => expr_kind(other).to_string(),
+    fn typed_binary(&mut self, op: ir::BinOp, l: &'a ir::Expr, r: &'a ir::Expr, d: u16) -> R<bool> {
+        use ir::BinOp as B;
+        let (Some(tl), Some(tr)) = (self.tys.expr_ty(l), self.tys.expr_ty(r)) else {
+            return Ok(false);
+        };
+        if (tl, tr) == (Ty::Boolean, Ty::Boolean) {
+            if !matches!(op, B::And | B::Or | B::Xor) {
+                return Ok(false);
+            }
+            let (a, b) = self.pair(l, r)?;
+            self.emit(match op {
+                B::And => Op::AndBool { d, a, b },
+                B::Or => Op::OrBool { d, a, b },
+                _ => Op::XorBool { d, a, b },
+            });
+            return Ok(true);
+        }
+        if (tl, tr) != (Ty::Integer, Ty::Integer) {
+            return Ok(false);
+        }
+        if matches!(op, B::Add | B::Sub) {
+            if let ir::Expr::Const(ir::Const::Integer(k)) = r {
+                if op == B::Add || *k != i32::MIN {
+                    let a = self.expr_any(l)?;
+                    let k = if op == B::Add { *k } else { -*k };
+                    self.emit(Op::AddIntK { d, a, k });
+                    return Ok(true);
+                }
+            }
+        }
+        if !matches!(
+            op,
+            B::Add | B::Sub | B::Mul | B::IntDiv | B::Mod | B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge
+        ) {
+            return Ok(false);
+        }
+        let (a, b) = self.pair(l, r)?;
+        self.emit(match op {
+            B::Add => Op::AddInt { d, a, b },
+            B::Sub => Op::SubInt { d, a, b },
+            B::Mul => Op::MulInt { d, a, b },
+            B::IntDiv => Op::DivInt { d, a, b },
+            B::Mod => Op::ModInt { d, a, b },
+            B::Eq => Op::EqInt { d, a, b },
+            B::Ne => Op::NeInt { d, a, b },
+            B::Lt => Op::LtInt { d, a, b },
+            B::Le => Op::LeInt { d, a, b },
+            B::Gt => Op::GtInt { d, a, b },
+            _ => Op::GeInt { d, a, b },
         });
-        let idx = (self.chunk.exprs.len() - 1) as u32;
-        self.chunk.tree_nodes += 1;
-        self.emit(Op::TreeExpr { e: idx, d });
+        Ok(true)
     }
 
-    fn expr_into(&mut self, e: &ir::Expr, d: u16) -> R<()> {
+    /// Evaluates the condition `c` and emits the jump taken when it is false, to be patched; returns the jump's index.
+    /// An Integer compare is fused with the jump.
+    fn cond_jump(&mut self, c: &'a ir::Expr, t: u32) -> R<usize> {
+        use ir::BinOp as B;
+        if let ir::Expr::Binary(op @ (B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge), l, r) = c {
+            if (self.tys.expr_ty(l), self.tys.expr_ty(r)) == (Some(Ty::Integer), Some(Ty::Integer)) {
+                let (a, b) = self.pair(l, r)?;
+                return Ok(self.emit(match op {
+                    B::Eq => Op::JumpUnlessEqInt { a, b, t },
+                    B::Ne => Op::JumpUnlessNeInt { a, b, t },
+                    B::Lt => Op::JumpUnlessLtInt { a, b, t },
+                    B::Le => Op::JumpUnlessLeInt { a, b, t },
+                    B::Gt => Op::JumpUnlessGtInt { a, b, t },
+                    _ => Op::JumpUnlessGeInt { a, b, t },
+                }));
+            }
+        }
+        let boolean = self.tys.expr_ty(c) == Some(Ty::Boolean);
+        let a = self.expr_any(c)?;
+        Ok(self.emit(if boolean {
+            Op::JumpIfNotBool { a, t }
+        } else {
+            Op::JumpIfNot { a, t }
+        }))
+    }
+
+    /// The builtins the VM runs on operands it holds (`special`): `false` when the shape of the call is not one it knows, which
+    /// then raises the error of a builtin nothing implements.
+    fn special(
+        &mut self,
+        id: al_builtins::builtin_id::BuiltinId,
+        receiver: Option<&'a ir::Arg>,
+        args: &'a [ir::Arg],
+        ret_used: bool,
+        d: u16,
+    ) -> R<bool> {
+        let (mut place, mut arg) = (None, None);
+        match id {
+            ids::SESSION_BINDSUBSCRIPTION_1 | ids::SESSION_UNBINDSUBSCRIPTION_1 => {
+                let Some(ir::Arg::Value(e)) = args.first() else {
+                    return Ok(false);
+                };
+                arg = Some(self.expr_copy(e)?);
+            }
+            ids::RECORD_SETCURRFIELDNO_1 => {
+                let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver, args.first()) else {
+                    return Ok(false);
+                };
+                place = Some(self.rplace(p)?);
+                arg = Some(self.expr_copy(e)?);
+            }
+            ids::RECORD_CURRFIELDNO_1 => {
+                let Some(ir::Arg::Ref(p)) = receiver else {
+                    return Ok(false);
+                };
+                place = Some(self.rplace(p)?);
+            }
+            ids::SYSTEM_CLEARALL_1 => {}
+            ids::SESSION_APPLICATIONAREA_1 => match args.first() {
+                None => {}
+                Some(ir::Arg::Value(e)) => arg = Some(self.expr_copy(e)?),
+                Some(_) => return Ok(false),
+            },
+            _ => return Ok(false),
+        }
+        self.chunk.specials.push(SpecialSite {
+            id,
+            place,
+            arg,
+            ret_used,
+        });
+        let s = (self.chunk.specials.len() - 1) as u32;
+        self.emit(Op::Special { s, d });
+        Ok(true)
+    }
+
+    fn fault(&mut self, k: FaultKind) {
+        self.chunk.faults.push(k);
+        let k = (self.chunk.faults.len() - 1) as u32;
+        self.emit(Op::Fault { k });
+    }
+
+    fn expr_into(&mut self, e: &'a ir::Expr, d: u16) -> R<()> {
         use ir::Expr as E;
         let mark = self.next;
         match e {
@@ -225,13 +367,19 @@ impl Compiler {
                 self.emit(Op::LoadGlobal { d, i: *i as u32 });
             }
             E::Load(p) => {
-                let p = self.place(p);
+                let rp = self.rplace(p)?;
+                let p = self.place(&rp);
                 self.emit(Op::ReadPlace { d, p });
+            }
+            E::Unary(ir::UnOp::Not, a) if self.tys.expr_ty(a) == Some(Ty::Boolean) => {
+                let a = self.expr_any(a)?;
+                self.emit(Op::NotBool { d, a });
             }
             E::Unary(op, a) => {
                 let a = self.expr_any(a)?;
                 self.emit(Op::Un { op: *op, d, a });
             }
+            E::Binary(op, l, r) if self.typed_binary(*op, l, r, d)? => {}
             E::Binary(op, l, r) => {
                 let (a, b) = self.pair(l, r)?;
                 use ir::BinOp as B;
@@ -243,6 +391,10 @@ impl Compiler {
                 } else {
                     self.emit(Op::Bin { op: *op, d, a, b });
                 }
+            }
+            // A conversion to the type the operand is proven to have changes nothing.
+            E::Convert(t, a) if of_rt(t).is_some() && of_rt(t) == self.tys.expr_ty(a) => {
+                self.expr_into(a, d)?;
             }
             E::Convert(t, a) => {
                 let a = self.expr_any(a)?;
@@ -261,13 +413,13 @@ impl Compiler {
                     Some(i) => Some(self.expr_copy(i)?),
                     None => None,
                 };
-                let arg_regs = self.arg_regs(args)?;
+                let (arg_regs, site_args) = self.arg_regs(args)?;
                 self.chunk.calls.push(CallSite {
                     object: *object,
                     routine: *routine,
                     instance,
                     arg_regs,
-                    args: blank(args),
+                    args: site_args,
                     try_call: *try_call,
                 });
                 let s = (self.chunk.calls.len() - 1) as u32;
@@ -278,30 +430,40 @@ impl Compiler {
                 receiver,
                 args,
                 ret_used,
+            } if special(*id) && self.special(*id, receiver.as_deref(), args, *ret_used, d)? => {}
+            E::Builtin {
+                id,
+                receiver,
+                args,
+                ret_used,
             } if !special(*id) && (vm_class(*id) || al_builtins::native::by_id(*id).is_some()) => {
                 let vm = vm_class(*id);
                 let native = if vm { None } else { al_builtins::native::by_id(*id) };
                 let n = args.len();
                 let mut regs = Vec::with_capacity(n + 1);
-                let mut all: Vec<&ir::Arg> = Vec::with_capacity(n + 1);
+                let mut kept: Vec<ir::Arg> = Vec::with_capacity(n + 1);
+                let mut all: Vec<&'a ir::Arg> = Vec::with_capacity(n + 1);
                 if let Some(r) = receiver.as_deref() {
                     all.push(r);
                 }
                 all.extend(args.iter());
                 for (i, a) in all.iter().enumerate() {
                     let rest_pure = all[i + 1..].iter().all(|b| arg_pure(b));
-                    regs.push(self.arg_reg(a, rest_pure)?);
+                    let (r, arg) = self.arg_reg(a, rest_pure)?;
+                    regs.push(r);
+                    kept.push(arg);
                 }
                 let receiver_reg = if receiver.is_some() { Some(regs.remove(0)) } else { None };
+                let receiver_arg = if receiver.is_some() { Some(kept.remove(0)) } else { None };
                 self.chunk.builtins.push(BuiltinSite {
                     id: *id,
                     vm_class: vm,
                     native,
                     class: id.class(),
                     receiver: receiver_reg,
-                    receiver_arg: receiver.as_deref().map(|a| blank(std::slice::from_ref(a)).remove(0)),
+                    receiver_arg,
                     arg_regs: regs,
-                    args: blank(args),
+                    args: kept,
                     ret_used: *ret_used,
                 });
                 let s = (self.chunk.builtins.len() - 1) as u32;
@@ -313,22 +475,31 @@ impl Compiler {
             }
             E::In(v, set) => {
                 let a = self.expr_copy(v)?;
-                self.chunk.labels.push(set.clone());
-                let l = (self.chunk.labels.len() - 1) as u32;
-                self.emit(Op::InSet { d, a, l });
+                let hits = self.label_tests(a, set)?;
+                let k = self.k(&ir::Const::Boolean(false));
+                self.emit(Op::Const { d, k });
+                let over = self.emit(Op::Jump { t: 0 });
+                let hit_at = self.here();
+                for h in hits {
+                    self.patch(h, hit_at);
+                }
+                let k = self.k(&ir::Const::Boolean(true));
+                self.emit(Op::Const { d, k });
+                let end = self.here();
+                self.patch(over, end);
             }
             E::DotNet { ty, receiver, op, args } => {
                 let recv = match receiver.as_deref() {
                     Some(r) => Some(self.expr_copy(r)?),
                     None => None,
                 };
-                let arg_regs = self.arg_regs(args)?;
+                let (arg_regs, site_args) = self.arg_regs(args)?;
                 self.chunk.dotnets.push(DotNetSite {
                     ty: *ty,
                     op: op.clone(),
                     recv,
                     arg_regs,
-                    args: blank(args),
+                    args: site_args,
                 });
                 let s = (self.chunk.dotnets.len() - 1) as u32;
                 self.emit(Op::DotNet { s, d });
@@ -337,22 +508,40 @@ impl Compiler {
                 receiver,
                 targets,
                 args,
-            } if args.iter().all(|a| {
-                matches!(a, ir::Arg::Value(v) if simple(v))
-                    || matches!(a, ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)))
-            }) =>
-            {
-                // The target is resolved before the arguments are evaluated; plain operands cannot tell the order.
+            } => {
+                // The target is resolved before the arguments are evaluated (a receiver that holds nothing raises before an
+                // argument runs). Plain operands cannot tell the order; for any other the target is resolved first.
+                let plain = args.iter().all(|a| {
+                    matches!(a, ir::Arg::Value(v) if simple(v))
+                        || matches!(a, ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)))
+                });
                 let recv = self.expr_copy(receiver)?;
-                let arg_regs = self.arg_regs(args)?;
                 self.chunk.ifaces.push(IfaceSite {
                     targets: targets.clone(),
                     recv,
-                    arg_regs,
-                    args: blank(args),
+                    arg_regs: Vec::new(),
+                    args: Vec::new(),
                 });
                 let s = (self.chunk.ifaces.len() - 1) as u32;
+                if !plain {
+                    self.emit(Op::IfaceResolve { r: recv, s });
+                }
+                let (arg_regs, site_args) = self.arg_regs(args)?;
+                self.chunk.ifaces[s as usize].arg_regs = arg_regs;
+                self.chunk.ifaces[s as usize].args = site_args;
                 self.emit(Op::IfaceCall { s, d });
+            }
+            E::DotNetCoerce(ty, inner) => {
+                self.emit(Op::DotNetClear);
+                let a = self.expr_any(inner)?;
+                self.chunk.types.push(ty.clone());
+                let t = (self.chunk.types.len() - 1) as u32;
+                self.emit(Op::DotNetCoerce { d, a, t });
+            }
+            E::DotNetOperand(inner, h) => {
+                self.emit(Op::DotNetClear);
+                let a = self.expr_any(inner)?;
+                self.emit(Op::DotNetOperand { d, a, h: *h });
             }
             E::ThisInstance => {
                 self.emit(Op::ThisInstance { d });
@@ -361,8 +550,7 @@ impl Compiler {
                 self.emit(Op::BaseInstance { d });
             }
             E::Ternary(c, a, b) => {
-                let cr = self.expr_any(c)?;
-                let jf = self.emit(Op::JumpIfNot { a: cr, t: 0 });
+                let jf = self.cond_jump(c, 0)?;
                 self.expr_into(a, d)?;
                 let jend = self.emit(Op::Jump { t: 0 });
                 let else_at = self.here();
@@ -416,43 +604,107 @@ impl Compiler {
                 let a = self.expr_any(query)?;
                 self.aux(AuxSite::QueryColumn { column: *column }, d, a);
             }
-            other => self.tree_expr(other, d),
+            E::Refused(why) => self.fault(FaultKind::Unsupported(why.clone())),
+            E::Fail { message, code } => self.fault(FaultKind::Error {
+                message: message.clone(),
+                code: code.clone(),
+            }),
+            // A builtin no native implements: it is refused before an operand is evaluated.
+            E::Builtin { id, .. } => self.fault(FaultKind::Unsupported(format!("builtin {id}"))),
         }
         // Temporaries used inside `e` are free again; `d` itself stays allocated by the caller.
         self.next = mark;
         Ok(())
     }
 
-    fn arg_regs(&mut self, args: &[ir::Arg]) -> R<Vec<u16>> {
+    /// The tests of the labels of `case` or of `in [...]` on the value in `a`: the jumps (to patch) taken on a match.
+    /// A label is evaluated when it is reached, in order, and the first that matches ends the tests, as before.
+    fn label_tests(&mut self, a: u16, labels: &'a [ir::SetElem]) -> R<Vec<usize>> {
+        let mut hits = Vec::new();
+        for l in labels {
+            match l {
+                ir::SetElem::One(e) => {
+                    let b = self.expr_copy(e)?;
+                    hits.push(self.emit(Op::JumpEq { a, b, t: 0 }));
+                }
+                ir::SetElem::Range(lo, hi) => {
+                    let mut fails = Vec::new();
+                    if let Some(lo) = lo {
+                        let b = self.expr_copy(lo)?;
+                        fails.push(self.emit(Op::JumpLt { a, b, t: 0 }));
+                    }
+                    if let Some(hi) = hi {
+                        let b = self.expr_copy(hi)?;
+                        fails.push(self.emit(Op::JumpGt { a, b, t: 0 }));
+                    }
+                    hits.push(self.emit(Op::Jump { t: 0 }));
+                    let next = self.here();
+                    for f in fails {
+                        self.patch(f, next);
+                    }
+                }
+            }
+        }
+        Ok(hits)
+    }
+
+    /// `p` with the index expressions of it evaluated now, into registers that stay allocated until the instruction that
+    /// uses the place has run; the place that comes back reads them as locals.
+    fn rplace(&mut self, p: &'a ir::Place) -> R<ir::Place> {
+        Ok(match p {
+            ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_) => p.clone(),
+            ir::Place::Field(base, pos) => ir::Place::Field(Box::new(self.rplace(base)?), *pos),
+            ir::Place::Index(base, idx) => {
+                let base = self.rplace(base)?;
+                let mut regs = Vec::with_capacity(idx.len());
+                for e in idx {
+                    let r = self.expr_copy(e)?;
+                    self.keep(r);
+                    regs.push(ir::Expr::Load(ir::Place::Local(r as usize)));
+                }
+                ir::Place::Index(Box::new(base), regs)
+            }
+        })
+    }
+
+    fn arg_regs(&mut self, args: &'a [ir::Arg]) -> R<(Vec<u16>, Vec<ir::Arg>)> {
         let mut regs = Vec::with_capacity(args.len());
+        let mut out = Vec::with_capacity(args.len());
         for (i, a) in args.iter().enumerate() {
             let rest_pure = args[i + 1..].iter().all(arg_pure);
-            regs.push(self.arg_reg(a, rest_pure)?);
+            let (r, arg) = self.arg_reg(a, rest_pure)?;
+            regs.push(r);
+            out.push(arg);
         }
-        Ok(regs)
+        Ok((regs, out))
     }
 
     /// The register of one call or builtin argument. A local is used in place when the arguments after it cannot write
     /// it; the register stays allocated until the instruction runs (the caller resets the temporaries per statement).
-    fn arg_reg(&mut self, a: &ir::Arg, rest_pure: bool) -> R<u16> {
+    /// The register of one argument, and the argument as the site keeps it: a value blanked, a place with its indexes in registers.
+    fn arg_reg(&mut self, a: &'a ir::Arg, rest_pure: bool) -> R<(u16, ir::Arg)> {
+        let blank = ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0)));
         match a {
             ir::Arg::Value(e) => {
                 if rest_pure {
                     let r = self.expr_any(e)?;
                     self.keep(r);
-                    Ok(r)
+                    Ok((r, blank))
                 } else {
                     let r = self.expr_copy(e)?;
                     self.keep(r);
-                    Ok(r)
+                    Ok((r, blank))
                 }
             }
-            ir::Arg::Ref(ir::Place::Local(i)) if rest_pure => u16::try_from(*i).map_err(|_| ()),
+            ir::Arg::Ref(ir::Place::Local(i)) if rest_pure => {
+                Ok((u16::try_from(*i).map_err(|_| ())?, ir::Arg::Ref(ir::Place::Local(*i))))
+            }
             ir::Arg::Ref(p) => {
+                let rp = self.rplace(p)?;
                 let d = self.alloc()?;
-                let p = self.place(p);
-                self.emit(Op::ReadPlace { d, p });
-                Ok(d)
+                let pi = self.place(&rp);
+                self.emit(Op::ReadPlace { d, p: pi });
+                Ok((d, ir::Arg::Ref(rp)))
             }
         }
     }
@@ -467,7 +719,10 @@ impl Compiler {
 
     // ---- statements ----
 
-    fn block(&mut self, stmts: &[ir::Stmt]) -> R<()> {
+    fn block(&mut self, stmts: &'a [ir::Stmt]) -> R<()> {
+        if self.captured {
+            return self.block_captured(stmts);
+        }
         for s in stmts {
             let mark = self.next;
             self.stmt(s)?;
@@ -476,41 +731,84 @@ impl Compiler {
         Ok(())
     }
 
-    fn tree_stmt(&mut self, s: &ir::Stmt) {
-        self.chunk.stmts.push(s.clone());
-        self.chunk.stmt_kinds.push(stmt_kind(s));
-        let idx = (self.chunk.stmts.len() - 1) as u32;
-        self.chunk.tree_nodes += 1;
-        let at = self.emit(Op::TreeStmt {
-            s: idx,
-            brk: NONE,
-            cont: NONE,
-        });
-        if let Some(l) = self.loops.last_mut() {
-            // Patched with the loop's targets when it ends.
-            l.brk.push(at | TREE_BRK);
-            l.cont.push(at | TREE_CONT);
+    /// A block as the capture sees it: a marker and the statement after it are one statement (`exec_block_captured`).
+    fn block_captured(&mut self, stmts: &'a [ir::Stmt]) -> R<()> {
+        let mut i = 0;
+        while i < stmts.len() {
+            let mark = self.next;
+            if let ir::Stmt::Pos(p) = &stmts[i] {
+                self.stmt(&stmts[i])?;
+                self.emit(Op::CapHit { p: *p });
+                // Markers of an assumption sit between the position and its statement.
+                let mut j = i + 1;
+                while let Some(m @ ir::Stmt::Assume(_)) = stmts.get(j) {
+                    self.stmt(m)?;
+                    j += 1;
+                }
+                if let Some(next) = stmts.get(j) {
+                    self.emit(Op::CapBegin { p: *p });
+                    self.cap_depth += 1;
+                    self.stmt(next)?;
+                    self.cap_depth -= 1;
+                    self.chunk.cap_sites.push(CapSite {
+                        pos: *p,
+                        writes: crate::capture::written_locals(next),
+                    });
+                    let s = (self.chunk.cap_sites.len() - 1) as u32;
+                    self.emit(Op::CapEnd { s });
+                    self.next = mark;
+                    i = j + 1;
+                    continue;
+                }
+                self.next = mark;
+                i = j;
+                continue;
+            }
+            self.stmt(&stmts[i])?;
+            self.next = mark;
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// A loop statement starts: the register for the capture's id of it (captured form), after its `Enter` op.
+    fn cap_loop_enter(&mut self) -> R<Option<u16>> {
+        if !self.captured {
+            return Ok(None);
+        }
+        let d = self.alloc()?;
+        self.emit(Op::CapLoopEnter { d });
+        Ok(Some(d))
+    }
+
+    fn cap_loop_pass(&mut self, lid: Option<u16>) {
+        if let Some(a) = lid {
+            self.emit(Op::CapLoopPass { a });
+        }
+    }
+
+    fn cap_loop_exit(&mut self, lid: Option<u16>) {
+        if let Some(a) = lid {
+            self.emit(Op::CapLoopExit { a });
+        }
+    }
+
+    /// The pops a `break` or `continue` needs before it leaves the statements open inside the innermost loop.
+    fn cap_pops(&mut self) {
+        if let Some(depth) = self.loops.last().map(|l| l.depth) {
+            for _ in depth..self.cap_depth {
+                self.emit(Op::CapPop);
+            }
         }
     }
 
     fn patch_all(&mut self, list: Vec<usize>, to: u32) {
         for at in list {
-            if at & TREE_BRK != 0 || at & TREE_CONT != 0 {
-                let i = at & !(TREE_BRK | TREE_CONT);
-                if let Op::TreeStmt { brk, cont, .. } = &mut self.chunk.code[i] {
-                    if at & TREE_BRK != 0 {
-                        *brk = to;
-                    } else {
-                        *cont = to;
-                    }
-                }
-            } else {
-                self.patch(at, to);
-            }
+            self.patch(at, to);
         }
     }
 
-    fn stmt(&mut self, s: &ir::Stmt) -> R<()> {
+    fn stmt(&mut self, s: &'a ir::Stmt) -> R<()> {
         use ir::Stmt as S;
         match s {
             S::Pos(p) => {
@@ -523,8 +821,7 @@ impl Compiler {
                 self.emit(Op::Clear { a: d });
             }
             S::If(c, t, e) => {
-                let cr = self.expr_any(c)?;
-                let jf = self.emit(Op::JumpIfNot { a: cr, t: 0 });
+                let jf = self.cond_jump(c, 0)?;
                 self.block(t)?;
                 if e.is_empty() {
                     let end = self.here();
@@ -541,13 +838,15 @@ impl Compiler {
             S::While(c, body) => {
                 let saved = self.alloc()?;
                 self.emit(Op::SavePos { d: saved });
+                let lid = self.cap_loop_enter()?;
                 let top = self.here();
                 let mark = self.next;
-                let cr = self.expr_any(c)?;
-                let jf = self.emit(Op::JumpIfNot { a: cr, t: 0 });
+                let jf = self.cond_jump(c, 0)?;
                 self.next = mark;
                 self.emit(Op::CheckStop);
+                self.cap_loop_pass(lid);
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -557,6 +856,7 @@ impl Compiler {
                 self.emit(Op::RestorePos { a: saved });
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                self.cap_loop_exit(lid);
                 self.patch(jf, end);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
@@ -564,9 +864,12 @@ impl Compiler {
             S::Repeat(body, until) => {
                 let saved = self.alloc()?;
                 self.emit(Op::SavePos { d: saved });
+                let lid = self.cap_loop_enter()?;
                 let top = self.here();
                 self.emit(Op::CheckStop);
+                self.cap_loop_pass(lid);
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -575,10 +878,10 @@ impl Compiler {
                 let cont = self.here();
                 self.emit(Op::RestorePos { a: saved });
                 let mark = self.next;
-                let cr = self.expr_any(until)?;
-                self.emit(Op::JumpIfNot { a: cr, t: top });
+                self.cond_jump(until, top)?;
                 self.next = mark;
                 let end = self.here();
+                self.cap_loop_exit(lid);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
             }
@@ -591,7 +894,9 @@ impl Compiler {
             } => {
                 let i = self.alloc()?;
                 let end_reg = self.alloc()?;
+                let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let (fr, tr) = self.pair(from, to)?;
+                let rvar = self.rplace(var)?;
                 let int_local = match var {
                     ir::Place::Local(v) if matches!(self.locals_ty.get(*v), Some(RtType::Integer)) => {
                         u16::try_from(*v).ok()
@@ -599,21 +904,26 @@ impl Compiler {
                     _ => None,
                 };
                 self.chunk.fors.push(ForSite {
-                    var: var.clone(),
+                    var: rvar,
                     down: *down,
                     from: fr,
                     to: tr,
                     i,
                     end: end_reg,
                     int_local,
+                    cap_loop: lid,
                 });
                 let site = (self.chunk.fors.len() - 1) as u32;
                 self.emit(Op::ForInit { s: site });
+                if let Some(d) = lid {
+                    self.emit(Op::CapLoopEnter { d });
+                }
                 let top = self.here();
                 let test = self.emit(Op::ForTest { s: site, t: 0 });
                 self.emit(Op::CheckStop);
                 self.emit(Op::ForSet { s: site });
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -625,6 +935,9 @@ impl Compiler {
                 self.emit(Op::ForNext { s: site });
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                if let Some(a) = lid {
+                    self.emit(Op::CapLoopExit { a });
+                }
                 self.patch(test, end);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
@@ -638,6 +951,7 @@ impl Compiler {
             }
             S::Break => match self.loops.last_mut() {
                 Some(_) => {
+                    self.cap_pops();
                     let at = self.emit(Op::Jump { t: 0 });
                     if let Some(l) = self.loops.last_mut() {
                         l.brk.push(at);
@@ -649,6 +963,7 @@ impl Compiler {
             },
             S::Continue => match self.loops.last_mut() {
                 Some(_) => {
+                    self.cap_pops();
                     let at = self.emit(Op::Jump { t: 0 });
                     if let Some(l) = self.loops.last_mut() {
                         l.cont.push(at);
@@ -666,9 +981,12 @@ impl Compiler {
                 let a = self.expr_copy(scrutinee)?;
                 let mut ends = Vec::new();
                 for (labels, body) in branches {
-                    self.chunk.labels.push(labels.clone());
-                    let l = (self.chunk.labels.len() - 1) as u32;
-                    let miss = self.emit(Op::MatchAny { a, l, t: 0 });
+                    let hits = self.label_tests(a, labels)?;
+                    let miss = self.emit(Op::Jump { t: 0 });
+                    let hit_at = self.here();
+                    for h in hits {
+                        self.patch(h, hit_at);
+                    }
                     self.emit(Op::Clear { a });
                     self.block(body)?;
                     ends.push(self.emit(Op::Jump { t: 0 }));
@@ -693,24 +1011,26 @@ impl Compiler {
                     *e = end;
                 }
             }
-            S::Foreach { var, collection, body }
-                if matches!(collection, ir::Expr::Load(ir::Place::Local(i))
-                    if matches!(self.locals_ty.get(*i), Some(RtType::List(_)))) =>
-            {
+            S::Foreach { var, collection, body } => {
                 let coll = self.expr_copy(collection)?;
+                let rvar = self.rplace(var)?;
+                let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let items = self.alloc()?;
                 let at = self.alloc()?;
                 self.chunk.foreachs.push(ForeachSite {
-                    var: var.clone(),
+                    var: rvar,
                     coll,
                     items,
                     at,
+                    collection: matches!(collection, ir::Expr::Load(_)).then(|| collection.clone()),
+                    cap_loop: lid,
                 });
                 let site = (self.chunk.foreachs.len() - 1) as u32;
                 self.emit(Op::ForeachInit { s: site });
                 let top = self.here();
                 let next = self.emit(Op::ForeachNext { s: site, t: 0 });
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -720,18 +1040,23 @@ impl Compiler {
                 let l = self.loops.pop().ok_or(())?;
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                if let Some(a) = lid {
+                    self.emit(Op::CapLoopExit { a });
+                }
                 self.emit(Op::Clear { a: items });
                 self.patch(next, end);
                 self.patch_all(l.cont, top);
                 self.patch_all(l.brk, end);
             }
-            S::Foreach { .. } | S::Assume(_) => self.tree_stmt(s),
+            S::Assume(a) => {
+                self.emit(Op::Assume { a: *a });
+            }
         }
         Ok(())
     }
 
-    fn assign(&mut self, p: &ir::Place, e: &ir::Expr) -> R<()> {
-        // `S += x` and `S := S + x` on a text variable append in place: the tree walker's routine does it.
+    fn assign(&mut self, p: &'a ir::Place, e: &'a ir::Expr) -> R<()> {
+        // `S += x` and `S := S + x` on a text variable append in place: the append routine does it.
         if let (ir::Place::Local(_) | ir::Place::Global(_), ir::Expr::Convert(RtType::Text(_), inner)) = (p, e) {
             if let ir::Expr::Binary(ir::BinOp::Add, l, _) = &**inner {
                 if matches!(&**l, ir::Expr::Load(lp) if lp == p) {
@@ -741,7 +1066,7 @@ impl Compiler {
                     let ir::Expr::Binary(_, _, r) = &**inner else {
                         unreachable!("matched above")
                     };
-                    // The old value is read before `x` is evaluated, as the tree walker does.
+                    // The old value is read before `x` is evaluated.
                     let old = self.alloc()?;
                     let pi = self.place(p);
                     self.emit(Op::ReadPlace { d: old, p: pi });
@@ -757,6 +1082,17 @@ impl Compiler {
             }
         }
         match p {
+            // A local of a typed kind takes a proven value of that kind straight into its register.
+            ir::Place::Local(i)
+                if self.locals_ty.get(*i).and_then(of_rt).is_some_and(|t| {
+                    let inner = if let ir::Expr::Convert(_, x) = e { x } else { e };
+                    self.tys.expr_ty(inner) == Some(t)
+                }) =>
+            {
+                let i = u16::try_from(*i).map_err(|_| ())?;
+                let inner = if let ir::Expr::Convert(_, x) = e { x } else { e };
+                self.expr_into(inner, i)?;
+            }
             ir::Place::Local(i) => {
                 let i = u16::try_from(*i).map_err(|_| ())?;
                 let a = self.expr_any(e)?;
@@ -764,8 +1100,13 @@ impl Compiler {
                 self.emit(Op::StoreLocal { i, a, p: pi });
             }
             _ => {
-                let a = self.expr_any(e)?;
-                let pi = self.place(p);
+                let a = if has_index(p) {
+                    self.expr_copy(e)?
+                } else {
+                    self.expr_any(e)?
+                };
+                let rp = self.rplace(p)?;
+                let pi = self.place(&rp);
                 self.emit(Op::StorePlace { p: pi, a });
             }
         }
@@ -773,62 +1114,10 @@ impl Compiler {
     }
 }
 
-const TREE_BRK: usize = 1 << 40;
-const TREE_CONT: usize = 1 << 41;
-
 fn arg_pure(a: &ir::Arg) -> bool {
     match a {
         ir::Arg::Value(e) => pure(e),
         ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)) => true,
         ir::Arg::Ref(_) => false,
-    }
-}
-
-fn expr_kind(e: &ir::Expr) -> &'static str {
-    use ir::Expr as E;
-    match e {
-        E::Const(_) => "Const",
-        E::Load(_) => "Load",
-        E::Unary(..) => "Unary",
-        E::Binary(..) => "Binary",
-        E::In(..) => "In",
-        E::Ternary(..) => "Ternary",
-        E::Convert(..) => "Convert",
-        E::Call { .. } => "Call",
-        E::InterfaceCall { .. } => "InterfaceCall",
-        E::BaseInstance => "BaseInstance",
-        E::ThisInstance => "ThisInstance",
-        E::Refused(_) => "Refused",
-        E::Fail { .. } => "Fail",
-        E::InterfaceTest { .. } => "InterfaceTest",
-        E::EnumImpl { .. } => "EnumImpl",
-        E::Control { .. } => "Control",
-        E::FieldOf(..) => "FieldOf",
-        E::QueryColumn { .. } => "QueryColumn",
-        E::DotNet { .. } => "DotNet",
-        E::CharAt(..) => "CharAt",
-        E::DotNetCoerce(..) => "DotNetCoerce",
-        E::DotNetOperand(..) => "DotNetOperand",
-        E::Builtin { .. } => "Builtin",
-    }
-}
-
-fn stmt_kind(s: &ir::Stmt) -> &'static str {
-    use ir::Stmt as S;
-    match s {
-        S::Assign(..) => "Assign",
-        S::Expr(_) => "Expr",
-        S::If(..) => "If",
-        S::While(..) => "While",
-        S::Repeat(..) => "Repeat",
-        S::For { .. } => "For",
-        S::Foreach { .. } => "Foreach",
-        S::Case { .. } => "Case",
-        S::Exit(_) => "Exit",
-        S::Break => "Break",
-        S::AssertError(_) => "AssertError",
-        S::Pos(_) => "Pos",
-        S::Assume(_) => "Assume",
-        S::Continue => "Continue",
     }
 }

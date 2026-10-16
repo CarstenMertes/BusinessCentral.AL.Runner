@@ -17,12 +17,16 @@ use std::process::ExitCode;
 static ALLOC: mimalloc::MiMalloc = mimalloc::MiMalloc;
 
 fn main() -> ExitCode {
-    // The tree-walking VM recurses on the native stack per AL call; give it room.
+    // An AL call nests native frames of the bytecode loop; give the runner thread room.
     let worker = std::thread::Builder::new()
         .stack_size(512 << 20)
         .spawn(real_main)
         .expect("spawn runner thread");
-    match worker.join() {
+    let joined = worker.join();
+    if std::env::var_os("AL_EXEC_REPORT").is_some() {
+        eprintln!("{}", al_vm::exec_report());
+    }
+    match joined {
         Ok(code) => code,
         Err(_) => {
             eprintln!("error: the runner thread panicked (a bug)");

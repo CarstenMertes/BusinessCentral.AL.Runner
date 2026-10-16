@@ -1,222 +1,14 @@
 use super::*;
 
 impl Session {
-    /// Runs a block. `CAP` is whether a capture watches the routine (`capture.rs`): the two instances are two
-    /// functions, so a run without a capture executes code that has no trace of it.
-    pub(crate) fn exec_block<const CAP: bool>(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
-        if CAP {
-            return self.exec_block_captured(stmts, f);
-        }
-        for s in stmts {
-            self.exec::<false>(s, f)?;
-        }
-        Ok(())
-    }
-
-    /// [`Session::exec_block`] for the instance the routine running now needs.
-    pub(crate) fn exec_block_dyn(&mut self, stmts: &[ir::Stmt], f: &mut Frame) -> Result<(), Signal> {
-        if self.capturing {
-            self.exec_block::<true>(stmts, f)
-        } else {
-            self.exec_block::<false>(stmts, f)
-        }
-    }
-
-    pub(crate) fn exec<const CAP: bool>(&mut self, s: &ir::Stmt, f: &mut Frame) -> Result<(), Signal> {
-        use ir::Stmt as S;
-        match s {
-            S::Assume(a) => {
-                al_builtins::assumptions::assume(*a);
-                Ok(())
-            }
-            S::Assign(p, e) => {
-                // `S += x` and `S := S + x` on a text variable append in place when nothing else holds the text.
-                if let (ir::Place::Local(_) | ir::Place::Global(_), ir::Expr::Convert(RtType::Text(max), inner)) =
-                    (p, e)
-                {
-                    if let ir::Expr::Binary(ir::BinOp::Add, l, r) = &**inner {
-                        if matches!(&**l, ir::Expr::Load(lp) if lp == p) {
-                            return self.append_text(p, *max, r, f);
-                        }
-                    }
-                }
-                let v = self.eval(e, f)?;
-                self.write(p, v, f)
-            }
-            S::Expr(e) => self.eval(e, f).map(|_| ()),
-            S::If(c, t, e) => {
-                if ops::truthy(&self.eval(c, f)?)? {
-                    self.exec_block::<CAP>(t, f)
-                } else {
-                    self.exec_block::<CAP>(e, f)
-                }
-            }
-            S::While(c, body) => {
-                let here = self.call_stack.last().map(|t| t.pos);
-                let lid = if CAP { self.cap_loop_enter() } else { None };
-                while ops::truthy(&self.eval(c, f)?)? {
-                    self.check_stop()?;
-                    if CAP {
-                        self.cap_loop_pass(lid);
-                    }
-                    match self.exec_block::<CAP>(body, f) {
-                        Err(Signal::Break) => break,
-                        Err(Signal::Continue) => {}
-                        r => r?,
-                    }
-                    // The condition belongs to the loop's line, not to the body's last statement.
-                    self.restore_pos(here);
-                }
-                if CAP {
-                    self.cap_loop_exit(lid);
-                }
-                Ok(())
-            }
-            S::Repeat(body, until) => {
-                let here = self.call_stack.last().map(|t| t.pos);
-                let lid = if CAP { self.cap_loop_enter() } else { None };
-                loop {
-                    self.check_stop()?;
-                    if CAP {
-                        self.cap_loop_pass(lid);
-                    }
-                    match self.exec_block::<CAP>(body, f) {
-                        Err(Signal::Break) => break,
-                        Err(Signal::Continue) => {}
-                        r => r?,
-                    }
-                    self.restore_pos(here);
-                    if ops::truthy(&self.eval(until, f)?)? {
-                        break;
-                    }
-                }
-                if CAP {
-                    self.cap_loop_exit(lid);
-                }
-                Ok(())
-            }
-            S::For {
-                var,
-                from,
-                to,
-                down,
-                body,
-            } => {
-                let (from, to) = (self.eval(from, f)?, self.eval(to, f)?);
-                let (start, end) = Self::for_limits(from, to)?;
-                let mut i = start;
-                let lid = if CAP { self.cap_loop_enter() } else { None };
-                // The type of the counter variable does not change while the loop runs: found once.
-                let slot_ty = self.place_type(var, f);
-                let kind = ForKind::of(&slot_ty);
-                while if *down { i >= end } else { i <= end } {
-                    self.check_stop()?;
-                    if CAP {
-                        self.cap_loop_pass(lid);
-                    }
-                    if kind.option_like {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
-                    }
-                    let counter = Self::for_counter(kind, i, &slot_ty)?;
-                    self.write(var, counter, f)?;
-                    if CAP {
-                        self.cap_loop_var(var, f);
-                    }
-                    match self.exec_block::<CAP>(body, f) {
-                        Err(Signal::Break) => break,
-                        Err(Signal::Continue) => {}
-                        r => r?,
-                    }
-                    // The counter is read back from the variable, which may be an Option (an Option field as the
-                    // loop variable, Sales Price Calc. Mgt.): its ordinal.
-                    i = int(&Self::for_bound(self.read(var, f)?))?;
-                    i += if *down { -1 } else { 1 };
-                }
-                if CAP {
-                    self.cap_loop_exit(lid);
-                }
-                Ok(())
-            }
-            S::Foreach { var, collection, body } => {
-                let coll = self.eval(collection, f)?;
-                // A .NET collection, or a DotNet variable that holds none (ADR-024 section 4).
-                let dotnet_var = matches!(coll, Value::Null)
-                    && matches!(collection, ir::Expr::Load(p) if matches!(self.place_type(p, f), RtType::DotNet(_)));
-                if matches!(coll, Value::DotNet(_)) || dotnet_var {
-                    return self.foreach_dotnet(var, coll, collection, body, f);
-                }
-                let items = Self::foreach_items(coll)?;
-                let lid = if CAP { self.cap_loop_enter() } else { None };
-                for item in items {
-                    if CAP {
-                        self.cap_loop_pass(lid);
-                    }
-                    self.write(var, item, f)?;
-                    if CAP {
-                        self.cap_loop_var(var, f);
-                    }
-                    match self.exec_block::<CAP>(body, f) {
-                        Err(Signal::Break) => break,
-                        Err(Signal::Continue) => {}
-                        r => r?,
-                    }
-                }
-                if CAP {
-                    self.cap_loop_exit(lid);
-                }
-                Ok(())
-            }
-            S::Case {
-                scrutinee,
-                branches,
-                otherwise,
-            } => {
-                let v = self.eval(scrutinee, f)?;
-                for (labels, body) in branches {
-                    if self.matches_any(&v, labels, f)? {
-                        return self.exec_block::<CAP>(body, f);
-                    }
-                }
-                self.exec_block::<CAP>(otherwise, f)
-            }
-            S::Exit(e) => {
-                let v = match e {
-                    Some(e) => Some(self.eval(e, f)?),
-                    None => None,
-                };
-                Err(Signal::Exit(v))
-            }
-            S::Break => Err(Signal::Break),
-            S::Continue => Err(Signal::Continue),
-            S::Pos(p) => {
-                self.at_pos(*p);
-                Ok(())
-            }
-            S::AssertError(body) => {
-                // A caught error rolls the transaction back to the last commit, also inside a modal
-                // page handler: the write pending before the page opened and the handler's own
-                // earlier writes are lost with it
-                // (record/TestValidateRaisesAndHandlerAsserterrorContracts.al:122-143,
-                // Asserterror_InAModalHandler_RollsBackToTheLastCommit).
-                match self.exec_block::<CAP>(body, f) {
-                    Err(Signal::Error(mut e)) => {
-                        // The caught error rolls the transaction back to the last commit
-                        // (record/TestRecordRenameRollback.al).
-                        self.rollback_transaction();
-                        // The routine that catches it is the last frame of its call stack.
-                        self.add_top_frame(&mut e);
-                        self.last_error = *e;
-                        Ok(())
-                    }
-                    // Text and code: types/TestFormatEvaluateTextContracts.al:Asserterror_NothingRaised_ReportsAssertError.
-                    Ok(()) => Err(Signal::Error(Box::new(AlError {
-                        message: "An error was expected inside an ASSERTERROR statement.".into(),
-                        code: "AssertError".into(),
-                        call_stack: String::new(),
-                    }))),
-                    Err(other) => Err(other),
-                }
-            }
+    /// An index of a place: the compiler evaluated the expression into a register (or it is a constant).
+    fn index_value(e: &ir::Expr, f: &Frame) -> Result<Value, Signal> {
+        match e {
+            ir::Expr::Load(ir::Place::Local(i)) => Ok(f.locals[*i].clone()),
+            ir::Expr::Const(c) => Ok(constant(c)),
+            _ => Err(Signal::Unsupported(
+                "an index expression the compiler did not evaluate ahead".into(),
+            )),
         }
     }
 
@@ -226,341 +18,8 @@ impl Session {
         }
     }
 
-    pub(crate) fn matches_any(&mut self, v: &Value, labels: &[ir::SetElem], f: &mut Frame) -> Result<bool, Signal> {
-        for l in labels {
-            let hit = match l {
-                ir::SetElem::One(e) => ops::compare(v, &self.eval(e, f)?)? == Ordering::Equal,
-                ir::SetElem::Range(lo, hi) => {
-                    let above = match lo {
-                        Some(lo) => ops::compare(v, &self.eval(lo, f)?)? != Ordering::Less,
-                        None => true,
-                    };
-                    let below = match hi {
-                        Some(hi) => ops::compare(v, &self.eval(hi, f)?)? != Ordering::Greater,
-                        None => true,
-                    };
-                    above && below
-                }
-            };
-            if hit {
-                return Ok(true);
-            }
-        }
-        Ok(false)
-    }
-
-    pub(crate) fn eval(&mut self, e: &ir::Expr, f: &mut Frame) -> Result<Value, Signal> {
-        use ir::Expr as E;
-        match e {
-            E::Const(c) => Ok(self.constant_once(c)),
-            E::Load(p) => self.read(p, f),
-            E::Convert(t, e) => {
-                let v = self.eval(e, f)?;
-                ops::convert(v, t)
-            }
-            E::Unary(op, e) => {
-                let v = self.eval(e, f)?;
-                Self::unary_op(*op, v)
-            }
-            E::Binary(op, l, r) => {
-                // AL evaluates both operands of and/or (no short circuit):
-                // docs/probes-needed.md.
-                let l = self.eval(l, f)?;
-                let r = self.eval(r, f)?;
-                Self::binary_op(*op, &l, &r)
-            }
-            E::In(v, set) => {
-                let v = self.eval(v, f)?;
-                Ok(Value::Boolean(self.matches_any(&v, set, f)?))
-            }
-            E::Ternary(c, a, b) => {
-                if ops::truthy(&self.eval(c, f)?)? {
-                    self.eval(a, f)
-                } else {
-                    self.eval(b, f)
-                }
-            }
-            E::Call {
-                object,
-                routine,
-                instance,
-                args,
-                try_call,
-            } => {
-                let inst = match instance {
-                    None => f.instance.clone(),
-                    Some(e) => match self.eval(e, f)? {
-                        // A procedure of a reportextension called through the report variable runs on the extension's
-                        // instance of that variable, which keeps the extension's globals and added data items
-                        // (reportext/W3RpExtProcedures.al:ExtensionProcedure_*).
-                        Value::Codeunit(i)
-                            if self.engine.program.objects[*object].report_ext.is_some()
-                                && i.borrow().object as usize != *object =>
-                        {
-                            self.report_extension_instance(&i, *object)?
-                        }
-                        Value::Codeunit(i) => self.shared_instance(i),
-                        // A table procedure runs with the record as its Rec, on the record
-                        // variable's own globals (ADR-021).
-                        Value::Record(rc) => {
-                            let (inst, saved) = self.enter_record(*object, rc, None)?;
-                            let r = self.finish_call(*object, *routine, inst.clone(), args, None, *try_call, f);
-                            Self::leave_record(&inst, saved);
-                            return r;
-                        }
-                        // A query procedure runs with the query it was called on as its own state.
-                        Value::Query(q) => self.query_instance(*object, q),
-                        // The page a part shows (`CurrPage.<Part>.Page`), or a `Page` variable, which
-                        // is constructed at first use.
-                        Value::TestPage(st) => {
-                            let i = self.construct_page(&st)?;
-                            // A procedure a page extension declares runs on the extension's instance.
-                            let ext = st
-                                .borrow()
-                                .ext_instances
-                                .iter()
-                                .find(|(e, _)| e == object)
-                                .map(|(_, i)| i.clone());
-                            self.shared_instance(ext.unwrap_or(i))
-                        }
-                        other => {
-                            return Err(Signal::Unsupported(format!(
-                                "a procedure call on a {} value",
-                                value_kind(&other)
-                            )));
-                        }
-                    },
-                };
-                self.finish_call(*object, *routine, inst, args, None, *try_call, f)
-            }
-            E::BaseInstance => Ok(Value::Codeunit(self.base_instance(f)?)),
-            E::ThisInstance => Ok(Value::Codeunit(f.instance.clone())),
-            E::Refused(why) => Err(Signal::Unsupported(why.clone())),
-            E::Fail { message, code } => Err(Signal::Error(Box::new(al_builtins::native::AlError {
-                message: message.clone(),
-                code: code.clone(),
-                call_stack: String::new(),
-            }))),
-            E::InterfaceCall {
-                receiver,
-                targets,
-                args,
-            } => {
-                let (object, routine, inst) = self.interface_target(receiver, targets, f)?;
-                self.finish_call(object, routine, inst, args, None, false, f)
-            }
-            E::InterfaceTest { value, objects, cast } => {
-                let v = self.eval(value, f)?;
-                self.interface_test(v, objects, *cast)
-            }
-            E::EnumImpl {
-                value,
-                by_ordinal,
-                unknown,
-            } => {
-                let v = self.eval(value, f)?;
-                self.enum_implementation(v, by_ordinal, *unknown)
-            }
-            E::Control { page, control, runtime } => {
-                let p = self.eval(page, f)?;
-                self.page_control(p, *control, *runtime)
-            }
-            E::FieldOf(base, pos) => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldOfProcedureResult);
-                let record = self.eval(base, f)?;
-                self.read_record_field(record, *pos)
-            }
-            E::QueryColumn { query, column } => {
-                let q = self.eval(query, f)?;
-                self.query_column(q, *column)
-            }
-            E::DotNet { ty, receiver, op, args } => self.eval_dotnet(*ty, receiver.as_deref(), op, args, f),
-            E::CharAt(text, index) => {
-                let t = self.eval(text, f)?;
-                let Some(t) = al_builtins::native::text_of(&t) else {
-                    return Err(Signal::Unsupported(format!("indexing {} as a text", t.describe())));
-                };
-                let i = int(&self.eval(index, f)?)?;
-                Self::char_at(&t, i)
-            }
-            E::DotNetCoerce(t, e) => {
-                self.dotnet.clear_null_string();
-                let v = self.eval(e, f)?;
-                self.dotnet_coerce(v, t)
-            }
-            E::DotNetOperand(e, how) => {
-                self.dotnet.clear_null_string();
-                let v = self.eval(e, f)?;
-                self.settle_operand(v, *how)
-            }
-            E::Builtin {
-                id,
-                receiver,
-                args,
-                ret_used,
-            } => {
-                use al_builtins::builtin_id::{Class, ids};
-                let id = *id;
-                // Event subscriptions are session state: the VM runs them (dispatch.rs).
-                if let ids::SESSION_BINDSUBSCRIPTION_1 | ids::SESSION_UNBINDSUBSCRIPTION_1 = id {
-                    let Some(ir::Arg::Value(e)) = args.first() else {
-                        return Err(Signal::Unsupported(format!("{id} with this argument")));
-                    };
-                    let cu = self.eval(e, f)?;
-                    return self.subscription(id == ids::SESSION_BINDSUBSCRIPTION_1, cu, *ret_used);
-                }
-                // `CurrFieldNo` is a property of the implicit Rec, not a catalog method: the lowerer
-                // emits this id with the Rec as receiver.
-                if id == ids::RECORD_SETCURRFIELDNO_1 {
-                    let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver.as_deref(), args.first()) else {
-                        return Err(Signal::Unsupported("CurrFieldNo := without a record".into()));
-                    };
-                    let Value::Record(rec) = self.read(p, f)? else {
-                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
-                    };
-                    let Value::Integer(n) = self.eval(e, f)? else {
-                        return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
-                    };
-                    match self
-                        .pages
-                        .curr_field_no
-                        .iter_mut()
-                        .rev()
-                        .find(|(w, _)| std::ptr::eq(w.as_ptr(), Rc::as_ptr(&rec)))
-                    {
-                        Some(entry) => entry.1 = n,
-                        None => {
-                            // Entries of dropped records are dead; forget them before adding one.
-                            self.pages.curr_field_no.retain(|(w, _)| w.strong_count() > 0);
-                            self.pages.curr_field_no.push((Rc::downgrade(&rec), n));
-                        }
-                    }
-                    return Ok(Value::Null);
-                }
-                if id == ids::RECORD_CURRFIELDNO_1 {
-                    let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
-                        return Err(Signal::Unsupported("CurrFieldNo without a record".into()));
-                    };
-                    let Value::Record(rec) = self.read(p, f)? else {
-                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
-                    };
-                    return Ok(Value::Integer(self.curr_field_of(&rec)));
-                }
-                // `ClearAll()` resets every global variable of the running object to its default;
-                // locals are untouched (docs/probes-needed.md "ClearAll"). In a codeunit with a TableNo,
-                // a table and a page the record stays as it is and so does the page itself
-                // (session/TestClearAllTransactionTypeContracts.al:224-285, BC 27.5). Any other object
-                // kind is refused.
-                if id == ids::SYSTEM_CLEARALL_1 {
-                    let object = f.instance.borrow().object as usize;
-                    let o = &self.engine.program.objects[object];
-                    let keep: Vec<usize> = match o.kind {
-                        al_ir::ObjKind::Codeunit | al_ir::ObjKind::Table => o.rec_slot.into_iter().collect(),
-                        al_ir::ObjKind::Page => o
-                            .rec_slot
-                            .into_iter()
-                            .chain(o.page.as_ref().map(|p| p.curr_page_slot))
-                            .collect(),
-                        _ => {
-                            return Err(Signal::Unsupported(format!("ClearAll in a {} (not pinned)", o.kind)));
-                        }
-                    };
-                    let tys: Vec<RtType> = o.globals.iter().map(|g| g.ty.clone()).collect();
-                    let fresh: Vec<Value> = tys.iter().map(|t| self.default_value(t)).collect();
-                    let mut inst = f.instance.borrow_mut();
-                    for (i, v) in fresh.into_iter().enumerate() {
-                        if !keep.contains(&i) {
-                            inst.globals[i] = v;
-                        }
-                    }
-                    return Ok(Value::Null);
-                }
-                if id == ids::SESSION_APPLICATIONAREA_1 {
-                    // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
-                    // (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
-                    return match args.first() {
-                        None => Ok(Value::Text(self.application_areas.clone().into())),
-                        Some(ir::Arg::Value(e)) => match self.eval(e, f)? {
-                            Value::Text(t) | Value::Code(t) => {
-                                self.application_areas = t.to_string();
-                                Ok(Value::Null)
-                            }
-                            other => Err(Signal::Unsupported(format!("ApplicationArea({})", other.describe()))),
-                        },
-                        Some(_) => Err(Signal::Unsupported("ApplicationArea with this argument".into())),
-                    };
-                }
-                let class = id.class();
-                if class != Class::Other && class != Class::InStreamRead
-                    || id == ids::REQUESTPAGE_UPDATE_1
-                    || id == ids::DATABASE_ISINWRITETRANSACTION_1
-                {
-                    let recv = match receiver.as_deref() {
-                        Some(ir::Arg::Value(e)) => Some(self.eval(e, f)?),
-                        Some(ir::Arg::Ref(p)) => Some(self.read(p, f)?),
-                        None => None,
-                    };
-                    let mut values = Vec::with_capacity(args.len());
-                    for a in args {
-                        values.push(match a {
-                            ir::Arg::Value(e) => self.eval(e, f)?,
-                            ir::Arg::Ref(p) => self.read(p, f)?,
-                        });
-                    }
-                    if id == ids::DATABASE_ISINWRITETRANSACTION_1 {
-                        return Ok(Value::Boolean(self.in_write_transaction()));
-                    }
-                    if class == Class::Xmlport {
-                        return self.xmlport_builtin(id, recv, &values, *ret_used);
-                    }
-                    if id == ids::REQUESTPAGE_UPDATE_1 {
-                        return self.request_page_update(&values);
-                    }
-                    if class == Class::Report {
-                        self.ret_used = *ret_used;
-                        return self.report_builtin(id, recv, &values, f.instance.clone());
-                    }
-                    if class == Class::FilterPageBuilder {
-                        return self.filter_page_builder_op(id, recv, &values, *ret_used);
-                    }
-                    return self.codeunit_run(id, recv, &values, *ret_used);
-                }
-                let native =
-                    al_builtins::native::by_id(id).ok_or_else(|| Signal::Unsupported(format!("builtin {id}")))?;
-                let mut recv = match receiver.as_deref() {
-                    Some(ir::Arg::Value(e)) => Some(self.eval(e, f)?),
-                    Some(ir::Arg::Ref(p)) => Some(self.read(p, f)?),
-                    None => None,
-                };
-                let mut values = Vec::with_capacity(args.len());
-                for a in args {
-                    values.push(match a {
-                        ir::Arg::Value(e) => self.eval(e, f)?,
-                        ir::Arg::Ref(p) => self.read(p, f)?,
-                    });
-                }
-                self.ret_used = *ret_used;
-                let ret = native(self, recv.as_mut(), &mut values)?;
-                if let (Some(ir::Arg::Ref(p)), Some(v)) = (receiver.as_deref(), recv) {
-                    self.write(p, v, f)?;
-                }
-                for (a, v) in args.iter().zip(values) {
-                    if let ir::Arg::Ref(p) = a {
-                        let v = if class == Class::InStreamRead {
-                            self.fit_stream_read(p, v, f)?
-                        } else {
-                            v
-                        };
-                        self.write(p, v, f)?;
-                    }
-                }
-                Ok(ret)
-            }
-        }
-    }
-
     /// A builtin the VM runs itself (`Codeunit.Run`, `Xmlport.*`, `Report.*`, `FilterPageBuilder.*`, `RequestPage.Update`,
-    /// `Database.IsInWriteTransaction`) on evaluated operands. Used by the bytecode; the tree walker's `E::Builtin`
+    /// `Database.IsInWriteTransaction`) on evaluated operands. Used by the bytecode.
     /// arm is the same chain kept inline.
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn vm_class_call(
@@ -592,8 +51,7 @@ impl Session {
         self.codeunit_run(id, recv, &values, ret_used)
     }
 
-    /// Runs the native of a builtin on evaluated operands and writes the by-reference ones back. Used by the bytecode;
-    /// the tree walker's `E::Builtin` arm is the same logic kept inline (see `call_site`).
+    /// Runs the native of a builtin on evaluated operands and writes the by-reference ones back.
     #[allow(clippy::too_many_arguments)]
     #[inline(never)]
     pub(crate) fn run_native(
@@ -617,12 +75,34 @@ impl Session {
                 let v = if class == al_builtins::builtin_id::Class::InStreamRead {
                     self.fit_stream_read(p, v, f)?
                 } else {
-                    v
+                    self.fit_ref_number(p, v, f)?
                 };
                 self.write(p, v, f)?;
             }
         }
         Ok(ret)
+    }
+
+    /// A number a builtin stored in a by-reference argument takes the declared number type of the variable, as an assignment
+    /// does (`List of [BigInteger].Get(1, I)` leaves an Integer in `I`; an overflow raises the error of the conversion).
+    #[inline]
+    fn fit_ref_number(&self, p: &ir::Place, v: Value, f: &Frame) -> Result<Value, Signal> {
+        if !matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
+            return Ok(v);
+        }
+        let Some(ty) = self.place_ty(p, f) else {
+            return Ok(v);
+        };
+        let same = matches!(
+            (&v, ty),
+            (Value::Integer(_), RtType::Integer)
+                | (Value::BigInteger(_), RtType::BigInteger)
+                | (Value::Decimal(_), RtType::Decimal)
+        );
+        if same || !matches!(ty, RtType::Integer | RtType::BigInteger | RtType::Decimal) {
+            return Ok(v);
+        }
+        al_builtins::ops::convert(v, ty)
     }
 
     /// What `InStream.Read` stores in a Text or Code variable: a Code takes the characters
@@ -642,6 +122,82 @@ impl Session {
                 "InStream.Read of more characters than the Text variable holds (not pinned)".into(),
             )),
             _ => Ok(v),
+        }
+    }
+
+    /// `Rec.CurrFieldNo := n`: the field number a TestPage write is validating on this record.
+    pub(crate) fn set_curr_field_no(&mut self, rec: Value, n: Value) -> Result<Value, Signal> {
+        let Value::Record(rec) = rec else {
+            return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+        };
+        let Value::Integer(n) = n else {
+            return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
+        };
+        match self
+            .pages
+            .curr_field_no
+            .iter_mut()
+            .rev()
+            .find(|(w, _)| std::ptr::eq(w.as_ptr(), Rc::as_ptr(&rec)))
+        {
+            Some(entry) => entry.1 = n,
+            None => {
+                // Entries of dropped records are dead; forget them before adding one.
+                self.pages.curr_field_no.retain(|(w, _)| w.strong_count() > 0);
+                self.pages.curr_field_no.push((Rc::downgrade(&rec), n));
+            }
+        }
+        Ok(Value::Null)
+    }
+
+    /// `Rec.CurrFieldNo`.
+    pub(crate) fn curr_field_no(&self, rec: Value) -> Result<Value, Signal> {
+        let Value::Record(rec) = rec else {
+            return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+        };
+        Ok(Value::Integer(self.curr_field_of(&rec)))
+    }
+
+    /// `ClearAll()` resets every global variable of the running object to its default;
+    /// locals are untouched (docs/probes-needed.md "ClearAll"). In a codeunit with a TableNo,
+    /// a table and a page the record stays as it is and so does the page itself
+    /// (session/TestClearAllTransactionTypeContracts.al:224-285, BC 27.5). Any other object
+    /// kind is refused.
+    pub(crate) fn clear_all(&mut self, f: &Frame) -> Result<Value, Signal> {
+        let object = f.instance.borrow().object as usize;
+        let o = &self.engine.program.objects[object];
+        let keep: Vec<usize> = match o.kind {
+            al_ir::ObjKind::Codeunit | al_ir::ObjKind::Table => o.rec_slot.into_iter().collect(),
+            al_ir::ObjKind::Page => o
+                .rec_slot
+                .into_iter()
+                .chain(o.page.as_ref().map(|p| p.curr_page_slot))
+                .collect(),
+            _ => {
+                return Err(Signal::Unsupported(format!("ClearAll in a {} (not pinned)", o.kind)));
+            }
+        };
+        let tys: Vec<RtType> = o.globals.iter().map(|g| g.ty.clone()).collect();
+        let fresh: Vec<Value> = tys.iter().map(|t| self.default_value(t)).collect();
+        let mut inst = f.instance.borrow_mut();
+        for (i, v) in fresh.into_iter().enumerate() {
+            if !keep.contains(&i) {
+                inst.globals[i] = v;
+            }
+        }
+        Ok(Value::Null)
+    }
+
+    /// `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
+    /// (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
+    pub(crate) fn application_area(&mut self, set: Option<Value>) -> Result<Value, Signal> {
+        match set {
+            None => Ok(Value::Text(self.application_areas.clone().into())),
+            Some(Value::Text(t) | Value::Code(t)) => {
+                self.application_areas = t.to_string();
+                Ok(Value::Null)
+            }
+            Some(other) => Err(Signal::Unsupported(format!("ApplicationArea({})", other.describe()))),
         }
     }
 
@@ -702,7 +258,7 @@ impl Session {
         })
     }
 
-    /// A binary operator on two evaluated operands. Shared by the tree walker and the bytecode.
+    /// A binary operator on two evaluated operands.
     #[inline(always)]
     pub(crate) fn binary_op(op: ir::BinOp, l: &Value, r: &Value) -> Result<Value, Signal> {
         use ir::BinOp as B;
@@ -727,7 +283,7 @@ impl Session {
         })
     }
 
-    /// A unary operator on an evaluated operand. Shared by the tree walker and the bytecode.
+    /// A unary operator on an evaluated operand.
     #[inline(always)]
     pub(crate) fn unary_op(op: ir::UnOp, v: Value) -> Result<Value, Signal> {
         match op {
@@ -809,9 +365,8 @@ impl Session {
         }
     }
 
-    /// A call of a procedure: `instance` is the value the procedure is called on (`None`: the running object). Used by
-    /// the bytecode; `pre` holds the argument values it already computed. The tree walker's `E::Call` arm is the same
-    /// logic kept inline (the budget in `perf_vm` measures the tree walker); the dual run keeps the two equal.
+    /// A call of a procedure: `instance` is the value the procedure is called on (`None`: the running object). `values` are the
+    /// argument values the bytecode already computed.
     #[inline(never)]
     #[allow(clippy::too_many_arguments)]
     pub(crate) fn call_site(
@@ -820,7 +375,7 @@ impl Session {
         routine: usize,
         instance: Option<Value>,
         args: &[ir::Arg],
-        pre: Option<Vec<Value>>,
+        values: Vec<Value>,
         try_call: bool,
         f: &mut Frame,
     ) -> Result<Value, Signal> {
@@ -841,7 +396,7 @@ impl Session {
                 // variable's own globals (ADR-021).
                 Value::Record(rc) => {
                     let (inst, saved) = self.enter_record(object, rc, None)?;
-                    let r = self.finish_call(object, routine, inst.clone(), args, pre, try_call, f);
+                    let r = self.finish_call(object, routine, inst.clone(), args, values, try_call, f);
                     Self::leave_record(&inst, saved);
                     return r;
                 }
@@ -868,7 +423,7 @@ impl Session {
                 }
             },
         };
-        self.finish_call(object, routine, inst, args, pre, try_call, f)
+        self.finish_call(object, routine, inst, args, values, try_call, f)
     }
 
     /// Evaluates the arguments of a resolved call and runs it on `inst`, writing back the
@@ -880,24 +435,10 @@ impl Session {
         routine: usize,
         inst: Rc<RefCell<Instance>>,
         args: &[ir::Arg],
-        pre: Option<Vec<Value>>,
+        values: Vec<Value>,
         try_call: bool,
         f: &mut Frame,
     ) -> Result<Value, Signal> {
-        // The bytecode hands over the argument values it already computed.
-        let values = match pre {
-            Some(v) => v,
-            None => {
-                let mut values = Vec::with_capacity(args.len());
-                for a in args {
-                    values.push(match a {
-                        ir::Arg::Value(e) => self.eval(e, f)?,
-                        ir::Arg::Ref(p) => self.read(p, f)?,
-                    });
-                }
-                values
-            }
-        };
         let result = self.call(object, routine, inst, values);
         if let Err(Signal::Error(_)) = &result {
             if let Some(finals) = self.error_finals.take() {
@@ -1005,22 +546,6 @@ impl Session {
                 _ => RtType::Variant,
             },
         }
-    }
-
-    /// `P := P + R` for a Text variable `P`: the text is taken out of the variable, `R` is appended to it (in
-    /// place when no other value shares it, so a loop of `S += x` is linear), and it is put back. The left
-    /// operand is the value before `R` is evaluated, as in the general path; the length limit and the
-    /// call-stack marker rule are the general path's (`ops::convert`, `ops::arith`).
-    pub(crate) fn append_text(
-        &mut self,
-        p: &ir::Place,
-        max: Option<u32>,
-        r: &ir::Expr,
-        f: &mut Frame,
-    ) -> Result<(), Signal> {
-        let old = self.read(p, f)?;
-        let rv = self.eval(r, f)?;
-        self.append_finish(p, max, old, rv, f)
     }
 
     /// The append of `S += x` once the old value of `S` and `x` are known: in place when nothing else holds the text.
@@ -1237,11 +762,24 @@ impl Session {
         let [e] = idx else {
             return Err(Signal::Unsupported("a text indexed with several positions".into()));
         };
-        let i = int(&self.eval(e, f)?)?;
+        let i = int(&Self::index_value(e, f)?)?;
         let unit = match int(&v) {
             Ok(c) => u16::try_from(c).ok().filter(|u| !(0xD800..0xE000).contains(u)),
             Err(_) => None,
         };
+        // A Text of ASCII only gets an ASCII character in place (a loop over a long text stays linear): the variable lets
+        // go of its hold first so that nothing is copied.
+        if let (false, Some(unit), true) = (is_code, unit.filter(|u| *u < 128), i >= 1) {
+            if let ir::Place::Local(l) = base {
+                if let Value::Text(t) = &mut f.locals[*l] {
+                    let at = (i - 1) as usize;
+                    if t.is_ascii() && at < t.len() {
+                        t.set_ascii_byte(at, unit as u8);
+                        return Ok(());
+                    }
+                }
+            }
+        }
         let (Value::Text(s) | Value::Code(s)) = self.read(base, f)? else {
             return Err(Signal::Unsupported(
                 "assigning a character into a value that is no text".into(),
@@ -1342,7 +880,7 @@ impl Session {
         };
         let mut flat = 0usize;
         for (d, e) in dims.iter().zip(idx) {
-            let i = int(&self.eval(e, f)?)?;
+            let i = int(&Self::index_value(e, f)?)?;
             if i < 1 || i > i64::from(*d) {
                 return Err(Signal::Unsupported(
                     "array index out of bounds (error text not pinned yet)".into(),

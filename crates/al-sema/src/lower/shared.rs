@@ -183,10 +183,10 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         routine_at: &sh.routine_at,
         oi,
         file: sh.ws.objects[oi].file,
-        globals: HashMap::new(),
-        locals: HashMap::new(),
-        global_labels: HashMap::new(),
-        local_labels: HashMap::new(),
+        globals: Default::default(),
+        locals: Default::default(),
+        global_labels: HashMap::default(),
+        local_labels: HashMap::default(),
         reasons: Vec::new(),
         calls: Vec::new(),
         page_reasons: &sh.page_reasons,
@@ -210,6 +210,9 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         emit_pos: false,
         routine_idx: 0,
         assumed: Vec::new(),
+        tys: Vec::new(),
+        tys_on: false,
+        roots: Vec::new(),
     }
 }
 
@@ -312,7 +315,7 @@ pub(crate) fn lower_object<'a>(
                 ir::XmlNodeKind::Text | ir::XmlNodeKind::TextAttr => (Ok(RtType::Text(None)), false),
                 ir::XmlNodeKind::Table => (
                     lw.rt(&Ty::Record {
-                        table: n.args.get(1).cloned().unwrap_or_default(),
+                        table: n.args.get(1).cloned().unwrap_or_default().into(),
                         temporary: n.section.properties().any(|p| {
                             p.name().eq_ignore_ascii_case("UseTemporary")
                                 && p.value_text().trim().eq_ignore_ascii_case("true")
@@ -360,7 +363,7 @@ pub(crate) fn lower_object<'a>(
                 continue;
             }
             let ty = lw.rt(&Ty::Record {
-                table: i.table.clone(),
+                table: i.table.as_str().into(),
                 temporary: crate::reports::uses_temporary(&i.section),
             });
             lw.globals.insert(key, globals.len());
@@ -393,7 +396,7 @@ pub(crate) fn lower_object<'a>(
                 continue;
             }
             let ty = lw.rt(&Ty::Record {
-                table: i.table.clone(),
+                table: i.table.as_str().into(),
                 temporary: crate::reports::uses_temporary(&i.section),
             });
             lw.globals.insert(key, globals.len());

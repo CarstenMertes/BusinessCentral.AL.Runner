@@ -205,6 +205,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `config.rs` (292): oracle/oracle.toml: versions, suites, corpus pin. Entry: `OracleFile` 7, `VersionEntry` 16, `SuiteEntry` 51.
 - `corpus.rs` (210): Corpus discovery: test codeunits, their area folder and file. Entry: `discover` 32, `CorpusIndex` 20, `TestCodeunit` 12.
 - `coverage.rs` (330): The corpus coverage map (`--coverage-map`, `docs/corpus-coverage.md` and `.json`): which builtin overloads of the catalog some corpus test calls, from the checker's `Res::Builtin` resolutions. Entry: `collect_calls`, `build`, `to_markdown`, `to_json`, `corpus_coverage`.
+- `behavior_coverage.rs` (~900): The behavior coverage map (`--behavior-coverage-map`, `docs/corpus-behavior-coverage.md` and `.json`): triggers, properties, platform events, statement/expression kinds and runtime error sites against the corpus; catalog = runtime source mentions union Microsoft-app use; pinned by static reach over resolved `Res::Proc` calls. Entry: `collect`, `classify`, `match_errors`, `corpus_behavior_coverage`.
 - `drift.rs` (119): Comparing case sets across BC versions (ADR-015 3.6). Entry: `differences` 11, `common` 26, `restrict` 39, `table` 46.
 - `mnc.rs` (300): The must-not-compile corpus (`--must-not-compile [DIR]`): parse a case header, compile it alone, compare the ALnnnn codes, report match / mismatch / not checked / skipped. Entry: `parse_case`, `read_cases`, `run_case`, `render`.
 - `insight.rs` (388): --top-refusals (folded reason ranking) and --baseline-diff. Entry: `normalise_reason` 22, `top_refusals` 116, `baseline_diff` 194, `render_top` 145, `render_diff` 222.
@@ -274,8 +275,9 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `globaltriggers.rs` (225): The events of the platform codeunit `Global Triggers` (2000000002, in the platform `System.app`). Entry: `global_setup` 63, `global_enabled` 142, `global_trigger` 157.
 - `hostvalues.rs` (259): Builtins that answer from the host (ADR-006). Entry: `datetime_of_unix_millis` 26, `Replaced` 142.
 - `interfaces.rs` (106): Interface variables: dispatch through the implementing codeunit. Entry: `interface_test` 32, `interface_target` 54, `enum_implementation` 81.
-- `lib.rs` (1070): Engine (immutable program) and Session (mutable state, grouped into the sub-states of `state.rs`), construction and the transaction entry points. The interpreter is in `interp.rs`.
-- `interp.rs` (1210): The tree-walking interpreter: `exec`, `eval`, `read`, `write`, `finish_call`, constants. Entry: `exec_block`, `exec`, `eval`, `read`, `write`.
+- `lib.rs` (1070): Engine (immutable program) and Session (mutable state, grouped into the sub-states of `state.rs`), construction and the transaction entry points. The executor is the bytecode in `exec/`; `interp.rs` holds what both it and the rest of the VM use.
+- `interp.rs`: Helpers the bytecode calls: `read`, `write` (places, with their index registers), `element`, `write_char`, `finish_call`, `call_site`, `run_native` (by-reference write-back, `fit_ref_number`), `vm_class_call`, `binary_op`, `unary_op`, `set_curr_field_no`, `clear_all`, `application_area`, constants.
+- `exec/mod.rs`, `exec/compile.rs`, `exec/run.rs`, `exec/types.rs`: The executable form (ADR-034), the only executor. `compile` turns a routine of the IR into a `Chunk` of register instructions (`compile(.., true)` is the captured form that value capture runs, ADR-030); `run_range` is the loop; `types.rs` is the interface the typed instructions get their static types from. Entry: `ExecProgram::chunk`, `captured_chunk`, `compile`, `Session::run_chunk`.
 - `ctx.rs` (289): `Session` as the context natives call back into: `FormatCtx` and `Ctx` (`record`, `page`, `session_op`, files, module lookups).
 - `state.rs` (117): Sub-states of `Session`: `TxState`, `UiState`, `PageClients`, `EventState`, `CoverageState`, `ReportState` (the .NET host state is `dotnet::DotNetState`).
 - `pages.rs` (432): The page test client (ADR-012): shared helpers, page triggers and events, the handle to a control. The rest is split by topic into `pages/`.
@@ -342,7 +344,7 @@ functions or methods; the file is in the module list above.
    slowest codeunits.
 5. `run_codeunit_observed`: `Session::with_host` -> `restore_baseline` -> `run_install_codeunits` -> `OnRun` via
    `Session::call` -> per `[Test]` routine: `resolve_handlers`, `blocked_site` (refusal decided at lowering),
-   `bind_handlers`, then `Session::call` -> `call_inner` -> `exec_block` -> `exec` / `eval`. The result becomes
+   `bind_handlers`, then `Session::call` -> `call_inner` -> `exec::compile` (once per routine) -> `Session::run_chunk`. The result becomes
    `Outcome::{Pass, Fail, NotRun}` (`Signal::Error` is a failure, `Signal::Unsupported` is a refusal).
 6. Back in `run_version`: `report::build` (counts by area) -> `output::junit` / `markdown` -> `report::ratchet` and
    `decide` against `metrics/<major>/passing.txt` -> `format_baseline` with `--update-baseline`.

@@ -943,7 +943,13 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
     }
     // A match at a char boundary is the same match unit by unit; the position counts UTF-16 units. No copy of the
     // text: a loop that calls StrPos on a long text (Pageworks' asset parsing) would copy it each time.
-    let pos = s.find(sub.as_str()).map_or(0, |b| {
+    // One character is a byte search (no searcher to build); longer needles are searched as a string.
+    let mut cs = sub.chars();
+    let found = match (cs.next(), cs.next()) {
+        (Some(c), None) => s.find(c),
+        _ => s.find(sub.as_str()),
+    };
+    let pos = found.map_or(0, |b| {
         if s.is_ascii() {
             b + 1
         } else {

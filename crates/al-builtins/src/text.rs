@@ -96,6 +96,16 @@ impl Txt {
         &mut inner.s
     }
 
+    /// Overwrites the ASCII byte at `i` with another ASCII byte, in place when nothing else holds the text, and keeps what
+    /// is known of the text (still ASCII, marker unchanged). The caller checks `is_ascii`, `i < len` and `c < 128`.
+    pub fn set_ascii_byte(&mut self, i: usize, c: u8) {
+        debug_assert!(self.is_ascii() && i < self.0.s.len() && c < 128);
+        let inner = Arc::make_mut(&mut self.0);
+        let mut buf = [0u8; 4];
+        inner.s.replace_range(i..=i, char::from(c).encode_utf8(&mut buf));
+        // U+E000 is not ASCII, so the marker flag cannot change.
+    }
+
     pub fn push(&mut self, c: char) {
         let mut b = [0u8; 4];
         self.push_str(c.encode_utf8(&mut b));

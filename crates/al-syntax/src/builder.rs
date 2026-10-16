@@ -18,12 +18,15 @@ const SLOTS: usize = 1 << 14;
 /// not thread-safe; use one per thread. Trees stay valid after it is dropped.
 pub struct TreeCache {
     slots: Box<[Option<GreenToken>]>,
+    /// The token of each kind whose text the lexer fixes (punctuation): found by kind, with no hash and no compare.
+    fixed: Box<[Option<GreenToken>]>,
 }
 
 impl Default for TreeCache {
     fn default() -> Self {
         TreeCache {
             slots: vec![None; SLOTS].into_boxed_slice(),
+            fixed: vec![None; 64].into_boxed_slice(),
         }
     }
 }
@@ -31,9 +34,28 @@ impl Default for TreeCache {
 impl TreeCache {
     fn token(&mut self, kind: SyntaxKind, text: &str) -> GreenToken {
         let raw: rowan::SyntaxKind = kind.into();
+        if kind >= SyntaxKind::LParen && kind <= SyntaxKind::Pipe {
+            // The lexer gives each of these kinds one spelling (`:=` is Assign and nothing else is), so the text is
+            // the kind's; the length is checked as a guard.
+            let slot = &mut self.fixed[kind as usize - SyntaxKind::LParen as usize];
+            if let Some(t) = slot {
+                if t.text().len() == text.len() {
+                    debug_assert_eq!(t.text(), text);
+                    return t.clone();
+                }
+            }
+            let t = GreenToken::new(raw, text);
+            *slot = Some(t.clone());
+            return t;
+        }
+        // A long text (a comment, a long string) is hardly ever seen twice: hashing and comparing it costs more than the
+        // copy it could save.
+        if text.len() > 40 {
+            return GreenToken::new(raw, text);
+        }
         let slot = &mut self.slots[hash(raw.0, text)];
         if let Some(t) = slot {
-            if t.kind() == raw && t.text() == text {
+            if t.kind() == raw && same_text(t.text(), text) {
                 return t.clone();
             }
         }
@@ -43,20 +65,61 @@ impl TreeCache {
     }
 }
 
-/// A cheap multiplicative hash of the kind and the text, reduced to a slot index.
+/// Whether two texts are equal, by inline word compares for the short texts that tokens are made of (a call to `bcmp`
+/// costs more than the compare).
+#[inline(always)]
+fn same_text(a: &str, b: &str) -> bool {
+    let (a, b) = (a.as_bytes(), b.as_bytes());
+    let n = a.len();
+    if n != b.len() {
+        return false;
+    }
+    let rd8 = |s: &[u8], i: usize| u64::from_le_bytes(s[i..i + 8].try_into().expect("8 bytes"));
+    if n >= 8 {
+        if n > 32 {
+            return a == b;
+        }
+        let mut i = 0;
+        while i + 8 <= n {
+            if rd8(a, i) != rd8(b, i) {
+                return false;
+            }
+            i += 8;
+        }
+        i == n || rd8(a, n - 8) == rd8(b, n - 8)
+    } else if n >= 4 {
+        let rd4 = |s: &[u8], i: usize| u32::from_le_bytes(s[i..i + 4].try_into().expect("4 bytes"));
+        rd4(a, 0) == rd4(b, 0) && rd4(a, n - 4) == rd4(b, n - 4)
+    } else {
+        n == 0 || (a[0] == b[0] && a[n / 2] == b[n / 2] && a[n - 1] == b[n - 1])
+    }
+}
+
+/// A cheap multiplicative hash of the kind and the text, reduced to a slot index. The tail of the text is read with
+/// overlapping loads, not byte by byte.
 fn hash(kind: u16, text: &str) -> usize {
     const K: u64 = 0x517c_c1b7_2722_0a95;
-    let bytes = text.as_bytes();
-    let mut h = (kind as u64 + 1).wrapping_mul(K) ^ bytes.len() as u64;
-    let mut chunks = bytes.chunks_exact(8);
-    for c in &mut chunks {
-        h = (h.rotate_left(5) ^ u64::from_le_bytes(c.try_into().expect("8 bytes"))).wrapping_mul(K);
+    let b = text.as_bytes();
+    let n = b.len();
+    let mut h = (kind as u64 + 1).wrapping_mul(K) ^ n as u64;
+    let rd8 = |i: usize| u64::from_le_bytes(b[i..i + 8].try_into().expect("8 bytes"));
+    if n >= 8 {
+        let mut i = 0;
+        while i + 8 <= n {
+            h = (h.rotate_left(5) ^ rd8(i)).wrapping_mul(K);
+            i += 8;
+        }
+        if i < n {
+            h = (h.rotate_left(5) ^ rd8(n - 8)).wrapping_mul(K);
+        }
+    } else if n >= 4 {
+        let lo = u32::from_le_bytes(b[..4].try_into().expect("4 bytes")) as u64;
+        let hi = u32::from_le_bytes(b[n - 4..].try_into().expect("4 bytes")) as u64;
+        h = (h.rotate_left(5) ^ (lo | hi << 32)).wrapping_mul(K);
+    } else if n > 0 {
+        let v = b[0] as u64 | (b[n / 2] as u64) << 8 | (b[n - 1] as u64) << 16;
+        h = (h.rotate_left(5) ^ v).wrapping_mul(K);
     }
-    let mut tail = 0u64;
-    for &b in chunks.remainder() {
-        tail = tail << 8 | b as u64;
-    }
-    h = (h.rotate_left(5) ^ tail).wrapping_mul(K);
     (h >> (64 - SLOTS.trailing_zeros())) as usize
 }
 

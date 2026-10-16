@@ -14,7 +14,7 @@ pub(crate) fn block(p: &mut Parser) {
 
 /// Statements separated by `;`, up to (not including) one of `terminators`.
 fn stmt_list(p: &mut Parser, terminators: &[&str]) {
-    while !p.at_eof() && !terminators.iter().any(|t| p.at_kw(t)) {
+    while !p.at_eof() && p.which_kw(terminators).is_none() {
         if p.eat(Semicolon) {
             continue;
         }
@@ -26,28 +26,30 @@ fn stmt_list(p: &mut Parser, terminators: &[&str]) {
     }
 }
 
+/// The keywords that start a statement, in the order `stmt` tests them.
+const STMT_KWS: [&str; 10] = [
+    "begin",
+    "if",
+    "case",
+    "while",
+    "repeat",
+    "for",
+    "foreach",
+    "exit",
+    "break",
+    "asserterror",
+];
+
 fn at_stmt_start(p: &Parser) -> bool {
-    [
-        "begin",
-        "if",
-        "case",
-        "while",
-        "repeat",
-        "for",
-        "foreach",
-        "exit",
-        "break",
-        "asserterror",
-    ]
-    .iter()
-    .any(|k| p.at_kw(k))
-        || at_expr_start(p)
+    p.which_kw(&STMT_KWS).is_some() || at_expr_start(p)
 }
 
 pub(crate) fn stmt(p: &mut Parser) {
-    if p.at_kw("begin") {
+    // One look-ahead names the keyword; an expression statement (no keyword) goes straight to the last arm.
+    let kw = p.which_kw(&STMT_KWS);
+    if kw == Some(0) {
         block(p);
-    } else if p.at_kw("if") {
+    } else if kw == Some(1) {
         p.start(IfStmt);
         p.bump_any();
         expr(p);
@@ -57,23 +59,23 @@ pub(crate) fn stmt(p: &mut Parser) {
             opt_stmt(p);
         }
         p.finish();
-    } else if p.at_kw("case") {
+    } else if kw == Some(2) {
         case_stmt(p);
-    } else if p.at_kw("while") {
+    } else if kw == Some(3) {
         p.start(WhileStmt);
         p.bump_any();
         expr(p);
         p.expect_kw("do");
         opt_stmt(p);
         p.finish();
-    } else if p.at_kw("repeat") {
+    } else if kw == Some(4) {
         p.start(RepeatStmt);
         p.bump_any();
         stmt_list(p, &["until"]);
         p.expect_kw("until");
         expr(p);
         p.finish();
-    } else if p.at_kw("for") {
+    } else if kw == Some(5) {
         p.start(ForStmt);
         p.bump_any();
         expr(p);
@@ -86,7 +88,7 @@ pub(crate) fn stmt(p: &mut Parser) {
         p.expect_kw("do");
         opt_stmt(p);
         p.finish();
-    } else if p.at_kw("foreach") {
+    } else if kw == Some(6) {
         p.start(ForeachStmt);
         p.bump_any();
         expr_until_in(p);
@@ -95,7 +97,7 @@ pub(crate) fn stmt(p: &mut Parser) {
         p.expect_kw("do");
         opt_stmt(p);
         p.finish();
-    } else if p.at_kw("exit") {
+    } else if kw == Some(7) {
         p.start(ExitStmt);
         p.bump_any();
         if p.eat(LParen) {
@@ -105,11 +107,11 @@ pub(crate) fn stmt(p: &mut Parser) {
             p.expect(RParen);
         }
         p.finish();
-    } else if p.at_kw("break") {
+    } else if kw == Some(8) {
         p.start(BreakStmt);
         p.bump_any();
         p.finish();
-    } else if p.at_kw("asserterror") {
+    } else if kw == Some(9) {
         p.start(AssertErrorStmt);
         p.bump_any();
         opt_stmt(p);

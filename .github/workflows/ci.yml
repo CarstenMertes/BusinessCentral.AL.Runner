@@ -302,3 +302,48 @@ jobs:
             -p al-deps --test network \
             -p al-test-cli --test network_deps \
             -- --ignored --nocapture
+
+  # The GitHub cache of the repository has a limit of 10 GB, and a push to main saves a new compile-cache entry
+  # (about 42 MB, its key holds the hash of the sources) and a new Swatinem rust-cache entry per job. Nothing
+  # removed the old ones, and the limit was reached. This job runs after the other three on a push to main and
+  # deletes what no later run can use:
+  #   compile-cache-*  keeps the newest 3 (the last commits; an entry of another commit is never a hit,
+  #                    there is no restore key), removes the rest.
+  #   v0-rust-*        keeps the newest entry of each prefix, the key without its two trailing hashes
+  #                    (one prefix per job, operating system and architecture), removes the older ones.
+  # A failure of the API call or of `gh` never fails the build: the job and each step are continue-on-error, and
+  # a cache that stays full is only slower. Only a push to main runs it (not a pull request, and not
+  # release.yml, which calls this workflow). Needs `actions: write`.
+  cache-cleanup:
+    name: cache cleanup
+    needs: [test, portable, corpus, release-tests]
+    if: always() && github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    permissions:
+      actions: write
+      contents: read
+    env:
+      GH_TOKEN: ${{ github.token }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Delete the old compile-cache entries (keep the newest 3)
+        continue-on-error: true
+        run: |
+          ids=$(gh cache list --key compile-cache- --sort created_at --order desc --limit 100 --json id --jq '.[3:][].id')
+          for id in $ids; do
+            echo "deleting compile-cache entry $id"
+            gh cache delete "$id" || true
+          done
+      - name: Delete the old rust-cache entries (keep the newest of each prefix)
+        continue-on-error: true
+        run: |
+          ids=$(gh cache list --key v0-rust- --limit 100 --json id,key,createdAt --jq '
+            map(. + {prefix: (.key | sub("-[0-9a-f]{8,}-[0-9a-f]{8,}$"; ""))})
+            | group_by(.prefix)
+            | map(sort_by(.createdAt) | reverse | .[1:][].id)
+            | .[]')
+          for id in $ids; do
+            echo "deleting rust-cache entry $id"
+            gh cache delete "$id" || true
+          done

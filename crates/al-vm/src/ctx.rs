@@ -1,0 +1,289 @@
+use super::*;
+
+impl al_builtins::format::FormatCtx for Session {
+    /// The caption a value declares, else its name (types/TestEnumCaption.al).
+    fn enum_name(&self, id: u32, value: i32) -> String {
+        let o = &self.engine.program.objects[id as usize];
+        if let Some((_, c)) = o.enum_captions.iter().find(|(v, _)| *v == value) {
+            return c.clone();
+        }
+        o.enum_values
+            .iter()
+            .find(|(v, _)| *v == value)
+            .map(|(_, n)| n.clone())
+            .unwrap_or_else(|| value.to_string())
+    }
+}
+
+impl al_builtins::native::Ctx for Session {
+    fn http_send(
+        &mut self,
+        request: al_builtins::native::HttpOutgoing,
+    ) -> Result<al_builtins::value::TestHttpResponseState, Signal> {
+        self.http_send_impl(request)
+    }
+    fn today_day(&self) -> Option<i32> {
+        Some(self.today_day_number())
+    }
+    fn format_composite(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        self.format_composite_value(v)
+    }
+    fn copy_stream_dotnet(&mut self, out: &Value, src: &Value, count: Option<i64>) -> Option<Result<(), Signal>> {
+        Some(self.copy_stream_with_dotnet(out, src, count))
+    }
+    fn format_dotnet(&mut self, v: &Value) -> Option<Result<String, Signal>> {
+        self.format_dotnet_value(v)
+    }
+    fn last_error(&self) -> AlError {
+        self.last_error.clone()
+    }
+    fn set_last_error(&mut self, e: AlError) {
+        self.last_error = e;
+    }
+    fn record(
+        &mut self,
+        method: al_builtins::record_op::RecordOp,
+        rec: Option<&mut Value>,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
+        match rec {
+            Some(Value::Record(rc)) => {
+                let rc = rc.clone();
+                self.record_op(method, &rc, args)
+            }
+            other => Err(Signal::Unsupported(format!(
+                "record method {method} on {}",
+                other.describe()
+            ))),
+        }
+    }
+    fn page(
+        &mut self,
+        method: al_builtins::page_op::PageOp,
+        recv: Option<&mut Value>,
+        args: &mut [Value],
+    ) -> Result<Value, Signal> {
+        self.page_op(method, recv, args)
+    }
+
+    fn query(&mut self, method: &str, recv: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        self.query_op(method, recv, args)
+    }
+
+    fn ref_op(&mut self, id: &str, receiver: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+        Session::ref_op(self, id, receiver, args)
+    }
+    fn session_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Result<Value, Signal> {
+        Session::session_op(self, id, args)
+    }
+    fn media_store(&mut self) -> Option<&mut al_builtins::media::MediaStore> {
+        Some(&mut self.media)
+    }
+    fn collect_error(&mut self, info: &Value) -> bool {
+        Session::collect_error(self, info)
+    }
+    fn fs_exists(&mut self, path: &str) -> Result<bool, Signal> {
+        Ok(self.host.files.exists(path))
+    }
+    fn fs_read(&mut self, path: &str) -> Result<Option<Vec<u8>>, Signal> {
+        Ok(self.host.files.read(path))
+    }
+    fn fs_write(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        self.host.files.write(path, bytes)
+    }
+    fn fs_remove(&mut self, path: &str) -> Result<bool, Signal> {
+        Ok(self.host.files.remove(path))
+    }
+    fn fs_temp_name(&mut self) -> String {
+        self.temp_files += 1;
+        format!("{}{}.tmp", al_builtins::file::TEMP_DIR, self.temp_files)
+    }
+    fn session_profile(&self) -> Option<(String, [u8; 16], String)> {
+        self.personalization_of_session_user()
+    }
+    fn session_locale(&self) -> Option<(i32, i32, String)> {
+        Some((
+            self.global_language,
+            self.host.identity.locale_id(),
+            self.host.identity.time_zone(),
+        ))
+    }
+    fn module_at_frame(&self, depth: usize) -> Option<al_builtins::value::ModuleInfoState> {
+        let at = self.frames.len().checked_sub(1 + depth)?;
+        self.module_of_app(self.engine.program.objects[self.frames[at]].app as usize)
+    }
+    fn app_resources(&self) -> Option<al_builtins::native::AppResources> {
+        let obj = *self.frames.last()?;
+        let app = self
+            .engine
+            .program
+            .apps
+            .get(self.engine.program.objects[obj].app as usize)?;
+        // BC names the app `<name> by <publisher> <version>` (session/W5NavAppResources.al:GetResourceAsText_NameMatching).
+        Some((
+            format!("{} by {} {}", app.name, app.publisher, app.version),
+            app.resources.clone(),
+        ))
+    }
+    fn runner_call_stack(&self) -> String {
+        self.runner_frames.clone()
+    }
+    fn module_callstack(&self, skip: usize) -> Vec<al_builtins::value::ModuleInfoState> {
+        let mut seen = Vec::new();
+        let mut out = Vec::new();
+        for obj in self.frames.iter().rev().skip(skip) {
+            let app = self.engine.program.objects[*obj].app as usize;
+            if !seen.contains(&app) {
+                seen.push(app);
+                out.extend(self.module_of_app(app));
+            }
+        }
+        out
+    }
+    fn application_module(&self) -> al_builtins::value::ModuleInfoState {
+        let bc = self.engine.target.as_ref().map(|t| &t.bc);
+        let (major, minor) = bc.map_or((29, 0), |b| (i32::from(b.major), i32::from(b.minor)));
+        // Build and revision of the base application are not zero (session/W5ModuleInfo.al:
+        // ModuleInfo_NullId_Properties); the artifact's own numbers when the run knows them, else 1.
+        let (build, revision) = bc
+            .and_then(|b| b.build.as_deref())
+            .and_then(|s| {
+                let n: Vec<i32> = s.split('.').filter_map(|p| p.parse().ok()).collect();
+                (n.len() >= 2).then(|| (n[n.len() - 2], n[n.len() - 1]))
+            })
+            .unwrap_or((1, 1));
+        al_builtins::value::ModuleInfoState {
+            // The module BC answers for the null app id: the base application W1 (session/
+            // TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).
+            id: [0; 16],
+            name: "W1".into(),
+            publisher: "Microsoft".into(),
+            version: Some([major, minor, build, revision]),
+            dependencies: Vec::new(),
+            synthesized: true,
+        }
+    }
+    fn module_by_id(&self, id: &[u8; 16]) -> al_builtins::native::ModuleLookup {
+        use al_builtins::native::ModuleLookup;
+        let apps = &self.engine.program.apps;
+        let parse = |s: &str| ops::parse_guid(s);
+        if let Some(i) = apps.iter().position(|a| parse(&a.id).as_ref() == Some(id)) {
+            if let Some(m) = self.module_of_app(i) {
+                return ModuleLookup::Found(m);
+            }
+        }
+        if apps
+            .iter()
+            .any(|a| a.dependencies.iter().any(|d| parse(d).as_ref() == Some(id)))
+        {
+            return ModuleLookup::OutsideWorkspace;
+        }
+        ModuleLookup::NotInstalled
+    }
+    fn workspace_table(&self, number: i32) -> bool {
+        self.engine
+            .program
+            .objects
+            .iter()
+            .any(|o| o.is_kind(al_ir::ObjKind::Table) && o.id.is_some_and(|id| i64::from(id) == i64::from(number)))
+    }
+    fn install_scope(&self) -> bool {
+        self.install_scope
+    }
+    fn in_test_run(&self) -> bool {
+        self.in_test_codeunit
+    }
+    fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
+        Some(self.engine.program.objects[id as usize].enum_values.clone())
+    }
+    fn enum_captions(&self, id: u32) -> Vec<(i32, String)> {
+        self.engine.program.objects[id as usize].enum_captions.clone()
+    }
+    fn commit(&mut self) -> Result<(), Signal> {
+        self.commit_builtin()
+    }
+    fn ret_used(&self) -> bool {
+        self.ret_used
+    }
+    fn ui_message(&mut self, text: String) -> Result<(), Signal> {
+        Session::ui_message(self, text)
+    }
+    fn ui_confirm(&mut self, question: String, default: bool) -> Result<bool, Signal> {
+        Session::ui_confirm(self, question, default)
+    }
+    fn ui_str_menu(&mut self, options: String, default: i32, instruction: String) -> Result<i32, Signal> {
+        Session::ui_str_menu(self, options, default, instruction)
+    }
+    fn ui_session_settings(&mut self, settings: Value) -> Result<Option<Value>, Signal> {
+        Session::ui_session_settings(self, settings)
+    }
+    fn ui_send_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<Option<Value>, Signal> {
+        Session::ui_send_notification(self, notification, id)
+    }
+    fn ui_recall_notification(&mut self, notification: Value, id: [u8; 16]) -> Result<bool, Signal> {
+        Session::ui_recall_notification(self, notification, id)
+    }
+    fn new_guid(&mut self) -> [u8; 16] {
+        self.fresh_guid()
+    }
+}
+
+/// A version 4 Guid (RFC 4122) that is a pure function of the host seed and a counter, so every
+/// byte looks random and a run is still repeatable (ADR-006: no OS randomness in the core;
+/// ADR-009: determinism is allowed where AL cannot tell the difference). The bytes are two
+/// SplitMix64 outputs; the version nibble is 4 and the variant bits are `10`.
+pub(crate) fn guid_for(seed: i32, n: u64) -> [u8; 16] {
+    let mut g = raw_guid_for(seed, n);
+    g[6] = 0x40 | (g[6] & 0x0F);
+    g[8] = 0x80 | (g[8] & 0x3F);
+    g
+}
+
+/// The bytes of [`guid_for`] before the version and variant bits are set: the form of the SystemId the
+/// platform gives a new row, which is not RFC 4122 version 4 (types/TestGuidFormContracts.al:
+/// SystemId_OfNewRows_IsNotVersion4).
+pub(crate) fn raw_guid_for(seed: i32, n: u64) -> [u8; 16] {
+    let mut state = ((seed as u32 as u64) << 32) ^ n.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+    let mut next = || {
+        state = state.wrapping_add(0x9E37_79B9_7F4A_7C15);
+        let mut z = state;
+        z = (z ^ (z >> 30)).wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        z = (z ^ (z >> 27)).wrapping_mul(0x94D0_49BB_1331_11EB);
+        z ^ (z >> 31)
+    };
+    let mut g = [0u8; 16];
+    g[..8].copy_from_slice(&next().to_be_bytes());
+    g[8..].copy_from_slice(&next().to_be_bytes());
+    g
+}
+
+impl Session {
+    /// The next Guid of the session: `CreateGuid`, a row's SystemId, the ids of media and tasks.
+    /// `CreateGuid` is a version 4 Guid (types/TestGuidFormContracts.al:CreateGuid_IsVersion4).
+    pub(crate) fn fresh_guid(&mut self) -> [u8; 16] {
+        self.next_guid += 1;
+        guid_for(self.guid_seed, self.next_guid)
+    }
+
+    /// The SystemId of a new row: not a version 4 Guid.
+    pub(crate) fn fresh_system_id(&mut self) -> [u8; 16] {
+        self.next_guid += 1;
+        raw_guid_for(self.guid_seed, self.next_guid)
+    }
+}
+
+pub(crate) fn base_slot_missing(slot: usize) -> Signal {
+    Signal::Unsupported(format!(
+        "internal error: the base object's instance has no global slot {slot}"
+    ))
+}
+
+#[cfg(test)]
+mod conformance {
+    /// ADR-001: the compiled program is shared across threads; sessions are not.
+    #[test]
+    fn engine_is_send_and_sync() {
+        fn assert_send_sync<T: Send + Sync>() {}
+        assert_send_sync::<super::Engine>();
+    }
+}

@@ -68,9 +68,13 @@ impl Lowerer<'_> {
         for v in r.local_var_decls() {
             let ty = v.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
             let label = v.type_ref().as_ref().and_then(label_text);
+            let refusal = v.type_ref().as_ref().and_then(textconst_refusal);
             for n in v.names() {
                 if let Some(l) = &label {
                     self.local_labels.insert(n.to_lowercase(), l.clone());
+                }
+                if let Some(why) = refusal {
+                    self.reasons.push(format!("`{n}`: {why}"));
                 }
                 add(self, n, ty.clone(), &mut locals);
             }

@@ -17,6 +17,7 @@ mod exec;
 mod in_precedence;
 mod interfaces;
 mod pageworks_probes;
+mod moved_fields;
 mod proc_assign;
 mod rec_field_by_var;
 mod setter_call;

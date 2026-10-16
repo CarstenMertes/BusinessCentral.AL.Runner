@@ -141,6 +141,7 @@ impl Lowerer<'_> {
             pos,
             end_pos,
             begin_pos,
+            expr_tys: Vec::new(),
         }
     }
 
@@ -223,6 +224,7 @@ impl Lowerer<'_> {
             pos: ir::NO_POS,
             end_pos: ir::NO_POS,
             begin_pos: ir::NO_POS,
+            expr_tys: Vec::new(),
         }
     }
 

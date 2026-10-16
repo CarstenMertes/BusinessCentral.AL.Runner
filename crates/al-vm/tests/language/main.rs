@@ -2,6 +2,7 @@
 
 mod array_params;
 mod builtins;
+mod calc_const_guid;
 mod call_stack;
 mod continue_stmt;
 mod dataformats;
@@ -11,6 +12,7 @@ mod erm_defects;
 mod errorcollect;
 mod events;
 mod exec;
+mod in_precedence;
 mod interfaces;
 mod pageworks_probes;
 mod text_append;

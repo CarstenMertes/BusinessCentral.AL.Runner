@@ -940,6 +940,7 @@ pub(crate) fn constant(c: &ir::Const) -> Value {
         ir::Const::Option(i, m) => Value::Option(*i, m.clone().into()),
         ir::Const::Enum(o, v) => Value::Enum(*o, *v),
         ir::Const::DateFormula(f) => Value::DateFormula(f.clone()),
+        ir::Const::Guid(g) => Value::Guid(*g),
         ir::Const::FieldPos(p) => Value::Integer(*p as i32),
     }
 }

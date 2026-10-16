@@ -6501,6 +6501,7 @@
 70539 PictureCodes_Dates
 70541 Enum_Conversions
 70541 Enum_NamesAndOrdinals_Order
+70542 Guid_FieldRefAndFilterText
 70542 IsInWriteTransaction_States
 70543 Run_NoRecord
 70543 Run_RealRecord_ChangeReachesCaller

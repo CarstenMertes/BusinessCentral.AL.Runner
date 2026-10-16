@@ -786,7 +786,9 @@ impl Lowerer<'_> {
                     .map(|i| ir::Place::Global(*i))
                     .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
                 Some(Res::BaseGlobal(name)) => {
-                    let (slot, _, _) = self.base_var(name)?;
+                    let name = name.clone();
+                    self.note_base_var_use();
+                    let (slot, _, _) = self.base_var(&name)?;
                     Ok(ir::Place::BaseGlobal(slot))
                 }
                 Some(Res::Field { table, id }) => {

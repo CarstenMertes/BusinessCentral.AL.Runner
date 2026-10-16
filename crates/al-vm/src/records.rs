@@ -565,12 +565,13 @@ impl Session {
         rec: Rec,
         xrec: Option<&Rec>,
     ) -> Result<(Rc<RefCell<Instance>>, RecSlots), Signal> {
-        let (rs, xs, per_variable) = {
+        let (rs, xs, per_variable, is_ext) = {
             let o = &self.engine.program.objects[object];
             (
                 o.rec_slot,
                 o.xrec_slot,
                 !o.uncompiled && matches!(o.kind, al_ir::ObjKind::Table | al_ir::ObjKind::TableExtension),
+                !o.uncompiled && o.kind == al_ir::ObjKind::TableExtension,
             )
         };
         let existing = if per_variable {
@@ -592,6 +593,21 @@ impl Session {
                 i
             }
         };
+        // A table extension's `BaseGlobal` places are the globals of the base table's instance for the same record
+        // (assumption `table-extension-base-vars`): the link is made here, and made again when the base instance is
+        // a new one (a Clear or a Reset).
+        if is_ext {
+            let table = rec.borrow().table;
+            let base = match rec.borrow().globals.instance(table) {
+                Some(b) => b,
+                None => {
+                    let b = self.table_instance(table as usize);
+                    rec.borrow().globals.set_instance(table, b.clone());
+                    b
+                }
+            };
+            inst.borrow_mut().base = Some(Rc::downgrade(&base));
+        }
         // xRec: the caller's handle when the operation has one (shared, so changes made by
         // event subscribers reach the trigger and the other subscribers), else a copy of Rec. Both
         // carry the variable's xRec globals (ADR-021 decision 5).

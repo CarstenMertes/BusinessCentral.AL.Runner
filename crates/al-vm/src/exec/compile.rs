@@ -6,7 +6,9 @@ use al_builtins::value::RtType;
 use types::{DeclaredTypes, ExprTypes, Ty, of_rt};
 
 /// Compiles `r`.
-pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
+/// `captured`: the form a value capture runs (ADR-030): statement and loop ops that tell the capture what the tree walker
+/// tells it. `None` for it also when a statement would need the tree walker.
+pub(crate) fn compile(r: &ir::Routine, captured: bool) -> Option<Chunk> {
     let nlocals = u16::try_from(r.locals.len()).ok()?;
     let mut c = Compiler {
         locals_ty: r.locals.iter().map(|l| l.ty.clone()).collect(),
@@ -16,13 +18,10 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
         },
         chunk: Chunk {
             code: Vec::new(),
+            cap_sites: Vec::new(),
             consts: Vec::new(),
             places: Vec::new(),
             types: Vec::new(),
-            exprs: Vec::new(),
-            stmts: Vec::new(),
-            expr_kinds: Vec::new(),
-            stmt_kinds: Vec::new(),
             calls: Vec::new(),
             builtins: Vec::new(),
             fors: Vec::new(),
@@ -31,14 +30,17 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
             dotnets: Vec::new(),
             aux: Vec::new(),
             foreachs: Vec::new(),
+            specials: Vec::new(),
+            faults: Vec::new(),
             ifaces: Vec::new(),
             nlocals,
             temps: 0,
-            tree_nodes: 0,
         },
         next: nlocals,
         max: nlocals,
         loops: Vec::new(),
+        captured,
+        cap_depth: 0,
     };
     c.block(&r.body).ok()?;
     c.chunk.temps = c.max - nlocals;
@@ -52,6 +54,8 @@ pub(crate) fn compile(r: &ir::Routine) -> Option<Chunk> {
 }
 
 struct LoopCtx {
+    /// `cap_depth` at the loop statement: a `break` or `continue` closes the statements above it.
+    depth: u32,
     /// Jumps to patch to the loop's exit and to its next round.
     brk: Vec<usize>,
     cont: Vec<usize>,
@@ -66,6 +70,9 @@ struct Compiler<'a> {
     next: u16,
     max: u16,
     loops: Vec<LoopCtx>,
+    captured: bool,
+    /// The statements open at this point of the code (captured form only).
+    cap_depth: u32,
 }
 
 type R<T> = Result<T, ()>;
@@ -145,7 +152,6 @@ impl<'a> Compiler<'a> {
             | Op::MatchAny { t, .. }
             | Op::ForeachNext { t, .. }
             | Op::ForTest { t, .. } => *t = to,
-            Op::TreeStmt { .. } => unreachable!("tree statements are patched through patch_tree"),
             other => unreachable!("not a jump: {other:?}"),
         }
     }
@@ -209,18 +215,6 @@ impl<'a> Compiler<'a> {
         self.emit(Op::Aux { s, d, a });
     }
 
-    fn tree_expr(&mut self, e: &'a ir::Expr, d: u16) {
-        self.chunk.exprs.push(e.clone());
-        self.chunk.expr_kinds.push(match e {
-            ir::Expr::Builtin { id, .. } => format!("Builtin {id}"),
-            other => expr_kind(other).to_string(),
-        });
-        let idx = (self.chunk.exprs.len() - 1) as u32;
-        self.chunk.tree_nodes += 1;
-        self.emit(Op::TreeExpr { e: idx, d });
-    }
-
-    /// Emits the typed instruction for `l op r` when both operands are proven Integer (or both Boolean) and one exists.
     fn typed_binary(&mut self, op: ir::BinOp, l: &'a ir::Expr, r: &'a ir::Expr, d: u16) -> R<bool> {
         use ir::BinOp as B;
         let (Some(tl), Some(tr)) = (self.tys.expr_ty(l), self.tys.expr_ty(r)) else {
@@ -298,6 +292,62 @@ impl<'a> Compiler<'a> {
         } else {
             Op::JumpIfNot { a, t }
         }))
+    }
+
+    /// The builtins the VM runs on operands it holds (`special`): `false` when the shape of the call is not one it knows, which
+    /// then stays a tree node (the error is the tree walker's).
+    fn special(
+        &mut self,
+        id: al_builtins::builtin_id::BuiltinId,
+        receiver: Option<&'a ir::Arg>,
+        args: &'a [ir::Arg],
+        ret_used: bool,
+        d: u16,
+    ) -> R<bool> {
+        let (mut place, mut arg) = (None, None);
+        match id {
+            ids::SESSION_BINDSUBSCRIPTION_1 | ids::SESSION_UNBINDSUBSCRIPTION_1 => {
+                let Some(ir::Arg::Value(e)) = args.first() else {
+                    return Ok(false);
+                };
+                arg = Some(self.expr_copy(e)?);
+            }
+            ids::RECORD_SETCURRFIELDNO_1 => {
+                let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver, args.first()) else {
+                    return Ok(false);
+                };
+                place = Some(p.clone());
+                arg = Some(self.expr_copy(e)?);
+            }
+            ids::RECORD_CURRFIELDNO_1 => {
+                let Some(ir::Arg::Ref(p)) = receiver else {
+                    return Ok(false);
+                };
+                place = Some(p.clone());
+            }
+            ids::SYSTEM_CLEARALL_1 => {}
+            ids::SESSION_APPLICATIONAREA_1 => match args.first() {
+                None => {}
+                Some(ir::Arg::Value(e)) => arg = Some(self.expr_copy(e)?),
+                Some(_) => return Ok(false),
+            },
+            _ => return Ok(false),
+        }
+        self.chunk.specials.push(SpecialSite {
+            id,
+            place,
+            arg,
+            ret_used,
+        });
+        let s = (self.chunk.specials.len() - 1) as u32;
+        self.emit(Op::Special { s, d });
+        Ok(true)
+    }
+
+    fn fault(&mut self, k: FaultKind) {
+        self.chunk.faults.push(k);
+        let k = (self.chunk.faults.len() - 1) as u32;
+        self.emit(Op::Fault { k });
     }
 
     fn expr_into(&mut self, e: &'a ir::Expr, d: u16) -> R<()> {
@@ -381,6 +431,12 @@ impl<'a> Compiler<'a> {
                 receiver,
                 args,
                 ret_used,
+            } if special(*id) && self.special(*id, receiver.as_deref(), args, *ret_used, d)? => {}
+            E::Builtin {
+                id,
+                receiver,
+                args,
+                ret_used,
             } if !special(*id) && (vm_class(*id) || al_builtins::native::by_id(*id).is_some()) => {
                 let vm = vm_class(*id);
                 let native = if vm { None } else { al_builtins::native::by_id(*id) };
@@ -440,22 +496,39 @@ impl<'a> Compiler<'a> {
                 receiver,
                 targets,
                 args,
-            } if args.iter().all(|a| {
-                matches!(a, ir::Arg::Value(v) if simple(v))
-                    || matches!(a, ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)))
-            }) =>
-            {
-                // The target is resolved before the arguments are evaluated; plain operands cannot tell the order.
+            } => {
+                // The target is resolved before the arguments are evaluated (a receiver that holds nothing raises before an
+                // argument runs). Plain operands cannot tell the order; for any other the target is resolved first.
+                let plain = args.iter().all(|a| {
+                    matches!(a, ir::Arg::Value(v) if simple(v))
+                        || matches!(a, ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)))
+                });
                 let recv = self.expr_copy(receiver)?;
-                let arg_regs = self.arg_regs(args)?;
                 self.chunk.ifaces.push(IfaceSite {
                     targets: targets.clone(),
                     recv,
-                    arg_regs,
+                    arg_regs: Vec::new(),
                     args: blank(args),
                 });
                 let s = (self.chunk.ifaces.len() - 1) as u32;
+                if !plain {
+                    self.emit(Op::IfaceResolve { r: recv, s });
+                }
+                let arg_regs = self.arg_regs(args)?;
+                self.chunk.ifaces[s as usize].arg_regs = arg_regs;
                 self.emit(Op::IfaceCall { s, d });
+            }
+            E::DotNetCoerce(ty, inner) => {
+                self.emit(Op::DotNetClear);
+                let a = self.expr_any(inner)?;
+                self.chunk.types.push(ty.clone());
+                let t = (self.chunk.types.len() - 1) as u32;
+                self.emit(Op::DotNetCoerce { d, a, t });
+            }
+            E::DotNetOperand(inner, h) => {
+                self.emit(Op::DotNetClear);
+                let a = self.expr_any(inner)?;
+                self.emit(Op::DotNetOperand { d, a, h: *h });
             }
             E::ThisInstance => {
                 self.emit(Op::ThisInstance { d });
@@ -518,7 +591,13 @@ impl<'a> Compiler<'a> {
                 let a = self.expr_any(query)?;
                 self.aux(AuxSite::QueryColumn { column: *column }, d, a);
             }
-            other => self.tree_expr(other, d),
+            E::Refused(why) => self.fault(FaultKind::Unsupported(why.clone())),
+            E::Fail { message, code } => self.fault(FaultKind::Error {
+                message: message.clone(),
+                code: code.clone(),
+            }),
+            // A builtin no native implements: the tree walker refuses it before it evaluates an operand.
+            E::Builtin { id, .. } => self.fault(FaultKind::Unsupported(format!("builtin {id}"))),
         }
         // Temporaries used inside `e` are free again; `d` itself stays allocated by the caller.
         self.next = mark;
@@ -570,6 +649,9 @@ impl<'a> Compiler<'a> {
     // ---- statements ----
 
     fn block(&mut self, stmts: &'a [ir::Stmt]) -> R<()> {
+        if self.captured {
+            return self.block_captured(stmts);
+        }
         for s in stmts {
             let mark = self.next;
             self.stmt(s)?;
@@ -578,37 +660,80 @@ impl<'a> Compiler<'a> {
         Ok(())
     }
 
-    fn tree_stmt(&mut self, s: &'a ir::Stmt) {
-        self.chunk.stmts.push(s.clone());
-        self.chunk.stmt_kinds.push(stmt_kind(s));
-        let idx = (self.chunk.stmts.len() - 1) as u32;
-        self.chunk.tree_nodes += 1;
-        let at = self.emit(Op::TreeStmt {
-            s: idx,
-            brk: NONE,
-            cont: NONE,
-        });
-        if let Some(l) = self.loops.last_mut() {
-            // Patched with the loop's targets when it ends.
-            l.brk.push(at | TREE_BRK);
-            l.cont.push(at | TREE_CONT);
+    /// A block as the capture sees it: a marker and the statement after it are one statement (`exec_block_captured`).
+    fn block_captured(&mut self, stmts: &'a [ir::Stmt]) -> R<()> {
+        let mut i = 0;
+        while i < stmts.len() {
+            let mark = self.next;
+            if let ir::Stmt::Pos(p) = &stmts[i] {
+                self.stmt(&stmts[i])?;
+                self.emit(Op::CapHit { p: *p });
+                // Markers of an assumption sit between the position and its statement.
+                let mut j = i + 1;
+                while let Some(m @ ir::Stmt::Assume(_)) = stmts.get(j) {
+                    self.stmt(m)?;
+                    j += 1;
+                }
+                if let Some(next) = stmts.get(j) {
+                    self.emit(Op::CapBegin { p: *p });
+                    self.cap_depth += 1;
+                    self.stmt(next)?;
+                    self.cap_depth -= 1;
+                    self.chunk.cap_sites.push(CapSite {
+                        pos: *p,
+                        writes: crate::capture::written_locals(next),
+                    });
+                    let s = (self.chunk.cap_sites.len() - 1) as u32;
+                    self.emit(Op::CapEnd { s });
+                    self.next = mark;
+                    i = j + 1;
+                    continue;
+                }
+                self.next = mark;
+                i = j;
+                continue;
+            }
+            self.stmt(&stmts[i])?;
+            self.next = mark;
+            i += 1;
+        }
+        Ok(())
+    }
+
+    /// A loop statement starts: the register for the capture's id of it (captured form), after its `Enter` op.
+    fn cap_loop_enter(&mut self) -> R<Option<u16>> {
+        if !self.captured {
+            return Ok(None);
+        }
+        let d = self.alloc()?;
+        self.emit(Op::CapLoopEnter { d });
+        Ok(Some(d))
+    }
+
+    fn cap_loop_pass(&mut self, lid: Option<u16>) {
+        if let Some(a) = lid {
+            self.emit(Op::CapLoopPass { a });
+        }
+    }
+
+    fn cap_loop_exit(&mut self, lid: Option<u16>) {
+        if let Some(a) = lid {
+            self.emit(Op::CapLoopExit { a });
+        }
+    }
+
+    /// The pops a `break` or `continue` needs before it leaves the statements open inside the innermost loop.
+    fn cap_pops(&mut self) {
+        if let Some(depth) = self.loops.last().map(|l| l.depth) {
+            for _ in depth..self.cap_depth {
+                self.emit(Op::CapPop);
+            }
         }
     }
 
     fn patch_all(&mut self, list: Vec<usize>, to: u32) {
         for at in list {
-            if at & TREE_BRK != 0 || at & TREE_CONT != 0 {
-                let i = at & !(TREE_BRK | TREE_CONT);
-                if let Op::TreeStmt { brk, cont, .. } = &mut self.chunk.code[i] {
-                    if at & TREE_BRK != 0 {
-                        *brk = to;
-                    } else {
-                        *cont = to;
-                    }
-                }
-            } else {
-                self.patch(at, to);
-            }
+            self.patch(at, to);
         }
     }
 
@@ -642,12 +767,15 @@ impl<'a> Compiler<'a> {
             S::While(c, body) => {
                 let saved = self.alloc()?;
                 self.emit(Op::SavePos { d: saved });
+                let lid = self.cap_loop_enter()?;
                 let top = self.here();
                 let mark = self.next;
                 let jf = self.cond_jump(c, 0)?;
                 self.next = mark;
                 self.emit(Op::CheckStop);
+                self.cap_loop_pass(lid);
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -657,6 +785,7 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::RestorePos { a: saved });
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                self.cap_loop_exit(lid);
                 self.patch(jf, end);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
@@ -664,9 +793,12 @@ impl<'a> Compiler<'a> {
             S::Repeat(body, until) => {
                 let saved = self.alloc()?;
                 self.emit(Op::SavePos { d: saved });
+                let lid = self.cap_loop_enter()?;
                 let top = self.here();
                 self.emit(Op::CheckStop);
+                self.cap_loop_pass(lid);
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -678,6 +810,7 @@ impl<'a> Compiler<'a> {
                 self.cond_jump(until, top)?;
                 self.next = mark;
                 let end = self.here();
+                self.cap_loop_exit(lid);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
             }
@@ -690,6 +823,7 @@ impl<'a> Compiler<'a> {
             } => {
                 let i = self.alloc()?;
                 let end_reg = self.alloc()?;
+                let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let (fr, tr) = self.pair(from, to)?;
                 let int_local = match var {
                     ir::Place::Local(v) if matches!(self.locals_ty.get(*v), Some(RtType::Integer)) => {
@@ -705,14 +839,19 @@ impl<'a> Compiler<'a> {
                     i,
                     end: end_reg,
                     int_local,
+                    cap_loop: lid,
                 });
                 let site = (self.chunk.fors.len() - 1) as u32;
                 self.emit(Op::ForInit { s: site });
+                if let Some(d) = lid {
+                    self.emit(Op::CapLoopEnter { d });
+                }
                 let top = self.here();
                 let test = self.emit(Op::ForTest { s: site, t: 0 });
                 self.emit(Op::CheckStop);
                 self.emit(Op::ForSet { s: site });
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -724,6 +863,9 @@ impl<'a> Compiler<'a> {
                 self.emit(Op::ForNext { s: site });
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                if let Some(a) = lid {
+                    self.emit(Op::CapLoopExit { a });
+                }
                 self.patch(test, end);
                 self.patch_all(l.cont, cont);
                 self.patch_all(l.brk, end);
@@ -737,6 +879,7 @@ impl<'a> Compiler<'a> {
             }
             S::Break => match self.loops.last_mut() {
                 Some(_) => {
+                    self.cap_pops();
                     let at = self.emit(Op::Jump { t: 0 });
                     if let Some(l) = self.loops.last_mut() {
                         l.brk.push(at);
@@ -748,6 +891,7 @@ impl<'a> Compiler<'a> {
             },
             S::Continue => match self.loops.last_mut() {
                 Some(_) => {
+                    self.cap_pops();
                     let at = self.emit(Op::Jump { t: 0 });
                     if let Some(l) = self.loops.last_mut() {
                         l.cont.push(at);
@@ -792,17 +936,9 @@ impl<'a> Compiler<'a> {
                     *e = end;
                 }
             }
-            S::Foreach { var, collection, body }
-                if match collection {
-                    ir::Expr::Load(ir::Place::Local(i)) => {
-                        matches!(self.locals_ty.get(*i), Some(RtType::List(_) | RtType::Library(_)))
-                    }
-                    // A built-in method returns a library value (XmlElement.GetChildNodes, JsonArray ...), never a .NET one.
-                    ir::Expr::Builtin { .. } => true,
-                    _ => false,
-                } =>
-            {
+            S::Foreach { var, collection, body } => {
                 let coll = self.expr_copy(collection)?;
+                let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let items = self.alloc()?;
                 let at = self.alloc()?;
                 self.chunk.foreachs.push(ForeachSite {
@@ -810,12 +946,15 @@ impl<'a> Compiler<'a> {
                     coll,
                     items,
                     at,
+                    collection: matches!(collection, ir::Expr::Load(_)).then(|| collection.clone()),
+                    cap_loop: lid,
                 });
                 let site = (self.chunk.foreachs.len() - 1) as u32;
                 self.emit(Op::ForeachInit { s: site });
                 let top = self.here();
                 let next = self.emit(Op::ForeachNext { s: site, t: 0 });
                 self.loops.push(LoopCtx {
+                    depth: self.cap_depth,
                     brk: Vec::new(),
                     cont: Vec::new(),
                 });
@@ -825,13 +964,17 @@ impl<'a> Compiler<'a> {
                 let l = self.loops.pop().ok_or(())?;
                 self.emit(Op::Jump { t: top });
                 let end = self.here();
+                if let Some(a) = lid {
+                    self.emit(Op::CapLoopExit { a });
+                }
                 self.emit(Op::Clear { a: items });
                 self.patch(next, end);
                 self.patch_all(l.cont, top);
                 self.patch_all(l.brk, end);
             }
-            S::Foreach { .. } => self.tree_stmt(s),
-            S::Assume(_) => self.tree_stmt(s),
+            S::Assume(a) => {
+                self.emit(Op::Assume { a: *a });
+            }
         }
         Ok(())
     }
@@ -890,62 +1033,10 @@ impl<'a> Compiler<'a> {
     }
 }
 
-const TREE_BRK: usize = 1 << 40;
-const TREE_CONT: usize = 1 << 41;
-
 fn arg_pure(a: &ir::Arg) -> bool {
     match a {
         ir::Arg::Value(e) => pure(e),
         ir::Arg::Ref(ir::Place::Local(_) | ir::Place::Global(_)) => true,
         ir::Arg::Ref(_) => false,
-    }
-}
-
-fn expr_kind(e: &ir::Expr) -> &'static str {
-    use ir::Expr as E;
-    match e {
-        E::Const(_) => "Const",
-        E::Load(_) => "Load",
-        E::Unary(..) => "Unary",
-        E::Binary(..) => "Binary",
-        E::In(..) => "In",
-        E::Ternary(..) => "Ternary",
-        E::Convert(..) => "Convert",
-        E::Call { .. } => "Call",
-        E::InterfaceCall { .. } => "InterfaceCall",
-        E::BaseInstance => "BaseInstance",
-        E::ThisInstance => "ThisInstance",
-        E::Refused(_) => "Refused",
-        E::Fail { .. } => "Fail",
-        E::InterfaceTest { .. } => "InterfaceTest",
-        E::EnumImpl { .. } => "EnumImpl",
-        E::Control { .. } => "Control",
-        E::FieldOf(..) => "FieldOf",
-        E::QueryColumn { .. } => "QueryColumn",
-        E::DotNet { .. } => "DotNet",
-        E::CharAt(..) => "CharAt",
-        E::DotNetCoerce(..) => "DotNetCoerce",
-        E::DotNetOperand(..) => "DotNetOperand",
-        E::Builtin { .. } => "Builtin",
-    }
-}
-
-fn stmt_kind(s: &ir::Stmt) -> &'static str {
-    use ir::Stmt as S;
-    match s {
-        S::Assign(..) => "Assign",
-        S::Expr(_) => "Expr",
-        S::If(..) => "If",
-        S::While(..) => "While",
-        S::Repeat(..) => "Repeat",
-        S::For { .. } => "For",
-        S::Foreach { .. } => "Foreach",
-        S::Case { .. } => "Case",
-        S::Exit(_) => "Exit",
-        S::Break => "Break",
-        S::AssertError(_) => "AssertError",
-        S::Pos(_) => "Pos",
-        S::Assume(_) => "Assume",
-        S::Continue => "Continue",
     }
 }

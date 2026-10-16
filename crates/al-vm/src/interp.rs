@@ -415,78 +415,27 @@ impl Session {
                     let (Some(ir::Arg::Ref(p)), Some(ir::Arg::Value(e))) = (receiver.as_deref(), args.first()) else {
                         return Err(Signal::Unsupported("CurrFieldNo := without a record".into()));
                     };
-                    let Value::Record(rec) = self.read(p, f)? else {
-                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
-                    };
-                    let Value::Integer(n) = self.eval(e, f)? else {
-                        return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
-                    };
-                    match self
-                        .pages
-                        .curr_field_no
-                        .iter_mut()
-                        .rev()
-                        .find(|(w, _)| std::ptr::eq(w.as_ptr(), Rc::as_ptr(&rec)))
-                    {
-                        Some(entry) => entry.1 = n,
-                        None => {
-                            // Entries of dropped records are dead; forget them before adding one.
-                            self.pages.curr_field_no.retain(|(w, _)| w.strong_count() > 0);
-                            self.pages.curr_field_no.push((Rc::downgrade(&rec), n));
-                        }
-                    }
-                    return Ok(Value::Null);
+                    let rec = self.read(p, f)?;
+                    let n = self.eval(e, f)?;
+                    return self.set_curr_field_no(rec, n);
                 }
                 if id == ids::RECORD_CURRFIELDNO_1 {
                     let Some(ir::Arg::Ref(p)) = receiver.as_deref() else {
                         return Err(Signal::Unsupported("CurrFieldNo without a record".into()));
                     };
-                    let Value::Record(rec) = self.read(p, f)? else {
-                        return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
-                    };
-                    return Ok(Value::Integer(self.curr_field_of(&rec)));
+                    let rec = self.read(p, f)?;
+                    return self.curr_field_no(rec);
                 }
-                // `ClearAll()` resets every global variable of the running object to its default;
-                // locals are untouched (docs/probes-needed.md "ClearAll"). In a codeunit with a TableNo,
-                // a table and a page the record stays as it is and so does the page itself
-                // (session/TestClearAllTransactionTypeContracts.al:224-285, BC 27.5). Any other object
-                // kind is refused.
                 if id == ids::SYSTEM_CLEARALL_1 {
-                    let object = f.instance.borrow().object as usize;
-                    let o = &self.engine.program.objects[object];
-                    let keep: Vec<usize> = match o.kind {
-                        al_ir::ObjKind::Codeunit | al_ir::ObjKind::Table => o.rec_slot.into_iter().collect(),
-                        al_ir::ObjKind::Page => o
-                            .rec_slot
-                            .into_iter()
-                            .chain(o.page.as_ref().map(|p| p.curr_page_slot))
-                            .collect(),
-                        _ => {
-                            return Err(Signal::Unsupported(format!("ClearAll in a {} (not pinned)", o.kind)));
-                        }
-                    };
-                    let tys: Vec<RtType> = o.globals.iter().map(|g| g.ty.clone()).collect();
-                    let fresh: Vec<Value> = tys.iter().map(|t| self.default_value(t)).collect();
-                    let mut inst = f.instance.borrow_mut();
-                    for (i, v) in fresh.into_iter().enumerate() {
-                        if !keep.contains(&i) {
-                            inst.globals[i] = v;
-                        }
-                    }
-                    return Ok(Value::Null);
+                    return self.clear_all(f);
                 }
                 if id == ids::SESSION_APPLICATIONAREA_1 {
-                    // `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
-                    // (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
                     return match args.first() {
-                        None => Ok(Value::Text(self.application_areas.clone().into())),
-                        Some(ir::Arg::Value(e)) => match self.eval(e, f)? {
-                            Value::Text(t) | Value::Code(t) => {
-                                self.application_areas = t.to_string();
-                                Ok(Value::Null)
-                            }
-                            other => Err(Signal::Unsupported(format!("ApplicationArea({})", other.describe()))),
-                        },
+                        None => self.application_area(None),
+                        Some(ir::Arg::Value(e)) => {
+                            let v = self.eval(e, f)?;
+                            self.application_area(Some(v))
+                        }
                         Some(_) => Err(Signal::Unsupported("ApplicationArea with this argument".into())),
                     };
                 }
@@ -664,6 +613,82 @@ impl Session {
                 "InStream.Read of more characters than the Text variable holds (not pinned)".into(),
             )),
             _ => Ok(v),
+        }
+    }
+
+    /// `Rec.CurrFieldNo := n`: the field number a TestPage write is validating on this record.
+    pub(crate) fn set_curr_field_no(&mut self, rec: Value, n: Value) -> Result<Value, Signal> {
+        let Value::Record(rec) = rec else {
+            return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+        };
+        let Value::Integer(n) = n else {
+            return Err(Signal::Unsupported("CurrFieldNo := a value that is no Integer".into()));
+        };
+        match self
+            .pages
+            .curr_field_no
+            .iter_mut()
+            .rev()
+            .find(|(w, _)| std::ptr::eq(w.as_ptr(), Rc::as_ptr(&rec)))
+        {
+            Some(entry) => entry.1 = n,
+            None => {
+                // Entries of dropped records are dead; forget them before adding one.
+                self.pages.curr_field_no.retain(|(w, _)| w.strong_count() > 0);
+                self.pages.curr_field_no.push((Rc::downgrade(&rec), n));
+            }
+        }
+        Ok(Value::Null)
+    }
+
+    /// `Rec.CurrFieldNo`.
+    pub(crate) fn curr_field_no(&self, rec: Value) -> Result<Value, Signal> {
+        let Value::Record(rec) = rec else {
+            return Err(Signal::Unsupported("CurrFieldNo of something that is no record".into()));
+        };
+        Ok(Value::Integer(self.curr_field_of(&rec)))
+    }
+
+    /// `ClearAll()` resets every global variable of the running object to its default;
+    /// locals are untouched (docs/probes-needed.md "ClearAll"). In a codeunit with a TableNo,
+    /// a table and a page the record stays as it is and so does the page itself
+    /// (session/TestClearAllTransactionTypeContracts.al:224-285, BC 27.5). Any other object
+    /// kind is refused.
+    pub(crate) fn clear_all(&mut self, f: &Frame) -> Result<Value, Signal> {
+        let object = f.instance.borrow().object as usize;
+        let o = &self.engine.program.objects[object];
+        let keep: Vec<usize> = match o.kind {
+            al_ir::ObjKind::Codeunit | al_ir::ObjKind::Table => o.rec_slot.into_iter().collect(),
+            al_ir::ObjKind::Page => o
+                .rec_slot
+                .into_iter()
+                .chain(o.page.as_ref().map(|p| p.curr_page_slot))
+                .collect(),
+            _ => {
+                return Err(Signal::Unsupported(format!("ClearAll in a {} (not pinned)", o.kind)));
+            }
+        };
+        let tys: Vec<RtType> = o.globals.iter().map(|g| g.ty.clone()).collect();
+        let fresh: Vec<Value> = tys.iter().map(|t| self.default_value(t)).collect();
+        let mut inst = f.instance.borrow_mut();
+        for (i, v) in fresh.into_iter().enumerate() {
+            if !keep.contains(&i) {
+                inst.globals[i] = v;
+            }
+        }
+        Ok(Value::Null)
+    }
+
+    /// `ApplicationArea()` reads the session's areas, `ApplicationArea(Text)` sets them
+    /// (corpus pageapplicationarea/TestPageApplicationAreaControlRemoval.al).
+    pub(crate) fn application_area(&mut self, set: Option<Value>) -> Result<Value, Signal> {
+        match set {
+            None => Ok(Value::Text(self.application_areas.clone().into())),
+            Some(Value::Text(t) | Value::Code(t)) => {
+                self.application_areas = t.to_string();
+                Ok(Value::Null)
+            }
+            Some(other) => Err(Signal::Unsupported(format!("ApplicationArea({})", other.describe()))),
         }
     }
 

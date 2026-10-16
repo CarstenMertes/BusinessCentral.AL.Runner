@@ -124,6 +124,8 @@ struct CapFrame {
     loops: Vec<u32>,
     /// `active.len()` when the frame started.
     active_at_start: usize,
+    /// `stmt.len()` when the frame started: what an `exit` or an error leaves open above it is dropped with the frame.
+    stmt_base: usize,
 }
 
 pub(crate) struct Capture {
@@ -180,7 +182,7 @@ fn arg_writes(args: &[ir::Arg], out: &mut Vec<usize>) {
 
 /// The locals a statement writes by its shape: the target of an assignment, the receiver of a method called as a
 /// statement (`Rec.Insert()`, `List.Add(1)`), and the `var` arguments of a call (`Clear(x)`, `Evaluate(x, s)`, `Fill(x)`).
-fn written_locals(s: &ir::Stmt) -> Vec<usize> {
+pub(crate) fn written_locals(s: &ir::Stmt) -> Vec<usize> {
     let mut out = Vec::new();
     match s {
         ir::Stmt::Assign(p, _) => out.extend(root_local(p)),
@@ -306,6 +308,7 @@ impl Session {
         };
         let Some(c) = self.capture.as_mut() else { return };
         let active_at_start = c.active.len();
+        let stmt_base = c.stmt.len();
         self.capturing = tracked;
         let Some(c) = self.capture.as_mut() else { return };
         c.frames.push(CapFrame {
@@ -314,6 +317,7 @@ impl Session {
             last,
             loops: Vec::new(),
             active_at_start,
+            stmt_base,
         });
     }
 
@@ -331,6 +335,7 @@ impl Session {
             c.close(id, by);
         }
         c.active.truncate(fr.active_at_start);
+        c.stmt.truncate(fr.stmt_base);
         self.capturing = c.frames.last().is_some_and(|f| f.tracked);
     }
 
@@ -366,12 +371,28 @@ impl Session {
 
     /// Statement `s` (marked `pos`) ended without an error: the locals of the routine it changed or wrote are recorded.
     pub(crate) fn cap_after(&mut self, pos: u32, s: &ir::Stmt, f: &Frame) {
+        self.cap_after_writes(pos, &written_locals(s), f);
+    }
+
+    /// The depth of the open statements (an `asserterror` that catches an error drops what the error left open).
+    pub(crate) fn cap_stmt_depth(&self) -> usize {
+        self.capture.as_ref().map_or(0, |c| c.stmt.len())
+    }
+
+    pub(crate) fn cap_stmt_truncate(&mut self, n: usize) {
+        if let Some(c) = self.capture.as_mut() {
+            c.stmt.truncate(n);
+        }
+    }
+
+    /// [`Session::cap_after`] with the locals the statement writes by its shape already worked out (the bytecode does it
+    /// once, at compile time).
+    pub(crate) fn cap_after_writes(&mut self, pos: u32, writes: &[usize], f: &Frame) {
         if !self.capture.as_ref().is_some_and(|c| c.cfg.values && c.tracking()) {
             return;
         }
         let engine = self.engine.clone();
         let r = &engine.program.objects[f.object].routines[f.routine];
-        let writes = written_locals(s);
         let seen: Vec<(usize, Rendered)> = f
             .locals
             .iter()

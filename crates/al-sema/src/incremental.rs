@@ -66,6 +66,106 @@ pub fn eligible(ws: &crate::Workspace, objects: &[usize]) -> Result<(), String> 
     Ok(())
 }
 
+/// Whether the declarations of these objects can change and the program still be renewed by lowering the
+/// objects and their readers again (`readers`, `lower::relower_objects`): codeunits that implement nothing.
+/// Everything else is read by the lowering of other objects without a name (the fields of a table by every
+/// extension, the controls of a page, the implementers of an interface) and is compiled again with the complete
+/// compile.
+pub fn eligible_for_declarations(ws: &crate::Workspace, objects: &[usize]) -> Result<(), String> {
+    for &oi in objects {
+        let o = &ws.objects[oi];
+        if ws.is_dependency(oi) {
+            return Err("an object of a dependency app".into());
+        }
+        if o.kind != crate::ObjKind::Codeunit {
+            return Err(format!("{} {} is not a codeunit", o.kind.label(), o.name));
+        }
+        if !o.implements.is_empty() {
+            return Err(format!("codeunit {} implements an interface", o.name));
+        }
+        if !o.name.is_ascii() {
+            return Err(format!("the name of codeunit {} is not ASCII", o.name));
+        }
+    }
+    Ok(())
+}
+
+/// The objects of the workspace's own apps that can read the declarations of `changed`: those whose file mentions
+/// the name of a changed object or its id. An object is named in the code that uses it (a variable type,
+/// `Codeunit::"Name"`, an attribute) or by number (`Codeunit.Run(50100)`), and that is what lowering resolves.
+/// More objects than `limit` is an error: lowering them again costs as much as the complete compile.
+pub fn readers(ws: &crate::Workspace, changed: &[usize], limit: usize) -> Result<Vec<usize>, String> {
+    let names: Vec<String> = changed
+        .iter()
+        .map(|&o| ws.objects[o].name.to_ascii_lowercase())
+        .collect();
+    let ids: Vec<String> = changed
+        .iter()
+        .filter_map(|&o| ws.objects[o].id.map(|i| i.to_string()))
+        .collect();
+    let mut out = Vec::new();
+    for (fi, f) in ws.files.iter().enumerate() {
+        if f.lazy || ws.kinds[f.app] == crate::AppKind::Dependency {
+            continue;
+        }
+        let text = ws.text(fi);
+        let mentions =
+            names.iter().any(|n| contains_ignore_case(text, n)) || ids.iter().any(|i| contains_number(text, i));
+        if !mentions {
+            continue;
+        }
+        for oi in (0..ws.objects.len()).filter(|&oi| ws.objects[oi].file == fi) {
+            if !changed.contains(&oi) {
+                out.push(oi);
+            }
+        }
+        if out.len() > limit {
+            return Err(format!("{} objects or more read the changed declarations", out.len()));
+        }
+    }
+    Ok(out)
+}
+
+/// Whether `text` holds `needle` (lower case ASCII), whatever the case.
+fn contains_ignore_case(text: &str, needle: &str) -> bool {
+    let (t, n) = (text.as_bytes(), needle.as_bytes());
+    if n.is_empty() || n.len() > t.len() {
+        return false;
+    }
+    let first = n[0];
+    let (lo, hi) = (first, first.to_ascii_uppercase());
+    let mut at = 0;
+    while at + n.len() <= t.len() {
+        match t[at..=t.len() - n.len()].iter().position(|&b| b == lo || b == hi) {
+            None => return false,
+            Some(i) => {
+                let start = at + i;
+                if t[start..start + n.len()].eq_ignore_ascii_case(n) {
+                    return true;
+                }
+                at = start + 1;
+            }
+        }
+    }
+    false
+}
+
+/// Whether `text` holds the number `digits` on its own (not as part of a longer number).
+fn contains_number(text: &str, digits: &str) -> bool {
+    let (t, n) = (text.as_bytes(), digits.as_bytes());
+    let mut from = 0;
+    while let Some(i) = text[from..].find(digits) {
+        let (a, b) = (from + i, from + i + n.len());
+        let before = a == 0 || !t[a - 1].is_ascii_alphanumeric();
+        let after = b >= t.len() || !t[b].is_ascii_alphanumeric();
+        if before && after {
+            return true;
+        }
+        from = a + 1;
+    }
+    false
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

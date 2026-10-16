@@ -397,6 +397,18 @@ impl Workspace {
     /// An error says why the text cannot be taken that way (the file is a dependency's, it does not
     /// parse cleanly, or a declaration changed); nothing has changed then.
     pub fn replace_file(&mut self, fi: usize, text: String) -> Result<Vec<usize>, String> {
+        self.replace_file_with(fi, text, false).map(|(objects, _)| objects)
+    }
+
+    /// [`replace_file`](Self::replace_file) that also takes a text whose declarations differ (a procedure more, a
+    /// changed signature, a variable). The objects of the file must be the same ones: kind, id, name, what they
+    /// extend and implement. The flag says whether a declaration changed (ADR-033 step 5: the caller then has the
+    /// readers of the objects checked and lowered again).
+    pub fn replace_file_declared(&mut self, fi: usize, text: String) -> Result<(Vec<usize>, bool), String> {
+        self.replace_file_with(fi, text, true)
+    }
+
+    fn replace_file_with(&mut self, fi: usize, text: String, declarations: bool) -> Result<(Vec<usize>, bool), String> {
         let file = self.files.get(fi).ok_or("no such file")?;
         if file.lazy {
             return Err("a file of a dependency app".into());
@@ -413,7 +425,8 @@ impl Workspace {
             return Err("the new text does not parse cleanly".into());
         }
         let green = parsed.green.clone().ok_or("no tree")?;
-        if crate::incremental::skeleton(&old_green) != crate::incremental::skeleton(&green) {
+        let declared = crate::incremental::skeleton(&old_green) != crate::incremental::skeleton(&green);
+        if declared && !declarations {
             return Err("a declaration changed".into());
         }
         let in_file: Vec<usize> = (0..self.objects.len())
@@ -462,7 +475,7 @@ impl Workspace {
         let mut diagnostics = std::mem::take(&mut self.diagnostics);
         diagnostics.sort_by_key(key);
         self.diagnostics = diagnostics;
-        Ok(in_file)
+        Ok((in_file, declared))
     }
 
     /// Extension targets and event subscribers, found from the object index alone.

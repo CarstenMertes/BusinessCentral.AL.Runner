@@ -334,6 +334,23 @@ impl<'a> Checker<'a> {
                 }
             }
         }
+        // A table extension sees the protected variables of its base table (assumption `table-extension-base-vars`:
+        // tableextension 906 "Asm. Requisition Line" of Microsoft's Base Application). Only the variables: the base
+        // table's procedures keep resolving through the implicit Rec, so `base_obj` stays unset.
+        if o.kind == ObjKind::TableExtension && crate::base_access::scope_enabled() {
+            if let Some(parts) = obj.extends_parts() {
+                if let Some(b) = self.resolve_parts(o.file, ObjKind::Table, &parts) {
+                    for (name, decl) in crate::base_access::visible_vars(&self.ws.object_ast(b)) {
+                        if globals.contains_key(&name) {
+                            continue;
+                        }
+                        let ty = decl.type_ref().map(|t| Ty::from_type_ref(&t)).unwrap_or(Ty::Unknown);
+                        globals.insert(name.clone(), ty);
+                        base_vars.insert(name);
+                    }
+                }
+            }
+        }
         let file = o.file;
         // Every type the object's variables name is used by the code that runs in it.
         let tys: Vec<Ty> = globals.values().cloned().chain(rec.clone()).collect();

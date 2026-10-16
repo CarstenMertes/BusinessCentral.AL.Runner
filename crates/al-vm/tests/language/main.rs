@@ -19,6 +19,7 @@ mod interfaces;
 mod pageworks_probes;
 mod proc_assign;
 mod setter_call;
+mod table_ext_base_vars;
 mod text_append;
 mod text_methods;
 mod text_scans;

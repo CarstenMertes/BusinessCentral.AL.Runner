@@ -785,13 +785,18 @@ fn int_arg(args: &[Value], i: usize) -> Option<i64> {
     }
 }
 
-/// Stands for a call stack that exists in BC but is not tracked here (a private-use character).
-pub const UNTRACKED_CALL_STACK: &str = "\u{E000}";
+/// The character inside a text that marks a call stack with an untracked frame. A noncharacter (Unicode permanently
+/// reserves U+FDD0 to U+FDEF for internal use): real code puts private-use characters in texts (a barcode font's glyphs
+/// are U+E000 and up), so the marks may not be private-use characters.
+pub const CALL_STACK_MARK: char = '\u{FDD0}';
+
+/// Stands for a call stack that exists in BC but is not tracked here.
+pub const UNTRACKED_CALL_STACK: &str = "\u{FDD0}";
 
 /// Stands for the text and code of an error BC raises but whose wording the corpus does not pin.
 /// `GetLastErrorText` and `GetLastErrorCode` refuse to answer while it is the last error, so a
 /// test that reads it is not run, and one that only needs the call to fail still passes.
-pub const UNPINNED_ERROR: &str = "\u{E001}";
+pub const UNPINNED_ERROR: &str = "\u{FDD1}";
 
 /// The last error to set when a call fails with an error whose text is not pinned.
 pub fn unpinned_error() -> AlError {

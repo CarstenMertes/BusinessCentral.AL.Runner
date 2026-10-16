@@ -1,6 +1,7 @@
 //! The tests of one area in one binary (ADR-037 item 5): fewer binaries to link. Each module is a file of language/.
 
 mod abs_duration;
+mod append_char;
 mod array_params;
 mod builtins;
 mod calc_const_guid;
@@ -23,6 +24,7 @@ mod interfaces;
 mod last_error_origin;
 mod moved_fields;
 mod pageworks_probes;
+mod private_use_chars;
 mod proc_assign;
 mod rec_field_by_var;
 mod relation_blank_member;

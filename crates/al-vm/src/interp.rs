@@ -593,6 +593,22 @@ impl Session {
                 t.push_str(x);
                 ops::convert(Value::Text(t), &RtType::Text(max))?
             }
+            // `S += T[i]`: a Char appends in place as a Text does. A surrogate half and the call-stack mark stay on the slow
+            // path, which builds the text the long way.
+            (Value::Text(mut t), Value::Char(c))
+                if char::from_u32(u32::from(*c)).is_some_and(|ch| ch != al_builtins::native::CALL_STACK_MARK)
+                    && !t.has_marker()
+                    && max.is_none_or(|m| t.utf16_len() < m as usize) =>
+            {
+                let ch = char::from_u32(u32::from(*c)).expect("checked in the guard");
+                match p {
+                    ir::Place::Local(i) => f.locals[*i] = Value::Null,
+                    ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = Value::Null,
+                    _ => unreachable!("a local or a global"),
+                }
+                t.push(ch);
+                ops::convert(Value::Text(t), &RtType::Text(max))?
+            }
             (old, rv) => ops::convert(ops::arith(ops::Arith::Add, &old, rv)?, &RtType::Text(max))?,
         };
         self.write(p, v, f)

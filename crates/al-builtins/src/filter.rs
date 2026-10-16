@@ -502,7 +502,7 @@ pub fn row_passes(row: &[Value], filters: &[FieldFilter]) -> bool {
 /// Total order on key tuples (field-wise `compare`; incomparable counts as equal).
 pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
     for (x, y) in a.iter().zip(b) {
-        match compare(x, y).unwrap_or(Ordering::Equal) {
+        match crate::ops::compare_key_value(x, y).unwrap_or(Ordering::Equal) {
             Ordering::Equal => continue,
             o => return o,
         }

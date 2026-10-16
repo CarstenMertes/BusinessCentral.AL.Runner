@@ -192,13 +192,13 @@ fn key_fields_differ(t: &TableDef, old: &[Value], new: &[Value]) -> bool {
     t.keys
         .iter()
         .flatten()
-        .any(|&i| al_builtins::ops::compare(&old[i], &new[i]).map_or(true, |o| o != Ordering::Equal))
+        .any(|&i| al_builtins::ops::compare_key_value(&old[i], &new[i]).map_or(true, |o| o != Ordering::Equal))
 }
 
 /// `key_cmp(position(t, key, row), other)` without building the position.
 fn cmp_row_to_position(t: &TableDef, key: usize, row: &[Value], other: &[Value]) -> Ordering {
     for (&i, x) in t.keys[key].iter().chain(&t.keys[0]).zip(other) {
-        match al_builtins::ops::compare(&row[i], x).unwrap_or(Ordering::Equal) {
+        match al_builtins::ops::compare_key_value(&row[i], x).unwrap_or(Ordering::Equal) {
             Ordering::Equal => continue,
             o => return o,
         }
@@ -209,7 +209,7 @@ fn cmp_row_to_position(t: &TableDef, key: usize, row: &[Value], other: &[Value])
 /// `key_cmp(position(t, key, a), position(t, key, b))` without building the positions.
 fn cmp_rows(t: &TableDef, key: usize, a: &[Value], b: &[Value]) -> Ordering {
     for &i in t.keys[key].iter().chain(&t.keys[0]) {
-        match al_builtins::ops::compare(&a[i], &b[i]).unwrap_or(Ordering::Equal) {
+        match al_builtins::ops::compare_key_value(&a[i], &b[i]).unwrap_or(Ordering::Equal) {
             Ordering::Equal => continue,
             o => return o,
         }
@@ -312,6 +312,14 @@ impl Seek {
         for (&i, b) in self.fields.iter().zip(bound) {
             if !same_kind(&row[i], b) {
                 return None;
+            }
+            // The store orders text keys by `text_key_order`; the filters compare text by code points. The two agree
+            // for upper-case letters and digits only: any other text is looked at row by row.
+            if let (Value::Text(x) | Value::Code(x), Value::Text(y) | Value::Code(y)) = (&row[i], b) {
+                let neutral = |t: &str| t.bytes().all(|c| c.is_ascii_uppercase() || c.is_ascii_digit());
+                if !neutral(x) || !neutral(y) {
+                    return None;
+                }
             }
             match al_builtins::ops::compare(&row[i], b) {
                 Ok(Ordering::Equal) => {}
@@ -725,7 +733,7 @@ impl MemStore {
         // How a row stands to the position `a`.
         let cmp_after = |r: &[Value], a: &[Value]| -> Ordering {
             for (&i, x) in fields.iter().zip(a) {
-                match al_builtins::ops::compare(&r[i], x).unwrap_or(Ordering::Equal) {
+                match al_builtins::ops::compare_key_value(&r[i], x).unwrap_or(Ordering::Equal) {
                     Ordering::Equal => continue,
                     o => return o,
                 }

@@ -708,6 +708,49 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     compare(l, r)
 }
 
+/// The order of two text key values: trailing blanks do not count, the letters compare without regard to their case first
+/// (collation order), and two texts that differ only in case are ordered by it (`a` before `A`), so they are two keys. A
+/// character the collation has no weight for falls back to the code point order of the trimmed texts
+/// (record/lt-record-read/RcAGetFind.al:Get_Text_Key, Find_Text_Key_Case_Insensitive).
+pub fn text_key_order(a: &str, b: &str) -> Ordering {
+    let (a, b) = (a.trim_end_matches(' '), b.trim_end_matches(' '));
+    if a == b {
+        return Ordering::Equal;
+    }
+    // Letters and digits only: the case-folded byte order is the collation's, and the first difference in case decides a tie.
+    let plain = |t: &str| t.bytes().all(|c| c.is_ascii_alphanumeric());
+    if plain(a) && plain(b) {
+        let folded = a
+            .bytes()
+            .map(|c| c.to_ascii_uppercase())
+            .cmp(b.bytes().map(|c| c.to_ascii_uppercase()));
+        if folded != Ordering::Equal {
+            return folded;
+        }
+        for (x, y) in a.bytes().zip(b.bytes()) {
+            if x != y {
+                return if x.is_ascii_lowercase() {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
+            }
+        }
+        return Ordering::Equal;
+    }
+    crate::collation::compare(a, b).unwrap_or_else(|_| a.cmp(b))
+}
+
+/// [`compare`] for the values of a key: text follows [`text_key_order`].
+pub fn compare_key_value(l: &Value, r: &Value) -> Result<Ordering, Signal> {
+    if let (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) = (l, r) {
+        if !a.has_marker() && !b.has_marker() {
+            return Ok(text_key_order(a, b));
+        }
+    }
+    compare(l, r)
+}
+
 /// Ordering for `=`, `<>`, `<`, ... ; `None` when the values are not comparable.
 /// Text compares ordinally (case-sensitive): docs/probes-needed.md.
 pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
@@ -835,6 +878,22 @@ pub fn truthy(v: &Value) -> Result<bool, Signal> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn text_keys_are_equal_without_trailing_blanks_and_ordered_by_case_last() {
+        use super::text_key_order;
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        // record/lt-record-read/RcAGetFind.al:Get_Text_Key: 'abc ' is the key 'abc', 'ABC' is another one.
+        assert_eq!(text_key_order("abc", "abc  "), Equal);
+        assert_ne!(text_key_order("abc", "ABC"), Equal);
+        assert_eq!(text_key_order("abc", "ABC"), Less);
+        // :Find_Text_Key_Case_Insensitive: 'abc' < 'abc x' < 'ABD' = 'abd' (case last) < 'b'.
+        assert_eq!(text_key_order("abc x", "ABD"), Less);
+        assert_eq!(text_key_order("abd", "ABD"), Less);
+        assert_eq!(text_key_order("ABD", "b"), Less);
+        assert_eq!(text_key_order("a_b", "a1"), Less);
+        assert_eq!(text_key_order("b", "ABD"), Greater);
+    }
+
     use super::*;
 
     // Microsoft test exception (no corpus pin): Match Bank Payments adds the Durations of its telemetry timers.

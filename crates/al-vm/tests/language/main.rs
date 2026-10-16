@@ -18,6 +18,7 @@ mod in_precedence;
 mod interfaces;
 mod pageworks_probes;
 mod proc_assign;
+mod rec_field_by_var;
 mod setter_call;
 mod text_append;
 mod text_methods;

@@ -47,7 +47,8 @@ fn find_first_on_an_empty_set_without_the_result_names_the_table() {
 
 #[test]
 fn a_text_filter_on_a_date_formula_field_is_refused_with_its_reason() {
-    let why = why_not_run("[Test] procedure T2() var R: Record \"B7 Row\"; begin R.SetFilter(Calc, '<>'''''); end;");
+    // The empty text is read as the empty formula (assumption filter-empty-text-dateformula); a formula stays open.
+    let why = why_not_run("[Test] procedure T2() var R: Record \"B7 Row\"; begin R.SetFilter(Calc, '1M'); end;");
     names_the_open_question(&why, &["SetFilter", "DateFormula"]);
 }
 

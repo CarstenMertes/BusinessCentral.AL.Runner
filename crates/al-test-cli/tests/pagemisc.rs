@@ -687,18 +687,46 @@ fn test_page_close_reports_ok_for_list_and_document_pages() {
 
 // Issue 33: Base Application's Tests-ERM declare `[ModalPageHandler] procedure H(var P: Page "X"; var
 // Response: Action)` (22 tests). No corpus test has a handler whose parameter is a Page rather than a
-// TestPage, so what BC gives it is not pinned: the refusal says that, and does not call the shape wrong.
+// TestPage, and none has a page with triggers. Microsoft's `PaymentToleranceWarning` handler (page 591, whose OnOpenPage and
+// OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: assumed
+// (typed-modal-handler-skips-page-triggers, docs/probes-needed.md).
 #[test]
-fn a_modal_page_handler_with_a_page_parameter_is_refused_as_not_pinned() {
-    let o = outcomes(&format!(
+fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_none_of_its_triggers() {
+    passes(&format!(
         "{HELPERS}
         [Test] [HandlerFunctions('PageHandler')]
-        procedure WithPage() var W: Page \"PM Wizard\"; begin W.RunModal(); end;
+        procedure WithPage() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.RunModal(); Check('', P.Trace()); end;
         [ModalPageHandler] procedure PageHandler(var P: Page \"PM Wizard\"; var Response: Action) begin Response := Action::OK; end;"
     ));
-    assert!(
-        matches!(&o[0].1, Outcome::NotRun(why)
-            if why.contains("Page") && why.contains("not pinned") && !why.contains("not shaped like")),
-        "{o:?}"
+}
+
+// Base Application's Financial Report sets `RequestOptionsPage.Caption := Description` while its request page opens
+// (86 Tests-ERM tests were refused with "is not assignable"). The corpus pins `CurrPage.Caption := x` on a page
+// (handlers/TestPageCaption_Page.al:44); for a request page the assignment is accepted and not shown to the handler
+// (request-page-caption-set, docs/probes-needed.md).
+#[test]
+fn a_request_page_caption_can_be_set_from_the_code_of_the_report() {
+    let src = format!(
+        "{OBJECTS}
+report 62200 \"PM Req Report\"
+{{
+    ProcessingOnly = true;
+    requestpage
+    {{
+        layout {{ area(Content) {{ field(Dummy; DummyValue) {{ ApplicationArea = All; }} }} }}
+        trigger OnOpenPage() begin SetCaption(); end;
+    }}
+    var DummyValue: Integer;
+    local procedure SetCaption() begin RequestOptionsPage.Caption := 'Custom caption'; end;
+}}
+codeunit 62201 T {{ Subtype = Test;
+    [Test] [HandlerFunctions('Handler')]
+    procedure CaptionIsSet() begin Report.Run(Report::\"PM Req Report\"); end;
+    [RequestPageHandler] procedure Handler(var R: TestRequestPage \"PM Req Report\") begin
+        R.Cancel().Invoke(); end;
+}}"
     );
+    let o = al_testkit::outcomes_in(&src, "T");
+    assert_eq!(o.len(), 1, "{o:?}");
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
 }

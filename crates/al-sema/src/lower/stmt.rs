@@ -577,7 +577,18 @@ impl Lowerer<'_> {
                             ObjKind::Report | ObjKind::ReportExtension
                         )
                         && recv.text().to_string().trim().eq_ignore_ascii_case("CurrReport");
-                    if !sig.instance || current_report {
+                    // `RequestOptionsPage` is the request page of the running report: no variable to take.
+                    let request_page = sig.receiver == "RequestPage"
+                        && matches!(
+                            self.ws.objects[self.oi].kind,
+                            ObjKind::Report | ObjKind::ReportExtension
+                        )
+                        && recv
+                            .text()
+                            .to_string()
+                            .trim()
+                            .eq_ignore_ascii_case("RequestOptionsPage");
+                    if !sig.instance || current_report || request_page {
                         None
                     } else {
                         Some(Box::new(match self.place(&recv) {

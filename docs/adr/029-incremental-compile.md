@@ -95,3 +95,18 @@ all. (Changes in files of other kinds compiled all of it again, as designed.) `t
 - A typed line in a codeunit costs the check and lowering of that codeunit, not of the workspace.
 - A defect in the update would show as a result that differs from a complete compile. The comparison runs in tests and
   can run in every request; the update can be switched off.
+
+## Amendment (ADR-033 step 5): declaration changes
+
+A change of a declaration of a codeunit that implements nothing is taken in too. `Workspace::replace_file_declared`
+takes the text when the objects of the file are the same ones (kind, id, name, what they extend and implement).
+`incremental::readers` finds the objects of the workspace's own apps whose file mentions the name or the id of a
+changed object (a reference is made by one of the two); they are checked and lowered again with the changed ones
+(`relower_objects`), and `relink` resolves them against the program by key, so the new routine numbers of the changed
+codeunit reach its callers. More readers than a fifth of the objects (and 20) compiles everything again, as do all
+other kinds (a table's fields, a page's controls and an interface's implementers are read without a name).
+
+Measured on Tests-ERM (`alrunner serve`, a procedure added to a test codeunit, one test requested; the machine busy):
+request 3.95 s before (everything compiled again), 0.77 s after (the reuse of an unchanged request: 0.7 s). With
+`ALRUNNER_CHECK_INCREMENTAL=1` (a complete compile after every update must give the same lowering): 12 codeunits
+changed and changed back, 24 updates, 0 differences. The slowest (8.3 s, `TestPostingPreview`) has many readers.

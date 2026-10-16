@@ -166,15 +166,27 @@ impl Compiled {
                 .ok_or("a file the compile does not have")?;
             files.push((fi, c.text));
         }
-        let dirty: Vec<usize> = (0..ws.objects.len())
+        let mut dirty: Vec<usize> = (0..ws.objects.len())
             .filter(|&oi| files.iter().any(|&(fi, _)| ws.objects[oi].file == fi))
             .collect();
-        al_sema::incremental::eligible(ws, &dirty)?;
         let t_replace = std::time::Instant::now();
+        // (A text the update cannot take leaves the workspace half changed: the caller compiles all of it again.)
+        let mut declared = false;
         for &(fi, text) in &files {
-            ws.replace_file(fi, text.to_string())?;
+            declared |= ws.replace_file_declared(fi, text.to_string())?.1;
         }
         let t_replace = t_replace.elapsed();
+        if declared {
+            // A declaration changed: the objects that name the changed ones may have read it, so they are
+            // checked and lowered again with them (ADR-033 step 5).
+            al_sema::incremental::eligible_for_declarations(ws, &dirty)?;
+            let limit = ws.objects.len() / 5 + 20;
+            let readers = al_sema::incremental::readers(ws, &dirty, limit)?;
+            dirty.extend(readers);
+            dirty.sort_unstable();
+        } else {
+            al_sema::incremental::eligible(ws, &dirty)?;
+        }
         // A complete compile of tests that look free of data would try the demand-driven compile first.
         if incr.try_skip && crate::observe::text_looks_pure(&ws.apps, &ws.kinds, &incr.symbols, opts_only.as_deref()) {
             return Err("the tests look free of data: a complete compile weighs the baseline first".into());

@@ -192,11 +192,10 @@ impl Session {
             LibraryValue::SystemTable(n) => unsupported(format!(
                 "{what} on a RecordRef opened on system table {n} (the platform's system tables are not modelled)"
             )),
-            // BC's answer is not pinned by the corpus: the error text, and whether `Get(RecordId)` opens the
-            // table of the RecordId (Base Application's Data Type Management does `if not Get(RecID) then
-            // Open(RecID.TableNo)`). See docs/probes-needed.md.
+            // BC's error text is not pinned by the corpus (`Get(RecordId)` opens the table: see `rr_op`). See
+            // docs/probes-needed.md.
             _ => unsupported(format!(
-                "{what} on a RecordRef that is not open: BC's error text, and whether Get(RecordId) opens the table of the RecordId, are not pinned (docs/probes-needed.md)"
+                "{what} on a RecordRef that is not open: BC's error text is not pinned (docs/probes-needed.md)"
             )),
         }
     }
@@ -382,17 +381,24 @@ impl Session {
                     )
                 };
             }
-            // System Application's Data Type Management does `if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`, so
-            // Get(RecordId) on a RecordRef never opened answers false and does not open it (about 260 Tests-ERM tests,
-            // CheckICPartner among them). The error text of Get with the result unused, and Get of anything but a
-            // RecordId, stay refused (open_ref). Not pinned: assumption recordref-get-unopened.
-            "Get"
-                if matches!(&*lib.borrow(), LibraryValue::Empty)
-                    && self.ret_used
-                    && matches!(args.first(), Some(Value::Library(_, l)) if matches!(&*l.borrow(), LibraryValue::RecordId { .. })) =>
-            {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefGetUnopened);
-                return Ok(Value::Boolean(false));
+            // Get(RecordId) on a RecordRef never opened opens the table of the RecordId and loads its row. Base
+            // Application's "Exp. Sales Inv. PEPPOL BIS3.0".OnRun does `RecordRef.Get(Rec.RecordID); RecordRef.SetTable(..)`
+            // on a fresh RecordRef (43 Tests-Misc tests, PEPPOL BIS BillingTests.ExportXmlToVerifyFileName), and System
+            // Application's Data Type Management (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`, about 260
+            // Tests-ERM tests, CheckICPartner) works with that too. The error text of Get of anything but a RecordId stays
+            // refused (open_ref). Not pinned: assumption recordref-get-unopened.
+            "Get" if matches!(&*lib.borrow(), LibraryValue::Empty) => {
+                let table_no = match args.first() {
+                    Some(Value::Library(_, l)) => match &*l.borrow() {
+                        LibraryValue::RecordId { table_no, .. } => Some(*table_no),
+                        _ => None,
+                    },
+                    _ => None,
+                };
+                if let Some(no) = table_no {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefGetUnopened);
+                    self.rr_open(lib, &[Value::Integer(no as i32)])?;
+                }
             }
             _ => {}
         }

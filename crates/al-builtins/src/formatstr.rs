@@ -536,9 +536,18 @@ mod tests {
     fn week_code_is_the_iso_week() {
         // 2024-01-17 gives 3 (types/lt-datetime/DateFuncs.al:418,433). The rule beyond the pinned dates is the ISO one,
         // as Date2DWY (assumption format-week-code-is-iso).
-        assert_eq!(text(fmt(Value::Date(day_from_civil(2024, 1, 17), false), "<Week>")), "3");
-        assert_eq!(text(fmt(Value::Date(day_from_civil(2021, 1, 3), false), "<Week>.<Year4>")), "53.2021");
-        assert_eq!(text(fmt(Value::Date(day_from_civil(2024, 12, 30), false), "<Week>")), "1");
+        assert_eq!(
+            text(fmt(Value::Date(day_from_civil(2024, 1, 17), false), "<Week>")),
+            "3"
+        );
+        assert_eq!(
+            text(fmt(Value::Date(day_from_civil(2021, 1, 3), false), "<Week>.<Year4>")),
+            "53.2021"
+        );
+        assert_eq!(
+            text(fmt(Value::Date(day_from_civil(2024, 12, 30), false), "<Week>")),
+            "1"
+        );
     }
 
     #[test]

@@ -773,20 +773,23 @@ fn filter_group_assigns_as_a_property_of_a_record_ref() {
 }
 
 #[test]
-fn get_of_a_record_id_on_a_record_ref_never_opened_answers_false_and_leaves_it_closed() {
-    // System Application's Data Type Management: `if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`.
-    // Unprobed (assumption recordref-get-unopened).
+fn get_of_a_record_id_on_a_record_ref_never_opened_opens_the_table_of_the_record_id() {
+    // Base Application's "Exp. Sales Inv. PEPPOL BIS3.0".OnRun does `RecordRef.Get(Rec.RecordID); RecordRef.SetTable(..)`
+    // on a RecordRef it never opened (43 Tests-Misc tests, PEPPOL BIS BillingTests.ExportXmlToVerifyFileName), so Get opens
+    // the table of the RecordId and loads its row. System Application's Data Type Management
+    // (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`) works with that too. Unprobed (assumption
+    // recordref-get-unopened).
     let r = run(
-        "procedure F(): Text var RR: RecordRef; T: Record \"ALT T\"; Ok: Boolean; s: Text; begin
+        "procedure F(): Text var RR: RecordRef; RR2: RecordRef; T: Record \"ALT T\"; Ok: Boolean; s: Text; begin
             T.\"No.\" := 'A'; T.Insert();
             Ok := RR.Get(T.RecordId());
-            s := Format(Ok) + '|' + Format(RR.Number());
-            if not RR.Get(T.RecordId()) then RR.Open(T.RecordId().TableNo());
-            exit(s + '|' + Format(RR.Get(T.RecordId())));
+            s := Format(Ok) + '|' + Format(RR.Number() = T.RecordId().TableNo()) + '|' + Format(RR.Get(T.RecordId()));
+            RR2.Get(T.RecordId());
+            exit(s + '|' + Format(RR2.Number() = T.RecordId().TableNo()));
         end;",
         "F",
     );
-    assert_eq!(text(r), "No|0|Yes");
+    assert_eq!(text(r), "Yes|Yes|Yes|Yes");
 }
 
 #[test]

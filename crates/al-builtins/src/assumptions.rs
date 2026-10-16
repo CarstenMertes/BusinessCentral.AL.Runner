@@ -135,9 +135,9 @@ registry! {
     },
     RecordRefGetUnopened => {
         id: "recordref-get-unopened",
-        assumed: "RecordRef.Get(RecordId) on a RecordRef that was never opened, with the result used, answers false and leaves the ref closed.",
-        tests: "System Application Data Type Management (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`): about 260 Tests-ERM tests (CheckICPartner).",
-        probe: "RecordRef.Get(Rec.RecordId()) on a fresh RecordRef: the Boolean, then Number() and an Open on the same ref; with the result unused (PnE08RecordMisc.al asks the same row).",
+        assumed: "RecordRef.Get(RecordId) on a RecordRef that was never opened opens the table of the RecordId and loads its row (the result says whether the row exists).",
+        tests: "System Application Data Type Management (`if not RecRef.Get(RecID) then RecRef.Open(RecID.TableNo)`): about 260 Tests-ERM tests (CheckICPartner); \"Exp. Sales Inv. PEPPOL BIS3.0\".OnRun (`RecordRef.Get(Rec.RecordID); RecordRef.SetTable(..)` on a fresh ref): 43 Tests-Misc tests.",
+        probe: "RecordRef.Get(Rec.RecordId()) on a fresh RecordRef: the Boolean, then Number() and an Open on the same ref; with the result unused and the row missing (PnE08RecordMisc.al asks the same row).",
     },
     CookieSetterResult => {
         id: "cookie-setter-result",

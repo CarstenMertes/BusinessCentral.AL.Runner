@@ -49,12 +49,12 @@ fn an_integer_key_for_an_enum_field_is_refused_with_its_reason() {
 }
 
 #[test]
-fn get_by_record_id_on_a_closed_record_ref_is_refused_with_its_reason() {
-    let o =
-        outcomes("[Test] procedure Closed() var R: Record \"B6 Row\"; RR: RecordRef; begin RR.Get(R.RecordId); end;");
+fn a_call_on_a_closed_record_ref_is_refused_with_its_reason() {
+    // `Get(RecordId)` on a closed RecordRef opens the table now (assumption recordref-get-unopened); the other calls stay refused.
+    let o = outcomes("[Test] procedure Closed() var RR: RecordRef; N: Integer; begin N := RR.Count(); end;");
     let why = not_run(&o[0]);
     assert!(
-        why.contains("RecordRef.Get")
+        why.contains("RecordRef.Count")
             && why.contains("not open")
             && why.contains("not pinned")
             && why.contains("probes-needed"),

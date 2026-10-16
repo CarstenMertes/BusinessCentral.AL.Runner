@@ -177,9 +177,14 @@ impl Session {
                         " The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
                     ));
                 }
+                // A DateTime adds that the date is not valid (pages/lt-page-run-overloads-testpart/P106TestFieldAsDateTime.al:
+                // P106_AsDateTime_Card, an ISO text on a table field).
+                if matches!(ty, RtType::DateTime) {
+                    msg.push_str(" The date is not valid.");
+                }
                 // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,
                 // Enum_VariableControl_*); one bound to a table field keeps the empty code.
-                return Err(if rec_bound && !no_row {
+                return Err(if rec_bound && !no_row && !matches!(ty, RtType::DateTime) {
                     refuse(self, msg)
                 } else {
                     refuse_bound(msg)

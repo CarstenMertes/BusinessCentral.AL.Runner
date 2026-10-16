@@ -288,6 +288,10 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
+    (
+        "System.GetLastErrorText#2",
+        get_last_error_text_without_customer_content,
+    ),
     ("System.GetLastErrorCode#1", get_last_error_code),
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
@@ -603,9 +607,6 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         }
         "Xmlport.Run#1" | "Xmlport.Run#2" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
-        }
-        "System.GetLastErrorText#2" => {
-            "GetLastErrorText(ExcludeCustomerContent) is in no corpus test, so what the flag removes from the text of an error (and whether it changes the text of one that carries no customer content) is not pinned"
         }
         _ => return None,
     })
@@ -926,6 +927,27 @@ fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
         return unsupported("GetLastErrorText of an error whose text is not pinned");
     }
     Ok(Value::Text(e.message.into()))
+}
+
+/// `GetLastErrorText(true)`: with no error pending it answers the empty text (corpus
+/// types/lt-evaluate-format-lasterror-setview/P86LastError.al:ErrorInfo_CustomerContent `cleared_excl`, PlainError_Exclude
+/// `empty_excl`). With an error pending the corpus pins a redaction that depends on how the error was raised (an ErrorInfo
+/// reads "This message had personal data removed ...", a formatted Error text a telemetry hint, TestField and FieldError
+/// their own redacted forms); the runtime does not keep how the error was raised, so that stays refused.
+fn get_last_error_text_without_customer_content(
+    ctx: &mut dyn Ctx,
+    r: Option<&mut Value>,
+    a: &mut [Value],
+) -> Result<Value, Signal> {
+    if matches!(a.first(), Some(Value::Boolean(false))) {
+        return get_last_error_text(ctx, r, &mut []);
+    }
+    if !ctx.last_error().message.is_empty() {
+        return unsupported(
+            "GetLastErrorText(true) while an error is pending: the redacted text depends on how the error was raised (ErrorInfo, formatted Error, TestField, FieldError), which is not kept",
+        );
+    }
+    Ok(Value::Text(String::new().into()))
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

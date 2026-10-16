@@ -4,6 +4,7 @@ mod multi_reportext;
 mod queries;
 mod query_outer_link;
 mod report_obsolete_properties;
+mod report_properties;
 mod report_saveas;
 mod report_temp_globals;
 mod reportext_calls;

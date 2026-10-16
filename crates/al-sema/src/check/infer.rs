@@ -67,6 +67,36 @@ impl<'a> Checker<'a> {
     /// Infers `node` as a value, calling a parameterless callable.
     pub(crate) fn ty(&mut self, sc: &mut Scope, node: &SyntaxNode) -> Ty {
         let e = self.infer(sc, node);
+        self.ty_of_inferred(sc, node, e)
+    }
+
+    /// The target of `Proc := value` where `Proc` is a procedure of the workspace that takes one parameter and none takes
+    /// none: AL reads it as the call `Proc(value)` (Base Application's Service Statistics writes
+    /// `CurrPage.SubForm.PAGE.SetParentControl := PAGE::"Service Statistics"`). The call is picked with the value's type
+    /// and recorded on the target; the type of the target is unknown. Assumption `procedure-assign-is-call`.
+    pub(crate) fn assign_target_ty(&mut self, sc: &mut Scope, target: &SyntaxNode, rhs: &SyntaxNode) -> Ty {
+        let e = self.infer(sc, target);
+        if let E::Callable(c) = &e {
+            let visible: Vec<&Cand> = c.iter().filter(|c| c.hidden.is_none()).collect();
+            if !visible.is_empty()
+                && visible
+                    .iter()
+                    .all(|c| matches!(c.target, Res::Proc { .. }) && c.min == 1 && c.max >= 1)
+            {
+                let c = c.clone();
+                let arg = self.ty(sc, rhs);
+                let t = self.pick(sc, target, &c, &[arg], &name_of(target));
+                let _ = t;
+                let r = target.text_range();
+                self.types
+                    .insert((sc.file, r.start().into(), r.end().into()), Ty::Unknown);
+                return Ty::Unknown;
+            }
+        }
+        self.ty_of_inferred(sc, target, e)
+    }
+
+    fn ty_of_inferred(&mut self, sc: &mut Scope, node: &SyntaxNode, e: E) -> Ty {
         let t = match e {
             E::Val(t) => t,
             E::Callable(c) => self.pick(sc, node, &c, &[], &name_of(node)),

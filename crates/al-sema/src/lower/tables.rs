@@ -104,6 +104,10 @@ impl Lowerer<'_> {
                                 // record/TestCalcFormulaQuotedFilterTests.Codeunit.al:9 pins it for a
                                 // CalcFormula filter; docs/probes-needed.md for the TableRelation).
                                 rewrite_quotes(text)
+                            } else if !text.is_empty() && text.trim().is_empty() {
+                                // `filter(" ")` / `const(" ")` name the member or value of one blank; the unquoted text would be an
+                                // empty filter term (Service Contract Line: `Blocked = filter(" ")`).
+                                format!("'{text}'")
                             } else {
                                 text.clone()
                             };

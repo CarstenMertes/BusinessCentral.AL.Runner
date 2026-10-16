@@ -49,6 +49,7 @@
 61243 TemporaryPath_EndsWithTheTempFolderAndABackslash
 61260 CodeCoverageRows_OfAnAppWithSource_HoldTheSourceLines
 61261 PlatformTable_Chart
+61261 PlatformTable_MCPConfiguration
 61261 PlatformTable_ObjectOptions
 61261 PlatformTable_PrivacyNotice
 61268 P110_Copy

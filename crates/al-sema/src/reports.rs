@@ -33,6 +33,10 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     // Whether the client shows the report, from a permission on a table. Permissions are not modelled
     // and no AL code reads it (docs/owner-review.md, issue 28).
     "accessbypermission",
+    // Whether a report extension may extend this report: known when the app is compiled, and not a column of the
+    // Report Metadata table. No corpus test runs a report that declares it; a documentation-only assumption
+    // (docs/probes-needed.md, "Report properties Extensible and EnableHyperlinks").
+    "extensible",
 ];
 
 /// Data item properties that change nothing a processing run can observe: they steer the request
@@ -284,6 +288,9 @@ pub fn layout(obj: &ast::Object) -> Layout {
             | "rdlclayout"
             | "wordlayout"
             | "excellayout"
+            // The hyperlinks of an RDLC layout. Microsoft's "Standard Sales - Invoice" declares it
+            // (docs/probes-needed.md, as `WordMergeDataItem`).
+            | "enablehyperlinks"
             | "previewmode" => out
                 .output
                 .push(format!("report property {name} (a layout) is not supported yet")),

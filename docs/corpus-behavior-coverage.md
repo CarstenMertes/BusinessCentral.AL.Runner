@@ -9,10 +9,10 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
 | Triggers per object kind | 164 | 108 | 128 | 52 | 44 |
-| Object properties per object kind | 1110 | 261 | 1074 | 849 | 630 |
+| Object properties per object kind | 1110 | 261 | 1074 | 849 | 631 |
 | Platform and system events | 122 | 12 | 28 | 16 | 15 |
 | Statements and expressions | 59 | 54 | 53 | 0 | 0 |
-| Runtime error sites (text pinned) | 42 | 39 | - | 3 | - |
+| Runtime error sites (text pinned) | 43 | 40 | - | 3 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -140,7 +140,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | tableextension/field | `MovedFrom` | 85 | no | 0 |
 | page/field | `AssistEdit` | 83 | yes | 0 |
 | xmlport/fieldattribute | `Occurrence` | 83 | no | 0 |
-| page/field | `NotBlank` | 82 | yes | 0 |
+| page/field | `NotBlank` | 82 | no | 0 |
 | report/field | `Importance` | 77 | no | 0 |
 | enum | `Access` | 75 | yes | 0 |
 | table/key | `MaintainSQLIndex` | 75 | no | 0 |
@@ -167,7 +167,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | page/group | `ObsoleteTag` | 41 | yes | 0 |
 | pageextension/action | `RunPageLink` | 41 | yes | 0 |
 | report/field | `Lookup` | 41 | yes | 0 |
-| report/field | `NotBlank` | 39 | yes | 0 |
+| report/field | `NotBlank` | 39 | no | 0 |
 | page | `ObsoleteReason` | 37 | yes | 0 |
 | page | `ObsoleteState` | 37 | yes | 0 |
 | page | `ObsoleteTag` | 37 | yes | 0 |
@@ -240,8 +240,8 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | table/field | `BlankNumbers` | 9 | yes | 0 |
 | report/group | `ShowCaption` | 9 | no | 0 |
 | report/labels | `PageCaption` | 9 | no | 0 |
+| report | `EnableHyperlinks` | 8 | yes | 0 |
 | entitlement | `GroupName` | 8 | no | 0 |
-| report | `EnableHyperlinks` | 8 | no | 0 |
 | report/labels | `PostingDateCaption` | 8 | no | 0 |
 | table | `MovedTo` | 8 | no | 0 |
 | table/field | `Locked` | 8 | no | 0 |
@@ -459,7 +459,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | statement | `EmptyStmt` | 0 | no | 0 |
 | statement | `WithStmt` | 0 | no | 0 |
 
-## Runtime error sites without a corpus test (3 of 42; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (3 of 43; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 

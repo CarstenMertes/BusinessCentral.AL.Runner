@@ -507,20 +507,25 @@ fn json_write_to_an_out_stream_writes_the_compact_text_the_text_overload_gives()
 }
 
 #[test]
-fn json_write_to_an_out_stream_appends_at_the_stream_position() {
-    // Like WriteText (streams/TestArrayStreamContracts.al InStream_Sequential_WriteText_ConcatenatesContent).
+fn json_write_to_an_out_stream_does_not_move_the_stream_and_is_refused_after_other_writes() {
+    // misc/lt-probes-needed-3/PnC20JsonStreams.al:WriteTo_DefaultStream_And_Appending: a second WriteTo writes over the
+    // first one's bytes, the blob is not emptied (`[1,2]1}`). After other writes the place is not pinned.
     let t = text(
-        base!("A: JsonArray;"),
-        "A.Add(1); B.Data.CreateOutStream(O); O.WriteText('x'); A.WriteTo(O); O.WriteText('y');
+        base!("A: JsonArray; J: JsonObject;"),
+        "A.Add(1); A.Add(2); J.Add('a', 1); B.Data.CreateOutStream(O); J.WriteTo(O); A.WriteTo(O);
          B.Data.CreateInStream(I); I.ReadText(T); exit(T);",
     );
-    assert_eq!(t, "x[1]y");
+    assert_eq!(t, "[1,2]1}");
+    assert!(refused(
+        base!("A: JsonArray;"),
+        "A.Add(1); B.Data.CreateOutStream(O); O.WriteText('x'); A.WriteTo(O); exit('');",
+    ));
 }
 
 #[test]
 fn json_read_from_an_in_stream_parses_what_the_stream_holds() {
     // The same parse as ReadFrom(Text) (json/TestJsonObject.al, TestJsonArray.al); the stream's
-    // rest is read and the position moves to its end. The bytes are taken as UTF-8 only where that
+    // rest is read and the position does not move (misc/lt-probes-needed-3/PnC20JsonStreams.al:ReadFrom_RestOfStream). The bytes are taken as UTF-8 only where that
     // equals the stream's own reading (docs/probes-needed.md).
     let vars = base!("A: JsonArray; J: JsonObject; Ok: Boolean;");
     assert_eq!(
@@ -529,7 +534,7 @@ fn json_read_from_an_in_stream_parses_what_the_stream_holds() {
             "B.Data.CreateOutStream(O, TextEncoding::UTF8); O.WriteText('[1,{\"k\":\"v\"}]'); B.Data.CreateInStream(I, TextEncoding::UTF8);
              Ok := A.ReadFrom(I); exit(Format(Ok) + Format(A.Count()) + Format(I.EOS()));"
         ),
-        "Yes2Yes"
+        "Yes2No"
     );
     assert_eq!(
         text(

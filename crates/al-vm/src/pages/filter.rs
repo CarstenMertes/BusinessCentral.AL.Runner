@@ -114,11 +114,23 @@ impl Session {
         // single-valued filter (corpus pageupdate/TestPageUpdateGoneRow.al:
         // Card_OpenEdit_FilterMatchesNothing_NoOpAction_StaysOpen).
         if st.borrow().cursor == Cursor::None {
-            let rec = self.page_rec(st);
-            let table = rec.borrow().table as usize;
-            let fresh = self.initial_fields(table);
-            rec.borrow_mut().fields = fresh;
-            self.stamp_from_filters(st, false)?;
+            // A list that offers the blank line stands on it (a page opened with OpenNew starts a new row), with the filter
+            // value on it (Microsoft's Item Vendor Catalog tests; assumption filter-change-lands-on-new-line).
+            let new_mode = st.borrow().mode == PageMode::New && self.has_source(st);
+            if new_mode || (st.borrow().new_line && self.is_list(st)) {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FilterChangeLandsOnNewLine);
+                if new_mode {
+                    self.start_draft(st, false)?;
+                } else {
+                    self.land_on_new_line(st)?;
+                }
+            } else {
+                let rec = self.page_rec(st);
+                let table = rec.borrow().table as usize;
+                let fresh = self.initial_fields(table);
+                rec.borrow_mut().fields = fresh;
+                self.stamp_from_filters(st, false)?;
+            }
         }
         if st.borrow().host.is_some() {
             self.sync_dependents(st)

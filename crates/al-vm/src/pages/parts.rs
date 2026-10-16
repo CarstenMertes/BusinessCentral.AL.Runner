@@ -161,8 +161,7 @@ impl Session {
         });
         // A part the control tree dropped (Visible = false, or an ApplicationArea the session does not enable) is
         // still there for the page's own code: Base Application's Sales Credit Memo calls
-        // `CurrPage.IncomingDocAttachFactBox.Page.LoadDataFromRecord(Rec)` in OnAfterGetCurrRecord. It is created and
-        // opened on the first such reach and kept out of the tree. Unprobed (InvisiblePartForPageCode).
+        // `CurrPage.IncomingDocAttachFactBox.Page.LoadDataFromRecord(Rec)` in OnAfterGetCurrRecord. It is created on the first such reach, not opened, and kept out of the tree. Unprobed (InvisiblePartForPageCode).
         let found = match found {
             None if runtime => {
                 let engine = self.engine();
@@ -173,13 +172,10 @@ impl Session {
                         child.borrow_mut().host = Some((Rc::downgrade(st), control));
                         self.page_instance(&child)?;
                         st.borrow_mut().hidden_parts.push((control, child.clone()));
-                        let mode = if self.page_editable(st) {
-                            PageMode::Edit
-                        } else {
-                            PageMode::View
-                        };
                         self.init_one_part(&child)?;
-                        self.open_page_as(&child, mode, None, None, true)?;
+                        // It is not opened: its OnOpenPage and OnAfterGetRecord do not run, only the call that reached it
+                        // (pages/lt-page-filtergroup-assumptions/P99InvisiblePart.al:P99_StaticInvisible, the log is
+                        // `host-OnAfterGetCurrRecord | part-Ping | host-after-Ping`).
                         al_builtins::assumptions::assume(
                             al_builtins::assumptions::Assumption::InvisiblePartForPageCode,
                         );

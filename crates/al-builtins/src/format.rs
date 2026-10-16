@@ -59,6 +59,8 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         Value::Byte(b) => char::from(*b).to_string(),
         Value::Char(c) => char::from_u32(u32::from(*c)).map(String::from).unwrap_or_default(),
         Value::Decimal(d) => format_decimal(d, standard)?,
+        // A NUL character does not show (types/lt-variant-is-text-streams/LTP89StreamText.al:Text_BytesWritten `nul_between`).
+        Value::Text(t) | Value::Code(t) if t.contains('\0') => t.replace('\0', ""),
         Value::Text(t) | Value::Code(t) => t.to_string(),
         Value::Option(o, members) => match standard {
             2 | 9 if crate::sysenum::is_field_table_type(members) => FIELD_TABLE_TYPE_ORDINALS

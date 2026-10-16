@@ -1106,7 +1106,11 @@ impl Writer {
             // `<![CDATA[a]]]]><![CDATA[>b]]>`).
             XData::CData(t) => Plan::CData(format!("<![CDATA[{}]]>", t.replace("]]>", "]]]]><![CDATA[>"))),
             // Two hyphens in a row are separated by a blank (xml/XmlNodes.al:Comment_Create `double_dash`: `a--b` is written `<!--a- -b-->`).
-            XData::Comment(t) => Plan::Markup(format!("<!--{}-->", t.replace("--", "- -"))),
+            XData::Comment(t) => Plan::Markup(format!(
+                "<!--{}{}-->",
+                t.replace("--", "- -"),
+                if t.ends_with('-') { " " } else { "" }
+            )),
             XData::Pi { target, data } => Plan::Markup(if data.is_empty() {
                 format!("<?{target}?>")
             } else {
@@ -3275,7 +3279,9 @@ fn get_document_type(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) ->
 fn get_document(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let root = root_of(&h);
-    if with(&root, |d| matches!(d, XData::Document { .. })) {
+    // A declaration belongs to no document as far as GetDocument goes (xml/lt-xml-remaining-node-methods/P104TreeBDecl.al:
+    // P104_Remove_InDoc `document1`).
+    if with(&h, |d| !matches!(d, XData::Declaration { .. })) && with(&root, |d| matches!(d, XData::Document { .. })) {
         a[0] = tagged("XmlDocument", root);
         Ok(Value::Boolean(true))
     } else if c.ret_used() {

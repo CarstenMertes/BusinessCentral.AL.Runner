@@ -889,7 +889,12 @@ impl Session {
         }
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
         st.borrow_mut().modal = modal && !trapped;
-        let handler = self.open_page(&st, PageMode::Edit, record, if trapped { None } else { Some(kind) })?;
+        let handler = self.open_page(
+            &st,
+            PageMode::Edit,
+            record.clone(),
+            if trapped { None } else { Some(kind) },
+        )?;
         let Some(handler) = handler else {
             return Ok(Value::Null);
         };

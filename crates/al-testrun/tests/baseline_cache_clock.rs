@@ -44,6 +44,7 @@ fn run(cache: &Path) -> Outcome {
         version: "1.0.0.0".into(),
         resources: vec![],
         include_source: false,
+        layout_files: Vec::new(),
         symbols: vec![],
     };
     let rt = CorpusRuntime::try_run_suites_with(

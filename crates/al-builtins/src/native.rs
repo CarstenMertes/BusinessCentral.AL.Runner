@@ -514,6 +514,16 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // name (SaveAsXml, SaveAsPdf, ...) writes a file no corpus test pins and stays refused.
     ("Report.SaveAs#1", vm_only),
     ("Report.SaveAs#2", vm_only),
+    // The rendering saves with a file name run only for the reports on the allow-list of ADR-040 and are refused for the
+    // others when they run. SaveAsXml with a file name stays refused in lowering.
+    ("Report.SaveAsPdf#1", vm_only),
+    ("Report.SaveAsPdf#2", vm_only),
+    ("Report.SaveAsExcel#1", vm_only),
+    ("Report.SaveAsExcel#2", vm_only),
+    ("Report.SaveAsWord#1", vm_only),
+    ("Report.SaveAsWord#2", vm_only),
+    ("Report.SaveAsHtml#1", vm_only),
+    ("Report.SaveAsHtml#2", vm_only),
     ("Report.Quit#1", vm_only),
     ("Report.Skip#1", vm_only),
     ("Report.Break#1", vm_only),
@@ -946,8 +956,24 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
             Some(n) => Value::BigInteger(n),
             None => return unsupported("Abs of the smallest BigInteger (the overflow error is not pinned)"),
         },
-        other => return unsupported(&format!("Abs of {}", other.describe())),
+        // A Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned by a corpus test; Microsoft's
+        // manufacturing code does `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests).
+        other => return abs_other(other),
     })
+}
+
+/// `Abs` of a Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned; Microsoft's manufacturing code does
+/// `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests; assumption abs-of-duration-is-decimal).
+#[cold]
+#[inline(never)]
+fn abs_other(v: &Value) -> Result<Value, Signal> {
+    match v {
+        Value::Duration(ms) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::AbsOfDuration);
+            Ok(Value::Decimal(rust_decimal::Decimal::from(*ms).abs()))
+        }
+        other => unsupported(&format!("Abs of {}", other.describe())),
+    }
 }
 
 fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

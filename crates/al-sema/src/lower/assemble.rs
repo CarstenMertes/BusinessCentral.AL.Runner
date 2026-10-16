@@ -803,6 +803,7 @@ pub(crate) fn lower_core(
                 resources: Vec::new(),
                 dependency: ws.kinds[i] == crate::workspace::AppKind::Dependency,
                 include_source: false,
+                layout_files: Vec::new(),
             })
             .collect(),
         dotnet_types: ws
@@ -968,6 +969,7 @@ pub(crate) fn lower_core(
                 target: match (site.publisher, site.platform) {
                     (Some(p), _) => al_ir::sym::SubscriberTarget::Object(piece_keys[p].clone()),
                     (None, ir::PlatformPublisher::CaptionClass) => al_ir::sym::SubscriberTarget::CaptionClass,
+                    (None, ir::PlatformPublisher::ReportingTriggers) => al_ir::sym::SubscriberTarget::ReportingTriggers,
                     (None, _) => al_ir::sym::SubscriberTarget::GlobalTriggers,
                 },
                 index: site.index as u32,

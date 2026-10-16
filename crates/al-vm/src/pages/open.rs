@@ -528,7 +528,9 @@ impl Session {
         if !(via_action && matches!(action, "Cancel" | "LookupCancel" | "No")) {
             self.store_page_values(st);
         }
-        if action == "LookupOK" && self.has_source(st) && st.borrow().cursor == Cursor::Row {
+        // Not on the blank new-line row of a page: corpus misc/lt-page-run-overloads RunModal_NonTempRecord_ShowsDbRows keeps
+        // `Row.Code` = D1 after a handler that read the page down to its new line and pressed OK.
+        if action == "LookupOK" && self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {
             let fields = self.page_rec(st).borrow().fields.clone();
             st.borrow_mut().selection = Some(fields);
         }

@@ -334,6 +334,9 @@ pub struct Session {
     guid_seed: i32,
     /// The session's `Random` (`System.Random`, `Randomize`); see `hostvalues.rs`.
     pub(crate) rng: al_host::random::NetRandom,
+    /// How many numbers `Random` has drawn in this session (a test that draws after tests that did not run sees another
+    /// sequence than BC's).
+    pub(crate) random_draws: u64,
     /// How many `Randomize()` calls without a seed the session has seen.
     pub(crate) unseeded_randomizes: i32,
     pub(crate) next_row_version: i64,
@@ -402,6 +405,10 @@ pub struct Session {
     pub(crate) encrypted: std::collections::HashMap<String, String>,
     /// Temporary files created so far (`File.CreateTempFile` names them in order).
     pub(crate) temp_files: u32,
+    /// ADR-040: the files a report on the allow-list was saved to in a rendered format, and for which nothing was
+    /// written (path in lower case with `/`, name of the report). Any look at one is refused; a write by AL over the
+    /// path ends the mark.
+    pub(crate) render_pending_files: std::collections::HashMap<String, Arc<str>>,
     /// The instant of the last system stamp (milliseconds since the Unix epoch).
     pub(crate) last_stamp: i64,
     /// The date `WorkDate(Date)` set; today until then.
@@ -497,6 +504,7 @@ impl Session {
             waited_ms: 0,
             encrypted: Default::default(),
             temp_files: 0,
+            render_pending_files: std::collections::HashMap::new(),
             last_stamp: i64::MIN / 2,
             work_date: None,
             engine,
@@ -510,6 +518,7 @@ impl Session {
             next_guid: 0,
             guid_seed: random_seed,
             rng: al_host::random::NetRandom::new(random_seed),
+            random_draws: 0,
             unseeded_randomizes: 0,
             next_row_version: 0,
             autoinc: Default::default(),
@@ -697,6 +706,20 @@ impl Session {
                 } else {
                     (0..n).map(|_| self.default_value(el)).collect()
                 };
+                // The elements of an array of temporary records share one temporary table: Inventory Profile
+                // Offsetting keeps demand and supply in `InventoryProfile: array[2] of Record "Inventory Profile"
+                // temporary`, fills element 1 and plans with element 2 (Base Application, Microsoft's Tests-SCM-Planning
+                // need it). Not pinned by a corpus test (assumption temporary-record-array-shares-table).
+                if let Some(Value::Record(first)) = cells.first() {
+                    if let Some(id) = first.borrow().temp_id.clone() {
+                        for c in cells.iter().skip(1) {
+                            if let Value::Record(rc) = c {
+                                rc.borrow_mut().temp_id = Some(id.clone());
+                            }
+                        }
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TempRecordArrayShares);
+                    }
+                }
                 Value::Array(Rc::new(RefCell::new(cells)))
             }
             other => Value::default_for(other),
@@ -765,6 +788,11 @@ impl Session {
     /// The changes made to restored rows since install scope was last entered.
     pub fn restored_changes(&self) -> Vec<al_data::memory::RestoredChange> {
         self.store.restored_changes()
+    }
+
+    /// How many numbers `Random` has drawn in this session.
+    pub fn random_draws(&self) -> u64 {
+        self.random_draws
     }
 
     pub fn instance(&mut self, object: usize) -> Rc<RefCell<Instance>> {
@@ -880,6 +908,16 @@ impl Session {
         };
         self.ret_used = ret_used;
         self.depth -= 1;
+        // ADR-040: a look at the output of a report that was never produced, made where the builtin could not refuse it
+        // (a parser or a hash reading a stream, `Format` of a Blob), ends the run when the outermost call returns:
+        // the result, or the error the empty bytes caused, is replaced by the refusal. One branch per outermost call.
+        if self.depth == 0 {
+            if let Some(refusal) = al_builtins::stream::take_pending_observation() {
+                if !matches!(r, Err(Signal::Unsupported(_))) {
+                    return Err(refusal);
+                }
+            }
+        }
         r
     }
 

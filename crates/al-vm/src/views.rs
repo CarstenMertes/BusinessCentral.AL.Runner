@@ -279,6 +279,7 @@ impl Session {
         order_needs_key: bool,
     ) -> Result<(), Signal> {
         let mut key = None;
+        let mut adhoc: Option<Vec<usize>> = None;
         let mut ascending = None;
         let mut filters: Vec<FieldFilter> = Vec::new();
         let group = group.unwrap_or(rec.borrow().filter_group);
@@ -294,12 +295,17 @@ impl Session {
                         .split(',')
                         .map(|n| field_by_name(t, n.trim()))
                         .collect::<Result<Vec<_>, _>>()?;
-                    key = Some(
-                        t.keys
-                            .iter()
-                            .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])
-                            .ok_or_else(|| Signal::Unsupported("SetView with SORTING without a matching key".into()))?,
-                    );
+                    // Fields no key starts with order the rows by themselves, as SetCurrentKey does (a view that
+                    // GetView wrote for such a key sets it back). Not pinned for SetView; Microsoft's tests set views
+                    // of ad hoc keys (assumption set-view-sorting-without-a-key).
+                    match t
+                        .keys
+                        .iter()
+                        .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])
+                    {
+                        Some(k) => key = Some(k),
+                        None => adhoc = Some(wanted),
+                    }
                 }
                 "ORDER" => match inner.trim().to_ascii_lowercase().as_str() {
                     "ascending" => ascending = Some(true),
@@ -354,6 +360,13 @@ impl Session {
         // (record/TestRecordViewCopyMarkContracts.al:130, SetView_ReplacesTheFilters_KeepsTheDirection_AndRejectsGarbage).
         if let Some(a) = ascending {
             r.ascending = a;
+        }
+        drop(r);
+        if let Some(wanted) = adhoc {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SetViewSortingWithoutKey);
+            self.ret_used = false;
+            let mut args: Vec<Value> = wanted.iter().map(|p| Value::Integer(*p as i32)).collect();
+            self.record_op(al_builtins::record_op::RecordOp::SetCurrentKey, rec, &mut args)?;
         }
         Ok(())
     }

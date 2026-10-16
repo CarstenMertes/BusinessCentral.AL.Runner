@@ -162,6 +162,7 @@ pub enum SubscriberTarget {
     Object(ObjKey),
     GlobalTriggers,
     CaptionClass,
+    ReportingTriggers,
 }
 
 /// An event subscriber of an object that was not compiled (a dependency object nothing reached): the runtime

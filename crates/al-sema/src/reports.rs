@@ -20,6 +20,11 @@ const INERT_OBJECT_PROPERTIES: &[&str] = &[
     "tooltip",
     "tooltipml",
     "description",
+    // Compile-time obsolescence notes: a run shows nothing of them (Base Application's Calculate Subcontracts,
+    // Tests-SCM-Manufacturing, 34 tests).
+    "obsoletereason",
+    "obsoletestate",
+    "obsoletetag",
     // Feeds the client's Tell Me search only (docs/owner-review.md, 2026-10-14).
     "additionalsearchterms",
     "additionalsearchtermsml",
@@ -111,6 +116,10 @@ pub struct Layout {
     pub dataset_reasons: Vec<String>,
     /// The `labels` section: (name, text).
     pub labels: Vec<(String, String)>,
+    /// The layouts of the `rendering` section: (name, type lower-case, LayoutFile as written, MimeType).
+    pub rendering: Vec<(String, String, String, String)>,
+    /// `DefaultRenderingLayout`.
+    pub default_rendering: Option<String>,
 }
 
 /// The entries of a `labels` section: `Name = 'text'` with optional `Comment`, `MaxLength` and `Locked` after a comma,
@@ -226,6 +235,35 @@ fn layout_file_missing(obj: &ast::Object) -> bool {
         })
 }
 
+/// The `layout(Name) { Type; LayoutFile; MimeType }` blocks of the `rendering` section.
+fn rendering_layouts(obj: &ast::Object) -> Vec<(String, String, String, String)> {
+    let literal = |v: String| {
+        let v = v.trim();
+        v.strip_prefix('\'')
+            .and_then(|r| r.strip_suffix('\''))
+            .unwrap_or(v)
+            .replace("''", "'")
+    };
+    let mut out = Vec::new();
+    for rendering in obj.sections().filter(|s| s.name().eq_ignore_ascii_case("rendering")) {
+        for l in rendering.sections().filter(|s| s.name().eq_ignore_ascii_case("layout")) {
+            let prop = |n: &str| {
+                l.properties()
+                    .find(|p| p.name().eq_ignore_ascii_case(n))
+                    .map(|p| literal(p.value_text()))
+                    .unwrap_or_default()
+            };
+            out.push((
+                l.args().first().cloned().unwrap_or_default(),
+                prop("Type").to_ascii_lowercase(),
+                prop("LayoutFile"),
+                prop("MimeType"),
+            ));
+        }
+    }
+    out
+}
+
 fn bool_prop(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" => Some(true),
@@ -251,6 +289,11 @@ pub fn layout(obj: &ast::Object) -> Layout {
         layout_file_missing: layout_file_missing(obj),
         dataset_reasons: Vec::new(),
         labels: Vec::new(),
+        rendering: rendering_layouts(obj),
+        default_rendering: obj
+            .properties()
+            .find(|p| p.name().eq_ignore_ascii_case("DefaultRenderingLayout"))
+            .map(|p| p.value_text().trim().trim_matches('"').to_string()),
     };
     for p in obj.properties() {
         let (name, value) = (p.name().to_ascii_lowercase(), p.value_text());
@@ -979,7 +1022,36 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         labels: layout.labels.clone(),
         dataset_unsupported: layout.dataset_reasons.clone(),
         layout_file_missing: layout.layout_file_missing,
+        rendering_layouts: layout
+            .rendering
+            .iter()
+            .map(|(name, kind, file, mime)| ir::RenderingLayout {
+                name: name.clone(),
+                kind: kind.clone(),
+                file: file.clone(),
+                path: resolve_layout_path(file),
+                mime_type: mime.clone(),
+            })
+            .collect(),
+        default_rendering_layout: layout.default_rendering.clone(),
     }
+}
+
+/// `file` (a `LayoutFile` as written) relative to the app folder, `/` separators, `.` and `..` resolved (a layout file
+/// is named from the app's root, as Pageworks writes `./src/X.pageworks` in `src/X.Report.al`).
+fn resolve_layout_path(file: &str) -> String {
+    let file = file.replace('\\', "/");
+    let mut parts: Vec<&str> = Vec::new();
+    for c in file.split('/') {
+        match c {
+            "" | "." => {}
+            ".." => {
+                parts.pop();
+            }
+            c => parts.push(c),
+        }
+    }
+    parts.join("/")
 }
 
 /// Everything `build_ext` needs to know about the reportextension being lowered.
@@ -1169,6 +1241,32 @@ mod tests {
         let parse = al_syntax::parse(src, &Default::default());
         let root = ast::SourceFile::cast(parse.syntax()).unwrap();
         layout(&root.objects().next().unwrap())
+    }
+
+    #[test]
+    fn the_rendering_section_lists_its_layouts_with_type_file_and_mime_type() {
+        let l = layout_of(
+            "report 1 R { DefaultRenderingLayout = Two; dataset { } rendering { layout(One) { Type = RDLC; LayoutFile = 'a.rdlc'; } layout(Two) { Type = Custom; LayoutFile = './src/b.x'; MimeType = 'application/x-b'; } } }",
+        );
+        assert_eq!(
+            l.rendering,
+            vec![
+                (
+                    "One".to_string(),
+                    "rdlc".to_string(),
+                    "a.rdlc".to_string(),
+                    String::new()
+                ),
+                (
+                    "Two".to_string(),
+                    "custom".to_string(),
+                    "./src/b.x".to_string(),
+                    "application/x-b".to_string()
+                ),
+            ]
+        );
+        assert_eq!(l.default_rendering.as_deref(), Some("Two"));
+        assert_eq!(resolve_layout_path("./src/../src/b.x"), "src/b.x");
     }
 
     #[test]

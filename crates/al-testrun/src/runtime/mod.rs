@@ -60,6 +60,72 @@ pub struct Manifest {
     /// `preprocessorSymbols` of the app's own app.json. A dependency app is compiled with these;
     /// the project's symbols apply to the workspace apps only (the publisher compiled the dependency).
     pub symbols: Vec<String>,
+    /// The files the app's reports name with `LayoutFile`: path relative to the app (`/` separators), content.
+    pub layout_files: Vec<(String, Vec<u8>)>,
+}
+
+/// The components of `path` made absolute, with `.` and `..` resolved without touching the file system.
+fn lexical(path: &std::path::Path) -> Vec<String> {
+    let abs = std::path::absolute(path).unwrap_or_else(|_| path.to_path_buf());
+    let mut parts: Vec<String> = Vec::new();
+    for c in abs.components() {
+        match c {
+            std::path::Component::ParentDir => {
+                parts.pop();
+            }
+            std::path::Component::CurDir => {}
+            c => parts.push(c.as_os_str().to_string_lossy().to_string()),
+        }
+    }
+    parts
+}
+
+/// The files the `.al` files of `dir` name with `LayoutFile = '...'`, read where they exist: the path is relative to `dir`
+/// (the written path from the app's folder), content bytes.
+fn load_layout_files(dir: &std::path::Path) -> Vec<(String, Vec<u8>)> {
+    let mut out: Vec<(String, Vec<u8>)> = Vec::new();
+    let mut stack = vec![dir.to_path_buf()];
+    while let Some(d) = stack.pop() {
+        let Ok(entries) = std::fs::read_dir(&d) else { continue };
+        for e in entries.flatten() {
+            let p = e.path();
+            let name = e.file_name().to_string_lossy().to_string();
+            if p.is_dir() {
+                if !name.starts_with('.') && name != "target" && name != "node_modules" {
+                    stack.push(p);
+                }
+                continue;
+            }
+            if !name.to_ascii_lowercase().ends_with(".al") {
+                continue;
+            }
+            let Ok(text) = std::fs::read_to_string(&p) else {
+                continue;
+            };
+            let lower = text.to_ascii_lowercase();
+            let mut from = 0;
+            while let Some(at) = lower[from..].find("layoutfile") {
+                let start = from + at + "layoutfile".len();
+                from = start;
+                let rest = text[start..].trim_start();
+                let Some(rest) = rest.strip_prefix('=') else { continue };
+                let Some(rest) = rest.trim_start().strip_prefix('\'') else {
+                    continue;
+                };
+                let Some(end) = rest.find('\'') else { continue };
+                let written = &rest[..end];
+                let target = dir.join(written);
+                let Ok(bytes) = std::fs::read(&target) else { continue };
+                let (root, full) = (lexical(dir), lexical(&target));
+                let rel = full[root.len().min(full.len())..].join("/");
+                if !out.iter().any(|(r, _)| *r == rel) {
+                    out.push((rel, bytes));
+                }
+            }
+        }
+    }
+    out.sort();
+    out
 }
 
 /// The manifest fields `NavApp.GetCurrentModuleInfo` reports, from `dir/app.json`.
@@ -99,6 +165,7 @@ pub fn load_manifest(dir: &std::path::Path) -> Result<Manifest, String> {
         include_source: manifest["resourceExposurePolicy"]["includeSourceInSymbolFile"]
             .as_bool()
             .unwrap_or(false),
+        layout_files: load_layout_files(dir),
         symbols: manifest["preprocessorSymbols"]
             .as_array()
             .into_iter()

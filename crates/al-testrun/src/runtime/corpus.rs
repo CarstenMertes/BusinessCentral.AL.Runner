@@ -400,6 +400,7 @@ impl CorpusRuntime {
             app.version = m.version.clone();
             app.resources = m.resources.clone();
             app.include_source = m.include_source;
+            app.layout_files = m.layout_files.clone();
         }
         // The source lines of an app that includes its source in the symbols (the Code Coverage `Line`).
         {

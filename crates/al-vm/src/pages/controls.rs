@@ -111,6 +111,20 @@ impl Session {
                 self.control_text(st, idx, &converted)?.into()
             }
         };
+        // A blank value in a control bound to a NotBlank field is refused by the client with a TestValidation error whose
+        // text no corpus test pins (Tests-SCM-Planning ManufacturerCodeCannotBeBlank asserts only the code): refused.
+        if rec_bound
+            && text.is_empty()
+            && self.control_field(st, idx).is_some_and(|f| {
+                f.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("NotBlank") && v.trim().eq_ignore_ascii_case("true"))
+            })
+        {
+            return unsupported(
+                "SetValue of a blank value on a control bound to a NotBlank field (the client's TestValidation text is not pinned)",
+            );
+        }
         let enum_engine = engine.clone();
         let by_text = move |id: u32, t: &str| {
             let o = &enum_engine.program.objects[id as usize];
@@ -267,7 +281,12 @@ impl Session {
         let was_dirty = st.borrow().dirty;
         // CurrPage.SaveRecord() inside the control's OnValidate must see the edit (corpus
         // handlers/TestPageSaveRecordInOnValidate_Tests.al:SaveRecordInOnValidatePersistsBeforeThePageCloses).
-        st.borrow_mut().dirty = true;
+        // A control bound to a page variable does not edit the row: nothing for SaveRecord to write (Planning Worksheet's batch
+        // name control calls SaveRecord from OnValidate on a DelayedInsert page; Tests-SCM-Planning
+        // OrderTrackingForCalcRegenPlanSalesUsingForecastLFLItem).
+        if rec_bound {
+            st.borrow_mut().dirty = true;
+        }
         let result = (|| -> Result<(), Signal> {
             match ctl.binding.clone() {
                 ir::Binding::Field(pos) => {

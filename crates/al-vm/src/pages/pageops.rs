@@ -260,6 +260,8 @@ impl Session {
                 Ok(Value::Boolean(false))
             }
             PageMethod::SaveAsXml => self.request_save_as_xml(st, args),
+            PageMethod::SaveAsPdf => self.request_save_as_render(st, args, "Pdf"),
+            PageMethod::SaveAsExcel => self.request_save_as_render(st, args, "Excel"),
             m @ (PageMethod::OK | PageMethod::Cancel | PageMethod::Yes | PageMethod::No) => {
                 self.require_open(st)?;
                 if !self.builtin_offered(st, m.name()) {

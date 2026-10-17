@@ -319,6 +319,12 @@ registry! {
         tests: "Microsoft's production order and routing code (Abs of a DateTime difference): Tests-SCM-Manufacturing and Tests-SCM-Costing, about 230 tests.",
         probe: "D: Duration := -5000; X := Abs(D) into a Decimal and into a Duration; Format both; Abs(D) > 4999.",
     },
+    SubPageLinkEmptyTerm => {
+        id: "subpagelink-empty-term-selects-blank",
+        assumed: "An empty const('') or filter('') term of a SubPageLink or RunPageLink selects the rows whose field is blank, as the same term of a TableRelation where() does (pinned there, not for links).",
+        tests: "Microsoft's Production BOM page (part ProdBOMLine: SubPageLink \"Version Code\" = const('')), opened by SCM Manufacturing 7.0 CalculateProdOrderWithSKUWithRoutingAndProdBOMNo and about 10 more Tests-SCM-Manufacturing tests.",
+        probe: "A part page with SubPageLink F = const('') and another with F = filter(''), over rows with blank and non-blank F: which rows show; the same for RunPageLink.",
+    },
     DurationDividedByDecimal => {
         id: "duration-divided-by-decimal",
         assumed: "A Duration divided by a Decimal counts the Duration as its milliseconds and answers a Decimal (no whole-millisecond requirement, unlike the pinned division by an Integer).",

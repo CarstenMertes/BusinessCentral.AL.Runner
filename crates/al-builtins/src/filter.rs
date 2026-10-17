@@ -312,6 +312,9 @@ impl Parser<'_> {
         use crate::value::RtType as T;
         let text = match t {
             Tok::Typed(v) => return crate::ops::convert(v, self.ty).map_err(|e| e.describe()),
+            // A quoted empty text is the blank date (corpus record/lt-loadfields-pagesource-validate/P81DateFilters.al:193-194,
+            // :308). The unquoted empty text stays refused.
+            Tok::Quoted(s) if s.is_empty() && matches!(self.ty, T::Date) => return Ok(Value::Date(0, false)),
             Tok::Raw(s) | Tok::Quoted(s) => s,
             Tok::Op(o) => return Err(format!("operator `{o}` where a value was expected")),
         };
@@ -550,6 +553,23 @@ mod tests {
             parse_filter("1M", &[], &T::DateFormula).is_err(),
             "a formula stays refused"
         );
+    }
+
+    /// A quoted empty text in a Date filter is the blank date: `''` finds the blank rows, `<>''` the others
+    /// (corpus record/lt-loadfields-pagesource-validate/P81DateFilters.al:193-194, z9 and z10), and `''..01/01/26` is the range
+    /// from the blank date (same file, :294 and :308, where %1 holds 0D). Item's GetFilter("Date Filter") gives that text back
+    /// to SetFilter in Transfer Line.FilterLinesWithItemToPlan.
+    #[test]
+    fn a_date_filter_reads_a_quoted_empty_text_as_the_blank_date() {
+        use crate::value::RtType as T;
+        let blank = Value::Date(0, false);
+        let day = Value::Date(crate::format::day_from_civil(2026, 1, 1), false);
+        let eq = parse_filter("''", &[], &T::Date).expect("''");
+        assert!(eq.matches(&blank) && !eq.matches(&day));
+        let ne = parse_filter("<>''", &[], &T::Date).expect("<>''");
+        assert!(!ne.matches(&blank) && ne.matches(&day));
+        let upto = parse_filter("''..01/01/26", &[], &T::Date).expect("''..01/01/26");
+        assert!(upto.matches(&blank) && upto.matches(&day));
     }
 
     #[test]

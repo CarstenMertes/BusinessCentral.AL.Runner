@@ -6663,6 +6663,7 @@
 70543 Run_RealRecord_ChangeReachesCaller
 70543 Run_TemporaryRecord
 70545 Find_NeighbourModes_PrimaryKey
+70545 Find_NeighbourModes_WithFilterAndKey
 70545 SetAscending_SingleFieldKey
 70548 Clear_CodeunitVariable_GivesFreshInstance
 70548 Dialog_OpenUpdateClose_AreHarmless

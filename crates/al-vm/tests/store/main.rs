@@ -3,6 +3,7 @@
 mod companies;
 mod delete_all_cascade;
 mod find_directions;
+mod find_other_key;
 mod fix_records;
 mod flowfields;
 mod general_journal;

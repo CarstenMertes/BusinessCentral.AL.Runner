@@ -579,10 +579,12 @@ impl CorpusRuntime {
             .map(|b| b.unseeded.iter().map(|&t| t as usize).collect())
             .unwrap_or_default();
         let baseline_engine = (workers > 1 && baseline_run.is_some()).then(|| engine.clone());
+        let mut baseline_ids: Vec<String> = Vec::new();
         if let Some(b) = &baseline_run {
             if from_cache {
                 eprintln!("baseline: read from the cache of an earlier run of this program");
             }
+            baseline_ids = crate::baseline::assumption_ids(&b.notes);
             for n in &b.notes {
                 eprintln!("baseline: {n}");
             }
@@ -916,6 +918,7 @@ impl CorpusRuntime {
             suites,
             panics,
             phases: Phases {
+                baseline_assumptions: baseline_ids,
                 compile: compile_time,
                 baseline: baseline_time,
                 tests: tests_time,

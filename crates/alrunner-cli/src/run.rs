@@ -1279,9 +1279,13 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     if let Some(path) = &a.junit {
         write_file(
             path,
-            &output::junit(&results, bc_build.as_deref(), total_time.as_secs_f64(), &|cu, t| {
-                disabled.as_ref().is_some_and(|d| d.is_disabled(cu, t))
-            }),
+            &output::junit(
+                &results,
+                bc_build.as_deref(),
+                total_time.as_secs_f64(),
+                &|cu, t| disabled.as_ref().is_some_and(|d| d.is_disabled(cu, t)),
+                &rt.phases.baseline_assumptions,
+            ),
         )?;
     }
 

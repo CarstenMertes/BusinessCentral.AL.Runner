@@ -431,7 +431,9 @@ impl Session {
         if has_prop("DataCaptionExpression") {
             return unsupported("the caption of a page with DataCaptionExpression (the expression is not evaluated)");
         }
-        if !self.has_source(st) || self.is_list(st) || st.borrow().caption.is_some() {
+        // A caption the page assigned still gets the record's values behind it (pages/lt-page-runtime/P82CurrPage.al:
+        // Caption_ReadAndAssign: `Changed caption - A`); on no row it stands alone (handlers/TestPageCaption_Tests.al).
+        if !self.has_source(st) || self.is_list(st) {
             return Ok(base);
         }
         let (cursor, draft) = {

@@ -528,6 +528,12 @@ impl Session {
                     && self.declares(st, "onaftergetrecord")
                 {
                     self.populate_current(st)?;
+                    // A page with OnAfterGetCurrRecord runs it after that read (errors/lt-ms-refusals-129/P129Handlers.al:
+                    // P129_TwoTestPageHandlers_SecondPageOpenedByAnActionOfTheFirstHandler: `card AGR 1;card AGCR 1;card OnQueryClosePage`).
+                    if self.declares(st, "onaftergetcurrrecord") {
+                        self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+                        self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+                    }
                 }
                 return self.close_with(st, name, true, true);
             }

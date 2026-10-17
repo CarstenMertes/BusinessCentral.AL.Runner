@@ -48,7 +48,7 @@ pub(crate) fn resolve_handlers(lowered: &Lowered, object: usize, test: usize) ->
                 ));
             };
             let page_of = |r: &al_ir::Routine| match r.locals.first().map(|l| &l.ty) {
-                Some(al_builtins::value::RtType::TestPage(p)) => Some(*p),
+                Some(al_builtins::value::RtType::TestPage(p) | al_builtins::value::RtType::Page(p)) => Some(*p),
                 _ => None,
             };
             let is_page = matches!(kind, UiKind::Page | UiKind::ModalPage | UiKind::RequestPage);

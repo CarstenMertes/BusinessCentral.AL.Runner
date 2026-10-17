@@ -1,6 +1,6 @@
 # ADR-041: Source positions in the IR of dependency apps
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-17)
 - Date: 2026-10-17
 - Related: ADR-013 (external objects), ADR-022 (compile cache, section "Dependency IR carries no source positions"), CLAUDE.md hard rules 3 and 6
 

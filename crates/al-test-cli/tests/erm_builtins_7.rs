@@ -1,4 +1,4 @@
-//! Tests-ERM refusals of issue 27: `FindFirst` on an empty set without using the result, a text filter
+//! Tests-ERM refusals of issue 27: a text filter
 //! on a DateFormula field and `TestField` of a Blob field. No corpus test
 //! pins any of them (the corpus has no `asserterror` on `FindFirst`, no filter on a DateFormula field,
 //! no `for ... := false to true` and no `TestField` of a Blob), so each is refused with a reason that
@@ -39,10 +39,21 @@ fn names_the_open_question(why: &str, words: &[&str]) {
     }
 }
 
+// The error is pinned on every version (record/lt-filters-keys-finds/P68C_EmptyFinds.al:215-250), so the test fails with it.
 #[test]
-fn find_first_on_an_empty_set_without_the_result_names_the_table() {
-    let why = why_not_run("[Test] procedure T1() var R: Record \"B7 Row\"; begin R.FindFirst(); end;");
-    names_the_open_question(&why, &["FindFirst", "B7 Row", "error text"]);
+fn find_first_on_an_empty_set_without_the_result_raises_the_table_is_empty_error() {
+    let (l, oi) = compile("[Test] procedure T1() var R: Record \"B7 Row\"; begin R.FindFirst(); end;");
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let o = run_codeunit(&engine, &l, oi);
+    match &o[0].1 {
+        Outcome::Fail(m) => assert_eq!(m, "The B7 Row table is empty."),
+        other => panic!("{other:?}"),
+    }
 }
 
 #[test]

@@ -66,3 +66,38 @@ pub(super) fn published_application_rows(p: &Providers, t: &TableDef) -> Vec<Ent
         })
         .collect()
 }
+
+/// NAV App Extra: "Runtime Package ID" (1), "Tenant Visible" (2), "PerTenant Or Installed" (3). One row per listed app, both
+/// Booleans true: Published Application looks them up by "Runtime Package ID" and reads true for this app and for the app
+/// it depends on (record/TestPublishedApplicationSysTable.al:294-365).
+pub(super) fn nav_app_extra_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    p.engine()
+        .program
+        .apps
+        .iter()
+        .filter_map(|a| {
+            let id = al_builtins::ops::parse_guid(&a.id)?;
+            let mut r = blank(t);
+            r[pos(t, 1)] = Value::Guid(ids::runtime_package_id(id, a.dependency));
+            r[pos(t, 2)] = Value::Boolean(true);
+            r[pos(t, 3)] = Value::Boolean(true);
+            Some(Entry::ok(r))
+        })
+        .collect()
+}
+
+/// Installed Application: "Runtime Package ID" (1). One row per listed app: every app of the run is installed
+/// (record/TestPublishedApplicationSysTable.al:275-290 for this app, :342-365 for the app it depends on).
+pub(super) fn installed_application_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
+    p.engine()
+        .program
+        .apps
+        .iter()
+        .filter_map(|a| {
+            let id = al_builtins::ops::parse_guid(&a.id)?;
+            let mut r = blank(t);
+            r[pos(t, 1)] = Value::Guid(ids::runtime_package_id(id, a.dependency));
+            Some(Entry::ok(r))
+        })
+        .collect()
+}

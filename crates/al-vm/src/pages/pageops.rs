@@ -57,6 +57,20 @@ impl Session {
                     3 => true,
                     _ => return unsupported("Page.Run with more than three arguments"),
                 };
+                // A FieldRef nobody assigned raises before anything opens (pages/lt-page-run-overloads-testpart/P106RunErrors.al:
+                // P106_Err_FieldRefVariants, observation 'uninitialized').
+                if let Some(Value::Library(_, lib)) = args.get(2) {
+                    if !matches!(
+                        &*lib.borrow(),
+                        al_builtins::value::LibraryValue::FieldRef(..)
+                            | al_builtins::value::LibraryValue::KeyFieldRef(..)
+                    ) {
+                        return Err(error_code(
+                            "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized.",
+                            "NotInitialized",
+                        ));
+                    }
+                }
                 // Id 0 with a record resolves the page from the record's table LookupPageId; a
                 // table without one refuses like any unknown id (corpus
                 // handlers/TestPageRunModalLookupPageId_Tests.al).

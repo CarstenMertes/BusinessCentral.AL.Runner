@@ -430,6 +430,8 @@ impl Providers {
                 unreachable!("composed per read")
             }
             Virtual::NavAppInstalledApp => apps::nav_app_installed_app_rows(self, t),
+            Virtual::NavAppExtra => apps::nav_app_extra_rows(self, t),
+            Virtual::InstalledApplication => apps::installed_application_rows(self, t),
             Virtual::PublishedApplication => apps::published_application_rows(self, t),
             Virtual::TimeZone => host_tables::time_zone_rows(t, &self.ident),
             Virtual::Session => vec![mat::Entry::ok(identity::session_row(t, &self.ident))],

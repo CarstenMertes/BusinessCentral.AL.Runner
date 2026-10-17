@@ -79,10 +79,46 @@ impl Lowerer<'_> {
                 add(self, n, ty.clone(), &mut locals);
             }
         }
+        // OnQueryClosePage with a Boolean return that ends without giving a value lets the page close. Not pinned (the corpus
+        // triggers all `exit(true)` or `exit(false)`); Item Tracking Lines' ends with `Result` untouched when the availability
+        // check finds nothing to warn about, and Microsoft's tests close it (Tests-SCM, about 1,100 tests; assumption
+        // query-close-page-falls-through-as-true). A named return value starts unassigned: a read of it before an assignment is
+        // refused, and the trigger's answer is Yes when it ends without an `exit(value)` and without an assignment.
+        let qcp =
+            r.is_trigger() && r.name().eq_ignore_ascii_case("onqueryclosepage") && matches!(ret, Some(RtType::Boolean));
+        if qcp {
+            if let Some(l) = ret_local {
+                let flag = locals.len();
+                locals.push(ir::Slot {
+                    name: "__assigned".into(),
+                    ty: RtType::Boolean,
+                });
+                self.qcp_ret = Some((l, flag));
+            }
+        }
         let mut body = match r.body() {
             Some(b) => self.stmts_of(&b),
             None => Vec::new(),
         };
+        if qcp {
+            let assume = ir::Stmt::Assume(al_builtins::assumptions::Assumption::QueryClosePageFallsThroughAsTrue);
+            let yes = ir::Expr::Const(ir::Const::Boolean(true));
+            match self.qcp_ret.take() {
+                Some((l, flag)) => {
+                    let guard = vec![ir::Stmt::If(
+                        ir::Expr::Unary(ir::UnOp::Not, Box::new(ir::Expr::Load(ir::Place::Local(flag)))),
+                        vec![assume.clone(), ir::Stmt::Assign(ir::Place::Local(l), yes.clone())],
+                        Vec::new(),
+                    )];
+                    body = guard_exits(body, &guard);
+                    body.extend(guard);
+                }
+                None => {
+                    body.push(assume);
+                    body.push(ir::Stmt::Exit(Some(yes)));
+                }
+            }
+        }
         // The service tier implements a `[Native]` procedure; its AL body is empty. Running that body
         // would answer the default value of the return type, which is not what the platform answers.
         // A few have an implementation here (`platform_native`, pinned by the corpus); the others are refused.
@@ -190,6 +226,42 @@ impl Lowerer<'_> {
             ));
         }
         Ok(ir::Expr::Convert(RtType::Option(captions), Box::new(value)))
+    }
+
+    /// The places `min:max` a Decimal table field declares for `Format`: its `DecimalPlaces`, else the precision of its
+    /// `AutoFormatExpression` (type 10), else the 2:2 of a blank-expression amount (type 1) or 2:5 of a unit amount (type 2)
+    /// (pages/lt-page-autoformat-lookups/P113AutoFormat.al:P113_AF_TableFieldFormatIsPlain, pages/lt-page-presentation-properties/
+    /// P119Table.al:P119_DecimalPlaces). `None` for any other argument or field.
+    pub(crate) fn decimal_field_places(&mut self, arg: &SyntaxNode) -> Option<String> {
+        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+            return None;
+        };
+        let f = self.members[table].fields.iter().find(|f| f.id == field)?;
+        if !matches!(f.ty, Ty::Decimal) {
+            return None;
+        }
+        let prop = |n: &str| {
+            f.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                .map(|(_, v)| v.trim().to_string())
+        };
+        let digits = |p: &str| p.split(':').all(|x| x.trim().parse::<u32>().is_ok());
+        if let Some(p) = prop("DecimalPlaces").filter(|p| digits(p)) {
+            return Some(p.replace(' ', ""));
+        }
+        let expr = prop("AutoFormatExpression");
+        match prop("AutoFormatType").as_deref() {
+            Some("10") => {
+                let text = expr?;
+                let rest = text.split("<Precision,").nth(1)?;
+                let p = rest.split('>').next()?.trim().to_string();
+                digits(&p).then_some(p)
+            }
+            Some("1") if expr.as_deref() == Some("''") => Some("2:2".into()),
+            Some("2") if expr.as_deref() == Some("''") => Some("2:5".into()),
+            _ => None,
+        }
     }
 
     pub(crate) fn attributes_of(&self, r: &ast::Routine) -> Vec<ir::Attribute> {
@@ -674,10 +746,69 @@ impl Lowerer<'_> {
             }
             _ => rhs,
         };
+        // A Variant into a record's Text or Code field stays unconverted here: the field write turns a number it holds into its
+        // Format text (assumption number-to-text-is-format), where the same into a variable raises (VaTCompare.al af117).
+        let variant_into_text_field = matches!(place, ir::Place::Field(..))
+            && matches!(target_ty, Ty::Text(_) | Ty::Code(_))
+            // `FieldRef.Value()` is typed Unknown by the checker: a value only known at run time, like a Variant.
+            && matches!(self.ty_ref(&kids[1]), Ty::Variant | Ty::Unknown)
+            && matches!(op_kind, Some(SyntaxKind::Assign) | None);
+        // A Variant holding an Integer or a Date assigned to a Text variable raises TypeConversion (corpus
+        // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117 and af121); the conversion into a field, a parameter
+        // or a returned value is another path (assumptions number-to-text-is-format, date-to-text-is-format).
+        let variant_into_text_variable = matches!(
+            place,
+            ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_)
+        ) && matches!(target_ty, Ty::Text(_))
+            && matches!(self.ty_ref(&kids[1]), Ty::Variant)
+            && matches!(op_kind, Some(SyntaxKind::Assign) | None)
+            && matches!(&value, ir::Expr::Load(p) if matches!(p, ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_)));
+        if variant_into_text_variable {
+            let ir::Expr::Load(src_place) = value.clone() else {
+                unreachable!()
+            };
+            let is = |id: &str| -> L<ir::Expr> {
+                Ok(ir::Expr::Builtin {
+                    id: super::call::builtin_id(id)?,
+                    receiver: Some(Box::new(ir::Arg::Ref(src_place.clone()))),
+                    args: Vec::new(),
+                    ret_used: true,
+                })
+            };
+            let cond = ir::Expr::Binary(
+                ir::BinOp::Or,
+                Box::new(is("Variant.IsInteger#1")?),
+                Box::new(is("Variant.IsDate#1")?),
+            );
+            let converted = self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?;
+            let guarded = ir::Expr::Ternary(
+                Box::new(cond),
+                Box::new(ir::Expr::Fail {
+                    message: "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.".into(),
+                    code: "TypeConversion".into(),
+                }),
+                Box::new(converted),
+            );
+            return Ok(ir::Stmt::Assign(place, guarded));
+        }
         let value = match op_kind {
+            _ if variant_into_text_field => value,
             Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,
             Some(_) => ir::Expr::Convert(self.rt(&target_ty)?, Box::new(value)),
         };
+        if let Some((l, flag)) = self.qcp_ret {
+            if place == ir::Place::Local(l) {
+                // An assignment to the named return value of an OnQueryClosePage notes that it has one.
+                return Ok(ir::Stmt::If(
+                    ir::Expr::Const(ir::Const::Boolean(true)),
+                    vec![
+                        ir::Stmt::Assign(place, value),
+                        ir::Stmt::Assign(ir::Place::Local(flag), ir::Expr::Const(ir::Const::Boolean(true))),
+                    ],
+                    Vec::new(),
+                ));
+            }
+        }
         Ok(ir::Stmt::Assign(place, value))
     }
 
@@ -838,4 +969,51 @@ fn member_ident(n: &SyntaxNode) -> Option<String> {
     let text = n.text().to_string();
     let last = text.rsplit('.').next()?.trim().trim_matches('"');
     (!last.is_empty()).then(|| last.to_string())
+}
+
+/// `body` with `guard` in front of every `exit` that gives no value (the named return value of an OnQueryClosePage).
+fn guard_exits(body: Vec<ir::Stmt>, guard: &[ir::Stmt]) -> Vec<ir::Stmt> {
+    use ir::Stmt as S;
+    let mut out = Vec::with_capacity(body.len());
+    for s in body {
+        match s {
+            S::Exit(None) => {
+                out.extend(guard.iter().cloned());
+                out.push(S::Exit(None));
+            }
+            S::If(c, a, b) => out.push(S::If(c, guard_exits(a, guard), guard_exits(b, guard))),
+            S::While(c, b) => out.push(S::While(c, guard_exits(b, guard))),
+            S::Repeat(b, c) => out.push(S::Repeat(guard_exits(b, guard), c)),
+            S::AssertError(b) => out.push(S::AssertError(guard_exits(b, guard))),
+            S::For {
+                var,
+                from,
+                to,
+                down,
+                body,
+            } => out.push(S::For {
+                var,
+                from,
+                to,
+                down,
+                body: guard_exits(body, guard),
+            }),
+            S::Foreach { var, collection, body } => out.push(S::Foreach {
+                var,
+                collection,
+                body: guard_exits(body, guard),
+            }),
+            S::Case {
+                scrutinee,
+                branches,
+                otherwise,
+            } => out.push(S::Case {
+                scrutinee,
+                branches: branches.into_iter().map(|(e, b)| (e, guard_exits(b, guard))).collect(),
+                otherwise: guard_exits(otherwise, guard),
+            }),
+            other => out.push(other),
+        }
+    }
+    out
 }

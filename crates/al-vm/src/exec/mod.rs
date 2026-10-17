@@ -440,6 +440,10 @@ pub(crate) struct ForeachSite {
     /// Registers that hold the items (a `Value::Array`) and the next position (an `Integer`).
     pub items: u16,
     pub at: u16,
+    /// Registers that hold the List being run over and its version at the start: a change to the list ends the loop with an error
+    /// (collections/RefSemantics.al:Foreach_ListAddWhileIterating).
+    pub watch: u16,
+    pub ver: u16,
     /// The collection when it is a variable (the text of the error of a .NET variable that holds nothing).
     pub collection: Option<ir::Expr>,
     pub cap_loop: Option<u16>,

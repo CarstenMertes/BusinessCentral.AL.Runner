@@ -657,6 +657,9 @@ fn is_numeric(t: &Ty) -> bool {
 fn binary_ty(op: &str, l: &Ty, r: &Ty) -> Ty {
     match op {
         "=" | "<>" | "<" | "<=" | ">" | ">=" | "in" | "and" | "or" | "xor" => Ty::Boolean,
+        // Duration div / mod a number is a Decimal18 (corpus types/lt-duration-div-mod/DurationDivIntegerOverflow.al: it formats as
+        // '2,160,000,000' and an assignment to an Integer overflows with the Decimal18 text).
+        "div" | "mod" if matches!(l, Ty::Duration) => Ty::Decimal,
         "div" | "mod" => Ty::Integer,
         "/" if is_numeric(l) && is_numeric(r) => Ty::Decimal,
         "+" | "-" | "*" | "/" => match (l, r) {
@@ -675,6 +678,11 @@ fn binary_ty(op: &str, l: &Ty, r: &Ty) -> Ty {
             (Ty::DateTime, _) => Ty::DateTime,
             (Ty::Time, Ty::Time) if op == "-" => Ty::Duration,
             (Ty::Time, _) => Ty::Time,
+            // Duration +/- Duration is a BigInteger of milliseconds (corpus types/lt-duration-arithmetic/DurationAddDuration.al).
+            (Ty::Duration, Ty::Duration) if op == "+" || op == "-" => Ty::BigInteger,
+            // So is Duration +/- a whole number and a whole number +/- Duration (corpus types/lt-duration-arithmetic/
+            // DurationPlusInteger.al:DurationPlusInteger_ResultType_Result, IntegerPlusDuration.al, IntegerMinusDuration.al).
+            (Ty::Duration, n) | (n, Ty::Duration) if (op == "+" || op == "-") && is_numeric(n) => Ty::BigInteger,
             (Ty::Duration, _) => Ty::Duration,
             _ => Ty::Unknown,
         },

@@ -139,6 +139,39 @@ impl Session {
         }
         let rec = self.page_rec(st);
         self.set_xrec(st);
+        // A new line of a list starts below the last row the client holds: OnNewRecord sees that row as xRec, while the
+        // insert sees the row the cursor was on (misc/W2BelowXRec.al:NewInTheMiddle_CursorOnFirstRow_KeyBetween,
+        // NewInTheMiddle_CursorOnMiddleRow_KeyBefore, NewTwice_InTheMiddle: xRec=30 at OnNewRecord, 10 at OnInsertRecord).
+        // A list longer than its window first reads on to the end of the view (the new line goes after the last row).
+        let reads_on = {
+            let s = st.borrow();
+            keep_focus
+                && s.host.is_none()
+                && s.cursor == Cursor::Row
+                && !s.draft
+                && s.window_from_start
+                && s.window.len() == Self::WINDOW
+                && !s.window_eof
+        } && self.is_list(st)
+            && self.declares(st, "onaftergetrecord")
+            && self.declares(st, "onaftergetcurrrecord")
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord");
+        if reads_on {
+            self.read_block_past_the_window(st, false)?;
+        }
+        let last_held = {
+            let s = st.borrow();
+            (keep_focus
+                && s.host.is_none()
+                && self.is_list(st)
+                && s.cursor == Cursor::Row
+                && !s.draft
+                && s.window_from_start
+                && (s.window.len() < Self::WINDOW || s.window_whole))
+                .then(|| s.window.last().map(|w| w.stored.clone()))
+                .flatten()
+        };
         self.note_lower_key(st)?;
         // A list line started below a stored row: remember the row (see `PageState::after_new`).
         let anchor = (keep_focus && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
@@ -159,6 +192,7 @@ impl Session {
                 Cursor::Row
             };
             s.draft = true;
+            s.new_by_call = true;
             s.dirty = false;
             s.refused = false;
             if !keep_focus {
@@ -172,8 +206,16 @@ impl Session {
         }
         let existed = self.stored_row(&rec)?.is_some();
         st.borrow_mut().draft_stored = existed;
+        if let Some(last) = last_held {
+            self.set_xrec_fields(st, last);
+        }
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        if self.is_list(st) && st.borrow().host.is_none() {
+            // xRec is the new record itself when the line becomes current (misc/lt-probes-needed-7/PnGNewRecord.al:
+            // HandedRecordNoFilters `AGCR(,)`).
+            self.set_xrec(st);
+        }
         // A new row nobody has saved raises OnAfterGetCurrRecord but no OnAfterGetRecord (corpus
         // pageupdate/TestPageUpdateNewRow.al:OpenNew_TraceIsOneOnAfterGetCurrRecord).
         self.populate_expressions(st)?;
@@ -223,6 +265,15 @@ impl Session {
         self.pages.page_xrec = Some(self.page_xrec_fields(st));
         let modified = self.record_op(RecordOp::Modify, &rec, &mut [Value::Boolean(true)]);
         self.pages.page_xrec = None;
+        // The page keeps the row it read; when code behind it has changed that row since, whether the client has read it again
+        // first is not pinned (no corpus page test reaches DB:RecordChanged), so the page's own save refuses rather than fails.
+        if let Err(Signal::Error(e)) = &modified {
+            if e.code == "DB:RecordChanged" {
+                return unsupported(
+                    "a page saves a row that code changed after the page read it (whether the client reads the row again first is not pinned)",
+                );
+            }
+        }
         modified?;
         st.borrow_mut().dirty = false;
         self.set_xrec(st);
@@ -236,8 +287,28 @@ impl Session {
         // BelowxRec is Yes for a row added with New() at the end, as it is for OnNewRecord (corpus
         // handlers/TestPageRuntimeContracts.al:197-211 TestPage_New_AtTheEnd_PassesBelowxRecTrueToOnInsertRecord).
         // A row added in the middle is not pinned; it is given the same Yes as OnNewRecord gets.
+        let anchor = st.borrow().after_new.clone();
+        if let Some(anchor) = anchor.filter(|_| self.is_list(st) && st.borrow().host.is_none()) {
+            // The insert sees the row the line was started below as xRec (misc/W2BelowXRec.al:NewInTheMiddle_*).
+            self.set_xrec_fields(st, anchor);
+        }
         let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(true)])?;
         if go == Some(false) {
+            // A trigger that inserted the row itself and answered false leaves the page on a stored row: its next edit is
+            // a modify (as for a template step in `start_draft`). Not pinned for this answer: Base Application's Item
+            // Tracking Lines inserts into its temporary source this way (assumption page-oninsertrecord-false-after-code-insert).
+            if !st.borrow().draft_stored && self.stored_row(&rec)?.is_some() {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::PageOnInsertRecordFalseAfterCodeInsert,
+                );
+                {
+                    let mut s = st.borrow_mut();
+                    s.draft = false;
+                    s.dirty = false;
+                    s.cursor = Cursor::Row;
+                }
+                self.set_xrec(st);
+            }
             return Ok(());
         }
         if !self.page_event(st, "oninsertrecordevent", Some(true), Some(true))? {

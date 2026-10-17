@@ -239,6 +239,21 @@ impl<'a> Lowerer<'a> {
 
     fn convert_raw(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
         let slot = self.rt(target)?;
+        // A number variable into a Text or Code is AL0122 (must-not-compile 0069 for an Integer; the other numbers are not judged by
+        // the checker). Only a Variant (FieldRef.Value) converts at run time (assumption number-to-text-is-format), so the direct
+        // assignment stays refused.
+        if matches!(slot, RtType::Text(_) | RtType::Code(_))
+            && matches!(src, Ty::Integer | Ty::BigInteger | Ty::Decimal)
+        {
+            return Err(format!(
+                "{src} into a {} (a compile error in AL; only a Variant holding a number converts)",
+                if matches!(slot, RtType::Text(_)) {
+                    "Text"
+                } else {
+                    "Code"
+                }
+            ));
+        }
         // An identity conversion is not emitted (ADR-031 item 2.2): the value already has the slot's type. Only the
         // types whose conversion is the identity qualify; a Text or Code keeps its conversion (it checks the length of
         // what a concatenation made), as does everything that copies, wraps or normalizes.

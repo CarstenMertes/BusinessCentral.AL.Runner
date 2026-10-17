@@ -1458,15 +1458,16 @@ fn quit_in_onprereport_ends_the_run() {
     );
 }
 
-// A table view that is more than filters (marked only, re-sorted, descending, temporary) is
-// refused; a plain one is taken.
+// A table view that is more than filters (marked only, re-sorted, descending, temporary) is taken as well: the marks, key and
+// direction carry over and a temporary record counts by its filters only (corpus errors/lt-ms-refusals-136/P136Report.al:
+// P136_Report_ViewTemporaryMarkedAndSorted).
 #[test]
-fn set_table_view_refuses_a_view_that_is_more_than_filters() {
-    for (setup, plain) in [
-        ("", true),
-        ("V.MarkedOnly(true);", false),
-        ("V.SetCurrentKey(Name);", false),
-        ("V.Ascending(false);", false),
+fn set_table_view_takes_marks_key_and_direction() {
+    for setup in [
+        "",
+        "V.MarkedOnly(true);",
+        "V.SetCurrentKey(Name);",
+        "V.Ascending(false);",
     ] {
         let r = run_model(
             &format!(
@@ -1476,19 +1477,15 @@ fn set_table_view_refuses_a_view_that_is_more_than_filters() {
             ),
             TxModel::AutoCommit,
         );
-        if plain {
-            assert!(matches!(r, Ok(Value::Text(ref t)) if t == "set"), "{r:?}");
-        } else {
-            match r {
-                Err(Signal::Unsupported(m)) => assert!(m.contains("temporary, marked or re-sorted"), "{setup}: {m}"),
-                other => panic!("{setup}: {other:?}"),
-            }
-        }
+        assert!(matches!(r, Ok(Value::Text(ref t)) if t == "set"), "{setup}: {r:?}");
     }
-    let why = refusal(
-        "var R: Report \"STV Counting Report\"; V: Record \"RRE Row\" temporary; begin R.SetTableView(V); exit(''); end;",
+    let r = run_model(
+        "procedure F(): Text
+        var R: Report \"STV Counting Report\"; V: Record \"RRE Row\" temporary;
+        begin R.SetTableView(V); exit('set'); end;",
+        TxModel::AutoCommit,
     );
-    assert!(why.contains("temporary, marked or re-sorted"), "{why}");
+    assert!(matches!(r, Ok(Value::Text(ref t)) if t == "set"), "temporary: {r:?}");
 }
 
 // A report run that enters a transaction world inside a TryFunction is not pinned.

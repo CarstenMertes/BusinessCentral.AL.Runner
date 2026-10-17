@@ -1002,6 +1002,8 @@ fn walk_report_item<V: RefVisitor>(i: &mut ReportItem, parent: TableOf, v: &mut 
         on_post: _,
         request_filter_fields: _,
         columns,
+        max_iteration: _,
+        print_only_if_detail: _,
     } = i;
     let own = TableOf::object(*table);
     for (mine, theirs) in link {
@@ -1047,6 +1049,8 @@ fn walk_report<V: RefVisitor>(r: &mut Report, v: &mut V) {
         labels: _,
         dataset_unsupported: _,
         layout_file_missing: _,
+        rendering_layouts: _,
+        default_rendering_layout: _,
     } = r;
     let tables: Vec<Option<usize>> = items.iter().map(|i| i.table).collect();
     for i in items {

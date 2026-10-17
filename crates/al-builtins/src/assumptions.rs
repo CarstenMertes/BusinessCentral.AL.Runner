@@ -91,6 +91,48 @@ registry! {
         tests: "BOM Structure (Item.SetFilter(\"No.\", ItemFilter) with an empty filter); 49 Tests-SCM tests.",
         probe: "SetFilter(F, '') after SetRange(F, 1) and after SetFilter(F, '>1'), then GetFilters, in filter group 0 and 2.",
     },
+    FindEqualOnAnotherKey => {
+        id: "find-equal-on-another-key",
+        assumed: "Find with `=` among several directions (`=><`) on a record whose current key is not the primary key finds the row itself when the record's primary key names a row that passes the filters and the fields of the current key still hold the row's values; only then is the neighbour searched.",
+        tests: "Req. Wksh.-Make Order (Code: ReqLine.Find('=><') on the Requisition Line the Carry Out Action Msg. report read by its own sorting); Tests-SCM UnitCostOnPurchLineWithCarryOutActionMsg and the tests that carry out action messages.",
+        probe: "SetCurrentKey(SecondaryKey), set the key fields and the primary key to an existing row, Find('=>'), Find('=<') and Find('=><'); then change one key field and repeat.",
+    },
+    ClearAllKeepsTemporaryRows => {
+        id: "clear-all-keeps-temporary-rows",
+        assumed: "ClearAll() resets the fields and filters of a global temporary record but keeps its rows, as Clear(Rec) does.",
+        tests: "Purch.-Post ClearAllVariables (RunWithCheck relies on TempWhseRcptHeader, filled by SetWhseRcptHeader before); Tests-SCM tests that post a warehouse receipt of a purchase order.",
+        probe: "A global temporary record with a row and a filter, ClearAll(), then Count and GetFilters; the same in a codeunit run by Codeunit.Run.",
+    },
+    PageOnInsertRecordFalseAfterCodeInsert => {
+        id: "page-oninsertrecord-false-after-code-insert",
+        assumed: "When a page's OnInsertRecord inserts the row itself and answers false, the page goes on with that row as a stored one: the next edit of the row runs OnModifyRecord instead of OnInsertRecord again.",
+        tests: "Item Tracking Lines (InsertRecord inserts into the page's temporary source, ValidateAndInsert answers false); Tests-Manufacturing PostProductionJournalUsingLotItemTracking and the item tracking tests that set a lot and a quantity.",
+        probe: "A page with OnInsertRecord { Rec.Insert(); exit(false) } and OnModifyRecord { Rec.Modify(); exit(false) }: OpenNew, set the key, set a second field, OK; read the row and count the trigger calls.",
+    },
+    CodeCoverageRefreshIsANoOp => {
+        id: "code-coverage-refresh-is-a-no-op",
+        assumed: "CodeCoverageRefresh() changes nothing: the Code Coverage table is served from the live recording, so a read after CodeCoverageLog(false, ...) already holds the hits.",
+        tests: "System Application's Code Coverage Mgt.Refresh, called by Microsoft's code coverage helpers; 9 Tests-SCM-Costing tests.",
+        probe: "CodeCoverageLog(true, false), run code, CodeCoverageLog(false, false); count the Code Coverage rows before and after CodeCoverageRefresh().",
+    },
+    NumberToTextIsFormat => {
+        id: "number-to-text-is-format",
+        assumed: "An Integer, BigInteger, Decimal or Enum value (a Variant from FieldRef.Value) assigned to a record's Text or Code field is its default Format text (an enum value its member name), as Format gives it.",
+        tests: "Workflow Table Relation Value.CreateNew (Value := FieldRef.Value()); 114 Tests-Workflow tests.",
+        probe: "A Variant holding an Integer, a BigInteger (2645 and 1234567), a Decimal and an enum value assigned to a Text[50] and a Code[50] field and variable and a Text parameter; compare with Format.",
+    },
+    QueryClosedAfterLastRow => {
+        id: "query-closed-after-last-row",
+        assumed: "A query whose Read has returned false after its last row is closed: SetRange and SetFilter take a new filter and Open runs it again.",
+        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 125 Tests-Workflow tests.",
+        probe: "Open a query, Read to false, SetRange on a column, Open and Read again; the same without the SetRange; Open twice after the last row.",
+    },
+    XmlportExportsFlowfieldCalculated => {
+        id: "xmlport-exports-flowfield-calculated",
+        assumed: "An XmlPort field element or attribute bound to a FlowField exports the calculated value, as if CalcFields had run on the row; an import sets the in-memory value only.",
+        tests: "Import / Export Workflow (\"Workflow Step Argument\".\"Response Option Group\", a Lookup FlowField); 76 Tests-Workflow tests.",
+        probe: "An export-only XmlPort with a fieldelement over a Sum FlowField and over a Lookup FlowField of a row with children: the exported text with and without a CalcFields on the row before; an import of the same element.",
+    },
     DateAddWholeDecimal => {
         id: "date-add-whole-decimal",
         assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",
@@ -132,6 +174,12 @@ registry! {
         assumed: "A Text or Code of digits (optional sign, surrounding spaces ignored) converts into an Integer or BigInteger where a Variant meets a number, such as the key of Get; a text with anything else stays refused.",
         tests: "Incoming Document.FindFromIncomingDocumentEntryNo (`Get(Format(FieldRef.Value))`): about 400 Tests-ERM tests behind the Incoming Doc. Attach. FactBox.",
         probe: "Rec.Get(Format(5)) on an Integer key; Get('5'); Get('x'); Get('') and Get(' 5 ') on an Integer and a BigInteger key.",
+    },
+    CustomLayoutMerger => {
+        id: "custom-layout-merger",
+        assumed: "A SaveAs of a report whose selected rendering layout has Type = Custom raises the platform's CustomDocumentMergerEx with ObjectID, a ReportAction named after the format (SaveAsPdf, SaveAsWord, SaveAsExcel, SaveAsHtml), an EMPTY ObjectPayload, XmlData holding the Xml dataset SaveAs writes, LayoutData holding the layout file (read as UTF-8) and DocumentStream on the stream SaveAs was given (UTF-8); a subscriber that sets Success/IsHandled makes SaveAs answer true. A SaveAs no subscriber handles is refused.",
+        tests: "handlers/TestReportLayoutByNameMergerCapture.al pins the subscriber's signature and the layout text; Pageworks (about 50 tests whose first refusal is SaveAs as Pdf).",
+        probe: "A custom layout report saved as Pdf, Word, Excel and Html with a Base Application subscriber that records every argument: the ReportAction ordinals, the keys of ObjectPayload (layoutmimetype, layoutname, ...), the form of XmlData, the encoding of the streams, and SaveAs with no subscriber.",
     },
     CookieSetterResult => {
         id: "cookie-setter-result",
@@ -199,11 +247,11 @@ registry! {
         tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
         probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback.",
     },
-    TypedModalHandlerSkipsPageTriggers => {
-        id: "typed-modal-handler-skips-page-triggers",
-        assumed: "A [ModalPageHandler] typed as the Page itself stands in for the page: none of the page's triggers (OnInit, OnOpenPage, OnQueryClosePage, ...) run for that call.",
-        tests: "Tests-ERM `PaymentToleranceWarning` handler (`PaymentToleranceWarning.InitializeOption(OptionValue)`, page 591, whose OnOpenPage and OnQueryClosePage would overwrite the result) and about 47 more tests.",
-        probe: "A page with Trace logging in OnInit, OnOpenPage, OnQueryClosePage and OnClosePage, run with RunModal under a ModalPageHandler typed as the Page that logs and sets Response.",
+    QueryColumnRecordId => {
+        id: "query-column-record-id",
+        assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",
+        tests: "Base Application's \"Workflow Instance\" query (column Record_ID), opened by Workflow Step Instance.SetTableRelationValues and Approvals Mgmt.; 142 Tests-Workflow tests.",
+        probe: "A query with a column over a RecordId field of a table with rows: Open, Read, Format of the column, grouping and OrderBy on it, SetFilter on the column, SaveAsCsv.",
     },
     QueryMethodOverFlowField => {
         id: "query-method-over-flowfield",
@@ -234,6 +282,36 @@ registry! {
         assumed: "CurrPage.Update on a page with OnFindRecord and OnAfterGetCurrRecord asks OnFindRecord for the current row with Which `=`, then reads the row as after a move: OnAfterGetRecord, OnAfterGetCurrRecord and the parts' reads.",
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
+    },
+    PageRecProcedureSeesPageXrec => {
+        id: "page-rec-procedure-sees-page-xrec",
+        assumed: "A table procedure the page's code calls on Rec (Rec.InitType()) sees the page's xRec as its xRec, not a blank record.",
+        tests: "Test Item Lookup (TestSalesInvoiceItemLookupInDescription and four siblings): Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type.",
+        probe: "A table with a procedure returning xRec.\"No.\"; a page whose OnAfterGetCurrRecord returns it through Rec.Proc() after moving between two rows; the same in OnNewRecord.",
+    },
+    UpdateRefreshListOnFindRecord => {
+        id: "update-refresh-list-onfindrecord",
+        assumed: "CurrPage.Update on a list with OnFindRecord (with or without OnNextRecord) reads the rows as the pinned table of 3 rows with the cursor on the middle one does (misc/W2FindRecordUpdate.al), for any number of rows and any cursor position below a window.",
+        tests: "ERM Sales Subform (InvoiceAddingLinesUpdatesTotals) and about 120 more Tests-ERM tests whose sales and purchase subforms refresh.",
+        probe: "The same list with 1, 2, 5 and 25 rows and the cursor on the first, last and a middle row; a list with OnFindRecord only; a list part of a card.",
+    },
+    CaptionReadBeforeThePageRuns => {
+        id: "caption-read-before-the-page-runs",
+        assumed: "CurrPage.Caption read in a procedure the caller invokes on a Page variable before Run or RunModal answers the page's Caption property, and raises nothing.",
+        tests: "Alloc. Account Sales E2E Tests (TestOverrideGLAllocation) and 20 more Tests-ERM tests that open Edit Dimension Set Entries through Dimension Management.",
+        probe: "A page with Caption = 'X' and a procedure returning CurrPage.Caption, called on a Page variable before RunModal and after it closed; also with a Caption assigned in OnOpenPage.",
+    },
+    CaptionAssignedBeforeThePageRuns => {
+        id: "caption-assigned-before-the-page-runs",
+        assumed: "`PageVariable.Caption := x` before the variable's first Run or RunModal raises nothing, and the page shows x when it opens (its own OnOpenPage may assign another).",
+        tests: "SCM Transfers (UndoTransShpt_SNTracking and about 20 more Tests-SCM tests): Item Tracking Data Collection.SelectMultipleTrackingNo sets the caption of Item Tracking Summary before it runs.",
+        probe: "A page variable with Caption := 'X' before RunModal; read TestPage.Caption in the handler; the same with OnOpenPage assigning CurrPage.Caption.",
+    },
+    PartOfAPageThatNeverRan => {
+        id: "part-of-a-page-that-never-ran",
+        assumed: "CurrPage.<Part>.Page in a procedure called on a Page variable that was never run reaches a part page that exists, is initialised and is not open (as a hidden part does).",
+        tests: "O365 Simplify UI Sales Invoice (CreateInvoiceForCustomerWithCreditLimit) and the other Tests-SMB and Tests-ERM tests that send the credit limit notification.",
+        probe: "A page with a part and a procedure that calls a procedure of the part page and returns what it set; call it on a Page variable before Run and read the result.",
     },
     SetTableViewKeepsSetRecordPosition => {
         id: "set-table-view-keeps-set-record-position",
@@ -295,6 +373,54 @@ registry! {
         tests: "Microsoft's Get Demand To Reserve with its Assembly extension, run by Reservation Worksheet tests.",
         probe: "A report with SaveValues whose first run confirms the default and whose second run sets the variable before RunModal; read the variable in OnPreReport.",
     },
+    TempRecordArrayShares => {
+        id: "temporary-record-array-shares-table",
+        assumed: "The elements of an array of temporary records of one table share one temporary table (each element has its own filters and position).",
+        tests: "Microsoft's Tests-SCM-Planning (Inventory Profile Offsetting keeps demand and supply in InventoryProfile: array[2] of Record \"Inventory Profile\" temporary).",
+        probe: "An array[2] of a temporary record: insert through element 1, count and read through element 2.",
+    },
+    AbsOfDuration => {
+        id: "abs-of-duration-is-decimal",
+        assumed: "Abs of a Duration takes the Decimal overload: the Duration counts as its milliseconds and the answer is a Decimal.",
+        tests: "Microsoft's production order and routing code (Abs of a DateTime difference): Tests-SCM-Manufacturing and Tests-SCM-Costing, about 230 tests.",
+        probe: "D: Duration := -5000; X := Abs(D) into a Decimal and into a Duration; Format both; Abs(D) > 4999.",
+    },
+    DateToDateTime => {
+        id: "date-to-datetime-is-midnight",
+        assumed: "A Date assigned or converted to a DateTime is that day at midnight; the blank Date is the blank DateTime.",
+        tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
+        probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
+    },
+    SetViewSortingWithoutKey => {
+        id: "set-view-sorting-without-a-key",
+        assumed: "SetView of a SORTING(...) that no key starts with orders the rows by those fields, then by the primary key, as SetCurrentKey of such fields does.",
+        tests: "Microsoft's tests that set a view written by GetView after an ad hoc SetCurrentKey (Posting Preview and Item Journal tests): Tests-SCM and Tests-SCM-Manufacturing, about 110 tests.",
+        probe: "SetCurrentKey on fields no key starts with, GetView, a second record SetView(that view): compare the order and CurrentKey().",
+    },
+    DeleteAllSkipsRowsDeletedMeanwhile => {
+        id: "delete-all-skips-rows-deleted-meanwhile",
+        assumed: "DeleteAll(true) with triggers goes row by row and does not visit a row that an earlier row's OnDelete (or an event) deleted.",
+        tests: "Requisition Line OnDelete (deletes the lines of a higher level that follow) under Order Planning Mgt. PrepareRequisitionRecord: Tests-SCM-Manufacturing B42538_UserIDOnReqLine and Order Planning tests.",
+        probe: "A table whose OnDelete deletes the next row; DeleteAll(true) over three rows; count the rows and the OnDelete calls.",
+    },
+    RelationWhereOnTargetFlowFilter => {
+        id: "relation-where-on-a-flowfilter-of-the-target",
+        assumed: "A where() condition of a TableRelation on a FlowFilter field of the related table does not select rows when the relation is validated.",
+        tests: "Item Journal Line \"Bin Code\" (Bin.Code where(\"Item Filter\" = field(\"Item No.\"), \"Variant Filter\" = ...)): Tests-SCM and Tests-SCM-Manufacturing, about 10 tests.",
+        probe: "A table relation whose where() names a FlowFilter of the target; Validate a value that exists; Validate one that does not.",
+    },
+    RelationWhereReadsValidatedValue => {
+        id: "relation-where-reads-the-validated-value",
+        assumed: "A where() condition of a TableRelation that names the validated field itself (Code = field(\"Variant Code\")) reads the value being validated, not the value the field holds before the assignment.",
+        tests: "Prod. Order Line, Assembly Header and Assembly Line \"Variant Code\" (Item Variant.Code where(\"Item No.\" = field(\"Item No.\"), Code = field(\"Variant Code\"), ...)): Tests-SCM and Tests-SCM-Assembly, about 60 tests, among them SCM Order Tracking OrderTrackingOnSalesWithVariant.",
+        probe: "A table relation whose where() has Code = field(<the field itself>); Validate a value that exists; read the field and the error.",
+    },
+    QueryClosePageFallsThroughAsTrue => {
+        id: "query-close-page-falls-through-as-true",
+        assumed: "An OnQueryClosePage trigger with a Boolean return that reaches its end without giving a value lets the page close (its named return value starts as Yes).",
+        tests: "Item Tracking Lines OnQueryClosePage (its Result stays untouched when the availability check has no warning): about 1,100 tests of Tests-SCM, Tests-SCM-Manufacturing and Tests-SCM-Costing that close the page from a handler.",
+        probe: "A page with trigger OnQueryClosePage(CloseAction: Action) Result: Boolean that does not assign Result on one path; close it with OK from a handler; read the answer of RunModal.",
+    },
     ImplicitCategoryGroup => {
         id: "implicit-category-group",
         assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",
@@ -339,8 +465,8 @@ registry! {
     },
     FormatCodeSpelling => {
         id: "format-code-spelling",
-        assumed: "The codes of a Format string are read in any case (`<sign><integer>`) and with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`).",
-        tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets) and Base Application's percent texts.",
+        assumed: "The codes of a Format string are read in any case (`<sign><integer>`), with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`), and `Filler Char` stands for `Filler Character`.",
+        tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets), Base Application's percent texts, and the Data Exchange tests' GetNodeID (`<Integer,4><Filler Char,0>`, about 30 tests).",
         probe: "Format of an Integer, a Decimal and a Date with the same codes in capitals, small letters and with a blank after the comma; compare with the canonical spelling.",
     },
     TableExtensionBaseVars => {
@@ -470,29 +596,41 @@ registry! {
         tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
         probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again.",
     },
-    PageRunModalRecordTakesSelection => {
-        id: "page-run-modal-record-takes-selection",
-        assumed: "Page.RunModal(Id, Rec) that answers LookupOK leaves in Rec the row the page was closed on, and not its own filters or key.",
-        tests: "Gen. Journal Management TemplateSelection (PAGE.RunModal(0, GenJnlTemplate) = ACTION::LookupOK, then GenJnlTemplate.Name): ERM Apply Sales/Receivables and about 9 more Tests-ERM tests.",
-        probe: "Page.RunModal(Page::X, Rec) with a handler that does GoToKey and OK; read Rec; the same with Cancel; with a page variable's RunModal and GetRecord.",
-    },
     FilterChangeLandsOnNewLine => {
         id: "filter-change-lands-on-new-line",
         assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",
         tests: "Item Vendor Catalog (OpenNew, Filter.SetFilter(\"Item No.\"), then SetValue of the vendor): ERM Item Reference Purchase and about 12 more Tests-ERM tests.",
         probe: "An editable list opened with OpenNew and with OpenEdit over an empty filtered result: SetValue of a non-key field and the stored row's key; Next() and the row triggers that run.",
     },
-    DurationAddDuration => {
-        id: "duration-add-duration",
-        assumed: "A Duration plus or minus a Duration is a Duration of the summed or subtracted milliseconds; an overflow is refused. (Duration times a whole number, DateTime and Time with a Duration are pinned by types/TestDurationContracts.al and types/PUTimeArithmetic.al.)",
-        tests: "Match Bank Payments (the telemetry timers of MatchEntries) through Tests-Bank ERM Bank Reconciliation and ERM Cash Manager: about 268 tests.",
-        probe: "D1 + D2, D1 - D2 and a negative result for two Duration variables, Format(Result, 0, 9), and the overflow at the BigInteger edge.",
-    },
     CalcSumsFlowFieldFilter => {
         id: "calcsums-flowfield-filter",
         assumed: "CalcSums on a record with a filter on a FlowField sums the stored field over the rows whose calculated FlowField value passes the filter. (CalcSums over stored-field filters is pinned by record/TestRecordFlowField.al:109-160.)",
         tests: "Bank Acc. Recon. Test.GetTotalOutstanding (SetRange/SetFilter on the Check Ledger Entries FlowField of the Bank Account Ledger Entry), reached by posting a bank reconciliation: about 200 Tests-Bank tests.",
         probe: "SetFilter(FlowField, '<>0') then CalcSums(StoredField), with rows whose FlowField is zero and non-zero, and a SetRange(FlowField, 0).",
+    },
+    DeleteAllMarkedOnly => {
+        id: "delete-all-marked-only",
+        assumed: "Record.DeleteAll with MarkedOnly(true) deletes the marked rows that pass the filters and no other row, like Find, Next, Count and ModifyAll work on the marked set; with triggers and events as a DeleteAll with a filter.",
+        tests: "Post Inventory Cost to G/L (PostValueEntryToGL.MarkedOnly(true); DeleteAll() in OnPostDataItem, then CapValueEntryLoop Gets the capacity entries left): SCM Kitting D3 Part 2 and SCM Costing Batch, and every test that posts inventory cost with the report.",
+        probe: "Mark two of three rows, MarkedOnly(true), DeleteAll: which rows remain; the same with a filter that excludes a marked row, and DeleteAll(true) with an OnDelete trigger.",
+    },
+    CodeDigitsCompareAsNumbers => {
+        id: "code-digits-compare-as-numbers",
+        assumed: "In <, <=, > and >= two Code values that are digits only and have no leading zero are ordered as numbers (the shorter is the smaller); anything else keeps the text order. Equality and the order of keys and filters are unchanged.",
+        tests: "No. Series NoIsWithinValidRange (CurrentNo > EndingNo with the Cronus series P-CR+, 109001 to 1010999): Purch. Correct Cr. Memo, O365 Cancel Purch Cr Memo Dim., ERM Sales/Purch. Correct. Docs and every test that posts or corrects through that series. Pinned for one pair: '10' < '9' is No.",
+        probe: "Code values '9' and '10', '09' and '9', '9A' and '10A', '100' and '99', '0' and '00', digits with a sign: the four operators and equality; and a SetRange over a Code field holding '9' and '10'.",
+    },
+    ReportRenderDiscarded => {
+        id: "report-render-discarded",
+        assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",
+        tests: "Post Inventory Cost to G/L through Library - Costing and Library - Assembly PostInvtCostToGL (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch); Check.SaveAsPdf (ERM Cash Manager, Match Bank Rec. Scenarios).",
+        probe: "A report on the list saved to a temp file and to a stream on a Windows tier: the answer, the order of the triggers, File.Exists and TempBlob.Length afterwards.",
+    },
+    HiddenPartUpdateIsNoop => {
+        id: "hidden-part-update-is-noop",
+        assumed: "CurrPage.Update (also with false) in the code of a part page that the host's code created without opening it (a literal Visible = false) does nothing and raises no error.",
+        tests: "Sales Invoice, Purchase Invoice and the other document pages call CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId) in OnAfterGetCurrRecord, which ends in CurrPage.Update(false): about 900 Tests-ERM, Tests-SCM and Tests-Misc tests.",
+        probe: "A host with part(P; ...) { Visible = false } whose OnAfterGetCurrRecord calls CurrPage.P.Page.Ping(), where Ping calls CurrPage.Update(false) and CurrPage.Update(true) and then reads Rec.",
     },
 }
 

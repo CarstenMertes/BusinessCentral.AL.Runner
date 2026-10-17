@@ -308,7 +308,10 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             crate::assumptions::assume(crate::assumptions::Assumption::BooleanToTextAsFormat);
             Value::Code(fit(if b { "YES" } else { "NO" }.to_string(), *max)?.into())
         }
-        (v, t) => return unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
+        // A Date into a DateTime is that day at midnight, the blank Date the blank DateTime (as CreateDateTime(D, 0T)). Not
+        // pinned; Microsoft's production order code assigns a Date to a DateTime (Tests-SCM-Manufacturing, 20 tests;
+        // assumption date-to-datetime-is-midnight).
+        (v, t) => return convert_rare(v, t),
     })
 }
 
@@ -357,13 +360,24 @@ fn fit_txt(s: crate::text::Txt, max: Option<u32>) -> Result<crate::text::Txt, Si
     }
 }
 
+/// The value an over-long text error shows: the first 200 characters and `...` after them (recordref/lt-refs/RfTValues.al:
+/// Value_Truncation_And_Length `text250_over`, misc/lt-system-functions/ErrorMessage.al `af235`).
+pub fn shown_in_length_error(s: &str) -> String {
+    if s.chars().count() > 200 {
+        format!("{}...", s.chars().take(200).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
 fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
     match max {
         // types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `too_long_11` (a Code[10] given 11 characters).
         Some(m) if Value::text_len(&s) > m as usize => crate::native::raise(
             format!(
-                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {s}",
-                Value::text_len(&s)
+                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                Value::text_len(&s),
+                shown_in_length_error(&s)
             ),
             "StringLengthExceeded",
         ),
@@ -403,7 +417,8 @@ pub fn int_arith(op: Arith, a: i32, b: i32) -> Result<i32, Signal> {
         Arith::Mul => a.checked_mul(b),
         Arith::IntDiv | Arith::Mod if b == 0 => return raise("Attempted to divide by zero.", "AL:DivideByZero"),
         Arith::IntDiv => a.checked_div(b),
-        Arith::Mod => Some(a.wrapping_rem(b)),
+        // The smallest Integer mod -1 overflows, as div does (types/lt-scalars/ScT70056.al:Integer_Overflow `min_mod_neg`).
+        Arith::Mod => a.checked_rem(b),
         Arith::Div => return Err(Signal::Unsupported("int_arith of the quotient operator".into())),
     };
     n.ok_or_else(arith_overflow)
@@ -428,6 +443,134 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         }
     }
     arith_general(op, l, r)
+}
+
+/// The conversions no hot path reaches: a Date into a DateTime, else the refusal.
+#[cold]
+#[inline(never)]
+fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
+    match (&v, t) {
+        (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
+        // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
+        // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
+        (Value::Integer(_), RtType::Text(_)) => raise(
+            "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.",
+            "TypeConversion",
+        ),
+        _ => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
+    }
+}
+
+/// A number a Variant holds (`FieldRef.Value()`) assigned to a Text or Code field of a record: its default `Format` text. Not pinned:
+/// assumption number-to-text-is-format. Base Application's Workflow Table Relation Value.CreateNew does `Value := FieldRef.Value()` into
+/// a Text[250] field (114 Tests-Workflow tests). A Variant into a Text *variable* is not this: it raises (VaTCompare.al:af117).
+/// `None` when the value is no number or the target no Text or Code.
+#[cold]
+#[inline(never)]
+pub fn number_into_text_field(
+    v: &Value,
+    t: &RtType,
+    ctx: &dyn crate::format::FormatCtx,
+) -> Option<Result<Value, Signal>> {
+    if !matches!(
+        v,
+        Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Enum(..)
+    ) {
+        return None;
+    }
+    let (max, code) = match t {
+        RtType::Text(max) => (max, false),
+        RtType::Code(max) => (max, true),
+        _ => return None,
+    };
+    crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
+    let text = match crate::format::try_format(v, 0, 0, ctx) {
+        Ok(text) => text,
+        Err(e) => return Some(Err(Signal::Unsupported(e))),
+    };
+    Some(if code {
+        fit(upper_code(text.trim()), *max).map(|c| Value::Code(c.into()))
+    } else {
+        fit_txt(text.into(), *max).map(Value::Text)
+    })
+}
+
+/// A Date into a DateTime is that day at midnight, the blank Date the blank DateTime (as CreateDateTime(D, 0T)). Not pinned;
+/// Microsoft's production order code assigns a Date to a DateTime (Tests-SCM-Manufacturing, 20 tests; assumption
+/// date-to-datetime-is-midnight). Kept off the conversion's hot path.
+#[cold]
+#[inline(never)]
+fn date_to_datetime(n: i32) -> Value {
+    if n == 0 {
+        return Value::DateTime(0);
+    }
+    crate::assumptions::assume(crate::assumptions::Assumption::DateToDateTime);
+    Value::DateTime((i64::from(n) - 1) * 86_400_000 + 1)
+}
+
+/// A whole number and a Duration add and subtract as milliseconds, into a BigInteger (types/lt-duration-arithmetic/DurationPlusInteger.al
+/// `sum_format_default = 2000`, IntegerPlusDuration.al, IntegerMinusDuration.al); the amount is not pinned for overflow. Used to be assumed; Microsoft's routing code
+/// adds a day in milliseconds to a Duration (Tests-SCM-Manufacturing, 20 tests; assumption duration-arithmetic-with-number).
+#[cold]
+#[inline(never)]
+fn duration_with_number(op: Arith, duration_first: bool, d: i64, k: i64) -> Result<Value, Signal> {
+    let (a, b) = if duration_first { (d, k) } else { (k, d) };
+    match op {
+        Arith::Add => a.checked_add(b),
+        _ => a.checked_sub(b),
+    }
+    .map(Value::BigInteger)
+    .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()))
+}
+
+/// Duration `/`, `div` and `mod` by a whole number, and Duration / Duration (pinned by corpus
+/// types/lt-filter-enum-relation-duration-guid/D_Duration.al:354-370 with 90000 ms: `/ 4` is 22500 ms, `div 7` is 12,857, `mod 7` is 1,
+/// Duration / Duration is the Decimal 3, `/ 7` raises ConversionCast because the quotient is no whole number of milliseconds).
+#[cold]
+#[inline(never)]
+fn duration_divide(op: Arith, a: i64, r: &Value) -> Result<Value, Signal> {
+    let (b, by_duration) = match r {
+        Value::Duration(ms) => (*ms, true),
+        other => (int_of(other).unwrap_or(0), false),
+    };
+    if b == 0 {
+        return raise("Attempted to divide by zero.", "AL:DivideByZero");
+    }
+    if by_duration {
+        // Only the quotient of two Durations is pinned.
+        if op != Arith::Div {
+            return unsupported(format!("{} of two Durations (not pinned)", op.describe()));
+        }
+        let q = Decimal::from(a)
+            .checked_div(Decimal::from(b))
+            .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+            .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
+        return Ok(Value::Decimal(q));
+    }
+    match op {
+        Arith::IntDiv | Arith::Mod => {
+            // The result formats as a Decimal (`D1 div 7` is '12,857' in Format; D_Duration.al:369).
+            Ok(Value::Decimal(Decimal::from(if op == Arith::IntDiv {
+                a / b
+            } else {
+                a % b
+            })))
+        }
+        Arith::Div if a % b == 0 => Ok(Value::Duration(a / b)),
+        Arith::Div => {
+            let q = Decimal::from(a)
+                .checked_div(Decimal::from(b))
+                .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+                .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
+            raise(
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {q} to System.Int64."
+                ),
+                "ConversionCast",
+            )
+        }
+        _ => unsupported("Duration arithmetic (not pinned)".to_string()),
+    }
 }
 
 fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
@@ -488,18 +631,21 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::Duration)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
-        // Duration +/- Duration is a Duration in milliseconds. Assumed (registry entry duration-add-duration): Match Bank
-        // Payments adds the Durations of its telemetry timers.
+        // Duration +/- Duration is a BigInteger of milliseconds: `Format(D1 + D2)` answers '4000', not a duration text, and `R := D1 + D2`
+        // converts it back (corpus types/lt-duration-arithmetic/DurationAddDuration.al:Add_TwoVariables_Result, sum_format_default).
         (V::Duration(a), V::Duration(b)) if matches!(op, Arith::Add | Arith::Sub) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationAddDuration);
             let n = if op == Arith::Add {
                 a.checked_add(*b)
             } else {
                 a.checked_sub(*b)
             };
             return n
-                .map(V::Duration)
+                .map(V::BigInteger)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
+        }
+        // A whole number and a Duration add and subtract as milliseconds, into a BigInteger (`duration_with_number`).
+        (V::Duration(d), n) | (n, V::Duration(d)) if matches!(op, Arith::Add | Arith::Sub) && int_of(n).is_some() => {
+            return duration_with_number(op, matches!(l, V::Duration(_)), *d, int_of(n).unwrap_or(0));
         }
         // DateTime + Duration is a DateTime and DateTime - DateTime a Duration, in milliseconds
         // (types/TestDurationContracts.al:44-171, session/TestDateTimeContracts.al:52-90). The undefined
@@ -612,7 +758,14 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Duration(a - b));
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
-        (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
+        // An undefined date has no difference, and the whole range is too wide a difference (types/lt-datetime/
+        // Arithmetic.al:Date_Plus_Minus_Integer `af30`, `af32`, `af34`).
+        (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => {
+            if *a == 0 || *b == 0 || (a - b).abs() >= 3_652_058 {
+                return date_invalid();
+            }
+            return Ok(V::Integer(a - b));
+        }
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
         // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
         // would round or truncate: not pinned, so it stays refused below (docs/probes-needed.md).
@@ -620,12 +773,37 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             if matches!(n, V::Decimal(_)) {
                 crate::assumptions::assume(crate::assumptions::Assumption::DateAddWholeDecimal);
             }
-            let n = whole_days(n).expect("whole") as i32;
-            return Ok(V::Date(if op == Arith::Add { a + n } else { a - n }, *c));
+            // The result stays within 0001-01-01 and 9999-12-31, an undefined date takes no days, and the sum of days is
+            // computed in 32 bits (Arithmetic.al:Date_Arithmetic_Errors, Date_Plus_Minus_Integer `af39`, `af41`).
+            let n = whole_days(n).expect("whole");
+            let Ok(n) = i32::try_from(n) else {
+                return raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+            };
+            let sum = if op == Arith::Add {
+                a.checked_add(n)
+            } else {
+                a.checked_sub(n)
+            };
+            let Some(sum) = sum else {
+                return raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+            };
+            if *a == 0 || !(1..=3_652_059).contains(&sum) {
+                return date_invalid();
+            }
+            return Ok(V::Date(sum, *c));
         }
         _ => {}
     }
     let (Some(a), Some(b)) = (as_decimal(l), as_decimal(r)) else {
+        // Duration `/`, `div` and `mod` a whole number, and Duration / Duration (types/lt-filter-enum-relation-duration-guid/
+        // D_Duration.al:Duration_Arithmetic). Here, off the path of the numbers.
+        if let V::Duration(d) = l {
+            if matches!(op, Arith::Div | Arith::IntDiv | Arith::Mod)
+                && (int_of(r).is_some() || matches!(r, V::Duration(_)))
+            {
+                return duration_divide(op, *d, r);
+            }
+        }
         return unsupported(format!(
             "{} of {l} and {r}",
             op.describe(),
@@ -651,6 +829,8 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Decimal(
                 a.checked_div(b)
                     .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+                    // A quotient carries no trailing zeros (types/lt-scalars/ScT70056.al:Integer_DivisionResult `value 3.5`).
+                    .map(|q| q.normalize())
                     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?,
             ));
         }
@@ -658,7 +838,8 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         Arith::Mod => Some(a % b),
     }
     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
-    if any_dec && !matches!(op, Arith::IntDiv | Arith::Mod) {
+    // A Decimal mod keeps the fraction (types/lt-scalars/ScT70058.al:Decimal_Basic `mod_int`, Decimal_DivModTruncation `mod2`).
+    if any_dec && !matches!(op, Arith::IntDiv) {
         return Ok(V::Decimal(res));
     }
     let n = res.trunc().mantissa() / 10i128.pow(res.trunc().scale());
@@ -697,15 +878,117 @@ fn int_of(v: &Value) -> Option<i64> {
     }
 }
 
+fn date_invalid<T>() -> Result<T, Signal> {
+    raise("The date is not valid.", "DateInvalid")
+}
+
+/// `=`, `<>`, `<`, ... on two values in AL code: as [`compare`], except that an undefined date against 0001-01-01 raises
+/// (types/lt-datetime/Arithmetic.al:Date_Comparisons `af72`, `af75`, `af79`).
+pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering, Signal> {
+    if let (Value::Date(a, _), Value::Date(b, _)) = (l, r) {
+        if (*a == 0 && *b == 1) || (*a == 1 && *b == 0) {
+            return date_invalid();
+        }
+    }
+    if ordered { compare_order(l, r) } else { compare(l, r) }
+}
+
 /// Ordering for `<`, `<=`, `>` and `>=`: as [`compare`], except that text follows the culture order
 /// (types/TestFormatEvaluateTextContracts.al:Operators_TextComparison_IsCultureOrderAndCaseSensitiveEquality).
 pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
+    // Two Codes of digits only are ordered as numbers: `'10' < '9'` is No
+    // (text/lt-text-functions/TextCompare.Codeunit.al:CodeComparison `tenlt`, lines 231-232 and 245). A Text keeps the
+    // culture order (a25 and a26 of the same file). The pin is one pair; leading zeros, a sign or a Code that mixes digits
+    // and letters are not pinned and keep the order of a text (assumption code-digits-compare-as-numbers).
+    if let (Value::Code(a), Value::Code(b)) = (l, r) {
+        if let Some(o) = digit_code_order(a, b) {
+            crate::assumptions::assume(crate::assumptions::Assumption::CodeDigitsCompareAsNumbers);
+            return Ok(o);
+        }
+    }
     if let (Value::Text(_) | Value::Code(_), Value::Text(_) | Value::Code(_)) = (l, r) {
         if let (Some(a), Some(b)) = (crate::native::text_of(l), crate::native::text_of(r)) {
             return crate::collation::compare(&a, &b).map_err(Signal::Unsupported);
         }
     }
     compare(l, r)
+}
+
+/// The order of two Codes that are digits only and have no leading zero: the shorter is the smaller, else the text order.
+/// `None` for anything else.
+fn digit_code_order(a: &str, b: &str) -> Option<Ordering> {
+    let plain = |t: &str| !t.is_empty() && !t.starts_with('0') && t.bytes().all(|c| c.is_ascii_digit());
+    (plain(a) && plain(b)).then(|| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+}
+
+/// The order of two text key values: trailing blanks do not count, the letters compare without regard to their case first
+/// (collation order), and two texts that differ only in case are ordered by it (`a` before `A`), so they are two keys. A
+/// character the collation has no weight for falls back to the code point order of the trimmed texts
+/// (record/lt-record-read/RcAGetFind.al:Get_Text_Key, Find_Text_Key_Case_Insensitive).
+pub fn text_key_order(a: &str, b: &str) -> Ordering {
+    // The common case first, without trimming or copying: byte-equal texts are equal, and two texts that first differ
+    // at an upper-case letter or a digit are ordered by that byte (the collation agrees with the code points there), or,
+    // when one is the start of the other, by what the longer one adds besides blanks.
+    let (ab, bb) = (a.as_bytes(), b.as_bytes());
+    let n = ab.iter().zip(bb).take_while(|(x, y)| x == y).count();
+    if n == ab.len() && n == bb.len() {
+        return Ordering::Equal;
+    }
+    let plain = |c: u8| c.is_ascii_uppercase() || c.is_ascii_digit();
+    if n < ab.len() && n < bb.len() && plain(ab[n]) && plain(bb[n]) {
+        return ab[n].cmp(&bb[n]);
+    }
+    if n == ab.len() || n == bb.len() {
+        let tail = if n == ab.len() { &bb[n..] } else { &ab[n..] };
+        if tail.iter().all(|c| *c == b' ') {
+            return Ordering::Equal;
+        }
+        if tail.iter().all(|c| c.is_ascii_graphic() || *c == b' ') && tail.iter().any(|c| *c != b' ') {
+            return if n == ab.len() {
+                Ordering::Less
+            } else {
+                Ordering::Greater
+            };
+        }
+    }
+    let (a, b) = (a.trim_end_matches(' '), b.trim_end_matches(' '));
+    if a == b {
+        return Ordering::Equal;
+    }
+    // Letters and digits only: the case-folded byte order is the collation's, and the first difference in case decides a tie.
+    let plain = |t: &str| t.bytes().all(|c| c.is_ascii_alphanumeric());
+    if plain(a) && plain(b) {
+        let folded = a
+            .bytes()
+            .map(|c| c.to_ascii_uppercase())
+            .cmp(b.bytes().map(|c| c.to_ascii_uppercase()));
+        if folded != Ordering::Equal {
+            return folded;
+        }
+        for (x, y) in a.bytes().zip(b.bytes()) {
+            if x != y {
+                return if x.is_ascii_lowercase() {
+                    Ordering::Less
+                } else {
+                    Ordering::Greater
+                };
+            }
+        }
+        return Ordering::Equal;
+    }
+    crate::collation::compare(a, b).unwrap_or_else(|_| a.cmp(b))
+}
+
+/// [`compare`] for the values of a key: text follows [`text_key_order`].
+#[inline]
+pub fn compare_key_value(l: &Value, r: &Value) -> Result<Ordering, Signal> {
+    match (l, r) {
+        (Value::Integer(a), Value::Integer(b)) => Ok(a.cmp(b)),
+        (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) if !a.has_marker() && !b.has_marker() => {
+            Ok(text_key_order(a, b))
+        }
+        _ => compare(l, r),
+    }
 }
 
 /// Ordering for `=`, `<>`, `<`, ... ; `None` when the values are not comparable.
@@ -730,7 +1013,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if !a.has_marker() && !b.has_marker() => {
             return Ok(a.cmp(b));
         }
-        // A call stack with an untracked frame holds the marker U+E000, so it is not empty: against the empty text the
+        // A call stack with an untracked frame holds the marker `CALL_STACK_MARK`, so it is not empty: against the empty text the
         // answer is exact (Assert.ExpectedError: `GetLastErrorCallstack = ''`; Tests-ERM, 92 tests). Against any other
         // text it stays refused.
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if (a.has_marker() && b.as_str().is_empty()) => {
@@ -835,20 +1118,43 @@ pub fn truthy(v: &Value) -> Result<bool, Signal> {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn text_keys_are_equal_without_trailing_blanks_and_ordered_by_case_last() {
+        use super::text_key_order;
+        use std::cmp::Ordering::{Equal, Greater, Less};
+        // record/lt-record-read/RcAGetFind.al:Get_Text_Key: 'abc ' is the key 'abc', 'ABC' is another one.
+        assert_eq!(text_key_order("abc", "abc  "), Equal);
+        assert_ne!(text_key_order("abc", "ABC"), Equal);
+        assert_eq!(text_key_order("abc", "ABC"), Less);
+        // :Find_Text_Key_Case_Insensitive: 'abc' < 'abc x' < 'ABD' = 'abd' (case last) < 'b'.
+        assert_eq!(text_key_order("abc x", "ABD"), Less);
+        assert_eq!(text_key_order("abd", "ABD"), Less);
+        assert_eq!(text_key_order("ABD", "b"), Less);
+        assert_eq!(text_key_order("a_b", "a1"), Less);
+        assert_eq!(text_key_order("b", "ABD"), Greater);
+        // The fast paths: a first difference at a capital or digit, and a text that starts the other.
+        assert_eq!(text_key_order("A1", "A10"), Less);
+        assert_eq!(text_key_order("A9", "A10"), Greater);
+        assert_eq!(text_key_order("ABC", "ABC   "), Equal);
+        assert_eq!(text_key_order("ABC   ", "ABC"), Equal);
+        assert_eq!(text_key_order("ABC", "ABC X"), Less);
+        assert_eq!(text_key_order("ABC X", "ABC"), Greater);
+    }
+
     use super::*;
 
     // Microsoft test exception (no corpus pin): Match Bank Payments adds the Durations of its telemetry timers.
     #[test]
     fn two_durations_add_and_subtract_as_milliseconds() {
         let add = arith(Arith::Add, &Value::Duration(1500), &Value::Duration(500)).unwrap();
-        assert!(matches!(add, Value::Duration(2000)));
+        assert!(matches!(add, Value::BigInteger(2000)));
         let sub = arith(Arith::Sub, &Value::Duration(500), &Value::Duration(1500)).unwrap();
-        assert!(matches!(sub, Value::Duration(-1000)));
+        assert!(matches!(sub, Value::BigInteger(-1000)));
     }
 
     #[test]
     fn a_text_with_the_call_stack_marker_is_not_equal_to_the_empty_text() {
-        let marked = Value::Text("a\u{E000}b".into());
+        let marked = Value::Text("a\u{FDD0}b".into());
         let empty = Value::Text("".into());
         assert_eq!(compare(&marked, &empty).unwrap(), Ordering::Greater);
         assert_eq!(compare(&empty, &marked).unwrap(), Ordering::Less);
@@ -896,6 +1202,8 @@ mod tests {
             Arith::Mul => x * y,
             Arith::IntDiv | Arith::Mod if y == 0 => return Some(Err(ZERO)),
             Arith::IntDiv => x / y,
+            // The smallest Integer mod -1 overflows (types/lt-scalars/ScT70056.al:Integer_Overflow `min_mod_neg`).
+            Arith::Mod if a == i32::MIN && b == -1 => return Some(Err(OVERFLOW)),
             Arith::Mod => x % y,
             Arith::Div => return None,
         };
@@ -1211,10 +1519,63 @@ mod tests {
         ));
         assert!(
             matches!(
-                arith(Arith::Div, &hour, &Value::Integer(2)),
+                arith(Arith::Mul, &hour, &Value::Duration(2)),
                 Err(Signal::Unsupported(_))
             ),
             "other Duration arithmetic is not pinned"
+        );
+    }
+
+    /// Duration `/`, `div` and `mod` with a whole number, and Duration / Duration, as corpus
+    /// types/lt-filter-enum-relation-duration-guid/D_Duration.al:Duration_Arithmetic pins them (D1 = 90000 ms, D2 = 30000 ms).
+    /// A Variant's number into a record's Text or Code field is its Format text (assumption number-to-text-is-format; a BigInteger has
+    /// no thousands separator in Format); into a Text variable an Integer raises TypeConversion (corpus VaTCompare.al af117).
+    #[test]
+    fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {
+        use crate::value::RtType as T;
+        struct NoEnums;
+        impl crate::format::FormatCtx for NoEnums {
+            fn enum_name(&self, _: u32, _: i32) -> String {
+                String::new()
+            }
+        }
+        let got = number_into_text_field(&Value::BigInteger(2645), &T::Text(Some(250)), &NoEnums);
+        assert!(matches!(&got, Some(Ok(Value::Text(t))) if &**t == "2645"), "{got:?}");
+        let got = number_into_text_field(&Value::Integer(7), &T::Code(Some(20)), &NoEnums);
+        assert!(matches!(&got, Some(Ok(Value::Code(t))) if &**t == "7"), "{got:?}");
+        assert!(number_into_text_field(&Value::Boolean(true), &T::Text(None), &NoEnums).is_none());
+        let Err(Signal::Error(e)) = convert(Value::Integer(5), &T::Text(Some(10))) else {
+            panic!("an Integer into a Text variable raises");
+        };
+        assert_eq!(e.code, "TypeConversion");
+    }
+
+    #[test]
+    fn a_duration_divides_and_takes_the_remainder_by_a_whole_number() {
+        let d1 = Value::Duration(90_000);
+        assert!(matches!(
+            arith(Arith::Div, &d1, &Value::Integer(4)),
+            Ok(Value::Duration(22_500))
+        ));
+        assert!(matches!(
+            arith(Arith::IntDiv, &d1, &Value::Integer(7)),
+            Ok(Value::Decimal(x)) if x == Decimal::from(12_857)
+        ));
+        assert!(matches!(
+            arith(Arith::Mod, &d1, &Value::Integer(7)),
+            Ok(Value::Decimal(x)) if x == Decimal::from(1)
+        ));
+        assert!(matches!(
+            arith(Arith::Div, &d1, &Value::Duration(30_000)),
+            Ok(Value::Decimal(x)) if x == Decimal::from(3)
+        ));
+        let Err(Signal::Error(e)) = arith(Arith::Div, &d1, &Value::Integer(7)) else {
+            panic!("a fraction of a millisecond raises");
+        };
+        assert_eq!(e.code, "ConversionCast");
+        assert_eq!(
+            e.message,
+            "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value 12857.1428571428571 to System.Int64."
         );
     }
 

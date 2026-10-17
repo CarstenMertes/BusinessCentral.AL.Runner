@@ -68,9 +68,13 @@ fn compile_corpus() -> usize {
 /// the day's value from 2.106 to 1.958 million, so the limit was back at the original 1 990 000 per object (1.958 million that day).
 ///
 /// The unit changed from the object to the KiB of source at corpus bump 12 (14 523 191 bytes, 4021 objects; 8.92 billion
-/// instructions = 629 042 per KiB). The limit is that value plus 5 %, 660 000. Compare values only on one compiler build.
-const LIMIT_INSTRUCTIONS_PER_KIB: u64 = 660_000;
-const LIMIT_CPU_NS_PER_KIB: u64 = 660_000;
+/// instructions = 629 042 per KiB). The limit was that value plus 5 %, 660 000.
+///
+/// Corpus bump 14 (18.9 MB of source): 662 399 per KiB. Main had grown to 655 403 on the old corpus (the night's language
+/// and Microsoft-test work, +4.2 %) and the bump's files add 1.1 %. Same rule, the day's value plus 5 %: 695 000. Compare
+/// values only on one compiler build.
+const LIMIT_INSTRUCTIONS_PER_KIB: u64 = 695_000;
+const LIMIT_CPU_NS_PER_KIB: u64 = 695_000;
 const RUNS: usize = 3;
 
 #[test]

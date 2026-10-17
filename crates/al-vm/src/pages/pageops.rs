@@ -57,6 +57,20 @@ impl Session {
                     3 => true,
                     _ => return unsupported("Page.Run with more than three arguments"),
                 };
+                // A FieldRef nobody assigned raises before anything opens (pages/lt-page-run-overloads-testpart/P106RunErrors.al:
+                // P106_Err_FieldRefVariants, observation 'uninitialized').
+                if let Some(Value::Library(_, lib)) = args.get(2) {
+                    if !matches!(
+                        &*lib.borrow(),
+                        al_builtins::value::LibraryValue::FieldRef(..)
+                            | al_builtins::value::LibraryValue::KeyFieldRef(..)
+                    ) {
+                        return Err(error_code(
+                            "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized.",
+                            "NotInitialized",
+                        ));
+                    }
+                }
                 // Id 0 with a record resolves the page from the record's table LookupPageId; a
                 // table without one refuses like any unknown id (corpus
                 // handlers/TestPageRunModalLookupPageId_Tests.al).
@@ -150,7 +164,24 @@ impl Session {
 
     pub(super) fn test_page_op(&mut self, method: PageOp, st: &St, args: &mut [Value]) -> Result<Value, Signal> {
         let name = method.method();
-        let r = self.test_page_op_inner(method, st, args)?;
+        let r = match self.test_page_op_inner(method, st, args) {
+            // `CurrPage` and a `Page` variable are the page's own code, not a TestPage the test closed: BC does not raise
+            // "The TestPage is not open." for them. What a method of a page that is not open (any more) does is not pinned, so
+            // the call is refused instead of failing with the TestPage error (Posted Sales Document Lines.CopyLineToDoc reads
+            // `CurrPage.PostedShpts.PAGE` after its RunModal returned).
+            // `Run` and `RunModal` only pass on what their handler raised (handlers/TestPageModalSelfClose_Tests.al:104).
+            Err(Signal::Error(e))
+                if e.code == "TestPageNotOpened"
+                    && method.recv() == PageRecv::Page
+                    && !matches!(name, PageMethod::Run | PageMethod::RunModal) =>
+            {
+                return unsupported(format!(
+                    "{} called by the code of a page that is not open (what it does then is not pinned)",
+                    method.method()
+                ));
+            }
+            r => r?,
+        };
         // The client runs the page's background tasks before the call returns (corpus
         // handlers/TestPageBgTask_Tests.al:EnqueueBackgroundTask_CompletesBeforeOpenViewReturns).
         self.bg_drain(st)?;
@@ -248,6 +279,8 @@ impl Session {
                 Ok(Value::Boolean(false))
             }
             PageMethod::SaveAsXml => self.request_save_as_xml(st, args),
+            PageMethod::SaveAsPdf => self.request_save_as_render(st, args, "Pdf"),
+            PageMethod::SaveAsExcel => self.request_save_as_render(st, args, "Excel"),
             m @ (PageMethod::OK | PageMethod::Cancel | PageMethod::Yes | PageMethod::No) => {
                 self.require_open(st)?;
                 if !self.builtin_offered(st, m.name()) {
@@ -296,6 +329,24 @@ impl Session {
             // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
             // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
             PageMethod::Caption if method.recv() == PageRecv::Page => {
+                // The caption read on a Page variable before the page runs is the page's own (Edit Dimension Set Entries.SetFormCaption
+                // reads `CurrPage.Caption` before Dimension Management runs the page); an assignment still needs an open page
+                // (assumption caption-read-before-the-page-runs).
+                if !args.is_empty() && !st.borrow().open && !st.borrow().ran {
+                    if let Some(t) = args.first().and_then(al_builtins::native::text_of) {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::CaptionAssignedBeforeThePageRuns,
+                        );
+                        st.borrow_mut().caption = Some(t.to_string());
+                        return Ok(Value::Null);
+                    }
+                }
+                if args.is_empty() && !st.borrow().open {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::CaptionReadBeforeThePageRuns,
+                    );
+                    return Ok(Value::Text(self.page_caption(st).into()));
+                }
                 self.require_open(st)?;
                 match args.first() {
                     Some(v) => match al_builtins::native::text_of(v) {
@@ -330,7 +381,7 @@ impl Session {
             }
             PageMethod::Caption => {
                 self.require_open(st)?;
-                Ok(Value::Text(self.page_caption(st).into()))
+                Ok(Value::Text(self.test_page_caption(st)?.into()))
             }
             // `CurrPage.PromptMode := PromptMode::Prompt` states what a PromptDialog already starts in:
             // the pages of handlers/TbaPromptDeclared.Page.al and TbaPromptBare.Page.al do it in OnOpenPage
@@ -420,8 +471,15 @@ impl Session {
                         rec.borrow_mut().fields = r.borrow().fields.clone();
                         return Ok(Value::Null);
                     }
+                    let kept = st.borrow().set_record.clone().filter(|_| st.borrow().set_view);
+                    if let Some(view) = kept.filter(|v| v.borrow().table == r.borrow().table) {
+                        view.borrow_mut().fields = r.borrow().fields.clone();
+                        return Ok(Value::Null);
+                    }
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
-                    st.borrow_mut().set_record = Some(copy);
+                    let mut s = st.borrow_mut();
+                    s.set_record = Some(copy);
+                    s.set_view = false;
                     Ok(Value::Null)
                 }
                 other => unsupported(format!("Page.SetRecord with {}", other.describe())),
@@ -501,7 +559,9 @@ impl Session {
                         _ => self.initial_fields(table),
                     };
                     copy.borrow_mut().fields = fields;
-                    st.borrow_mut().set_record = Some(copy);
+                    let mut s = st.borrow_mut();
+                    s.set_record = Some(copy);
+                    s.set_view = true;
                     Ok(Value::Null)
                 }
                 other => unsupported(format!("Page.SetTableView with {}", other.describe())),
@@ -552,6 +612,13 @@ impl Session {
                     // an index past the last error is assumed to raise the same (docs/probes-needed.md).
                     None => Err(error_code("Index out of bounds.", "IndexOutOfBounds")),
                 }
+            }
+            // A part the page's own code created without opening it (a literal `Visible = false`, `InvisiblePartForPageCode`) has no
+            // client to refresh: `CurrPage.Update` in its procedure does nothing. Base Application's Approval FactBox ends
+            // `UpdateApprovalEntriesFromSourceRecord` with it (assumption hidden-part-update-is-noop).
+            PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::HiddenPartUpdateIsNoop);
+                Ok(Value::Null)
             }
             PageMethod::Update | PageMethod::SaveRecord => {
                 self.require_open(st)?;

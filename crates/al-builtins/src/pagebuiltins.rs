@@ -117,6 +117,8 @@ page_methods! {
     "TestFilter.Ascending#1" => TestFilterAscending,
     // A request page is the test client's page of a report; only what the corpus uses is routed.
     "TestRequestPage.SaveAsXml#1" => TestRequestPageSaveAsXml,
+    "TestRequestPage.SaveAsPdf#1" => TestRequestPageSaveAsPdf,
+    "TestRequestPage.SaveAsExcel#1" => TestRequestPageSaveAsExcel,
     "TestRequestPage.OK#1" => TestPageOK,
     "TestRequestPage.Cancel#1" => TestPageCancel,
     "TestRequestPage.Caption#1" => TestPageCaption,

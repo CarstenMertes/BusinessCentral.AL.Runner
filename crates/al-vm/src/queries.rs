@@ -148,7 +148,10 @@ impl Session {
                 // Opening an open query is not an error (query/TestQueryRuntimeContracts.al:
                 // Query_StateMisuse_DoesNotThrow); once rows were read what it does is not pinned.
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
-                    return unsupported("Open on a query that is already open and was read from (not pinned)");
+                    if !Self::query_read_to_the_end(&qs) {
+                        return unsupported("Open on a query that is already open and was read from (not pinned)");
+                    }
+                    qs.borrow_mut().run = None;
                 }
                 // OnBeforeOpen runs inside Open, after the filters set so far, and a filter it sets
                 // applies to this read (query/TestQueryOnBeforeOpenVariablesContracts.al:104-140).
@@ -181,7 +184,10 @@ impl Session {
                 let col = arg_col(args, 0)?;
                 // A filter set after Open and before the first Read is in force when the query runs.
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
-                    return unsupported(format!("{method} on a query that was read from (not pinned)"));
+                    if !Self::query_read_to_the_end(&qs) {
+                        return unsupported(format!("{method} on a query that was read from (not pinned)"));
+                    }
+                    qs.borrow_mut().run = None;
                 }
                 let ty = def.columns[col].ty.clone();
                 let expr = if method == "SetRange" {
@@ -261,6 +267,7 @@ impl Session {
                             message: "Top number of rows cannot be negative".into(),
                             code: String::new(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                     if qs.borrow().run.is_some() {
@@ -281,6 +288,7 @@ impl Session {
                                 message: "SECURITYFILTERING cannot be set to \"Validated\" on a Query.".into(),
                                 code: "Argument".into(),
                                 call_stack: String::new(),
+                                ..Default::default()
                             })));
                         }
                         qs.borrow_mut().security_filtering = Some(*i);
@@ -517,6 +525,7 @@ impl Session {
                     ),
                     code: "QueryNoDataSet".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 })))
             }
         }
@@ -559,11 +568,35 @@ impl Session {
         Ok(out)
     }
 
+    /// Whether the query was read to its last row. Such a query is closed: a filter can be set and `Open` runs it again.
+    /// Not pinned: Base Application's Workflow Step Instance.SetTableRelationValues does so once per table relation
+    /// (assumption query-closed-after-last-row).
+    fn query_read_to_the_end(qs: &Qs) -> bool {
+        let done = qs
+            .borrow()
+            .run
+            .as_ref()
+            .is_some_and(|r| r.started && r.current.is_none() && r.next >= r.rows.len());
+        if done {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryClosedAfterLastRow);
+        }
+        done
+    }
+
     fn query_read(&mut self, def: &ir::Query, qs: &Qs) -> Result<Value, Signal> {
         // Read on a query that is not open returns false
         // (query/TestQueryRuntimeContracts.al:Query_StateMisuse_DoesNotThrow).
+        // With the result unused the statement raises (xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:Read_BeforeOpen, Read_AfterClose).
         if qs.borrow().run.is_none() {
-            return Ok(Value::Boolean(false));
+            if self.ret_used {
+                return Ok(Value::Boolean(false));
+            }
+            return Err(Signal::Error(Box::new(AlError {
+                message: "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function.".into(),
+                code: "QueryNoDataSet".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
         }
         if !qs.borrow().run.as_ref().expect("open").started {
             let filters = qs.borrow().filters.clone();
@@ -919,6 +952,9 @@ impl Session {
             }
             let item = &def.items[c.item];
             let field = c.field.expect("a column over a field");
+            if matches!(c.ty, RtType::Library(al_builtins::library_kind::LibraryKind::RecordId)) {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryColumnRecordId);
+            }
             let row = &self.filled(item.table, &joined[c.item]);
             let schema = &engine.program.objects[item.table].table.as_ref().expect("table").fields[field];
             let mut v = if schema.stored {

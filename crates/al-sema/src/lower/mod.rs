@@ -188,6 +188,8 @@ pub(crate) struct Lowerer<'a> {
     memo: &'a Memo,
     /// Return type of the routine being lowered (a DotNet result in `exit` is coerced to it).
     ret_ty: Option<RtType>,
+    /// While an OnQueryClosePage with a named Boolean return is lowered: its return local and the local that notes an assignment to it.
+    qcp_ret: Option<(usize, usize)>,
     /// The declared return type of the routine being lowered (an interface result converts in `exit`).
     ret_decl: Option<Ty>,
     /// The routine nodes of every object, numbered as `routine_at` numbers them.
@@ -332,10 +334,12 @@ pub(crate) fn is_stmt(k: SyntaxKind) -> bool {
 /// - `TestHttpResponseMessage.HttpStatusCode`, `.ReasonPhrase`, `.IsBlockedByEnvironment`, `.IsSuccessfulRequest` and
 ///   `HttpClient.Timeout`: the HTTP probes (PZHttpHandler.al; network/lt-http/HttpClient.al, TestHttpMessages.al).
 /// - `File.TextMode`, `File.WriteMode`: Base Application's "Export Consolidation" report.
+/// - `FilterPageBuilder.PageCaption`: the call form is pinned by filterpage/TestFilterPageBuilder.al:600.
 fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
         (receiver, name),
         ("FieldRef" | "TestField", "Value")
+            | ("FilterPageBuilder", "PageCaption")
             | ("InStream" | "OutStream", "Position")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
             | ("RequestPage", "Caption")

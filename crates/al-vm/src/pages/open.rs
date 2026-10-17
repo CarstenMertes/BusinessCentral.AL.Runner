@@ -137,7 +137,9 @@ impl Session {
         self.page_instance(st)?;
         {
             let mut s = st.borrow_mut();
+            let first_run = !s.ran;
             s.open = true;
+            s.ran = true;
             s.mode = mode;
             s.cursor = Cursor::None;
             s.draft = false;
@@ -146,6 +148,7 @@ impl Session {
             s.window = Vec::new();
             s.window_from_start = false;
             s.window_eof = false;
+            s.window_whole = false;
             s.focus = None;
             s.focus_in_row = false;
             s.errors = Vec::new();
@@ -153,7 +156,10 @@ impl Session {
             s.pending = None;
             s.result = None;
             s.editable_off = false;
-            s.caption = None;
+            // A caption assigned to the variable before its first run stays (assumption caption-assigned-before-the-page-runs).
+            if !first_run {
+                s.caption = None;
+            }
             s.opening = true;
             s.parts = Vec::new();
             s.areas = self.application_areas.clone();
@@ -212,7 +218,20 @@ impl Session {
             // The platform applies the view in filter group 2: the page's own AL reads it with
             // FilterGroup(2) and finds group 0 empty (corpus handlers/TestPageSourceTableView.al:
             // FiltersAreInFilterGroup2WhenOnOpenPageRuns).
+            // The filters the handed record carries in group 2 (Bank Acc. Reconciliation.OpenWorksheet sets the statement there) stay: the view
+            // adds its own to the group instead of replacing it (assumption `page-run-record-and-source-table-view`).
+            let kept: Vec<_> = if record.is_some() {
+                rec.borrow().filters.iter().filter(|f| f.group == 2).cloned().collect()
+            } else {
+                Vec::new()
+            };
             self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
+            // A field the view filters itself keeps the view's filter alone (two equal filters of one field read as a doubled value
+            // when a new line takes it: Purchase Price List's "Price Type").
+            let mut r = rec.borrow_mut();
+            let viewed: Vec<usize> = r.filters.iter().filter(|f| f.group == 2).map(|f| f.field).collect();
+            r.filters
+                .extend(kept.into_iter().filter(|f| !viewed.contains(&f.field)));
         }
         let result = (|| {
             // A `Page` variable whose procedure ran before this open was constructed then, and its
@@ -311,8 +330,18 @@ impl Session {
                 self.ret_used = true;
                 let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
                 if matches!(self.record_op(RecordOp::Get, &rec, &mut pk)?, Value::Boolean(true)) {
-                    st.borrow_mut().cursor = Cursor::Row;
-                    return self.arrive(st);
+                    // A row the view does not admit is not the page's: it opens on the first row at or after it in the view
+                    // (pages/lt-page-setrecord-settableview/PageVarSetRecordTableView.al:P157_List_SetRecordThenSetTableView_RecordOutsideView
+                    // `B` over `Grp = 1` opens on `C`, P157_Card_SetRecordOutsideView).
+                    if !rec.borrow().filters.is_empty() {
+                        if self.nav_find(st, "=>")? {
+                            st.borrow_mut().cursor = Cursor::Row;
+                            return self.arrive(st);
+                        }
+                    } else {
+                        st.borrow_mut().cursor = Cursor::Row;
+                        return self.arrive(st);
+                    }
                 }
             }
         }
@@ -528,7 +557,17 @@ impl Session {
         if !(via_action && matches!(action, "Cancel" | "LookupCancel" | "No")) {
             self.store_page_values(st);
         }
-        if action == "LookupOK" && self.has_source(st) && st.borrow().cursor == Cursor::Row {
+        // Not on the blank new-line row of a page: corpus misc/lt-page-run-overloads RunModal_NonTempRecord_ShowsDbRows keeps
+        // `Row.Code` = D1 after a handler that read the page down to its new line and pressed OK.
+        // A line started with New() is the row the page ends on, blank or typed (pages/lt-page-runmodal-rec/
+        // PageRunModalRecAfterClose.al:P174_NonTemp_StartA_HandlerNewRowThenOk, _NewRowTypedKeyThenOk, _NewRowThenCancel), and
+        // Cancel leaves the row the cursor stood on in Rec as OK does (:P174_NonTemp_StartA_HandlerNextThenCancel).
+        let on_row = st.borrow().cursor == Cursor::Row && !st.borrow().draft;
+        let on_new = st.borrow().draft && st.borrow().new_by_call;
+        // A page the platform closes after the handler returned hands back nothing on Cancel (handlers/
+        // TestPageActionRunObjectPageRec_Tests.al:PageRunModalTargetMovingItsRecAndTheCallersRecord).
+        let hands_back = action == "LookupOK" || (action == "LookupCancel" && via_action);
+        if hands_back && self.has_source(st) && (on_row || on_new) {
             let fields = self.page_rec(st).borrow().fields.clone();
             st.borrow_mut().selection = Some(fields);
         }
@@ -660,6 +699,15 @@ impl Session {
             st.borrow_mut().landing_first = true;
             let r = self.arrive(st);
             st.borrow_mut().landing_first = false;
+            // An error of the rows a modal page reads when it opens comes out with the code of the client's abort (misc/
+            // lt-probes-needed-7/PnGPageClose.al:TeardownInHandlerReportsForNonLookupRunModal `af236`, `af260`, `af285`).
+            let r = match r {
+                Err(Signal::Error(mut e)) if st.borrow().modal && e.code == "Dialog" => {
+                    e.code = "ClientPageAbort:FormAbort".into();
+                    Err(Signal::Error(e))
+                }
+                other => other,
+            };
             r?;
             // The window starts at the first row of the view.
             let from_start = self.is_list(st);
@@ -667,6 +715,12 @@ impl Session {
             Ok(())
         } else if st.borrow().new_line {
             self.land_on_new_line(st)?;
+            // A list with no row but the blank line reads it twice, as a list of one row reads its row (misc/lt-probes-needed-3/
+            // PnC07TestPage.al:New_OnEmptyPage `OnNewRecord` three times with the New() call, misc/lt-probes-needed-7/
+            // PnGNewRecord.al:HandedRecordKeyFieldFilter `OnNewRecord;AGCR(FILTERED,FILTERED)` twice).
+            if self.is_list(st) && st.borrow().host.is_none() {
+                self.land_on_new_line(st)?;
+            }
             self.populate_expressions(st)
         } else {
             self.populate_expressions(st)
@@ -705,6 +759,9 @@ impl Session {
         self.stamp_from_filters(st, !host_unsaved)?;
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        // xRec is the new record itself there (misc/lt-probes-needed-7/PnGNewRecord.al:HandedRecordNoFilters `AGCR(,)`,
+        // PnGHandedRecord `AGCR(FILTERED,FILTERED)`).
+        self.set_xrec(st);
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
         self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         Ok(())

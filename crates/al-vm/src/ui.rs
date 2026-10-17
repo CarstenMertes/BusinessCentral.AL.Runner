@@ -257,11 +257,35 @@ impl Session {
                 message: format!("Unhandled UI: {} {shown}", kind.label()),
                 code: "MissingUIHandler".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })));
         };
         h.fired = true;
         let (object, routine, instance) = (h.object, h.routine, h.instance.clone());
         scope.in_handler = true;
+        // A value too long for the handler's parameter fails before the handler runs, with the error of the conversion and no
+        // prefix (handlers/... misc/lt-system-functions/ErrorMessage.al:Message_Long `af235`).
+        let bound: Result<Vec<Value>, Signal> = {
+            let r = &self.engine.program.objects[object].routines[routine];
+            args.into_iter()
+                .enumerate()
+                .map(|(i, a)| match (&a, r.locals.get(i)) {
+                    (Value::Text(_) | Value::Code(_), Some(slot)) if i < r.params => {
+                        al_builtins::ops::convert(a.clone(), &slot.ty)
+                    }
+                    _ => Ok(a),
+                })
+                .collect()
+        };
+        let args = match bound {
+            Ok(a) => a,
+            Err(e) => {
+                if let Some(scope) = self.ui_state.scope.as_mut() {
+                    scope.in_handler = false;
+                }
+                return Err(e);
+            }
+        };
         let result = self.call(object, routine, instance, args);
         if let Some(scope) = self.ui_state.scope.as_mut() {
             scope.in_handler = false;
@@ -417,6 +441,7 @@ impl Session {
                 message: format!("Unhandled UI: {} {}", kind.label(), shown_id),
                 code: "MissingUIHandler".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })));
         };
         h.fired = true;
@@ -444,6 +469,7 @@ impl Session {
             message: format!("Unhandled UI: {} {}", kind.label(), self.object_id_of(object)),
             code: "MissingUIHandler".into(),
             call_stack: String::new(),
+            ..Default::default()
         }))
     }
 

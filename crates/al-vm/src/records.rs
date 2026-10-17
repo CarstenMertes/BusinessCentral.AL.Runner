@@ -147,7 +147,8 @@ impl Session {
         let mut parts = Vec::new();
         for &i in &t.keys[0] {
             let v = al_builtins::format::try_format(&fields[i], 0, 0, self).map_err(Signal::Unsupported)?;
-            parts.push(format!("{}='{}'", t.fields[i].name, v));
+            // The field's caption names it (recordref/lt-recordref-fieldref-members + records/lt-record-meta: `Code Caption='A1'`).
+            parts.push(format!("{}='{}'", self.field_caption(t, i), v));
         }
         Ok(parts.join(","))
     }
@@ -202,10 +203,21 @@ impl Session {
                 "DB:RecordNotFound",
             )
         };
+        // A missing row: the flag hides the key (P86LastError.al:309, :316, :319, P70_02LastErrFlag.al:76, :82, :88). A row that
+        // exists is not pinned.
+        let origin = if exists {
+            al_builtins::native::ErrorOrigin::Unknown
+        } else {
+            al_builtins::native::ErrorOrigin::Redacted(format!(
+                "The {} does not exist. Identification fields and values: <redacted>",
+                self.caption(t)
+            ))
+        };
         Err(Signal::Error(Box::new(AlError {
             message,
             code: code.into(),
-            call_stack: String::new(),
+            origin,
+            ..Default::default()
         })))
     }
 
@@ -511,6 +523,7 @@ impl Session {
             ),
             code: "DB:RecordExists".into(),
             call_stack: String::new(),
+            ..Default::default()
         })))
     }
 
@@ -898,6 +911,7 @@ impl Session {
             ),
             code: "DB:RecordExists".into(),
             call_stack: String::new(),
+            ..Default::default()
         })))
     }
 
@@ -981,12 +995,17 @@ impl Session {
             // A row that is not stored (a copy of a record never inserted) leaves the Blob empty: the buffer
             // showed `*` after `Copy1 := Row`, and CalcFields reads nothing back
             // (types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes, BC 27.5).
-            let bytes = match stored.as_ref().map(|row| row[pos].clone()) {
-                Some(Value::Blob(src)) => src.borrow().bytes.clone(),
-                _ => Vec::new(),
+            let (bytes, pending) = match stored.as_ref().map(|row| row[pos].clone()) {
+                Some(Value::Blob(src)) => {
+                    let src = src.borrow();
+                    (src.bytes.clone(), src.render_pending.clone())
+                }
+                _ => (Vec::new(), None),
             };
             let mut b = buf.borrow_mut();
             b.bytes = bytes;
+            // ADR-040: the stored row carries the mark of an output that was never produced.
+            b.render_pending = pending;
             b.loaded = true;
             b.refetch = false;
         }
@@ -1096,6 +1115,7 @@ impl Session {
                         message: (*messages.iter().next().expect("one message")).clone(),
                         code: String::new(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 return unsupported(format!(
@@ -1419,6 +1439,7 @@ impl Session {
                             ),
                             code: "DB:RecordChanged".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                 }
@@ -1513,6 +1534,7 @@ impl Session {
                         message: "It is not possible to delete any record in the Tenant License State table.".into(),
                         code: "DB:Ok".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 let (filters, flow_field_filters) = self.split_filters(rec);
@@ -1548,7 +1570,14 @@ impl Session {
                 // Delete_And_DeleteAll_WithAndWithoutRunTrigger).
                 // The User table has no bulk delete: the platform deletes it row by row.
                 let user_rows = self.is_user_row(&t, rec.borrow().temporary);
-                if events || global || user_rows || (run && trigger) {
+                // MarkedOnly limits the rows to the marked ones, which the store's bulk delete does not know: delete row
+                // by row what the scan finds (Post Inventory Cost to G/L ends its data item with
+                // `MarkedOnly(true); DeleteAll()` and keeps the capacity entries it has not posted yet).
+                let marked_only = rec.borrow().marked_only;
+                if marked_only {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DeleteAllMarkedOnly);
+                }
+                if events || global || user_rows || (run && trigger) || marked_only {
                     // One Delete per row (record/TestTriggerContracts.al:DeleteAll_WithTrigger_FiresForEachFilteredRecord).
                     let key = rec.borrow().key;
                     let mut rows = Vec::new();
@@ -1561,6 +1590,21 @@ impl Session {
                     // (ADR-021 decision 6; corpus probe TableGlobals_DeleteAll_TriggersRunOnOneInstanceForAllRows).
                     let shared = al_builtins::value::TableGlobals::new_shared();
                     for row in rows {
+                        // A row an earlier row's OnDelete deleted is not visited: BC finds the next row of the table as
+                        // it is then. Not pinned; Requisition Line's OnDelete deletes the lines that follow it
+                        // (Tests-SCM-Manufacturing B42538_UserIDOnReqLine; assumption delete-all-skips-rows-deleted-meanwhile).
+                        let pk: Vec<Value> = t.keys[0].iter().map(|&f| row[f].clone()).collect();
+                        let still_there = self
+                            .store_for(rec)
+                            .get(&cx, &t, &pk)
+                            .map_err(|e| Signal::Unsupported(format!("{e}")))?
+                            .is_some();
+                        if !still_there {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::DeleteAllSkipsRowsDeletedMeanwhile,
+                            );
+                            continue;
+                        }
                         let mut st = rec.borrow().clone();
                         st.fields = row;
                         st.filters.clear();
@@ -1679,6 +1723,7 @@ impl Session {
                         ),
                         code: "DB:BadSearchMethod".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 let found = match which.as_str() {
@@ -1722,7 +1767,11 @@ impl Session {
                             found = match c {
                                 // Another current key looks for the neighbour by that key's fields
                                 // (events/TestProbeEventContracts.al:Find_NeighbourSearch_WithFilterAndOtherKey, key Name).
-                                '=' if key != 0 => None,
+                                // The row itself is the one with the record's primary key whose fields of that key still
+                                // hold the record's values and that passes the filters. Not pinned for a row that exists
+                                // (the corpus names only keys whose values no row holds); Base Application's Req. Wksh.-Make
+                                // Order `Code` needs it for the Requisition Line the Carry Out Action Msg. report read by its
+                                // own sorting (docs/probes-needed.md, find-equal-on-another-key).
                                 '=' => {
                                     let pk = t.primary_key(&rec.borrow().fields);
                                     let exact = self
@@ -1730,7 +1779,18 @@ impl Session {
                                         .get(&cx, &t, &pk)
                                         .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                                     match exact {
-                                        Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
+                                        Some(row) if self.row_passes(rec, &t, &row)? => {
+                                            if key == 0 {
+                                                Some(row)
+                                            } else if Self::same_key_values(&t, key, &row, &pos) {
+                                                al_builtins::assumptions::assume(
+                                                    al_builtins::assumptions::Assumption::FindEqualOnAnotherKey,
+                                                );
+                                                Some(row)
+                                            } else {
+                                                None
+                                            }
+                                        }
                                         _ => None,
                                     }
                                 }
@@ -1757,6 +1817,19 @@ impl Session {
                     // with a filter): the text lists the filters; without one it is not pinned.
                     None => {
                         let filters = self.get_filters(rec, &t)?;
+                        // Without a filter the table itself is empty, on every version: FindFirst and FindLast
+                        // record/lt-filters-keys-finds/P68C_EmptyFinds.al:215-250 ( passes on the BC 27 oracle
+                        // too), FindSet ErTTriggerErrors.al:140-147 and P68C_EmptyFinds.al:202-204.
+                        if filters.is_empty()
+                            && matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
+                        {
+                            return Err(Signal::Error(Box::new(AlError {
+                                message: format!("The {} table is empty.", self.caption(&t)),
+                                code: "DB:TableIsEmpty".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
+                        }
                         if filters.is_empty()
                             || !matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
                         {
@@ -1772,6 +1845,7 @@ impl Session {
                             ),
                             code: "DB:NothingInsideFilter".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })))
                     }
                 }
@@ -1885,6 +1959,7 @@ impl Session {
                             ),
                             code: "Filter:CSide".into(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                     Err(e) => return Err(Signal::Unsupported(format!("SetFilter: {e}"))),
@@ -2062,6 +2137,15 @@ impl Session {
                         }
                     }
                 }
+                // More values than the primary key has fields (recordref/lt-refs/RfTWrite.al:Rename_Variants `rename_too_many`).
+                if args.len() > t.keys[0].len() {
+                    return Err(Signal::Error(Box::new(AlError {
+                        message: "The number of field arguments does not match the primary key size.".into(),
+                        code: "RenameArgument".into(),
+                        call_stack: String::new(),
+                        ..Default::default()
+                    })));
+                }
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
                     if let Some(v) = args.get(n) {
@@ -2134,8 +2218,11 @@ impl Session {
                         rec.borrow_mut().fields = old.clone();
                         self.fail(&t, &old, false)
                     }
+                    // A rename that cannot be done raises whether or not the Boolean is used (RfTWrite.al:Rename_Variants
+                    // `rename_existing`: `B := RecRef.Rename('D2')`).
                     RenameOutcome::AlreadyExists => {
                         rec.borrow_mut().fields = old;
+                        self.ret_used = false;
                         self.fail(&t, &row, true)
                     }
                 }
@@ -2176,5 +2263,17 @@ pub(crate) fn unevaluable_init_value(f: &al_ir::Field) -> Option<String> {
                 .then(|| format!("The format of the Date '{text}' does not match your device's date settings."))
         }
         _ => None,
+    }
+}
+
+impl Session {
+    /// Whether `row` holds the values of `pos` in the fields of key `key` (and the primary key after them).
+    fn same_key_values(t: &al_data::TableDef, key: usize, row: &[Value], pos: &[Value]) -> bool {
+        let theirs = position(t, key, row);
+        theirs.len() == pos.len()
+            && theirs
+                .iter()
+                .zip(pos.iter())
+                .all(|(a, b)| al_builtins::ops::compare(a, b).is_ok_and(|o| o == std::cmp::Ordering::Equal))
     }
 }

@@ -289,6 +289,14 @@ impl Session {
                 ))
             }
             ids::REPORT_SAVEAS_1 | ids::REPORT_SAVEAS_2 => self.report_save_as(id, receiver, args),
+            ids::REPORT_SAVEASPDF_1 => self.report_save_as_file(id, receiver, args, "Pdf", false),
+            ids::REPORT_SAVEASPDF_2 => self.report_save_as_file(id, receiver, args, "Pdf", true),
+            ids::REPORT_SAVEASEXCEL_1 => self.report_save_as_file(id, receiver, args, "Excel", false),
+            ids::REPORT_SAVEASEXCEL_2 => self.report_save_as_file(id, receiver, args, "Excel", true),
+            ids::REPORT_SAVEASWORD_1 => self.report_save_as_file(id, receiver, args, "Word", false),
+            ids::REPORT_SAVEASWORD_2 => self.report_save_as_file(id, receiver, args, "Word", true),
+            ids::REPORT_SAVEASHTML_1 => self.report_save_as_file(id, receiver, args, "Html", false),
+            ids::REPORT_SAVEASHTML_2 => self.report_save_as_file(id, receiver, args, "Html", true),
             ids::REPORT_WORDXMLPART_1 | ids::REPORT_WORDXMLPART_2 => self.report_word_xml_part(id, receiver, args),
             ids::REPORT_RUNREQUESTPAGE_1 | ids::REPORT_RUNREQUESTPAGE_2 => {
                 let (inst, schema, seed) = if id == ids::REPORT_RUNREQUESTPAGE_1 {
@@ -697,17 +705,28 @@ impl Session {
             .iter()
             .filter(|i| i.table == Some(table as usize))
             .collect();
-        let [item] = items[..] else {
-            return unsupported(format!(
-                "a table view for report \"{}\", which has {} data items over that table (not pinned)",
-                schema.name(),
-                items.len()
-            ));
+        // No data item over the table is an error; with several the view filters the first
+        // (corpus errors/lt-ms-refusals-136/P136Report.al:P136_Report_ViewOverTableWithoutDataItem and
+        // P136_Report_ViewWithTwoDataItemsOverTheTable: `A:a;A:b;B:a;B:b;B:c;`).
+        let Some(&item) = items.first() else {
+            let (id, name) = {
+                let o = &self.engine.program.objects[table as usize];
+                (o.id.unwrap_or(0), o.name.clone())
+            };
+            return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                message: format!(
+                    "The {} report does not have a DataItem that uses the table (Table {id} {name}) specified in the function SetTableView.",
+                    schema.name()
+                ),
+                code: "ReportNoDataItem".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
         };
         let v = view.borrow();
-        if v.temporary || v.marked_only || v.key != 0 || !v.ascending {
-            return unsupported("a table view with a temporary, marked or re-sorted record (not pinned)");
-        }
+        // The data item reads the table itself, so a temporary record's rows do not count, only its filters do; the marks of a
+        // marked-only record, its key and its direction carry over (corpus errors/lt-ms-refusals-136/P136Report.al:
+        // temporary, temporaryFiltered, markedOnly, markedNotOnly, keyQty, keyQtyDescending, descendingPrimary, keyQtyFiltered).
         // A view handed to SetTableView stays in force over a DataItemTableView that only sorts
         // (handlers/TestReportRuntimeContracts.al:393-410 "Probe Rep Order"). Over one that filters, both apply
         // (the item's filters live in the report's own filter group): assumed, Whse.-Source - Create Document and its
@@ -723,6 +742,14 @@ impl Session {
         let mut t = target.borrow_mut();
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
+        t.key = v.key;
+        t.adhoc = v.adhoc.clone();
+        t.ascending = v.ascending;
+        t.field_descending = v.field_descending;
+        if !v.temporary {
+            t.marks = v.marks.clone();
+            t.marked_only = v.marked_only;
+        }
         Ok(())
     }
 
@@ -910,9 +937,20 @@ impl Session {
             // (handlers/TestReportRuntimeContracts.al:393-410).
             let kept = Some(rec.borrow().filters.clone());
             let filtering = view.to_ascii_lowercase().contains("where");
+            // A view that only filters keeps the key and direction a SetTableView gave the item (corpus
+            // report/lt-report-set-table/ReportSetTableViewOverWhere.al:P163_SetTableView_OverWhere_KeyOfTheView: key Txt, 4|3|2).
+            let kept_order = {
+                let r = rec.borrow();
+                (r.key, r.adhoc.clone(), r.ascending, r.field_descending)
+            };
+            let sorts = view.to_ascii_lowercase().contains("sorting");
             // The filters of a DataItemTableView are the report's, not the record's: GetFilters does not show them, in
             // OnPostReport either (report/TestProbeReportContracts.al:TriggerOrder_NestedAndSecondItem).
             self.set_view_in(&rec, &t, &view, Some(LINK_GROUP), false, false)?;
+            if !sorts {
+                let mut r = rec.borrow_mut();
+                (r.key, r.adhoc, r.ascending, r.field_descending) = kept_order;
+            }
             if let Some(mut filters) = kept {
                 // A view that filters adds its own filters to the ones a SetTableView gave the item.
                 if filtering {
@@ -1130,7 +1168,9 @@ impl Session {
         }
         self.ret_used = true;
         let mut more = !no_rows && matches!(self.record_op(RecordOp::FindSet, &rec, &mut [])?, Value::Boolean(true));
+        let mut iterations = 0u32;
         'rows: while more {
+            iterations += 1;
             if run.dataset {
                 self.dataset_autocalc(run, r, &rec)?;
             }
@@ -1167,8 +1207,16 @@ impl Session {
                     }
                 }
                 if run.dataset {
-                    self.report.dataset.as_mut().expect("a SaveAs run has a dataset").end();
+                    self.report
+                        .dataset
+                        .as_mut()
+                        .expect("a SaveAs run has a dataset")
+                        .end_row(item.print_only_if_detail);
                 }
+            }
+            // MaxIteration stops an Integer item after that many rows (misc/lt-probes-needed-8/PnH3Link.al:MaxIteration_*).
+            if item.max_iteration.is_some_and(|m| iterations >= m) {
+                break 'rows;
             }
             self.ret_used = true;
             more = !matches!(self.record_op(RecordOp::Next, &rec, &mut [])?, Value::Integer(0));
@@ -1348,7 +1396,56 @@ impl Run {
 const FORMAT_NOT_SUPPORTED_BY_LAYOUT: &str =
     "The Html output format is not supported by the current report layout format.";
 
+/// Where a rendering save puts its output.
+enum SaveTarget {
+    Stream(al_builtins::stream::BlobRef),
+    File(String),
+}
+
+/// A report whose rendered output nothing reads (ADR-040, section 3). A rendering save of one runs the report and
+/// writes no output. The list grows by evidence only: a Microsoft test that discards the output, cited here and in
+/// docs/probes-needed.md (rule 3 exception of 2026-10-15). Layout smoke tests, `CheckFileNotEmpty` tests and Excel
+/// cell tests are never on it.
+pub(crate) struct IgnoredOutput {
+    /// The id of the app that declares the report (Base Application).
+    pub app: &'static str,
+    pub id: u32,
+    pub name: &'static str,
+    /// Why the output is not the point, and the Microsoft tests that need the report to run.
+    #[allow(dead_code)] // read by the unit test of the list and by whoever extends it
+    pub why: &'static str,
+}
+
+pub(crate) const IGNORED_OUTPUT: &[IgnoredOutput] = &[
+    IgnoredOutput {
+        app: "437dbf0e-84ff-417a-965d-ed2bb9650972",
+        id: 1002,
+        name: "Post Inventory Cost to G/L",
+        why: "posts to G/L in its data item triggers; Library - Costing.PostInvtCostToGL and Library - Assembly.PostInvtCostToGL \
+              save it to a file nobody reads (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch)",
+    },
+    IgnoredOutput {
+        app: "437dbf0e-84ff-417a-965d-ed2bb9650972",
+        id: 1401,
+        name: "Check",
+        why: "prints and posts check ledger entries; the file name is a GUID or a temp name nobody reads (ERM Cash Manager, \
+              Match Bank Rec. Scenarios)",
+    },
+];
+
 impl Session {
+    /// Whether the report is on the allow-list of reports whose rendered output is not read (ADR-040).
+    pub(crate) fn output_is_ignored(&self, schema: &Schema) -> bool {
+        let program = &self.engine.program;
+        let obj = &program.objects[schema.object];
+        let Some(app) = program.apps.get(obj.app as usize) else {
+            return false;
+        };
+        IGNORED_OUTPUT
+            .iter()
+            .any(|e| e.id == obj.id.unwrap_or(0) && e.name == obj.name && e.app.eq_ignore_ascii_case(&app.id))
+    }
+
     /// `Report.SaveAs(Parameters, Format, OutStream[, RecordRef])` and the static form with the
     /// report number first. Only `ReportFormat::Xml` is implemented: it runs the report with no
     /// request page and writes the dataset the run produces. `Html` of a report with an RDLC layout
@@ -1360,7 +1457,6 @@ impl Session {
         receiver: Option<Value>,
         args: &[Value],
     ) -> Result<Value, Signal> {
-        let result_used = self.ret_used;
         let at = usize::from(id == ids::REPORT_SAVEAS_2);
         let parameters = match args.get(at) {
             Some(Value::Text(s)) => s.clone(),
@@ -1378,6 +1474,64 @@ impl Session {
             other => return unsupported(format!("{id} to {}", other.describe())),
         };
         let record_ref = args.get(at + 3);
+        self.report_save_core(
+            id,
+            receiver,
+            args,
+            at,
+            parameters,
+            &format,
+            SaveTarget::Stream(blob),
+            record_ref,
+        )
+    }
+
+    /// `SaveAsPdf`, `SaveAsExcel`, `SaveAsWord` and `SaveAsHtml` with a file name, on a report variable (`FileName`) or by
+    /// number (`Number, FileName`). Only a report on the allow-list runs (ADR-040); the others stay refused.
+    fn report_save_as_file(
+        &mut self,
+        id: al_ir::BuiltinId,
+        receiver: Option<Value>,
+        args: &[Value],
+        format: &str,
+        by_number: bool,
+    ) -> Result<Value, Signal> {
+        let at = usize::from(by_number);
+        let name = match args.get(at) {
+            Some(Value::Text(s) | Value::Code(s)) => s.to_string(),
+            other => return unsupported(format!("{id} with the file name {}", other.describe())),
+        };
+        if args.get(at + 1).is_some() {
+            return unsupported(format!("{id} with a record argument (what it filters is not pinned)"));
+        }
+        self.report_save_core(
+            id,
+            receiver,
+            args,
+            at,
+            String::new().into(),
+            format,
+            SaveTarget::File(name),
+            None,
+        )
+    }
+
+    #[allow(clippy::too_many_arguments)]
+    fn report_save_core(
+        &mut self,
+        id: al_ir::BuiltinId,
+        receiver: Option<Value>,
+        args: &[Value],
+        at: usize,
+        parameters: al_builtins::text::Txt,
+        format: &str,
+        target: SaveTarget,
+        record_ref: Option<&Value>,
+    ) -> Result<Value, Signal> {
+        let result_used = self.ret_used;
+        let format = format.to_string();
+        // ADR-040: a rendering save of a listed report runs it and writes nothing.
+        let mut discard = false;
         let (inst, schema, quit) = if at == 0 {
             let (inst, quit) = self.report_instance(receiver, true)?;
             let schema = self.report_schema(&inst)?;
@@ -1385,6 +1539,11 @@ impl Session {
         } else {
             let (inst, schema) = self.report_by_number(id, args.first())?;
             (inst, schema, false)
+        };
+        let custom = if format == "Xml" {
+            None
+        } else {
+            self.custom_layout(&schema)?
         };
         match format.as_str() {
             "Xml" => {}
@@ -1402,17 +1561,23 @@ impl Session {
                     ),
                     code: "Dialog".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 };
                 return Ok(Value::Boolean(false));
             }
+            // A layout of Type = Custom is rendered by whoever subscribes to the platform's CustomDocumentMergerEx; the
+            // event is raised below, once the dataset is written (assumption custom-layout-merger).
+            "Pdf" | "Word" | "Excel" | "Html" if custom.is_some() => {}
             "Html" if schema.report().layout == ir::ReportLayout::Rdlc => {
                 self.last_error = al_builtins::native::AlError {
                     message: FORMAT_NOT_SUPPORTED_BY_LAYOUT.into(),
                     code: "Dialog".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 };
                 return Ok(Value::Boolean(false));
             }
+            "Pdf" | "Html" | "Word" | "Excel" if self.output_is_ignored(&schema) => discard = true,
             other => {
                 return unsupported(format!(
                     "Report.SaveAs of \"{}\" as {other}: only the Xml dataset is produced (a rendered format needs a layout \
@@ -1432,6 +1597,7 @@ impl Session {
                 ),
                 code: "ReportProcessingOnly".into(),
                 call_stack: String::new(),
+                ..Default::default()
             };
             // The statement form raises the same error (handlers/TestReportSaveAsColumnDetailsContracts.al:
             // ProcessingOnlyReport_StatementFormRaises, handlers/PWReportSaveAsColumns.al:
@@ -1489,7 +1655,27 @@ impl Session {
             Ok(true) => {
                 let header = self.dataset_header(&schema)?;
                 let bytes = written.expect("a SaveAs run has a dataset").finish(&header)?;
-                al_builtins::stream::write_bytes(&blob, &bytes);
+                if let Some(layout) = custom {
+                    let SaveTarget::Stream(blob) = target else {
+                        return unsupported(format!(
+                            "{id} to a file of a report with a Custom layout (only a stream is handed to the merger)"
+                        ));
+                    };
+                    return self.render_custom_layout(&schema, &format, layout, bytes, &blob);
+                }
+                match target {
+                    SaveTarget::Stream(blob) if !discard => al_builtins::stream::write_bytes(&blob, &bytes),
+                    SaveTarget::Stream(blob) => {
+                        // The dataset is dropped; the buffer is marked and any look at it is refused.
+                        blob.borrow_mut().render_pending = Some(schema.name().into());
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportRenderDiscarded);
+                    }
+                    SaveTarget::File(name) => {
+                        self.render_pending_files
+                            .insert(crate::ctx::pending_key(&name), schema.name().into());
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportRenderDiscarded);
+                    }
+                }
                 Ok(Value::Boolean(true))
             }
             Ok(false) => unsupported("CurrReport.Quit during a SaveAs (what the dataset holds is not pinned)"),
@@ -1520,6 +1706,134 @@ impl Session {
                 }
             }
             Err(other) => Err(other),
+        }
+    }
+
+    /// The layout a rendered `SaveAs` of `schema` uses when it is of `Type = Custom`: the report's
+    /// `DefaultRenderingLayout`, with its file's bytes. `None` for a report whose layout is not a custom one; a custom
+    /// layout whose file the app does not hold is refused.
+    fn custom_layout(&self, schema: &Schema) -> Result<Option<(ir::RenderingLayout, Vec<u8>)>, Signal> {
+        let report = schema.report();
+        let Some(default) = &report.default_rendering_layout else {
+            return Ok(None);
+        };
+        let Some(layout) = report
+            .rendering_layouts
+            .iter()
+            .find(|l| l.name.eq_ignore_ascii_case(default))
+            .filter(|l| l.kind == "custom")
+        else {
+            return Ok(None);
+        };
+        let app = self.engine.program.objects[schema.object].app as usize;
+        let bytes = self
+            .engine
+            .program
+            .apps
+            .get(app)
+            .and_then(|a| a.layout_files.iter().find(|(p, _)| *p == layout.path))
+            .map(|(_, b)| b.clone());
+        match bytes {
+            Some(b) => Ok(Some((layout.clone(), b))),
+            None => unsupported(format!(
+                "Report.SaveAs of \"{}\" with the custom layout {}, whose file {} the app does not hold",
+                schema.name(),
+                layout.name,
+                layout.path
+            )),
+        }
+    }
+
+    /// Raises the platform's `CustomDocumentMergerEx` for a custom layout (assumption custom-layout-merger) and answers
+    /// whether a subscriber rendered the document into `blob`.
+    fn render_custom_layout(
+        &mut self,
+        schema: &Schema,
+        format: &str,
+        (layout, layout_bytes): (ir::RenderingLayout, Vec<u8>),
+        dataset: Vec<u8>,
+        blob: &al_builtins::stream::BlobRef,
+    ) -> Result<Value, Signal> {
+        use al_builtins::stream::{Encoding, InState};
+        use al_builtins::value::LibraryValue;
+        if !self
+            .engine
+            .events
+            .is_subscribed(crate::events::REPORTING_TRIGGERS, "customdocumentmergerex")
+        {
+            return unsupported(format!(
+                "Report.SaveAs of \"{}\" with the custom layout {}: no subscriber to CustomDocumentMergerEx (what BC does then is not pinned)",
+                schema.name(),
+                layout.name
+            ));
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::CustomLayoutMerger);
+        let members: std::sync::Arc<[String]> = [
+            "SaveAsPdf",
+            "SaveAsWord",
+            "SaveAsExcel",
+            "Preview",
+            "Print",
+            "SaveAsHtml",
+        ]
+        .iter()
+        .map(|m| m.to_string())
+        .collect();
+        let action = match format {
+            "Pdf" => 0,
+            "Word" => 1,
+            "Excel" => 2,
+            _ => 5,
+        };
+        let stream = |name: &str, v: LibraryValue| Value::Library(name.into(), Rc::new(RefCell::new(v)));
+        let names: Vec<String> = [
+            "ObjectID",
+            "ReportAction",
+            "ObjectPayload",
+            "XmlData",
+            "LayoutData",
+            "DocumentStream",
+            "Success",
+        ]
+        .iter()
+        .map(|n| n.to_string())
+        .collect();
+        // The payload keys are not pinned (corpus topic #176): any use of the object is refused.
+        let payload = al_builtins::json::unpinned_object(
+            "the ObjectPayload of a custom layout merger is not pinned (corpus topic #176)",
+        );
+        let mut args = vec![
+            Value::Integer(self.object_id_of(schema.object as u32) as i32),
+            Value::Option(action, members),
+            payload,
+            stream(
+                "InStream",
+                LibraryValue::InStream(InState::snapshot(dataset, Encoding::Utf8)),
+            ),
+            stream(
+                "InStream",
+                LibraryValue::InStream(InState::snapshot(layout_bytes, Encoding::Utf8)),
+            ),
+            stream("OutStream", LibraryValue::OutStream(blob.clone(), Encoding::Utf8)),
+            Value::Boolean(false),
+        ];
+        let call = crate::dispatch::EventCall {
+            object: crate::events::REPORTING_TRIGGERS,
+            event: "customdocumentmergerex",
+            element: None,
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        self.raise(&call, &mut args)?;
+        if matches!(args[6], Value::Boolean(true)) {
+            Ok(Value::Boolean(true))
+        } else {
+            unsupported(format!(
+                "Report.SaveAs of \"{}\" with the custom layout {}: no subscriber rendered it (what SaveAs does then is not pinned)",
+                schema.name(),
+                layout.name
+            ))
         }
     }
 
@@ -1889,5 +2203,41 @@ impl Session {
             now: (y, mo, d, (in_day / 3_600_000) as u32, (in_day / 60_000 % 60) as u32),
             company_block: self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock),
         })
+    }
+}
+
+#[cfg(test)]
+mod ignored_output_tests {
+    use super::*;
+
+    /// ADR-040 section 3: the list grows by evidence only. Each entry names the app, the object, and the Microsoft tests
+    /// that need the report to run; no entry is listed twice; a layout smoke test, a `CheckFileNotEmpty` test or an
+    /// Excel cell test is never a reason.
+    #[test]
+    fn the_allow_list_cites_its_tests_and_has_no_duplicates() {
+        assert_eq!(
+            IGNORED_OUTPUT.iter().map(|e| e.name).collect::<Vec<_>>(),
+            ["Post Inventory Cost to G/L", "Check"]
+        );
+        for (i, e) in IGNORED_OUTPUT.iter().enumerate() {
+            assert!(e.app.len() == 36 && e.id > 0 && !e.name.is_empty(), "{}", e.name);
+            assert!(
+                e.why.contains('(') && e.why.contains("tests") == e.why.contains("tests"),
+                "{}",
+                e.name
+            );
+            assert!(
+                IGNORED_OUTPUT[..i].iter().all(|o| (o.app, o.id) != (e.app, e.id)),
+                "{} is listed twice",
+                e.name
+            );
+            for banned in ["CheckFileNotEmpty", "VerifyCellValue", "Layout Test", "Report Layout"] {
+                assert!(
+                    !e.why.contains(banned) || e.why.contains("never"),
+                    "{}: {banned}",
+                    e.name
+                );
+            }
+        }
     }
 }

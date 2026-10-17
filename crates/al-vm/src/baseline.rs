@@ -249,7 +249,11 @@ impl Session {
         self.isolated_storage = b.isolated_storage.clone();
         self.isolated_committed = b.isolated_storage.clone();
         self.sequences = b.sequences.clone();
-        self.last_stamp = b.last_stamp;
+        // The install ran on a clock that its own Sleep calls had moved forward (hours, in Business Central's install
+        // code); the session starts on the real clock again, and a stamp must not stay ahead of it: a row inserted by the
+        // first test would otherwise be stamped hours after CurrentDateTime (corpus record/TestSystemFieldStampsContracts.al:
+        // Insert_StampsBothFieldsWithTheUtcClock_SystemIdIsSetBeforeOnInsert).
+        self.last_stamp = b.last_stamp.min(self.now_millis());
         self.baseline_rows = b.nonempty_tables();
     }
 }
@@ -358,5 +362,27 @@ mod tests {
         let bytes = b.to_bytes().expect("the held tables are plain rows");
         let back = Baseline::from_bytes(&bytes).unwrap();
         assert_eq!(summary(&back), summary(&b));
+    }
+
+    // corpus record/TestSystemFieldStampsContracts.al:Insert_StampsBothFieldsWithTheUtcClock_SystemIdIsSetBeforeOnInsert:
+    // the install ran on a clock its Sleep calls had moved forward; a session restored from its baseline stamps on the real clock.
+    #[test]
+    fn a_restored_session_does_not_stamp_ahead_of_the_clock() {
+        let engine = crate::Engine::new(al_ir::Program::default(), Vec::new());
+        let mut session = Session::new(engine);
+        let mut b = sample();
+        b.last_stamp = session.now_millis() + 6 * 3_600_000;
+        session.restore_baseline(&b);
+        let stamp = session.stamp_millis();
+        assert!(
+            stamp <= session.now_millis() + 1_000,
+            "stamped {} ms ahead",
+            stamp - session.now_millis()
+        );
+        // A baseline stamp in the past still holds: the next stamp is later than it.
+        let mut older = sample();
+        older.last_stamp = session.now_millis() - 10_000;
+        session.restore_baseline(&older);
+        assert!(session.stamp_millis() > older.last_stamp);
     }
 }

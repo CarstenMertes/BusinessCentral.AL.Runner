@@ -93,15 +93,22 @@ impl al_builtins::native::Ctx for Session {
         Session::collect_error(self, info)
     }
     fn fs_exists(&mut self, path: &str) -> Result<bool, Signal> {
+        self.refuse_pending_file(path)?;
         Ok(self.host.files.exists(path))
     }
     fn fs_read(&mut self, path: &str) -> Result<Option<Vec<u8>>, Signal> {
+        self.refuse_pending_file(path)?;
         Ok(self.host.files.read(path))
     }
     fn fs_write(&mut self, path: &str, bytes: &[u8]) -> Result<(), String> {
+        // A write by AL over the path ends the mark: the file is what AL wrote.
+        if !self.render_pending_files.is_empty() {
+            self.render_pending_files.remove(&pending_key(path));
+        }
         self.host.files.write(path, bytes)
     }
     fn fs_remove(&mut self, path: &str) -> Result<bool, Signal> {
+        self.refuse_pending_file(path)?;
         Ok(self.host.files.remove(path))
     }
     fn fs_temp_name(&mut self) -> String {
@@ -286,6 +293,25 @@ pub(crate) fn base_slot_missing(slot: usize) -> Signal {
     Signal::Unsupported(format!(
         "internal error: the base object's instance has no global slot {slot}"
     ))
+}
+
+/// How a path is compared with the pending ones: case folded and with `/` for `\`, so a different spelling of the
+/// same file is still the file (a superset of what the file system would call equal, which only refuses more).
+pub(crate) fn pending_key(path: &str) -> String {
+    path.replace('\\', "/").to_lowercase()
+}
+
+impl Session {
+    /// Refuses a look at a file whose rendered output was never produced (ADR-040).
+    pub(crate) fn refuse_pending_file(&self, path: &str) -> Result<(), Signal> {
+        if self.render_pending_files.is_empty() {
+            return Ok(());
+        }
+        match self.render_pending_files.get(&pending_key(path)) {
+            Some(report) => Err(al_builtins::stream::render_pending_error(report)),
+            None => Ok(()),
+        }
+    }
 }
 
 #[cfg(test)]

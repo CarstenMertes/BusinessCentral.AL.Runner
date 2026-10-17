@@ -60,6 +60,10 @@ fn blank_if_spaces(v: &Value) -> std::borrow::Cow<'_, Value> {
         Value::Code(s) if !s.is_empty() && s.bytes().all(|c| c == b' ') => {
             Cow::Owned(Value::Code(String::new().into()))
         }
+        // Trailing blanks do not count in a filter comparison: `SetRange(K, 'abc  ')` finds the row 'abc' (record/lt-key-case-trailing-blank/
+        // TableKeyCaseTrailingBlank.al:P184_TextKey_Get_And_Filter_OtherCase_Blanks `range blanks count = 1`).
+        Value::Text(s) if s.ends_with(' ') => Cow::Owned(Value::Text(s.trim_end_matches(' ').to_string().into())),
+        Value::Code(s) if s.ends_with(' ') => Cow::Owned(Value::Code(s.trim_end_matches(' ').to_string().into())),
         other => Cow::Borrowed(other),
     }
 }
@@ -164,7 +168,9 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
             flush(&mut raw, &mut out);
             out.push(Tok::Op(op));
             i += op.len();
-        } else if c[i] == '\'' {
+        // A quote opens a literal only where a value starts; inside a word it is a character (record/lt-record-read/RcAMisc.al:
+        // GetView_Field_Types `quote`: `it's`).
+        } else if c[i] == '\'' && raw.trim().is_empty() {
             flush(&mut raw, &mut out);
             let mut lit = String::new();
             i += 1;
@@ -310,6 +316,9 @@ impl Parser<'_> {
         use crate::value::RtType as T;
         let text = match t {
             Tok::Typed(v) => return crate::ops::convert(v, self.ty).map_err(|e| e.describe()),
+            // A quoted empty text is the blank date (corpus record/lt-loadfields-pagesource-validate/P81DateFilters.al:193-194,
+            // :308). The unquoted empty text stays refused.
+            Tok::Quoted(s) if s.is_empty() && matches!(self.ty, T::Date) => return Ok(Value::Date(0, false)),
             Tok::Raw(s) | Tok::Quoted(s) => s,
             Tok::Op(o) => return Err(format!("operator `{o}` where a value was expected")),
         };
@@ -502,7 +511,7 @@ pub fn row_passes(row: &[Value], filters: &[FieldFilter]) -> bool {
 /// Total order on key tuples (field-wise `compare`; incomparable counts as equal).
 pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
     for (x, y) in a.iter().zip(b) {
-        match compare(x, y).unwrap_or(Ordering::Equal) {
+        match crate::ops::compare_key_value(x, y).unwrap_or(Ordering::Equal) {
             Ordering::Equal => continue,
             o => return o,
         }
@@ -548,6 +557,23 @@ mod tests {
             parse_filter("1M", &[], &T::DateFormula).is_err(),
             "a formula stays refused"
         );
+    }
+
+    /// A quoted empty text in a Date filter is the blank date: `''` finds the blank rows, `<>''` the others
+    /// (corpus record/lt-loadfields-pagesource-validate/P81DateFilters.al:193-194, z9 and z10), and `''..01/01/26` is the range
+    /// from the blank date (same file, :294 and :308, where %1 holds 0D). Item's GetFilter("Date Filter") gives that text back
+    /// to SetFilter in Transfer Line.FilterLinesWithItemToPlan.
+    #[test]
+    fn a_date_filter_reads_a_quoted_empty_text_as_the_blank_date() {
+        use crate::value::RtType as T;
+        let blank = Value::Date(0, false);
+        let day = Value::Date(crate::format::day_from_civil(2026, 1, 1), false);
+        let eq = parse_filter("''", &[], &T::Date).expect("''");
+        assert!(eq.matches(&blank) && !eq.matches(&day));
+        let ne = parse_filter("<>''", &[], &T::Date).expect("<>''");
+        assert!(!ne.matches(&blank) && ne.matches(&day));
+        let upto = parse_filter("''..01/01/26", &[], &T::Date).expect("''..01/01/26");
+        assert!(upto.matches(&blank) && upto.matches(&day));
     }
 
     #[test]

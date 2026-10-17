@@ -62,6 +62,8 @@ pub enum PlatformPublisher {
     GlobalTriggers,
     /// `Caption Class` (42): `OnResolveCaptionClass`.
     CaptionClass,
+    /// `Reporting Triggers`: `CustomDocumentMergerEx`, raised when a report renders with a custom layout.
+    ReportingTriggers,
 }
 
 /// The events of a page the test client raises (`al-vm/src/pages.rs`). A subscriber to any other
@@ -136,6 +138,9 @@ pub struct AppInfo {
     /// lines are known (`SourceFile::lines`).
     #[serde(default)]
     pub include_source: bool,
+    /// The files the app's reports name with `LayoutFile`: path relative to the app (`/` separators), content.
+    #[serde(default)]
+    pub layout_files: Vec<(String, Vec<u8>)>,
 }
 
 /// A `.NET` type declared by a `dotnet { }` block.
@@ -298,6 +303,25 @@ pub struct Report {
     /// `ExcelLayout` property, no `rendering` section): a rendered `Report.SaveAs` finds no valid layout.
     #[serde(default)]
     pub layout_file_missing: bool,
+    /// The layouts of the `rendering` section, in declaration order.
+    #[serde(default)]
+    pub rendering_layouts: Vec<RenderingLayout>,
+    /// `DefaultRenderingLayout`: the name of the layout the report renders with when none is named.
+    #[serde(default)]
+    pub default_rendering_layout: Option<String>,
+}
+
+/// One `layout(Name) { ... }` of a report's `rendering` section.
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
+pub struct RenderingLayout {
+    pub name: String,
+    /// The `Type` property, lower-case (`rdlc`, `word`, `excel`, `custom`); empty when it is not declared.
+    pub kind: String,
+    /// The `LayoutFile` as written, with the quotes taken off.
+    pub file: String,
+    /// `LayoutFile` relative to the app folder (`/` separators, `.` and `..` resolved).
+    pub path: String,
+    pub mime_type: String,
 }
 
 /// The layout a report renders with by default.
@@ -441,6 +465,12 @@ pub struct ReportItem {
     /// The columns the dataset writes for each row, in source order.
     #[serde(default)]
     pub columns: Vec<ReportColumn>,
+    /// `MaxIteration` of an `Integer` item: the rows after which the item stops (its `OnPostDataItem` still runs).
+    #[serde(default)]
+    pub max_iteration: Option<u32>,
+    /// `PrintOnlyIfDetail = true`: the dataset leaves out a row whose nested items wrote no row.
+    #[serde(default)]
+    pub print_only_if_detail: bool,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).

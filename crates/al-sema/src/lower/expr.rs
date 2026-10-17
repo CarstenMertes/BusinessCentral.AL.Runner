@@ -593,7 +593,23 @@ impl Lowerer<'_> {
                     let field = self.field_ref(table, id);
                     Ok(ir::Expr::FieldOf(Box::new(self.expr(&kids[0])?), field))
                 }
-                _ => Ok(ir::Expr::Load(self.place(n)?)),
+                _ => {
+                    let place = self.place(n)?;
+                    if let Some((l, flag)) = self.qcp_ret {
+                        if place == ir::Place::Local(l) {
+                            // The named return value of an OnQueryClosePage read before it has one.
+                            return Ok(ir::Expr::Ternary(
+                                Box::new(ir::Expr::Load(ir::Place::Local(flag))),
+                                Box::new(ir::Expr::Load(place)),
+                                Box::new(ir::Expr::Refused(
+                                    "OnQueryClosePage reads its return value before it assigned one (not pinned)"
+                                        .into(),
+                                )),
+                            ));
+                        }
+                    }
+                    Ok(ir::Expr::Load(place))
+                }
             },
             other => Err(format!("expression {other:?} `{}` is not lowered yet", n.text())),
         }

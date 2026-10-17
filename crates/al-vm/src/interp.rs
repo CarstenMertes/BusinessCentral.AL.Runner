@@ -90,6 +90,18 @@ impl Session {
     /// does (`List of [BigInteger].Get(1, I)` leaves an Integer in `I`; an overflow raises the error of the conversion).
     #[inline]
     fn fit_ref_number(&self, p: &ir::Place, v: Value, f: &Frame) -> Result<Value, Signal> {
+        // A text a builtin stores in a bounded Text or Code variable is checked against its length, as an assignment is
+        // (json/JsonWriteTo.al:WriteToTextVariants `writeto_text10_overflow`).
+        if let Value::Text(t) = &v {
+            if let Some(ty @ (RtType::Text(Some(_)) | RtType::Code(Some(_)))) = self.place_ty(p, f) {
+                if let RtType::Text(Some(m)) | RtType::Code(Some(m)) = ty {
+                    if t.chars().count() > *m as usize {
+                        return al_builtins::ops::convert(v, ty);
+                    }
+                }
+            }
+            return Ok(v);
+        }
         if !matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
             return Ok(v);
         }
@@ -185,6 +197,18 @@ impl Session {
         let mut inst = f.instance.borrow_mut();
         for (i, v) in fresh.into_iter().enumerate() {
             if !keep.contains(&i) {
+                // A global temporary record keeps its rows, as Clear leaves them
+                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount); that ClearAll does the same
+                // is not pinned: Base Application's Purch.-Post ClearAllVariables relies on it.
+                if let (Value::Record(old), Value::Record(new)) = (&inst.globals[i], &v) {
+                    let id = old.borrow().temp_id.clone();
+                    if id.is_some() && old.borrow().temporary {
+                        new.borrow_mut().temp_id = id;
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::ClearAllKeepsTemporaryRows,
+                        );
+                    }
+                }
                 inst.globals[i] = v;
             }
         }
@@ -211,6 +235,7 @@ impl Session {
                         ),
                         code: "Argument".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 self.application_areas = t.to_string();
@@ -267,7 +292,7 @@ impl Session {
     /// The items a `foreach` runs over (a List, a JSON array or an XPath result).
     pub(crate) fn foreach_items(coll: Value) -> Result<Vec<Value>, Signal> {
         Ok(match coll {
-            Value::List(l) => l.borrow().clone(),
+            Value::List(l) => l.borrow().to_vec(),
             // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
             other => match al_builtins::json::array_items(&other).or_else(|| al_builtins::xml::node_list_items(&other))
             {
@@ -291,12 +316,12 @@ impl Session {
             B::And => Value::Boolean(ops::truthy(l)? & ops::truthy(r)?),
             B::Or => Value::Boolean(ops::truthy(l)? | ops::truthy(r)?),
             B::Xor => Value::Boolean(ops::truthy(l)? ^ ops::truthy(r)?),
-            B::Eq => Value::Boolean(ops::compare(l, r)? == Ordering::Equal),
-            B::Ne => Value::Boolean(ops::compare(l, r)? != Ordering::Equal),
-            B::Lt => Value::Boolean(ops::compare_order(l, r)? == Ordering::Less),
-            B::Le => Value::Boolean(ops::compare_order(l, r)? != Ordering::Greater),
-            B::Gt => Value::Boolean(ops::compare_order(l, r)? == Ordering::Greater),
-            B::Ge => Value::Boolean(ops::compare_order(l, r)? != Ordering::Less),
+            B::Eq => Value::Boolean(ops::compare_operator(l, r, false)? == Ordering::Equal),
+            B::Ne => Value::Boolean(ops::compare_operator(l, r, false)? != Ordering::Equal),
+            B::Lt => Value::Boolean(ops::compare_operator(l, r, true)? == Ordering::Less),
+            B::Le => Value::Boolean(ops::compare_operator(l, r, true)? != Ordering::Greater),
+            B::Gt => Value::Boolean(ops::compare_operator(l, r, true)? == Ordering::Greater),
+            B::Ge => Value::Boolean(ops::compare_operator(l, r, true)? != Ordering::Less),
             B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(l, r)?),
             B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(l, r)?),
         })
@@ -414,7 +439,26 @@ impl Session {
                 // A table procedure runs with the record as its Rec, on the record
                 // variable's own globals (ADR-021).
                 Value::Record(rc) => {
-                    let (inst, saved) = self.enter_record(object, rc, None)?;
+                    // `Rec.InitType()` in a page's code: the table procedure's xRec is the page's own xRec, as the page's triggers see it
+                    // (Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type; assumption
+                    // page-rec-procedure-sees-page-xrec).
+                    let page_xrec = {
+                        let fi = f.instance.borrow();
+                        let o = &self.engine.program.objects[fi.object as usize];
+                        match (o.kind == al_ir::ObjKind::Page, o.rec_slot, o.xrec_slot) {
+                            (true, Some(r), Some(x)) => match (&fi.globals[r], &fi.globals[x]) {
+                                (Value::Record(pr), Value::Record(px)) if Rc::ptr_eq(pr, &rc) => Some(px.clone()),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    };
+                    if page_xrec.is_some() {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::PageRecProcedureSeesPageXrec,
+                        );
+                    }
+                    let (inst, saved) = self.enter_record(object, rc, page_xrec.as_ref())?;
                     let r = self.finish_call(object, routine, inst.clone(), args, values, try_call, f);
                     Self::leave_record(&inst, saved);
                     return r;
@@ -592,6 +636,22 @@ impl Session {
                 t.push_str(x);
                 ops::convert(Value::Text(t), &RtType::Text(max))?
             }
+            // `S += T[i]`: a Char appends in place as a Text does. A surrogate half and the call-stack mark stay on the slow
+            // path, which builds the text the long way.
+            (Value::Text(mut t), Value::Char(c))
+                if char::from_u32(u32::from(*c)).is_some_and(|ch| ch != al_builtins::native::CALL_STACK_MARK)
+                    && !t.has_marker()
+                    && max.is_none_or(|m| t.utf16_len() < m as usize) =>
+            {
+                let ch = char::from_u32(u32::from(*c)).expect("checked in the guard");
+                match p {
+                    ir::Place::Local(i) => f.locals[*i] = Value::Null,
+                    ir::Place::Global(i) => f.instance.borrow_mut().globals[*i] = Value::Null,
+                    _ => unreachable!("a local or a global"),
+                }
+                t.push(ch);
+                ops::convert(Value::Text(t), &RtType::Text(max))?
+            }
             (old, rv) => ops::convert(ops::arith(ops::Arith::Add, &old, rv)?, &RtType::Text(max))?,
         };
         self.write(p, v, f)
@@ -635,6 +695,7 @@ impl Session {
                             message: message.clone(),
                             code: String::new(),
                             call_stack: String::new(),
+                            ..Default::default()
                         })));
                     }
                 }
@@ -696,6 +757,7 @@ impl Session {
                                             loaded: true,
                                             refetch: true,
                                             persisted: false,
+                                            render_pending: b.render_pending.clone(),
                                         },
                                     )))
                                 }
@@ -715,7 +777,19 @@ impl Session {
         }
         if let ir::Place::Field(base, pos) = p {
             let ty = self.place_type(p, f);
-            let v = ops::convert(v, &ty)?;
+            // A number a Variant holds goes into a Text or Code field as its Format text (the lowering leaves it unconverted for
+            // that); the guard is one test on the common path.
+            let v = if matches!(
+                v,
+                Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Enum(..)
+            ) {
+                match ops::number_into_text_field(&v, &ty, &*self) {
+                    Some(r) => r?,
+                    None => ops::convert(v, &ty)?,
+                }
+            } else {
+                ops::convert(v, &ty)?
+            };
             return match self.read(base, f)? {
                 Value::Record(rc) => {
                     self.connection_check(&rc)?;
@@ -834,7 +908,7 @@ impl Session {
                 format!(
                     "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
                     units.len(),
-                    String::from_utf16_lossy(&units)
+                    ops::shown_in_length_error(&String::from_utf16_lossy(&units))
                 ),
                 "StringLengthExceeded",
             );

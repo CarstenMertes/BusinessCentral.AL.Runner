@@ -140,6 +140,14 @@ impl Lowerer<'_> {
                     None => Err("ArrayLen with a dimension outside the array (error text not pinned)".into()),
                 }
             }
+            // Refused when it runs, so code that never reaches it still runs: Base Application's Item Picture page exports in an
+            // action's trigger, which a test that only opens an Item Card never invokes. What the call writes is not pinned (the
+            // corpus skips it: streams/lt-stream-read-write-media/P102Media.al line 5).
+            Some(Res::Builtin(id)) if matches!(id.as_str(), "Media.ExportFile#1" | "MediaSet.ExportFile#1") => {
+                Ok(ir::Expr::Refused(format!(
+                    "builtin {id}: what a media export writes to the server's file system is not pinned (docs/probes-needed.md)"
+                )))
+            }
             Some(Res::Builtin(id)) => {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(match al_builtins::native::refusal(&id) {
@@ -155,17 +163,28 @@ impl Lowerer<'_> {
                 // Evaluate into an Option variable: a variable has no OptionCaption, so a text that is neither an ordinal nor a
                 // member name is a plain rejection (P86Eval.al:Eval Option, `Bet`, `-1`, `1,0`). A field may name a member by its
                 // caption, which the value does not carry, so a field keeps the id that refuses it.
+                let decimal_field_places = if id == "System.Format#1" {
+                    args.first().and_then(|a| self.decimal_field_places(a))
+                } else {
+                    None
+                };
                 let emit_id = if id == "System.Evaluate#1"
                     && args.first().is_some_and(|a| {
                         matches!(self.ty_of(a), Ty::Option(_))
                             && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
                     }) {
                     "System.EvaluateVariableOption#1".to_string()
+                } else if id == "Dialog.Error#2" && args.first().is_some_and(|a| a.kind() != SyntaxKind::Literal) {
+                    // `Error(Label, ...)` and `Error(Variable, ...)`: only a string literal has its text for
+                    // `GetLastErrorText(true)` pinned (corpus P86LastError.al:PlainError_Exclude).
+                    "Dialog.ErrorNotLiteral#1".to_string()
                 } else if id == "System.Format#1"
                     && args.len() >= 3
                     && args.first().is_some_and(|a| matches!(self.ty_of(a), Ty::Variant))
                 {
                     "System.FormatVariant#1".to_string()
+                } else if id == "System.Format#1" && decimal_field_places.is_some() {
+                    "System.FormatDecimalField#1".to_string()
                 } else {
                     id.clone()
                 };
@@ -378,6 +397,12 @@ impl Lowerer<'_> {
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });
+                }
+                if let (true, Some(places)) = (emit_id == "System.FormatDecimalField#1", decimal_field_places) {
+                    while out.len() < 3 {
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))));
+                    }
+                    out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Text(places))));
                 }
                 Ok(ir::Expr::Builtin {
                     id: builtin_id(&emit_id)?,

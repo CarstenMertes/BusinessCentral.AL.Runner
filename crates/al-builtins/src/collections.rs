@@ -31,7 +31,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         })
     }),
     ("List.Contains#1", |_, r, a| {
-        with_list(r, |l| Ok(Value::Boolean(position(l, &a[0]).is_some())))
+        with_list(r, |l| Ok(Value::Boolean(position_checked(l, &a[0])?.is_some())))
     }),
     ("List.Count#1", |_, r, _| {
         with_list(r, |l| Ok(Value::Integer(l.len() as i32)))
@@ -41,8 +41,14 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
         with_list(r, |l| l.get(i).cloned().map_or_else(list_get_error, Ok))
     }),
     ("List.Get#2", |c, r, a| {
-        let i = index(&a[0])?;
-        let got = with_list(r, |l| Ok(l.get(i).cloned()))?;
+        // An index below 1 answers false like one past the end (collections/ListInt.al:Int_AddCountGet `get 0 ret`).
+        let got = match &a[0] {
+            Value::Integer(n) if *n < 1 && c.ret_used() => None,
+            other => {
+                let i = index(other)?;
+                with_list(r, |l| Ok(l.get(i).cloned()))?
+            }
+        };
         match got {
             Some(v) => {
                 a[1] = v;
@@ -54,7 +60,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     }),
     ("List.IndexOf#1", |_, r, a| {
         with_list(r, |l| {
-            Ok(Value::Integer(position(l, &a[0]).map_or(0, |p| p as i32 + 1)))
+            Ok(Value::Integer(position_checked(l, &a[0])?.map_or(0, |p| p as i32 + 1)))
         })
     }),
     ("List.LastIndexOf#1", |_, r, a| {
@@ -85,26 +91,34 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
             }))
         })
     }),
-    ("List.RemoveAt#1", |_, r, a| {
-        let i = index(&a[0])?;
-        with_list(r, |l| {
-            if i >= l.len() {
-                return out_of_range();
-            }
-            l.remove(i);
-            Ok(Value::Boolean(true))
-        })
+    // With the result used a bad index or range answers false and removes nothing (collections/ListInt.al:Int_Remove
+    // `removeat 10 ret`, Int_RemoveRange `removerange 4,3`); the statement form raises.
+    ("List.RemoveAt#1", |c, r, a| {
+        let done = (|| {
+            let i = index(&a[0])?;
+            with_list(r, |l| {
+                if i >= l.len() {
+                    return out_of_range();
+                }
+                l.remove(i);
+                Ok(Value::Boolean(true))
+            })
+        })();
+        false_when_used(c.ret_used(), done)
     }),
-    ("List.RemoveRange#1", |_, r, a| {
-        let i = index(&a[0])?;
-        let n = count(&a[1])?;
-        with_list(r, |l| {
-            if i + n > l.len() {
-                return range_past_end();
-            }
-            l.drain(i..i + n);
-            Ok(Value::Boolean(true))
-        })
+    ("List.RemoveRange#1", |c, r, a| {
+        let done = (|| {
+            let i = index(&a[0])?;
+            let n = count(&a[1])?;
+            with_list(r, |l| {
+                if i + n > l.len() {
+                    return range_past_end();
+                }
+                l.drain(i..i + n);
+                Ok(Value::Boolean(true))
+            })
+        })();
+        false_when_used(c.ret_used(), done)
     }),
     ("List.Reverse#1", |_, r, _| {
         with_list(r, |l| {
@@ -129,7 +143,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
             if i + n > l.len() {
                 return range_past_end();
             }
-            Ok(Value::List(Rc::new(RefCell::new(l[i..i + n].to_vec()))))
+            Ok(Value::List(Rc::new(RefCell::new(l[i..i + n].to_vec().into()))))
         })
     }),
     ("Dictionary.Add#1", |c, r, a| {
@@ -211,6 +225,33 @@ fn eq(a: &Value, b: &Value) -> bool {
     compare(a, b).ok() == Some(Ordering::Equal)
 }
 
+/// `Contains` and `IndexOf`: a list of interfaces does not support them, and two lists are the same list or cannot be compared
+/// (collections/ListComplex.al:Interface_List `af33`, `af35`, Nested_ListOfList, Nested_ListOfListEquality).
+fn position_checked(l: &[Value], v: &Value) -> Result<Option<usize>, Signal> {
+    if matches!(v, Value::Codeunit(_)) {
+        return error_code(
+            "The function is not supported on lists of type 'Microsoft.Dynamics.Nav.Runtime.NavInterfaceHandle'.",
+            "NotSupportedOperation",
+        );
+    }
+    if let Value::List(want) = v {
+        for (i, x) in l.iter().enumerate() {
+            match x {
+                Value::List(have) if Rc::ptr_eq(have, want) => return Ok(Some(i)),
+                Value::List(_) => {
+                    return error_code(
+                        "Unable to compare operands of type NavList`1 with NavList`1.",
+                        "InvalidComparison",
+                    );
+                }
+                _ => {}
+            }
+        }
+        return Ok(None);
+    }
+    Ok(position(l, v))
+}
+
 fn position(l: &[Value], v: &Value) -> Option<usize> {
     l.iter().position(|x| eq(x, v))
 }
@@ -220,6 +261,7 @@ fn error_code<T>(message: &str, code: &str) -> Result<T, Signal> {
         message: message.into(),
         code: code.into(),
         call_stack: String::new(),
+        ..Default::default()
     })))
 }
 
@@ -248,6 +290,14 @@ fn range_past_end<T>() -> Result<T, Signal> {
     error_code(LIST_INVALID, "Argument")
 }
 
+/// `done`, or false for the list errors when the result is used.
+fn false_when_used(ret_used: bool, done: Result<Value, Signal>) -> Result<Value, Signal> {
+    match done {
+        Err(Signal::Error(e)) if ret_used && e.message == LIST_INVALID => Ok(Value::Boolean(false)),
+        other => other,
+    }
+}
+
 /// AL list indexes are 1-based.
 fn index(v: &Value) -> Result<usize, Signal> {
     match v {
@@ -265,7 +315,7 @@ fn count(v: &Value) -> Result<usize, Signal> {
 
 fn list_items(v: &Value) -> Result<Vec<Value>, Signal> {
     match v {
-        Value::List(l) => Ok(l.borrow().clone()),
+        Value::List(l) => Ok(l.borrow().to_vec()),
         other => Err(Signal::Unsupported(format!("{} is not a list", other.describe()))),
     }
 }

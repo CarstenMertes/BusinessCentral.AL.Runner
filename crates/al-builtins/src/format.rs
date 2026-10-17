@@ -53,6 +53,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             (2, true) => "1".into(),
             (2, false) => "0".into(),
             (9, b) => b.to_string(),
+            // German after GlobalLanguage(1031): `Ja` / `Nein` (misc/lt-probes-needed-3/PnC*: Identity_GlobalLanguage_SetsAndRestores
+            // `set_ok = Ja`, ObjectId_WithAnotherGlobalLanguage `set 1031 ok = Ja`, P142_Date_Language).
+            (_, true) if ctx.language() == 1031 => "Ja".into(),
+            (_, false) if ctx.language() == 1031 => "Nein".into(),
             (_, true) => "Yes".into(),
             (_, false) => "No".into(),
         },
@@ -83,16 +87,39 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             // `Option` declared without members is the one empty name: it shows the number
             // (types/lt-scalars/ScT70062.al:Option_Defaults `nomembers_len`, `nomembers_3`).
             _ if members.len() == 1 && members[0].is_empty() => o.to_string(),
-            _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),
+            // A member with a blank name shows as one space (types/lt-scalars/ScT70053.al:Option_Format `blank_len`).
+            _ => match members.get(*o as usize) {
+                Some(m) if m.is_empty() => " ".to_string(),
+                Some(m) => m.clone(),
+                None => o.to_string(),
+            },
         },
         Value::Enum(id, o) => match standard {
             2 | 9 => o.to_string(),
             _ => ctx.enum_name(*id, *o),
         },
-        Value::Guid(g) => format_guid(g),
+        // Numbers 0, 1, 2 and 9 are the braced form; 3 has neither braces nor dashes, 4 only the dashes (platform/lt-platform-members/
+        // PlTGuid.al:Format_Numbers, NullGuid_Values); the others are not pinned for a Guid.
+        Value::Guid(g) => match standard {
+            0 | 1 | 2 | 9 => format_guid(g),
+            3 => format_guid(g).replace(['{', '}', '-'], ""),
+            4 => format_guid(g).replace(['{', '}'], ""),
+            n => {
+                return Err(FormatFail::Unsupported(format!(
+                    "Format of a Guid with the standard format {n} (not pinned)"
+                )));
+            }
+        },
         // A Blob shows `*` when it holds data and one space when it does not (record/
         // TestFormatRecordContracts.al:132-136, the cleared record shows the blank form).
-        Value::Blob(b) => (if b.borrow().bytes.is_empty() { " " } else { "*" }).to_string(),
+        Value::Blob(b) => {
+            let buf = b.borrow();
+            // ADR-040: the text shows whether the buffer holds data, which a pending buffer cannot say.
+            if let Some(report) = &buf.render_pending {
+                crate::stream::note_pending_observation(report);
+            }
+            (if buf.bytes.is_empty() { " " } else { "*" }).to_string()
+        }
         Value::Date(0, _) | Value::Time(0) | Value::DateTime(0) => String::new(),
         Value::Date(day, closing) => format_date(*day, *closing, standard)?,
         Value::Time(t) => format_time(t - 1, standard)?,
@@ -163,6 +190,11 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
         // (types/ProbeTypeFormsAndFilters.al:Clear_JsonTypes_GiveFreshUnassigned, BC 27.5); an object or array
         // gives its compact text; any other value is not pinned.
         Value::Library(name, l) if matches!(name.as_str(), "JsonObject" | "JsonArray" | "JsonValue" | "JsonToken") => {
+            if let crate::value::LibraryValue::Json(c) = &*l.borrow() {
+                if let Some(why) = c.unpinned {
+                    return Err(FormatFail::Unsupported(why.to_string()));
+                }
+            }
             let container = matches!(&*l.borrow(), crate::value::LibraryValue::Json(c)
                 if matches!(&c.node, crate::json::JsonNode::Object(k) if !k.is_empty())
                     || matches!(&c.node, crate::json::JsonNode::Array(_)));
@@ -239,12 +271,29 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
     };
     // A Boolean pads on the right and cuts at the length (types/TestProbeScalarContracts.al:FormatBoolean_Numbers:
     // `Format(true, 10)` is `Yes       `, `Format(true, 2)` is `Ye`).
-    if matches!(v, Value::Boolean(_) | Value::Option(..) | Value::Enum(..)) && length > 0 {
+    if matches!(
+        v,
+        Value::Boolean(_) | Value::Option(..) | Value::Enum(..) | Value::Guid(_)
+    ) && length > 0
+    {
         let cut: String = s.chars().take(length as usize).collect();
         return Ok(format!(
             "{cut}{}",
             " ".repeat((length as usize).saturating_sub(cut.chars().count()))
         ));
+    }
+    // A Text shorter than the length is padded on the right (types/lt-scalars/ScT70053.al:Text_FormatNumbers `len30`).
+    if let (Value::Text(_) | Value::Code(_), true) = (v, length > 0) {
+        let n = s.chars().count();
+        if n < length as usize {
+            return Ok(format!("{s}{}", " ".repeat(length as usize - n)));
+        }
+    }
+    // A negative length cuts a Text the same way (types/lt-scalars/ScT70053.al:Text_FormatNumbers `len-5`).
+    if let (Value::Text(_) | Value::Code(_), true) = (v, length < 0) {
+        if s.chars().count() > length.unsigned_abs() as usize {
+            return Ok(s.chars().take(length.unsigned_abs() as usize).collect());
+        }
     }
     // A text longer than the length is cut to it (text/lt-label-textbuilder/TxCLabel.al:Label_Value_And_Format `Format(Plain, 5)`).
     if matches!(
@@ -307,7 +356,11 @@ pub(crate) fn pad(s: String, length: i32) -> String {
 fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, FormatFail> {
     // A Decimal outside +-999,999,999,999,999.99 raises (misc/lt-system-functions/RandomFormat.al:Format_Decimal `af191`, `af193`).
     if d.abs() > rust_decimal::Decimal::new(99_999_999_999_999_999, 2) {
-        let whole = d.round().to_string();
+        // The shown value keeps 18 significant digits (types/lt-scalars/ScT70058.al:Decimal_Digits `af83`).
+        let kept = d
+            .round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+            .unwrap_or(*d);
+        let whole = kept.round().to_string();
         let (sign, digits) = whole.strip_prefix('-').map_or(("", whole.as_str()), |r| ("-", r));
         let mut grouped = String::new();
         for (i, c) in digits.chars().enumerate() {

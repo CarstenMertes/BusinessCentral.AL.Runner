@@ -425,8 +425,13 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                         match pos {
                             Some(p) => {
                                 let t = nodes[tn].table.expect("a position implies a table");
-                                if cx.members[t].fields[p].class != FieldClass::Normal {
-                                    reasons.push(format!("{} is bound to a FlowField or FlowFilter", raw.name));
+                                // A FlowField exports its calculated value (assumption xmlport-exports-flowfield-calculated); a
+                                // FlowFilter has no value to write.
+                                if !matches!(
+                                    cx.members[t].fields[p].class,
+                                    FieldClass::Normal | FieldClass::FlowField
+                                ) {
+                                    reasons.push(format!("{} is bound to a FlowFilter", raw.name));
                                 }
                                 node.field = Some(p);
                             }

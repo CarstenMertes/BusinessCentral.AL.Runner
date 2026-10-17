@@ -109,7 +109,11 @@ fn canonical_template(template: &str) -> Option<String> {
             Some((n, a)) => (n, Some(a)),
             None => (code, None),
         };
-        let known = CODE_NAMES.iter().find(|c| c.eq_ignore_ascii_case(name.trim()));
+        // `Filler Char` is the short spelling Microsoft's Data Exchange tests use (assumption `format-code-spelling`).
+        let known = CODE_NAMES.iter().find(|c| {
+            c.eq_ignore_ascii_case(name.trim())
+                || (**c == "Filler Character" && name.trim().eq_ignore_ascii_case("Filler Char"))
+        });
         let canon = match known {
             Some(c) => {
                 let arg = arg.map(|a| {
@@ -138,6 +142,13 @@ fn canonical_template(template: &str) -> Option<String> {
 
 /// `Err` names the part of the format string that is not understood.
 pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -> Result<String, String> {
+    // A Guid takes no format string without codes: the platform asks for the standard format number -1
+    // (types/lt-scalars/ScT70054.al:Guid_FormatStrings `af79`).
+    if matches!(v, Value::Guid(_)) && !template.contains('<') {
+        return Err(format!(
+            "{RAISE_MARK}InvalidStandardFormat{RAISE_MARK}Standard format number -1 does not exist for the type 'GUID'."
+        ));
+    }
     let canon = canonical_template(template);
     if canon.is_some() {
         crate::assumptions::assume(crate::assumptions::Assumption::FormatCodeSpelling);
@@ -603,6 +614,8 @@ mod tests {
         let dec = |s: &str| Value::Decimal(s.parse().unwrap());
         assert_eq!(text(fmt(dec("1234.5"), "<Integer Thousand><Decimals,3>")), "1,234.50");
         assert_eq!(text(fmt(Value::Integer(5), "<Integer,4><Filler Character,0>")), "0005");
+        // Microsoft's Data Exchange tests (GetNodeID) write the code as `Filler Char`.
+        assert_eq!(text(fmt(Value::Integer(5), "<Integer,4><Filler Char,0>")), "0005");
         assert_eq!(
             text(fmt(dec("1234.567"), "<Precision,2:2><Standard Format,0>")),
             "1,234.57"

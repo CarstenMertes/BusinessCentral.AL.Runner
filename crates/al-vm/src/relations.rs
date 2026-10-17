@@ -179,6 +179,17 @@ impl Session {
             group: 0,
         }];
         for w in wheres {
+            // A condition on a FlowFilter field of the related table is a flow filter: it selects no row. Not pinned;
+            // Item Journal Line's "Bin Code" relation names the Bin's "Item Filter" and "Variant Filter"
+            // (Tests-SCM Invt. Doc. Pst Preview TestInventoryShipmentPreviewWithBin; assumption
+            // relation-where-on-a-flowfilter-of-the-target).
+            let related_pos = match w {
+                ir::RelationWhere::Value { related, .. } | ir::RelationWhere::Field { related, .. } => *related,
+            };
+            if self.is_flow_filter(related.object, related_pos) {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RelationWhereOnTargetFlowFilter);
+                continue;
+            }
             filters.push(match w {
                 ir::RelationWhere::Value { related: p, text } => FieldFilter {
                     field: *p,
@@ -196,7 +207,21 @@ impl Session {
                         if self.is_flow_field(t.object, *own) {
                             self.calc_fields(rec, &[*own])?;
                         }
-                        ops::convert(rec.borrow().fields[*own].clone(), &related.fields[*p].ty)?
+                        // A condition that names the validated field itself (`Item Variant.Code where("Item No." =
+                        // field("Item No."), Code = field("Variant Code"))` on Prod. Order Line, Assembly Header and
+                        // Assembly Line "Variant Code") reads the value being validated, not the old one; the old
+                        // blank value would make the filter contradict the key. Not pinned by the corpus; required
+                        // by Tests-SCM SCM Order Tracking OrderTrackingOnSalesWithVariant (assumption
+                        // relation-where-reads-the-validated-value).
+                        let own_value = if *own == pos {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::RelationWhereReadsValidatedValue,
+                            );
+                            value.clone()
+                        } else {
+                            rec.borrow().fields[*own].clone()
+                        };
+                        ops::convert(own_value, &related.fields[*p].ty)?
                     }),
                     group: 0,
                 },
@@ -232,6 +257,7 @@ impl Session {
                 "DB:PrimRecordNotFound".into()
             },
             call_stack: String::new(),
+            ..Default::default()
         })))
     }
 }

@@ -103,6 +103,7 @@ impl Session {
             message,
             code: "Dialog".into(),
             call_stack: String::new(),
+            ..Default::default()
         })))
     }
 

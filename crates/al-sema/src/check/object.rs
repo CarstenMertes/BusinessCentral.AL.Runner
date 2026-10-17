@@ -61,7 +61,10 @@ impl<'a> Checker<'a> {
             let column = self.query(qi)?.column(name)?;
             return Some(Res::QueryColumn { query: qi, column });
         }
-        let Ty::Record { table, .. } = t else { return None };
+        // A `TestPage.Filter` names the fields of the page's source table.
+        let (Ty::Record { table, .. } | Ty::TestFilter(table)) = t else {
+            return None;
+        };
         let ti = self.resolve(sc, ObjKind::Table, table)?;
         self.members[ti].field(name).map(|f| Res::Field { table: ti, id: f.id })
     }
@@ -390,6 +393,7 @@ impl<'a> Checker<'a> {
             ObjKind::Page | ObjKind::PageExtension | ObjKind::Report | ObjKind::ReportExtension
         ) {
             self.reach_caption_class_if_used(oi);
+            self.reach_reporting_triggers_if_used(oi);
         }
         if matches!(self.ws.objects[oi].kind, ObjKind::Page | ObjKind::PageExtension) {
             self.reach_run_objects(oi);

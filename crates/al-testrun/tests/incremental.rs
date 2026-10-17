@@ -168,6 +168,7 @@ fn manifests() -> Vec<Manifest> {
             version: v.into(),
             resources: vec![],
             include_source: false,
+            layout_files: Vec::new(),
             symbols: vec![],
         })
         .collect()

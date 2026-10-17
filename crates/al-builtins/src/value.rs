@@ -66,6 +66,40 @@ pub enum RtType {
     DotNet(u32),
 }
 
+/// The items of a List: a `Vec<Value>` that counts the times it was borrowed mutably, so that a `foreach` over it notices
+/// a change (collections/RefSemantics.al:Foreach_ListAddWhileIterating, ...).
+#[derive(Debug, Clone, Default)]
+pub struct ListVec {
+    items: Vec<Value>,
+    pub version: u64,
+}
+
+impl From<Vec<Value>> for ListVec {
+    fn from(items: Vec<Value>) -> Self {
+        ListVec { items, version: 0 }
+    }
+}
+
+impl FromIterator<Value> for ListVec {
+    fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
+        ListVec::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl std::ops::Deref for ListVec {
+    type Target = Vec<Value>;
+    fn deref(&self) -> &Vec<Value> {
+        &self.items
+    }
+}
+
+impl std::ops::DerefMut for ListVec {
+    fn deref_mut(&mut self) -> &mut Vec<Value> {
+        self.version += 1;
+        &mut self.items
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     /// An unassigned Variant.
@@ -91,7 +125,7 @@ pub enum Value {
     /// Ordinal and the option's member names (needed by Format).
     Option(i32, std::sync::Arc<[String]>),
     Enum(u32, i32),
-    List(Rc<RefCell<Vec<Value>>>),
+    List(Rc<RefCell<ListVec>>),
     Dictionary(Rc<RefCell<Vec<(Value, Value)>>>),
     Array(Rc<RefCell<Vec<Value>>>),
     Codeunit(Rc<RefCell<Instance>>),
@@ -251,6 +285,8 @@ pub struct PageState {
     pub object: u32,
     /// Open pages answer; closed ones, and ones torn down by an error in a row load,
     /// raise "The TestPage is not open." (corpus testpageteardown/TestPageTeardown.al:3-24).
+    /// The page has been opened at least once (a Page variable that never ran has not).
+    pub ran: bool,
     pub open: bool,
     pub mode: PageMode,
     /// The running page: its globals hold `Rec`, `xRec` and `CurrPage`.
@@ -272,6 +308,8 @@ pub struct PageState {
     pub window_from_start: bool,
     /// A read has run to the end of the view and read the last two rows once more.
     pub window_eof: bool,
+    /// The window holds every row of the view, read by `Last` past a full window (see `last_past_the_window`).
+    pub window_whole: bool,
     /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
     pub landing_first: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
@@ -323,6 +361,11 @@ pub struct PageState {
     pub lower_key: Option<Vec<Value>>,
     /// The record `Page.SetRecord` handed a page variable, shown when the page runs.
     pub set_record: Option<Rc<RefCell<RecordState>>>,
+    /// `Page.SetTableView` gave `set_record` its filters and order: a later `SetRecord` moves the position only
+    /// (pages/lt-page-setrecord-settableview/PageVarSetRecordTableView.al:P157_List_SetTableViewThenSetRecord_*).
+    pub set_view: bool,
+    /// The line the page stands on was started by a `New()` call, not reached by moving onto the blank line.
+    pub new_by_call: bool,
     /// A `Page`-typed modal handler is running on this page: the page never opened, `GetRecord` and `SetRecord`
     /// read and write its Rec (handlers/PSModalPageHandlerTyped.al).
     pub typed_handler: bool,
@@ -369,6 +412,7 @@ impl PageState {
         PageState {
             object,
             open: false,
+            ran: false,
             mode: PageMode::View,
             instance: None,
             cursor: Cursor::None,
@@ -379,6 +423,7 @@ impl PageState {
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,
+            window_whole: false,
             landing_first: false,
             focus: None,
             focus_in_row: false,
@@ -402,6 +447,8 @@ impl PageState {
             hidden_parts: Vec::new(),
             lower_key: None,
             set_record: None,
+            set_view: false,
+            new_by_call: false,
             typed_handler: false,
             host: None,
             ext_instances: Vec::new(),

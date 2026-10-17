@@ -101,6 +101,7 @@ fn add_entity_key(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Ou
         message: "An invalid argument was passed to a 'WebServiceActionContext' data type method.".into(),
         code: "Argument".into(),
         call_stack: String::new(),
+        ..Default::default()
     };
     if c.ret_used() {
         c.set_last_error(error);

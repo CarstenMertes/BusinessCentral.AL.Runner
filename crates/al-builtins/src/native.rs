@@ -12,14 +12,42 @@ pub struct AlError {
     pub message: String,
     pub code: String,
     pub call_stack: String,
+    /// How the error was raised, which `GetLastErrorText(true)` needs.
+    pub origin: ErrorOrigin,
 }
+
+/// How an error was raised, for the text `GetLastErrorText(true)` answers (corpus
+/// types/lt-evaluate-format-lasterror-setview/P86LastError.al, errors/lt-last-error-and-events/P70_02LastErrFlag.al,
+/// misc/lt-probes-needed-6/PnF01LastErrorFlag.al). An origin the corpus does not pin is `Unknown` and refused.
+#[derive(Debug, Clone, Default, PartialEq, Eq)]
+pub enum ErrorOrigin {
+    #[default]
+    Unknown,
+    /// The flag leaves the text as it is (a runtime error without customer content: a division by zero, an empty table).
+    SameText,
+    /// The text the flag answers instead (the personal data removed from it).
+    Redacted(String),
+}
+
+/// The text of `Error(ErrorInfo)` for the flag (P86LastError.al:54, :88-104, :121, :145, :169).
+pub const PERSONAL_DATA_REMOVED: &str = "This message had personal data removed. The original may still be in transient telemetry. Find it using the transientTelemetryId.";
+
+/// The text of `Error('literal', args)` for the flag (P86LastError.al:189, PnF01LastErrorFlag.al:85, :103).
+pub const USE_ERROR_WITH_A_TEXT_CONSTANT: &str = "Use ERROR with a text constant to improve telemetry details";
 
 /// Raises an AL error with a pinned text and code.
 pub fn raise<T>(message: impl Into<String>, code: &str) -> Result<T, Signal> {
+    // A division by zero carries no customer content: the flag leaves its text (P86LastError.al:RuntimeError_Other `div_excl`).
+    let origin = if code == "AL:DivideByZero" {
+        ErrorOrigin::SameText
+    } else {
+        ErrorOrigin::Unknown
+    };
     Err(Signal::Error(Box::new(AlError {
         message: message.into(),
         code: code.into(),
-        call_stack: String::new(),
+        origin,
+        ..Default::default()
     })))
 }
 
@@ -281,6 +309,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
     ("System.Format#2", format_2),
     ("System.FormatVariant#1", format_variant),
+    ("System.FormatDecimalField#1", format_decimal_field),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
         "System.EvaluateVariableOption#1",
@@ -295,7 +324,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.GetLastErrorCode#1", get_last_error_code),
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
+    ("System.CodeCoverageRefresh#1", code_coverage_refresh),
     ("Dialog.Error#2", error_text),
+    ("Dialog.ErrorNotLiteral#1", error_text_not_literal),
     ("Dialog.Error#1", crate::errorinfo::raise),
     ("Session.GetExecutionContext#1", execution_context),
     ("Session.GetCurrentModuleExecutionContext#1", execution_context),
@@ -485,6 +516,16 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // name (SaveAsXml, SaveAsPdf, ...) writes a file no corpus test pins and stays refused.
     ("Report.SaveAs#1", vm_only),
     ("Report.SaveAs#2", vm_only),
+    // The rendering saves with a file name run only for the reports on the allow-list of ADR-040 and are refused for the
+    // others when they run. SaveAsXml with a file name stays refused in lowering.
+    ("Report.SaveAsPdf#1", vm_only),
+    ("Report.SaveAsPdf#2", vm_only),
+    ("Report.SaveAsExcel#1", vm_only),
+    ("Report.SaveAsExcel#2", vm_only),
+    ("Report.SaveAsWord#1", vm_only),
+    ("Report.SaveAsWord#2", vm_only),
+    ("Report.SaveAsHtml#1", vm_only),
+    ("Report.SaveAsHtml#2", vm_only),
     ("Report.Quit#1", vm_only),
     ("Report.Skip#1", vm_only),
     ("Report.Break#1", vm_only),
@@ -535,9 +576,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
     // of [Text, Text]): taken as Format(value) with the default format. No corpus test calls them: assumption
     // primitive-totext-is-format.
-    ("Date.ToText#1", |c, r, _| primitive_to_text(c, r, "Date")),
-    ("Boolean.ToText#1", |c, r, _| primitive_to_text(c, r, "Boolean")),
-    ("Decimal.ToText#1", |c, r, _| primitive_to_text(c, r, "Decimal")),
+    ("Date.ToText#1", |c, r, a| primitive_to_text(c, r, "Date", a)),
+    ("Boolean.ToText#1", |c, r, a| primitive_to_text(c, r, "Boolean", a)),
+    ("Decimal.ToText#1", |c, r, a| primitive_to_text(c, r, "Decimal", a)),
     ("Variant.IsDefaultLayout#1", |_, r, _| is(r, "defaultlayout")),
     ("Variant.IsTestPermissions#1", |_, r, _| is(r, "testpermissions")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
@@ -746,13 +787,18 @@ fn int_arg(args: &[Value], i: usize) -> Option<i64> {
     }
 }
 
-/// Stands for a call stack that exists in BC but is not tracked here (a private-use character).
-pub const UNTRACKED_CALL_STACK: &str = "\u{E000}";
+/// The character inside a text that marks a call stack with an untracked frame. A noncharacter (Unicode permanently
+/// reserves U+FDD0 to U+FDEF for internal use): real code puts private-use characters in texts (a barcode font's glyphs
+/// are U+E000 and up), so the marks may not be private-use characters.
+pub const CALL_STACK_MARK: char = '\u{FDD0}';
+
+/// Stands for a call stack that exists in BC but is not tracked here.
+pub const UNTRACKED_CALL_STACK: &str = "\u{FDD0}";
 
 /// Stands for the text and code of an error BC raises but whose wording the corpus does not pin.
 /// `GetLastErrorText` and `GetLastErrorCode` refuse to answer while it is the last error, so a
 /// test that reads it is not run, and one that only needs the call to fail still passes.
-pub const UNPINNED_ERROR: &str = "\u{E001}";
+pub const UNPINNED_ERROR: &str = "\u{FDD1}";
 
 /// The last error to set when a call fails with an error whose text is not pinned.
 pub fn unpinned_error() -> AlError {
@@ -760,6 +806,7 @@ pub fn unpinned_error() -> AlError {
         message: UNPINNED_ERROR.into(),
         code: UNPINNED_ERROR.into(),
         call_stack: String::new(),
+        ..Default::default()
     }
 }
 
@@ -819,9 +866,32 @@ fn format_variant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) 
             message: format!("Standard format number {std} does not exist for the type 'Variant'."),
             code: "InvalidStandardFormat".into(),
             call_stack: String::new(),
+            ..Default::default()
         })));
     }
     format_1(ctx, r, args)
+}
+
+/// `Format(Rec.Field)` of a Decimal field that declares its places (`DecimalPlaces` or an `AutoFormatExpression` precision;
+/// lowering appends them as a fourth argument `min:max`). The standard formats 0 and 1 and the XML format 9 show those places; 0 groups
+/// thousands (pages/lt-page-autoformat-lookups/P113AutoFormat.al:P113_AF_TableFieldFormatIsPlain, `1,234.500` and, for 1 and 9,
+/// `1234.500`; pages/lt-page-presentation-properties/P119Table.al:P119_DecimalPlaces `1.500`).
+fn format_decimal_field(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let len = int_arg(args, 1).unwrap_or(0) as i32;
+    let std = int_arg(args, 2).unwrap_or(0) as i32;
+    let places = match args.get(3) {
+        Some(Value::Text(t)) => crate::pagefmt::parse_decimal_places(t),
+        _ => None,
+    };
+    if let (Value::Decimal(d), Some(places), 0 | 1 | 9) = (&args[0], places, std) {
+        let mut text = crate::pagefmt::decimal_text(d, places);
+        if std != 0 {
+            text.retain(|c| c != ',');
+        }
+        return Ok(Value::Text(crate::format::pad(text, len).into()));
+    }
+    let n = args.len().min(3);
+    format_1(ctx, r, &mut args[..n])
 }
 
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
@@ -842,6 +912,7 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
             message: "The date is not valid.".into(),
             code: "DateInvalid".into(),
             call_stack: String::new(),
+            ..Default::default()
         })));
     }
     // A record as a whole, a RecordRef and a FieldRef need the table's schema.
@@ -866,6 +937,7 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
                 message,
                 code,
                 call_stack: String::new(),
+                ..Default::default()
             })),
         })
 }
@@ -883,6 +955,7 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
                 ),
                 code: "InvalidFormatString".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })),
             None => match e
                 .strip_prefix(crate::formatstr::RAISE_MARK)
@@ -892,6 +965,7 @@ fn format_2(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
                     message: message.to_string(),
                     code: code.to_string(),
                     call_stack: String::new(),
+                    ..Default::default()
                 })),
                 None => Signal::Unsupported(e),
             },
@@ -905,14 +979,36 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
         // (types/lt-variant-is-text-streams/LTP89IsMisc.al:NearTypes_TextVsCode_IntegerVsBigInteger `abs_int`, `abs_bigint`).
         Value::Integer(i) => match i.checked_abs() {
             Some(n) => Value::Integer(n),
-            None => return unsupported("Abs of the smallest Integer (the overflow error is not pinned)"),
+            // types/lt-scalars/ScT70056.al:Integer_Overflow `abs_min`.
+            None => {
+                return raise(
+                    "Negating the minimum value of a twos complement number is invalid.",
+                    "AL:Overflow",
+                );
+            }
         },
         Value::BigInteger(i) => match i.checked_abs() {
             Some(n) => Value::BigInteger(n),
             None => return unsupported("Abs of the smallest BigInteger (the overflow error is not pinned)"),
         },
-        other => return unsupported(&format!("Abs of {}", other.describe())),
+        // A Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned by a corpus test; Microsoft's
+        // manufacturing code does `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests).
+        other => return abs_other(other),
     })
+}
+
+/// `Abs` of a Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned; Microsoft's manufacturing code does
+/// `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests; assumption abs-of-duration-is-decimal).
+#[cold]
+#[inline(never)]
+fn abs_other(v: &Value) -> Result<Value, Signal> {
+    match v {
+        Value::Duration(ms) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::AbsOfDuration);
+            Ok(Value::Decimal(rust_decimal::Decimal::from(*ms).abs()))
+        }
+        other => unsupported(&format!("Abs of {}", other.describe())),
+    }
 }
 
 fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -923,11 +1019,9 @@ fn get_last_error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]
     Ok(Value::Text(e.message.into()))
 }
 
-/// `GetLastErrorText(true)`: with no error pending it answers the empty text (corpus
-/// types/lt-evaluate-format-lasterror-setview/P86LastError.al:ErrorInfo_CustomerContent `cleared_excl`, PlainError_Exclude
-/// `empty_excl`). With an error pending the corpus pins a redaction that depends on how the error was raised (an ErrorInfo
-/// reads "This message had personal data removed ...", a formatted Error text a telemetry hint, TestField and FieldError
-/// their own redacted forms); the runtime does not keep how the error was raised, so that stays refused.
+/// `GetLastErrorText(true)`: the text with the personal data removed. Which text depends on how the error was raised; the
+/// pinned origins are in [`ErrorOrigin`]. No error pending, or an empty text, answers the empty text (P86LastError.al:60
+/// `cleared_excl`, :192 `empty_excl`, :410 `text_excl`); an origin the corpus does not pin is refused.
 fn get_last_error_text_without_customer_content(
     ctx: &mut dyn Ctx,
     r: Option<&mut Value>,
@@ -936,12 +1030,18 @@ fn get_last_error_text_without_customer_content(
     if matches!(a.first(), Some(Value::Boolean(false))) {
         return get_last_error_text(ctx, r, &mut []);
     }
-    if !ctx.last_error().message.is_empty() {
-        return unsupported(
-            "GetLastErrorText(true) while an error is pending: the redacted text depends on how the error was raised (ErrorInfo, formatted Error, TestField, FieldError), which is not kept",
-        );
+    let e = ctx.last_error();
+    if e.message.is_empty() {
+        return Ok(Value::Text(String::new().into()));
     }
-    Ok(Value::Text(String::new().into()))
+    match e.origin {
+        ErrorOrigin::SameText => Ok(Value::Text(e.message.into())),
+        ErrorOrigin::Redacted(t) => Ok(Value::Text(t.into())),
+        ErrorOrigin::Unknown => unsupported(&format!(
+            "GetLastErrorText(true) of an error raised in a way the corpus does not pin for the flag (code {})",
+            e.code
+        )),
+    }
 }
 
 fn get_last_error_code(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
@@ -977,6 +1077,14 @@ fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [
     Ok(Value::Text(out.into()))
 }
 
+/// `CodeCoverageRefresh()`: loads the recorded coverage into the Code Coverage table. The runtime serves the table from the live
+/// recording, so there is nothing to load (corpus codeunit/TestCodeCoverageTable.al reads the table right after
+/// `CodeCoverageLog(false, false)`). Not pinned on its own: assumption code-coverage-refresh-is-a-no-op.
+fn code_coverage_refresh(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    crate::assumptions::assume(crate::assumptions::Assumption::CodeCoverageRefreshIsANoOp);
+    Ok(Value::Null)
+}
+
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     ctx.set_last_error(AlError::default());
     Ok(Value::Null)
@@ -986,12 +1094,27 @@ fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -
 /// test libraries and the corpus Assert's DialogTxt use it; no corpus test
 /// pins it directly).
 fn error_text(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    error_text_with(ctx, args, true)
+}
+
+/// `Error(Label, ...)` and any `Error(Text, ...)` that is not a string literal: the flag's text for it is not pinned.
+fn error_text_not_literal(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    error_text_with(ctx, args, false)
+}
+
+fn error_text_with(ctx: &mut dyn Ctx, args: &mut [Value], literal: bool) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
     let message = substitute(&template, &args[1..], ctx)?;
+    let origin = if literal {
+        ErrorOrigin::Redacted(USE_ERROR_WITH_A_TEXT_CONSTANT.into())
+    } else {
+        ErrorOrigin::Unknown
+    };
     Err(Signal::Error(Box::new(AlError {
         message,
         code: "Dialog".into(),
-        call_stack: String::new(),
+        origin,
+        ..Default::default()
     })))
 }
 
@@ -1121,6 +1244,7 @@ fn hyperlink(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Resu
         message: format!("Unhandled UI: Hyperlink {url}"),
         code: "MissingUIHandler".into(),
         call_stack: String::new(),
+        ..Default::default()
     })))
 }
 
@@ -1166,8 +1290,7 @@ fn start_session(c: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Res
             message: "Sessions can only be started in tests that are run by a TestRunner that has TestIsolation set to Disabled."
                 .into(),
             code: "TestStartSessionNotAllowed".into(),
-            call_stack: String::new(),
-        })));
+            call_stack: String::new(), ..Default::default() })));
     }
     unsupported("StartSession outside an install trigger and a test run (a second session is not modelled)")
 }
@@ -1232,10 +1355,13 @@ pub fn copystr_of(whole: &crate::text::Txt, pos: i64, len: Option<i64>) -> Resul
     };
     let total = if ascii { whole.len() } else { s.len() };
     // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.
+    // The two-argument form allows a start up to 2048, the three-argument form up to the largest Integer (text/lt-text-functions/
+    // CopyStr.Codeunit.al:CopyStrErrors `pos0` against `pos0len`).
     if pos < 1 {
+        let top = if len.is_some() { "2,147,483,647" } else { "2048" };
         return raise(
             format!(
-                "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to 2,147,483,647."
+                "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to {top}."
             ),
             "OutsidePermittedRange",
         );
@@ -1250,6 +1376,17 @@ pub fn copystr_of(whole: &crate::text::Txt, pos: i64, len: Option<i64>) -> Resul
                 "OutsidePermittedRange",
             );
         }
+        // The count may reach to the largest Integer counted from the start (CopyStrErrors `af81`).
+        Some(len) if len > 2_147_483_648 - pos => {
+            return raise(
+                format!(
+                    "The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: {}. The permitted range is: from 0 to {}.",
+                    group_thousands(len),
+                    group_thousands(2_147_483_648 - pos)
+                ),
+                "OutsidePermittedRange",
+            );
+        }
         Some(len) => (start + len as usize).min(total),
         None => total,
     };
@@ -1259,17 +1396,29 @@ pub fn copystr_of(whole: &crate::text::Txt, pos: i64, len: Option<i64>) -> Resul
     Ok(Value::Text(String::from_utf16_lossy(&s[start..end]).into()))
 }
 
+fn group_thousands(n: i64) -> String {
+    let digits = n.abs().to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if n < 0 { format!("-{out}") } else { out }
+}
+
 fn strsubstno(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
     Ok(Value::Text(substitute(&template, &args[1..], ctx)?.into()))
 }
 
 fn uppercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(text_arg(args, 0)?.to_uppercase().into()))
+    Ok(Value::Text(simple_upper(&text_arg(args, 0)?).into()))
 }
 
 fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(text_arg(args, 0)?.to_lowercase().into()))
+    Ok(Value::Text(simple_lower(&text_arg(args, 0)?).into()))
 }
 
 /// `ArrayLen(Array)` of a one-dimensional array: the length of the array the variable holds. A `var` or value
@@ -1480,7 +1629,7 @@ fn enum_receiver(ctx: &dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<(u3
 }
 
 fn list_of(items: Vec<Value>) -> Value {
-    Value::List(Rc::new(std::cell::RefCell::new(items)))
+    Value::List(Rc::new(std::cell::RefCell::new(items.into())))
 }
 
 /// `Enum.Names()`: every declared name, the blank ordinal included
@@ -1525,9 +1674,68 @@ fn value_kind(v: &Value) -> String {
 }
 
 /// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
-fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<Value, Signal> {
+/// Case mapping one character to one (types/lt-scalars/ScT70509.al:LowerUpperBasic `a9`, LowerUpperLengthsAndTargets `lenu`): an
+/// upper-case `ß` stays `ß` and the dotted capital I is a plain `i`.
+pub(crate) fn simple_upper(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let mut up = c.to_uppercase();
+            match (up.next(), up.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+/// `Text.ToUpper()` / `ToLower()`: one character to one, and a character the mapping would turn into several stays (`ß`, `ﬁ`, the dotted
+/// capital `İ`), the dotless `ı` stays too (text/lt-text-instance/CaseTrim1.Codeunit.al:ToLower_ToUpper_Unicode; unlike `UpperCase`/`LowerCase`).
+pub(crate) fn method_upper(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c == 'ı' {
+                return c;
+            }
+            let mut up = c.to_uppercase();
+            match (up.next(), up.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn method_lower(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let mut low = c.to_lowercase();
+            match (low.next(), low.next()) {
+                (Some(l), None) => l,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn simple_lower(s: &str) -> String {
+    s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
+}
+
+fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str, a: &[Value]) -> Result<Value, Signal> {
     match r.as_deref() {
-        Some(v @ (Value::Date(..) | Value::Boolean(_) | Value::Decimal(_))) => {
+        // `Date.ToText(true)` is the round-trip form `yyyy-mm-dd`, `ToText(false)` the default one; the first of January 1 has
+        // no text (types/lt-totext-bigtext-codeunit-run/P93Date.al:ToText_Normal, ToText_Closing).
+        Some(v @ Value::Date(..)) => {
+            let iso = matches!(a.first(), Some(Value::Boolean(true)));
+            if matches!(v, Value::Date(1, _)) {
+                return raise("The date is not valid.", "DateInvalid");
+            }
+            match crate::format::try_format(v, 0, if iso { 9 } else { 0 }, &*c) {
+                Ok(t) => Ok(Value::Text(t.into())),
+                Err(e) => Err(Signal::Unsupported(e)),
+            }
+        }
+        Some(v @ (Value::Boolean(_) | Value::Decimal(_))) => {
             crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
             match crate::format::try_format(v, 0, 0, &*c) {
                 Ok(t) => Ok(Value::Text(t.into())),
@@ -1702,7 +1910,12 @@ pub(crate) mod tests {
         let cat = crate::catalog::Catalog::load();
         let ids: Vec<String> = cat.signatures.iter().map(|s| cat.id(s)).collect();
         // Ids lowering picks for a call of a catalog overload that needs another implementation (`Evaluate` into an Option variable).
-        let derived = ["System.EvaluateVariableOption#1", "System.FormatVariant#1"];
+        let derived = [
+            "System.EvaluateVariableOption#1",
+            "System.FormatVariant#1",
+            "System.FormatDecimalField#1",
+            "Dialog.ErrorNotLiteral#1",
+        ];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {
             assert!(ids.iter().any(|i| i == id), "{id} is not a catalog overload id");
         }
@@ -1771,6 +1984,7 @@ pub(crate) mod tests {
             message: "boom".into(),
             code: "Dialog".into(),
             call_stack: String::new(),
+            ..Default::default()
         });
         let Ok(stack @ Value::Text(_)) = f(&mut ctx, None, &mut []) else {
             panic!("a call stack is returned after an error")
@@ -1885,6 +2099,7 @@ pub(crate) mod tests {
             message: "boom".into(),
             code: "Dialog".into(),
             call_stack: String::new(),
+            ..Default::default()
         });
         let get = lookup("System.GetLastErrorText#1").unwrap();
         assert!(matches!(get(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s == "boom"));

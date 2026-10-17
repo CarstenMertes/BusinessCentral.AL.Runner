@@ -9,6 +9,7 @@ table 62000 "PM Row"
 {
     fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } field(3; Rank; Integer) { } }
     keys { key(PK; "No.") { } }
+    procedure PreviousNo(): Code[20] begin exit(xRec."No."); end;
 }
 codeunit 62002 "PM Probe"
 {
@@ -181,6 +182,41 @@ page 62308 "PM Selection Own"
     actions { area(Processing) { action(Pick) { trigger OnAction() var S: Record "PM Row"; begin CurrPage.SetSelectionFilter(S); if S.FindFirst() then; end; } } }
     procedure SetSelectionFilter() begin end;
 }
+page 62320 "PM Hidden Part" { PageType = ListPart; SourceTable = "PM Row";
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } } } }
+  procedure Mark() begin end;
+  procedure Ping(Key: Code[20]) begin Rec.FilterGroup(2); Rec.SetRange("No.", Key); Rec.FilterGroup(0); if Rec.FindLast() then; CurrPage.Update(false); end; }
+page 62321 "PM Hidden Host" { PageType = Card; SourceTable = "PM Row";
+  layout { area(Content) { field("No."; Rec."No.") { } part(Hid; "PM Hidden Part") { Visible = false; } } }
+  trigger OnAfterGetCurrRecord() var P: Codeunit "PM Probe"; begin CurrPage.Hid.PAGE.Ping(Rec."No."); P.Note('host;'); end; }
+page 62323 "PM Find List" { PageType = List; SourceTable = "PM Row";
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } } } }
+  actions { area(Processing) { action(Refresh) { trigger OnAction() begin CurrPage.Update(false); end; } } }
+  trigger OnFindRecord(Which: Text): Boolean var P: Codeunit "PM Probe"; begin P.Note('F' + Which + ';'); exit(Rec.Find(Which)); end;
+  trigger OnAfterGetRecord() var P: Codeunit "PM Probe"; begin P.Note('R' + Rec."No." + ';'); end; }
+page 62324 "PM Caption Before" { PageType = Card; SourceTable = "PM Row"; Caption = 'Static Caption'; layout { area(Content) { field("No."; Rec."No.") { } } }
+  procedure Read(): Text begin exit(CurrPage.Caption); end; }
+page 62326 "PM Never Ran Host" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } part(Sub; "PM Hidden Part") { } } }
+  procedure Reach(): Text begin CurrPage.Sub.PAGE.Mark(); exit('reached'); end; }
+page 62325 "PM Empty Class" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { CaptionClass = '3,'; } } } }
+page 62322 "PM Selection Own Update" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
+  procedure UseAfterClose() begin CurrPage.Update(false); end; }
+page 62327 "PM Editable Flag" { PageType = Card; SourceTable = "PM Row";
+  layout { area(Content) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { trigger OnValidate() begin Flag := Rec.Descr = ''; end; } field(Other; Rec.Rank) { Editable = not Flag; } } }
+  var Flag: Boolean; }
+page 62328 "PM Xrec Card" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
+  trigger OnNewRecord(BelowxRec: Boolean) var P: Codeunit "PM Probe"; begin P.Note('x=' + Rec.PreviousNo() + ';'); end; }
+page 62329 "PM Temp Part" { PageType = ListPart; SourceTable = "PM Row"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+  procedure SetRows(var Src: Record "PM Row" temporary) begin if Src.FindFirst() then Rec.Copy(Src, true); end; }
+page 62330 "PM Temp Host" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } part(Sub; "PM Temp Part") { } } }
+  procedure Fill(var Src: Record "PM Row" temporary) begin CurrPage.Sub.PAGE.SetRows(Src); end; }
+page 62331 "PM Temp Var" { PageType = List; SourceTable = "PM Row"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+  procedure Fill() begin Rec."No." := 'T1'; Rec.Descr := 'before'; Rec.Insert(); end;
+  procedure Mark() begin Rec.FindFirst(); Rec.Descr := 'marked'; Rec.Modify(); end;
+  procedure Count(): Integer begin Rec.Reset(); exit(Rec.Count()); end;
+  procedure First(): Text begin Rec.Reset(); if Rec.FindFirst() then exit(Rec.Descr); end; }
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -734,14 +770,14 @@ fn test_page_close_reports_ok_for_list_and_document_pages() {
 // Issue 33: Base Application's Tests-ERM declare `[ModalPageHandler] procedure H(var P: Page "X"; var
 // Response: Action)` (22 tests). No corpus test has a handler whose parameter is a Page rather than a
 // TestPage, and none has a page with triggers. Microsoft's `PaymentToleranceWarning` handler (page 591, whose OnOpenPage and
-// OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: assumed
-// (typed-modal-handler-skips-page-triggers, docs/probes-needed.md).
+// OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: pinned by
+// errors/lt-ms-refusals-136/P136PageTyped.al (OnInit runs before the handler, nothing else does).
 #[test]
-fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_none_of_its_triggers() {
+fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_only_its_oninit() {
     passes(&format!(
         "{HELPERS}
         [Test] [HandlerFunctions('PageHandler')]
-        procedure WithPage() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.RunModal(); Check('', P.Trace()); end;
+        procedure WithPage() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.RunModal(); Check('I', P.Trace()); end;
         [ModalPageHandler] procedure PageHandler(var P: Page \"PM Wizard\"; var Response: Action) begin Response := Action::OK; end;"
     ));
 }
@@ -842,7 +878,7 @@ fn a_part_linked_to_a_new_unsaved_host_does_not_validate_the_link_when_the_key_i
 
 // Base Application's lookups run `Page.RunModal(0, Rec) = Action::LookupOK` and read the record afterwards (Gen. Journal
 // Management's template selection: 10 Tests-ERM tests failed with an empty template name). On LookupOK the record holds
-// the row the page was left on. Not pinned by a corpus test (assumption page-run-modal-record-takes-selection).
+// the row the page was left on. Pinned by pages/lt-page-runmodal-rec/PageRunModalRecAfterClose.al.
 #[test]
 fn page_run_modal_with_a_record_hands_back_the_selected_row_on_lookup_ok() {
     passes(&format!(
@@ -884,5 +920,150 @@ fn a_page_procedure_named_like_a_platform_method_leaves_the_other_overload_to_th
         [Test]
         procedure Selection() var C: TestPage \"PM Selection Own\"; R: Record \"PM Row\"; begin
             R.DeleteAll(); R.\"No.\" := 'S1'; R.Insert(); C.OpenEdit(); C.Pick.Invoke(); Check('S1', C.\"No.\".Value); C.Close(); end;"
+    ));
+}
+
+// Base Application's Sales Invoice calls `CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId)` in OnAfterGetCurrRecord
+// behind `Visible = false`; that procedure ends in `CurrPage.Update(false)` on the part page, which is created and not opened. 926 Tests-ERM
+// tests failed with "The TestPage is not open." CurrPage.Update on such a part does nothing (assumption hidden-part-update-is-noop).
+#[test]
+fn current_page_update_inside_a_procedure_of_a_hidden_part_does_nothing() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Hidden() var C: TestPage \"PM Hidden Host\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'H1'; R.Insert(); P.Reset(); C.OpenEdit(); C.GoToRecord(R);
+            if StrPos(P.Trace(), 'host;') = 0 then Error('host trigger did not finish'); C.Close(); end;"
+    ));
+}
+
+// A procedure of a `Page` variable that uses `CurrPage` after the page closed is refused, not failed with the TestPage error
+// (Posted Sales Document Lines.CopyLineToDoc after RunModal: 35 Tests-ERM, SCM and SMB tests).
+#[test]
+fn a_page_variable_procedure_using_curr_page_after_the_page_closed_is_refused_not_failed() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Closed() var W: Page \"PM Selection Own Update\"; begin W.RunModal(); W.UseAfterClose(); end;
+        [ModalPageHandler] procedure H(var T: TestPage \"PM Selection Own Update\") begin T.OK().Invoke(); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("not open") && why.contains("not pinned")),
+        "{o:?}"
+    );
+}
+
+#[test]
+fn a_control_editable_expression_follows_a_variable_set_by_another_controls_on_validate() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Follows() var C: TestPage \"PM Editable Flag\"; begin
+            C.OpenNew(); C.Descr.SetValue('x');
+            if not C.Other.Editable() then Error('should be editable'); C.Descr.SetValue('');
+            if C.Other.Editable() then Error('should not be editable'); C.Close(); end;"
+    ));
+}
+
+// handlers/TestPageCreateModeNewRecordArgs.al:OpenNew_TableWithRows pins xRec `B` in OnNewRecord; a table procedure the page's code calls
+// on Rec sees that xRec (Sales Invoice Subform.OnNewRecord -> Rec.InitType; assumption page-rec-procedure-sees-page-xrec).
+#[test]
+fn a_table_procedure_called_on_rec_in_a_page_trigger_sees_the_pages_xrec() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Sees() var C: TestPage \"PM Xrec Card\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'B'; R.Insert();
+            P.Reset(); C.OpenNew(); Check('x=B;', P.Trace()); C.Close(); end;"
+    ));
+}
+
+// misc/W2FindRecordUpdate.al:Update_False_OnOpenedPage, Update_True_OnOpenedPage (3 rows, the cursor on the middle one): a list refresh
+// re-reads the row, asks `=>`, reads on to the end, steps back to the start and asks `=` (Base Application's sales subforms have
+// OnFindRecord alone; there Next moves the record: assumption update-refresh-list-onfindrecord, docs/probes-needed.md).
+#[test]
+fn current_page_update_on_a_list_with_on_find_record_alone_refreshes_it_instead_of_being_refused() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Refreshes() var C: TestPage \"PM Find List\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'B'; R.Insert(); R.\"No.\" := 'C'; R.Insert();
+            C.OpenEdit(); C.GoToKey('B'); P.Reset(); C.Refresh.Invoke();
+            if StrPos(P.Trace(), 'F=>;') = 0 then Error('no =>: %1', P.Trace());
+            if StrPos(P.Trace(), 'F=;') = 0 then Error('no =: %1', P.Trace());
+            Check('B', C.\"No.\".Value); C.Close(); end;"
+    ));
+}
+
+// A CaptionClass of '3,' with nothing after the comma (a matrix column nobody captioned) raises no event, so the page opens;
+// reading that caption stays refused (P84Captions.al Page_NoSubscriber c06 shows the caption is not the field's own).
+#[test]
+fn an_empty_caption_class_of_area_3_does_not_stop_the_page_from_opening() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Opens() var C: TestPage \"PM Empty Class\"; R: Record \"PM Row\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); C.OpenView(); Check('A', C.\"No.\".Value); C.Close(); end;"
+    ));
+}
+
+// Edit Dimension Set Entries.SetFormCaption reads CurrPage.Caption on a Page variable before Dimension Management runs it
+// (assumption caption-read-before-the-page-runs).
+#[test]
+fn a_page_variable_reads_its_caption_before_it_runs() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Reads() var W: Page \"PM Caption Before\"; begin Check('Static Caption', W.Read()); end;"
+    ));
+}
+
+// Check Credit Limit.PopulateDataOnNotification reaches `CurrPage.CreditLimitDetails.PAGE` on a Page variable that never ran
+// (assumption part-of-a-page-that-never-ran); after the page ran and closed, the same reach stays refused.
+#[test]
+fn a_page_variable_reaches_the_part_of_a_page_that_never_ran() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Reaches() var W: Page \"PM Never Ran Host\"; begin Check('reached', W.Reach()); end;"
+    ));
+}
+
+// Posted Purchase Document Lines.CopyLineToDoc reads a part after RunModal returned: refused, not failed with the TestPage error.
+#[test]
+fn a_page_variable_reaching_a_part_after_the_page_closed_is_refused_not_failed() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Closed() var W: Page \"PM Never Ran Host\"; begin W.RunModal(); W.Reach(); end;
+        [ModalPageHandler] procedure H(var T: TestPage \"PM Never Ran Host\") begin T.OK().Invoke(); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("not open") && why.contains("not pinned")),
+        "{o:?}"
+    );
+}
+
+// Warehouse Pick Summary.SetRecords hands its part (a temporary-table page) the rows before the page runs; the part keeps them when it opens.
+#[test]
+fn rows_handed_to_a_part_before_the_host_runs_are_there_when_it_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Keeps() var W: Page \"PM Temp Host\"; T: Record \"PM Row\" temporary; begin
+            T.\"No.\" := 'T1'; T.Descr := 'kept'; T.Insert(); W.Fill(T); W.RunModal(); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Temp Host\") begin Check('kept', P.Sub.Descr.Value()); P.OK().Invoke(); end;"
+    ));
+}
+
+// Item Tracking Summary: SetSources fills the temporary Rec of a Page variable, AutoSelectTrackingNo modifies it, RunModal runs, GetSelected reads Rec.
+#[test]
+fn the_temporary_rows_of_a_page_variable_survive_its_run() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Survives() var W: Page \"PM Temp Var\"; begin
+            W.Fill(); W.Mark(); W.RunModal(); Check('1', Format(W.Count())); Check('marked', W.First()); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Temp Var\") begin Check('marked', P.Descr.Value()); P.OK().Invoke(); end;"
     ));
 }

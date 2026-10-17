@@ -38,7 +38,24 @@ impl Session {
         al_builtins::filter::parse_filter_with(text, &[], ty, &enums)
     }
 
-    fn filter_value(&self, v: &Value) -> Result<String, Signal> {
+    /// `filter_value`; with `iso` a Date reads `yyyy-mm-dd`, as a view writes it (record/lt-record-read/RcAMisc.al:
+    /// GetView_Field_Types `date`).
+    fn filter_value_with(&self, v: &Value, iso: bool) -> Result<String, Signal> {
+        // A blank date shows as two single quotes, like a blank text (record/lt-record-read/RcAMisc.al:
+        // SetRecFilter_Composite_And_Text_Keys `dateBlank`).
+        if matches!(v, Value::Date(0, false)) {
+            return Ok("''".into());
+        }
+        // A view writes a Boolean as `true` or `false` (:GetView_Field_Types `bool`).
+        if let (true, Value::Boolean(b)) = (iso, v) {
+            return Ok(b.to_string());
+        }
+        if let (true, Value::Date(d, false)) = (iso, v) {
+            if *d != 0 {
+                let (y, m, day) = al_builtins::format::civil_from_day(*d);
+                return Ok(format!("{y:04}-{m:02}-{day:02}"));
+            }
+        }
         if let Value::Text(s) | Value::Code(s) = v {
             // A blank text shows as two single quotes (corpus record/PWFilterGroupOr.al: `A: ''`).
             if s.is_empty() {
@@ -67,30 +84,39 @@ impl Session {
     }
 
     pub(crate) fn filter_text(&self, e: &FilterExpr) -> Result<String, Signal> {
+        self.filter_text_with(e, false)
+    }
+
+    /// `filter_text`; with `iso` the dates are written as a view writes them.
+    pub(crate) fn filter_text_with(&self, e: &FilterExpr, iso: bool) -> Result<String, Signal> {
         Ok(match e {
             FilterExpr::Range(Some(a), Some(b)) => {
                 if al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal) {
-                    self.filter_value(a)?
+                    self.filter_value_with(a, iso)?
                 } else {
-                    format!("{}..{}", self.filter_value(a)?, self.filter_value(b)?)
+                    format!(
+                        "{}..{}",
+                        self.filter_value_with(a, iso)?,
+                        self.filter_value_with(b, iso)?
+                    )
                 }
             }
-            FilterExpr::Range(Some(a), None) => format!("{}..", self.filter_value(a)?),
-            FilterExpr::Range(None, Some(b)) => format!("..{}", self.filter_value(b)?),
+            FilterExpr::Range(Some(a), None) => format!("{}..", self.filter_value_with(a, iso)?),
+            FilterExpr::Range(None, Some(b)) => format!("..{}", self.filter_value_with(b, iso)?),
             FilterExpr::Range(None, None) => return unsupported("an unbounded range filter"),
-            FilterExpr::Eq(v) => self.filter_value(v)?,
-            FilterExpr::Ne(v) => format!("<>{}", self.filter_value(v)?),
-            FilterExpr::Lt(v) => format!("<{}", self.filter_value(v)?),
-            FilterExpr::Le(v) => format!("<={}", self.filter_value(v)?),
-            FilterExpr::Gt(v) => format!(">{}", self.filter_value(v)?),
-            FilterExpr::Ge(v) => format!(">={}", self.filter_value(v)?),
+            FilterExpr::Eq(v) => self.filter_value_with(v, iso)?,
+            FilterExpr::Ne(v) => format!("<>{}", self.filter_value_with(v, iso)?),
+            FilterExpr::Lt(v) => format!("<{}", self.filter_value_with(v, iso)?),
+            FilterExpr::Le(v) => format!("<={}", self.filter_value_with(v, iso)?),
+            FilterExpr::Gt(v) => format!(">{}", self.filter_value_with(v, iso)?),
+            FilterExpr::Ge(v) => format!(">={}", self.filter_value_with(v, iso)?),
             FilterExpr::Like(p, ci) if needs_quotes(p) && !p.contains(['*', '?', '\'', '>']) => {
                 format!("'{}{p}'", if *ci { "@" } else { "" })
             }
             FilterExpr::Like(p, ci) => format!("{}{p}", if *ci { "@" } else { "" }),
             FilterExpr::Or(xs) => xs
                 .iter()
-                .map(|x| self.filter_text(x))
+                .map(|x| self.filter_text_with(x, iso))
                 .collect::<Result<Vec<_>, _>>()?
                 .join("|"),
             FilterExpr::And(xs) => {
@@ -98,7 +124,7 @@ impl Session {
                     return unsupported("an AND of OR filters");
                 }
                 xs.iter()
-                    .map(|x| self.filter_text(x))
+                    .map(|x| self.filter_text_with(x, iso))
                     .collect::<Result<Vec<_>, _>>()?
                     .join("&")
             }
@@ -244,7 +270,7 @@ impl Session {
                 let text = if option_ordinals {
                     self.filter_text(&ordinals(&f.expr))?
                 } else {
-                    self.filter_text(&f.expr)?
+                    self.filter_text_with(&f.expr, true)?
                 };
                 // The numeric form writes the kind as a number: FILTER is 1, CONST is 0.
                 items.push(if use_names || !record_form {
@@ -279,6 +305,7 @@ impl Session {
         order_needs_key: bool,
     ) -> Result<(), Signal> {
         let mut key = None;
+        let mut adhoc: Option<Vec<usize>> = None;
         let mut ascending = None;
         let mut filters: Vec<FieldFilter> = Vec::new();
         let group = group.unwrap_or(rec.borrow().filter_group);
@@ -294,12 +321,17 @@ impl Session {
                         .split(',')
                         .map(|n| field_by_name(t, n.trim()))
                         .collect::<Result<Vec<_>, _>>()?;
-                    key = Some(
-                        t.keys
-                            .iter()
-                            .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])
-                            .ok_or_else(|| Signal::Unsupported("SetView with SORTING without a matching key".into()))?,
-                    );
+                    // Fields no key starts with order the rows by themselves, as SetCurrentKey does (a view that
+                    // GetView wrote for such a key sets it back). Not pinned for SetView; Microsoft's tests set views
+                    // of ad hoc keys (assumption set-view-sorting-without-a-key).
+                    match t
+                        .keys
+                        .iter()
+                        .position(|k| k.len() >= wanted.len() && k[..wanted.len()] == wanted[..])
+                    {
+                        Some(k) => key = Some(k),
+                        None => adhoc = Some(wanted),
+                    }
                 }
                 "ORDER" => match inner.trim().to_ascii_lowercase().as_str() {
                     "ascending" => ascending = Some(true),
@@ -355,6 +387,13 @@ impl Session {
         if let Some(a) = ascending {
             r.ascending = a;
         }
+        drop(r);
+        if let Some(wanted) = adhoc {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SetViewSortingWithoutKey);
+            self.ret_used = false;
+            let mut args: Vec<Value> = wanted.iter().map(|p| Value::Integer(*p as i32)).collect();
+            self.record_op(al_builtins::record_op::RecordOp::SetCurrentKey, rec, &mut args)?;
+        }
         Ok(())
     }
 }
@@ -367,6 +406,7 @@ fn invalid_view(view: &str) -> Signal {
         message: format!("Invalid expression of type: table view.{}{view}", crate::records::BR),
         code: "DB:Ok".into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 

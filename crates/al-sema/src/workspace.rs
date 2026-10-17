@@ -593,6 +593,12 @@ impl Workspace {
         self.codeunit_subscribers(&["caption class", "42"])
     }
 
+    /// Subscribers to the platform's `Reporting Triggers` codeunit, whose `CustomDocumentMergerEx` the runtime raises
+    /// when a report renders with a custom layout.
+    pub fn reporting_triggers_subscribers(&self) -> Vec<(usize, usize)> {
+        self.codeunit_subscribers(&["reporting triggers"])
+    }
+
     fn codeunit_subscribers(&self, keys: &[&str]) -> Vec<(usize, usize)> {
         keys.iter()
             .flat_map(|k| {

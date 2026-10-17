@@ -347,9 +347,9 @@ fn an_extension_trigger_runs_in_the_pages_context_for_each_row() {
         ),
         "F",
     );
-    // A list reads its window and then the current row once more (handlers/TestPageRuntimeContracts.al:121-136); a view that ends
-    // inside the window reads the current row a second time (pageext/PCCurrRecordReads.al:List_ReadsAfterEachAction, 3 rows).
-    assert_eq!(text(r), "ext-open;ext-agr:A;ext-agr:B;ext-agr:A;ext-agr:A;");
+    // A list with OnAfterGetRecord alone reads its window and then the current row once more, whether the view ends inside the window
+    // or not (handlers/TestPageRuntimeContracts.al:121-136; pages/lt-testpage-list-rows/ListRowsOpenAG.al:OpenView_OnlyRec5Rows_ReadsAtOpen).
+    assert_eq!(text(r), "ext-open;ext-agr:A;ext-agr:B;ext-agr:A;");
 }
 
 // pageextensioncontrol/TestPageExtensionControlTrapped_Tests.al: TrappedPageRun_ExtExpressionControl_ReadsTheCurrentRow,
@@ -415,7 +415,7 @@ fn an_extension_action_runs_its_trigger_against_the_current_row() {
         text(r),
         // The page reads the current row again after an action (corpus handlers/
         // TestPageExtensionBaseMembersContracts.al:195-218), so the extension's OnAfterGetRecord runs.
-        "ext-open;ext-agr:A;ext-agr:B;ext-agr:A;ext-agr:A;stamp:B;ext-agr:B;|ext action refused"
+        "ext-open;ext-agr:A;ext-agr:B;ext-agr:A;stamp:B;ext-agr:B;|ext action refused"
     );
 }
 

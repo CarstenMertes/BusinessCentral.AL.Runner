@@ -19,11 +19,22 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
+/// [`error`] with the text `GetLastErrorText(true)` answers for it.
+fn error_redacted(message: String, code: &str, redacted: String) -> Signal {
+    Signal::Error(Box::new(AlError {
+        message,
+        code: code.into(),
+        origin: al_builtins::native::ErrorOrigin::Redacted(redacted),
+        ..Default::default()
+    }))
+}
+
 fn error(message: String, code: &str) -> Signal {
     Signal::Error(Box::new(AlError {
         message,
         code: code.into(),
         call_stack: String::new(),
+        ..Default::default()
     }))
 }
 
@@ -452,12 +463,13 @@ impl Session {
                 Ok(Value::Text(
                     t.keys[key]
                         .iter()
-                        // The hidden key on SystemId (recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:101).
+                        // The hidden key on SystemId (recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:101); a field with
+                        // a Caption shows it (records/lt-record-meta/RcBMeta*.al:CurrentKey_Default_And_Set `Identifier`).
                         .map(|&p| {
                             if t.fields[p].id == 2_000_000_000 {
-                                "System ID"
+                                "System ID".to_string()
                             } else {
-                                t.fields[p].name.as_str()
+                                self.field_caption(t, p)
                             }
                         })
                         .collect::<Vec<_>>()
@@ -702,9 +714,11 @@ impl Session {
                         ));
                     }
                     let key = self.key_text(t, &row)?;
-                    return Err(error(
+                    // The flag hides the key: P86LastError.al:233, :236, P70_02LastErrFlag.al:123, :141.
+                    return Err(error_redacted(
                         format!("{caption} must have a value in {table}: {key}. It cannot be zero or empty."),
                         "TestField",
+                        format!("{caption} must have a value in {table}: <redacted>. It cannot be zero or empty."),
                     ));
                 }
             }
@@ -755,13 +769,17 @@ impl Session {
                     let key = self.key_text(t, &row)?;
                     // record/TestRecordRuntimeTextsAndViews.al:Record_TestField_MismatchTexts: the
                     // wanted and the current value are quoted, and two spaces precede "in".
-                    return Err(error(
+                    // The flag hides the key and both values: P86LastError.al:229, :233, P70_02LastErrFlag.al:129, :135.
+                    return Err(error_redacted(
                         format!(
                             "{caption} must be equal to '{}'  in {table}: {key}. Current value is '{}'.",
                             self.member_caption(t, pos, &want)?,
                             self.member_caption(t, pos, &current)?
                         ),
                         "TestField",
+                        format!(
+                            "{caption} must be equal to '<redacted>'  in {table}: <redacted>. Current value is '<redacted>'."
+                        ),
                     ));
                 }
             }
@@ -779,10 +797,12 @@ impl Session {
         let mut parts = Vec::new();
         for &p in &t.keys[0] {
             let mut value = self.message_value(&r.fields[p])?;
-            if value.contains('"') {
-                return unsupported("a position value with a double quote");
-            }
+            // A double quote is written as it is when the value needs no quotes around it (record/lt-record-read/RcAMisc.al:
+            // GetPosition_Text_With_Special_Characters `a"b`); inside quotes it is not pinned.
             if value.contains(['(', ')']) {
+                if value.contains('"') {
+                    return unsupported("a position value with a double quote and a parenthesis");
+                }
                 value = format!("\"{value}\"");
             }
             if use_names {
@@ -805,6 +825,7 @@ impl Session {
                 message,
                 code: "DB:Ok".into(),
                 call_stack: String::new(),
+                ..Default::default()
             }))
         };
         let invalid = || db_ok(format!("Invalid expression of type: position.\\{text}"));
@@ -1058,7 +1079,11 @@ impl Session {
                         self.caption(t)
                     ),
                     code: "DB:RecordNotFound".into(),
-                    call_stack: String::new(),
+                    origin: al_builtins::native::ErrorOrigin::Redacted(format!(
+                        "The {} does not exist. Identification fields and values: <redacted>",
+                        self.caption(t)
+                    )),
+                    ..Default::default()
                 })))
             }
             None => unsupported("GetBySystemId of a missing row without using the result (error text not pinned)"),
@@ -1166,6 +1191,8 @@ impl Session {
             None => None,
         }
         .filter(|w| !w.is_empty());
+        let given_text = what.is_some();
+        let info_given = info.is_some();
         let blank_value =
             is_blank(&row[pos])? && matches!(row[pos], Value::Text(_) | Value::Date(..) | Value::DateTime(_));
         let full = match what.take() {
@@ -1190,6 +1217,19 @@ impl Session {
                 }
             }
         }
-        Err(error(full, "NCLCSRTS:TableErrorStr"))
+        // The flag: P86LastError.al:270, :273 (the text given as a literal), :276, :279. Only the two forms the corpus pins;
+        // the "You must specify" form and an ErrorInfo are not pinned.
+        let redacted = match (given_text, blank_value, info_given) {
+            (false, false, false) => Some(format!(
+                "FieldError for incorrect value of {}.{}",
+                self.caption(t),
+                self.field_caption(t, pos)
+            )),
+            _ => None,
+        };
+        match redacted {
+            Some(r) => Err(error_redacted(full, "NCLCSRTS:TableErrorStr", r)),
+            None => Err(error(full, "NCLCSRTS:TableErrorStr")),
+        }
     }
 }

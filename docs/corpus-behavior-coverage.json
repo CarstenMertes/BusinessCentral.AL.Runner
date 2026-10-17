@@ -1,12 +1,12 @@
 {
-  "corpus_commit": "a7e4a5ece09ab0acefd8e4d556fb4c46920e7dd2",
+  "corpus_commit": "1ce17a4c0e65936221e68e46c1e40f9a21824404",
   "dimensions": [
     {
-      "catalog": 164,
+      "catalog": 167,
       "dimension": "triggers",
       "items": [
         {
-          "corpus_uses": 230,
+          "corpus_uses": 322,
           "group": "page/action",
           "ms_uses": 6517,
           "name": "OnAction",
@@ -15,7 +15,7 @@
           "site": "_fixtures/pages/ALTCardPage.al:61"
         },
         {
-          "corpus_uses": 52,
+          "corpus_uses": 65,
           "group": "table/field",
           "ms_uses": 3994,
           "name": "OnValidate",
@@ -24,7 +24,7 @@
           "site": "_fixtures/tables/ALTErrorTrigger.al:14"
         },
         {
-          "corpus_uses": 67,
+          "corpus_uses": 81,
           "group": "page/field",
           "ms_uses": 3476,
           "name": "OnValidate",
@@ -33,16 +33,16 @@
           "site": "_fixtures/pages/ALTRunTxNoneCardPage.al:34"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 10,
           "group": "page/field",
           "ms_uses": 2863,
           "name": "OnDrillDown",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestPageFieldDrillDown_Page.al:36"
+          "site": "errors/lt-ms-refusals-128/P128Callstack.al:108"
         },
         {
-          "corpus_uses": 126,
+          "corpus_uses": 178,
           "group": "page",
           "ms_uses": 1332,
           "name": "OnOpenPage",
@@ -51,7 +51,7 @@
           "site": "_fixtures/pages/ALTPageEvtRows.al:54"
         },
         {
-          "corpus_uses": 123,
+          "corpus_uses": 131,
           "group": "codeunit",
           "ms_uses": 1252,
           "name": "OnRun",
@@ -60,7 +60,7 @@
           "site": "_fixtures/ALTCodeunitMetaProbe.al:12"
         },
         {
-          "corpus_uses": 111,
+          "corpus_uses": 150,
           "group": "report/dataitem",
           "ms_uses": 1236,
           "name": "OnAfterGetRecord",
@@ -69,7 +69,7 @@
           "site": "_fixtures/reports/ALTRunTxNoneReportInserter.al:27"
         },
         {
-          "corpus_uses": 55,
+          "corpus_uses": 67,
           "group": "report/dataitem",
           "ms_uses": 1218,
           "name": "OnPreDataItem",
@@ -78,7 +78,7 @@
           "site": "_fixtures/reports/ALTManualReportIntegrationEvent.al:19"
         },
         {
-          "corpus_uses": 48,
+          "corpus_uses": 94,
           "group": "page",
           "ms_uses": 923,
           "name": "OnAfterGetRecord",
@@ -87,16 +87,16 @@
           "site": "autoformat/TestAutoFormatExpressionTiming.al:408"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 14,
           "group": "page/field",
           "ms_uses": 572,
           "name": "OnLookup",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestPageModalHandler_HostPage.al:34"
+          "site": "errors/lt-ms-refusals-128/P128Callstack.al:100"
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 5,
           "group": "table/field",
           "ms_uses": 545,
           "name": "OnLookup",
@@ -105,7 +105,7 @@
           "site": "handlers/TflRow.Table.al:16"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 11,
           "group": "xmlport/textelement",
           "ms_uses": 520,
           "name": "OnBeforePassVariable",
@@ -114,7 +114,7 @@
           "site": "_fixtures/xmlports/ALTVariableXmlPort.al:48"
         },
         {
-          "corpus_uses": 52,
+          "corpus_uses": 91,
           "group": "page",
           "ms_uses": 480,
           "name": "OnAfterGetCurrRecord",
@@ -123,13 +123,13 @@
           "site": "bgtasks/W2BackgroundTasks.al:133"
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 10,
           "group": "page/field",
           "ms_uses": 446,
           "name": "OnAssistEdit",
           "pinned": true,
           "runtime_reads": true,
-          "site": "lookups/W2Lookups.al:264"
+          "site": "errors/lt-ms-refusals-128/P128Callstack.al:115"
         },
         {
           "corpus_uses": 10,
@@ -141,7 +141,7 @@
           "site": "handlers/PRRequestPageUpdate.al:72"
         },
         {
-          "corpus_uses": 13,
+          "corpus_uses": 18,
           "group": "table",
           "ms_uses": 445,
           "name": "OnDelete",
@@ -150,7 +150,7 @@
           "site": "_fixtures/tables/ALTErrorTrigger.al:46"
         },
         {
-          "corpus_uses": 80,
+          "corpus_uses": 105,
           "group": "report",
           "ms_uses": 431,
           "name": "OnPreReport",
@@ -159,7 +159,7 @@
           "site": "_fixtures/reports/ALTSimpleReport.al:63"
         },
         {
-          "corpus_uses": 31,
+          "corpus_uses": 46,
           "group": "page",
           "ms_uses": 409,
           "name": "OnInit",
@@ -168,7 +168,7 @@
           "site": "controls/W2PageVariableInit.al:64"
         },
         {
-          "corpus_uses": 41,
+          "corpus_uses": 52,
           "group": "table",
           "ms_uses": 376,
           "name": "OnInsert",
@@ -177,16 +177,16 @@
           "site": "_fixtures/tables/ALTErrorTrigger.al:34"
         },
         {
-          "corpus_uses": 29,
+          "corpus_uses": 40,
           "group": "report/dataitem",
           "ms_uses": 308,
           "name": "OnPostDataItem",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestReportRuntimeContracts.al:63"
+          "site": "errors/lt-ms-refusals-128/P128ClearAllReport.al:83"
         },
         {
-          "corpus_uses": 26,
+          "corpus_uses": 34,
           "group": "page",
           "ms_uses": 282,
           "name": "OnNewRecord",
@@ -195,7 +195,7 @@
           "site": "_fixtures/pages/ALTPageEvtRows.al:70"
         },
         {
-          "corpus_uses": 11,
+          "corpus_uses": 13,
           "group": "table",
           "ms_uses": 210,
           "name": "OnRename",
@@ -204,7 +204,7 @@
           "site": "_fixtures/tables/ALTRenameKeyRelation.al:82"
         },
         {
-          "corpus_uses": 25,
+          "corpus_uses": 33,
           "group": "table",
           "ms_uses": 199,
           "name": "OnModify",
@@ -213,7 +213,7 @@
           "site": "_fixtures/tables/ALTErrorTrigger.al:40"
         },
         {
-          "corpus_uses": 41,
+          "corpus_uses": 61,
           "group": "page",
           "ms_uses": 192,
           "name": "OnQueryClosePage",
@@ -231,25 +231,25 @@
           "site": "_fixtures/reports/ALTSimpleReport.al:58"
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 12,
           "group": "page",
           "ms_uses": 141,
           "name": "OnFindRecord",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/W2FindRecordUpdate.al:111"
+          "site": "errors/lt-ms-refusals-129/P129PageMisc.al:89"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "page",
           "ms_uses": 137,
           "name": "OnDeleteRecord",
           "pinned": true,
           "runtime_reads": false,
-          "site": "pages/W1Update.al:450"
+          "site": "events/lt-global-triggers-statements/P114PageActionEvents.al:346"
         },
         {
-          "corpus_uses": 25,
+          "corpus_uses": 38,
           "group": "report",
           "ms_uses": 125,
           "name": "OnInitReport",
@@ -258,13 +258,13 @@
           "site": "errors/lt-last-error-and-events/P70_07RequestCaption.al:44"
         },
         {
-          "corpus_uses": 39,
+          "corpus_uses": 54,
           "group": "report",
           "ms_uses": 121,
           "name": "OnPostReport",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/RreProcessingOnlyReport.Report.al:37"
+          "site": "errors/lt-ms-refusals-128/P128ClearAllReport.al:125"
         },
         {
           "corpus_uses": 2,
@@ -276,7 +276,7 @@
           "site": "handlers/PRRequestPageUpdate.al:81"
         },
         {
-          "corpus_uses": 12,
+          "corpus_uses": 16,
           "group": "page",
           "ms_uses": 102,
           "name": "OnInsertRecord",
@@ -294,16 +294,16 @@
           "site": "handlers/TestRequestPageOnInitReport.al:51"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 12,
           "group": "xmlport/tableelement",
           "ms_uses": 82,
           "name": "OnAfterGetRecord",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:182"
+          "site": "errors/lt-ms-refusals-129/P129CallstackXmlPort.al:74"
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 9,
           "group": "page",
           "ms_uses": 72,
           "name": "OnModifyRecord",
@@ -312,16 +312,16 @@
           "site": "_fixtures/pages/ALTPageEvtRows.al:81"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 9,
           "group": "page",
           "ms_uses": 69,
           "name": "OnNextRecord",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/W2FindRecordUpdate.al:119"
+          "site": "errors/lt-ms-refusals-129/P129PageMisc.al:173"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "xmlport/textattribute",
           "ms_uses": 68,
           "name": "OnBeforePassVariable",
@@ -330,16 +330,16 @@
           "site": "_fixtures/xmlports/ALTVariableXmlPort.al:24"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 7,
           "group": "xmlport/tableelement",
           "ms_uses": 65,
           "name": "OnPreXmlItem",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:177"
+          "site": "errors/lt-ms-refusals-129/P129CallstackXmlPort.al:69"
         },
         {
-          "corpus_uses": 27,
+          "corpus_uses": 30,
           "group": "pageextension/action",
           "ms_uses": 56,
           "name": "OnAction",
@@ -348,7 +348,7 @@
           "site": "handlers/TestPageExtensionActionInvoke_Page.al:70"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 9,
           "group": "tableextension/field",
           "ms_uses": 56,
           "name": "OnValidate",
@@ -357,25 +357,25 @@
           "site": "_fixtures/tables/ALTTriggeredOrder.TableExt.al:12"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "xmlport/fieldattribute",
           "ms_uses": 56,
           "name": "OnBeforePassField",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:154"
+          "site": "pages/lt-pages-xmlport-upload-members/P112XpXml.al:84"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 13,
           "group": "xmlport/fieldelement",
           "ms_uses": 44,
           "name": "OnBeforePassField",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:166"
+          "site": "errors/lt-ms-refusals-135/P135CallstackXmlportEtc.al:77"
         },
         {
-          "corpus_uses": 27,
+          "corpus_uses": 49,
           "group": "page",
           "ms_uses": 41,
           "name": "OnClosePage",
@@ -384,25 +384,25 @@
           "site": "_fixtures/pages/ALTPageEvtRows.al:65"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 34,
           "name": "OnAssistEdit",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-pages-xmlport-upload-members/P112Report.al:59"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/field",
           "ms_uses": 32,
           "name": "OnAfterLookup",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-pages-xmlport-upload-members/P112Pages.al:99"
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 7,
           "group": "xmlport/tableelement",
           "ms_uses": 28,
           "name": "OnBeforeInsertRecord",
@@ -411,13 +411,13 @@
           "site": "_fixtures/xmlports/ALTUniversalManualXmlPort.al:39"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 27,
           "name": "Refresh",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:100"
         },
         {
           "corpus_uses": 3,
@@ -429,22 +429,22 @@
           "site": "report/W3ReportRequestPageRun.al:78"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/field",
           "ms_uses": 25,
           "name": "OnDrillDown",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-pages-xmlport-upload-members/P112Pages.al:140"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 23,
           "name": "AddInReady",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:78"
         },
         {
           "corpus_uses": 1,
@@ -465,13 +465,13 @@
           "site": "bgtasks/W2BackgroundTasks.al:159"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 20,
           "name": "DataPointClicked",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:104"
         },
         {
           "corpus_uses": 3,
@@ -483,34 +483,34 @@
           "site": "misc/lt-probes-needed-8/PnH5aExt.al:178"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 19,
           "name": "ControlAddInReady",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:85"
         },
         {
-          "corpus_uses": 10,
+          "corpus_uses": 15,
           "group": "xmlport",
           "ms_uses": 18,
           "name": "OnPreXmlPort",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestPageActionRunObjectKinds_Objects.al:296"
+          "site": "errors/lt-ms-refusals-129/P129CallstackXmlPort.al:91"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 18,
           "name": "DataPointDoubleClicked",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:108"
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 7,
           "group": "xmlport/tableelement",
           "ms_uses": 16,
           "name": "OnAfterInsertRecord",
@@ -546,16 +546,16 @@
           "site": "codeunit/TestCodeCoverageTableExtension.al:73"
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 13,
           "group": "xmlport",
           "ms_uses": 11,
           "name": "OnPostXmlPort",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:207"
+          "site": "errors/lt-ms-refusals-129/P129CallstackXmlPort.al:97"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "xmlport/textattribute",
           "ms_uses": 11,
           "name": "OnAfterAssignVariable",
@@ -573,13 +573,13 @@
           "site": "bgtasks/W2BackgroundTasks.al:169"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "xmlport/fieldattribute",
           "ms_uses": 10,
           "name": "OnAfterAssignField",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:159"
+          "site": "pages/lt-pages-xmlport-upload-members/P112XpXml.al:89"
         },
         {
           "corpus_uses": 6,
@@ -591,13 +591,13 @@
           "site": "handlers/TestPageExtensionBaseMembersContracts.al:148"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 7,
           "group": "query",
           "ms_uses": 9,
           "name": "OnBeforeOpen",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-probes-needed-3/PnC18Query.al:63"
+          "site": "errors/lt-ms-refusals-129/P129CallstackQuery.al:66"
         },
         {
           "corpus_uses": 5,
@@ -618,7 +618,7 @@
           "site": "_fixtures/ALTInstallProbe.al:21"
         },
         {
-          "corpus_uses": 11,
+          "corpus_uses": 12,
           "group": "xmlport/textelement",
           "ms_uses": 7,
           "name": "OnAfterAssignVariable",
@@ -627,22 +627,22 @@
           "site": "_fixtures/xmlports/ALTVariableXmlPort.al:53"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "xmlport",
           "ms_uses": 6,
           "name": "OnInitXmlPort",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-pages-xmlport-upload-members/P112XpCsv.al:131"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "page/fileuploadaction",
           "ms_uses": 5,
           "name": "OnAction",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageFileUpload.al:35"
         },
         {
           "corpus_uses": 5,
@@ -663,22 +663,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 5,
           "name": "Callback",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:112"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 5,
           "name": "ResponseReceived",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:116"
         },
         {
           "corpus_uses": 3,
@@ -708,25 +708,25 @@
           "site": "misc/lt-probes-needed-2/PnBPages.al:60"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 4,
           "name": "OnDrillDown",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-pages-xmlport-upload-members/P112Report.al:69"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 4,
           "name": "ErrorOccurred",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:120"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "tableextension/modify",
           "ms_uses": 3,
           "name": "OnAfterValidate",
@@ -762,58 +762,58 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 3,
           "name": "AuthorizationCodeRetrieved",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:124"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 3,
           "name": "AuthorizationErrorOccurred",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:128"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 3,
           "name": "DashboardLoaded",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:132"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 3,
           "name": "DashboardTileLoaded",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:136"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 3,
           "name": "ReportLoaded",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:140"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 3,
           "name": "ReportPageChanged",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:144"
         },
         {
           "corpus_uses": 0,
@@ -825,7 +825,7 @@
           "site": null
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 8,
           "group": "pageextension",
           "ms_uses": 2,
           "name": "OnAfterGetRecord",
@@ -852,7 +852,7 @@
           "site": null
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 16,
           "group": "xmlport/fieldelement",
           "ms_uses": 2,
           "name": "OnAfterAssignField",
@@ -915,22 +915,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 2,
           "name": "DocumentReady",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:152"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 2,
           "name": "ReportVisualLoaded",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:148"
         },
         {
           "corpus_uses": 1,
@@ -960,16 +960,16 @@
           "site": "handlers/TestPageCloseTriggersSelectionCardPageContracts.al:112"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/field",
           "ms_uses": 1,
           "name": "OnLookup",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-pages-xmlport-upload-members/P112Pages.al:149"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "pageextension/modify",
           "ms_uses": 1,
           "name": "OnDrillDown",
@@ -1005,7 +1005,7 @@
           "site": "reportext/W3RpExtRequestPage.al:128"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "tableextension/modify",
           "ms_uses": 1,
           "name": "OnBeforeValidate",
@@ -1077,76 +1077,76 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 1,
           "name": "BarcodeAvailable",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:156"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 1,
           "name": "BarcodeFailure",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:160"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 1,
           "name": "BarcodeReceived",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:164"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 1,
           "name": "ControlReady",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:92"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 1,
           "name": "OnAcceptAction",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:168"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 1,
           "name": "OnProfileSelected",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:172"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 1,
           "name": "Ready",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:96"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 1,
           "name": "ThumbnailClicked",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:176"
         },
         {
           "corpus_uses": 0,
@@ -1222,6 +1222,15 @@
         },
         {
           "corpus_uses": 1,
+          "group": "pageextension/field",
+          "ms_uses": 0,
+          "name": "OnAssistEdit",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-pages-xmlport-upload-members/P112Pages.al:156"
+        },
+        {
+          "corpus_uses": 1,
           "group": "pageextension/modify",
           "ms_uses": 0,
           "name": "OnAssistEdit",
@@ -1248,7 +1257,7 @@
           "site": "lookups/W2Lookups.al:293"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 16,
           "group": "report/action",
           "ms_uses": 0,
           "name": "OnAction",
@@ -1266,7 +1275,7 @@
           "site": "misc/lt-probes-needed-5/PnE14ReportExt.al:91"
         },
         {
-          "corpus_uses": 19,
+          "corpus_uses": 20,
           "group": "reportextension",
           "ms_uses": 0,
           "name": "OnPreReport",
@@ -1284,22 +1293,22 @@
           "site": "pageapplicationarea/TestReqPageApplicationAreaReportExtension.al:89"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 10,
           "group": "reportextension/modify",
           "ms_uses": 0,
           "name": "OnAfterAfterGetRecord",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-probes-needed-8/PnH5aExt.al:147"
+          "site": "errors/lt-ms-refusals-129/P129ReportExtBreak.al:116"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "reportextension/modify",
           "ms_uses": 0,
           "name": "OnAfterPostDataItem",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-probes-needed-8/PnH5aExt.al:166"
+          "site": "errors/lt-ms-refusals-129/P129ReportExtBreak.al:125"
         },
         {
           "corpus_uses": 5,
@@ -1311,13 +1320,13 @@
           "site": "misc/lt-probes-needed-8/PnH5aExt.al:128"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 6,
           "group": "reportextension/modify",
           "ms_uses": 0,
           "name": "OnBeforeAfterGetRecord",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-probes-needed-8/PnH5aExt.al:133"
+          "site": "errors/lt-ms-refusals-129/P129ReportExtBreak.al:107"
         },
         {
           "corpus_uses": 2,
@@ -1329,13 +1338,13 @@
           "site": "misc/lt-probes-needed-8/PnH5aExt.al:161"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "reportextension/modify",
           "ms_uses": 0,
           "name": "OnBeforePreDataItem",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-probes-needed-8/PnH5aExt.al:123"
+          "site": "errors/lt-ms-refusals-129/P129ReportExtBreak.al:100"
         },
         {
           "corpus_uses": 2,
@@ -1356,7 +1365,7 @@
           "site": "_fixtures/tables/ALTTriggeredOrder.TableExt.al:165"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "tableextension",
           "ms_uses": 0,
           "name": "OnAfterInsert",
@@ -1392,7 +1401,7 @@
           "site": "_fixtures/tables/ALTTriggeredOrder.TableExt.al:139"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "tableextension",
           "ms_uses": 0,
           "name": "OnBeforeInsert",
@@ -1419,7 +1428,7 @@
           "site": "_fixtures/tables/ALTTriggeredOrder.TableExt.al:178"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "tableextension",
           "ms_uses": 0,
           "name": "OnDelete",
@@ -1428,7 +1437,7 @@
           "site": "_fixtures/tables/ALTTriggeredOrder.TableExt.al:152"
         },
         {
-          "corpus_uses": 12,
+          "corpus_uses": 16,
           "group": "tableextension",
           "ms_uses": 0,
           "name": "OnInsert",
@@ -1437,7 +1446,7 @@
           "site": "_fixtures/tables/ALTTriggeredOrder.TableExt.al:65"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 8,
           "group": "tableextension",
           "ms_uses": 0,
           "name": "OnModify",
@@ -1446,7 +1455,7 @@
           "site": "_fixtures/tables/ALTTriggeredOrder.TableExt.al:107"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "tableextension",
           "ms_uses": 0,
           "name": "OnRename",
@@ -1480,16 +1489,34 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pageext/POPageExtTriggers.al:61"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "pageextension/field",
+          "ms_uses": 0,
+          "name": "OnAfterLookup",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-pages-xmlport-upload-members/P112Pages.al:131"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "pageextension/modify",
+          "ms_uses": 0,
+          "name": "OnAfterAfterLookup",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-pages-xmlport-upload-members/P112PagesMod.al:63"
         }
       ],
-      "pinned": 108
+      "pinned": 142
     },
     {
-      "catalog": 1110,
+      "catalog": 1119,
       "dimension": "properties",
       "items": [
         {
-          "corpus_uses": 35,
+          "corpus_uses": 45,
           "group": "page/field",
           "ms_uses": 11607,
           "name": "Visible",
@@ -1498,7 +1525,7 @@
           "site": "_fixtures/pages/ALTControlTreePage.al:48"
         },
         {
-          "corpus_uses": 106,
+          "corpus_uses": 125,
           "group": "table/field",
           "ms_uses": 7976,
           "name": "TableRelation",
@@ -1507,7 +1534,7 @@
           "site": "_fixtures/ALTRelationOwnDepImportedWriters.al:22"
         },
         {
-          "corpus_uses": 38,
+          "corpus_uses": 44,
           "group": "page/field",
           "ms_uses": 6274,
           "name": "Editable",
@@ -1525,7 +1552,7 @@
           "site": "handlers/ProbePageMetadataFixtures.al:321"
         },
         {
-          "corpus_uses": 63,
+          "corpus_uses": 66,
           "group": "table/field",
           "ms_uses": 5342,
           "name": "Editable",
@@ -1534,7 +1561,7 @@
           "site": "_fixtures/tables/ALTParentChild.al:19"
         },
         {
-          "corpus_uses": 200,
+          "corpus_uses": 212,
           "group": "codeunit",
           "ms_uses": 2933,
           "name": "Locked",
@@ -1561,16 +1588,16 @@
           "site": "_fixtures/tables/ALTCrmEntity.al:21"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 5,
           "group": "page/field",
           "ms_uses": 2790,
           "name": "Importance",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageExt.al:26"
         },
         {
-          "corpus_uses": 604,
+          "corpus_uses": 838,
           "group": "page",
           "ms_uses": 2786,
           "name": "PageType",
@@ -1579,7 +1606,7 @@
           "site": "ALTModifyCaption.al:20"
         },
         {
-          "corpus_uses": 43,
+          "corpus_uses": 45,
           "group": "page/field",
           "ms_uses": 2754,
           "name": "CaptionClass",
@@ -1588,7 +1615,7 @@
           "site": "autoformat/TestAutoFormatExpressionTiming.al:322"
         },
         {
-          "corpus_uses": 203,
+          "corpus_uses": 230,
           "group": "table/field",
           "ms_uses": 2673,
           "name": "FieldClass",
@@ -1597,7 +1624,7 @@
           "site": "_fixtures/ALTRelationOwnDepImportedWriters.al:26"
         },
         {
-          "corpus_uses": 540,
+          "corpus_uses": 748,
           "group": "page",
           "ms_uses": 2619,
           "name": "SourceTable",
@@ -1615,7 +1642,7 @@
           "site": "_fixtures/Assert.al:21"
         },
         {
-          "corpus_uses": 177,
+          "corpus_uses": 200,
           "group": "table/field",
           "ms_uses": 2181,
           "name": "CalcFormula",
@@ -1624,7 +1651,7 @@
           "site": "_fixtures/ALTRelationOwnDepImportedWriters.al:27"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 6,
           "group": "table/field",
           "ms_uses": 2001,
           "name": "AutoFormatType",
@@ -1633,13 +1660,13 @@
           "site": "handlers/TestReportSaveAsColumnTypesContracts.al:41"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "report/column",
           "ms_uses": 1910,
           "name": "AutoFormatType",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113AutoFormat.al:87"
         },
         {
           "corpus_uses": 1,
@@ -1660,7 +1687,7 @@
           "site": "handlers/TestActionRunPageLinkFilterGroup.al:161"
         },
         {
-          "corpus_uses": 75,
+          "corpus_uses": 97,
           "group": "report/dataitem",
           "ms_uses": 1774,
           "name": "DataItemTableView",
@@ -1669,16 +1696,16 @@
           "site": "_fixtures/reports/ALTRunTxNoneReportInserter.al:25"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 11,
           "group": "table/field",
           "ms_uses": 1770,
           "name": "DecimalPlaces",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestReportSaveAsColumnDetailsContracts.al:29"
+          "site": "errors/lt-ms-refusals-134/P134MinMaxDecimals.al:27"
         },
         {
-          "corpus_uses": 799,
+          "corpus_uses": 1109,
           "group": "table/key",
           "ms_uses": 1769,
           "name": "Clustered",
@@ -1687,7 +1714,7 @@
           "site": "ALTInternalTable.al:28"
         },
         {
-          "corpus_uses": 29,
+          "corpus_uses": 45,
           "group": "page/field",
           "ms_uses": 1415,
           "name": "AutoFormatType",
@@ -1696,43 +1723,43 @@
           "site": "autoformat/AutoFormatCard.Page.al:45"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 5,
           "group": "page/field",
           "ms_uses": 1388,
           "name": "BlankZero",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestPageFieldFormats.Page.al:27"
+          "site": "errors/lt-ms-refusals-135/P135TestPageFormat.al:122"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/repeater",
           "ms_uses": 1357,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Repeater.al:21"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/field",
           "ms_uses": 1314,
           "name": "StyleExpr",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageFields.al:28"
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 28,
           "group": "report/column",
           "ms_uses": 1289,
           "name": "IncludeCaption",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/PWReportSaveAsColumns.al:134"
+          "site": "errors/lt-ms-refusals-130/P130ReportInclCap.al:20"
         },
         {
-          "corpus_uses": 74,
+          "corpus_uses": 101,
           "group": "table/field",
           "ms_uses": 1288,
           "name": "OptionMembers",
@@ -1750,13 +1777,13 @@
           "site": "_fixtures/tables/ALTCrmEntity.al:22"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 8,
           "group": "page/group",
           "ms_uses": 1237,
           "name": "Visible",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestPageActionReachability_Objects.al:127"
+          "site": "errors/lt-ms-refusals-132/P132PageControlVisible.al:36"
         },
         {
           "corpus_uses": 1,
@@ -1768,7 +1795,7 @@
           "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:170"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 10,
           "group": "page/group",
           "ms_uses": 1208,
           "name": "ShowCaption",
@@ -1777,7 +1804,7 @@
           "site": "handlers/TestPageFieldSharedBinding_Page.al:37"
         },
         {
-          "corpus_uses": 9,
+          "corpus_uses": 11,
           "group": "page/action",
           "ms_uses": 1197,
           "name": "Enabled",
@@ -1786,16 +1813,16 @@
           "site": "handlers/TestPageActionEnabledSourceField_Objects.al:102"
         },
         {
-          "corpus_uses": 13,
+          "corpus_uses": 30,
           "group": "table/field",
           "ms_uses": 1145,
           "name": "OptionCaption",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestPageFieldFormats.Table.al:26"
+          "site": "error-handling/lt-last-error-text-forms/TestFieldOptionEnumExcludeFlag.al:34"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 13,
           "group": "page/field",
           "ms_uses": 1090,
           "name": "DecimalPlaces",
@@ -1804,7 +1831,7 @@
           "site": "autoformat/AutoFormatCard.Page.al:76"
         },
         {
-          "corpus_uses": 34,
+          "corpus_uses": 38,
           "group": "page",
           "ms_uses": 1073,
           "name": "Editable",
@@ -1813,7 +1840,7 @@
           "site": "_fixtures/pages/ALTListPage.al:6"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 7,
           "group": "page/action",
           "ms_uses": 1064,
           "name": "Visible",
@@ -1822,31 +1849,31 @@
           "site": "handlers/TestPageActionReachability_Objects.al:80"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "table/field",
           "ms_uses": 999,
           "name": "AutoFormatExpression",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113AutoFormat.al:16"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "page/action",
           "ms_uses": 963,
           "name": "Ellipsis",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Actions.al:38"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "report/column",
           "ms_uses": 872,
           "name": "AutoFormatExpression",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113AutoFormat.al:89"
         },
         {
           "corpus_uses": 5,
@@ -1867,7 +1894,7 @@
           "site": "handlers/TestPageFieldDrillDown_Page.al:34"
         },
         {
-          "corpus_uses": 15,
+          "corpus_uses": 18,
           "group": "page/field",
           "ms_uses": 843,
           "name": "Enabled",
@@ -1876,7 +1903,7 @@
           "site": "_fixtures/pages/ALTControlDefaultsPage.al:60"
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 13,
           "group": "table/field",
           "ms_uses": 832,
           "name": "MinValue",
@@ -1885,7 +1912,7 @@
           "site": "errors/lt-error-handling/ErTFixtures.al:29"
         },
         {
-          "corpus_uses": 27,
+          "corpus_uses": 41,
           "group": "page/field",
           "ms_uses": 827,
           "name": "AutoFormatExpression",
@@ -1903,16 +1930,16 @@
           "site": "_fixtures/tables/ALTInitValue.al:12"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "page/field",
           "ms_uses": 817,
           "name": "TableRelation",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113Lookups.al:80"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "xmlport/textelement",
           "ms_uses": 816,
           "name": "XmlName",
@@ -1930,16 +1957,16 @@
           "site": "handlers/TestPageActionRunPageView.al:169"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "table/field",
           "ms_uses": 807,
           "name": "NotBlank",
           "pinned": true,
-          "runtime_reads": false,
-          "site": "record/lt-record-write/RcBInit.al:93"
+          "runtime_reads": true,
+          "site": "pages/lt-page-presentation-properties/P119Table.al:17"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "page/field",
           "ms_uses": 802,
           "name": "ShowCaption",
@@ -1948,13 +1975,13 @@
           "site": "handlers/ProbePageMetadataFixtures.al:287"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 799,
           "name": "Style",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageFields.al:35"
         },
         {
           "corpus_uses": 1,
@@ -1984,7 +2011,7 @@
           "site": "pages/lt-page-report-events/P84Captions.al:15"
         },
         {
-          "corpus_uses": 67,
+          "corpus_uses": 80,
           "group": "page/part",
           "ms_uses": 716,
           "name": "SubPageLink",
@@ -1993,7 +2020,7 @@
           "site": "handlers/AskBigCard.Page.al:25"
         },
         {
-          "corpus_uses": 23,
+          "corpus_uses": 25,
           "group": "report/dataitem",
           "ms_uses": 631,
           "name": "RequestFilterFields",
@@ -2002,16 +2029,16 @@
           "site": "handlers/PRRequestPageUpdate.al:58"
         },
         {
-          "corpus_uses": 13,
+          "corpus_uses": 18,
           "group": "table",
           "ms_uses": 631,
           "name": "LookupPageId",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/TestPageFieldRelationLookup_Related.al:12"
+          "site": "errors/lt-ms-refusals-133/P133RelationLookups.al:11"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "page",
           "ms_uses": 589,
           "name": "LinksAllowed",
@@ -2020,7 +2047,7 @@
           "site": "_fixtures/pages/ALTSourceObjectPropsPage.al:26"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "codeunit",
           "ms_uses": 563,
           "name": "Access",
@@ -2029,13 +2056,13 @@
           "site": "ALTInternalCodeunit.al:3"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 550,
           "name": "QuickEntry",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageFields.al:27"
         },
         {
           "corpus_uses": 2,
@@ -2065,7 +2092,7 @@
           "site": "metadata/W6TableCodeunitMetadata.al:26"
         },
         {
-          "corpus_uses": 28,
+          "corpus_uses": 29,
           "group": "codeunit",
           "ms_uses": 510,
           "name": "TableNo",
@@ -2074,13 +2101,13 @@
           "site": "_fixtures/ALTCodeunitMetaProbe.al:10"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "codeunit",
           "ms_uses": 502,
           "name": "Permissions",
           "pinned": true,
           "runtime_reads": true,
-          "site": "record/ProbePlatformFixtures.al:91"
+          "site": "permissions/lt-permissions-mock-indirect/Objects.al:90"
         },
         {
           "corpus_uses": 2,
@@ -2092,7 +2119,7 @@
           "site": "handlers/CnhConfirmFalse.Page.al:27"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "table/field",
           "ms_uses": 484,
           "name": "BlankZero",
@@ -2101,7 +2128,7 @@
           "site": "handlers/TestPageFieldFormats.Table.al:20"
         },
         {
-          "corpus_uses": 14,
+          "corpus_uses": 30,
           "group": "page/part",
           "ms_uses": 469,
           "name": "Visible",
@@ -2110,7 +2137,7 @@
           "site": "misc/lt-probes-needed-7/PnGFixtures.al:660"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 18,
           "group": "permissionset",
           "ms_uses": 457,
           "name": "Assignable",
@@ -2128,13 +2155,13 @@
           "site": null
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 9,
           "group": "enum",
           "ms_uses": 443,
           "name": "AssignmentCompatibility",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-probes-needed-5/PnE13EnumConv.al:13"
+          "site": "errors/lt-ms-refusals-138/P138EnumGetNotFound.al:13"
         },
         {
           "corpus_uses": 7,
@@ -2146,7 +2173,7 @@
           "site": "_fixtures/tables/ALTRelationFieldClass.al:43"
         },
         {
-          "corpus_uses": 9,
+          "corpus_uses": 19,
           "group": "permissionset",
           "ms_uses": 424,
           "name": "Permissions",
@@ -2164,7 +2191,7 @@
           "site": "handlers/TestPageRuntimeContracts.al:69"
         },
         {
-          "corpus_uses": 27,
+          "corpus_uses": 31,
           "group": "page",
           "ms_uses": 417,
           "name": "SourceTableView",
@@ -2173,22 +2200,22 @@
           "site": "_fixtures/pages/ALTSourceObjectFlagsPage.al:21"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 5,
           "group": "page/field",
           "ms_uses": 409,
           "name": "ExtendedDatatype",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageFields.al:42"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/action",
           "ms_uses": 406,
           "name": "Scope",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113ModifyAllowed.al:110"
         },
         {
           "corpus_uses": 5,
@@ -2200,16 +2227,16 @@
           "site": "handlers/PWReportSaveAsColumns.al:84"
         },
         {
-          "corpus_uses": 32,
+          "corpus_uses": 35,
           "group": "report/dataitem",
           "ms_uses": 389,
           "name": "DataItemLink",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/ProbeObjectMetadataTables.al:17"
+          "site": "errors/lt-ms-refusals-129/P129ReportBreak.al:78"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "page",
           "ms_uses": 386,
           "name": "DataCaptionFields",
@@ -2218,13 +2245,13 @@
           "site": "_fixtures/pages/ALTSourceObjectPropsPage.al:30"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page",
           "ms_uses": 377,
           "name": "ModifyAllowed",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113ModifyAllowed.al:46"
         },
         {
           "corpus_uses": 26,
@@ -2254,13 +2281,13 @@
           "site": "ALTInternalPermissionSet.permissionset.al:4"
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 13,
           "group": "report",
           "ms_uses": 339,
           "name": "DefaultLayout",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/PSRequestPageEditable.al:77"
+          "site": "errors/lt-ms-refusals-130/P130ReportInclCap.al:13"
         },
         {
           "corpus_uses": 0,
@@ -2272,7 +2299,7 @@
           "site": null
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "report/requestpage",
           "ms_uses": 336,
           "name": "SaveValues",
@@ -2281,7 +2308,7 @@
           "site": "handlers/TestReportRequestPageSaveValues.al:71"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "page",
           "ms_uses": 335,
           "name": "DataCaptionExpression",
@@ -2290,7 +2317,7 @@
           "site": "_fixtures/pages/ALTPagePropertiesPage.al:17"
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 13,
           "group": "table/field",
           "ms_uses": 320,
           "name": "MaxValue",
@@ -2299,7 +2326,7 @@
           "site": "errors/lt-error-handling/ErTFixtures.al:30"
         },
         {
-          "corpus_uses": 16,
+          "corpus_uses": 17,
           "group": "page",
           "ms_uses": 314,
           "name": "DelayedInsert",
@@ -2326,13 +2353,13 @@
           "site": "handlers/TestPageOnInit_Objects.al:71"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "xmlport/textattribute",
           "ms_uses": 292,
           "name": "XmlName",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-xmlname.al:21"
         },
         {
           "corpus_uses": 1,
@@ -2344,34 +2371,34 @@
           "site": "_fixtures/pages/ALTPagePropertiesPage.al:16"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "page/action",
           "ms_uses": 286,
           "name": "ObsoleteReason",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:109"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "page/action",
           "ms_uses": 286,
           "name": "ObsoleteState",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:108"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/action",
           "ms_uses": 286,
           "name": "ObsoleteTag",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:110"
         },
         {
-          "corpus_uses": 193,
+          "corpus_uses": 261,
           "group": "report",
           "ms_uses": 270,
           "name": "ProcessingOnly",
@@ -2380,13 +2407,13 @@
           "site": "ALTModifyCaption.al:56"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 269,
-          "name": "DrillDownPageID",
-          "pinned": false,
+          "name": "DrillDownPageId",
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113Lookups.al:82"
         },
         {
           "corpus_uses": 6,
@@ -2398,7 +2425,7 @@
           "site": "_fixtures/tables/ALTRenameKeyRelation.al:91"
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 6,
           "group": "tableextension/field",
           "ms_uses": 259,
           "name": "TableRelation",
@@ -2407,13 +2434,13 @@
           "site": "_fixtures/ALTRelationOwnDepWriters.al:60"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 5,
           "group": "table/field",
           "ms_uses": 257,
           "name": "ExtendedDatatype",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Table.al:19"
         },
         {
           "corpus_uses": 18,
@@ -2425,7 +2452,7 @@
           "site": "handlers/TestPageActionRunPageMode.al:168"
         },
         {
-          "corpus_uses": 8,
+          "corpus_uses": 9,
           "group": "page",
           "ms_uses": 241,
           "name": "CardPageId",
@@ -2443,7 +2470,7 @@
           "site": null
         },
         {
-          "corpus_uses": 13,
+          "corpus_uses": 15,
           "group": "page",
           "ms_uses": 236,
           "name": "AutoSplitKey",
@@ -2452,13 +2479,13 @@
           "site": "_fixtures/pages/ALTSourceObjectFlagsPage.al:23"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "table",
           "ms_uses": 232,
           "name": "DataCaptionFields",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113DataCaption.al:11"
         },
         {
           "corpus_uses": 0,
@@ -2470,13 +2497,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page",
           "ms_uses": 223,
           "name": "AdditionalSearchTerms",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:58"
         },
         {
           "corpus_uses": 0,
@@ -2488,13 +2515,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "table",
           "ms_uses": 219,
           "name": "Scope",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyScopeAccess.al:10"
         },
         {
           "corpus_uses": 9,
@@ -2506,7 +2533,7 @@
           "site": "_fixtures/tables/ALTCrmEntity.al:11"
         },
         {
-          "corpus_uses": 32,
+          "corpus_uses": 37,
           "group": "xmlport/tableelement",
           "ms_uses": 207,
           "name": "XmlName",
@@ -2533,13 +2560,13 @@
           "site": null
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 7,
           "group": "table/key",
           "ms_uses": 189,
           "name": "SumIndexFields",
           "pinned": true,
           "runtime_reads": true,
-          "site": "record/TestPlatformMetadataDeclarationContracts.al:97"
+          "site": "metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:24"
         },
         {
           "corpus_uses": 1,
@@ -2560,22 +2587,22 @@
           "site": "_fixtures/ALTExpPermComp.permissionset.al:11"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "table",
           "ms_uses": 167,
           "name": "InherentPermissions",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyInherentEntitlements.al:20"
         },
         {
-          "corpus_uses": 119,
+          "corpus_uses": 134,
           "group": "query/dataitem",
           "ms_uses": 166,
           "name": "DataItemLink",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-inferred-behaviors/P69QueryTwoOuters.al:62"
+          "site": "errors/lt-ms-refusals-130/P130QueryOuterFlow.al:74"
         },
         {
           "corpus_uses": 5,
@@ -2596,16 +2623,16 @@
           "site": "handlers/TestReportDataItemLinkReferenceContracts.al:91"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 5,
           "group": "page/field",
           "ms_uses": 150,
           "name": "LookupPageId",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-autoformat-lookups/P113Lookups.al:83"
         },
         {
-          "corpus_uses": 13,
+          "corpus_uses": 14,
           "group": "table/field",
           "ms_uses": 148,
           "name": "ObsoleteReason",
@@ -2614,7 +2641,7 @@
           "site": "misc/lt-probes-needed-4/PnD12_RemovedFieldRecordRef.al:20"
         },
         {
-          "corpus_uses": 14,
+          "corpus_uses": 15,
           "group": "table/field",
           "ms_uses": 148,
           "name": "ObsoleteState",
@@ -2641,7 +2668,7 @@
           "site": "report/lt-report-requestpage/RptFilters.al:110"
         },
         {
-          "corpus_uses": 201,
+          "corpus_uses": 310,
           "group": "codeunit",
           "ms_uses": 146,
           "name": "SingleInstance",
@@ -2686,7 +2713,7 @@
           "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:295"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "table",
           "ms_uses": 141,
           "name": "Access",
@@ -2704,34 +2731,34 @@
           "site": "ALTModifyCaption.al:67"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 135,
           "name": "Permissions",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyPagePermissions.al:37"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "page/field",
           "ms_uses": 135,
           "name": "Width",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-editability-width-lookups/P115Width.al:21"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/column",
           "ms_uses": 134,
           "name": "AutoCalcField",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-autocalc.al:22"
         },
         {
-          "corpus_uses": 36,
+          "corpus_uses": 38,
           "group": "table/field",
           "ms_uses": 132,
           "name": "AutoIncrement",
@@ -2740,22 +2767,22 @@
           "site": "ALTInternalTable.al:10"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "table/key",
           "ms_uses": 132,
           "name": "IncludedFields",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableKeyProps.al:23"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "table",
           "ms_uses": 131,
           "name": "InherentEntitlements",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyInherentEntitlements.al:9"
         },
         {
           "corpus_uses": 0,
@@ -2776,40 +2803,40 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/actionref",
           "ms_uses": 125,
           "name": "ObsoleteReason",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:156"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/actionref",
           "ms_uses": 125,
           "name": "ObsoleteState",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:155"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/actionref",
           "ms_uses": 125,
           "name": "ObsoleteTag",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:157"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "table",
           "ms_uses": 125,
           "name": "Permissions",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/Objects.al:29"
         },
         {
           "corpus_uses": 0,
@@ -2848,25 +2875,25 @@
           "site": "recordref/TestKeyMetadataRowVersionRemoved.Fixtures.al:139"
         },
         {
-          "corpus_uses": 28,
+          "corpus_uses": 45,
+          "group": "report/layout",
+          "ms_uses": 120,
+          "name": "LayoutFile",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "errors/lt-ms-refusals-132/P132ReportTimeMs.al:59"
+        },
+        {
+          "corpus_uses": 45,
           "group": "report/layout",
           "ms_uses": 120,
           "name": "Type",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/PWReportSaveAsColumns.al:65"
+          "site": "errors/lt-ms-refusals-132/P132ReportTimeMs.al:55"
         },
         {
-          "corpus_uses": 28,
-          "group": "report/layout",
-          "ms_uses": 120,
-          "name": "LayoutFile",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "handlers/PWReportSaveAsColumns.al:66"
-        },
-        {
-          "corpus_uses": 11,
+          "corpus_uses": 12,
           "group": "table/field",
           "ms_uses": 119,
           "name": "ObsoleteTag",
@@ -2884,31 +2911,31 @@
           "site": "_fixtures/pages/ALTSourceObjectFlagsPage.al:25"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "report/column",
           "ms_uses": 115,
           "name": "ObsoleteReason",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "errors/lt-ms-refusals-138/P138ColObsolete.al:41"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "report/column",
           "ms_uses": 115,
           "name": "ObsoleteState",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "errors/lt-ms-refusals-138/P138ColObsolete.al:40"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "report/column",
           "ms_uses": 115,
           "name": "ObsoleteTag",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "errors/lt-ms-refusals-138/P138ColObsolete.al:43"
         },
         {
           "corpus_uses": 0,
@@ -2920,13 +2947,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "pageextension/action",
           "ms_uses": 112,
           "name": "RunObject",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageExtRunPage.al:79"
         },
         {
           "corpus_uses": 28,
@@ -2947,13 +2974,13 @@
           "site": null
         },
         {
-          "corpus_uses": 171,
+          "corpus_uses": 193,
           "group": "query/column",
           "ms_uses": 106,
           "name": "Method",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-probes-needed-1/PnAQueryObjects.al:55"
+          "site": "errors/lt-ms-refusals-131/P131QueryOuterFilter.al:62"
         },
         {
           "corpus_uses": 3,
@@ -2965,13 +2992,13 @@
           "site": "handlers/TestReqPageBoundVisibilityObjects.al:76"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "page/repeater",
           "ms_uses": 102,
           "name": "IndentationColumn",
           "pinned": true,
           "runtime_reads": false,
-          "site": "pages/lt-page-runtime/P82Fixtures.al:471"
+          "site": "pageext/lt-page-ext-properties/PageTree.al:36"
         },
         {
           "corpus_uses": 4,
@@ -2992,22 +3019,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "entitlement",
           "ms_uses": 100,
           "name": "Type",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyEntitlement.al:25"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "entitlement",
           "ms_uses": 100,
           "name": "ObjectEntitlements",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyEntitlement.al:26"
         },
         {
           "corpus_uses": 13,
@@ -3028,16 +3055,16 @@
           "site": "report/lt-report-requestpage/RptFilters.al:67"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/repeater",
           "ms_uses": 96,
           "name": "IndentationControls",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Repeater.al:23"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "report",
           "ms_uses": 95,
           "name": "WordMergeDataItem",
@@ -3064,13 +3091,13 @@
           "site": "_fixtures/pages/ALTPagePropertiesPage.al:18"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/fixed",
           "ms_uses": 93,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Fixed.al:25"
         },
         {
           "corpus_uses": 2,
@@ -3082,7 +3109,7 @@
           "site": "pages/W1Controls.al:197"
         },
         {
-          "corpus_uses": 36,
+          "corpus_uses": 43,
           "group": "codeunit",
           "ms_uses": 88,
           "name": "EventSubscriberInstance",
@@ -3127,13 +3154,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "table/field",
           "ms_uses": 86,
           "name": "AllowInCustomizations",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/AllowInCustomizations.al:14"
         },
         {
           "corpus_uses": 0,
@@ -3154,13 +3181,13 @@
           "site": "text/lt-label-textbuilder/TxCLabel.al:184"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 83,
           "name": "AssistEdit",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-editability-width-lookups/P115Lookups.al:34"
         },
         {
           "corpus_uses": 0,
@@ -3172,13 +3199,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/field",
           "ms_uses": 82,
           "name": "NotBlank",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-presentation-properties/P119PageFields.al:34"
         },
         {
           "corpus_uses": 1,
@@ -3190,25 +3217,25 @@
           "site": "report/lt-report-requestpage/RptRequestPage.al:118"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 77,
           "name": "Importance",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:27"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "enum",
           "ms_uses": 75,
           "name": "Access",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyScopeAccess.al:34"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "page/field",
           "ms_uses": 75,
           "name": "HideValue",
@@ -3217,16 +3244,16 @@
           "site": "handlers/TestProbePageHandlerContracts.al:61"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "table/key",
           "ms_uses": 75,
           "name": "MaintainSQLIndex",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableKeyProps.al:23"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "table/field",
           "ms_uses": 73,
           "name": "Access",
@@ -3235,13 +3262,13 @@
           "site": "ALTInternalTable.al:19"
         },
         {
-          "corpus_uses": 123,
+          "corpus_uses": 135,
           "group": "query/dataitem",
           "ms_uses": 72,
           "name": "SqlJoinType",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-inferred-behaviors/P69QueryTwoOuters.al:87"
+          "site": "errors/lt-ms-refusals-130/P130QueryOuterFlow.al:75"
         },
         {
           "corpus_uses": 1,
@@ -3262,67 +3289,67 @@
           "site": "xmlport/W7XmlPortObjects.al:169"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/part",
           "ms_uses": 69,
           "name": "ObsoleteReason",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Part.al:63"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/part",
           "ms_uses": 69,
           "name": "ObsoleteState",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Part.al:62"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/part",
           "ms_uses": 69,
           "name": "ObsoleteTag",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Part.al:64"
         },
         {
-          "corpus_uses": 43,
+          "corpus_uses": 46,
           "group": "query/dataitem",
           "ms_uses": 66,
           "name": "DataItemTableFilter",
           "pinned": true,
           "runtime_reads": true,
-          "site": "query/QdbKindFiltered.Query.al:11"
+          "site": "errors/lt-ms-refusals-133/P133QueryOuterFilters.al:138"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "page/field",
           "ms_uses": 61,
           "name": "ObsoleteReason",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:72"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "page/field",
           "ms_uses": 61,
           "name": "ObsoleteState",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:71"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 61,
           "name": "ObsoleteTag",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-obsolete-layout-parts/P117Pages.al:73"
         },
         {
           "corpus_uses": 0,
@@ -3343,7 +3370,7 @@
           "site": "_fixtures/tables/ALTCrmEntity.al:12"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 6,
           "group": "xmlport/tableelement",
           "ms_uses": 60,
           "name": "AutoSave",
@@ -3361,7 +3388,7 @@
           "site": "_fixtures/xmlports/ALTUniversalManualXmlPort.al:21"
         },
         {
-          "corpus_uses": 1615,
+          "corpus_uses": 2114,
           "group": "codeunit",
           "ms_uses": 59,
           "name": "Subtype",
@@ -3388,7 +3415,7 @@
           "site": "misc/lt-probes-needed-7/PnGFixtures.al:654"
         },
         {
-          "corpus_uses": 149,
+          "corpus_uses": 177,
           "group": "query",
           "ms_uses": 58,
           "name": "QueryType",
@@ -3397,7 +3424,7 @@
           "site": "_fixtures/queries/ALTManualQueryIntegrationEvent.al:9"
         },
         {
-          "corpus_uses": 4,
+          "corpus_uses": 9,
           "group": "report/layout",
           "ms_uses": 58,
           "name": "Summary",
@@ -3442,13 +3469,13 @@
           "site": "_fixtures/ALTExtensionSubtypeFixtures.al:31"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 52,
           "name": "PreviewMode",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-props.al:10"
         },
         {
           "corpus_uses": 1,
@@ -3460,7 +3487,7 @@
           "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:174"
         },
         {
-          "corpus_uses": 17,
+          "corpus_uses": 24,
           "group": "page/part",
           "ms_uses": 51,
           "name": "SubPageView",
@@ -3469,7 +3496,7 @@
           "site": "handlers/TestPartOwnSortVsSubPageView.al:208"
         },
         {
-          "corpus_uses": 12,
+          "corpus_uses": 13,
           "group": "page/field",
           "ms_uses": 48,
           "name": "BlankNumbers",
@@ -3478,40 +3505,40 @@
           "site": "handlers/TestPageFieldFormats.Page.al:29"
         },
         {
-          "corpus_uses": 22,
+          "corpus_uses": 35,
           "group": "report",
           "ms_uses": 48,
           "name": "DefaultRenderingLayout",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/PWReportSaveAsColumns.al:30"
+          "site": "errors/lt-ms-refusals-132/P132ReportTimeMs.al:28"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/label",
           "ms_uses": 48,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Labels.al:44"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/label",
           "ms_uses": 47,
           "name": "CaptionClass",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageLabelCaptionClass.al:23"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 46,
           "name": "Permissions",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyReportQueryXmlport.al:35"
         },
         {
           "corpus_uses": 0,
@@ -3523,13 +3550,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 46,
           "name": "MultiLine",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:48"
         },
         {
           "corpus_uses": 0,
@@ -3559,13 +3586,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "tableextension/field",
           "ms_uses": 45,
           "name": "DecimalPlaces",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119TableExt.al:12"
         },
         {
           "corpus_uses": 6,
@@ -3586,13 +3613,13 @@
           "site": "_fixtures/xmlports/ALTUniversalTemporaryXmlPort.al:18"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 7,
           "group": "profile",
           "ms_uses": 43,
           "name": "RoleCenter",
           "pinned": true,
           "runtime_reads": true,
-          "site": "permissions/W6PermissionColumns.al:51"
+          "site": "pages/lt-report-page-properties/08-profile-customizations.al:49"
         },
         {
           "corpus_uses": 3,
@@ -3631,13 +3658,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/action",
           "ms_uses": 41,
           "name": "RunPageLink",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageExtRunPage.al:80"
         },
         {
           "corpus_uses": 2,
@@ -3649,16 +3676,16 @@
           "site": "misc/lt-probes-needed-2/PnBObjects.al:132"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "report/field",
           "ms_uses": 41,
           "name": "Lookup",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/05-requestpage-lookup.al:29"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "xmlport/tableelement",
           "ms_uses": 40,
           "name": "LinkFields",
@@ -3667,7 +3694,7 @@
           "site": "_fixtures/xmlports/ALTParentChildXmlPort.al:30"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "xmlport/tableelement",
           "ms_uses": 40,
           "name": "LinkTable",
@@ -3676,13 +3703,13 @@
           "site": "_fixtures/xmlports/ALTParentChildXmlPort.al:29"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 39,
           "name": "NotBlank",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:28"
         },
         {
           "corpus_uses": 9,
@@ -3748,22 +3775,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "page/view",
           "ms_uses": 36,
           "name": "Filters",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageViews.al:32"
         },
         {
-          "corpus_uses": 32,
+          "corpus_uses": 34,
           "group": "xmlport/fieldelement",
           "ms_uses": 35,
           "name": "MinOccurs",
           "pinned": true,
           "runtime_reads": true,
-          "site": "xmlport/PWXmlPortFormatEvaluate.al:48"
+          "site": "pages/lt-report-page-properties/06-xmlport-maxocc.al:22"
         },
         {
           "corpus_uses": 0,
@@ -3775,22 +3802,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 30,
           "name": "DataAccessIntent",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-props.al:9"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 30,
           "name": "DecimalPlaces",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:34"
         },
         {
           "corpus_uses": 1,
@@ -3802,7 +3829,7 @@
           "site": "record/TestPlatformMetadataDeclarationContracts.al:96"
         },
         {
-          "corpus_uses": 80,
+          "corpus_uses": 113,
           "group": "xmlport",
           "ms_uses": 30,
           "name": "Direction",
@@ -3811,22 +3838,22 @@
           "site": "_fixtures/xmlports/ALTManualXmlPortIntegrationEvent.al:9"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 29,
           "name": "MinValue",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:35"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "page/repeater",
           "ms_uses": 29,
           "name": "ShowAsTree",
           "pinned": true,
           "runtime_reads": false,
-          "site": "pages/lt-page-runtime/P82Fixtures.al:473"
+          "site": "pageext/lt-page-ext-properties/PageTree.al:37"
         },
         {
           "corpus_uses": 0,
@@ -3856,13 +3883,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 27,
           "name": "ShowMandatory",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:60"
         },
         {
           "corpus_uses": 1,
@@ -3883,25 +3910,25 @@
           "site": "misc/lt-probes-needed-3/PnC19XmlPort.al:162"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "table/field",
           "ms_uses": 25,
           "name": "ClosingDates",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Table.al:24"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 8,
           "group": "page/field",
           "ms_uses": 24,
           "name": "MinValue",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/ProbeTestPageForms.al:83"
+          "site": "errors/lt-ms-refusals-134/P134MinMaxDecimals.al:84"
         },
         {
-          "corpus_uses": 99,
+          "corpus_uses": 142,
           "group": "report",
           "ms_uses": 24,
           "name": "UseRequestPage",
@@ -3919,31 +3946,31 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/cuegroup",
           "ms_uses": 23,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Cues.al:21"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/repeater",
           "ms_uses": 23,
           "name": "FreezeColumn",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Repeater.al:24"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 23,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportCaption.al:27"
         },
         {
           "corpus_uses": 0,
@@ -3955,31 +3982,31 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
-          "group": "reportextension/column",
-          "ms_uses": 22,
-          "name": "IncludeCaption",
-          "pinned": false,
-          "runtime_reads": true,
-          "site": null
-        },
-        {
-          "corpus_uses": 3,
+          "corpus_uses": 5,
           "group": "report/dataitem",
           "ms_uses": 22,
           "name": "MaxIteration",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "misc/lt-probes-needed-8/PnH3Link.al:194"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
+          "group": "reportextension/column",
+          "ms_uses": 22,
+          "name": "IncludeCaption",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-report-page-properties/04-reportext-includecaption.al:39"
+        },
+        {
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 22,
           "name": "ClosingDates",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:54"
         },
         {
           "corpus_uses": 1,
@@ -3991,7 +4018,7 @@
           "site": "handlers/TestPageCueGroupFixedGridContracts.al:75"
         },
         {
-          "corpus_uses": 88,
+          "corpus_uses": 110,
           "group": "query",
           "ms_uses": 21,
           "name": "OrderBy",
@@ -4009,13 +4036,13 @@
           "site": "reportextensiontrigger/TestReportExtensionTriggers.al:119"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 21,
           "name": "AnalysisModeEnabled",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageAnalysisMode.al:13"
         },
         {
           "corpus_uses": 0,
@@ -4027,22 +4054,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 20,
           "name": "BlankZero",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:42"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 20,
           "name": "MaskType",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageMaskType.al:20"
         },
         {
           "corpus_uses": 0,
@@ -4099,7 +4126,7 @@
           "site": null
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 6,
           "group": "page/grid",
           "ms_uses": 19,
           "name": "GridLayout",
@@ -4171,7 +4198,7 @@
           "site": "misc/lt-probes-needed-3/PnC21Metadata.al:158"
         },
         {
-          "corpus_uses": 80,
+          "corpus_uses": 113,
           "group": "xmlport",
           "ms_uses": 17,
           "name": "Format",
@@ -4180,13 +4207,13 @@
           "site": "_fixtures/xmlports/ALTManualXmlPortIntegrationEvent.al:10"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/action",
           "ms_uses": 16,
           "name": "RunPageView",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageExtRunPage.al:87"
         },
         {
           "corpus_uses": 1,
@@ -4216,16 +4243,16 @@
           "site": "handlers/SrlLayoutReport.Report.al:40"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "controladdin",
           "ms_uses": 16,
           "name": "Scripts",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-images.al:9"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 3,
           "group": "page",
           "ms_uses": 16,
           "name": "ODataKeyFields",
@@ -4234,13 +4261,13 @@
           "site": "handlers/ProbePageMetadataFixtures.al:125"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "xmlport/fieldelement",
           "ms_uses": 16,
           "name": "FieldValidate",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-fvel.al:22"
         },
         {
           "corpus_uses": 0,
@@ -4261,22 +4288,22 @@
           "site": null
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 16,
           "group": "query/column",
           "ms_uses": 15,
           "name": "ColumnFilter",
           "pinned": true,
           "runtime_reads": true,
-          "site": "query/QfgJoinPositiveTotals.Query.al:22"
+          "site": "errors/lt-ms-refusals-131/P131QueryOuterFilter.al:69"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 2,
           "group": "table/key",
           "ms_uses": 15,
           "name": "Unique",
           "pinned": true,
           "runtime_reads": true,
-          "site": "record/TestAutoIncrementExplicitKey.Objects.al:69"
+          "site": "error-handling/lt-last-error-text-forms/InsertDuplicateKeyExcludeFlag.al:22"
         },
         {
           "corpus_uses": 0,
@@ -4297,13 +4324,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/grid",
           "ms_uses": 15,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Grid.al:21"
         },
         {
           "corpus_uses": 5,
@@ -4315,16 +4342,16 @@
           "site": "misc/lt-probes-needed-3/PnC19XmlPort.al:163"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/label",
           "ms_uses": 14,
           "name": "Editable",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-editability-width-lookups/P115GridLabel.al:22"
         },
         {
-          "corpus_uses": 77,
+          "corpus_uses": 108,
           "group": "xmlport",
           "ms_uses": 14,
           "name": "UseRequestPage",
@@ -4333,40 +4360,40 @@
           "site": "_fixtures/xmlports/ALTManualXmlPortIntegrationEvent.al:11"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 14,
           "name": "HorizontalStretch",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-size.al:13"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 14,
           "name": "VerticalStretch",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-size.al:14"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 8,
           "group": "page/field",
           "ms_uses": 13,
           "name": "MaxValue",
           "pinned": true,
           "runtime_reads": true,
-          "site": "handlers/ProbeTestPageForms.al:84"
+          "site": "errors/lt-ms-refusals-134/P134MinMaxDecimals.al:85"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/label",
           "ms_uses": 13,
           "name": "Visible",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Labels.al:50"
         },
         {
           "corpus_uses": 2,
@@ -4396,40 +4423,40 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "controladdin",
           "ms_uses": 13,
           "name": "RequestedHeight",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:10"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "controladdin",
           "ms_uses": 13,
           "name": "RequestedWidth",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:11"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/label",
           "ms_uses": 13,
           "name": "MultiLine",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Labels.al:25"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/label",
           "ms_uses": 13,
           "name": "Style",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Labels.al:32"
         },
         {
           "corpus_uses": 0,
@@ -4468,34 +4495,34 @@
           "site": "_fixtures/tables/ALTKeyedExt.TableExt.al:20"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 12,
           "name": "StartupScript",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-scripts.al:10"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/field",
           "ms_uses": 12,
           "name": "ValuesAllowed",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageFieldValuesAllowed.al:42"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/action",
           "ms_uses": 12,
           "name": "Ellipsis",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageExt.al:127"
         },
         {
-          "corpus_uses": 7,
+          "corpus_uses": 10,
           "group": "pageextension/modify",
           "ms_uses": 11,
           "name": "Visible",
@@ -4504,13 +4531,13 @@
           "site": "misc/lt-probes-needed-2/PnBPages.al:70"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 5,
           "group": "report/column",
           "ms_uses": 11,
           "name": "OptionCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "errors/lt-ms-refusals-130/P130ReportOpt.al:23"
         },
         {
           "corpus_uses": 8,
@@ -4522,13 +4549,13 @@
           "site": "misc/lt-probes-needed-3/PnC19XmlPort.al:66"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 11,
           "name": "StyleSheets",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-styles.al:10"
         },
         {
           "corpus_uses": 3,
@@ -4540,22 +4567,22 @@
           "site": "codeunit/lt-enums-interfaces/OjT71047.al:109"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/label",
           "ms_uses": 10,
           "name": "HideValue",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119LabelHideValue.al:22"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/action",
           "ms_uses": 10,
           "name": "RunPageMode",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageExtRunPage.al:94"
         },
         {
           "corpus_uses": 1,
@@ -4567,22 +4594,22 @@
           "site": "handlers/TestPageExtensionActionWithPart_Page.al:90"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "table/field",
           "ms_uses": 10,
           "name": "Numeric",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Table.al:18"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 10,
           "name": "PromotedActionCategories",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Promoted.al:13"
         },
         {
           "corpus_uses": 0,
@@ -4621,13 +4648,13 @@
           "site": "types/TestEnumExtActionTypeExt.EnumExt.al:5"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/repeater",
           "ms_uses": 9,
           "name": "Visible",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119RepeaterVisible.al:21"
         },
         {
           "corpus_uses": 0,
@@ -4639,31 +4666,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "pageextension/field",
           "ms_uses": 9,
           "name": "Editable",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "table/field",
-          "ms_uses": 9,
-          "name": "BlankNumbers",
-          "pinned": false,
-          "runtime_reads": true,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "report/group",
-          "ms_uses": 9,
-          "name": "ShowCaption",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-editability-width-lookups/P115ExtField.al:16"
         },
         {
           "corpus_uses": 0,
@@ -4671,11 +4680,29 @@
           "ms_uses": 9,
           "name": "PageCaption",
           "pinned": false,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": null
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 2,
+          "group": "table/field",
+          "ms_uses": 9,
+          "name": "BlankNumbers",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-presentation-properties/P119Table.al:26"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "report/group",
+          "ms_uses": 9,
+          "name": "ShowCaption",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-page-presentation-properties/P119ReportCaption.al:22"
+        },
+        {
+          "corpus_uses": 4,
           "group": "page",
           "ms_uses": 8,
           "name": "APIGroup",
@@ -4684,7 +4711,7 @@
           "site": "_fixtures/pages/ALTPagePropertiesApiPage.al:10"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "page",
           "ms_uses": 8,
           "name": "APIPublisher",
@@ -4693,7 +4720,7 @@
           "site": "_fixtures/pages/ALTPagePropertiesApiPage.al:9"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "page",
           "ms_uses": 8,
           "name": "EntityName",
@@ -4702,7 +4729,7 @@
           "site": "_fixtures/pages/ALTPagePropertiesApiPage.al:12"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "page",
           "ms_uses": 8,
           "name": "EntitySetName",
@@ -4729,16 +4756,16 @@
           "site": "report/TestProbeReportContracts.al:19"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 8,
           "name": "EnableHyperlinks",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-props.al:11"
         },
         {
-          "corpus_uses": 12,
+          "corpus_uses": 15,
           "group": "xmlport",
           "ms_uses": 8,
           "name": "TextEncoding",
@@ -4783,13 +4810,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "xmlport/fieldelement",
           "ms_uses": 8,
           "name": "MaxOccurs",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-maxocc.al:23"
         },
         {
           "corpus_uses": 0,
@@ -4810,22 +4837,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "query",
           "ms_uses": 7,
           "name": "Permissions",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyReportQueryXmlport.al:63"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 7,
           "name": "CaptionClass",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/05-requestpage-capclass.al:29"
         },
         {
           "corpus_uses": 2,
@@ -4837,40 +4864,40 @@
           "site": "metadata/W6TableCodeunitMetadata.al:25"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 7,
           "name": "HorizontalShrink",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-size.al:15"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 7,
           "name": "MinimumHeight",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-size.al:11"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 7,
           "name": "MinimumWidth",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-size.al:12"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 7,
           "name": "VerticalShrink",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-size.al:16"
         },
         {
           "corpus_uses": 0,
@@ -4882,40 +4909,40 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/field",
           "ms_uses": 7,
           "name": "ColumnSpan",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Grid.al:28"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/label",
           "ms_uses": 7,
           "name": "StyleExpr",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Labels.al:38"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 7,
           "name": "ValuesAllowed",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/05-requestpage-valuesallowed.al:29"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "xmlport/fieldattribute",
           "ms_uses": 7,
           "name": "FieldValidate",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-fvat.al:22"
         },
         {
           "corpus_uses": 0,
@@ -4945,31 +4972,31 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "enum",
           "ms_uses": 6,
           "name": "Scope",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyScopeAccess.al:43"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/usercontrol",
           "ms_uses": 6,
           "name": "Visible",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119UserControl.al:30"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "pagecustomization/modify",
           "ms_uses": 6,
           "name": "Visible",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageCustomization.al:14"
         },
         {
           "corpus_uses": 0,
@@ -4999,13 +5026,13 @@
           "site": "query/QjOrderReverseSign.Query.al:16"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 6,
           "name": "LookupPageID",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/05-requestpage-lookuppage.al:49"
         },
         {
           "corpus_uses": 23,
@@ -5026,40 +5053,40 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "tableextension/field",
           "ms_uses": 6,
           "name": "OptionCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableExtFieldProps.al:45"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "tableextension/field",
           "ms_uses": 6,
           "name": "OptionMembers",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableExtFieldProps.al:44"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "tableextension/field",
           "ms_uses": 6,
           "name": "ValidateTableRelation",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableExtFieldProps.al:51"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "xmlport",
           "ms_uses": 6,
           "name": "UseDefaultNamespace",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-dnsfalse.al:12"
         },
         {
           "corpus_uses": 0,
@@ -5071,49 +5098,49 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 6,
           "name": "RecreateScript",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "controladdin",
-          "ms_uses": 6,
-          "name": "RefreshScript",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "page/field",
-          "ms_uses": 6,
-          "name": "ClosingDates",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "page/field",
-          "ms_uses": 6,
-          "name": "RowSpan",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-recreate.al:10"
         },
         {
           "corpus_uses": 1,
+          "group": "controladdin",
+          "ms_uses": 6,
+          "name": "RefreshScript",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-report-page-properties/07-controladdin-recreate.al:11"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/field",
+          "ms_uses": 6,
+          "name": "ClosingDates",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-page-presentation-properties/P119PageNumeric.al:26"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "page/field",
+          "ms_uses": 6,
+          "name": "RowSpan",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-page-presentation-properties/P119Grid.al:29"
+        },
+        {
+          "corpus_uses": 3,
           "group": "xmlport",
           "ms_uses": 6,
           "name": "DefaultNamespace",
           "pinned": true,
           "runtime_reads": false,
-          "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:186"
+          "site": "pages/lt-report-page-properties/06-xmlport-dnsfalse.al:11"
         },
         {
           "corpus_uses": 1,
@@ -5161,40 +5188,40 @@
           "site": null
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 9,
           "group": "xmlport",
           "ms_uses": 5,
           "name": "FieldDelimiter",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:70"
+          "site": "pages/lt-pages-xmlport-upload-members/P112XpCsv.al:72"
         },
         {
-          "corpus_uses": 10,
+          "corpus_uses": 17,
           "group": "xmlport",
           "ms_uses": 5,
           "name": "FieldSeparator",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:71"
+          "site": "pages/lt-pages-xmlport-upload-members/P112XpCsv.al:73"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/label",
           "ms_uses": 5,
           "name": "Importance",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119Labels.al:26"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/repeater",
           "ms_uses": 5,
           "name": "TreeInitialState",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageTree.al:38"
         },
         {
           "corpus_uses": 0,
@@ -5224,22 +5251,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/field",
           "ms_uses": 4,
           "name": "Numeric",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageNumeric.al:21"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page/fileuploadaction",
           "ms_uses": 4,
           "name": "Visible",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119FileUploadAction.al:39"
         },
         {
           "corpus_uses": 0,
@@ -5314,13 +5341,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "tableextension/field",
           "ms_uses": 4,
           "name": "CaptionClass",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableExtCaptionClass.al:30"
         },
         {
           "corpus_uses": 0,
@@ -5350,22 +5377,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "xmlport",
           "ms_uses": 4,
           "name": "Permissions",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "permissions/lt-permissions-mock-indirect/RiskyReportQueryXmlport.al:78"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "controladdin",
           "ms_uses": 4,
           "name": "Images",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/07-controladdin-images.al:10"
         },
         {
           "corpus_uses": 0,
@@ -5386,22 +5413,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 4,
           "group": "page/fileuploadaction",
           "ms_uses": 4,
           "name": "AllowMultipleFiles",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageFileUpload.al:32"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/field",
           "ms_uses": 4,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageExt.al:85"
         },
         {
           "corpus_uses": 0,
@@ -5503,7 +5530,7 @@
           "site": null
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "page",
           "ms_uses": 3,
           "name": "APIVersion",
@@ -5548,22 +5575,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/grid",
           "ms_uses": 3,
           "name": "Editable",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-editability-width-lookups/P115GridLabel.al:33"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "page/view",
           "ms_uses": 3,
           "name": "OrderBy",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageViews.al:33"
         },
         {
           "corpus_uses": 0,
@@ -5638,13 +5665,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/view",
           "ms_uses": 3,
           "name": "Visible",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ViewsAdd.al:44"
         },
         {
           "corpus_uses": 4,
@@ -5674,13 +5701,13 @@
           "site": "handlers/TestReportRuntimeContracts.al:218"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/column",
           "ms_uses": 3,
           "name": "OptionMembers",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/05-report-optionmembers.al:22"
         },
         {
           "corpus_uses": 0,
@@ -5692,22 +5719,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 3,
           "name": "DrillDown",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/05-requestpage-drilldown.al:29"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 3,
           "name": "MaxValue",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportFields.al:36"
         },
         {
           "corpus_uses": 0,
@@ -5755,13 +5782,13 @@
           "site": "xmlport/lt-xmlport-query-datatransfer/XmlPortFixtures.al:511"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "xmlport/tableelement",
           "ms_uses": 3,
           "name": "RequestFilterFields",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-reqfilt.al:19"
         },
         {
           "corpus_uses": 0,
@@ -5773,40 +5800,40 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "pageextension/group",
           "ms_uses": 3,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119GridExt.al:20"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "pageextension/view",
           "ms_uses": 3,
           "name": "Filters",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageExtViewFilters.al:35"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/label",
           "ms_uses": 3,
           "name": "MultiLine",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportLabels.al:26"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/label",
           "ms_uses": 3,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportLabels.al:32"
         },
         {
           "corpus_uses": 0,
@@ -5962,13 +5989,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "xmlport/textelement",
           "ms_uses": 3,
           "name": "Unbound",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-unbound.al:22"
         },
         {
           "corpus_uses": 0,
@@ -6124,22 +6151,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/modify",
           "ms_uses": 2,
           "name": "DrillDownPageId",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageExtDrillDownPageId.al:48"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "permissionsetextension",
           "ms_uses": 2,
           "name": "IncludedPermissionSets",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/08-permissionsetext.al:23"
         },
         {
           "corpus_uses": 2,
@@ -6187,13 +6214,13 @@
           "site": null
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 6,
           "group": "xmlport",
           "ms_uses": 2,
           "name": "TableSeparator",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:73"
+          "site": "pages/lt-report-page-properties/06-xmlport-tablesep.al:12"
         },
         {
           "corpus_uses": 0,
@@ -6205,13 +6232,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 2,
           "name": "UseSystemPrinter",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-props.al:12"
         },
         {
           "corpus_uses": 0,
@@ -6223,13 +6250,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 2,
           "name": "Style",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportCaption.al:33"
         },
         {
           "corpus_uses": 0,
@@ -6448,13 +6475,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "table/field",
           "ms_uses": 2,
           "name": "ValuesAllowed",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableFieldValuesAllowed.al:22"
         },
         {
           "corpus_uses": 0,
@@ -6691,13 +6718,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/label",
           "ms_uses": 1,
           "name": "Visible",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportLabels.al:38"
         },
         {
           "corpus_uses": 0,
@@ -6754,13 +6781,13 @@
           "site": "handlers/SrlLayoutReport.Report.al:45"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report/requestpage",
           "ms_uses": 1,
           "name": "InsertAllowed",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/05-requestpage-insertallowed.al:21"
         },
         {
           "corpus_uses": 0,
@@ -6799,13 +6826,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "table/field",
           "ms_uses": 1,
           "name": "Compressed",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableFieldCompressed.al:14"
         },
         {
           "corpus_uses": 0,
@@ -6817,31 +6844,31 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "tableextension/field",
           "ms_uses": 1,
           "name": "BlankNumbers",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119TableExt.al:18"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "tableextension/field",
           "ms_uses": 1,
           "name": "BlankZero",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119TableExt.al:19"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "tableextension/field",
           "ms_uses": 1,
           "name": "MaxValue",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119TableExt.al:20"
         },
         {
           "corpus_uses": 3,
@@ -6853,13 +6880,13 @@
           "site": "_fixtures/xmlports/ALTUniversalReplaceXmlPort.al:18"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "xmlport/tableelement",
           "ms_uses": 1,
           "name": "CalcFields",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-calcf.al:19"
         },
         {
           "corpus_uses": 0,
@@ -6871,13 +6898,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 3,
           "group": "page/fileuploadaction",
           "ms_uses": 1,
           "name": "AllowedFileExtensions",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/PageFileUpload.al:33"
         },
         {
           "corpus_uses": 0,
@@ -6907,49 +6934,49 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/field",
           "ms_uses": 1,
           "name": "MultiLine",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageExt.al:86"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/field",
           "ms_uses": 1,
           "name": "Style",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageExt.al:91"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/field",
           "ms_uses": 1,
           "name": "StyleExpr",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageExt.al:96"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/grid",
           "ms_uses": 1,
           "name": "GridLayout",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119GridExt.al:16"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/grid",
           "ms_uses": 1,
           "name": "ShowCaption",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119GridExt.al:17"
         },
         {
           "corpus_uses": 0,
@@ -6961,67 +6988,67 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "pageextension/modify",
           "ms_uses": 1,
           "name": "StyleExpr",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119PageExt.al:73"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "profile",
           "ms_uses": 1,
           "name": "Customizations",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/08-profile-customizations.al:50"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 1,
           "name": "ExecutionTimeout",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-exectimeout.al:9"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 1,
           "name": "MaximumDatasetSize",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-maxdataset.al:9"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 1,
           "name": "MaximumDocumentCount",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-maxdoccount.al:9"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "report",
           "ms_uses": 1,
           "name": "ShowPrintStatus",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/03-report-showprint.al:9"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 2,
           "group": "report/field",
           "ms_uses": 1,
           "name": "ExtendedDatatype",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-page-presentation-properties/P119ReportCaption.al:44"
         },
         {
           "corpus_uses": 0,
@@ -11128,13 +11155,13 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "table/key",
           "ms_uses": 1,
           "name": "SqlIndex",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pageext/lt-page-ext-properties/TableSqlIndex.al:21"
         },
         {
           "corpus_uses": 0,
@@ -11146,16 +11173,16 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "xmlport/tableelement",
           "ms_uses": 1,
           "name": "LinkTableForceInsert",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "pages/lt-report-page-properties/06-xmlport-linkforce.al:24"
         },
         {
-          "corpus_uses": 1508,
+          "corpus_uses": 2007,
           "group": "codeunit",
           "ms_uses": 0,
           "name": "TestPermissions",
@@ -11245,6 +11272,15 @@
           "site": "report/W3ReportActions.al:68"
         },
         {
+          "corpus_uses": 6,
+          "group": "report/layout",
+          "ms_uses": 0,
+          "name": "MimeType",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "handlers/TestReportLayoutByNameReport.al:47"
+        },
+        {
           "corpus_uses": 1,
           "group": "report/requestpage",
           "ms_uses": 0,
@@ -11254,13 +11290,40 @@
           "site": "handlers/PSRequestPageEditable.al:120"
         },
         {
+          "corpus_uses": 6,
+          "group": "reportextension/layout",
+          "ms_uses": 0,
+          "name": "LayoutFile",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "record/TestEventSubscriptionColumnsReportLayoutListContracts.al:89"
+        },
+        {
           "corpus_uses": 1,
+          "group": "reportextension/layout",
+          "ms_uses": 0,
+          "name": "Summary",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-reportext-rendering/ReportExtensionRendering.al:66"
+        },
+        {
+          "corpus_uses": 6,
           "group": "reportextension/layout",
           "ms_uses": 0,
           "name": "Type",
           "pinned": true,
           "runtime_reads": true,
           "site": "record/TestEventSubscriptionColumnsReportLayoutListContracts.al:88"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "reportextension/modify",
+          "ms_uses": 0,
+          "name": "CalcFields",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-report-page-properties/04-reportext-calcfields.al:33"
         },
         {
           "corpus_uses": 2,
@@ -11335,13 +11398,13 @@
           "site": "recordref/TestKeyMetadataRowVersionRemoved.Fixtures.al:152"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 12,
           "group": "xmlport",
           "ms_uses": 0,
           "name": "RecordSeparator",
           "pinned": true,
           "runtime_reads": true,
-          "site": "platform/lt-xmlport-session-navapp-cookie/P94Fixtures.al:72"
+          "site": "pages/lt-pages-xmlport-upload-members/P112XpCsv.al:74"
         },
         {
           "corpus_uses": 1,
@@ -11362,13 +11425,22 @@
           "site": "xmlport/TestXmlPortTextFormatsContracts.al:70"
         },
         {
-          "corpus_uses": 3,
+          "corpus_uses": 4,
           "group": "codeunit",
           "ms_uses": 0,
           "name": "TestHttpRequestPolicy",
           "pinned": true,
           "runtime_reads": false,
           "site": "network/TestHttpClientBlockNoHandler.al:26"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "pageextension/modify",
+          "ms_uses": 0,
+          "name": "Importance",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-page-presentation-properties/P119PageExt.al:69"
         },
         {
           "corpus_uses": 1,
@@ -11392,10 +11464,37 @@
           "corpus_uses": 1,
           "group": "report/labels",
           "ms_uses": 0,
+          "name": "FirstLabel",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "types/lt-format-codes-textbuilder-pagerun-labels/P144ReportLabelsCaption.al:48"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/labels",
+          "ms_uses": 0,
           "name": "LockedLabel",
           "pinned": true,
           "runtime_reads": false,
           "site": "report/PZReportLabels.al:27"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/labels",
+          "ms_uses": 0,
+          "name": "LockedLbl",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-report-page-properties/03-report-lblocked.al:23"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/labels",
+          "ms_uses": 0,
+          "name": "NoteLbl",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "report/lt-report-layout-merger/ReportMergerFixtures.al:143"
         },
         {
           "corpus_uses": 1,
@@ -11419,10 +11518,37 @@
           "corpus_uses": 1,
           "group": "report/labels",
           "ms_uses": 0,
+          "name": "PlainLbl",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "pages/lt-report-page-properties/03-report-lblocked.al:26"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/labels",
+          "ms_uses": 0,
           "name": "QuoteLabel",
           "pinned": true,
           "runtime_reads": false,
           "site": "report/PZReportLabels.al:29"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/labels",
+          "ms_uses": 0,
+          "name": "SecondLabel",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "types/lt-format-codes-textbuilder-pagerun-labels/P144ReportLabelsCaption.al:49"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "report/labels",
+          "ms_uses": 0,
+          "name": "TitleLbl",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "report/lt-report-layout-merger/ReportMergerFixtures.al:141"
         },
         {
           "corpus_uses": 1,
@@ -11435,30 +11561,12 @@
         },
         {
           "corpus_uses": 1,
-          "group": "report/layout",
-          "ms_uses": 0,
-          "name": "MimeType",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "handlers/TestReportLayoutByNameReport.al:47"
-        },
-        {
-          "corpus_uses": 1,
           "group": "reportextension/labels",
           "ms_uses": 0,
           "name": "ExtLabel",
           "pinned": true,
           "runtime_reads": false,
           "site": "report/PZReportLabels.al:67"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "reportextension/layout",
-          "ms_uses": 0,
-          "name": "LayoutFile",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "record/TestEventSubscriptionColumnsReportLayoutListContracts.al:89"
         },
         {
           "corpus_uses": 1,
@@ -11479,14 +11587,14 @@
           "site": "handlers/ProbeObjectMetadataTables.al:162"
         }
       ],
-      "pinned": 261
+      "pinned": 443
     },
     {
-      "catalog": 122,
+      "catalog": 123,
       "dimension": "events",
       "items": [
         {
-          "corpus_uses": 9,
+          "corpus_uses": 11,
           "group": "table",
           "ms_uses": 154,
           "name": "OnAfterDeleteEvent",
@@ -11495,7 +11603,7 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:91"
         },
         {
-          "corpus_uses": 15,
+          "corpus_uses": 20,
           "group": "table",
           "ms_uses": 117,
           "name": "OnBeforeInsertEvent",
@@ -11504,7 +11612,7 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:34"
         },
         {
-          "corpus_uses": 16,
+          "corpus_uses": 20,
           "group": "table",
           "ms_uses": 116,
           "name": "OnAfterInsertEvent",
@@ -11513,7 +11621,7 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:43"
         },
         {
-          "corpus_uses": 10,
+          "corpus_uses": 13,
           "group": "table",
           "ms_uses": 91,
           "name": "OnAfterModifyEvent",
@@ -11522,7 +11630,7 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:68"
         },
         {
-          "corpus_uses": 6,
+          "corpus_uses": 8,
           "group": "table",
           "ms_uses": 67,
           "name": "OnAfterRenameEvent",
@@ -11531,7 +11639,7 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:113"
         },
         {
-          "corpus_uses": 9,
+          "corpus_uses": 12,
           "group": "table",
           "ms_uses": 34,
           "name": "OnBeforeDeleteEvent",
@@ -11540,7 +11648,7 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:77"
         },
         {
-          "corpus_uses": 16,
+          "corpus_uses": 21,
           "group": "table",
           "ms_uses": 30,
           "name": "OnAfterValidateEvent",
@@ -11549,7 +11657,7 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:25"
         },
         {
-          "corpus_uses": 10,
+          "corpus_uses": 14,
           "group": "table",
           "ms_uses": 26,
           "name": "OnBeforeModifyEvent",
@@ -11558,16 +11666,16 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:52"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 9,
           "group": "page",
           "ms_uses": 19,
           "name": "OnAfterValidateEvent",
           "pinned": true,
           "runtime_reads": true,
-          "site": "events/W6PageEventSubscription.al:42"
+          "site": "errors/lt-ms-refusals-128/P128CallstackPageEvents.al:146"
         },
         {
-          "corpus_uses": 11,
+          "corpus_uses": 15,
           "group": "table",
           "ms_uses": 18,
           "name": "OnBeforeValidateEvent",
@@ -11576,16 +11684,16 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:12"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "page",
           "ms_uses": 17,
           "name": "OnDeleteRecordEvent",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": true,
-          "site": null
+          "site": "events/lt-global-triggers-statements/P114PageActionEvents.al:172"
         },
         {
-          "corpus_uses": 5,
+          "corpus_uses": 6,
           "group": "table",
           "ms_uses": 10,
           "name": "OnBeforeRenameEvent",
@@ -11594,154 +11702,64 @@
           "site": "_fixtures/events/ALTEventMutationSubscriber.al:100"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 5,
           "group": "page",
           "ms_uses": 3,
           "name": "OnAfterActionEvent",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "errors/lt-ms-refusals-128/P128CallstackPageEvents.al:138"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 5,
           "group": "page",
           "ms_uses": 2,
           "name": "OnBeforeActionEvent",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "errors/lt-ms-refusals-128/P128CallstackPageEvents.al:130"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 5,
           "group": "page",
           "ms_uses": 1,
           "name": "OnBeforeValidateEvent",
           "pinned": true,
           "runtime_reads": true,
-          "site": "record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al:137"
+          "site": "events/lt-global-triggers-statements/P114PageActionEvents.al:180"
         },
         {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "AutoFormatTranslate",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "CaptionClassTranslate",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 1,
           "name": "GetAgentTaskMessagePageId",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyAgentTaskPage.al:54"
         },
         {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "GetApplicationLanguage",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "GetAutoStartTours",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "GetFindEntriesPageId",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "GetPowerPlatformEnvironmentId",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 1,
           "name": "GetUserToken",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "MakeCodeFilter",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "OnCompanyOpenCompleted",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "OnOpenInExcel",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "OpenLastErrorPage",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 1,
-          "name": "SetNotificationStatus",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118RiskyGetUserToken.al:54"
         },
         {
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
           "name": "ChangeCompany",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "CustomDocumentMergerEx",
           "pinned": false,
           "runtime_reads": true,
           "site": null
@@ -11840,7 +11858,7 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
-          "name": "ConfirmPrivacyNoticeApproval",
+          "name": "AutoFormatTranslate",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -11849,7 +11867,16 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
-          "name": "CustomDocumentMergerEx",
+          "name": "CaptionClassTranslate",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "ConfirmPrivacyNoticeApproval",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -11885,7 +11912,25 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "GetApplicationLanguage",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "GetApplicationVersion",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "GetAutoStartTours",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -11984,6 +12029,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "GetFindEntriesPageId",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "GetIsLegacyActionBarEnabled",
           "pinned": false,
           "runtime_reads": false,
@@ -12021,6 +12075,15 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "GetPerformanceTroubleshooterPageId",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "GetPowerPlatformEnvironmentId",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -12102,6 +12165,15 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "InvokeExtensionInstallation",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "MakeCodeFilter",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -12215,22 +12287,22 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 0,
           "name": "OnCheckPreconditionsPerCompany",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118UpgradeTriggersSubs.al:54"
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 1,
           "group": "codeunit",
           "ms_uses": 0,
           "name": "OnCheckPreconditionsPerDatabase",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-system-events-upgrade-subs/P118UpgradeTriggersSubs.al:62"
         },
         {
           "corpus_uses": 0,
@@ -12246,6 +12318,15 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "OnCompanyOpen",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "OnCompanyOpenCompleted",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -12407,6 +12488,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "OnOpenInExcel",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "OnUpgradePerCompany",
           "pinned": false,
           "runtime_reads": false,
@@ -12506,6 +12596,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "OpenLastErrorPage",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "OpenRoleBasedSetupExperience",
           "pinned": false,
           "runtime_reads": false,
@@ -12560,6 +12659,15 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
+          "name": "SetNotificationStatus",
+          "pinned": false,
+          "runtime_reads": false,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
           "name": "SetupPrinters",
           "pinned": false,
           "runtime_reads": false,
@@ -12582,16 +12690,25 @@
           "pinned": false,
           "runtime_reads": false,
           "site": null
+        },
+        {
+          "corpus_uses": 3,
+          "group": "page",
+          "ms_uses": 0,
+          "name": "OnAfterGetRecordEvent",
+          "pinned": true,
+          "runtime_reads": false,
+          "site": "errors/lt-ms-refusals-128/P128CallstackPageEvents.al:122"
         }
       ],
-      "pinned": 12
+      "pinned": 20
     },
     {
       "catalog": 59,
       "dimension": "syntax",
       "items": [
         {
-          "corpus_uses": 472193,
+          "corpus_uses": 564524,
           "group": "expression",
           "ms_uses": 1808040,
           "name": "NameRef",
@@ -12600,7 +12717,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 175849,
+          "corpus_uses": 208842,
           "group": "expression",
           "ms_uses": 474879,
           "name": "MemberExpr",
@@ -12609,7 +12726,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 206391,
+          "corpus_uses": 246315,
           "group": "expression",
           "ms_uses": 389287,
           "name": "CallExpr",
@@ -12618,7 +12735,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 145805,
+          "corpus_uses": 174673,
           "group": "statement",
           "ms_uses": 248561,
           "name": "ExprStmt",
@@ -12627,7 +12744,7 @@
           "site": "ALTCallstackModuleInfos.al:26"
         },
         {
-          "corpus_uses": 21596,
+          "corpus_uses": 26227,
           "group": "statement",
           "ms_uses": 187658,
           "name": "Block",
@@ -12636,7 +12753,7 @@
           "site": "ALTCallstackModuleInfos.al:8"
         },
         {
-          "corpus_uses": 22138,
+          "corpus_uses": 26695,
           "group": "statement",
           "ms_uses": 139861,
           "name": "AssignStmt",
@@ -12645,7 +12762,7 @@
           "site": "ALTInternalCodeunit.al:19"
         },
         {
-          "corpus_uses": 2462,
+          "corpus_uses": 3167,
           "group": "statement",
           "ms_uses": 101593,
           "name": "IfStmt",
@@ -12654,7 +12771,7 @@
           "site": "ALTIsolatedStorageOwner.al:25"
         },
         {
-          "corpus_uses": 2983,
+          "corpus_uses": 3796,
           "group": "statement",
           "ms_uses": 79996,
           "name": "ExitStmt",
@@ -12663,7 +12780,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 34648,
+          "corpus_uses": 40202,
           "group": "expression",
           "ms_uses": 77686,
           "name": "Literal:Integer",
@@ -12672,7 +12789,7 @@
           "site": "ALTInternalCodeunit.al:7"
         },
         {
-          "corpus_uses": 4553,
+          "corpus_uses": 5647,
           "group": "expression",
           "ms_uses": 71172,
           "name": "ScopeExpr",
@@ -12681,7 +12798,7 @@
           "site": "ALTIsolatedStorageOwner.al:41"
         },
         {
-          "corpus_uses": 177990,
+          "corpus_uses": 215139,
           "group": "expression",
           "ms_uses": 54237,
           "name": "Literal:StringLit",
@@ -12690,7 +12807,7 @@
           "site": "_fixtures/ALTDispatchProbe.al:43"
         },
         {
-          "corpus_uses": 1322,
+          "corpus_uses": 1686,
           "group": "expression",
           "ms_uses": 33690,
           "name": "BinExpr =",
@@ -12699,7 +12816,7 @@
           "site": "_fixtures/Assert.al:176"
         },
         {
-          "corpus_uses": 300,
+          "corpus_uses": 397,
           "group": "expression",
           "ms_uses": 25503,
           "name": "ParenExpr",
@@ -12708,7 +12825,7 @@
           "site": "_fixtures/Assert.al:176"
         },
         {
-          "corpus_uses": 1993,
+          "corpus_uses": 2356,
           "group": "expression",
           "ms_uses": 24498,
           "name": "Literal:false",
@@ -12717,7 +12834,7 @@
           "site": "_fixtures/ALTFixtureCleanup.al:28"
         },
         {
-          "corpus_uses": 473,
+          "corpus_uses": 618,
           "group": "expression",
           "ms_uses": 24370,
           "name": "PrefixExpr not",
@@ -12726,7 +12843,7 @@
           "site": "_fixtures/Assert.al:56"
         },
         {
-          "corpus_uses": 2608,
+          "corpus_uses": 3024,
           "group": "expression",
           "ms_uses": 23439,
           "name": "Literal:true",
@@ -12735,7 +12852,7 @@
           "site": "_fixtures/ALTImplicitReturnCallee.al:19"
         },
         {
-          "corpus_uses": 385,
+          "corpus_uses": 462,
           "group": "expression",
           "ms_uses": 23304,
           "name": "BinExpr <>",
@@ -12744,7 +12861,7 @@
           "site": "_fixtures/Assert.al:167"
         },
         {
-          "corpus_uses": 791,
+          "corpus_uses": 1115,
           "group": "expression",
           "ms_uses": 21542,
           "name": "IndexExpr",
@@ -12753,7 +12870,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:27"
         },
         {
-          "corpus_uses": 1868,
+          "corpus_uses": 1988,
           "group": "statement",
           "ms_uses": 15938,
           "name": "CaseBranch",
@@ -12762,7 +12879,7 @@
           "site": "_fixtures/Assert.al:428"
         },
         {
-          "corpus_uses": 13175,
+          "corpus_uses": 16876,
           "group": "expression",
           "ms_uses": 15738,
           "name": "BinExpr +",
@@ -12771,7 +12888,7 @@
           "site": "_fixtures/ALTCodeunitMetaProbe.al:14"
         },
         {
-          "corpus_uses": 114,
+          "corpus_uses": 196,
           "group": "expression",
           "ms_uses": 11380,
           "name": "BinExpr and",
@@ -12780,7 +12897,7 @@
           "site": "_fixtures/Assert.al:186"
         },
         {
-          "corpus_uses": 219,
+          "corpus_uses": 282,
           "group": "statement",
           "ms_uses": 6695,
           "name": "RepeatStmt",
@@ -12789,7 +12906,7 @@
           "site": "_fixtures/Assert.al:169"
         },
         {
-          "corpus_uses": 103,
+          "corpus_uses": 143,
           "group": "expression",
           "ms_uses": 6296,
           "name": "BinExpr or",
@@ -12798,7 +12915,7 @@
           "site": "_fixtures/Assert.al:176"
         },
         {
-          "corpus_uses": 230,
+          "corpus_uses": 300,
           "group": "expression",
           "ms_uses": 4880,
           "name": "BinExpr -",
@@ -12807,7 +12924,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:107"
         },
         {
-          "corpus_uses": 323,
+          "corpus_uses": 347,
           "group": "statement",
           "ms_uses": 4793,
           "name": "CaseStmt",
@@ -12816,7 +12933,7 @@
           "site": "_fixtures/Assert.al:427"
         },
         {
-          "corpus_uses": 419,
+          "corpus_uses": 475,
           "group": "expression",
           "ms_uses": 3898,
           "name": "BinExpr >",
@@ -12825,7 +12942,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:181"
         },
         {
-          "corpus_uses": 168,
+          "corpus_uses": 211,
           "group": "expression",
           "ms_uses": 3188,
           "name": "BinExpr *",
@@ -12834,7 +12951,7 @@
           "site": "ALTInternalCodeunit.al:7"
         },
         {
-          "corpus_uses": 941,
+          "corpus_uses": 1034,
           "group": "expression",
           "ms_uses": 2915,
           "name": "Literal:DateLit",
@@ -12843,7 +12960,7 @@
           "site": "codeunit/lt-enums-interfaces/OjT71060.al:264"
         },
         {
-          "corpus_uses": 1073,
+          "corpus_uses": 1196,
           "group": "expression",
           "ms_uses": 2426,
           "name": "PrefixExpr -",
@@ -12852,7 +12969,7 @@
           "site": "codeunit/TestCodeunitInterface.al:94"
         },
         {
-          "corpus_uses": 74,
+          "corpus_uses": 105,
           "group": "expression",
           "ms_uses": 2384,
           "name": "BinExpr /",
@@ -12861,7 +12978,7 @@
           "site": "collections/DictKeys.al:185"
         },
         {
-          "corpus_uses": 185,
+          "corpus_uses": 224,
           "group": "expression",
           "ms_uses": 2169,
           "name": "BinExpr <",
@@ -12870,7 +12987,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:48"
         },
         {
-          "corpus_uses": 42,
+          "corpus_uses": 182,
           "group": "expression",
           "ms_uses": 1934,
           "name": "BinExpr in",
@@ -12879,7 +12996,7 @@
           "site": "_fixtures/Assert.al:299"
         },
         {
-          "corpus_uses": 42,
+          "corpus_uses": 182,
           "group": "expression",
           "ms_uses": 1934,
           "name": "SetExpr",
@@ -12888,7 +13005,7 @@
           "site": "_fixtures/Assert.al:299"
         },
         {
-          "corpus_uses": 23,
+          "corpus_uses": 27,
           "group": "statement",
           "ms_uses": 1202,
           "name": "CaseElse",
@@ -12897,7 +13014,7 @@
           "site": "_fixtures/Assert.al:440"
         },
         {
-          "corpus_uses": 146,
+          "corpus_uses": 155,
           "group": "expression",
           "ms_uses": 1188,
           "name": "BinExpr >=",
@@ -12906,7 +13023,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:48"
         },
         {
-          "corpus_uses": 67,
+          "corpus_uses": 85,
           "group": "expression",
           "ms_uses": 912,
           "name": "BinExpr <=",
@@ -12915,7 +13032,7 @@
           "site": "_fixtures/Assert.al:415"
         },
         {
-          "corpus_uses": 650,
+          "corpus_uses": 795,
           "group": "statement",
           "ms_uses": 743,
           "name": "ForStmt",
@@ -12924,7 +13041,7 @@
           "site": "_fixtures/Assert.al:171"
         },
         {
-          "corpus_uses": 369,
+          "corpus_uses": 430,
           "group": "statement",
           "ms_uses": 561,
           "name": "WhileStmt",
@@ -12933,7 +13050,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:103"
         },
         {
-          "corpus_uses": 240,
+          "corpus_uses": 321,
           "group": "statement",
           "ms_uses": 455,
           "name": "ForeachStmt",
@@ -12942,7 +13059,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:145"
         },
         {
-          "corpus_uses": 1127,
+          "corpus_uses": 1329,
           "group": "expression",
           "ms_uses": 279,
           "name": "Literal:Decimal",
@@ -12951,7 +13068,7 @@
           "site": "_fixtures/ALTImplicitReturnCallee.al:28"
         },
         {
-          "corpus_uses": 578,
+          "corpus_uses": 669,
           "group": "expression",
           "ms_uses": 268,
           "name": "Literal:TimeLit",
@@ -12960,7 +13077,7 @@
           "site": "collections/DictErrors.al:142"
         },
         {
-          "corpus_uses": 119,
+          "corpus_uses": 122,
           "group": "expression",
           "ms_uses": 191,
           "name": "Literal:DateTimeLit",
@@ -12969,7 +13086,7 @@
           "site": "collections/DictErrors.al:144"
         },
         {
-          "corpus_uses": 65,
+          "corpus_uses": 77,
           "group": "expression",
           "ms_uses": 149,
           "name": "BinExpr div",
@@ -12978,16 +13095,16 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:49"
         },
         {
-          "corpus_uses": 24,
+          "corpus_uses": 28,
           "group": "expression",
           "ms_uses": 108,
           "name": "RangeExpr",
           "pinned": true,
           "runtime_reads": false,
-          "site": "misc/lt-system-functions/ControlFlow.al:351"
+          "site": "events/lt-global-triggers-statements/P114Statements.al:59"
         },
         {
-          "corpus_uses": 73,
+          "corpus_uses": 84,
           "group": "expression",
           "ms_uses": 90,
           "name": "BinExpr mod",
@@ -12996,7 +13113,7 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:49"
         },
         {
-          "corpus_uses": 12,
+          "corpus_uses": 13,
           "group": "statement",
           "ms_uses": 36,
           "name": "BreakStmt",
@@ -13005,13 +13122,13 @@
           "site": "_fixtures/ProbeObserver.Codeunit.al:106"
         },
         {
-          "corpus_uses": 2,
+          "corpus_uses": 22,
           "group": "expression",
           "ms_uses": 30,
           "name": "BinExpr xor",
           "pinned": true,
           "runtime_reads": true,
-          "site": "misc/lt-system-functions/ControlFlow.al:472"
+          "site": "events/lt-global-triggers-statements/P114Statements.al:369"
         },
         {
           "corpus_uses": 9,
@@ -13023,13 +13140,13 @@
           "site": "types/TestTernaryContracts.al:19"
         },
         {
-          "corpus_uses": 13,
+          "corpus_uses": 21,
           "group": "statement",
           "ms_uses": 11,
           "name": "ContinueStmt",
           "pinned": true,
           "runtime_reads": false,
-          "site": "misc/lt-system-functions/ControlFlow.al:68"
+          "site": "events/lt-global-triggers-statements/P114Statements.al:123"
         },
         {
           "corpus_uses": 7,
@@ -13041,13 +13158,13 @@
           "site": "codeunit/TestInterfaceIsAsContracts.al:60"
         },
         {
-          "corpus_uses": 1,
+          "corpus_uses": 3,
           "group": "expression",
           "ms_uses": 9,
           "name": "PrefixExpr +",
           "pinned": true,
           "runtime_reads": true,
-          "site": "types/lt-scalars/ScT70056.al:35"
+          "site": "events/lt-global-triggers-statements/P114Statements.al:263"
         },
         {
           "corpus_uses": 5,
@@ -13095,7 +13212,7 @@
           "site": null
         },
         {
-          "corpus_uses": 3384,
+          "corpus_uses": 3687,
           "group": "statement",
           "ms_uses": 0,
           "name": "AssertErrorStmt",
@@ -13133,25 +13250,43 @@
         "generic": false,
         "line": 101,
         "pinned": true,
-        "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
       },
       {
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 257,
+        "line": 113,
         "pinned": true,
-        "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
       },
       {
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 291,
+        "line": 183,
         "pinned": true,
-        "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
+        "template": "The date is not valid."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/datefns.rs",
+        "generic": false,
+        "line": 266,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
+        "template": "The date is not valid."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/datefns.rs",
+        "generic": false,
+        "line": 300,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
       },
       {
@@ -13203,7 +13338,7 @@
         "code": "",
         "file": "crates/al-builtins/src/moduleinfo.rs",
         "generic": false,
-        "line": 287,
+        "line": 288,
         "pinned": true,
         "site": "session/W5NavAppResources.al:31",
         "template": "A resource matching '%' could not be found in app '%'."
@@ -13212,7 +13347,16 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 404,
+        "line": 418,
+        "pinned": true,
+        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
+        "template": "Attempted to divide by zero."
+      },
+      {
+        "code": "AL:DivideByZero",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 537,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13221,7 +13365,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 564,
+        "line": 710,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -13230,16 +13374,34 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 607,
+        "line": 753,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
       },
       {
+        "code": "AL:Overflow",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 780,
+        "pinned": true,
+        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
+        "template": "Arithmetic operation resulted in an overflow."
+      },
+      {
+        "code": "AL:Overflow",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 788,
+        "pinned": true,
+        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
+        "template": "Arithmetic operation resulted in an overflow."
+      },
+      {
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 642,
+        "line": 820,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13248,7 +13410,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 668,
+        "line": 849,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13257,16 +13419,25 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 673,
+        "line": 854,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
       },
       {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 882,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
+        "template": "The date is not valid."
+      },
+      {
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 597,
+        "line": 675,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -13275,7 +13446,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 747,
+        "line": 828,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -13284,16 +13455,16 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 778,
+        "line": 860,
         "pinned": true,
-        "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
+        "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
       },
       {
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/textfns.rs",
         "generic": false,
-        "line": 818,
+        "line": 832,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13320,7 +13491,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/autoinc.rs",
         "generic": false,
-        "line": 111,
+        "line": 112,
         "pinned": true,
         "site": "misc/lt-probes-needed-3/PnC03Truncate.al:100",
         "template": "Temporary tables does not support truncation."
@@ -13338,16 +13509,25 @@
         "code": "AssertError",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 421,
+        "line": 422,
         "pinned": true,
         "site": "types/TestFormatEvaluateTextContracts.al:228",
         "template": "An error was expected inside an ASSERTERROR statement."
       },
       {
+        "code": "AL:InvalidOperation",
+        "file": "crates/al-vm/src/exec/run.rs",
+        "generic": false,
+        "line": 563,
+        "pinned": true,
+        "site": "collections/RefSemantics.al:343",
+        "template": "Collection was modified; enumeration operation may not execute."
+      },
+      {
         "code": "AL:Overflow",
         "file": "crates/al-vm/src/flowfields.rs",
         "generic": false,
-        "line": 131,
+        "line": 132,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13365,7 +13545,7 @@
         "code": "UnableToCast",
         "file": "crates/al-vm/src/interfaces.rs",
         "generic": false,
-        "line": 36,
+        "line": 37,
         "pinned": true,
         "site": "codeunit/TestInterfaceIsAsContracts.al:81",
         "template": "The expression cannot be the target interface."
@@ -13374,7 +13554,7 @@
         "code": "ArgumentOutOfRange",
         "file": "crates/al-vm/src/interfaces.rs",
         "generic": false,
-        "line": 100,
+        "line": 102,
         "pinned": true,
         "site": "codeunit/TestInterfaceRuntimeContracts.al:103",
         "template": "Enum does not contain value %."
@@ -13383,7 +13563,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 868,
+        "line": 896,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -13392,52 +13572,70 @@
         "code": "",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 261,
+        "line": 267,
         "pinned": true,
         "site": "query/TestQueryTopProperty.al:179",
         "template": "Top number of rows cannot be negative"
       },
       {
+        "code": "QueryNoDataSet",
+        "file": "crates/al-vm/src/queries.rs",
+        "generic": false,
+        "line": 595,
+        "pinned": true,
+        "site": "xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:84",
+        "template": "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function."
+      },
+      {
         "code": "DB:Ok",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 1513,
+        "line": 1534,
         "pinned": true,
         "site": "record/TestPlatformTablesWritableContracts.al:107",
         "template": "It is not possible to delete any record in the Tenant License State table."
       },
       {
+        "code": "RenameArgument",
+        "file": "crates/al-vm/src/records.rs",
+        "generic": false,
+        "line": 2143,
+        "pinned": true,
+        "site": "recordref/lt-refs/RfTWrite.al:223",
+        "template": "The number of field arguments does not match the primary key size."
+      },
+      {
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 162,
+        "line": 163,
         "pinned": true,
-        "site": "misc/lt-probes-needed-1/PnARecordRefDuplicate.al:174",
+        "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
       },
       {
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 229,
+        "line": 231,
         "pinned": true,
-        "site": "misc/lt-probes-needed-1/PnARecordRefDuplicate.al:174",
+        "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
       },
       {
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 381,
+        "line": 384,
         "pinned": true,
-        "site": "misc/lt-probes-needed-1/PnARecordRefDuplicate.al:174",
+        "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
       },
       {
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 601,
+        "line": 605,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds."
@@ -13446,7 +13644,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 620,
+        "line": 625,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -13455,7 +13653,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 729,
+        "line": 735,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds"
@@ -13464,7 +13662,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 748,
+        "line": 755,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -13482,7 +13680,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 417,
+        "line": 441,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -13491,7 +13689,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 444,
+        "line": 469,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -13500,7 +13698,7 @@
         "code": "Dialog",
         "file": "crates/al-vm/src/usertable.rs",
         "generic": false,
-        "line": 373,
+        "line": 374,
         "pinned": false,
         "site": null,
         "template": "There should be at least one enabled 'SUPER' user."
@@ -13509,13 +13707,13 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 367,
+        "line": 406,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 40,
-    "sites": 43
+    "pinned": 49,
+    "sites": 52
   }
 }

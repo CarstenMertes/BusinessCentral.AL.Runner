@@ -34,6 +34,51 @@ pub struct BlobBuf {
     pub refetch: bool,
     /// A `Modify` of a temporary record wrote this content to the row; a write through a stream clears it.
     pub persisted: bool,
+    /// ADR-040: a report on the allow-list was saved to this buffer in a rendered format and nothing was written:
+    /// the name of the report. Any look at the buffer is refused (`observe`); a copy of the buffer carries the mark
+    /// (`copy_blob`, a record assignment, `CalcFields`); creating the stream again clears it.
+    pub render_pending: Option<std::sync::Arc<str>>,
+}
+
+thread_local! {
+    /// The report of a pending buffer that AL looked at through a path that cannot return the error itself (a read
+    /// of a stream by a parser, a hash, a .NET call, `Format`). The caller of the builtin turns it into the refusal
+    /// (`take_pending_observation`), so such a read never gives a result.
+    static OBSERVED: std::cell::RefCell<Option<std::sync::Arc<str>>> = const { std::cell::RefCell::new(None) };
+    static OBSERVED_ANY: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
+}
+
+/// The refusal for a look at the output of a report that was run for its effects only (ADR-040).
+pub fn render_pending_error(report: &str) -> Signal {
+    Signal::Unsupported(format!("rendered output of report {report} is not produced"))
+}
+
+/// Records that AL looked at a pending buffer.
+pub fn note_pending_observation(report: &std::sync::Arc<str>) {
+    OBSERVED.with(|o| *o.borrow_mut() = Some(report.clone()));
+    OBSERVED_ANY.with(|c| c.set(true));
+}
+
+/// The refusal for a look at a pending buffer that happened since the last call, if one did. One branch on a
+/// thread-local flag in the usual case.
+pub fn take_pending_observation() -> Option<Signal> {
+    if !OBSERVED_ANY.with(|c| c.get()) {
+        return None;
+    }
+    OBSERVED_ANY.with(|c| c.set(false));
+    OBSERVED
+        .with(|o| o.borrow_mut().take())
+        .map(|r| render_pending_error(&r))
+}
+
+impl BlobBuf {
+    /// Refuses a look at the buffer when it is pending (ADR-040).
+    pub fn observe(&self) -> Result<(), Signal> {
+        match &self.render_pending {
+            Some(report) => Err(render_pending_error(report)),
+            None => Ok(()),
+        }
+    }
 }
 
 /// A buffer that follows the borrowing rules of a `RefCell` (any number of readers or one writer,
@@ -75,17 +120,20 @@ pub fn new_blob() -> BlobRef {
         loaded: true,
         refetch: false,
         persisted: false,
+        render_pending: None,
     }))
 }
 
 /// A copy with its own buffer (what a database table stores and returns).
 pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
+    let b = b.borrow();
     std::sync::Arc::new(BlobCell::new(BlobBuf {
-        bytes: b.borrow().bytes.clone(),
+        bytes: b.bytes.clone(),
         write_pos: 0,
         loaded,
         refetch: false,
         persisted: false,
+        render_pending: b.render_pending.clone(),
     }))
 }
 
@@ -292,12 +340,25 @@ impl InState {
         }
     }
 
+    /// The report whose unproduced output the stream looks at (ADR-040), if it does.
+    pub fn render_pending(&self) -> Option<std::sync::Arc<str>> {
+        match &self.source {
+            Source::Live(b) => b.borrow().render_pending.clone(),
+            Source::Snapshot(_) => None,
+        }
+    }
+
     /// Runs `f` on the bytes the stream sees now.
     pub fn with_data<T>(&self, f: impl FnOnce(&[u8]) -> T) -> T {
         match &self.source {
             Source::Snapshot(d) => f(d),
             Source::Live(b) => {
                 let buf = b.borrow();
+                if let Some(report) = &buf.render_pending {
+                    // The stream sees nothing; the builtin that asked is refused when it returns.
+                    note_pending_observation(report);
+                    return f(&[]);
+                }
                 f(if buf.loaded { &buf.bytes } else { &[] })
             }
         }
@@ -358,6 +419,7 @@ fn blob_create_out(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
         buf.loaded = true;
         buf.refetch = false;
         buf.persisted = false;
+        buf.render_pending = None;
     }
     set_stream(&a[0], LibraryValue::OutStream(b, enc))?;
     Ok(Value::Null)
@@ -366,6 +428,7 @@ fn blob_create_out(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> N
 fn blob_create_in(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let enc = Encoding::from_arg(a)?;
     let b = blob_of(r)?;
+    b.borrow().observe()?;
     set_stream(&a[0], LibraryValue::InStream(InState::live(b, enc)))?;
     Ok(Value::Null)
 }
@@ -379,6 +442,7 @@ pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
         loaded: true,
         refetch: false,
         persisted: false,
+        render_pending: None,
     });
     set_stream(
         &a[0],
@@ -388,12 +452,16 @@ pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
 
 fn blob_has_value(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     // streams/TestInOutStream.al InOutStream_WriteText_BlobHasValue: true after Get without CalcFields.
-    Ok(Value::Boolean(!blob_of(r)?.borrow().bytes.is_empty()))
+    let b = blob_of(r)?;
+    let buf = b.borrow();
+    buf.observe()?;
+    Ok(Value::Boolean(!buf.bytes.is_empty()))
 }
 
 fn blob_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
     let b = blob_of(r)?;
     let buf = b.borrow();
+    buf.observe()?;
     if !buf.loaded {
         // Before CalcFields the length is the stored size, which is 6 more than the content
         // (:Blob_Length_WithoutCalcFields_ReportsTheStoredSize, one measurement: 5 bytes read as 11).
@@ -414,6 +482,11 @@ fn in_state<'a>(r: Option<&'a mut Value>) -> Result<std::cell::RefMut<'a, Librar
     }
 }
 
+/// Refuses a stream that looks at the output of a report that was never produced (ADR-040), without reading it.
+pub fn refuse_pending_in(v: &mut Value) -> Result<(), Signal> {
+    with_in(Some(v), |_| Ok(()))
+}
+
 /// Reads the rest of an `InStream` value and moves its position to the end.
 pub fn drain_in(v: &mut Value) -> Result<Vec<u8>, Signal> {
     with_in(Some(v), |s| Ok(s.drain()))
@@ -422,7 +495,12 @@ pub fn drain_in(v: &mut Value) -> Result<Vec<u8>, Signal> {
 fn with_in<T>(r: Option<&mut Value>, f: impl FnOnce(&mut InState) -> Result<T, Signal>) -> Result<T, Signal> {
     let mut g = in_state(r)?;
     match &mut *g {
-        LibraryValue::InStream(s) => f(s),
+        LibraryValue::InStream(s) => {
+            if let Some(report) = s.render_pending() {
+                return Err(render_pending_error(&report));
+            }
+            f(s)
+        }
         _ => unsupported("use of an InStream that was never created"),
     }
 }
@@ -555,7 +633,7 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             }
         }
         let (enc, pos) = (s.enc, s.pos);
-        if !s.is_empty() && pos >= s.len() {
+        if pos >= s.len() {
             s.hit_end = true;
         }
         let unit = enc.unit();
@@ -597,6 +675,7 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
                 message: "Invalid data encountered in stream, unable to read text.".into(),
                 code: "InvalidStreamData".into(),
                 call_stack: String::new(),
+                ..Default::default()
             })));
         }
         let Some(text) = text else {
@@ -715,7 +794,9 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
     // At the end of a stream that holds data nothing is read: the result is 0 and the variable takes its default value
     // (streams/lt-stream-read-write-media/P102ReadTyped.al: every `pastend_*`). A stream without any data keeps the error below.
     let at_end = with_in(r.as_deref_mut(), |s| {
-        let at = !s.is_empty() && s.pos >= s.len();
+        // An empty stream is at its end like any other (types/lt-variant-is-text-streams/LTP89StreamNumbers.al:
+        // Integer_RoundTrip_PastEnd `read_empty`, with the second read raising: types/PRFileUpload.al:ReadFromUnfilledStream).
+        let at = s.pos >= s.len();
         // The first read at the end answers 0; one after another read already hit the end raises.
         let first = at && !s.hit_end;
         if at {
@@ -747,6 +828,7 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                     message: "Invalid data encountered in stream, unable to read text.".into(),
                     code: "InvalidStreamData".into(),
                     call_stack: String::new(),
+                    ..Default::default()
                 }))
             })?;
         s.pos += width;
@@ -778,6 +860,7 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
                         message: "The date is not valid.".into(),
                         code: "DateInvalid".into(),
                         call_stack: String::new(),
+                        ..Default::default()
                     })));
                 }
                 Value::Date(day, closing)

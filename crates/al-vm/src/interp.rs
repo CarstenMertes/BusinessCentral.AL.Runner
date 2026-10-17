@@ -207,15 +207,14 @@ impl Session {
         for (i, v) in fresh.into_iter().enumerate() {
             if !keep.contains(&i) {
                 // A global temporary record keeps its rows, as Clear leaves them
-                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount); that ClearAll does the same
-                // is not pinned: Base Application's Purch.-Post ClearAllVariables relies on it.
+                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount); ClearAll does the same: real BC 29
+                // keeps both rows of a codeunit's global temporary record and drops its filter, called directly and through
+                // Codeunit.Run (record/lt-priority-assumptions/PriorityAssumptions.al:247-281, ClearAll_TemporaryGlobalRecord_*).
+                // Pinned for a codeunit's global; the same for a report, a page or a record shared through Copy is not.
                 if let (Value::Record(old), Value::Record(new)) = (&inst.globals[i], &v) {
                     let id = old.borrow().temp_id.clone();
                     if id.is_some() && old.borrow().temporary {
                         new.borrow_mut().temp_id = id;
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::ClearAllKeepsTemporaryRows,
-                        );
                     }
                 }
                 inst.globals[i] = v;

@@ -7229,6 +7229,7 @@
 71034 Compare_After_Conversion_Numbers
 71034 Compare_After_Conversion_Text
 71034 Compare_Format_Of_Variants
+71034 Concat_After_Conversion
 71035 Evaluate_Error_Texts_Through_Typed_Targets
 71035 Format_Of_Duration_BigInteger_Char_Byte_Enum
 71035 Format_Of_Variants
@@ -8314,6 +8315,7 @@
 72689 Zone_Blank_Arm_Loc
 72691 Duration_To_BigInteger_Decimal
 72691 Duration_To_Integer_InRange
+72692 Duration_Arithmetic
 72692 Duration_Format
 72693 Dictionary_Text_Text_Add_Guid
 72693 Guid_Null_To_Text

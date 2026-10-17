@@ -17,7 +17,6 @@ impl Lowerer<'_> {
     /// (ADR-023): its slot among the base object's globals, and its type. Refused until the probes
     /// of ADR-023 pin the access. A table extension's use of a base table variable is pinned by
     /// misc/lt-protected-var-abs-query-views/P146TableExtProtected.al.
-
     pub(crate) fn base_var(&self, name: &str) -> L<(usize, Ty, Option<String>)> {
         // A table extension sees the protected variables of its base table, on the globals of the same record
         // (ADR-021 per-record instances). Not pinned by a corpus test; Microsoft's own tableextension 906 "Asm.

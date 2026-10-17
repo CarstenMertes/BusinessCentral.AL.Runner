@@ -422,6 +422,9 @@ impl Lowerer<'_> {
                         .ok_or_else(|| format!("{what} reads a host field, but the host has no source table"))?;
                     ir::LinkEntry::Field(pf, field_pos(ht, &f)?)
                 }
+                // An empty `const('')` selects the blank value, as in a where() (corpus record/lt-relation-where-empty-term/
+                // RelationWhereEmptyTerm.al); Production BOM's `"Version Code" = const('')` (Tests-SCM-Manufacturing).
+                LinkRhs::Filter(t) if t.is_empty() => ir::LinkEntry::Filter(pf, "''".to_string()),
                 LinkRhs::Filter(t) => ir::LinkEntry::Filter(pf, t),
                 LinkRhs::TableId(name) => {
                     let t = self.resolve_obj_in(file, ObjKind::Table, &name)?;

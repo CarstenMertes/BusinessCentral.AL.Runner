@@ -29,3 +29,31 @@ codeunit 69853 "RB C"
 fn a_relation_filter_naming_the_blank_enum_member_selects_the_unblocked_rows() {
     assert_eq!(int(run_in(SRC, "RB C", "F")), 11);
 }
+
+// An empty `const('')` or `filter('')` term of a where() selects the rows whose field is blank (corpus
+// record/lt-relation-where-empty-term/RelationWhereEmptyTerm.al:Relation_ErrorTextOfFailedValidate, CalcFormula_CountWhereEmptyTerms:
+// `empty_const` counts the 2 blank-zone rows).
+const EMPTY: &str = r#"
+table 69861 "RE Item" { fields { field(1; No; Code[10]) { } field(2; Zone; Code[10]) { } } keys { key(PK; No) { } } }
+table 69862 "RE Line" { fields { field(1; Id; Integer) { } field(2; ItemNo; Code[10]) { TableRelation = "RE Item" where(Zone = const('')); } } keys { key(PK; Id) { } } }
+codeunit 69863 "RE C"
+{
+    procedure F(): Integer
+    var I: Record "RE Item"; L: Record "RE Line"; Hits: Integer;
+    begin
+        I.No := 'A'; I.Insert();
+        I.No := 'B'; I.Zone := 'Z1'; I.Insert();
+        L.Id := 1;
+        L.Validate(ItemNo, 'A');
+        Hits += 1;
+        asserterror L.Validate(ItemNo, 'B');
+        if GetLastErrorText() <> '' then Hits += 10;
+        exit(Hits);
+    end;
+}
+"#;
+
+#[test]
+fn an_empty_const_term_of_a_relation_selects_the_blank_rows() {
+    assert_eq!(int(run_in(EMPTY, "RE C", "F")), 11);
+}

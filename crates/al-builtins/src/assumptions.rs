@@ -415,6 +415,12 @@ registry! {
         tests: "Microsoft's production order and routing code (Abs of a DateTime difference): Tests-SCM-Manufacturing and Tests-SCM-Costing, about 230 tests.",
         probe: "D: Duration := -5000; X := Abs(D) into a Decimal and into a Duration; Format both; Abs(D) > 4999.",
     },
+    DurationDividedByDecimal => {
+        id: "duration-divided-by-decimal",
+        assumed: "A Duration divided by a Decimal counts the Duration as its milliseconds and answers a Decimal (no whole-millisecond requirement, unlike the pinned division by an Integer).",
+        tests: "Microsoft's Calculate Routing Line CalcDuration (Time difference / CalendarMgt.TimeFactor): Tests-SCM-Manufacturing, SCM Production Journal CheckAllocatedCapacityTimeCalculation and about 20 more.",
+        probe: "D: Duration := 26820000 and 30000; X := D / Dec60000 into a Decimal; Format(D / Dec60000); a Decimal divisor that is zero.",
+    },
     DateToDateTime => {
         id: "date-to-datetime-is-midnight",
         assumed: "A Date assigned or converted to a DateTime is that day at midnight; the blank Date is the blank DateTime.",

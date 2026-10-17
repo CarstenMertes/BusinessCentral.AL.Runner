@@ -42,6 +42,11 @@ page 64012 "FP Dialog"
 {
     PageType = StandardDialog;
 }
+page 64017 "FP Row Dialog"
+{
+    PageType = StandardDialog; SourceTable = "FP Row";
+    layout { area(Content) { field(TxtCtl; Rec.Txt) { } } }
+}
 page 64013 "FP Hidden Host"
 {
     PageType = Card; SourceTable = "FP Row";
@@ -295,4 +300,29 @@ fn editable_false_part_still_takes_writes() {
           H.OpenEdit(); H.GoToKey(1); H.ReadOnly.First(); H.ReadOnly.TxtCtl.SetValue('ro'); H.ReadOnly.Next();
           R.Get(11); Check('ro', R.Txt); H.Close(); end;"
     ));
+}
+
+// Page.RunModal(Id, Rec, Field) with a handler that does not answer LookupOK (Segment Line.RunCreateInteraction, Tests-Marketing, 33 tests):
+// the field is kept (assumption `runmodal-field-kept-unless-lookupok`); the unhandled case is pinned by errors/lt-last-error-and-events/P70_06RunModalField.al.
+#[test]
+fn run_modal_with_a_field_argument_and_a_handler_that_does_not_answer_lookup_ok() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('Cancel')] procedure Cancelled() var R: Record \"FP Row\"; A: Action; begin
+          R.Txt := 'kept'; A := Page.RunModal(Page::\"FP Row Dialog\", R, R.Txt); Check('LookupCancel', Format(A)); Check('kept', R.Txt); end;
+        [Test] [HandlerFunctions('Typed')] procedure TypedHandler() var R: Record \"FP Row\"; A: Action; D: Page \"FP Row Dialog\"; begin
+          R.Txt := 'kept'; A := D.RunModal(); Check('kept', R.Txt); end;
+        [ModalPageHandler] procedure Cancel(var D: TestPage \"FP Row Dialog\") begin D.Cancel().Invoke(); end;
+        [ModalPageHandler] procedure Typed(var D: Page \"FP Row Dialog\"; var Response: Action) begin end;"
+    ));
+}
+
+#[test]
+fn run_modal_with_a_field_argument_and_lookup_ok_stays_refused() {
+    let r = outcomes(
+        "[Test] [HandlerFunctions('Ok')] procedure Accepted() var R: Record \"FP Row\"; A: Action; begin
+          R.Txt := 'x'; A := Page.RunModal(Page::\"FP Row Dialog\", R, R.Txt); end;
+        [ModalPageHandler] procedure Ok(var D: TestPage \"FP Row Dialog\") begin D.OK().Invoke(); end;",
+    );
+    assert!(r.iter().all(|(_, o)| matches!(o, Outcome::NotRun(m) if m.contains("field argument"))), "{r:?}");
 }

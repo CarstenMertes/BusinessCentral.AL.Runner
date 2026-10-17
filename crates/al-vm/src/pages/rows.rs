@@ -1325,10 +1325,8 @@ impl Session {
         }
         if modal {
             if let Some(handler) = self.take_typed_modal_handler(object) {
-                if field {
-                    return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
-                }
-                return self.answer_typed_modal(&st, record, handler);
+                let answer = self.answer_typed_modal(&st, record, handler)?;
+                return self.field_argument_answer(field, answer);
             }
         }
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
@@ -1342,10 +1340,8 @@ impl Session {
         let Some(handler) = handler else {
             return Ok(Value::Null);
         };
-        if field {
-            return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
-        }
         let answer = self.answer_page(&st, handler, modal)?;
+        let answer = self.field_argument_answer(field, answer)?;
         self.hand_back_selection(&st, &handed, &answer);
         // After a LookupOK the page variable holds the row the page closed on, and the next run of the variable opens on it;
         // after OK it does not (pages/lt-page-run-overloads-testpart/P106RunInstance.al:P106_Inst_RunModal_LookupMode,
@@ -1362,6 +1358,23 @@ impl Session {
                 }
             }
         }
+        Ok(answer)
+    }
+
+    /// What `Page.RunModal(Id, Rec, Field)` does with the field when a handler answered. Only an answer other than LookupOK is
+    /// accepted, and then the field keeps its value (documented: the field takes the page's value on LookupOK; the corpus pins no
+    /// handler with a field argument, P70_06RunModalField.al has none bound). Microsoft's tests need it: Segment Line.RunCreateInteraction
+    /// runs `PAGE.RunModal(PAGE::"Create Interaction", Rec, "Interaction Template Code")` and Tests-Marketing answer it with a
+    /// Page-typed handler that leaves Response alone (33 tests). A LookupOK answer stays refused.
+    fn field_argument_answer(&self, field: bool, answer: Value) -> Result<Value, Signal> {
+        if !field {
+            return Ok(answer);
+        }
+        let lookup_ok = matches!(&answer, Value::Option(o, m) if m.get(*o as usize).is_some_and(|n| n == "LookupOK"));
+        if lookup_ok {
+            return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RunModalFieldKeptUnlessLookupOk);
         Ok(answer)
     }
 

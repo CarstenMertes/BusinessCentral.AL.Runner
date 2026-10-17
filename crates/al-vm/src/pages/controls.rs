@@ -171,7 +171,9 @@ impl Session {
         };
         // Without a row on the page there is nothing to refresh (controls/W2ValueControls.al:Enum_RecordFieldControl_*).
         let no_row = self.shows_no_row(st, idx);
-        let suffix = if rec_bound && !no_row {
+        // A list shows no Refresh hint (misc/lt-probes-needed-3/PnC07TestPage.al:GetValidationError_AfterFailedValidation, ValueAssign_Number_FromText_And_Decimal);
+        // a card does (handlers/TestPageErrTeardown_Tests.al, TestPageBooleanSpelling_Tests.al:210).
+        let suffix = if rec_bound && !no_row && !self.is_list(st) {
             " (Select Refresh to discard errors)"
         } else {
             ""
@@ -202,6 +204,10 @@ impl Session {
                 if !rec_bound && matches!(ty, RtType::Integer) {
                     msg.push_str(&format!(" The value \"{text}\" can't be evaluated into type Integer."));
                 }
+                // A Decimal says what was wrong (misc/lt-probes-needed-3/PnC07TestPage.al:ValueAssign_Number_FromText_And_Decimal, a list).
+                if rec_bound && self.is_list(st) && matches!(ty, RtType::Decimal) {
+                    msg.push_str(&format!(" '{text}' is not a part of a valid decimal expression."));
+                }
                 if matches!(ty, RtType::Date) {
                     msg.push_str(&format!(
                         " The format of the Date '{text}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'."
@@ -214,7 +220,7 @@ impl Session {
                 }
                 // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,
                 // Enum_VariableControl_*); one bound to a table field keeps the empty code.
-                return Err(if rec_bound && !no_row && !matches!(ty, RtType::DateTime) {
+                return Err(if rec_bound && !no_row && !matches!(ty, RtType::DateTime) && !self.is_list(st) {
                     refuse(self, msg)
                 } else {
                     refuse_bound(msg)
@@ -317,6 +323,7 @@ impl Session {
         if rec_bound {
             st.borrow_mut().dirty = true;
         }
+        let from_page_trigger = std::cell::Cell::new(false);
         let result = (|| -> Result<(), Signal> {
             match ctl.binding.clone() {
                 ir::Binding::Field(pos) => {
@@ -370,7 +377,10 @@ impl Session {
                 self.page_validate_event(st, "onbeforevalidateevent", &element)?;
             }
             if let Some(r) = ctl.trigger("onvalidate") {
-                self.control_routine(st, idx, r)?;
+                if let Err(e) = self.control_routine(st, idx, r) {
+                    from_page_trigger.set(true);
+                    return Err(e);
+                }
             }
             for (e, r) in &ext_after {
                 self.owner_routine(st, Some(*e), *r)?;
@@ -402,6 +412,21 @@ impl Session {
                 // error, as for a variable (misc/lt-probes-needed-7/PnGTempControl.al:SetValueTooLongAndInvalid).
                 if matches!(ctl.binding, ir::Binding::Expr(_)) {
                     return Err(refuse_bound(e.message));
+                }
+                // An error of a control's own OnValidate on a list is the bare message, with no Refresh hint (misc/lt-probes-needed-3/
+                // PnC07TestPage.al:GetValidationError_AfterFailedValidation and ValueAssign_ValidationError); on a card it carries it
+                // (handlers/TestPageErrTeardown_Tests.al, codeunit 60836). Whether the list or something else in that page decides is
+                // not probed (docs/probes-needed.md).
+                if from_page_trigger.get() && self.is_list(st) {
+                    st.borrow_mut().errors.push((idx, e.message.clone()));
+                    return Err(error_code(
+                        format!(
+                            "Validation error for Field: {},  Message = '{}'",
+                            page_of(&engine, st).controls[idx].name,
+                            e.message
+                        ),
+                        "TestValidation",
+                    ));
                 }
                 // An error of the table's validation (its trigger, the length of the text) carries TestValidation
                 // (record/lt-loadfields-pagesource-validate/P81PageValidateEvents.al:TestPage_SetValue_NegativeQty_TableTriggerRaises,

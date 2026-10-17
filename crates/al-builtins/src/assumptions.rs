@@ -289,12 +289,6 @@ registry! {
         tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
         probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
     },
-    FilterTextReadAsEvaluate => {
-        id: "filter-text-read-as-evaluate",
-        assumed: "A text value of a filter on a Date field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, closing date `C01/17/27`). A formula such as 1M, a Time or DateTime text and an empty text stay refused. (A Guid filter text is pinned by types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al.)",
-        tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
-        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; then GetFilter and Count.",
-    },
     BooleanToTextAsFormat => {
         id: "boolean-to-text-as-format",
         assumed: "A Boolean given where a Text or Code is expected (Record.Get(Boolean) on a Code key) converts as Format writes it: Yes or No, upper case for a Code.",
@@ -345,9 +339,9 @@ registry! {
     },
     HttpHeaderRules => {
         id: "http-header-rules",
-        assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and Accept, Authorization, Date and Content-Type values are checked; every other header .NET types (Cache-Control, Range, Via, ...) is accepted as written, and the content headers other than Content-Type and Content-Length follow the same rule as those two.",
+        assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and Accept, Authorization, Date and Content-Type values are checked; every other header .NET types (Range, Via, ...) is accepted as written, and the content headers other than Content-Type and Content-Length follow the same rule as those two.",
         tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
-        probe: "network/lt-http/HttpHeaders.al covers the measured part; the case and the content-or-not of all 39 known names are pinned by network/lt-http-header-names-cache-control/HeaderNameCase*.al. Wanted: the value rules of Range, If-Match, Content-Disposition, Content-Encoding and Expires on request and content headers. The Cache-Control directive order is pinned by CacheControl*.al but not implemented yet (it stays refused).",
+        probe: "network/lt-http/HttpHeaders.al covers the measured part; the case and the content-or-not of all 39 known names are pinned by network/lt-http-header-names-cache-control/HeaderNameCase*.al. Wanted: the value rules of the typed headers other than Cache-Control (Range, If-Match, Content-Disposition, Content-Encoding, Expires and the rest) on request, response and content headers; Cache-Control (directive order, values, merging) is pinned by CacheControl*.al.",
     },
     HttpHandlerEveryVersion => {
         id: "http-handler-every-version",
@@ -402,6 +396,12 @@ registry! {
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",
         tests: "Post Inventory Cost to G/L through Library - Costing and Library - Assembly PostInvtCostToGL (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch); Check.SaveAsPdf (ERM Cash Manager, Match Bank Rec. Scenarios).",
         probe: "A report on the list saved to a temp file and to a stream on a Windows tier: the answer, the order of the triggers, File.Exists and TempBlob.Length afterwards.",
+    },
+    ReportProcedureFilterUnderRequestPage => {
+        id: "report-procedure-filter-under-request-page",
+        assumed: "A filter a procedure of the report set on a data item before a run with a request page is not in that run: the page does not show it (pinned) and the filters of the page replace it when the page closes with OK (assumed).",
+        tests: "Microsoft tests that call a report procedure which filters a data item and then RunModal the report with its request page.",
+        probe: "A report procedure RowDi.SetFilter(Code, 'B*'), RunModal with a handler that clicks OK and a report that counts the rows in OnPreDataItem and OnAfterGetRecord: are the B rows alone read?",
     },
 }
 

@@ -674,58 +674,105 @@ fn user_agent_parts(v: &str) -> Option<Vec<String>> {
     (!out.is_empty()).then_some(out)
 }
 
-fn cache_control_pinned(merged: &str) -> bool {
-    let parts: Vec<&str> = merged.split(", ").collect();
-    parts.iter().all(|p| matches!(*p, "no-store" | "no-cache"))
-        || (parts.len() == 1 && parts[0].starts_with("max-age="))
+/// The known Cache-Control directives in the order .NET writes them (network/lt-http-header-names-cache-control/CacheControlPairs.al,
+/// CacheControlTriples.al:P198_AllDirectivesInListOrderAndReverse); extensions follow, in the order added.
+const CACHE_CONTROL_ORDER: &[&str] = &[
+    "no-store",
+    "no-transform",
+    "only-if-cached",
+    "public",
+    "must-revalidate",
+    "proxy-revalidate",
+    "no-cache",
+    "max-age",
+    "s-maxage",
+    "max-stale",
+    "min-fresh",
+    "private",
+];
+
+/// One Cache-Control entry: `Ok(Some((name as written, normalized text)))`, `Ok(None)` for an invalid one (InvalidHeader:Format), an
+/// `Err` for a form no test pins.
+fn cache_control_item(item: &str) -> Result<Option<(String, String)>, Signal> {
+    let (name, value) = match item.split_once('=') {
+        Some((n, v)) => (n.trim(), Some(v.trim())),
+        None => (item.trim(), None),
+    };
+    if !is_token(name) {
+        return Ok(None);
+    }
+    let lower = name.to_ascii_lowercase();
+    let unpinned = |what: &str| {
+        unsupported(format!(
+            "Cache-Control {item}: {what} is not pinned (network/lt-http-header-names-cache-control)"
+        ))
+    };
+    match lower.as_str() {
+        "max-age" | "s-maxage" | "min-fresh" | "max-stale" => match value {
+            // `max-age=` with nothing, text, a sign or a number beyond Int32 are invalid; the value is read as seconds.
+            Some(v) if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) || v.parse::<i32>().is_err() => Ok(None),
+            Some(v) => Ok(Some((
+                lower.clone(),
+                format!("{lower}={}", v.parse::<i32>().expect("checked")),
+            ))),
+            None => unpinned("a directive that takes seconds written without them"),
+        },
+        "no-cache" | "private" => match value {
+            None => Ok(Some((lower.clone(), lower))),
+            Some(v) if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') => {
+                Ok(Some((lower.clone(), format!("{lower}={v}"))))
+            }
+            Some(_) => unpinned("a field list without quotes"),
+        },
+        "no-store" | "no-transform" | "only-if-cached" | "public" | "must-revalidate" | "proxy-revalidate" => {
+            match value {
+                None => Ok(Some((lower.clone(), lower))),
+                Some(_) => unpinned("a flag directive with a value"),
+            }
+        }
+        _ => match value {
+            None => Ok(Some((name.to_string(), name.to_string()))),
+            Some(v) if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') => {
+                Ok(Some((name.to_string(), format!("{name}={v}"))))
+            }
+            Some(v) if is_token(v) => Ok(Some((name.to_string(), format!("{name}={v}")))),
+            Some(_) => Ok(None),
+        },
+    }
 }
 
-/// The directives of a Cache-Control value merged and written the way .NET's CacheControlHeaderValue writes them.
-fn cache_control(existing: &[String], added: &str) -> Option<String> {
-    const ORDER: &[&str] = &[
-        "no-store",
-        "no-transform",
-        "only-if-cached",
-        "public",
-        "no-cache",
-        "max-age",
-        "max-stale",
-        "min-fresh",
-        "private",
-        "must-revalidate",
-        "proxy-revalidate",
-        "s-maxage",
-    ];
-    let mut directives: Vec<(String, Option<String>)> = Vec::new();
-    for item in existing.iter().flat_map(|e| split_list(e)).chain(split_list(added)) {
-        let (n, v) = match item.split_once('=') {
-            Some((n, v)) => (n.trim().to_string(), Some(v.trim().to_string())),
-            None => (item.trim().to_string(), None),
+/// The directives of a Cache-Control value merged and written the way .NET's CacheControlHeaderValue writes them: the known ones
+/// in `CACHE_CONTROL_ORDER` once each, then the extensions as added (an extension added twice is written twice). `Ok(None)` is an
+/// invalid value; two different values of one known directive are not pinned.
+fn cache_control(existing: &[String], added: &str) -> Result<Option<String>, Signal> {
+    let mut known: Vec<(String, String)> = Vec::new();
+    let mut extensions: Vec<String> = Vec::new();
+    for entry in existing.iter().flat_map(|e| split_list(e)).chain(split_list(added)) {
+        let Some((name, text)) = cache_control_item(&entry)? else {
+            return Ok(None);
         };
-        if !is_token(&n) || v.as_deref().is_some_and(str::is_empty) {
-            return None;
-        }
-        let n = n.to_ascii_lowercase();
-        if !directives.iter().any(|(d, _)| *d == n) {
-            directives.push((n, v));
+        if CACHE_CONTROL_ORDER.contains(&name.as_str()) {
+            match known.iter().find(|(n, _)| *n == name) {
+                None => known.push((name, text)),
+                Some((_, old)) if *old == text => {}
+                Some(_) => {
+                    return unsupported(format!(
+                        "Cache-Control {entry}: a second value of a directive that is there is not pinned (network/lt-http-header-names-cache-control)"
+                    ));
+                }
+            }
+        } else {
+            extensions.push(text);
         }
     }
     let mut out: Vec<String> = Vec::new();
-    for known in ORDER {
-        if let Some((n, v)) = directives.iter().find(|(d, _)| d == known) {
-            out.push(match v {
-                Some(v) => format!("{n}={v}"),
-                None => n.clone(),
-            });
+    for k in CACHE_CONTROL_ORDER {
+        if let Some((_, text)) = known.iter().find(|(n, _)| n == k) {
+            out.push(text.clone());
         }
     }
-    for (n, v) in directives.iter().filter(|(d, _)| !ORDER.contains(&d.as_str())) {
-        out.push(match v {
-            Some(v) => format!("{n}={v}"),
-            None => n.clone(),
-        });
-    }
-    Some(out.join(", "))
+    out.extend(extensions);
+    Ok(Some(out.join(", ")))
 }
 
 /// What `HttpHeaders.Add` stores for a header .NET types, or `None` for one it accepts as written. The values come from the probes of
@@ -777,12 +824,11 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
         }
         "cache-control" => {
             let old: Vec<String> = existing.map(|(_, v)| v.clone()).unwrap_or_default();
-            match cache_control(&old, value) {
-                // Only no-store and no-cache together or alone, and a lone max-age, are pinned (P87Values.al KnownHeaderLists_Request_1,
-                // P87Twice.al); what order other directives are written in is not (docs/probes-needed.md).
-                Some(merged) if !cache_control_pinned(&merged) => unsupported(format!(
-                    "Cache-Control {merged}: the order .NET writes these directives in is not pinned (docs/probes-needed.md)"
-                )),
+            match cache_control(&old, value)? {
+                Some(merged) if merged.is_empty() => Ok(Some(Typed {
+                    values: Vec::new(),
+                    replace: true,
+                })),
                 Some(merged) => Ok(Some(Typed {
                     values: vec![merged],
                     replace: true,
@@ -881,7 +927,6 @@ fn push_value(items: &mut Vec<(String, Vec<String>)>, name: &str, value: String)
 
 /// `HttpHeaders.Add` (network/lt-http/HttpHeaders.al, HttpClient.al, HttpContent.al, HttpResponse.al).
 fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Result<(), Signal> {
-    assume(crate::assumptions::Assumption::HttpHeaderRules);
     if name.is_empty() {
         return header_error("Argument");
     }
@@ -899,10 +944,23 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
         return Ok(());
     }
     let stored = stored_name(&bag.items, name)?;
-    match typed_add(bag, name, value)? {
+    let typed = typed_add(bag, name, value)?;
+    // The value rules of a typed header other than Cache-Control (pinned by network/lt-http-header-names-cache-control/CacheControl*.al) rest
+    // on the probes measured so far (assumption http-header-rules).
+    if typed.is_some() && !name.eq_ignore_ascii_case("cache-control") {
+        assume(crate::assumptions::Assumption::HttpHeaderRules);
+    }
+    match typed {
         Some(t) if t.replace => {
-            bag.items.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
-            bag.items.push((stored, t.values));
+            // The value is replaced where the header stands (CacheControlTriples.al:P198_InterleavedAndRemoved `keys`).
+            match bag.items.iter().position(|(n, _)| n.eq_ignore_ascii_case(name)) {
+                Some(at) if t.values.is_empty() => {
+                    bag.items.remove(at);
+                }
+                Some(at) => bag.items[at].1 = t.values,
+                None if t.values.is_empty() => {}
+                None => bag.items.push((stored, t.values)),
+            }
         }
         Some(t) => {
             for v in t.values {

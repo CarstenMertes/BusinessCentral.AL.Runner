@@ -613,6 +613,7 @@ impl Session {
                 report_executed: Vec::new(),
                 prepared: Vec::new(),
                 report_preview_pinned: Vec::new(),
+                set_view_filters: Vec::new(),
                 dataset: None,
             },
         };

@@ -796,6 +796,24 @@ impl Session {
                 }
             }
         }
+        // `Evaluate` into a Text[n] or Code[n] whose text is longer than n answers No when the result is used (errors/lt-ms-refusals-128/
+        // P128EvalBasic.al:P128_Evaluate_IntoCode `one too long`, 'No|[KEEP]'); with the result unused the write-back raises the
+        // pinned StringLengthExceeded (P128_Evaluate_IntoShortText_ResultUnused). A Code is measured after it is trimmed.
+        if site.id == al_builtins::builtin_id::ids::SYSTEM_EVALUATE_1 && site.ret_used {
+            if let (Some(ir::Arg::Ref(p)), Some(src)) = (site.args.first(), values.get(1)) {
+                let bound = match self.place_type(p, f) {
+                    al_builtins::value::RtType::Text(Some(n)) => Some((n, false)),
+                    al_builtins::value::RtType::Code(Some(n)) => Some((n, true)),
+                    _ => None,
+                };
+                if let (Some((n, is_code)), Some(t)) = (bound, al_builtins::native::text_of(src)) {
+                    let t: String = if is_code { t.trim().to_string() } else { t.to_string() };
+                    if al_builtins::value::Value::text_len(&t) > n as usize {
+                        return Ok(Value::Boolean(false));
+                    }
+                }
+            }
+        }
         self.run_native(
             native,
             site.class,

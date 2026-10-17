@@ -106,6 +106,18 @@ fn foreach_over_ordinals_into_an_enum_variable_gives_enum_values() {
     assert_eq!(r.unwrap(), 11);
 }
 
+// errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, _IntoCode, _IntoShortText_ResultUnused: a Text keeps the text as written,
+// a Code is trimmed and upper case, and a text longer than the variable fails (No with the result used).
+#[test]
+fn evaluate_into_text_and_code() {
+    let r = text_of(
+        "T: Text; C: Code[5]; S: Text[5]; B1: Boolean; B2: Boolean; B3: Boolean;",
+        "T := 'KEEP'; B1 := Evaluate(T, ' hello '); C := 'KEEP'; B2 := Evaluate(C, ' ab '); S := 'KEEP'; B3 := Evaluate(S, 'abcdef'); \
+         exit('[' + T + ']' + Format(B1) + '[' + C + ']' + Format(B2) + '[' + S + ']' + Format(B3));",
+    );
+    assert_eq!(r.unwrap(), "[ hello ]Yes[AB]Yes[KEEP]No");
+}
+
 #[test]
 fn enum_from_integer_carries_any_ordinal() {
     // types/TestEnum.al:15-22 (a declared ordinal), :83-91 and types/TestEnumDefaultImplTests.Codeunit.al:70

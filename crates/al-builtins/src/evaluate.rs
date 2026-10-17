@@ -723,6 +723,10 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
             crate::datefns::Evaluated::Stored(f) => Parsed::Value(Value::DateFormula(f)),
             crate::datefns::Evaluated::Rejected => Parsed::Rejected,
         },
+        // A Text keeps the text as written, a Code is trimmed and upper case
+        // (errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, P128_Evaluate_IntoCode).
+        Value::Text(_) => Parsed::Value(Value::Text(text.clone().into())),
+        Value::Code(_) => Parsed::Value(Value::Code(text.trim().to_uppercase().into())),
         other => return unsupported(format!("Evaluate into {} (not pinned by the corpus)", other.describe())),
     };
     match parsed {

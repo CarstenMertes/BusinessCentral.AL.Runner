@@ -433,6 +433,12 @@ registry! {
         tests: "Email Account Impl.GetAllAccounts (`foreach Connector in Connector.Ordinals do`), which Job Planning Lines.OnInit reaches through Email Account.IsAnyAccountRegistered: SCM Fulfillment and other tests that open the Job Planning Lines page; 6 Tests-SCM tests.",
         probe: "foreach E in E.Ordinals with E an Enum variable: Format(E) and E.AsInteger() in the body; the same with a List of Integer that holds an ordinal the enum lacks.",
     },
+    TestFilterSetFilterEmptyClears => {
+        id: "testfilter-setfilter-empty-clears",
+        assumed: "TestFilter.SetFilter(Field, '') (a text empty or of spaces) on a page or request page filter removes the user's filter on that field, as FieldRef.SetFilter does (pinned: P134DateTextFilters.al:P134_FieldRef_Date_EmptyAndBlankForms).",
+        tests: "SCM Inventory Misc. II (Inventory Pick and Put-away \"WithAdditionalFilters\"), SCM Invt Item Tracking III, SCM Plan-Req. Wksht, SCM Inventory Journals, SCM Inventory Miscellaneous: about 17 Tests-SCM tests that clear a request page filter with an empty text.",
+        probe: "TestPage.Filter.SetFilter(F, '') and (F, ' ') after a filter on F: GetFilter(F) and the rows; the same on a request page's data item filter.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

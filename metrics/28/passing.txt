@@ -4849,6 +4849,7 @@
 68511 WriteWhileANormalQueryIsOpen_InsertAfterFirstRead
 68511 WriteWhileANormalQueryIsOpen_InsertBetweenOpenAndFirstRead
 68511 WriteWhileAnAggregatedQueryIsOpen_InsertBetweenOpenAndFirstRead
+68512 Average_Decimal_FewerDigitsThanTheLimit
 68512 CrossJoin_GroupedByOuterAndInnerColumns
 68512 CrossJoin_GroupedByTheInnerKey
 68512 CrossJoin_GroupedByTheOuterNonKeyColumn
@@ -5349,6 +5350,7 @@
 69350 LabelsOnly_ReportWithOnlyOneLabel
 69350 Labels_AreWrittenIntoTheDataset
 69350 NoLabels_NoLabelsElement
+69351 FieldRows_AllColumns_OfLivePendingAndRemovedField
 69351 FieldRows_CountsOfTheTable_ByState
 69353 Find_InvalidDirection_ErrorText
 69353 Find_InvalidDirections
@@ -6221,6 +6223,7 @@
 70000 IndexOf_StartIndex
 70000 IndexOf_StartIndex_EmptyAndLiteral
 70000 LastIndexOf_Basic
+70000 LastIndexOf_StartIndex
 70000 StartsWith_EndsWith
 70001 P146_Abs_Duration_DateTimeDifference
 70001 P146_Abs_Duration_ResultFormats
@@ -6373,6 +6376,8 @@
 70076 PlaceholderValueFormatting
 70076 StrSubstNoPlaceholders
 70077 ResultUsed_WrongKind
+70077 StatementForm_InvalidText
+70077 StatementForm_WrongKind
 70078 ArrayIndexOutOfRange
 70078 TokenAsOtherKind
 70080 Escapes_Built
@@ -6384,6 +6389,8 @@
 70081 WhiteSpace_InsideAndOutsideRoot
 70082 AddNodeWithParent_Copies_FreeNode_Shared
 70082 InvalidAdds
+70084 MalformedPaths
+70084 NamespacePaths
 70084 PlainPaths
 70084 SelectSingleNode_And_Elements
 70085 Invalid_LineAndPosition
@@ -6393,6 +6400,7 @@
 70088 Write_ClosingDate
 70088 Write_Date
 70089 Write_Decimal_Small
+70089 Write_Decimal_Tiny
 70091 Read_Types_A
 70092 Assign_Stored
 70092 Assign_Temporary
@@ -6415,12 +6423,14 @@
 70098 IncStr_Cases
 70098 IndexOf_Cases
 70098 InsStr_Cases
+70098 LastIndexOf_Cases
 70098 Substring_Cases
 70106 Delete_And_DeleteAll_RunTrigger
 70106 Insert_RunTrigger
 70106 Modify_RunTrigger_AndXRec
 70106 Rename_AlwaysRunsTriggers
 70106 TwoExtensions_SameTrigger
+70115 Modify_StampsOnlyWhenStoredFieldDiffers
 70115 RenameOfAnotherTable_ReStampsPropagatedRows
 70115 StoredRecord_IsStamped_Reference
 70115 TemporaryRecord_IsNotStamped
@@ -6430,6 +6440,7 @@
 70118 SeveralFields_Order
 70119 FieldType_Members_A
 70119 FieldType_Members_B
+70119 IsolationLevel_Members
 70120 RoundTrip_AndFormatCodes
 70120 Undefined_AndDateOnly
 70121 NullAppId
@@ -6437,6 +6448,8 @@
 70122 P147_Filter_SetTableViewVsStored
 70127 ThreeFilters_EntryTxtQty_AllOrders
 70128 CloseSetRangeReopen
+70128 SetRangeBeforeOpen_ThenChangedBeforeFirstRead
+70128 SetRangeBetweenOpenAndFirstRead
 70170 AssignedThenReadBack
 70170 HandlerSeesInitSettings
 70170 HandlerSeesPristineSettings
@@ -6522,6 +6535,7 @@
 70186 FindFirstFieldHitsAndMisses
 70186 FindFirstFieldTypeAndCaseBoundaries
 70186 FindNextAndPreviousField
+70186 HideValueAndShowMandatoryLiterals
 70186 HideValueAndShowMandatoryOnNewRow
 70186 IsExpandedAndExpandOnANonTreePage
 70187 RunCardPageType
@@ -6734,7 +6748,10 @@
 70377 P157_List_SetTableViewThenSetRecord_RecordOutsideView
 70378 P157_Gbp_AmountAutoFormatShape
 70378 P157_Gbp_PrefixPlusOtherTags
+70378 P157_NotAtStart
 70378 P157_OtherCurrencyCodes
+70378 P157_UnknownAndEmptyCurrency
+70379 P157_German_KnownAndUnknownCode
 70379 P157_German_PrefixPlusOtherTags
 70381 P169_QuotedPlaceholder_ArgumentWithSpecialCharacters
 70381 P169_QuotedPlaceholder_CodeArgument
@@ -6877,6 +6894,7 @@
 70526 Delete_AfterCommitRollback
 70526 LockTable_EmptyTable
 70526 ModifyAll_Basics
+70526 ModifyAll_PrimaryKeyField
 70526 Modify_AfterCommitRollback
 70526 Modify_StaleRecordOverwrites
 70526 Modify_UnchangedAndReturn
@@ -6905,6 +6923,7 @@
 70542 Guid_FieldRefAndFilterText
 70542 Guid_TextForms
 70542 IsInWriteTransaction_States
+70542 LastUsedRowVersion_AndLockTimeout
 70543 Run_NoRecord
 70543 Run_RealRecord_ChangeReachesCaller
 70543 Run_TemporaryRecord
@@ -7531,6 +7550,7 @@
 70905 P170_LoadFields_Statement_ThenReadAfterGet
 70906 P170_TimePlusMinusDecimal_Literal
 70906 P170_TimePlusMinusDecimal_Whole
+70907 P170_TimePlusMinusBigInteger
 70909 P170_CurrFieldNo_CopyIsNotTheProperty
 70910 P170_And_LocalNameAndAttribute
 70910 P170_And_PositionAndLastInsideConjunction
@@ -7657,6 +7677,7 @@
 71031 Is_Text_Code_Char_Byte
 71032 Is_Codeunit_List_Dictionary
 71032 Is_Empty_Variant
+71032 Is_Record_RecordRef_FieldRef
 71032 Is_Streams_Notification
 71033 DecimalVariant_To_Integer
 71033 Enum_Variant_To_Integer_Text
@@ -7708,6 +7729,7 @@
 71051 Enum_ImplementationIsFreshInstance
 71051 Enum_ImplementationSelection
 71051 PassInterface_ToProcedure
+71051 Uninitialized_AfterClear
 71051 Uninitialized_Call
 71051 VarParameter_ThroughInterface
 71059 Run_AsserterrorOnErrorStatement
@@ -7721,6 +7743,7 @@
 71059 SingleInstance_StateAcrossVariables
 71061 Access_InternalAndLocal
 71061 Overload_ByTypeOfArgument
+71061 Overload_Resolution
 71061 Parameters_ByValueAndByVar
 71061 Parameters_ReplaceReferenceType
 71061 Parameters_Swap
@@ -7757,6 +7780,8 @@
 71101 Find_OtherKey
 71102 FieldsNoKeyStartsWith
 71102 KeyAndFilter_Combine
+71103 Truncate_MediaTable
+71103 Truncate_MediaTable_Empty
 71103 Truncate_Plain_ThenCount
 71103 Truncate_TableWithBlobAndFlowField
 71103 Truncate_TemporaryRecord
@@ -7792,6 +7817,7 @@
 71111 Handler_Error_ModalPage
 71111 Handler_Error_Page
 71111 Handler_Error_RequestPage
+71111 Handler_Error_StrMenu
 71111 Message_Unhandled
 71111 Pages_Unhandled
 71111 Report_RequestPage_Unhandled
@@ -7815,6 +7841,7 @@
 71121 OptionArray_Indexed
 71123 BindSubscription_This
 71123 This_PassedByReference
+71124 OptionArray_MemberOnArrayName
 71126 Ascending_AssignAndCall
 71126 FilterGroup_AssignAndCall
 71126 Mark_AssignAndCall
@@ -7843,8 +7870,11 @@
 71139 Key_Rows_Of_Own_Table
 71139 XmlPortMetadata_Encoding
 71159 Overload_CodeBooleanPairs
+71159 Overload_DecimalIntegerBigInteger
+71159 Overload_IntegerVsVariant
 71159 Overload_RecordRefVsVariant
 71159 Overload_RecordVsVariant
+71159 Overload_TextVsVariant
 71161 ProcResult_ExistingRow
 71161 ProcResult_InitOnly
 71161 ProcResult_MethodOnResult
@@ -7852,6 +7882,7 @@
 71161 ProcResult_Temporary
 71163 Option_OtherTextBuiltins
 71163 Option_SelectStrAndEvaluate
+71163 Option_StrSubstNo
 71164 GuidToText_FormatNumbers
 71164 GuidToText_NullGuid
 71164 GuidToText_RoundTrip
@@ -7914,11 +7945,13 @@
 71204 Caption_List_And_Host
 71204 Filter_CurrentKey_And_Ascending
 71204 Navigation_FirstNextPreviousLast
+71204 Navigation_GoToKey
 71204 Navigation_GoToRecord
 71204 OpenNew_Then_GoToKey
 71204 OpenView_FilterBeforeOpen
 71204 Page_Editable_And_Close_Twice
 71204 Part_Hidden_And_Disabled_Access
+71205 AssistEdit_Trigger
 71205 Drilldown_Trigger
 71205 Lookup_Trigger_EditMode
 71205 Lookup_Trigger_ViewMode
@@ -7927,6 +7960,7 @@
 71206 Confirm_WithHandler_False_DefaultTrue
 71206 Confirm_WithHandler_True
 71206 Confirm_WithoutHandler
+71206 Dialog_EdgeCases
 71206 Dialog_Open_Update_Close
 71206 Error_ErrorInfo
 71206 Error_Rolls_Back_And_Clears
@@ -8212,6 +8246,9 @@
 71572 P175_GuidText_ModuleScope
 71572 P175_GuidText_OverwriteAndEmptyValue
 71572 P175_GuidText_UserScope
+71574 P175_Raw_EAcute_ReadText
+71574 P175_Raw_Euro_ReadText
+71574 P175_Raw_UUml_ReadText
 71612 Execute_Parameters
 71612 RunRequestPage_NoRequestPage
 71612 Run_Static_Instance_Modal
@@ -8244,6 +8281,7 @@
 71630 P119_FieldState
 71630 P119_MailBadValue
 71630 P119_NotBlankMandatory
+71630 P119_SetValues
 71630 P119_ShowCaptionField
 71632 P119_ActionInvoke
 71632 P119_ActionState
@@ -8268,6 +8306,8 @@
 71667 P119_NeighboursOfUploadAction
 71670 P119_NeighbourOfUserControl
 71672 P119_PageFieldValues
+71672 P119_PageMinMax
+71672 P119_PageNumericSetValue
 71674 P119_PromotedActions
 71678 P119_CustomizedField
 71680 P119_ReportDecimalAndBlank
@@ -8282,6 +8322,7 @@
 71695 P159_BackToBackInserts_StampsNeverGoBack
 71698 LayoutList_TwoLayouts_RowCountEqualsDeclared
 71698 ReportMeta_ProcessingOnly_RowAndColumnsPresent
+71698 ReportMeta_TwoLayouts_RowAndColumnsPresent
 71699 LayoutList_BaseWithExtension_ContainsExtensionLayouts
 71700 GuidTextBracedBareLower_ThreeSpellings_Module
 71700 GuidTextLower_SetThenOverwriteUpper_Module
@@ -8545,7 +8586,10 @@
 71866 P112_ExtensionField_DrillDown_NoTrigger_Controls
 71866 P112_ExtensionField_LookupAndAssistEdit
 71866 P112_Lookup_BasePageField_Cancel
+71866 P112_Lookup_BasePageField_OK
 71866 P112_Lookup_ExtensionField_Cancel
+71866 P112_Lookup_ExtensionField_OK
+71866 P112_Lookup_ViewMode
 71873 P112_Upload_Page_Opens_PlainAction_Runs
 71876 P192_ArrayAdd_Integer_Get0
 71878 P192_Insert_Set_Replace_DateTime
@@ -8554,6 +8598,7 @@
 71930 ID_AsText_FormatForms
 71930 UrlName_IsTheCompanyNameWithEncodedSpaces
 71931 DisplayName_AgainstTheCompanyRecord
+71931 ID_EqualsTheCompanyRecordId
 71941 Plain_InsertDeleteBetweenReads
 71944 Xml_ProcessingOnly
 71955 P184_CodeKey_Case_And_Blanks
@@ -8593,6 +8638,7 @@
 72002 Init_ResetsAssignedFields
 72002 Init_TypeDefaults
 72002 NoInit_NewVariableDefaults
+72002 Props_BlankZero_Option_Caption
 72002 Props_NotBlank
 72003 TestField_Blank_Each_Type
 72003 TestField_ErrorInfo_Collect
@@ -8640,8 +8686,10 @@
 72007 CalcFields_RecalculatesAfterChange
 72007 CalcFields_Returns_Nothing_OnModifyKeepsValue
 72007 FlowField_BeforeCalc_IsDefault
+72007 SetAutoCalcFields_AfterInsertRead
 72007 SetAutoCalcFields_FindSet_Loop
 72007 SetAutoCalcFields_Get
+72007 SetAutoCalcFields_Reset_And_Replace
 72008 CalcSums_All
 72008 CalcSums_Filtered
 72008 CalcSums_Multiple
@@ -8901,6 +8949,7 @@
 72180 P121_OpenPageWithControl
 72210 Open_CloseThenReopenKeepsCurrentRecord
 72210 Open_ErrorTextUnknownCompany
+72210 Open_FailedOpenKeepsPreviousState
 72210 Open_NumberNameCaptionByVariants
 72210 Open_TemporaryFlagIgnoresCompany
 72210 Open_TemporaryIsolatedFromReal
@@ -8929,6 +8978,7 @@
 72215 CountApprox_Unopened
 72216 ReadIsolation_AllLevels
 72216 ReadIsolation_CopyOfVariable
+72216 ReadIsolation_FromRecordAndToRecord
 72216 ReadIsolation_Unopened
 72217 ReadConsistency_Tables
 72217 RecordLevelLocking_Tables
@@ -9078,6 +9128,7 @@
 72503 ValueTokens
 72504 SetValueOthers
 72504 ValueInContainerReference
+72505 ObjectReadFromErrors
 72505 ReadFromReplacesContent
 72506 ForeachObjectKeys
 72506 KeysAreEscaped
@@ -9129,6 +9180,8 @@
 72514 Array_DifferentSizeAssignment
 72514 Array_OfRecordsAndPassing
 72514 CompressArray_Texts
+72514 CopyArray_Forms
+72514 CopyArray_Texts
 72515 ArgumentEvaluationOrder
 72515 BooleanShortCircuit
 72515 Case_Semantics
@@ -9235,6 +9288,7 @@
 72719 P161_CompanyScope_NextToModuleScope
 72719 P161_Delete_Missing_AndSetOverwrite
 72719 P161_FailedGet_LeavesVariable
+72722 P161_RegisterTwice_SameAndOtherCase
 72731 GoToKeyLastThenRow2_Both41Rows_ReadsLogged
 72731 GoToKeyLastThenRow2_Both60Rows_ReadsLogged
 72731 GoToKeyLastThenRow2_Both61Rows_ReadsLogged
@@ -9571,6 +9625,7 @@
 73028 Error_ErrorInfo_Text
 73028 LastError_Object_Related
 73030 AddAction_Variants
+73030 Copy_Semantics
 73030 Data_AllValueTypes
 73030 Data_Missing_And_Overwrite
 73030 Defaults
@@ -9579,6 +9634,7 @@
 73030 Recall_Handler
 73030 Recall_NeverSent
 73030 Scope_Values
+73030 Send_EmptyMessage
 73030 Send_Handler
 73030 Send_Twice_GlobalScope
 73032 Copy_Empty
@@ -9593,7 +9649,9 @@
 73033 Value_Lengths
 73033 Value_Special_Texts
 73034 Database_WriteTransaction
+73034 Dialog_Errors
 73034 Dialog_OpenUpdateClose
+73034 Dialog_UpdateWithoutOpen
 73034 Session_LogMessage_NoError
 73034 Session_Relations
 73040 FieldRef_Captions
@@ -9794,6 +9852,7 @@
 73238 P163_SetCurrentKey_UndeclaredFields_Order
 73238 P163_SetCurrentKey_UndeclaredFields_TemporaryRecord
 73238 P163_SetCurrentKey_UndeclaredFields_WithFiltersAndCopy
+73242 P163_Truncate_MediaSetTable_AndFilters
 73242 P163_Truncate_TableOtherRecordsRead
 73242 P163_Truncate_TemporaryAndMedia_WhichGuardFirst
 73250 P163_SetTableView_OverSortingDescending
@@ -10063,6 +10122,7 @@
 73511 Group_CaseDifferentCategories
 73511 Group_EmptyTable
 73511 Group_FilterOnQty
+73511 Group_NegativeAndZero
 73511 Group_SingleRow
 73511 Total_AfterReopenSeesChanges
 73511 Total_CountOnlyOneRow
@@ -10314,6 +10374,7 @@
 73631 P131_Get_Unopened_ThenOpenOfTheRecordIdTable
 73657 P131_Query_ColumnFilterOnDefaultJoinChild
 73657 P131_Query_ColumnFilterOnExplicitLeftOuterChild
+73658 P131_Query_SetRangeBetweenOpenAndRead_Control
 73664 P131_TwoModalHandlers_OpenedInTheOtherOrder_AndByStaticRun
 73664 P131_TwoModalHandlers_PageParameters
 73665 P131_ModalPageHandler_PageParam_ResponseValues
@@ -10592,6 +10653,7 @@
 74011 ClearRecordRef
 74013 ClearRecordField
 74014 ClearParameters
+74017 ClearInterface
 74025 CodeCoverageRefreshOnly
 74036 P133_MixedModalHandlers_TestPageList_PageCard
 74036 P133_ModalHandler_PageTyped_NeverTouchesThePage
@@ -10685,6 +10747,7 @@
 74204 MediaExportStream
 74204 MediaIdIsGuidType
 74204 MediaImportEmptyDescription
+74204 MediaImportEmptyStream
 74204 MediaImportNonImageStream
 74204 MediaImportStreamThreeArgs
 74204 MediaImportStreamTwoArgs
@@ -10743,6 +10806,7 @@
 74216 TwoSequences_AreIndependent
 74217 Delete_Restart_Unknown
 74217 Insert_Duplicate
+74217 Insert_ZeroIncrement
 74217 Next_Current_Unknown
 74218 CycleFlag_FalseExplicit
 74218 Names_CaseSpacesUnicode
@@ -10868,6 +10932,7 @@
 74260 P135_Get_RecordId_BasePattern_OpenWhenMissing
 74260 P135_Get_RecordId_OnNeverOpenedRecordRef
 74260 P135_Get_RecordId_ThenFieldsReadable
+74265 P135_SelFilter_FreshRecord_AndOtherFieldFilters
 74265 P135_SelFilter_SameFieldFilters
 74279 P135_Callstack_TableInsert_NoRunTrigger
 74279 P135_Callstack_TableIntegrationEvent
@@ -10876,6 +10941,7 @@
 74291 P135_Callstack_ManualAndStaticSubscribers
 74305 Currency_BothPlacesEmpty_OtherSetup
 74314 JsonObject_ReadFromStream_OtherShapes
+74315 JsonValue_ReadFromStream_ContainersAndEdges
 74319 SetCurrentKey_PrimaryKeyOrderForComparison
 74331 P136_DelChr_PaymentExportShape
 74340 P136_Callstack_CodeunitRunAndTryFunction
@@ -10911,6 +10977,9 @@
 74408 Replace_ExistingAndMissing
 74409 Path_Nested
 74409 Path_SpecialKeys
+74410 ReadFrom_Containers
+74410 ReadFrom_Invalid
+74410 ReadFrom_Scalars
 74412 Duration_BigInteger_Readback
 74442 P137_Callstack_TableTriggersAndEvents
 74442 P137_Callstack_TableWithoutTriggers
@@ -10920,6 +10989,7 @@
 74447 QueryRecordId_Variant_Result
 74451 BlobCalcFields_AfterModifyAndClear_Result
 74451 BlobCalcFields_FieldRefCalcField_Result
+74451 BlobCalcFields_UnsavedContent_Result
 74451 BlobCalcFields_WithContent_Result
 74451 BlobCalcFields_WithoutContent_Result
 74454 ReportRunModal_SystemPrinterFalse_Result
@@ -11018,6 +11088,7 @@
 74620 Dict_ContainsKey
 74620 Dict_EmptyKeysValues
 74620 Dict_InsertionOrderStable
+74620 Dict_SetRemove
 74620 Dict_ValuesDuplicates
 74621 Err_GuidAndTimeKeys
 74621 Err_IntegerKey
@@ -11074,6 +11145,8 @@
 74634 Options_Defaults
 74635 NameTable_NamespaceManager
 74635 NodeList_AttributeCollection
+74635 NodeVsSpecific_Casting
+74635 Node_FromEachKind
 74636 DocumentVsElement_RootAndParents
 74636 Near_TextWithXml
 74637 Edit_1
@@ -11277,8 +11350,10 @@
 74992 P146_Parameters_ByValue_ByVar
 74992 P146_ReadWrite_ExtensionProcedure
 74992 P146_Temporary_Record
+74992 P146_Triggers_BaseThenExtension
 74992 P146_Triggers_FailedInsertKeepsGlobal
 74996 P146_SetRange_AfterClose_ThenOpen
+74996 P146_SetRange_BetweenOpenAndFirstRead
 74999 P146_GetView_MarkedOnly_Real
 74999 P146_GetView_MarkedOnly_WithFilterAndKey
 74999 P146_GetView_Temporary

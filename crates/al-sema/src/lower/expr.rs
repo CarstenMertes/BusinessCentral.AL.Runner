@@ -385,11 +385,11 @@ impl Lowerer<'_> {
                 // How a settled DotNet operand may be used depends on the operator (ADR-024).
                 let operand_use = match op.as_str() {
                     "+" | "=" | "<>" => ir::OperandUse::Enum,
-                    "<" | "<=" | ">" | ">=" => ir::OperandUse::NoText,
+                    "<" | "<=" | ">" | ">=" => ir::OperandUse::Order,
                     _ => ir::OperandUse::Value,
                 };
-                if op == "in" {
-                    self.no_dotnet_operand(&kids[0])?;
+                if op == "in" && matches!(self.ty_of(&kids[0]), Ty::DotNet(_)) {
+                    return self.dotnet_in(&kids[0], &kids[1]);
                 }
                 let l = if op == "in" {
                     self.expr(&kids[0])?
@@ -410,6 +410,10 @@ impl Lowerer<'_> {
                 let op = match op.as_str() {
                     "=" if dotnet => ir::BinOp::DotNetEq,
                     "<>" if dotnet => ir::BinOp::DotNetNe,
+                    "<" if dotnet => ir::BinOp::DotNetLt,
+                    "<=" if dotnet => ir::BinOp::DotNetLe,
+                    ">" if dotnet => ir::BinOp::DotNetGt,
+                    ">=" if dotnet => ir::BinOp::DotNetGe,
                     "+" => ir::BinOp::Add,
                     "-" => ir::BinOp::Sub,
                     "*" => ir::BinOp::Mul,
@@ -703,25 +707,94 @@ impl Lowerer<'_> {
     }
 
     /// An expression used as an operand. A `DotNet` value has no static type: it is settled when
-    /// the code runs, from the kind the host returned (ADR-024).
+    /// the code runs, from the kind the host returned (ADR-024). A variable declared `DotNet String` holds a text
+    /// or nothing, and nothing reads as the empty text
+    /// (tests/al-language-onprem-dotnet/lt-dotnet-interop/DotNetOperandStringEq.al: `Nothing = ''` is Yes,
+    /// `Nothing + 'x'` is `x`).
     pub(crate) fn operand(&mut self, n: &SyntaxNode, how: ir::OperandUse) -> L<ir::Expr> {
         let e = self.expr(n)?;
         Ok(match self.ty_of(n) {
-            Ty::DotNet(_) => ir::Expr::DotNetOperand(Box::new(e), how),
+            Ty::DotNet(alias) => {
+                let e = if self.declared_clr_type(&alias).as_deref() == Some("System.String") {
+                    ir::Expr::Convert(RtType::Text(None), Box::new(e))
+                } else {
+                    e
+                };
+                ir::Expr::DotNetOperand(Box::new(e), how)
+            }
             _ => e,
         })
     }
 
-    /// The left side of `in` keeps the static refusal: a membership test against a set of
-    /// literals is not pinned for a settled value (ADR-024, refusals that stay).
-    pub(crate) fn no_dotnet_operand(&self, n: &SyntaxNode) -> L<()> {
-        match self.ty_of(n) {
-            Ty::DotNet(_) => Err(format!(
-                "`{}` is a DotNet value used as an operand: its type is only known at run time; assign it to a typed variable first",
-                n.text().to_string().trim()
-            )),
-            _ => Ok(()),
+    /// The CLR type a `DotNet` alias is declared as (`None` for a result whose type is only known at run time).
+    pub(crate) fn declared_clr_type(&self, alias: &str) -> Option<String> {
+        if alias.is_empty() {
+            return None;
         }
+        let i = self.ws.resolve_dotnet(self.file, alias)?;
+        Some(self.ws.dotnet[i].decl.type_name.clone())
+    }
+
+    /// `x in [..]` where `x` is a `DotNet` variable: each element is `=` (a .NET text compares by case), each range
+    /// `>= lo and <= hi` (tests/al-language-onprem-dotnet/lt-dotnet-interop/DotNetOperandStringIn.al,
+    /// DotNetOperandInt32In.al, DotNetOperandDecimalIn.al, DotNetOperandDateTimeIn.al, XmlNodeTypeOrder.al:`InSet`).
+    /// The subject is read once per element, so it must be a plain variable: a member call stays refused.
+    fn dotnet_in(&mut self, subject: &SyntaxNode, set: &SyntaxNode) -> L<ir::Expr> {
+        use ir::BinOp as B;
+        if subject.kind() != SyntaxKind::NameRef {
+            return Err(format!(
+                "`{}` is a DotNet value used as an operand of `in`: only a variable is lowered (a member would run once per element)",
+                subject.text().to_string().trim()
+            ));
+        }
+        if set.kind() != SyntaxKind::SetExpr {
+            return Err("`in` with a non-literal set is not lowered yet".into());
+        }
+        let bin = |op, a, b| ir::Expr::Binary(op, Box::new(a), Box::new(b));
+        let mut any: Option<ir::Expr> = None;
+        for elem in set.children() {
+            let test = if elem.kind() == SyntaxKind::RangeExpr {
+                let dotdot = sig_tokens(&elem)
+                    .into_iter()
+                    .find(|t| t.kind() == SyntaxKind::DotDot)
+                    .ok_or("range without ..")?
+                    .text_range()
+                    .start();
+                let mut lo = None;
+                let mut hi = None;
+                for c in elem.children() {
+                    let e = self.operand(&c, ir::OperandUse::Order)?;
+                    if c.text_range().start() < dotdot {
+                        lo = Some(e);
+                    } else {
+                        hi = Some(e);
+                    }
+                }
+                let mut test: Option<ir::Expr> = None;
+                if let Some(lo) = lo {
+                    test = Some(bin(B::DotNetGe, self.operand(subject, ir::OperandUse::Order)?, lo));
+                }
+                if let Some(hi) = hi {
+                    let upper = bin(B::DotNetLe, self.operand(subject, ir::OperandUse::Order)?, hi);
+                    test = Some(match test {
+                        Some(t) => bin(B::And, t, upper),
+                        None => upper,
+                    });
+                }
+                test.ok_or("a range without bounds")?
+            } else {
+                bin(
+                    B::DotNetEq,
+                    self.operand(subject, ir::OperandUse::Enum)?,
+                    self.operand(&elem, ir::OperandUse::Enum)?,
+                )
+            };
+            any = Some(match any {
+                Some(a) => bin(B::Or, a, test),
+                None => test,
+            });
+        }
+        Ok(any.unwrap_or(ir::Expr::Const(ir::Const::Boolean(false))))
     }
 
     /// A condition: a DotNet result must be a Boolean.

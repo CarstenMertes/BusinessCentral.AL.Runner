@@ -13019,7 +13019,7 @@
           "ms_uses": 1934,
           "name": "SetExpr",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "_fixtures/Assert.al:299"
         },
         {
@@ -13118,7 +13118,7 @@
           "ms_uses": 108,
           "name": "RangeExpr",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "events/lt-global-triggers-statements/P114Statements.al:59"
         },
         {

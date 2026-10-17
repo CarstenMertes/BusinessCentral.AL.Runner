@@ -301,12 +301,6 @@ registry! {
         tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
         probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; then GetFilter and Count.",
     },
-    PageRunRecordAndSourceTableView => {
-        id: "page-run-record-and-source-table-view",
-        assumed: "Page.Run(Page, Rec) on a page that declares SourceTableView: the page shows the rows of the record that the view also admits (the record's filters, then the view in filter group 2).",
-        tests: "Assemble-to-Order Link ShowAsmOrders runs the Assembly Orders page on a temporary record; about 30 tests of the Tests-SCM-Assembly bucket.",
-        probe: "A page with SourceTableView = where(Kind = const(B)) run on a temporary record holding A and B rows: the rows a handler sees; and on a record with a filter of its own.",
-    },
     BooleanToTextAsFormat => {
         id: "boolean-to-text-as-format",
         assumed: "A Boolean given where a Text or Code is expected (Record.Get(Boolean) on a Code key) converts as Format writes it: Yes or No, upper case for a Code.",

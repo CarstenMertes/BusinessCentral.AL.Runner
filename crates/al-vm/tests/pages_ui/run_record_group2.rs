@@ -2,7 +2,7 @@
 //! (group 2 too). Base Application's `Bank Acc. Reconciliation.OpenWorksheet` sets the statement in group 2 and runs
 //! "Payment Reconciliation Journal", whose SourceTableView names the statement type; the page showed the first line of
 //! the whole table (Tests-Bank Bank Pmt. Appl. Algorithm TestCustSingleAmountMatch). How the record and the view combine
-//! is the assumption page-run-record-and-source-table-view (docs/probes-needed.md).
+//! is pinned by types/lt-code-digits-page-run-view/P145PageRunView.al (P145_A_RecFilterInGroup2).
 
 use al_testkit::text;
 

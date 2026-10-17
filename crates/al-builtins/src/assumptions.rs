@@ -331,12 +331,6 @@ registry! {
         tests: "Item Card OnAssistEdit and the other pages that ask whether the record changed: about 345 Microsoft tests (Tests-SCM, Tests-ERM).",
         probe: "Read a row into RecordRef A and RecordRef B, Modify the row through B, then A.IsDirty(); also a table with a FlowField and a partial load (SetLoadFields).",
     },
-    DatasetNameDotAndSlash => {
-        id: "dataset-name-dot-and-slash",
-        assumed: "In the Report.SaveAs dataset a data item or column name that holds a dot or a slash is spelled with each of them as one underscore, like a space, and the underscores are not merged (`Cust. Ledger Entry` is `Cust__Ledger_Entry`, `G/L Account` is `G_L_Account`).",
-        tests: "Every Microsoft test that runs a Base Application report whose data item name has a dot or a slash (G/L Account, Gen. Journal Batch, Prod. Order Line, Cust. Ledger Entry, ...): about 227 tests.",
-        probe: "Report.SaveAs Xml of a report with data items named `A. B`, `C/D`, `E.F` and `G..H`, read back as text: the DataItem name attribute (and the name of a column declared with a quoted name).",
-    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",

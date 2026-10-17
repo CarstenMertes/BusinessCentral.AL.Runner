@@ -27,23 +27,6 @@ pub(crate) fn dataset_name(name: &str) -> Result<String, Signal> {
     let simple = name
         .chars()
         .all(|c| c.is_alphanumeric() || c == '_' || c == ' ' || c == '(' || c == ')');
-    // Unpinned (registered assumption): a dot or a slash becomes an underscore, like a space, and the underscores
-    // are not merged. A name with one of them and with parentheses is refused (neither is pinned together).
-    let punctuated = !simple
-        && name.chars().any(|c| c == '.' || c == '/')
-        && name
-            .chars()
-            .all(|c| c.is_alphanumeric() || c == '_' || c == ' ' || c == '.' || c == '/')
-        && !name.starts_with(|c: char| !c.is_alphanumeric())
-        && !name.contains("__")
-        && !name.contains("  ");
-    if punctuated {
-        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DatasetNameDotAndSlash);
-        return Ok(name
-            .chars()
-            .map(|c| if c.is_alphanumeric() { c } else { '_' })
-            .collect());
-    }
     if !simple || name.contains("__") || name.contains("  ") {
         return unsupported(format!(
             "the dataset name of `{name}` (only letters, digits, underscores, spaces and parentheses are pinned)"
@@ -587,19 +570,16 @@ mod tests {
         );
     }
 
-    // Not pinned (assumption `dataset-name-dot-and-slash`): a dot or a slash is one underscore each, like a space; the data
-    // item names of the Base Application reports ("Cust. Ledger Entry", "G/L Account") need it.
     #[test]
-    fn a_dot_or_a_slash_in_a_name_is_one_underscore() {
-        assert_eq!(dataset_name("Cust. Ledger Entry").unwrap(), "Cust__Ledger_Entry");
-        assert_eq!(dataset_name("G/L Account").unwrap(), "G_L_Account");
-        assert_eq!(dataset_name("Purch. Cr. Memo Hdr.").unwrap(), "Purch__Cr__Memo_Hdr_");
+    fn a_dot_or_a_slash_in_a_name_is_refused() {
+        assert!(dataset_name("Cust. Ledger Entry").is_err());
+        assert!(dataset_name("G/L Account").is_err());
     }
 
     #[test]
     fn a_name_the_example_does_not_cover_is_refused() {
         assert!(dataset_name("A(B)").is_err());
-        assert!(dataset_name("A-B").is_err());
+        assert!(dataset_name("No.").is_err());
         assert!(dataset_name("").is_err());
     }
 

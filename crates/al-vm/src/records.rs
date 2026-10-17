@@ -933,7 +933,7 @@ impl Session {
             for v in &mut row {
                 if let Value::Blob(b) = v {
                     if b.borrow().persisted {
-                        *b = al_builtins::stream::copy_blob(b, false);
+                        *b = al_builtins::stream::copy_blob_temp_row(b);
                     }
                 }
             }

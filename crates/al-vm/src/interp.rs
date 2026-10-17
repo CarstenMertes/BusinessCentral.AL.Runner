@@ -763,6 +763,7 @@ impl Session {
                                             loaded: b.loaded,
                                             refetch: true,
                                             persisted: false,
+                                            temp_row: b.temp_row,
                                             render_pending: b.render_pending.clone(),
                                         },
                                     )))

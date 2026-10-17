@@ -258,6 +258,11 @@ impl Session {
         self.caption(&t)
     }
 
+    fn is_blob_field(&self, table: usize, p: usize) -> bool {
+        let f = &self.engine.program.objects[table].table.as_ref().expect("table").fields[p];
+        f.stored && f.ty == RtType::Library("Blob".into())
+    }
+
     /// `CalcFields`: every named field is validated before any is calculated,
     /// and a refused call changes nothing (corpus
     /// record/TestCalcFormulaValidationTests.Codeunit.al:211,
@@ -702,6 +707,12 @@ impl Session {
             RecordOp::SetAutoCalcFields => {
                 let table = rec.borrow().table as usize;
                 for &p in &positions {
+                    // A Blob is accepted and loaded by every read (corpus
+                    // misc/lt-probes-needed-1/PnABlobLength.al:83 Length_InMemoryAndFindVariants:
+                    // `findfirst-autocalc` 5 against `findfirst-unloaded` 11).
+                    if self.is_blob_field(table, p) {
+                        continue;
+                    }
                     self.check_calc_field(table, p)?;
                 }
                 rec.borrow_mut().auto_calc = positions;
@@ -716,6 +727,13 @@ impl Session {
         let auto = rec.borrow().auto_calc.clone();
         if auto.is_empty() {
             return Ok(());
+        }
+        // A temporary record's auto-calculated Blob is not pinned (the corpus pins a stored row only).
+        if rec.borrow().temporary {
+            let table = rec.borrow().table as usize;
+            if auto.iter().any(|&p| self.is_blob_field(table, p)) {
+                return unsupported("SetAutoCalcFields of a Blob field on a temporary record (not pinned)");
+            }
         }
         self.calc_fields(rec, &auto)
     }

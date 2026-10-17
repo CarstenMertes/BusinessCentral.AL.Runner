@@ -16,6 +16,7 @@ table 50800 "LF Keyed"
         field(3; Code; Code[20]) { }
         field(4; Amount; Decimal) { }
         field(5; Note; Text[50]) { }
+        field(6; Cnt; Integer) { FieldClass = FlowField; CalcFormula = count("LF Keyed"); }
     }
     keys { key(PK; "Entry No.") { } key(Key2; Amount) { } }
 }
@@ -321,4 +322,53 @@ fn load_fields_with_its_result_used_on_a_fetched_record_is_refused() {
         &format!("{SEED} Rec.Get(1); Rec.LoadFields(Rec.Name); exit(Rec.Name);"),
     );
     assert_eq!(statement.unwrap(), "alpha");
+}
+
+#[test]
+fn set_load_fields_with_a_flow_field_loads_it_and_the_named_fields() {
+    // record/lt-priority-assumptions/PriorityAssumptions.al:282-312 (SetLoadFields_FlowFieldAndNormal, real BC 29): the
+    // FlowField reads as loaded, the key too, and the other stored fields are not.
+    let body = format!(
+        "{SEED} Rec.SetLoadFields(Rec.Cnt); Rec.FindFirst(); {} {} {} {} Clear(Rec); Rec.SetLoadFields(Rec.Name, Rec.Cnt); Rec.FindFirst(); {} {} {} {} exit(a);",
+        yn("Rec.AreFieldsLoaded(Rec.Name)"),
+        yn("Rec.AreFieldsLoaded(Rec.Amount)"),
+        yn("Rec.AreFieldsLoaded(Rec.Cnt)"),
+        yn("Rec.AreFieldsLoaded(Rec.\"Entry No.\")"),
+        yn("Rec.AreFieldsLoaded(Rec.Name)"),
+        yn("Rec.AreFieldsLoaded(Rec.Amount)"),
+        yn("Rec.AreFieldsLoaded(Rec.Cnt)"),
+        yn("Rec.AreFieldsLoaded(Rec.Name, Rec.Cnt)")
+    );
+    assert_eq!(text("", &body).unwrap(), "NoNoYesYesYesNoYesYes");
+}
+
+#[test]
+fn add_load_fields_with_a_flow_field_is_an_error() {
+    // record/lt-priority-assumptions/PriorityAssumptions.al:314-344 (AddLoadFields_FlowFieldAndNormal, real BC 29): the
+    // text and the code `DB:Ok`, after a SetLoadFields and on a record without a request.
+    let msg = "The field 'Cnt' in the 'LF Keyed' table is not valid for auto loading and cannot be passed to calls to AddLoadFields, SetLoadFields, or LoadFields.";
+    for body in [
+        "Rec.SetLoadFields(Rec.Name); Rec.AddLoadFields(Rec.Cnt); exit('no error');",
+        "Rec.AddLoadFields(Rec.Cnt); exit('no error');",
+    ] {
+        match text("", body) {
+            Err(Signal::Error(e)) => {
+                assert_eq!(e.message, msg);
+                assert_eq!(e.code, "DB:Ok");
+            }
+            other => panic!("{other:?}"),
+        }
+    }
+}
+
+#[test]
+fn add_load_fields_of_a_stored_field_after_set_load_fields_loads_a_flow_field_too() {
+    // PriorityAssumptions.al:314-344: Name and Qty requested, the FlowField reads as loaded all the same.
+    let body = format!(
+        "{SEED} Rec.SetLoadFields(Rec.Name); Rec.AddLoadFields(Rec.Amount); Rec.FindFirst(); {} {} {} exit(a);",
+        yn("Rec.AreFieldsLoaded(Rec.Name)"),
+        yn("Rec.AreFieldsLoaded(Rec.Amount)"),
+        yn("Rec.AreFieldsLoaded(Rec.Cnt)")
+    );
+    assert_eq!(text("", &body).unwrap(), "YesYesYes");
 }

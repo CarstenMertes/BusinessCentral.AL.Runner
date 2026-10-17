@@ -938,6 +938,15 @@ impl Session {
             }
             "Relation" => self.field_relation(&rec, &t, pos).map(Value::Integer),
             "GetFilter" => self.field_filter_text(&rec, pos).map(|s| Value::Text(s.into())),
+            // recordref/lt-refs/RfTFieldFilters.al:183 (GetRangeMinMax); the rules are the Record ones.
+            "GetRangeMin" | "GetRangeMax" => {
+                let op = if method == "GetRangeMin" {
+                    RecordOp::GetRangeMin
+                } else {
+                    RecordOp::GetRangeMax
+                };
+                self.record_meta_op(op, &rec, &t, &mut [Value::Integer(pos as i32)])
+            }
             "Record" => Ok(handle("RecordRef", LibraryValue::RecordRef(rec))),
             // fieldref/TestRelationTargetNamespaceScope.al:63-75. Record.CalcFields raises a pinned
             // error for a field that is not a FlowField (record/TestCalcFieldsFieldClass.Codeunit.al);

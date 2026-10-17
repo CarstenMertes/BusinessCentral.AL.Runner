@@ -121,12 +121,6 @@ registry! {
         tests: "Company-Initialize (Doc. Exch. Service Setup.SetURLsToDefault -> OAuth2Impl.GetDefaultRedirectUrl), so the install baseline of a company built from the RapidStart package; every Microsoft test that reads Application Area Setup or Workflow after it.",
         probe: "GetUrl(ClientType::Web) asserted for scheme, path and query, with and without a company, and inside a per-database install trigger (docs/probes-needed.md).",
     },
-    ClearAllKeepsTemporaryRows => {
-        id: "clear-all-keeps-temporary-rows",
-        assumed: "ClearAll() resets the fields and filters of a global temporary record but keeps its rows, as Clear(Rec) does.",
-        tests: "Purch.-Post ClearAllVariables (RunWithCheck relies on TempWhseRcptHeader, filled by SetWhseRcptHeader before); Tests-SCM tests that post a warehouse receipt of a purchase order.",
-        probe: "A global temporary record with a row and a filter, ClearAll(), then Count and GetFilters; the same in a codeunit run by Codeunit.Run.",
-    },
     PageOnInsertRecordFalseAfterCodeInsert => {
         id: "page-oninsertrecord-false-after-code-insert",
         assumed: "When a page's OnInsertRecord inserts the row itself and answers false, the page goes on with that row as a stored one: the next edit of the row runs OnModifyRecord instead of OnInsertRecord again.",
@@ -163,12 +157,6 @@ registry! {
         tests: "Temp Blob Impl.FromFieldRef (FieldRef.CalcField on each Blob it reads); 14 Tests-SCM-Manufacturing tests (Demand Forecast Card).",
         probe: "A FieldRef on a Blob field of a stored row read without CalcFields: CalcField() then Value and HasValue; the same on a Code field (the error text) and on a FlowField.",
     },
-    ModifyWithoutChangeKeepsRowVersion => {
-        id: "modify-without-change-keeps-row-version",
-        assumed: "A Modify of a persistent record whose fields equal the stored row's does not change the row's SystemRowVersion, so a buffer another variable read before it is not stale afterwards.",
-        tests: "Create Prod. Order Lines.Copy (ProdOrder.Modify after Refresh Production Order) followed by the test's Modify of the same Production Order; 4 Tests-SCM-Manufacturing tests (SCM Prod. Whse. Handling).",
-        probe: "Two variables Get the same row; one Modifies with no change and Commit; the other changes a field and Modifies: accepted or DB:RecordChanged; the same after a Modify that changes a field.",
-    },
     EvaluateRecordIdCompositeKey => {
         id: "evaluate-recordid-composite-key",
         assumed: "Evaluate into a RecordId of a table whose primary key has several fields reads `Table: v1,v2,...` as Format writes it (a value that is empty or holds a comma is in double quotes): one value per key field, each read as Evaluate reads that field's type (a Code as written, an Integer or an Enum by its name or ordinal); a count of values other than the key's field count is rejected. A rejected text leaves a RecordId that is not blank as it was and answers false (any key).",
@@ -180,6 +168,12 @@ registry! {
         assumed: "A temporary record passed by value to a parameter that is not declared temporary gives the callee a record of the stored table holding the current row (the copy is no longer temporary); a parameter declared temporary gets an independent empty buffer (pinned).",
         tests: "To-do.InsertTask / InsertTaskAndRelatedData (Task2: Record \"To-do\" receives the temporary Rec of CreateTaskFromTask, Task2.Insert(true), then Task2.Get); Tests-Marketing Marketing Matrix Management TaskWith* (10 tests).",
         probe: "A temporary record with a row, passed by value to a procedure with a parameter of the same table not declared temporary: the callee's IsTemporary, Insert then Count of the stored table, and whether the caller's temporary rows change.",
+    },
+    EventVarAliasThroughSender => {
+        id: "event-var-alias-through-sender",
+        assumed: "A `var` parameter of an event is a reference to the publisher's variable: when a subscriber changes that variable through the sender (Sender.Proc()) and leaves its own parameter as it was sent, the change stays after the event (a scalar parameter is not written back over it). Records, lists and other shared values already alias.",
+        tests: "Create Inventory Pick/Movement.AutoCreatePickOrMove passes its globals LineCreated and CurrWarehouseActivityHeader to OnAutoCreatePickOrMoveFromWhseRequest; the manufacturing subscriber fills them through sender.CreatePickOrMoveLine. Tests-SCM SCM Extend Warehouse (35 tests).",
+        probe: "A codeunit with global Boolean, Integer and Text variables passed as var arguments to an IncludeSender event; a subscriber with `var Sender` that calls a procedure setting the globals and does not assign its own parameters: the globals after the event; the same when the subscriber also assigns one of the parameters.",
     },
     TestPageAssertEqualsIntegerOnTextControl => {
         id: "testpage-assertequals-integer-on-text-control",
@@ -409,12 +403,6 @@ registry! {
         tests: "About 975 Tests-ERM, Tests-SCM and Tests-General Journal tests (Library - Random and Library - Utility date and time helpers).",
         probe: "Dt.Date() and Dt.Time() for a set DateTime and for 0DT, next to DT2Date(Dt) and DT2Time(Dt).",
     },
-    LoadFieldsNonStored => {
-        id: "load-fields-non-stored",
-        assumed: "SetLoadFields and AddLoadFields accept a field that is not stored (a FlowField) and add nothing to the load request for it. (The documentation says a runtime error or a false result; Microsoft's own code passes a FlowField and runs on real BC.)",
-        tests: "Sales Line SetLoadFieldsForInvDiscoundCalculation (\"Reserved Quantity\"): about 2,350 Tests-ERM and Tests-SCM tests.",
-        probe: "SetLoadFields(FlowField) and SetLoadFields(Normal, FlowField) then FindFirst and AreFieldsLoaded of the normal field; AddLoadFields the same; the result of SetLoadFields used as a value.",
-    },
     TestFieldBlobWithStoredContent => {
         id: "test-field-blob-with-stored-content",
         assumed: "TestField of a Blob field that holds content from the database (after CalcFields) passes. (An empty Blob fails and a Blob written through a stream and not saved passes: misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob.)",
@@ -462,12 +450,6 @@ registry! {
         assumed: "An [HttpClientHandler] that answers true makes the request fail as one to an unresolvable host does (the call answers false, the response keeps status 0), whatever the host. (Pinned for example.invalid by session/PZHttpHandler.al:HandlerAnsweringTrue_SendsTheRealRequest; the runtime never sends, so a host that BC could resolve is treated the same.)",
         tests: "NP Retail and Microsoft tests whose handler falls through with true and then expects a failed call or a real answer.",
         probe: "A handler answering true for a resolvable host on an environment without a network: the Boolean, the status and GetLastErrorText.",
-    },
-    DataItemViewAndTableView => {
-        id: "data-item-view-and-table-view",
-        assumed: "A report data item whose DataItemTableView filters, run with a SetTableView (or a record given to the static Run), shows the rows that pass both: the filters of the view are added to the item's own, which live in the report's filter group. (A DataItemTableView that only sorts keeps the SetTableView filters: handlers/TestReportRuntimeContracts.al:393-410.)",
-        tests: "Whse.-Source - Create Document and Production Order callers (Warehouse Request, Item data items): about 800 Tests-SCM and Tests-ERM tests.",
-        probe: "A data item with DataItemTableView = where(F = filter(1..2)) run after SetTableView with F in 2..3, with a filter on another field, and the item's GetFilters in OnPreDataItem.",
     },
     OpenNewSkipsOnFindRecord => {
         id: "open-new-skips-onfindrecord",
@@ -583,6 +565,12 @@ registry! {
         tests: "Microsoft tests that call a report procedure which filters a data item and then RunModal the report with its request page.",
         probe: "A report procedure RowDi.SetFilter(Code, 'B*'), RunModal with a handler that clicks OK and a report that counts the rows in OnPreDataItem and OnAfterGetRecord: are the B rows alone read?",
     },
+    DotNetTypeOfUnassignedPrimitive => {
+        id: "dotnet-type-of-unassigned-primitive",
+        assumed: "GetDotNetType of a DotNet variable that holds nothing and is declared as System.String, System.Char, System.Byte or System.Int32 answers the declared type (such a variable reads as its default value); the pinned unassigned case, System.Object, raises DotNetVariableNotCreated.",
+        tests: "DotNet Array.StringArray, CharArray, ByteArray and Int32Array (GetDotNetType(DotNetString) and the like on a variable nothing was assigned to), reached through Web Request Helper and the Cryptography Management wrappers.",
+        probe: "An unassigned DotNet String, Char, Byte and Int32 variable: GetDotNetType(X).FullName, and the same for an unassigned DotNet StringBuilder and Type.",
+    },
 }
 
 thread_local! {
@@ -670,15 +658,15 @@ mod tests {
     #[test]
     fn marks_are_collected_per_thread_and_cleared() {
         clear_hits();
-        assume(Assumption::ClearAllKeepsTemporaryRows);
-        assume(Assumption::ClearAllKeepsTemporaryRows);
+        assume(Assumption::QueryClosedAfterLastRow);
+        assume(Assumption::QueryClosedAfterLastRow);
         assume(Assumption::NextWholeDecimal);
         assert_eq!(
             take_hits(),
-            vec![Assumption::ClearAllKeepsTemporaryRows, Assumption::NextWholeDecimal]
+            vec![Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal]
         );
         assert!(take_hits().is_empty());
-        assume(Assumption::ClearAllKeepsTemporaryRows);
+        assume(Assumption::QueryClosedAfterLastRow);
         std::thread::spawn(|| assert!(take_hits().is_empty())).join().unwrap();
         clear_hits();
     }

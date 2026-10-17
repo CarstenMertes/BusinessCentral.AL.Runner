@@ -1330,6 +1330,14 @@ impl Session {
                 // Only Insert(_, true) takes a SystemId the code put in the buffer; a trigger
                 // that sets one on any other insert changes nothing about the stored id.
                 if let (false, Some(i), Some(id)) = (keep_id, id_slot, assigned) {
+                    // A SystemId the code changed after the platform gave one (OnInsert: `SystemId := CreateGuid()`): whether BC
+                    // keeps it is not pinned (the corpus pins only a value set before Insert, events/TestProbeEventContracts.al:
+                    // SystemId_BeforeOnInsert_AndPresetBuffer). Refused, not guessed.
+                    if !matches!((&rec.borrow().fields[i], &id), (Value::Guid(a), Value::Guid(b)) if a == b) {
+                        return unsupported(
+                            "a SystemId set by an Insert event or OnInsert without InsertWithSystemId: whether BC keeps it is not pinned (probe wanted, corpus issue 216 item 4)",
+                        );
+                    }
                     rec.borrow_mut().fields[i] = id;
                 }
                 if keep_id {
@@ -1510,12 +1518,10 @@ impl Session {
                 }
                 // A Modify that changes no field leaves the row version as it is: Microsoft's tests Modify a record after a refresh report
                 // modified its row without a change (Create Prod. Order Lines.Copy) and pass, which a bumped version would make a
-                // stale write (assumption modify-without-change-keeps-row-version).
+                // stale write (record/lt-priority-assumptions/PriorityAssumptions.al:143-244, real BC 29: after a Modify that changes nothing and a Commit, the
+                // other variable's Modify of a changed field is accepted, while a Modify that changed a field makes it fail with DB:RecordChanged).
                 let old_version = match stored_row.as_deref() {
                     Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::ModifyWithoutChangeKeepsRowVersion,
-                        );
                         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
                             rec.borrow_mut().fields[i] = old[i].clone();
                         }

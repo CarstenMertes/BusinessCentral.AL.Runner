@@ -488,8 +488,10 @@ fn a_null_string_is_empty_a_null_object_is_refused_and_ordering_a_string_is_refu
         "case sensitive: {:?}",
         r.result
     );
-    let r = run(&host, "C: DotNet Convert;", "exit(C.Name() < 'b');", ": Boolean");
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Name() < 'abc');", ": Boolean");
     assert!(unsupported(&r).contains("not pinned"));
+    let r = run(&host, "C: DotNet Convert;", "exit(C.Name() < 'b');", ": Boolean");
+    assert!(matches!(r.result, Ok(Value::Boolean(true))), "{:?}", r.result);
 }
 
 #[test]
@@ -1453,4 +1455,22 @@ fn graph_get_tenant_detail_answers_an_empty_tenant_info() {
     );
     assert_eq!(text(r), "[||]");
     assert_eq!(host.log(), vec![]);
+}
+
+// Microsoft's CDS Integration Impl.GetOptionSetMetadata: `Result.Add(Pair.Key, Pair.Value)` on a
+// `Dictionary of [Integer, Text]` takes .NET results as the element types.
+#[test]
+fn a_dotnet_result_is_added_to_a_collection_as_its_element_type() {
+    let host = Fake::new(|r| match r {
+        Req::Invoke(_, m, _) if m == "Num" => reply(DotNetValue::Int32(3)),
+        Req::Invoke(_, m, _) if m == "Name" => reply(DotNetValue::Str("Abc".into())),
+        other => panic!("{other:?}"),
+    });
+    let r = run(
+        &host,
+        "C: DotNet Convert; D: Dictionary of [Integer, Text]; L: List of [Text];",
+        "D.Add(C.Num(), C.Name()); L.Add(C.Name()); exit(D.Get(3) + L.Get(1));",
+        ": Text",
+    );
+    assert_eq!(text(r), "AbcAbc");
 }

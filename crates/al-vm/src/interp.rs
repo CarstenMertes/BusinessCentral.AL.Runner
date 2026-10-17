@@ -207,15 +207,14 @@ impl Session {
         for (i, v) in fresh.into_iter().enumerate() {
             if !keep.contains(&i) {
                 // A global temporary record keeps its rows, as Clear leaves them
-                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount); that ClearAll does the same
-                // is not pinned: Base Application's Purch.-Post ClearAllVariables relies on it.
+                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount); ClearAll does the same: real BC 29
+                // keeps both rows of a codeunit's global temporary record and drops its filter, called directly and through
+                // Codeunit.Run (record/lt-priority-assumptions/PriorityAssumptions.al:247-281, ClearAll_TemporaryGlobalRecord_*).
+                // Pinned for a codeunit's global; the same for a report, a page or a record shared through Copy is not.
                 if let (Value::Record(old), Value::Record(new)) = (&inst.globals[i], &v) {
                     let id = old.borrow().temp_id.clone();
                     if id.is_some() && old.borrow().temporary {
                         new.borrow_mut().temp_id = id;
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::ClearAllKeepsTemporaryRows,
-                        );
                     }
                 }
                 inst.globals[i] = v;
@@ -333,6 +332,10 @@ impl Session {
             B::Ge => Value::Boolean(ops::compare_operator(l, r, true)? != Ordering::Less),
             B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(l, r)?),
             B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(l, r)?),
+            B::DotNetLt => Value::Boolean(dotnet::dotnet_order(l, r)? == Ordering::Less),
+            B::DotNetLe => Value::Boolean(dotnet::dotnet_order(l, r)? != Ordering::Greater),
+            B::DotNetGt => Value::Boolean(dotnet::dotnet_order(l, r)? == Ordering::Greater),
+            B::DotNetGe => Value::Boolean(dotnet::dotnet_order(l, r)? != Ordering::Less),
         })
     }
 
@@ -499,6 +502,25 @@ impl Session {
         try_call: bool,
         f: &mut Frame,
     ) -> Result<Value, Signal> {
+        // A publisher's `var` arguments are references to the caller's variables. A subscriber that changes such a variable
+        // through the sender (not through its own parameter) must keep the change, so a scalar the subscribers left as it was
+        // sent is not written back over the caller's place. Assumption event-var-alias-through-sender.
+        let sent: Vec<Value> = if self.engine.facts[object][routine].publisher {
+            let by_var = &self.engine.program.objects[object].routines[routine].by_var;
+            values
+                .iter()
+                .enumerate()
+                .map(|(i, v)| {
+                    if by_var.get(i).copied().unwrap_or(false) {
+                        v.clone()
+                    } else {
+                        Value::Null
+                    }
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
         let result = self.call(object, routine, inst, values);
         if let Err(Signal::Error(_)) = &result {
             if let Some(finals) = self.error_finals.take() {
@@ -518,8 +540,16 @@ impl Session {
             (Ok((_, finals)), true) => (Value::Boolean(true), finals),
             (r, _) => r?,
         };
-        for (a, v) in args.iter().zip(finals) {
+        for (i, (a, v)) in args.iter().zip(finals).enumerate() {
             if let ir::Arg::Ref(p) = a {
+                if let Some(sent) = sent.get(i) {
+                    if unchanged_scalar(sent, &v) && self.read(p, f).is_ok_and(|now| !unchanged_scalar(sent, &now)) {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::EventVarAliasThroughSender,
+                        );
+                        continue;
+                    }
+                }
                 self.write_back(p, v, f)?;
             }
         }
@@ -1146,5 +1176,26 @@ impl ForKind {
             is_boolean: matches!(ty, RtType::Boolean),
             is_integer: matches!(ty, RtType::Integer),
         }
+    }
+}
+
+/// Both values are the same scalar (a kind that is copied, not shared). Anything else is "not known to be unchanged".
+fn unchanged_scalar(a: &Value, b: &Value) -> bool {
+    match (a, b) {
+        (Value::Boolean(x), Value::Boolean(y)) => x == y,
+        (Value::Integer(x), Value::Integer(y)) => x == y,
+        (Value::BigInteger(x), Value::BigInteger(y)) => x == y,
+        (Value::Decimal(x), Value::Decimal(y)) => x == y,
+        (Value::Byte(x), Value::Byte(y)) => x == y,
+        (Value::Char(x), Value::Char(y)) => x == y,
+        (Value::Text(x), Value::Text(y)) | (Value::Code(x), Value::Code(y)) => x.as_str() == y.as_str(),
+        (Value::Date(x, c), Value::Date(y, d)) => x == y && c == d,
+        (Value::Time(x), Value::Time(y))
+        | (Value::DateTime(x), Value::DateTime(y))
+        | (Value::Duration(x), Value::Duration(y)) => x == y,
+        (Value::Option(x, _), Value::Option(y, _)) => x == y,
+        (Value::Enum(t, x), Value::Enum(u, y)) => t == u && x == y,
+        (Value::Guid(x), Value::Guid(y)) => x == y,
+        _ => false,
     }
 }

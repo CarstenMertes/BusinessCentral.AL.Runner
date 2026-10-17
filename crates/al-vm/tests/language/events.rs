@@ -1592,3 +1592,36 @@ codeunit 50100 C
         other => panic!("expected a refusal, got {other:?}"),
     }
 }
+
+// A `var` parameter of an event is a reference to the publisher's variable. A subscriber that changes that variable through
+// the sender (`Sender.SetFlag()`), without touching its own copy of the parameter, keeps the change: Base Application's
+// "Create Inventory Pick/Movement" passes its globals LineCreated and CurrWarehouseActivityHeader to
+// OnAutoCreatePickOrMoveFromWhseRequest, and the manufacturing subscriber fills them through `sender.CreatePickOrMoveLine`
+// (Tests-SCM "SCM Extend Warehouse".SC4TC41Silver and 34 more). Not pinned in the corpus: assumption event-var-alias-through-sender.
+const ALIAS: &str = r#"
+codeunit 50200 Pub
+{
+    var Flag: Boolean; Count: Integer; Note: Text;
+    procedure Mark() begin Flag := true; Count := 7; Note := 'marked'; end;
+    [IntegrationEvent(true, false)] local procedure OnWork(var Flag: Boolean; var Count: Integer; var Note: Text; var Own: Integer) begin end;
+    procedure Go(): Text
+    var Own: Integer;
+    begin
+        OnWork(Flag, Count, Note, Own);
+        exit(Format(Flag) + Format(Count) + Note + Format(Own));
+    end;
+}
+codeunit 50201 Sub
+{
+    [EventSubscriber(ObjectType::Codeunit, Codeunit::Pub, 'OnWork', '', false, false)]
+    local procedure F(var Sender: Codeunit Pub; var Own: Integer) begin Sender.Mark(); Own := 3; end;
+}
+codeunit 50100 C
+{
+    procedure F(): Text var P: Codeunit Pub; begin exit(P.Go()); end;
+}"#;
+
+#[test]
+fn a_var_parameter_sees_the_publishers_variable_changed_through_the_sender() {
+    assert_eq!(text(run(ALIAS, "F")), "Yes7marked3");
+}

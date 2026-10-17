@@ -1786,7 +1786,7 @@ impl Session {
                                                 theirs.len() == pos.len()
                                                     && theirs.iter().zip(pos.iter()).all(|(a, b)| {
                                                         al_builtins::ops::compare(a, b)
-                                                            .is_some_and(|o| o == std::cmp::Ordering::Equal)
+                                                            .is_ok_and(|o| o == std::cmp::Ordering::Equal)
                                                     })
                                             } {
                                                 al_builtins::assumptions::assume(

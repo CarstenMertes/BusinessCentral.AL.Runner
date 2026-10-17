@@ -3770,7 +3770,14 @@ fn write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
     }
     let mut bytes = vec![0xEF, 0xBB, 0xBF];
     bytes.extend_from_slice(text.as_bytes());
-    crate::stream::write_raw_bytes(&mut a[stream], &bytes)?;
+    // A text, CDATA, comment or processing instruction leaves the stream where it was, as JSON does: a second WriteTo writes over the
+    // first one's bytes (xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:WriteTo_OutStream_TwiceIntoSameStream and its three siblings:
+    // one copy, 16 bytes). Pinned for a stream nothing else was written to. A document and an element keep appending.
+    if with(&h, |d| !matches!(d, XData::Document { .. } | XData::Element { .. })) {
+        crate::stream::write_raw_bytes_rewinding(&mut a[stream], &bytes)?;
+    } else {
+        crate::stream::write_raw_bytes(&mut a[stream], &bytes)?;
+    }
     Ok(Value::Boolean(true))
 }
 
@@ -4201,7 +4208,13 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlNamespaceManager", "LookupNamespace", ["Text", "Text"]) => manager_lookup_namespace,
         ("XmlNamespaceManager", "HasNamespace", ["Text"]) => manager_has_namespace,
         (_, "WriteTo", ["Text"]) if is_node && first_by_var => write_to_text,
-        ("XmlDocument" | "XmlElement", "WriteTo", ["OutStream"] | ["XmlWriteOptions", "OutStream"]) => {
+        // The byte order mark and the markup, as for an element (xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:
+        // WriteTo_OutStream_Attached_AndText, `Ù‹<![CDATA[x]]>`, 16 bytes; the Text, Comment and ProcessingInstruction files pin their own).
+        (
+            "XmlDocument" | "XmlElement" | "XmlNode" | "XmlText" | "XmlCData" | "XmlComment" | "XmlProcessingInstruction",
+            "WriteTo",
+            ["OutStream"] | ["XmlWriteOptions", "OutStream"],
+        ) => {
             write_to_outstream
         }
         ("XmlWriteOptions", "PreserveWhitespace", ["Boolean"]) => write_options_preserve_whitespace,

@@ -7494,6 +7494,7 @@
 71106 GlobalsAfterRun_AndInitReport
 71106 PreReportFilter_DiscardedOrKept
 71106 SecondExecute_OnOneVariable
+71106 SetTableView_Forms
 71106 UseRequestPage_Getter
 71108 New_InTheMiddle
 71109 FindFirstField_Hit_And_Miss
@@ -9121,6 +9122,7 @@
 73238 P163_SetCurrentKey_UndeclaredFields_WithFiltersAndCopy
 73242 P163_Truncate_TableOtherRecordsRead
 73242 P163_Truncate_TemporaryAndMedia_WhichGuardFirst
+73250 P163_SetTableView_OverSortingDescending
 73250 P163_SetTableView_OverWhere_SameAndOtherField
 73251 P129_Evaluate_EmptyAndGarbage_Numbers_ResultUnused
 73258 P129_WriteText_Ascii_PerEncoding
@@ -9717,7 +9719,10 @@
 73838 RequestFilterFields_ParametersText
 73838 SetTableView_AddsToDataItemTableView
 73838 SetTableView_CalledTwice_LastWins
+73838 SetTableView_NoDataItemInReport
+73838 SetTableView_OtherKey
 73838 SetTableView_SameFieldAsTableView
+73838 SetTableView_WrongTable_Error
 73850 AssertEquals_PassAndFail
 73850 Cancel_TriggersOrder
 73850 NoHandler_VariableRunModal_Error
@@ -9856,6 +9861,7 @@
 74011 ClearRecordRef
 74013 ClearRecordField
 74014 ClearParameters
+74025 CodeCoverageRefreshOnly
 74036 P133_MixedModalHandlers_TestPageList_PageCard
 74036 P133_ModalHandler_PageTyped_NeverTouchesThePage
 74036 P133_ModalHandler_PageTyped_ResponsesOfCard
@@ -10068,6 +10074,9 @@
 74319 SetCurrentKey_PrimaryKeyOrderForComparison
 74331 P136_DelChr_PaymentExportShape
 74340 P136_Callstack_CodeunitRunAndTryFunction
+74352 P136_Report_ViewOverTableWithoutDataItem
+74352 P136_Report_ViewTemporaryMarkedAndSorted
+74352 P136_Report_ViewWithTwoDataItemsOverTheTable
 74401 AddA_Part1
 74401 AddA_Part2
 74404 AddO_Part1

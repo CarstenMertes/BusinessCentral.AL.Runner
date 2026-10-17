@@ -365,8 +365,8 @@ impl Session {
                             .strip_prefix('\'')
                             .and_then(|v| v.strip_suffix('\''))
                             // Only a literal that starts with a comparison operator (`'>10'`, `'>=2'`) is read as a filter; a quoted name such as a
-            // member with parentheses keeps its quotes (record/TestCalcFormulaQuotedFilterTests.Codeunit.al:60308).
-            .filter(|v| !v.contains('\'') && !v.contains('"') && v.starts_with(['<', '>']))
+                            // member with parentheses keeps its quotes (record/TestCalcFormulaQuotedFilterTests.Codeunit.al:60308).
+                            .filter(|v| !v.contains('\'') && !v.contains('"') && v.starts_with(['<', '>']))
                             .unwrap_or(value);
                         let expr = self
                             .parse_filter_text(value, &ty)

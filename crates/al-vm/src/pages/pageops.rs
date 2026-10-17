@@ -526,7 +526,9 @@ impl Session {
                 // A record with marks is not pinned beyond what the same test shows (`Marked: Yes` in the filters and a count of 1 for a
                 // mark outside the selected row); it stays refused.
                 if !dst.borrow().marks.is_empty() || dst.borrow().marked_only {
-                    return unsupported("Page.SetSelectionFilter into a record with marks (the marked result is not pinned)");
+                    return unsupported(
+                        "Page.SetSelectionFilter into a record with marks (the marked result is not pinned)",
+                    );
                 }
                 dst.borrow_mut().filters.clear();
                 let fields = src.borrow().fields.clone();

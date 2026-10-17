@@ -1289,7 +1289,9 @@ fn array_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Re
     let found = if matches!(needle, Value::Library(..)) {
         let target = handle_of(needle)?;
         if with_node(&target, |n| matches!(n, JsonNode::Scalar(_))) {
-            return unsupported("JsonArray.IndexOf of a JsonToken or JsonValue holding a scalar (which element it names is not modelled)");
+            return unsupported(
+                "JsonArray.IndexOf of a JsonToken or JsonValue holding a scalar (which element it names is not modelled)",
+            );
         }
         kids.iter().position(|k| Rc::ptr_eq(k, &target))
     } else {
@@ -1311,7 +1313,9 @@ fn array_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Re
                     break;
                 }
                 Some(false) => {}
-                None => return unsupported("JsonArray.IndexOf of a value against an element of another type (not pinned)"),
+                None => {
+                    return unsupported("JsonArray.IndexOf of a value against an element of another type (not pinned)");
+                }
             }
         }
         at
@@ -1363,10 +1367,12 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
     // A variable whose node sits inside a container (it was added) reads into a new node of its own: the container keeps what it
     // holds (json/lt-json-typed-overloads/P101ArrayAdd.al:P101_Add_JsonToken, `Tk.ReadFrom(..)` after `A.Add(Tk)` leaves `A` as it was).
     if parent_link(&h).and_then(|w| w.upgrade()).is_some() {
-        if let Some(Value::Library(name, _)) = r.as_deref_mut().map(|v| &mut *v) {
+        if let Some(slot @ Value::Library(..)) = r {
+            let Value::Library(name, _) = &*slot else {
+                unreachable!()
+            };
             let fresh = new_handle(JsonNode::Scalar(Scalar::Null));
-            let name = name.clone();
-            *r.as_deref_mut().expect("receiver") = Value::Library(name, fresh.clone());
+            *slot = Value::Library(name.clone(), fresh.clone());
             h = fresh;
         }
     }

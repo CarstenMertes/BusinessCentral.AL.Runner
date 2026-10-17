@@ -309,6 +309,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
     ("System.Format#2", format_2),
     ("System.FormatVariant#1", format_variant),
+    ("System.FormatDecimalField#1", format_decimal_field),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
         "System.EvaluateVariableOption#1",
@@ -868,6 +869,28 @@ fn format_variant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) 
         })));
     }
     format_1(ctx, r, args)
+}
+
+/// `Format(Rec.Field)` of a Decimal field that declares its places (`DecimalPlaces` or an `AutoFormatExpression` precision;
+/// lowering appends them as a fourth argument `min:max`). The standard formats 0 and 1 and the XML format 9 show those places; 0 groups
+/// thousands (pages/lt-page-autoformat-lookups/P113AutoFormat.al:P113_AF_TableFieldFormatIsPlain, `1,234.500` and, for 1 and 9,
+/// `1234.500`; pages/lt-page-presentation-properties/P119Table.al:P119_DecimalPlaces `1.500`).
+fn format_decimal_field(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    let len = int_arg(args, 1).unwrap_or(0) as i32;
+    let std = int_arg(args, 2).unwrap_or(0) as i32;
+    let places = match args.get(3) {
+        Some(Value::Text(t)) => crate::pagefmt::parse_decimal_places(t),
+        _ => None,
+    };
+    if let (Value::Decimal(d), Some(places), 0 | 1 | 9) = (&args[0], places, std) {
+        let mut text = crate::pagefmt::decimal_text(d, places);
+        if std != 0 {
+            text.retain(|c| c != ',');
+        }
+        return Ok(Value::Text(crate::format::pad(text, len).into()));
+    }
+    let n = args.len().min(3);
+    format_1(ctx, r, &mut args[..n])
 }
 
 fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
@@ -1852,6 +1875,7 @@ pub(crate) mod tests {
         let derived = [
             "System.EvaluateVariableOption#1",
             "System.FormatVariant#1",
+            "System.FormatDecimalField#1",
             "Dialog.ErrorNotLiteral#1",
         ];
         for id in registered_ids().into_iter().filter(|id| !derived.contains(id)) {

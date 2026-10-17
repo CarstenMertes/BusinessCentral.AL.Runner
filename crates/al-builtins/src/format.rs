@@ -53,6 +53,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             (2, true) => "1".into(),
             (2, false) => "0".into(),
             (9, b) => b.to_string(),
+            // German after GlobalLanguage(1031): `Ja` / `Nein` (misc/lt-probes-needed-3/PnC*: Identity_GlobalLanguage_SetsAndRestores
+            // `set_ok = Ja`, ObjectId_WithAnotherGlobalLanguage `set 1031 ok = Ja`, P142_Date_Language).
+            (_, true) if ctx.language() == 1031 => "Ja".into(),
+            (_, false) if ctx.language() == 1031 => "Nein".into(),
             (_, true) => "Yes".into(),
             (_, false) => "No".into(),
         },

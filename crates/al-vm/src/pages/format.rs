@@ -418,6 +418,12 @@ impl Session {
         // (P113_DC_PageLevelDataCaptionFields: `DataCaptionFields = Name` shows `C1 ∙ Alpha`).
         let names = names_of(&engine.program.objects[table.object as usize].properties);
         let mut parts = Vec::new();
+        // Without DataCaptionFields the caption shows the primary key (pages/lt-page-runtime/P82RunModal*.al:RunModal_Number_OnCard
+        // `LT P82 Card Caption - A`, P117 `LT P117 Card - 1`).
+        let names = names.or_else(|| {
+            let key: Vec<String> = table.keys.first()?.iter().map(|&i| table.fields[i].name.clone()).collect();
+            Some(key.join(","))
+        });
         if let Some(names) = names {
             for name in names.split(',') {
                 let name = name.trim().trim_matches('"');

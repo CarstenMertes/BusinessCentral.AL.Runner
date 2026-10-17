@@ -714,7 +714,8 @@ impl Lowerer<'_> {
         // Format text (assumption number-to-text-is-format), where the same into a variable raises (VaTCompare.al af117).
         let variant_into_text_field = matches!(place, ir::Place::Field(..))
             && matches!(target_ty, Ty::Text(_) | Ty::Code(_))
-            && matches!(self.ty_ref(&kids[1]), Ty::Variant)
+            // `FieldRef.Value()` is typed Unknown by the checker: a value only known at run time, like a Variant.
+            && matches!(self.ty_ref(&kids[1]), Ty::Variant | Ty::Unknown)
             && matches!(op_kind, Some(SyntaxKind::Assign) | None);
         // A Variant holding an Integer or a Date assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117 and af121); the conversion into a field, a parameter

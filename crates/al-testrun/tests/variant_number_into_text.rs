@@ -22,6 +22,16 @@ codeunit 50500 "T"
         if Row.Cd <> '2645' then Error('code %1', Row.Cd);
     end;
     [Test]
+    procedure FromAFieldRef()
+    var Row: Record "VNT Row"; Dst: Record "VNT Row"; RR: RecordRef; FR: FieldRef;
+    begin
+        Row.Id := 2645; Row.Insert();
+        RR.GetTable(Row);
+        FR := RR.Field(1);
+        Dst.Txt := FR.Value();
+        if Dst.Txt <> '2645' then Error('text %1', Dst.Txt);
+    end;
+    [Test]
     procedure IntoAVariable()
     var V: Variant; T: Text;
     begin
@@ -49,7 +59,7 @@ fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {
         &[SuiteRun::everything()],
         &RunOptions::default(),
     );
-    for name in ["IntoAField", "IntoAVariable"] {
+    for name in ["IntoAField", "FromAFieldRef", "IntoAVariable"] {
         let o = rt.first_outcome(&CaseId {
             codeunit: 50500,
             name: name.into(),

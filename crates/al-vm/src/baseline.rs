@@ -235,7 +235,14 @@ impl Session {
     /// `OnInstallAppPerDatabase`, where `CompanyName()` is empty and a per-company table cannot
     /// be accessed.
     pub fn set_company(&mut self, company: &str) -> String {
-        std::mem::replace(&mut self.cx.company, company.into()).to_string()
+        let old = std::mem::replace(&mut self.cx.company, company.into()).to_string();
+        if old != company && !self.events.global_setups.is_empty() {
+            // UNPROBED (assumption database-trigger-setup-per-company): Microsoft's setup subscribers answer by
+            // CompanyName(), so what was asked in one company is not reused in another.
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DatabaseTriggerSetupPerCompany);
+            self.events.global_setups.clear();
+        }
+        old
     }
 
     /// Replaces the session's data with the baseline's (a new session starts here).

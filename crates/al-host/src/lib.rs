@@ -69,6 +69,25 @@ impl ClientType {
     }
 }
 
+/// The server base address when nothing sets one (ADR-042).
+pub const DEFAULT_SERVER_URL: &str = "http://localhost:8080/BC/";
+
+/// Checks a `--server-url` value: an absolute `http` or `https` URL with a host.
+pub fn check_server_url(url: &str) -> Result<String, String> {
+    let u = url.trim();
+    let rest = u
+        .strip_prefix("http://")
+        .or_else(|| u.strip_prefix("https://"))
+        .ok_or_else(|| format!("`{url}` is not an absolute http or https URL"))?;
+    let host = rest.split(['/', '?', '#']).next().unwrap_or("");
+    if host.is_empty() || u.contains(char::is_whitespace) || u.contains(['?', '#']) {
+        return Err(format!(
+            "`{url}` is not an absolute http or https URL without query (scheme://host[:port]/path)"
+        ));
+    }
+    Ok(u.to_string())
+}
+
 /// What kind of server the session runs on, as far as Environment Information can tell
 /// (`--environment`, ADR-014 amendment 2026-10-15).
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -130,6 +149,11 @@ pub trait Identity {
     /// The id of the company the session runs in: the `Id` of its row in the Company table.
     fn company_id(&self) -> [u8; 16] {
         COMPANY_ID
+    }
+    /// The base address of the web client that `GetUrl` builds on: scheme, host, port and instance path, no query
+    /// (ADR-042). The default is a stated host value, not a claim about BC.
+    fn server_base_url(&self) -> String {
+        DEFAULT_SERVER_URL.into()
     }
     /// The name of the machine that hosts the session (the `Host Name` of the Session table).
     fn host_name(&self) -> String {
@@ -298,6 +322,75 @@ impl Identity for InEnvironment {
     fn host_name(&self) -> String {
         self.inner.host_name()
     }
+    fn server_base_url(&self) -> String {
+        self.inner.server_base_url()
+    }
+    fn time_zones(&self) -> Vec<TimeZoneInfo> {
+        self.inner.time_zones()
+    }
+}
+
+/// An identity whose server answers at another base address.
+struct InServerUrl {
+    inner: Box<dyn Identity>,
+    url: String,
+}
+
+impl Identity for InServerUrl {
+    fn server_base_url(&self) -> String {
+        self.url.clone()
+    }
+    fn environment(&self) -> Environment {
+        self.inner.environment()
+    }
+    fn user_id(&self) -> String {
+        self.inner.user_id()
+    }
+    fn user_security_id(&self) -> [u8; 16] {
+        self.inner.user_security_id()
+    }
+    fn company_name(&self) -> String {
+        self.inner.company_name()
+    }
+    fn session_id(&self) -> i32 {
+        self.inner.session_id()
+    }
+    fn service_instance_id(&self) -> i32 {
+        self.inner.service_instance_id()
+    }
+    fn tenant_id(&self) -> String {
+        self.inner.tenant_id()
+    }
+    fn gui_allowed(&self) -> bool {
+        self.inner.gui_allowed()
+    }
+    fn is_service_tier(&self) -> bool {
+        self.inner.is_service_tier()
+    }
+    fn windows_language(&self) -> i32 {
+        self.inner.windows_language()
+    }
+    fn global_language(&self) -> i32 {
+        self.inner.global_language()
+    }
+    fn locale_id(&self) -> i32 {
+        self.inner.locale_id()
+    }
+    fn time_zone(&self) -> String {
+        self.inner.time_zone()
+    }
+    fn current_client_type(&self) -> ClientType {
+        self.inner.current_client_type()
+    }
+    fn default_client_type(&self) -> ClientType {
+        self.inner.default_client_type()
+    }
+    fn company_id(&self) -> [u8; 16] {
+        self.inner.company_id()
+    }
+    fn host_name(&self) -> String {
+        self.inner.host_name()
+    }
     fn time_zones(&self) -> Vec<TimeZoneInfo> {
         self.inner.time_zones()
     }
@@ -360,6 +453,9 @@ impl Identity for InCompany {
     }
     fn host_name(&self) -> String {
         self.inner.host_name()
+    }
+    fn server_base_url(&self) -> String {
+        self.inner.server_base_url()
     }
     fn time_zones(&self) -> Vec<TimeZoneInfo> {
         self.inner.time_zones()
@@ -454,6 +550,15 @@ impl Host {
         self
     }
 
+    /// The same host whose server answers at `url` (`--server-url`, ADR-042).
+    pub fn with_server_url(mut self, url: &str) -> Host {
+        self.identity = Box::new(InServerUrl {
+            inner: self.identity,
+            url: url.to_string(),
+        });
+        self
+    }
+
     /// The same host on another file system.
     pub fn with_files(mut self, files: impl FileSystem + 'static) -> Host {
         self.files = Box::new(files);
@@ -479,6 +584,35 @@ impl Default for Host {
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn the_server_base_url_has_a_default_and_can_be_set_through_every_wrapper() {
+        let h = Host::default();
+        assert_eq!(h.identity.server_base_url(), "http://localhost:8080/BC/");
+        let h = h
+            .with_server_url("https://bc.example/BC/")
+            .in_company("X")
+            .in_environment(Environment::OnPrem);
+        assert_eq!(h.identity.server_base_url(), "https://bc.example/BC/");
+        assert_eq!(h.in_company("Y").identity.server_base_url(), "https://bc.example/BC/");
+    }
+
+    #[test]
+    fn a_server_url_is_an_absolute_http_url_without_query() {
+        assert_eq!(check_server_url(" http://h:1/BC/ "), Ok("http://h:1/BC/".into()));
+        assert!(check_server_url("https://h").is_ok());
+        for bad in [
+            "",
+            "h:8080",
+            "ftp://h/",
+            "http://",
+            "/BC/",
+            "http://h/?a=1",
+            "http://h /x",
+        ] {
+            assert!(check_server_url(bad).is_err(), "{bad}");
+        }
+    }
+
     use super::*;
 
     #[test]

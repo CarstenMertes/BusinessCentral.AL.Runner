@@ -48,6 +48,18 @@ pub struct Suite<'a> {
 /// The document. `bc_build` is the Microsoft build the dependency apps came from, recorded as a property so a build
 /// change that flips a case shows its cause; `wall_s` is the run's wall time (Runner dialect only).
 pub fn write(suites: &[Suite<'_>], dialect: Dialect, bc_build: Option<&str>, wall_s: f64) -> String {
+    write_with_baseline(suites, dialect, bc_build, wall_s, &[])
+}
+
+/// [`write`], and in the Runner dialect the ids of the assumptions the install baseline relied on as the suite-level
+/// property `baseline_assumptions` (comma separated). Not every test carries them: the baseline is shared by all.
+pub fn write_with_baseline(
+    suites: &[Suite<'_>],
+    dialect: Dialect,
+    bc_build: Option<&str>,
+    wall_s: f64,
+    baseline_assumptions: &[String],
+) -> String {
     let esc: fn(&str) -> String = match dialect {
         Dialect::Oracle => esc_oracle,
         Dialect::Runner => esc_runner,
@@ -64,11 +76,18 @@ pub fn write(suites: &[Suite<'_>], dialect: Dialect, bc_build: Option<&str>, wal
             "<?xml version=\"1.0\" encoding=\"utf-8\"?>\n<testsuites tests=\"{total}\" failures=\"{failures}\" errors=\"0\" skipped=\"{skipped}\" time=\"{wall_s:.3}\">\n"
         ),
     };
+    let mut top = String::new();
     if let Some(b) = bc_build {
-        s.push_str(&format!(
-            "  <properties><property name=\"bc_build\" value=\"{}\" /></properties>\n",
-            esc(b)
+        top.push_str(&format!("<property name=\"bc_build\" value=\"{}\" />", esc(b)));
+    }
+    if dialect == Dialect::Runner && !baseline_assumptions.is_empty() {
+        top.push_str(&format!(
+            "<property name=\"baseline_assumptions\" value=\"{}\" />",
+            esc(&baseline_assumptions.join(","))
         ));
+    }
+    if !top.is_empty() {
+        s.push_str(&format!("  <properties>{top}</properties>\n"));
     }
     for suite in suites {
         let time: f64 = suite.cases.iter().map(|c| c.time).sum();
@@ -361,6 +380,19 @@ mod tests {
         }
         s.push_str("</testsuites>\n");
         s
+    }
+
+    #[test]
+    fn the_runner_dialect_lists_the_assumptions_of_the_baseline_at_suite_level() {
+        let x = write_with_baseline(&[], Dialect::Runner, Some("27.5"), 1.0, &["a-b".into(), "c-d".into()]);
+        assert!(
+            x.contains("<properties><property name=\"bc_build\" value=\"27.5\" /><property name=\"baseline_assumptions\" value=\"a-b,c-d\" /></properties>"),
+            "{x}"
+        );
+        assert!(
+            !write_with_baseline(&[], Dialect::Oracle, None, 0.0, &["a-b".into()]).contains("baseline_assumptions")
+        );
+        assert!(!write_with_baseline(&[], Dialect::Runner, None, 0.0, &[]).contains("properties"));
     }
 
     #[test]

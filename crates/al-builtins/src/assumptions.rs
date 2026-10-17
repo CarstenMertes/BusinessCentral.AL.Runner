@@ -67,6 +67,24 @@ pub struct Info {
 }
 
 registry! {
+    PackageAutoIncrementFromOne => {
+        id: "package-auto-increment-from-one",
+        assumed: "A table built from a RapidStart package whose rows hold no value for the table's AutoIncrement field (Dimension Value.\"Dimension Value ID\" is not in the shipped package) gets 1, 2, 3 in the order of the package's rows, as the database numbers rows it inserts, and the counter continues after them.",
+        tests: "Sales-Calc. Discount Test LcyDiscountTest and ERM Sales Quotes SalesQuoteWithContact (a dimension set entry must carry a nonzero Dimension Value ID); Production & Assembly Costing AssemblyOrderWithDimensionShouldPostWithoutError.",
+        probe: "Not measurable from the corpus (it depends on the import tool): import a RapidStart package into Dimension Value and read the field. Until then the rule rests on the field being AutoIncrement and absent from Microsoft's package.",
+    },
+    DatabaseTriggerSetupPerCompany => {
+        id: "database-trigger-setup-per-company",
+        assumed: "The answer of the Global Triggers event GetDatabaseTableTriggerSetup is not reused after the session's company changes (the install baseline's per-database roots run with no company after the per-company roots).",
+        tests: "Microsoft's install roots Plan Installer, Upgrade Tag Install and No. Series Copilot Install must run to their end on real BC for Microsoft's tests to pass; their setup subscribers (Change Log Management.GetDatabaseTableTriggerSetup, CRM Integration Management.GetDatabaseTableTriggerSetup) exit when CompanyName() is empty.",
+        probe: "A GetDatabaseTableTriggerSetup subscriber that logs CompanyName(); write a table, ChangeCompany, write it again: is the setup asked again per company?",
+    },
+    GetUrlWebBaseAddress => {
+        id: "geturl-web-base-address",
+        assumed: "GetUrl(ClientType::Web) without company and object returns the host's server base address as set (--server-url, default http://localhost:8080/BC/), unchanged (ADR-042).",
+        tests: "Company-Initialize (Doc. Exch. Service Setup.SetURLsToDefault -> OAuth2Impl.GetDefaultRedirectUrl), so the install baseline of a company built from the RapidStart package; every Microsoft test that reads Application Area Setup or Workflow after it.",
+        probe: "GetUrl(ClientType::Web) asserted for scheme, path and query, with and without a company, and inside a per-database install trigger (docs/probes-needed.md).",
+    },
     ClearAllKeepsTemporaryRows => {
         id: "clear-all-keeps-temporary-rows",
         assumed: "ClearAll() resets the fields and filters of a global temporary record but keeps its rows, as Clear(Rec) does.",

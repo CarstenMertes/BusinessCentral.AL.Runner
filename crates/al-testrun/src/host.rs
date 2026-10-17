@@ -83,6 +83,24 @@ pub fn set_environment(environment: al_host::Environment) {
     let _ = ENVIRONMENT.set(environment);
 }
 
+/// The server base address of the run (`--server-url`, ADR-042). A server sets it per request, so it is not set-once.
+static SERVER_URL: std::sync::RwLock<Option<String>> = std::sync::RwLock::new(None);
+
+/// Sets the server base address; `None` is the default of `al_host::DEFAULT_SERVER_URL`.
+pub fn set_server_url(url: Option<String>) {
+    if let Ok(mut w) = SERVER_URL.write() {
+        *w = url;
+    }
+}
+
+/// The server base address the system host answers `GetUrl` with, and whether it is the default.
+pub fn server_url() -> (String, bool) {
+    match SERVER_URL.read().ok().and_then(|r| r.clone()) {
+        Some(u) => (u, false),
+        None => (al_host::DEFAULT_SERVER_URL.to_string(), true),
+    }
+}
+
 /// The environment of the system host, as text (a key of the install baseline on disk holds it).
 pub fn environment_text() -> &'static str {
     match ENVIRONMENT.get().copied().unwrap_or_default() {
@@ -115,6 +133,7 @@ pub fn host_at(start: Option<i64>) -> Host {
         None => Host::new(SystemClock, AlRunnerIdentity),
     };
     let host = host.in_environment(ENVIRONMENT.get().copied().unwrap_or_default());
+    let host = host.with_server_url(&server_url().0);
     match FILES_DIR.get() {
         Some(dir) => host.with_files(DirFileSystem::new(dir.clone())),
         None => host,

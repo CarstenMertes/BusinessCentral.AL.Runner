@@ -3830,7 +3830,27 @@ fn set_attribute(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
 fn remove_attribute(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let target = match a.first() {
-        Some(Value::Library(..)) => node_of(&a[0])?,
+        // An attribute object names the attribute to remove from the receiver by its name: one that belongs to another element
+        // removes nothing there and leaves its own element alone, and one that no element holds removes the receiver's attribute of
+        // that name; removing it again is silent (fieldref/lt-fieldref-testfield-types/XmlElementRemoveAttributeObject.al:
+        // RemoveAttribute_ByObject).
+        Some(Value::Library(..)) => {
+            let attr = node_of(&a[0])?;
+            let key = with(&attr, |d| match d {
+                XData::Attribute { local, ns, .. } => Some((local.clone(), ns.clone())),
+                _ => None,
+            });
+            let Some((name, ns)) = key else {
+                return unsupported("RemoveAttribute with something that is no attribute");
+            };
+            let found = attrs_of(&h)
+                .into_iter()
+                .find(|x| with(x, |d| matches!(d, XData::Attribute { local, ns: n, .. } if *local == name && *n == ns)));
+            match found {
+                Some(x) => x,
+                None => return Ok(Value::Null),
+            }
+        }
         _ => {
             let name = arg_text(a, 0)?;
             let found = attrs_of(&h).into_iter().find(|x| {

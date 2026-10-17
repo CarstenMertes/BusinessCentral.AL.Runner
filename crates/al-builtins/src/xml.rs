@@ -3770,7 +3770,14 @@ fn write_to_outstream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
     }
     let mut bytes = vec![0xEF, 0xBB, 0xBF];
     bytes.extend_from_slice(text.as_bytes());
-    crate::stream::write_raw_bytes(&mut a[stream], &bytes)?;
+    // A text, CDATA, comment or processing instruction leaves the stream where it was, as JSON does: a second WriteTo writes over the
+    // first one's bytes (xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:WriteTo_OutStream_TwiceIntoSameStream and its three siblings:
+    // one copy, 16 bytes). Pinned for a stream nothing else was written to. A document and an element keep appending.
+    if with(&h, |d| !matches!(d, XData::Document { .. } | XData::Element { .. })) {
+        crate::stream::write_raw_bytes_rewinding(&mut a[stream], &bytes)?;
+    } else {
+        crate::stream::write_raw_bytes(&mut a[stream], &bytes)?;
+    }
     Ok(Value::Boolean(true))
 }
 
@@ -3830,7 +3837,30 @@ fn set_attribute(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRe
 fn remove_attribute(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let h = recv(r)?;
     let target = match a.first() {
-        Some(Value::Library(..)) => node_of(&a[0])?,
+        // An attribute object names the attribute to remove from the receiver by its name: one that belongs to another element
+        // removes nothing there and leaves its own element alone, and one that no element holds removes the receiver's attribute of
+        // that name; removing it again is silent (fieldref/lt-fieldref-testfield-types/XmlElementRemoveAttributeObject.al:
+        // RemoveAttribute_ByObject).
+        Some(Value::Library(..)) => {
+            let attr = node_of(&a[0])?;
+            let key = with(&attr, |d| match d {
+                XData::Attribute { local, ns, .. } => Some((local.clone(), ns.clone())),
+                _ => None,
+            });
+            let Some((name, ns)) = key else {
+                return unsupported("RemoveAttribute with something that is no attribute");
+            };
+            let found = attrs_of(&h).into_iter().find(|x| {
+                with(
+                    x,
+                    |d| matches!(d, XData::Attribute { local, ns: n, .. } if *local == name && *n == ns),
+                )
+            });
+            match found {
+                Some(x) => x,
+                None => return Ok(Value::Null),
+            }
+        }
         _ => {
             let name = arg_text(a, 0)?;
             let found = attrs_of(&h).into_iter().find(|x| {
@@ -4181,9 +4211,19 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("XmlNamespaceManager", "LookupNamespace", ["Text", "Text"]) => manager_lookup_namespace,
         ("XmlNamespaceManager", "HasNamespace", ["Text"]) => manager_has_namespace,
         (_, "WriteTo", ["Text"]) if is_node && first_by_var => write_to_text,
-        ("XmlDocument" | "XmlElement", "WriteTo", ["OutStream"] | ["XmlWriteOptions", "OutStream"]) => {
-            write_to_outstream
-        }
+        // The byte order mark and the markup, as for an element (xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:
+        // WriteTo_OutStream_Attached_AndText, `Ù‹<![CDATA[x]]>`, 16 bytes; the Text, Comment and ProcessingInstruction files pin their own).
+        (
+            "XmlDocument"
+            | "XmlElement"
+            | "XmlNode"
+            | "XmlText"
+            | "XmlCData"
+            | "XmlComment"
+            | "XmlProcessingInstruction",
+            "WriteTo",
+            ["OutStream"] | ["XmlWriteOptions", "OutStream"],
+        ) => write_to_outstream,
         ("XmlWriteOptions", "PreserveWhitespace", ["Boolean"]) => write_options_preserve_whitespace,
         ("XmlReadOptions", "PreserveWhitespace", ["Boolean"]) => read_options_preserve_whitespace,
         ("XmlReadOptions" | "XmlWriteOptions", "PreserveWhitespace", []) => options_preserve_whitespace_get,

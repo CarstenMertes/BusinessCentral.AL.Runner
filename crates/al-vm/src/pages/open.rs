@@ -181,7 +181,7 @@ impl Session {
         let has_source = self.has_source(st);
         // SourceTableView is the page's own view of its table (corpus
         // pagefindrecord/TestPageFindRecord.al:192 PlainPage_WithoutTheTriggers_WalksTheTableDescending);
-        // how it combines with the view of a record handed to Page.Run is the assumption `page-run-record-and-source-table-view`.
+        // how it combines with the view of a record handed to Page.Run is pinned by P145PageRunView.al.
         let source_view = engine.program.objects[st.borrow().object as usize]
             .properties
             .iter()
@@ -197,9 +197,10 @@ impl Session {
             self.set_view_in(&rec, &table, view, Some(parts::LINK_GROUP), false, true)?;
         }
         // A record handed to Page.Run brings its own filters, key and order; they come first and the page's
-        // SourceTableView then adds to them (how the two combine is not pinned: assumption
-        // `page-run-record-and-source-table-view`). A view that names a sorting or an order would fight the record's key,
-        // so that stays refused.
+        // SourceTableView then adds to them: the record's filters stay in their groups, the view's land in group 2 beside the
+        // record's own group 2, the view's SORTING replaces the record's key and the record's direction stays (types/lt-code-digits-page-run-view/
+        // P145PageRunView.al:P145_A_RecFilterSameFieldAsView, _RecFilterOverlappingView, _RecFilterOtherField, _RecKeyDescending,
+        // _RecKeyPrimary, _RecFilterInGroup1, _RecFilterInGroup2). A view that names an ORDER stays refused: nothing pins it.
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
             let src = r.borrow();
@@ -218,13 +219,12 @@ impl Session {
         if let (Some(view), true) = (source_view, has_source) {
             if record.is_some() {
                 let lower = view.to_ascii_lowercase();
-                if lower.contains("sorting(") || lower.contains("order(") {
+                if lower.contains("order(") {
                     self.mark_closed(st);
                     return unsupported(
-                        "Page.Run with a record on a page whose SourceTableView names a sorting or an order (not pinned)",
+                        "Page.Run with a record on a page whose SourceTableView names an order (not pinned)",
                     );
                 }
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageRunRecordAndSourceTableView);
             }
             let rec = self.page_rec(st);
             let table = self.table(&rec)?;
@@ -232,7 +232,7 @@ impl Session {
             // FilterGroup(2) and finds group 0 empty (corpus handlers/TestPageSourceTableView.al:
             // FiltersAreInFilterGroup2WhenOnOpenPageRuns).
             // The filters the handed record carries in group 2 (Bank Acc. Reconciliation.OpenWorksheet sets the statement there) stay: the view
-            // adds its own to the group instead of replacing it (assumption `page-run-record-and-source-table-view`).
+            // adds its own to the group instead of replacing it (P145PageRunView.al:P145_A_RecFilterInGroup2).
             let kept: Vec<_> = if record.is_some() {
                 rec.borrow().filters.iter().filter(|f| f.group == 2).cloned().collect()
             } else {
@@ -433,7 +433,8 @@ impl Session {
                 .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)));
         for (slot, v) in saved {
             if caller_set && !matches!(v, Value::Record(_)) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SaveValuesCallerValueWins);
+                // The caller's value stays over the stored one (report/lt-requestpage-savevalues-date-text-setvalue/P147SaveValuesText.al:
+                // P147_Text_StoredVsCaller_Ok, P147_Boolean_CallerFalseOverStoredTrue, P147_Option_CallerSelectedOverStoredAll).
                 continue;
             }
             inst.borrow_mut().globals[slot] = v;

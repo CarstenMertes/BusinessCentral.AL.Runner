@@ -114,18 +114,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // the assignment compiles (the target must state AssignmentCompatibility, AL0122) is the checker's.
         (Value::Enum(_, o), T::Enum(to)) => Value::Enum(*to, o),
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
-        // An Enum value into an Option or an Integer is its ordinal, a BigInteger into an Option likewise (an ordinal
-        // beyond the members is kept, as for an Integer). Not pinned by the corpus (docs/probes-needed.md).
-        (Value::Enum(_, o), T::Option(m))
-            if crate::assumptions::hit(crate::assumptions::Assumption::EnumOptionIntegerOrdinal) =>
-        {
-            Value::Option(o, m.clone().into())
-        }
-        (Value::Enum(_, o), T::Integer)
-            if crate::assumptions::hit(crate::assumptions::Assumption::EnumOptionIntegerOrdinal) =>
-        {
-            Value::Integer(o)
-        }
+        // An Enum value into an Option, an Integer or a Decimal is its ordinal; one beyond the members is kept
+        // (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_DirectAssign_Option_Integer, EnumVariant_To_Integer).
+        (Value::Enum(_, o), T::Option(m)) => Value::Option(o, m.clone().into()),
+        (Value::Enum(_, o), T::Integer) => Value::Integer(o),
+        (Value::Enum(_, o), T::Decimal) => Value::Decimal(Decimal::from(o)),
+        // A BigInteger into an Option likewise (not pinned: assumption enum-option-integer-ordinal).
         (Value::BigInteger(n), T::Option(m)) => match i32::try_from(n) {
             Ok(o) => {
                 crate::assumptions::assume(crate::assumptions::Assumption::EnumOptionIntegerOrdinal);
@@ -136,21 +130,20 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Option(o, _), T::Integer) => Value::Integer(o),
         (Value::Integer(n), T::Duration) => Value::Duration(i64::from(n)),
         (Value::BigInteger(n), T::Duration) => Value::Duration(n),
-        // A Duration into an Integer, BigInteger or Decimal is its milliseconds (the reverse of a whole number into a
-        // Duration, pinned by record/TestCalcFormulaValidationTests.Codeunit.al:42). Calendar Management CalcTimeDelta
-        // does `Result := EndingTime - StartingTime` (Time - Time is a Duration) into an Integer. Not pinned.
-        (Value::Duration(ms), T::Integer) if i32::try_from(ms).is_ok() => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
-            Value::Integer(i32::try_from(ms).expect("checked"))
-        }
-        (Value::Duration(ms), T::BigInteger) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
-            Value::BigInteger(ms)
-        }
-        (Value::Duration(ms), T::Decimal) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
-            Value::Decimal(Decimal::from(ms))
-        }
+        // A Duration into an Integer, BigInteger or Decimal is its milliseconds; into an Integer a value beyond its range raises
+        // ConversionCast (types/lt-filter-enum-relation-duration-guid/D_Duration.al:DateTimeMinusDateTime_To_Integer,
+        // Duration_To_BigInteger_Decimal).
+        (Value::Duration(ms), T::Integer) => match i32::try_from(ms) {
+            Ok(i) => Value::Integer(i),
+            Err(_) => {
+                return raise(
+                    format!("Overflow under conversion of System.Int64 value {ms} to System.Int32."),
+                    "ConversionCast",
+                );
+            }
+        },
+        (Value::Duration(ms), T::BigInteger) => Value::BigInteger(ms),
+        (Value::Duration(ms), T::Decimal) => Value::Decimal(Decimal::from(ms)),
         (Value::Integer(i), T::Option(m)) => Value::Option(i, m.clone().into()),
         // A Duration is a count of milliseconds.
         (v, T::Duration) if as_decimal(&v).is_some() && !matches!(v, Value::Text(_) | Value::Code(_)) => {
@@ -470,16 +463,32 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
         }
         // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
-        (Value::Integer(_), RtType::Text(_)) => raise(
-            "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.",
-            "TypeConversion",
-        ),
+        // The same for an Enum (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer, `text_big`).
+        // A Variant holding a number or an Enum into a Text or Code field raises likewise, with NavCode for a Code target
+        // (types/lt-variant-to-text-fields/VariantNumberToField.al: TextField_FromVariantInteger_Result, _BigInteger_, _Decimal_,
+        // CodeField_FromVariantNumbers_Result; VariantEnumOptionToText.al:TextField_FromVariantEnum_Result).
+        (
+            Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Enum(..),
+            RtType::Text(_) | RtType::Code(_),
+        ) => {
+            let nav = if matches!(t, RtType::Code(_)) {
+                "NavCode"
+            } else {
+                "NavText"
+            };
+            raise(
+                format!(
+                    "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.{nav} value."
+                ),
+                "TypeConversion",
+            )
+        }
         _ => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     }
 }
 
-/// A number a Variant holds (`FieldRef.Value()`) assigned to a Text or Code field of a record: its default `Format` text. Not pinned:
-/// assumption number-to-text-is-format. Base Application's Workflow Table Relation Value.CreateNew does `Value := FieldRef.Value()` into
+/// A number `FieldRef.Value()` returns, assigned to a Text or Code field of a record: its default `Format` text (types/lt-variant-to-text-fields/
+/// VariantFieldRefBigIntToText.al:TextField_FromFieldRefValue_Numbers); an Enum goes in as its caption (types/lt-enum-to-text-fieldref/EnumToTextFieldRef.al:FieldRefValue_EnumToTextField_PerMember). Base Application's Workflow Table Relation Value.CreateNew does `Value := FieldRef.Value()` into
 /// a Text[250] field (114 Tests-Workflow tests). A Variant into a Text *variable* is not this: it raises (VaTCompare.al:af117).
 /// `None` when the value is no number or the target no Text or Code.
 #[cold]
@@ -500,7 +509,6 @@ pub fn number_into_text_field(
         RtType::Code(max) => (max, true),
         _ => return None,
     };
-    crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
     let text = match crate::format::try_format(v, 0, 0, ctx) {
         Ok(text) => text,
         Err(e) => return Some(Err(Signal::Unsupported(e))),
@@ -525,9 +533,8 @@ fn date_to_datetime(n: i32) -> Value {
     Value::DateTime((i64::from(n) - 1) * 86_400_000 + 1)
 }
 
-/// A whole number and a Duration add and subtract as milliseconds, into a BigInteger (types/lt-duration-arithmetic/DurationPlusInteger.al
-/// `sum_format_default = 2000`, IntegerPlusDuration.al, IntegerMinusDuration.al); the amount is not pinned for overflow. Used to be assumed; Microsoft's routing code
-/// adds a day in milliseconds to a Duration (Tests-SCM-Manufacturing, 20 tests; assumption duration-arithmetic-with-number).
+/// A whole number and a Duration add and subtract as milliseconds, into a BigInteger (types/lt-duration-integer-arithmetic/
+/// DurationPlusInteger.al:DurationPlusInteger_ResultType_Result, IntegerPlusDuration.al, IntegerMinusDuration.al).
 #[cold]
 #[inline(never)]
 fn duration_with_number(op: Arith, duration_first: bool, d: i64, k: i64) -> Result<Value, Signal> {
@@ -743,14 +750,14 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .ok_or_else(|| Signal::Unsupported("Time moved by an amount that overflows (not pinned)".into()));
         }
         // A whole-number Decimal moves a Time like an Integer (Calendar Management's `Time + Decimal`); a fraction raises
-        // below. Assumed, as for a Date (registry entry time-add-whole-decimal).
+        // below (corpus types/lt-for-option-time-decimal/TimeAddWholeDecimal.al: TimeDecimal_Whole_PlusMinus1000, _Zero, _Negative,
+        // _WrapsAroundMidnight, _FromDivisionAndProduct). A whole value beyond Integer raises ConversionCast like a fraction (_BeyondInteger).
         (V::Time(_), V::Decimal(d)) | (V::Decimal(d), V::Time(_))
             if matches!(op, Arith::Add | Arith::Sub)
                 && d.fract().is_zero()
                 && (op == Arith::Add || matches!(l, V::Time(_)))
                 && i32::try_from(d.mantissa() / 10i128.pow(d.scale())).is_ok() =>
         {
-            crate::assumptions::assume(crate::assumptions::Assumption::TimeAddWholeDecimal);
             let n = V::Integer(i32::try_from(d.mantissa() / 10i128.pow(d.scale())).expect("checked"));
             return match (l, r) {
                 (V::Time(_), _) => arith(op, l, &n),
@@ -758,12 +765,14 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             };
         }
         (V::Time(a), V::Decimal(d)) | (V::Decimal(d), V::Time(a))
-            if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() =>
+            if matches!(op, Arith::Add | Arith::Sub) && *a > 0 =>
         {
+            // The text shows the Decimal as written (`3000000000.0`), a fraction as `1000.5`; a subtraction names the negated
+            // amount (`-3000000000.0`, `-1000.5`), TimeAddWholeDecimal.al:TimeDecimal_Whole_BeyondInteger, TimeDecimal_Fractional.
+            let d = if op == Arith::Sub { -*d } else { *d };
             return raise(
                 format!(
-                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.Int32.",
-                    d.normalize()
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
                 ),
                 "ConversionCast",
             );
@@ -1143,6 +1152,8 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Guid(a), V::Guid(b)) => a.cmp(b),
         (V::Option(a, _), V::Option(b, _)) => a.cmp(b),
         (V::Option(a, _), V::Integer(b)) | (V::Integer(a), V::Option(b, _)) => a.cmp(b),
+        // An Option column against an Enum value compares by ordinal (B_EnumOptionVariant.al:SetFilter_FlowField_And_Compare).
+        (V::Option(a, _), V::Enum(_, b)) | (V::Enum(_, a), V::Option(b, _)) => a.cmp(b),
         // A Duration compares with a whole number of milliseconds (json/TestJsonComplete.al: `Dur > 0`).
         (V::Duration(a), V::Integer(b)) => a.cmp(&i64::from(*b)),
         (V::Integer(a), V::Duration(b)) => i64::from(*a).cmp(b),
@@ -1539,8 +1550,9 @@ mod tests {
         );
         assert!(matches!(
             convert(Value::Duration(i64::MAX), &RtType::Integer),
-            Err(Signal::Unsupported(_))
+            Err(Signal::Error(_))
         ));
+        // Beyond Integer raises ConversionCast (types/lt-filter-enum-relation-duration-guid/D_Duration.al:DateTimeMinusDateTime_To_Integer).
     }
 
     // Calendar Management: `Time + Decimal` with a whole Decimal (about 820 Microsoft tests through the service set-up).
@@ -1625,7 +1637,7 @@ mod tests {
 
     /// Duration `/`, `div` and `mod` with a whole number, and Duration / Duration, as corpus
     /// types/lt-filter-enum-relation-duration-guid/D_Duration.al:Duration_Arithmetic pins them (D1 = 90000 ms, D2 = 30000 ms).
-    /// A Variant's number into a record's Text or Code field is its Format text (assumption number-to-text-is-format; a BigInteger has
+    /// A number `FieldRef.Value()` returns, into a record's Text or Code field, is its Format text (VariantFieldRefBigIntToText.al; a BigInteger has
     /// no thousands separator in Format); into a Text variable an Integer raises TypeConversion (corpus VaTCompare.al af117).
     #[test]
     fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {

@@ -2034,10 +2034,10 @@ impl Session {
         Ok(())
     }
 
-    /// The Labels block of the top-level data items is written even when no row reaches the column
+    /// The Labels block of every data item, nested ones too, is written even when no row reaches the column
     /// (handlers/TestReportSaveAsColumnDetailsContracts.al:LabelsAreWrittenForAnEmptyDataItem,
-    /// handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll). Items nested in another are added when a
-    /// row reaches them: whether an unreached nested item writes its labels is not pinned.
+    /// handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll, report/PTSaveAsEmpty.al:SaveAs_NoRowAtAll_ExactLines
+    /// `ParentIdColCaption` then `ChildIdColCaption`).
     fn dataset_labels(&mut self, schema: &Schema) -> Result<(), Signal> {
         let engine = self.engine.clone();
         // The labels the report and its extensions declare come first, base report then extensions, in declaration
@@ -2056,7 +2056,7 @@ impl Session {
             .expect("a SaveAs run has a dataset")
             .labels
             .extend(declared);
-        for item in schema.report().items.iter().filter(|i| i.parent.is_none()) {
+        for item in schema.report().items.iter() {
             let Some(t) = item.table.and_then(|t| engine.tables.get(t)).and_then(|t| t.clone()) else {
                 continue;
             };

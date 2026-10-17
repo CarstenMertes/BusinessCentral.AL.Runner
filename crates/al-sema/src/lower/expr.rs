@@ -15,14 +15,8 @@ impl Lowerer<'_> {
 
     /// Variable `name` (lower case) of the base object, seen from the extension being lowered
     /// (ADR-023): its slot among the base object's globals, and its type. Refused until the probes
-    /// of ADR-023 pin the access.
-    /// Notes the assumption a table extension's use of a base table variable rests on.
-    pub(crate) fn note_base_var_use(&mut self) {
-        if self.ws.objects[self.oi].kind == ObjKind::TableExtension {
-            self.assume(al_builtins::assumptions::Assumption::TableExtensionBaseVars);
-        }
-    }
-
+    /// of ADR-023 pin the access. A table extension's use of a base table variable is pinned by
+    /// misc/lt-protected-var-abs-query-views/P146TableExtProtected.al.
     pub(crate) fn base_var(&self, name: &str) -> L<(usize, Ty, Option<String>)> {
         // A table extension sees the protected variables of its base table, on the globals of the same record
         // (ADR-021 per-record instances). Not pinned by a corpus test; Microsoft's own tableextension 906 "Asm.
@@ -340,7 +334,6 @@ impl Lowerer<'_> {
                     && self.ws.objects[self.oi].kind == ObjKind::Report
                     && !self.globals.contains_key("this") =>
             {
-                self.assume(al_builtins::assumptions::Assumption::ReportThisPassedOn);
                 Ok(ir::Expr::ThisInstance)
             }
             ParenExpr => self.expr(&kids[0]),
@@ -364,17 +357,30 @@ impl Lowerer<'_> {
             }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
-                // `a and b in [..]` is `a and (b in [..])` (grammar/expressions.rs): not pinned, Microsoft's
-                // Purchase Header needs it.
-                if matches!(op.as_str(), "and" | "or" | "xor")
-                    && kids.get(1).is_some_and(|r| {
-                        r.kind() == BinExpr
-                            && sig_tokens(r)
+                // `a and b in [..]` is `a and (b in [..])` and `a in [..] and b` is `(a in [..]) and b`: `in` binds tighter than
+                // `and`, `or` and `xor` (grammar/expressions.rs; corpus types/lt-in-precedence-date-guid-filters/P143Prec_*.al).
+                // `<Integer> in [..] and|or|xor <Boolean>`: the corpus has BC answer `1 in [1, 2] and false` with Yes
+                // (P143Prec_InAnd_Int), which neither reading of the precedence explains, while the Boolean and enum forms follow
+                // `(a in [..]) and b`. The Integer form is refused until it is probed again (docs/probes-needed.md).
+                if matches!(op.as_str(), "and" | "or" | "xor") {
+                    let in_op = |n: &SyntaxNode| {
+                        n.kind() == BinExpr
+                            && sig_tokens(n)
                                 .first()
                                 .is_some_and(|t| t.text().eq_ignore_ascii_case("in"))
-                    })
-                {
-                    self.assume(al_builtins::assumptions::Assumption::InBindsTighterThanAnd);
+                    };
+                    if let (Some(l), Some(r)) = (kids.first(), kids.get(1)) {
+                        if in_op(l) && !in_op(r) {
+                            if let Some(subject) = l.children().next() {
+                                if matches!(self.ty_ref(&subject), Ty::Integer | Ty::BigInteger | Ty::Decimal) {
+                                    return Err(
+                                        "an Integer `in` set followed by and, or or xor with a Boolean: BC answers `1 in [1, 2] and false` with Yes (corpus P143Prec_InAnd_Int), which no reading of the precedence explains (docs/probes-needed.md)"
+                                            .into(),
+                                    );
+                                }
+                            }
+                        }
+                    }
                 }
                 // How a settled DotNet operand may be used depends on the operator (ADR-024).
                 let operand_use = match op.as_str() {

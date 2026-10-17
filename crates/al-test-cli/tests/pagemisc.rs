@@ -917,8 +917,8 @@ fn page_run_modal_with_a_record_hands_back_the_selected_row_on_lookup_ok() {
 // Microsoft's "Item Vendor Catalog" tests open a list with OpenNew, set a filter on the first key field and type the other key
 // field: the list shows the blank line and the filter value is on it (2 Tests-ERM tests failed with "The row does not exist on the
 // TestPage"). The corpus pins the blank line of an editable list (handlers/TestPageNewRowLine_Tests.al) and that a new row takes
-// a single-valued filter (handlers/TestPageNewRowFilters_Tests.al); that a filter change brings the blank line back is assumed
-// (filter-change-lands-on-new-line, docs/probes-needed.md).
+// a single-valued filter (handlers/TestPageNewRowFilters_Tests.al); that a filter change brings the blank line back is pinned by
+// pages/lt-filter-change-new-line/FilterChangeNewLine.al.
 #[test]
 fn a_filter_that_leaves_an_editable_list_empty_lands_on_the_blank_line_carrying_the_filter_value() {
     passes(&format!(
@@ -948,7 +948,7 @@ fn a_page_procedure_named_like_a_platform_method_leaves_the_other_overload_to_th
 
 // Base Application's Sales Invoice calls `CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId)` in OnAfterGetCurrRecord
 // behind `Visible = false`; that procedure ends in `CurrPage.Update(false)` on the part page, which is created and not opened. 926 Tests-ERM
-// tests failed with "The TestPage is not open." CurrPage.Update on such a part does nothing (assumption hidden-part-update-is-noop).
+// tests failed with "The TestPage is not open." CurrPage.Update on such a part does nothing (pages/lt-hidden-part-currpage/HiddenPartCurrPageUpdateFalse.al:UpdateFalse_LiteralInvisible_OpenEdit).
 #[test]
 fn current_page_update_inside_a_procedure_of_a_hidden_part_does_nothing() {
     passes(&format!(
@@ -989,7 +989,7 @@ fn a_control_editable_expression_follows_a_variable_set_by_another_controls_on_v
 }
 
 // handlers/TestPageCreateModeNewRecordArgs.al:OpenNew_TableWithRows pins xRec `B` in OnNewRecord; a table procedure the page's code calls
-// on Rec sees that xRec (Sales Invoice Subform.OnNewRecord -> Rec.InitType; assumption page-rec-procedure-sees-page-xrec).
+// on Rec sees that xRec (Sales Invoice Subform.OnNewRecord -> Rec.InitType; pinned by pages/lt-xrec-table-procedure/XRecTableProcedure.al).
 #[test]
 fn a_table_procedure_called_on_rec_in_a_page_trigger_sees_the_pages_xrec() {
     passes(&format!(
@@ -1042,7 +1042,7 @@ fn a_page_variable_reads_its_caption_before_it_runs() {
 }
 
 // Check Credit Limit.PopulateDataOnNotification reaches `CurrPage.CreditLimitDetails.PAGE` on a Page variable that never ran
-// (assumption part-of-a-page-that-never-ran); after the page ran and closed, the same reach stays refused.
+// (pages/lt-part-never-ran/NeverRanReadRec.al); after the page ran and closed, the same reach stays refused.
 #[test]
 fn a_page_variable_reaches_the_part_of_a_page_that_never_ran() {
     passes(&format!(

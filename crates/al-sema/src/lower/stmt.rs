@@ -101,20 +101,20 @@ impl Lowerer<'_> {
             None => Vec::new(),
         };
         if qcp {
-            let assume = ir::Stmt::Assume(al_builtins::assumptions::Assumption::QueryClosePageFallsThroughAsTrue);
+            // A Boolean OnQueryClosePage that reaches its end without a value lets the page close
+            // (pages/lt-query-close-page-result/QcrNamedBranches.al:OnQueryClosePage_NamedTrueIfFlagFlagFalseHandlerOk_Observed and its siblings).
             let yes = ir::Expr::Const(ir::Const::Boolean(true));
             match self.qcp_ret.take() {
                 Some((l, flag)) => {
                     let guard = vec![ir::Stmt::If(
                         ir::Expr::Unary(ir::UnOp::Not, Box::new(ir::Expr::Load(ir::Place::Local(flag)))),
-                        vec![assume.clone(), ir::Stmt::Assign(ir::Place::Local(l), yes.clone())],
+                        vec![ir::Stmt::Assign(ir::Place::Local(l), yes.clone())],
                         Vec::new(),
                     )];
                     body = guard_exits(body, &guard);
                     body.extend(guard);
                 }
                 None => {
-                    body.push(assume);
                     body.push(ir::Stmt::Exit(Some(yes)));
                 }
             }
@@ -349,6 +349,8 @@ impl Lowerer<'_> {
 
     /// Notes that the lowering of the statement being lowered rests on assumption `a`: the statement is
     /// preceded by `Stmt::Assume(a)`, so a test that runs it is reported as flagged.
+    // No lowering-level assumption is registered at the moment; the next one calls this.
+    #[allow(dead_code)]
     pub(crate) fn assume(&mut self, a: al_builtins::assumptions::Assumption) {
         if let Some(frame) = self.assumed.last_mut() {
             if !frame.contains(&a) {
@@ -763,16 +765,17 @@ impl Lowerer<'_> {
             }
             _ => rhs,
         };
-        // A Variant into a record's Text or Code field stays unconverted here: the field write turns a number it holds into its
-        // Format text (assumption number-to-text-is-format), where the same into a variable raises (VaTCompare.al af117).
+        // A `FieldRef.Value()` into a record's Text or Code field stays unconverted here: the field write turns a number into its Format text.
         let variant_into_text_field = matches!(place, ir::Place::Field(..))
             && matches!(target_ty, Ty::Text(_) | Ty::Code(_))
-            // `FieldRef.Value()` is typed Unknown by the checker: a value only known at run time, like a Variant.
-            && matches!(self.ty_ref(&kids[1]), Ty::Variant | Ty::Unknown)
+            // `FieldRef.Value()` is typed Unknown by the checker: its number goes into the field as its Format text
+            // (types/lt-variant-to-text-fields/VariantFieldRefBigIntToText.al:TextField_FromFieldRefValue_Numbers), where a Variant holding
+            // a number raises TypeConversion (VariantNumberToField.al:TextField_FromVariantInteger_Result and siblings).
+            && matches!(self.ty_ref(&kids[1]), Ty::Unknown)
             && matches!(op_kind, Some(SyntaxKind::Assign) | None);
         // A Variant holding an Integer or a Date assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117 and af121); the conversion into a field, a parameter
-        // or a returned value is another path (assumptions number-to-text-is-format, date-to-text-is-format).
+        // or a returned value is another path (VariantNumberToField.al; assumption date-to-text-is-format).
         let variant_into_text_variable = matches!(
             place,
             ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_)
@@ -956,10 +959,10 @@ impl Lowerer<'_> {
             SyntaxKind::ParenExpr => self.place(&n.children().next().ok_or("empty parentheses")?),
             SyntaxKind::IndexExpr => {
                 let kids: Vec<SyntaxNode> = n.children().collect();
-                // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index.
+                // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index (misc/lt-chained-array-index/
+                // ChainedArrayIndex.al:P168_Chained_TwoDimensions_ReadWrite, P168_Chained_ThreeDimensionsAndText).
                 if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_ref(&kids[0]), Ty::Array(..)) {
                     if let ir::Place::Index(root, mut idx) = self.place(&kids[0])? {
-                        self.assume(al_builtins::assumptions::Assumption::ChainedArrayIndex);
                         for k in &kids[1..] {
                             idx.push(self.expr(k)?);
                         }
@@ -985,7 +988,6 @@ impl Lowerer<'_> {
                     .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
                 Some(Res::BaseGlobal(name)) => {
                     let name = name.clone();
-                    self.note_base_var_use();
                     let (slot, _, _) = self.base_var(&name)?;
                     Ok(ir::Place::BaseGlobal(slot))
                 }

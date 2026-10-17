@@ -60,17 +60,20 @@ fn set_load_fields_accepts_a_flow_field() {
 }
 
 // Mfg. Dimension Management does RecRef.GetTable(RecordVariant) for the temporary Purchase Line of a posting check and
-// RecRef.SetTable(PurchaseLine) into a record that is not declared temporary. The target then reads the temporary rows.
+// RecRef.SetTable(PurchaseLine) into a record that is not declared temporary. The target stays a permanent record: it keeps
+// its own table and does not read the temporary rows (corpus recordref/lt-settable-temporary/SetTableTemporaryToPermanent.al:
+// SetTable_TempIntoPermanent_Insert `perm_temp` No, SetTable_TempIntoPermanent_FilteredSource `perm_count` 0). This test used to
+// assume the opposite (registry entry settable-temporary-into-permanent, retired).
 #[test]
-fn set_table_of_a_temporary_record_ref_into_a_permanent_record_reads_the_temporary_rows() {
+fn set_table_of_a_temporary_record_ref_into_a_permanent_record_stays_permanent() {
     all_pass(
         "[Test] procedure TemporaryIntoPermanent() var Tmp: Record \"CV Row\" temporary; Target: Record \"CV Row\"; RecRef: RecordRef; begin
              Tmp.Code := 'T'; Tmp.Number := 7; Tmp.Insert();
              RecRef.GetTable(Tmp);
              RecRef.SetTable(Target);
-             if not Target.Get('T') then Error('row not found');
+             if Target.Get('T') then Error('read a temporary row');
+             if Target.IsTemporary() then Error('temporary');
              if Target.Number <> 7 then Error('number %1', Target.Number);
-             if not Target.IsTemporary() then Error('not temporary');
          end;",
     );
 }

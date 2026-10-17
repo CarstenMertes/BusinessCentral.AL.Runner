@@ -433,8 +433,8 @@ impl Session {
                 // variable's own globals (ADR-021).
                 Value::Record(rc) => {
                     // `Rec.InitType()` in a page's code: the table procedure's xRec is the page's own xRec, as the page's triggers see it
-                    // (Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type; assumption
-                    // page-rec-procedure-sees-page-xrec).
+                    // (Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type; pages/lt-xrec-table-procedure/
+                    // XRecTableProcedure.al `proc xRec=2/22/two`).
                     let page_xrec = {
                         let fi = f.instance.borrow();
                         let o = &self.engine.program.objects[fi.object as usize];
@@ -446,11 +446,6 @@ impl Session {
                             _ => None,
                         }
                     };
-                    if page_xrec.is_some() {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::PageRecProcedureSeesPageXrec,
-                        );
-                    }
                     let (inst, saved) = self.enter_record(object, rc, page_xrec.as_ref())?;
                     let r = self.finish_call(object, routine, inst.clone(), args, values, try_call, f);
                     Self::leave_record(&inst, saved);

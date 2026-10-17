@@ -989,7 +989,7 @@ fn a_control_editable_expression_follows_a_variable_set_by_another_controls_on_v
 }
 
 // handlers/TestPageCreateModeNewRecordArgs.al:OpenNew_TableWithRows pins xRec `B` in OnNewRecord; a table procedure the page's code calls
-// on Rec sees that xRec (Sales Invoice Subform.OnNewRecord -> Rec.InitType; assumption page-rec-procedure-sees-page-xrec).
+// on Rec sees that xRec (Sales Invoice Subform.OnNewRecord -> Rec.InitType; pinned by pages/lt-xrec-table-procedure/XRecTableProcedure.al).
 #[test]
 fn a_table_procedure_called_on_rec_in_a_page_trigger_sees_the_pages_xrec() {
     passes(&format!(

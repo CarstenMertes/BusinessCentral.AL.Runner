@@ -161,6 +161,9 @@ pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn Form
             "{RAISE_MARK}InvalidStandardFormat{RAISE_MARK}Standard format number -1 does not exist for the type 'GUID'."
         ));
     }
+    if template.contains("<Comma") {
+        return comma_template(v, length, template, ctx);
+    }
     let canon = canonical_template(template);
     let template = canon.as_deref().unwrap_or(template);
     let mut pieces: Vec<(bool, &str)> = Vec::new();
@@ -211,6 +214,60 @@ pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn Form
         return Ok(out.chars().take(length as usize).collect());
     }
     Ok(crate::format::pad(out, length))
+}
+
+/// The format strings with a `<Comma,...>` element that the corpus pins (types/lt-format-comma-format-string/
+/// FormatCommaFormatString.al): any other string with a `<Comma` element, or a value of another type, is refused.
+/// On a Decimal, `<Comma,.>` and `<Comma,,>` set the character that `<Decimals>` writes and write nothing themselves
+/// (:37-55 Decimal, :59-84 negative, :88-113 zero); `<Comma>` without an argument is an invalid format. `,` is pinned
+/// after `<Decimals>` only. On an Integer, a Text and a Date the element alone writes nothing and every
+/// longer string is an invalid format (:117-200).
+fn comma_template(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -> Result<String, String> {
+    const SIGN_INT_DEC: &str = "<Sign><Integer><Decimals>";
+    let invalid = || Err(format!("{INVALID_FORMAT_MARK}{template}"));
+    let pinned_other = [
+        "<Sign><Integer><Decimals><Comma,.>",
+        "<Integer><Comma,.><Decimals>",
+        "<Sign><Integer><Decimals><Comma,,>",
+        "<Sign><Integer><Decimals><Comma>",
+        "<Decimals><Comma,.>",
+    ];
+    match v {
+        Value::Decimal(_) => {
+            let (plain, point) = match template {
+                "<Sign><Integer><Decimals><Comma,.>" => (SIGN_INT_DEC, '.'),
+                "<Integer><Comma,.><Decimals>" => ("<Integer><Decimals>", '.'),
+                "<Sign><Integer><Decimals><Comma,,>" => (SIGN_INT_DEC, ','),
+                "<Decimals><Comma,.>" => ("<Decimals>", '.'),
+                "<Comma,.>" => return Ok(crate::format::pad(String::new(), length)),
+                "<Sign><Integer><Decimals><Comma>" => return invalid(),
+                _ => {
+                    return Err(format!(
+                        "format string `{template}`: the `<Comma` element is pinned for six strings only"
+                    ));
+                }
+            };
+            let out = format_with_string(v, 0, plain, ctx)?;
+            // The digits before the point carry no grouping, so the first point is the decimal one.
+            let out = if point == ',' { out.replacen('.', ",", 1) } else { out };
+            Ok(crate::format::pad(out, length))
+        }
+        Value::Integer(_) | Value::Text(_) | Value::Date(..) => {
+            if template == "<Comma,.>" {
+                Ok(crate::format::pad(String::new(), length))
+            } else if pinned_other.contains(&template) {
+                invalid()
+            } else {
+                Err(format!(
+                    "format string `{template}`: the `<Comma` element is pinned for six strings only"
+                ))
+            }
+        }
+        _ => Err(format!(
+            "format string `{template}`: the `<Comma` element is not pinned for {}",
+            v.describe()
+        )),
+    }
 }
 
 fn numeric_of(v: &Value, pieces: &[(bool, &str)]) -> Result<Option<Numeric>, String> {

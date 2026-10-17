@@ -810,8 +810,15 @@ impl Lowerer<'_> {
                 })
             };
             let or = |a: ir::Expr, b: ir::Expr| ir::Expr::Binary(ir::BinOp::Or, Box::new(a), Box::new(b));
-            let cond = or(or(is("Variant.IsInteger#1")?, is("Variant.IsBigInteger#1")?), is("Variant.IsDecimal#1")?);
-            let kind = if matches!(target_ty, Ty::Code(_)) { "NavCode" } else { "NavText" };
+            let cond = or(
+                or(is("Variant.IsInteger#1")?, is("Variant.IsBigInteger#1")?),
+                is("Variant.IsDecimal#1")?,
+            );
+            let kind = if matches!(target_ty, Ty::Code(_)) {
+                "NavCode"
+            } else {
+                "NavText"
+            };
             let guarded = ir::Expr::Ternary(
                 Box::new(cond),
                 Box::new(ir::Expr::Fail {

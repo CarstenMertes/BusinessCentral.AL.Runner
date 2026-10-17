@@ -995,7 +995,12 @@ pub fn text_key_order(a: &str, b: &str) -> Ordering {
     // `0|00|01|1|-1|10|-10` (types/lt-code-digits-compare-more/CodeDigitsCompare.al:P182b_SecondaryKeyOrder_Mixed,
     // _DigitsAndEmpty). Only a hyphen at the start of a text of letters, digits and that hyphen is pinned; anything else keeps
     // the collation below.
-    let hyphen_shape = |t: &str| t.strip_prefix('-').unwrap_or(t).bytes().all(|c| c.is_ascii_alphanumeric());
+    let hyphen_shape = |t: &str| {
+        t.strip_prefix('-')
+            .unwrap_or(t)
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric())
+    };
     if (a.starts_with('-') || b.starts_with('-')) && hyphen_shape(a) && hyphen_shape(b) {
         let (sa, sb) = (a.strip_prefix('-').unwrap_or(a), b.strip_prefix('-').unwrap_or(b));
         let first = text_key_order(sa, sb);
@@ -1015,7 +1020,12 @@ pub fn hyphen_filter_order(a: &Value, b: &Value) -> Option<Ordering> {
     let (Value::Text(x) | Value::Code(x), Value::Text(y) | Value::Code(y)) = (a, b) else {
         return None;
     };
-    let shape = |t: &str| t.strip_prefix('-').unwrap_or(t).bytes().all(|c| c.is_ascii_alphanumeric());
+    let shape = |t: &str| {
+        t.strip_prefix('-')
+            .unwrap_or(t)
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric())
+    };
     ((x.starts_with('-') || y.starts_with('-')) && shape(x) && shape(y)).then(|| text_key_order(x, y))
 }
 

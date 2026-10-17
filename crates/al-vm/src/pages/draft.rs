@@ -346,7 +346,8 @@ impl Session {
                 let mut merged = stored;
                 let mut edited = false;
                 for (i, v) in typed.iter().enumerate() {
-                    if i < before.len() && !Self::same_values(std::slice::from_ref(v), std::slice::from_ref(&before[i])) {
+                    if i < before.len() && !Self::same_values(std::slice::from_ref(v), std::slice::from_ref(&before[i]))
+                    {
                         merged[i] = v.clone();
                         edited = true;
                     }

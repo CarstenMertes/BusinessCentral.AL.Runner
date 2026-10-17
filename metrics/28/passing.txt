@@ -7848,8 +7848,16 @@
 71432 Mod_Integer_NegativeDuration
 71432 Mod_Integer_ZeroDivisor
 71436 FieldRefValue_SetEnumFromOrdinalAndText
+71457 P182b_CodeFields_DigitThenLetter
 71457 P182b_CodeFields_EmptyVersusZero
+71457 P182b_CodeFields_Negative
+71457 P182b_CodeFields_StoredValuesCompared
+71457 P182b_CodeVars_DigitThenLetter
 71457 P182b_CodeVars_EmptyVersusZero
+71457 P182b_CodeVars_Negative
+71457 P182b_Filters_OverMixedValues
+71457 P182b_SecondaryKeyOrder_DigitsAndEmpty
+71457 P182b_SecondaryKeyOrder_Mixed
 71472 P182b_NoCaption_AssignBeforeRun
 71472 P182b_NoCaption_BeforeRunAfterRunModal
 71472 P182b_Static_AssignBeforeRun
@@ -7857,6 +7865,7 @@
 71472 P182b_Static_BeforeRunAfterRun
 71472 P182b_Static_BeforeRunAfterRunModal
 71474 P182b_Ml_AssignBeforeRun
+71474 P182b_Ml_BeforeRunAfterRunModal
 71475 P182b_PageVariable_CaptionMember_BeforeRun
 71483 P182b_HostNeverRan_PartReadCount
 71483 P182b_HostNeverRan_PartReadFilters
@@ -7864,6 +7873,12 @@
 71484 P182b_HostNeverRan_PartUpdateFalse
 71484 P182b_HostNeverRan_PartUpdateTrue
 71486 P182b_HostNeverRan_PartEditable
+71494 P182b_Plain_ModifyAction
+71494 P182b_Plain_SaveRecordAction
+71494 P182b_Plain_SecondFieldEdit
+71495 P182b_Asserterror_ModifyAction
+71495 P182b_Asserterror_SaveRecordAction
+71495 P182b_Asserterror_SecondFieldEdit
 71500 Find_Edges_Past_Ends
 71500 Find_Empty_Table_And_Filtered_Out
 71500 Find_Invalid_SearchStrings
@@ -8765,7 +8780,10 @@
 72433 ValidateFlowFilterFieldRelation_ExistingValue
 72433 ValidateFlowFilterRelation_InsertWithValidate
 72433 ValidateNormalFieldRelation_Contrast
+72442 Validate_OldBlank_ExistingAndMissing
 72442 Validate_OldNonBlank_NewExisting
+72442 Validate_OldNonBlank_NewMissing
+72442 Validate_OtherItemNo_SameValue
 72454 Page_NewAfterFirstRow
 72454 Page_NewAfterSecondRow
 72454 Page_NewOnEmptyTable
@@ -8773,6 +8791,8 @@
 72462 P187_AssignBeforeRun_OpenPageAndHandler
 72462 P187_AssignEmpty_BeforeRun
 72462 P187_NoAssign_OpenPageAndHandler
+72462 P187_SecondRun_NoReassign
+72462 P187_SecondRun_Reassigned
 72500 AddAndGet
 72500 AddKeysEdge
 72500 AddTokenAndNull
@@ -8916,6 +8936,8 @@
 72689 Where_Field
 72689 Where_ValidateTableRelation_False
 72689 Zone_Blank_Arm_Loc
+72689 Zone_Error_Text_Asserterror
+72689 Zone_Filled_Arm_Bin
 72691 Duration_To_BigInteger_Decimal
 72691 Duration_To_Integer_InRange
 72692 Duration_Arithmetic
@@ -10043,6 +10065,7 @@
 73889 OptionAsInteger_ProcedureParameter
 73889 OptionAsInteger_SelectStr
 73893 RelationFilter_FieldRefRelation
+73893 RelationFilter_FilledZone
 73895 StaleModify_AfterRollback_Raises
 73895 StaleModify_AfterRollback_RunTrigger_Raises
 73895 StaleModify_AfterRollback_RunTrigger_Succeeds
@@ -10731,6 +10754,7 @@
 74842 P168_Get_BaseAddressWithoutTrailingSlash
 74850 ErrorTextVariableEmpty_TryFunction_ExcludeFlag
 74901 P145_CodeFields_Compared
+74901 P145_CodeVars_DigitsOnly
 74901 P145_CodeVars_NumberSeriesPair
 74901 P145_CodeVars_WithLetters
 74901 P145_Lengths_CodeVariablesOfDifferentSize
@@ -10750,6 +10774,12 @@
 74904 P145_FormatBoolean_IntoCodeAndText
 74904 P145_FormatBoolean_IntoShortCode
 74925 P145_A_NoRecordArgument
+74929 CodeField_FromVariantNumbers_Result
+74929 TextField_FromVariantBigInteger_Result
+74929 TextField_FromVariantDecimal_Result
+74929 TextField_FromVariantInteger_Result
+74929 TextField_FromVariantNumber_TooLong
+74931 VarTextParam_VariantArgument
 74933 CodeField_FromFieldRefValue_Numbers
 74933 TextField_FromFieldRefValue_InsertedRow
 74933 TextField_FromFieldRefValue_Numbers

@@ -259,6 +259,24 @@ registry! {
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
     },
+    UpdateRefreshListOnFindRecord => {
+        id: "update-refresh-list-onfindrecord",
+        assumed: "CurrPage.Update on a list with OnFindRecord (with or without OnNextRecord) reads the rows as the pinned table of 3 rows with the cursor on the middle one does (misc/W2FindRecordUpdate.al), for any number of rows and any cursor position below a window.",
+        tests: "ERM Sales Subform (InvoiceAddingLinesUpdatesTotals) and about 120 more Tests-ERM tests whose sales and purchase subforms refresh.",
+        probe: "The same list with 1, 2, 5 and 25 rows and the cursor on the first, last and a middle row; a list with OnFindRecord only; a list part of a card.",
+    },
+    CaptionReadBeforeThePageRuns => {
+        id: "caption-read-before-the-page-runs",
+        assumed: "CurrPage.Caption read in a procedure the caller invokes on a Page variable before Run or RunModal answers the page's Caption property, and raises nothing.",
+        tests: "Alloc. Account Sales E2E Tests (TestOverrideGLAllocation) and 20 more Tests-ERM tests that open Edit Dimension Set Entries through Dimension Management.",
+        probe: "A page with Caption = 'X' and a procedure returning CurrPage.Caption, called on a Page variable before RunModal and after it closed; also with a Caption assigned in OnOpenPage.",
+    },
+    PartOfAPageThatNeverRan => {
+        id: "part-of-a-page-that-never-ran",
+        assumed: "CurrPage.<Part>.Page in a procedure called on a Page variable that was never run reaches a part page that exists, is initialised and is not open (as a hidden part does).",
+        tests: "O365 Simplify UI Sales Invoice (CreateInvoiceForCustomerWithCreditLimit) and the other Tests-SMB and Tests-ERM tests that send the credit limit notification.",
+        probe: "A page with a part and a procedure that calls a procedure of the part page and returns what it set; call it on a Page variable before Run and read the result.",
+    },
     SetTableViewKeepsSetRecordPosition => {
         id: "set-table-view-keeps-set-record-position",
         assumed: "On a Page variable, SetTableView(Rec) after SetRecord(Rec) takes the filters of the view and keeps the record SetRecord handed over as the position the page opens on, so OnOpenPage reads it as Rec.",
@@ -360,6 +378,12 @@ registry! {
         assumed: "A where() condition of a TableRelation on a FlowFilter field of the related table does not select rows when the relation is validated.",
         tests: "Item Journal Line \"Bin Code\" (Bin.Code where(\"Item Filter\" = field(\"Item No.\"), \"Variant Filter\" = ...)): Tests-SCM and Tests-SCM-Manufacturing, about 10 tests.",
         probe: "A table relation whose where() names a FlowFilter of the target; Validate a value that exists; Validate one that does not.",
+    },
+    RelationWhereReadsValidatedValue => {
+        id: "relation-where-reads-the-validated-value",
+        assumed: "A where() condition of a TableRelation that names the validated field itself (Code = field(\"Variant Code\")) reads the value being validated, not the value the field holds before the assignment.",
+        tests: "Prod. Order Line, Assembly Header and Assembly Line \"Variant Code\" (Item Variant.Code where(\"Item No.\" = field(\"Item No.\"), Code = field(\"Variant Code\"), ...)): Tests-SCM and Tests-SCM-Assembly, about 60 tests, among them SCM Order Tracking OrderTrackingOnSalesWithVariant.",
+        probe: "A table relation whose where() has Code = field(<the field itself>); Validate a value that exists; read the field and the error.",
     },
     QueryClosePageFallsThroughAsTrue => {
         id: "query-close-page-falls-through-as-true",

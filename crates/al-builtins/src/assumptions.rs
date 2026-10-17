@@ -530,6 +530,24 @@ registry! {
         tests: "Service Orders list (SourceTableView = sorting(\"Document Type\", \"No.\") ...) run on a filtered record: AcceptOnServiceOrderPromising and about 20 more Tests-SCM-Service tests, 19 Tests-Misc tests.",
         probe: "A page with SourceTableView = sorting(B) order(descending) where(...), run with Page.Run(Page, Rec) on a record that has SetCurrentKey(A) and its own filter: the order of the rows a handler sees.",
     },
+    EnumFilterMatchesCaption => {
+        id: "enum-filter-matches-caption",
+        assumed: "A filter on an Enum field names a member by its caption as well as by its name (a name wins): GetFilter writes the caption, and SetFilter with that text finds the rows again. (A filter by a caption that no row has gives 0 rows and no error: codeunit/lt-enums-interfaces/OjT71044.al:122-142.)",
+        tests: "Report Selections.GetCustomReportSelectionByUsageFilter (SetFilter(Usage, Rec.GetFilter(Usage)) with the caption `Sales Quote`): SalesQuoteSendByEmailWhenArchivingIsOn and about 45 more Tests-Misc tests.",
+        probe: "An enum whose member has a caption other than its name: SetFilter(Col, Format(Value)) and SetFilter(Col, Rec.GetFilter(Col)) on rows holding the member: the count, and the same with a range of two captions.",
+    },
+    FlowFieldLookupBetweenEnums => {
+        id: "flowfield-lookup-between-enums",
+        assumed: "A FlowField of an Enum type whose CalcFormula is lookup() of a field of another Enum type holds the source value's ordinal as a member of its own enum.",
+        tests: "VAT Return Period.\"VAT Return Status\" (lookup of \"VAT Report Header\".Status), read by the VAT Return Period List page: UI_CreateOrOpenReturnActions_ClosedPeriodWithLinkedReturn and about 38 more Tests-Misc tests.",
+        probe: "Two enums with the same ordinals and different names, a FlowField of the first with lookup() of a field of the second: CalcFields, then Format and AsInteger of the FlowField; and an ordinal the first enum lacks.",
+    },
+    TextToDecimalFromVariant => {
+        id: "text-to-decimal-from-variant",
+        assumed: "A Text of an optional sign, digits and at most one decimal point converts into a Decimal where a Variant meets a number, such as the return of DequeueDecimal; a text with anything else (thousands separators, other symbols, an empty text) stays refused.",
+        tests: "Library - Variable Storage.DequeueDecimal after a page handler enqueued a control's Value text: Service Statistics (OrderStatisticsNegativeProfit and 11 more Tests-SCM-Service tests).",
+        probe: "Dequeue a Variant holding Text '-111.69', '5', '1,000.5', '' and 'x' into a Decimal: the value or the error and its text.",
+    },
     PartLinkNotValidatedForUnsavedHost => {
         id: "part-link-not-validated-for-unsaved-host",
         assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",

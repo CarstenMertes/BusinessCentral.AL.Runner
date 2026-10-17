@@ -270,6 +270,25 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Guid(g), T::Text(max)) => Value::Text(fit(crate::format::format_guid(&g), *max)?.into()),
         (Value::Guid(g), T::Code(max)) => Value::Code(fit(crate::format::format_guid(&g), *max)?.into()),
         // A Text of digits converts into an Integer or BigInteger where a Variant meets a number (a Get key).
+        // A Text of a plain decimal number into a Decimal where a Variant meets a number: Library - Variable Storage's
+        // DequeueDecimal returns what a test page handler enqueued as the control's text (`-111.69`). Not pinned by the
+        // corpus, registry entry text-to-decimal-from-variant. Anything but sign, digits and one point stays refused.
+        (Value::Text(s) | Value::Code(s), T::Decimal)
+            if {
+                let d = s.trim();
+                let body = d.strip_prefix(['-', '+']).unwrap_or(d);
+                body.bytes().filter(|b| *b == b'.').count() <= 1
+                    && body.bytes().any(|b| b.is_ascii_digit())
+                    && body.bytes().all(|b| b.is_ascii_digit() || b == b'.')
+            } =>
+        {
+            let d: rust_decimal::Decimal = s
+                .trim()
+                .parse()
+                .map_err(|_| Signal::Unsupported(format!("text `{s}` into a Decimal (out of range)")))?;
+            crate::assumptions::assume(crate::assumptions::Assumption::TextToDecimalFromVariant);
+            Value::Decimal(d)
+        }
         // Not pinned by the corpus: Microsoft's Incoming Document `Get(Format(Value))`, registry entry text-digits-to-integer.
         (Value::Text(s) | Value::Code(s), T::Integer | T::BigInteger)
             if {

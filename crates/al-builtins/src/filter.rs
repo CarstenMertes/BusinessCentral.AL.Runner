@@ -102,6 +102,9 @@ pub fn parse_filter(text: &str, args: &[crate::value::Value], ty: &crate::value:
 /// Prefix of the parse error for a word a Boolean filter does not accept; the rest is the word.
 pub const INVALID_BOOLEAN: &str = "invalid Boolean filter value: ";
 
+/// Marks, in the member list a caller hands to [`parse_filter_with`], an entry that is a caption and not a name.
+pub const CAPTION_MARK: char = '\u{1}';
+
 pub fn parse_filter_with(
     text: &str,
     args: &[crate::value::Value],
@@ -350,10 +353,24 @@ impl Parser<'_> {
                 ),
             },
             T::Enum(id) => {
+                // The list holds the member names, then their captions behind CAPTION_MARK: a name wins; a caption is what
+                // `GetFilter` writes, and Microsoft's Report Selections code filters with it again (assumption
+                // `enum-filter-matches-caption`).
                 let named = (self.enums)(*id)
                     .into_iter()
-                    .find(|(_, n)| !n.is_empty() && n.trim().eq_ignore_ascii_case(text.trim()))
-                    .map(|(v, _)| v);
+                    .find_map(|(v, n)| {
+                        let (caption, n) = match n.strip_prefix(CAPTION_MARK) {
+                            Some(c) => (true, c.to_string()),
+                            None => (false, n),
+                        };
+                        (!n.is_empty() && n.trim().eq_ignore_ascii_case(text.trim())).then_some((v, caption))
+                    })
+                    .map(|(v, caption)| {
+                        if caption {
+                            crate::assumptions::assume(crate::assumptions::Assumption::EnumFilterMatchesCaption);
+                        }
+                        v
+                    });
                 match named.or_else(|| text.trim().parse().ok()) {
                     Some(v) => Value::Enum(*id, v),
                     None => return Err(format!("`{text}` is not a member of the enum")),

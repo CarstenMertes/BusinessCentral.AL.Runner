@@ -211,7 +211,7 @@ impl Session {
                 } else {
                     let text = text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
                     let engine = self.engine.clone();
-                    let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+                    let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
                     Some(
                         al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
                             .map_err(|e| Signal::Unsupported(format!("SetFilter: {e}")))?,

@@ -67,7 +67,7 @@ struct Numeric {
     precision_single: bool,
 }
 
-const CODE_NAMES: [&str; 19] = [
+const CODE_NAMES: [&str; 21] = [
     "Standard Format",
     "Integer Thousand",
     "Integer",
@@ -86,6 +86,8 @@ const CODE_NAMES: [&str; 19] = [
     "Hours12",
     "Minutes",
     "Seconds",
+    "Thousands",
+    "Second dec",
     "AM/PM",
 ];
 
@@ -465,9 +467,23 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
         ("Minutes", _, Some(ms)) if ms / 60_000 % 60 >= 10 => format!("{}", ms / 60_000 % 60),
         // The twelve-hour clock pads the hour with a space (:Format_PictureCodes).
         ("Hours12,2", _, Some(ms)) => format!("{:>2}", hour12(ms)),
+        // `<Hours12>` is the hour without padding; midnight and noon are 12 (types/lt-datetime/Format.al:Time_Format_Custom).
+        ("Hours12", _, Some(ms)) => format!("{}", hour12(ms)),
         ("Minutes,2", _, Some(ms)) => format!("{:02}", ms / 60_000 % 60),
         ("Seconds,2", _, Some(ms)) => format!("{:02}", ms / 1000 % 60),
+        // Corpus types/lt-datetime/Format.al:Time_Format_Custom (134506.078T): `<Seconds>` 6, `<Thousands>` 78,
+        // `<Thousands,3>` ` 78`, `<Second dec>` .078, `<Second dec,3>` ***.
+        ("Seconds", _, Some(ms)) => format!("{}", ms / 1000 % 60),
+        ("Thousands", _, Some(ms)) => format!("{}", ms % 1000),
+        ("Thousands,3", _, Some(ms)) => format!("{:>3}", ms % 1000),
+        ("Second dec", _, Some(ms)) => format!(".{:03}", ms % 1000),
+        ("Second dec,3", _, Some(_)) => "***".to_string(),
         ("AM/PM", _, Some(ms)) => (if ms / 3_600_000 < 12 { "AM" } else { "PM" }).to_string(),
+        // A name that is no code at all is an invalid format, as for a number (types/lt-datetime/Format.al:
+        // Time_Format_Custom `<Foo>`, error InvalidFormatString).
+        _ if !CODE_NAMES.contains(&code.split_once(',').map_or(code, |(n, _)| n)) => {
+            return Err(INVALID_FORMAT_MARK.to_string());
+        }
         _ => return Err(format!("code `<{code}>` on {}", v.describe())),
     };
     Ok(part)

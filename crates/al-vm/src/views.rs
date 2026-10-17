@@ -34,7 +34,7 @@ impl Session {
     /// A filter expression over a field of type `ty`, enum members by name included.
     pub(crate) fn parse_filter_text(&self, text: &str, ty: &al_builtins::value::RtType) -> Result<FilterExpr, String> {
         let engine = self.engine.clone();
-        let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+        let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
         al_builtins::filter::parse_filter_with(text, &[], ty, &enums)
     }
 
@@ -614,4 +614,16 @@ mod tests {
             "sorting(\"No.\") order(descending)"
         );
     }
+}
+
+/// The members of an enum for a text filter: the names, then the captions (marked, see `filter::CAPTION_MARK`).
+pub(crate) fn enum_filter_members(o: &al_ir::Object) -> Vec<(i32, String)> {
+    let mut out = o.enum_values.clone();
+    out.extend(
+        o.enum_captions
+            .iter()
+            .filter(|(_, c)| !c.is_empty())
+            .map(|(v, c)| (*v, format!("{}{c}", al_builtins::filter::CAPTION_MARK))),
+    );
+    out
 }

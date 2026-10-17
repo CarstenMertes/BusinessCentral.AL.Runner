@@ -235,7 +235,11 @@ impl Session {
                         type_name(&f.ty)
                     ));
                 }
-                if !same_kind(&f.ty, &s.ty) {
+                // A lookup into an enum field from the field of another enum takes the value's ordinal (Microsoft's VAT
+                // Return Period: "VAT Return Status" looks up "VAT Report Header".Status). Assumed, see
+                // Assumption::FlowFieldLookupBetweenEnums.
+                let enum_pair = matches!((&f.ty, &s.ty), (RtType::Enum(_), RtType::Enum(_)));
+                if !same_kind(&f.ty, &s.ty) && !(enum_pair && calc.method == ir::CalcMethod::Lookup) {
                     return unsupported("min, max or lookup into a field of another type");
                 }
             }
@@ -435,9 +439,13 @@ impl Session {
                 }
                 // Nothing matched: the type default (corpus
                 // record/TestCalcFormulaMinMaxAvgTests.Codeunit.al:250).
-                match best {
-                    Some(v) => v,
-                    None => self.default_value(&f.ty),
+                match (best, &f.ty) {
+                    (Some(Value::Enum(from, v)), RtType::Enum(to)) if from != *to => {
+                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FlowFieldLookupBetweenEnums);
+                        Value::Enum(*to, v)
+                    }
+                    (Some(v), _) => v,
+                    (None, _) => self.default_value(&f.ty),
                 }
             }
         };
@@ -455,7 +463,7 @@ impl Session {
         let table = rec.borrow().table as usize;
         let own = &engine.program.objects[table].table.as_ref().expect("table").fields;
         let src = &engine.program.objects[calc.table].table.as_ref().expect("table").fields;
-        let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+        let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
         let parse = |text: &str, ty: &RtType| {
             parse_filter_with(text, &[], ty, &enums)
                 .map_err(|e| Signal::Unsupported(format!("CalcFormula filter: {e}")))

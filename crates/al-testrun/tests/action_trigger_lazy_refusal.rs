@@ -9,7 +9,7 @@ use al_testrun::{CaseId, Outcome};
 const SRC: &str = r#"
 page 50430 "LAZ Page" { PageType = Card;
     layout { area(Content) { field(F; Flag) { } } }
-    actions { area(Processing) { action(Boom) { trigger OnAction() begin CodeCoverageRefresh(); end; } } }
+    actions { area(Processing) { action(Boom) { trigger OnAction() begin CodeCoverageLoad(); end; } } }
     var Flag: Boolean; }
 codeunit 50430 "T"
 {

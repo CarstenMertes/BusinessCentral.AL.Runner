@@ -379,6 +379,12 @@ registry! {
         tests: "Item Journal Line \"Bin Code\" (Bin.Code where(\"Item Filter\" = field(\"Item No.\"), \"Variant Filter\" = ...)): Tests-SCM and Tests-SCM-Manufacturing, about 10 tests.",
         probe: "A table relation whose where() names a FlowFilter of the target; Validate a value that exists; Validate one that does not.",
     },
+    RelationWhereReadsValidatedValue => {
+        id: "relation-where-reads-the-validated-value",
+        assumed: "A where() condition of a TableRelation that names the validated field itself (Code = field(\"Variant Code\")) reads the value being validated, not the value the field holds before the assignment.",
+        tests: "Prod. Order Line, Assembly Header and Assembly Line \"Variant Code\" (Item Variant.Code where(\"Item No.\" = field(\"Item No.\"), Code = field(\"Variant Code\"), ...)): Tests-SCM and Tests-SCM-Assembly, about 60 tests, among them SCM Order Tracking OrderTrackingOnSalesWithVariant.",
+        probe: "A table relation whose where() has Code = field(<the field itself>); Validate a value that exists; read the field and the error.",
+    },
     QueryClosePageFallsThroughAsTrue => {
         id: "query-close-page-falls-through-as-true",
         assumed: "An OnQueryClosePage trigger with a Boolean return that reaches its end without giving a value lets the page close (its named return value starts as Yes).",

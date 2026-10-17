@@ -1383,6 +1383,9 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     if let Some(w) = &dotnet_warning {
         say!("{w}");
     }
+    if !a.verbose && !a.quiet && counts.total > 0 {
+        say!("{}", output::time_line(total_time, p.compile, p.tests, rate));
+    }
     if a.verbose {
         say!(
             "Time: load {}, compile {}, install baseline {}, run {} ({:.0} tests/s), total {}{}",

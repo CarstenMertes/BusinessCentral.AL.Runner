@@ -289,6 +289,21 @@ pub(crate) struct Dataset {
     flat: Vec<Vec<(String, Option<&'static str>, String)>>,
     /// Whether the rows fit one flat table: one data item, no nested row.
     flat_ok: bool,
+    /// For every open `DataItem`: the state to go back to when `PrintOnlyIfDetail` drops its row, and how many rows its nested items wrote.
+    marks: Vec<Mark>,
+}
+
+/// The dataset as it was before a row began.
+struct Mark {
+    body: usize,
+    flat: usize,
+    rows: usize,
+    root: bool,
+    flat_ok: bool,
+    /// Whether the parent row's `DataItems` element was open.
+    parent_open: Option<bool>,
+    /// Rows written by the nested items so far.
+    kids: usize,
 }
 
 impl Dataset {
@@ -307,6 +322,20 @@ impl Dataset {
         declares_children: bool,
     ) {
         let depth = self.open.len();
+        self.marks.push(Mark {
+            body: self.body.len(),
+            flat: self.flat.len(),
+            rows: self.rows,
+            root: self.root,
+            flat_ok: self.flat_ok,
+            parent_open: self.open.last().copied(),
+            kids: 0,
+        });
+        if depth > 0 {
+            if let Some(parent) = self.marks.len().checked_sub(2).and_then(|i| self.marks.get_mut(i)) {
+                parent.kids += 1;
+            }
+        }
         if depth == 0 {
             if self.rows == 0 {
                 self.flat_ok = true;
@@ -371,6 +400,29 @@ impl Dataset {
 
     /// Closes the row opened last.
     pub(crate) fn end(&mut self) {
+        self.end_row(false);
+    }
+
+    /// Closes the row opened last; with `only_if_detail` (the item's `PrintOnlyIfDetail`) a row whose nested items wrote no row is
+    /// taken back (corpus report/lt-report-requestpage/RptFilters.al:PrintOnlyIfDetail_Dataset, `1,3,`).
+    pub(crate) fn end_row(&mut self, only_if_detail: bool) {
+        let mark = self.marks.pop().expect("a row is open");
+        if only_if_detail && mark.kids == 0 {
+            self.body.truncate(mark.body);
+            self.flat.truncate(mark.flat);
+            self.rows = mark.rows;
+            self.root = mark.root;
+            self.flat_ok = mark.flat_ok;
+            self.open.pop();
+            self.declares.pop();
+            if let (Some(was), Some(last)) = (mark.parent_open, self.open.last_mut()) {
+                *last = was;
+            }
+            if let Some(parent) = self.marks.last_mut() {
+                parent.kids -= 1;
+            }
+            return;
+        }
         let items_open = self.open.pop().expect("a row is open");
         let declares = self.declares.pop().unwrap_or(false);
         let at = 4 + 4 * self.open.len();

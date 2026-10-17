@@ -937,9 +937,20 @@ impl Session {
             // (handlers/TestReportRuntimeContracts.al:393-410).
             let kept = Some(rec.borrow().filters.clone());
             let filtering = view.to_ascii_lowercase().contains("where");
+            // A view that only filters keeps the key and direction a SetTableView gave the item (corpus
+            // report/lt-report-set-table/ReportSetTableViewOverWhere.al:P163_SetTableView_OverWhere_KeyOfTheView: key Txt, 4|3|2).
+            let kept_order = {
+                let r = rec.borrow();
+                (r.key, r.adhoc.clone(), r.ascending, r.field_descending)
+            };
+            let sorts = view.to_ascii_lowercase().contains("sorting");
             // The filters of a DataItemTableView are the report's, not the record's: GetFilters does not show them, in
             // OnPostReport either (report/TestProbeReportContracts.al:TriggerOrder_NestedAndSecondItem).
             self.set_view_in(&rec, &t, &view, Some(LINK_GROUP), false, false)?;
+            if !sorts {
+                let mut r = rec.borrow_mut();
+                (r.key, r.adhoc, r.ascending, r.field_descending) = kept_order;
+            }
             if let Some(mut filters) = kept {
                 // A view that filters adds its own filters to the ones a SetTableView gave the item.
                 if filtering {
@@ -1196,7 +1207,11 @@ impl Session {
                     }
                 }
                 if run.dataset {
-                    self.report.dataset.as_mut().expect("a SaveAs run has a dataset").end();
+                    self.report
+                        .dataset
+                        .as_mut()
+                        .expect("a SaveAs run has a dataset")
+                        .end_row(item.print_only_if_detail);
                 }
             }
             // MaxIteration stops an Integer item after that many rows (misc/lt-probes-needed-8/PnH3Link.al:MaxIteration_*).

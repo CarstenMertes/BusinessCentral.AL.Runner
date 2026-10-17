@@ -1003,6 +1003,7 @@ fn walk_report_item<V: RefVisitor>(i: &mut ReportItem, parent: TableOf, v: &mut 
         request_filter_fields: _,
         columns,
         max_iteration: _,
+        print_only_if_detail: _,
     } = i;
     let own = TableOf::object(*table);
     for (mine, theirs) in link {

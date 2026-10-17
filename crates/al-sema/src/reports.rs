@@ -978,6 +978,7 @@ fn item_ir(
         on_after_get: trigger("OnAfterGetRecord"),
         on_post: trigger("OnPostDataItem"),
         columns: o.columns(sec, table),
+        print_only_if_detail: prop("PrintOnlyIfDetail").is_some_and(|v| v.trim().eq_ignore_ascii_case("true")),
         max_iteration: prop("MaxIteration")
             .and_then(|v| v.trim().parse::<u32>().ok())
             .filter(|n| *n > 0),

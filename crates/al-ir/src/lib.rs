@@ -468,6 +468,9 @@ pub struct ReportItem {
     /// `MaxIteration` of an `Integer` item: the rows after which the item stops (its `OnPostDataItem` still runs).
     #[serde(default)]
     pub max_iteration: Option<u32>,
+    /// `PrintOnlyIfDetail = true`: the dataset leaves out a row whose nested items wrote no row.
+    #[serde(default)]
+    pub print_only_if_detail: bool,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).

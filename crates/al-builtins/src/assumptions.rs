@@ -596,12 +596,6 @@ registry! {
         tests: "Item Vendor Catalog (OpenNew, Filter.SetFilter(\"Item No.\"), then SetValue of the vendor): ERM Item Reference Purchase and about 12 more Tests-ERM tests.",
         probe: "An editable list opened with OpenNew and with OpenEdit over an empty filtered result: SetValue of a non-key field and the stored row's key; Next() and the row triggers that run.",
     },
-    DurationAddDuration => {
-        id: "duration-add-duration",
-        assumed: "A Duration plus or minus a Duration is a Duration of the summed or subtracted milliseconds; an overflow is refused. (Duration times a whole number, DateTime and Time with a Duration are pinned by types/TestDurationContracts.al and types/PUTimeArithmetic.al.)",
-        tests: "Match Bank Payments (the telemetry timers of MatchEntries) through Tests-Bank ERM Bank Reconciliation and ERM Cash Manager: about 268 tests.",
-        probe: "D1 + D2, D1 - D2 and a negative result for two Duration variables, Format(Result, 0, 9), and the overflow at the BigInteger edge.",
-    },
     CalcSumsFlowFieldFilter => {
         id: "calcsums-flowfield-filter",
         assumed: "CalcSums on a record with a filter on a FlowField sums the stored field over the rows whose calculated FlowField value passes the filter. (CalcSums over stored-field filters is pinned by record/TestRecordFlowField.al:109-160.)",

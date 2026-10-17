@@ -630,17 +630,16 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::Duration)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
-        // Duration +/- Duration is a Duration in milliseconds. Assumed (registry entry duration-add-duration): Match Bank
-        // Payments adds the Durations of its telemetry timers.
+        // Duration +/- Duration is a BigInteger of milliseconds: `Format(D1 + D2)` answers '4000', not a duration text, and `R := D1 + D2`
+        // converts it back (corpus types/lt-duration-arithmetic/DurationAddDuration.al:Add_TwoVariables_Result, sum_format_default).
         (V::Duration(a), V::Duration(b)) if matches!(op, Arith::Add | Arith::Sub) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationAddDuration);
             let n = if op == Arith::Add {
                 a.checked_add(*b)
             } else {
                 a.checked_sub(*b)
             };
             return n
-                .map(V::Duration)
+                .map(V::BigInteger)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
         // A whole number and a Duration add and subtract as milliseconds, into a Duration (`duration_with_number`).
@@ -1147,9 +1146,9 @@ mod tests {
     #[test]
     fn two_durations_add_and_subtract_as_milliseconds() {
         let add = arith(Arith::Add, &Value::Duration(1500), &Value::Duration(500)).unwrap();
-        assert!(matches!(add, Value::Duration(2000)));
+        assert!(matches!(add, Value::BigInteger(2000)));
         let sub = arith(Arith::Sub, &Value::Duration(500), &Value::Duration(1500)).unwrap();
-        assert!(matches!(sub, Value::Duration(-1000)));
+        assert!(matches!(sub, Value::BigInteger(-1000)));
     }
 
     #[test]

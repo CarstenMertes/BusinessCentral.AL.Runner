@@ -41,14 +41,12 @@ codeunit 50521 "T"
 
 fn run_variant(base: &str) -> Outcome {
     let rt = CorpusRuntime::run_suites_with(
-        vec![
-            AppSource {
-                id: "main".into(),
-                name: "main".into(),
-                dependencies: vec![],
-                files: vec![("main.al".into(), format!("{base}{MAIN}"))],
-            },
-        ],
+        vec![AppSource {
+            id: "main".into(),
+            name: "main".into(),
+            dependencies: vec![],
+            files: vec![("main.al".into(), format!("{base}{MAIN}"))],
+        }],
         vec![al_sema::AppKind::Workspace],
         &[],
         &Default::default(),
@@ -57,11 +55,10 @@ fn run_variant(base: &str) -> Outcome {
         &[SuiteRun::everything()],
         &RunOptions::default(),
     );
-    let o = rt.first_outcome(&CaseId {
+    rt.first_outcome(&CaseId {
         codeunit: 50521,
         name: "SetTheElement".into(),
-    });
-    o
+    })
 }
 
 #[test]

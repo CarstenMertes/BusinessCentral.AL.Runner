@@ -929,15 +929,33 @@ fn a_part_viewing_its_linked_field_reads_its_rows_backwards_once_at_open() {
             52010 + i
         );
     }
-    let views = ["", "", "", "", "SubPageView = where(\"Line No.\" = filter('>10'));", "SubPageView = where(\"Head Code\" = const('ZZZ'));"];
+    let views = [
+        "",
+        "",
+        "",
+        "",
+        "SubPageView = where(\"Line No.\" = filter('>10'));",
+        "SubPageView = where(\"Head Code\" = const('ZZZ'));",
+    ];
     let vis = ["", "", "Enabled = false;", "Visible = Hide;", "", ""];
     let ed = ["", "Editable = false;", "", "", "", ""];
     let mut parts = String::new();
     for i in 0..6 {
-        parts += &format!("part(P{}; \"SX Part {}\") {{ {} {} {} SubPageLink = \"Head Code\" = field(\"Code\"); }}\n", i + 1, i + 1, views[i], vis[i], ed[i]);
+        parts += &format!(
+            "part(P{}; \"SX Part {}\") {{ {} {} {} SubPageLink = \"Head Code\" = field(\"Code\"); }}\n",
+            i + 1,
+            i + 1,
+            views[i],
+            vis[i],
+            ed[i]
+        );
     }
-    objs += &format!("page 52030 \"SX Host\" {{ PageType = Document; SourceTable = \"SX Head\"; layout {{ area(Content) {{ field(C; Rec.\"Code\") {{ }} {parts} }} }} var Hide: Boolean; }}\n");
-    let src = format!("{objs}\ncodeunit 52100 C {{ procedure F(): Text var H: Record \"SX Head\"; L: Record \"SX Line\"; Pg: TestPage \"SX Host\"; Lg: Codeunit \"SX Log\"; begin H.Code := 'D1'; H.Insert(); L.\"Head Code\" := 'D1'; L.\"Line No.\" := 10000; L.Insert(); L.\"Line No.\" := 20000; L.Insert(); Pg.OpenEdit(); exit(Lg.Dump()); end; }}");
+    objs += &format!(
+        "page 52030 \"SX Host\" {{ PageType = Document; SourceTable = \"SX Head\"; layout {{ area(Content) {{ field(C; Rec.\"Code\") {{ }} {parts} }} }} var Hide: Boolean; }}\n"
+    );
+    let src = format!(
+        "{objs}\ncodeunit 52100 C {{ procedure F(): Text var H: Record \"SX Head\"; L: Record \"SX Line\"; Pg: TestPage \"SX Host\"; Lg: Codeunit \"SX Log\"; begin H.Code := 'D1'; H.Insert(); L.\"Head Code\" := 'D1'; L.\"Line No.\" := 10000; L.Insert(); L.\"Line No.\" := 20000; L.Insert(); Pg.OpenEdit(); exit(Lg.Dump()); end; }}"
+    );
     let l = al_testkit::compile(&src);
     let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
     let mut s = al_testkit::session(l);

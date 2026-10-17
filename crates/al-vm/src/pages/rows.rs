@@ -212,7 +212,11 @@ impl Session {
         loop {
             let key = self.row_key(&rec)?;
             let stored = rec.borrow().fields.clone();
-            rows.push(al_builtins::value::WindowRow { key, stored: stored.clone(), shown: stored });
+            rows.push(al_builtins::value::WindowRow {
+                key,
+                stored: stored.clone(),
+                shown: stored,
+            });
             if rows.len() > 3 || !self.nav_next(st, 1)? {
                 break;
             }

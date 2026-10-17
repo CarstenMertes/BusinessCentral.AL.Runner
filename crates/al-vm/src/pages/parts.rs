@@ -293,10 +293,16 @@ impl Session {
             let ir::LinkEntry::Field(pf, _) = entry else { continue };
             let name = table.fields[*pf].name.to_ascii_lowercase();
             for form in [format!("\"{name}\""), name.clone()] {
-                let Some(at) = view.find(&format!("{form} =")).or_else(|| view.find(&format!("{form}="))) else {
+                let Some(at) = view
+                    .find(&format!("{form} ="))
+                    .or_else(|| view.find(&format!("{form}=")))
+                else {
                     continue;
                 };
-                let after = view[at + form.len()..].trim_start().trim_start_matches('=').trim_start();
+                let after = view[at + form.len()..]
+                    .trim_start()
+                    .trim_start_matches('=')
+                    .trim_start();
                 if !after.starts_with("const(") {
                     return unsupported(format!(
                         "a SubPageView condition other than const on the linked field {name} (not pinned)"

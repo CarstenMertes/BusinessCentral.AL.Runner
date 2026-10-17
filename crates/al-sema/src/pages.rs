@@ -270,14 +270,25 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
                 .enumerate()
                 .filter_map(|(ordinal, sec)| {
                     let expr = sec.args_raw().get(1).cloned()?;
-                    let len = format!("\nprocedure {}(): Variant begin exit({expr}); end;", column_name(ordinal)).len();
+                    let len = format!(
+                        "\nprocedure {}(): Variant begin exit({expr}); end;",
+                        column_name(ordinal)
+                    )
+                    .len();
                     Some((usize::from(sec.syntax().text_range().end()) - base, len))
                 })
                 .collect()
         } else {
             Vec::new()
         };
-        let shifted = |offset: usize| offset + column_inserts.iter().filter(|(at, _)| *at <= offset).map(|(_, l)| l).sum::<usize>();
+        let shifted = |offset: usize| {
+            offset
+                + column_inserts
+                    .iter()
+                    .filter(|(at, _)| *at <= offset)
+                    .map(|(_, l)| l)
+                    .sum::<usize>()
+        };
         for sec in control_sections(&obj) {
             for (prop, ty, offset, expr) in needed(&sec, base, &globals, extension_routines.as_ref()) {
                 let offset = shifted(offset);

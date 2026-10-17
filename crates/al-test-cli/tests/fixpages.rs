@@ -324,5 +324,9 @@ fn run_modal_with_a_field_argument_and_lookup_ok_stays_refused() {
           R.Txt := 'x'; A := Page.RunModal(Page::\"FP Row Dialog\", R, R.Txt); end;
         [ModalPageHandler] procedure Ok(var D: TestPage \"FP Row Dialog\") begin D.OK().Invoke(); end;",
     );
-    assert!(r.iter().all(|(_, o)| matches!(o, Outcome::NotRun(m) if m.contains("field argument"))), "{r:?}");
+    assert!(
+        r.iter()
+            .all(|(_, o)| matches!(o, Outcome::NotRun(m) if m.contains("field argument"))),
+        "{r:?}"
+    );
 }

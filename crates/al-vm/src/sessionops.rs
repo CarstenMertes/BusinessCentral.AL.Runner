@@ -80,6 +80,10 @@ impl Session {
             // (session/TestDatabaseExtended.al:75-92, TestSystemExtended.al:664-672).
             ("Has", "ExternalSQL") => return Ok(Value::Boolean(false)),
             ("GetDefault", "ExternalSQL") => return Ok(Value::Text(String::new().into())),
+            // Unregistering a name that was never registered is no error, for every connection type
+            // (errors/lt-ms-refusals-137/P137TableConnRisky.al:P137_Unregister_NeverRegistered_OtherTypes
+            // for ExternalSQL, Exchange and MicrosoftGraph; P137TableConn.al:P137_Unregister_NeverRegistered for CRM).
+            ("Unregister", "ExternalSQL" | "Exchange" | "MicrosoftGraph") => return Ok(Value::Null),
             (_, "CRM") => {}
             (m, k) => return unsupported(format!("{m}TableConnection of type {k} (not pinned)")),
         }
@@ -118,10 +122,10 @@ impl Session {
                         Ok(Value::Null)
                     }
                     "Unregister" => {
+                        // Not registered: no error and nothing changes (P137TableConn.al:P137_Unregister_NeverRegistered,
+                        // _Twice `unregister_second`, _OtherNameAndOtherCase `unregister_b` and `unregister_a_again`).
                         if !self.table_connections.remove(&key) {
-                            return unsupported(
-                                "UnregisterTableConnection of a connection that is not registered (not pinned)",
-                            );
+                            return Ok(Value::Null);
                         }
                         // Unregistering the default clears the default too
                         // (:Database_UnregisterTableConnection_CrmTest_ClearsDefaultAndHas).

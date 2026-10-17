@@ -445,34 +445,45 @@ impl Session {
                 match args.first() {
                     None => Ok(Value::Boolean({
                         let r = rec.borrow();
-                        r.ascending && !r.field_descending
+                        r.ascending && r.field_descending == 0
                     })),
                     Some(v) => {
                         let mut r = rec.borrow_mut();
                         r.ascending = ops::truthy(v)?;
-                        r.field_descending = false;
+                        r.field_descending = 0;
                         Ok(Value::Null)
                     }
                 }
             }
-            // The direction of one key field. A record keeps one direction for its whole key, so
-            // only a key of that single field is covered: record/TestRecordSort.al:184-203
-            // (SetAscending(Amount, false) makes FindFirst return the largest), :158-181
-            // (GetAscending). A field of a longer key, or outside the key, has a direction of its
-            // own that is not pinned.
+            // The direction of one field of the current sorting: the key's fields, then the primary key's. A field outside
+            // it raises `Cannot call <method> on field <field> because it is not part of the current sorting.` (code DB:Ok;
+            // record/lt-filters-keys-finds/P68D_Ascending.al:Field_Not_In_Key, Composite_Key_Default). Each field of a
+            // composite key has a direction of its own, the rest of the sorting stays ascending (P68D_Ascending.al:
+            // Composite_Key_First_Descending, _Second_Descending, _Both_Descending; records/W4SortKeys.al:
+            // SetAscending_TwoFieldKey_OneFieldAtATime). Single field: record/TestRecordSort.al:184-203 (SetAscending(Amount, false)
+            // makes FindFirst return the largest), :158-181 (GetAscending).
             // The companies are the session company and the rows of the Company table; a record in
             // another company reads and writes that company's rows (record/TestRecordChangeCompanyRows.al).
             RecordOp::ChangeCompany => self.change_company(rec, args),
             RecordOp::SetAscending | RecordOp::GetAscending => {
                 let pos = arg_pos(args, 0)?;
-                if t.keys[rec.borrow().key] != [pos] {
-                    return unsupported(format!(
-                        "{method} on a field that is not the only field of the current key (per-field direction not pinned)"
+                let key = rec.borrow().key;
+                let Some(bit) = t.keys[key].iter().chain(&t.keys[0]).position(|&p| p == pos) else {
+                    let name = if method == RecordOp::GetAscending { "GetAscending" } else { "SetAscending" };
+                    return Err(crate::transactions::al_error_code(
+                        &format!(
+                            "Cannot call {name} on field {} because it is not part of the current sorting.",
+                            self.field_caption(t, pos)
+                        ),
+                        "DB:Ok",
                     ));
+                };
+                if bit >= 32 {
+                    return unsupported(format!("{method} on the {bit}th field of a sorting"));
                 }
                 if method == RecordOp::GetAscending {
                     let r = rec.borrow();
-                    return Ok(Value::Boolean(r.ascending && !r.field_descending));
+                    return Ok(Value::Boolean(r.ascending && r.field_descending & (1 << bit) == 0));
                 }
                 let ascending = match args.get(1) {
                     Some(v) => ops::truthy(v)?,
@@ -485,7 +496,11 @@ impl Session {
                 if !r.ascending {
                     return unsupported("SetAscending on a record that also has Ascending(false) (not pinned)");
                 }
-                r.field_descending = !ascending;
+                if ascending {
+                    r.field_descending &= !(1 << bit);
+                } else {
+                    r.field_descending |= 1 << bit;
+                }
                 Ok(Value::Null)
             }
             // The key's field names (corpus record/TestCopyOntoTemporaryRecord.al:93 `'No.'`,

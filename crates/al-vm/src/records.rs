@@ -756,15 +756,15 @@ impl Session {
         ascending: bool,
         after: Option<Vec<Value>>,
     ) -> Result<Option<Vec<Value>>, Signal> {
-        if rec.borrow().field_descending {
+        if rec.borrow().field_descending != 0 {
             return self.scan_first_field_reversed(rec, t, ascending, after);
         }
         self.scan_plain(rec, t, ascending, after)
     }
 
-    /// A scan in the order `SetAscending(Field, false)` gives: the first field of the key runs backwards and the rest
+    /// A scan in the order `SetAscending(Field, false)` gives: the fields marked descending run backwards and the rest
     /// of the key, then the primary key, forwards (records/W4SortKeys.al:SetAscending_SingleFieldKey: key Txt, ids
-    /// `4,2,3,1,5`, where `Ascending(false)` and a view give `4,3,2,5,1`). The rows are read in key order and sorted
+    /// `4,2,3,1,5`, where `Ascending(false)` and a view give `4,3,2,5,1`; record/lt-filters-keys-finds/P68D_Ascending.al). The rows are read in key order and sorted
     /// again, so a walk over a big table costs more than one in the key's own order.
     fn scan_first_field_reversed(
         &mut self,
@@ -782,10 +782,11 @@ impl Session {
             cursor = Some(pos.clone());
             rows.push((pos, row));
         }
+        let mask = rec.borrow().field_descending;
         let order = |a: &[Value], b: &[Value]| -> Ordering {
             for (i, (x, y)) in a.iter().zip(b).enumerate() {
                 let o = ops::compare(x, y).unwrap_or(Ordering::Equal);
-                let o = if i == 0 { o.reverse() } else { o };
+                let o = if i < 32 && mask & (1 << i) != 0 { o.reverse() } else { o };
                 if o != Ordering::Equal {
                     return o;
                 }
@@ -1237,7 +1238,7 @@ impl Session {
                 r.key = 0;
                 r.adhoc = None;
                 r.ascending = true;
-                r.field_descending = false;
+                r.field_descending = 0;
                 r.position = None;
                 // A Clear leaves the record's record of what it fetched: the fields in hand stay loaded for a later
                 // partial fetch (session/TestProbeSessionMiscContracts.al:PartialRecords_AreFieldsLoaded: a full Get,
@@ -2023,7 +2024,7 @@ impl Session {
                 r.key = 0;
                 r.adhoc = None;
                 r.ascending = true;
-                r.field_descending = false;
+                r.field_descending = 0;
                 Ok(Value::Null)
             }
             RecordOp::SetCurrentKey => {
@@ -2039,6 +2040,11 @@ impl Session {
                 {
                     Some(k) => {
                         let mut r = rec.borrow_mut();
+                        // Another sorting starts ascending again; the same one keeps its directions
+                        // (record/lt-filters-keys-finds/P68D_Ascending.al:Reset_And_SetCurrentKey_Reset_Direction).
+                        if r.key != k || r.adhoc.is_some() {
+                            r.field_descending = 0;
+                        }
                         r.key = k;
                         r.adhoc = None;
                         Ok(Value::Boolean(true))
@@ -2099,6 +2105,9 @@ impl Session {
                             .as_ref()
                             .map_or(0, |e| e.keys.len());
                         let mut r = rec.borrow_mut();
+                        if r.adhoc.as_ref().map(|a| &a.1) != Some(&wanted) {
+                            r.field_descending = 0;
+                        }
                         r.key = index;
                         r.adhoc = Some((index, wanted));
                         Ok(Value::Boolean(true))

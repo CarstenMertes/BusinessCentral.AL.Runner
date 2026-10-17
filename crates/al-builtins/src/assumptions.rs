@@ -386,12 +386,6 @@ registry! {
         tests: "Whse.-Source - Create Document and Production Order callers (Warehouse Request, Item data items): about 800 Tests-SCM and Tests-ERM tests.",
         probe: "A data item with DataItemTableView = where(F = filter(1..2)) run after SetTableView with F in 2..3, with a filter on another field, and the item's GetFilters in OnPreDataItem.",
     },
-    TimeAddWholeDecimal => {
-        id: "time-add-whole-decimal",
-        assumed: "A Time plus or minus a whole-number Decimal moves like an Integer. (A Time with an Integer, a Duration and a fractional Decimal is pinned by types/PUTimeArithmetic.al.)",
-        tests: "Service Item Line CalculateResponseDateTime through Calendar Management: about 820 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
-        probe: "T + 1000.0 and T - 1000.0 for a Decimal variable holding a whole number, and 0.",
-    },
     PartLinkNotValidatedForUnsavedHost => {
         id: "part-link-not-validated-for-unsaved-host",
         assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",

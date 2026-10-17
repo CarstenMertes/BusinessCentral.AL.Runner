@@ -726,14 +726,14 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .ok_or_else(|| Signal::Unsupported("Time moved by an amount that overflows (not pinned)".into()));
         }
         // A whole-number Decimal moves a Time like an Integer (Calendar Management's `Time + Decimal`); a fraction raises
-        // below. Assumed, as for a Date (registry entry time-add-whole-decimal).
+        // below (corpus types/lt-for-option-time-decimal/TimeAddWholeDecimal.al: TimeDecimal_Whole_PlusMinus1000, _Zero, _Negative,
+        // _WrapsAroundMidnight, _FromDivisionAndProduct). A whole value beyond Integer raises ConversionCast like a fraction (_BeyondInteger).
         (V::Time(_), V::Decimal(d)) | (V::Decimal(d), V::Time(_))
             if matches!(op, Arith::Add | Arith::Sub)
                 && d.fract().is_zero()
                 && (op == Arith::Add || matches!(l, V::Time(_)))
                 && i32::try_from(d.mantissa() / 10i128.pow(d.scale())).is_ok() =>
         {
-            crate::assumptions::assume(crate::assumptions::Assumption::TimeAddWholeDecimal);
             let n = V::Integer(i32::try_from(d.mantissa() / 10i128.pow(d.scale())).expect("checked"));
             return match (l, r) {
                 (V::Time(_), _) => arith(op, l, &n),
@@ -741,13 +741,13 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             };
         }
         (V::Time(a), V::Decimal(d)) | (V::Decimal(d), V::Time(a))
-            if matches!(op, Arith::Add | Arith::Sub) && *a > 0 && !d.fract().is_zero() =>
+            if matches!(op, Arith::Add | Arith::Sub) && *a > 0 =>
         {
+            // The text shows the Decimal as written (`3000000000.0`), a fraction as `1000.5`; a subtraction names the negated
+            // amount (`-3000000000.0`, `-1000.5`), TimeAddWholeDecimal.al:TimeDecimal_Whole_BeyondInteger, TimeDecimal_Fractional.
+            let d = if op == Arith::Sub { -*d } else { *d };
             return raise(
-                format!(
-                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.Int32.",
-                    d.normalize()
-                ),
+                format!("Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."),
                 "ConversionCast",
             );
         }

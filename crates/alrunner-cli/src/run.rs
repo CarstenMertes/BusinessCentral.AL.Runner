@@ -5,6 +5,7 @@ use crate::args::{DEFAULT_TOP, TestArgs};
 use crate::capture;
 use crate::coverage;
 use crate::output::{self, Counts};
+use crate::style;
 use crate::testdata;
 use al_bcdb_std::BackupProvider;
 use al_deps::load::WorkspaceApp;
@@ -177,6 +178,16 @@ fn peak_memory_mb() -> Option<u64> {
     Some(kb / 1024)
 }
 
+/// A test's run time for the per-test lines: milliseconds down to microseconds, right-aligned.
+fn ms(d: Duration) -> String {
+    format!("{:>10.3} ms", d.as_secs_f64() * 1000.0)
+}
+
+/// [`secs`] right-aligned, so the numbers of the `Time:` line stack up from run to run.
+fn secs_w(d: Duration) -> String {
+    format!("{:>6.2} s", d.as_secs_f64())
+}
+
 fn secs(d: Duration) -> String {
     format!("{:.2} s", d.as_secs_f64())
 }
@@ -325,19 +336,23 @@ fn choose_test_data(
                 let cdn = al_deps::artifact::HttpCdn::from_env();
                 let mut printed = 0u64;
                 let t = Instant::now();
-                eprintln!("test data: downloading the demo data of build {build} (about 520 MB, once) ...");
-                let got = al_deps::demo::ensure_demo_backup(&cdn, &cache_root, build, "w1", &mut |read, total| {
-                    let pct = (read * 100).checked_div(total).unwrap_or(100);
-                    if pct >= printed + 10 || (pct == 100 && printed < 100) {
-                        printed = pct - pct % 10;
-                        eprintln!(
-                            "test data: {pct}% ({} of {} MB, {:.0} s)",
-                            read >> 20,
-                            total >> 20,
-                            t.elapsed().as_secs_f64()
-                        );
-                    }
-                })?;
+                eprintln!(
+                    "test data: downloading the {} demo data of build {build} (about 0.5 GB, once) ...",
+                    a.country()
+                );
+                let got =
+                    al_deps::demo::ensure_demo_backup(&cdn, &cache_root, build, a.country(), &mut |read, total| {
+                        let pct = (read * 100).checked_div(total).unwrap_or(100);
+                        if pct >= printed + 10 || (pct == 100 && printed < 100) {
+                            printed = pct - pct % 10;
+                            eprintln!(
+                                "test data: {pct}% ({} of {} MB, {:.0} s)",
+                                read >> 20,
+                                total >> 20,
+                                t.elapsed().as_secs_f64()
+                            );
+                        }
+                    })?;
                 Ok(got.path)
             });
             let found = testdata::locate(
@@ -349,8 +364,9 @@ fn choose_test_data(
                     local_root: local.as_deref(),
                     cache_root: &cache_root,
                     download,
+                    explicit_country: a.country.is_some(),
                 },
-                "w1",
+                a.country(),
             );
             match found.path {
                 Some(p) => (p, found.notes),
@@ -377,8 +393,18 @@ fn choose_test_data(
     }
 }
 
+/// Whether the run looks for a demo backup (and so may download one): never with `--no-test-data`, whatever the
+/// country (owner 2026-10-17: partners who test across countries write tests that need no data); not when a backup
+/// is open already; a default run with no Microsoft app has no use for the CRONUS company.
+fn should_choose_test_data(a: &TestArgs, already_open: bool, microsoft: bool) -> bool {
+    a.wants_test_data() && !already_open && (microsoft || a.test_data_asked_for())
+}
+
 /// `alrunner warm`: finds the backup, opens it, and so builds the index kept next to the compile cache.
 pub fn warm(a: &TestArgs) -> Result<(), String> {
+    if a.country.is_some() && !a.no_download {
+        al_deps::artifact::check_country(&al_deps::artifact::HttpCdn::from_env(), a.country())?;
+    }
     let version = a.bc_version.as_deref();
     let numbers: Vec<u16> = version
         .map(|v| v.split('.').map_while(|p| p.parse().ok()).collect())
@@ -500,7 +526,25 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         matches!(a.output_json, Some(None)) || warm.is_some(),
         std::sync::atomic::Ordering::Relaxed,
     );
+    {
+        use std::io::IsTerminal;
+        let to_stderr = REPORT_TO_STDERR.load(std::sync::atomic::Ordering::Relaxed);
+        let terminal = if to_stderr {
+            std::io::stderr().is_terminal()
+        } else {
+            std::io::stdout().is_terminal()
+        };
+        let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+        // A server request is never colored.
+        style::set(warm.is_none() && a.color.enabled(terminal, no_color));
+    }
     let test_timeout = test_timeout_secs(a)?;
+    // The country of the run (ADR-020 amendment): only `--country` selects it. An unknown one stops here, before
+    // anything is loaded.
+    let country = a.country().to_string();
+    if a.country.is_some() && !a.no_download {
+        al_deps::artifact::check_country(&al_deps::artifact::HttpCdn::from_env(), &country)?;
+    }
     // The key of the compile cache starts with a hash of this executable (10 ms): make it beside the loading.
     if !a.no_compile_cache {
         std::thread::spawn(|| {
@@ -656,6 +700,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         download: !a.no_download,
         query: target::build_query(a.bc_version.as_deref(), &chosen, floor_versions).with_preferred(preferred),
         local_artifacts: al_deps::cache::bcartifacts_sandbox_from_env(),
+        country: country.clone(),
     };
     // The text of a package's files is left unread: a run whose tests reach nothing in it never needs it.
     // ALRUNNER_EAGER_SOURCES=1 reads it at once, as before (the other side of the differential check).
@@ -669,7 +714,9 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         true,
         lazy_sources,
     )?;
-    if a.wants_test_data() && test_data.is_none() {
+    let microsoft = inputs.iter().any(|i| apps::is_microsoft(&i.manifest.publisher))
+        || dependencies.manifests.iter().any(|m| apps::is_microsoft(&m.publisher));
+    if should_choose_test_data(a, test_data.is_some(), microsoft) {
         // The build of the Microsoft apps is the build of the data: what the feed gave, what
         // --bc-version named, then the versions of the loaded packages and of the APPs
         // (Microsoft's test archives carry the build as their version).
@@ -696,10 +743,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                 downloadable.push(b);
             }
         }
-        // A default run with no Microsoft app has no use for the CRONUS company.
-        let microsoft = inputs.iter().any(|i| apps::is_microsoft(&i.manifest.publisher))
-            || dependencies.manifests.iter().any(|m| apps::is_microsoft(&m.publisher));
-        if microsoft || a.test_data_asked_for() {
+        {
             let chosen_data = choose_test_data(
                 a,
                 &builds,
@@ -731,9 +775,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     let mut seen = BTreeSet::new();
     let mut hidden = 0;
     for line in &dependencies.log {
-        let is_problem = line.starts_with("dependency skipped")
-            || line.starts_with("dependency note")
-            || line.starts_with("warning:");
+        let is_problem = output::dependency_line_is_problem(line);
         if (a.verbose || is_problem) && seen.insert(line.as_str()) {
             if a.verbose || seen.len() <= 12 {
                 // A missing-dependency line repeats the whole search list; the start says it all.
@@ -758,7 +800,20 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     }
 
     if !a.quiet {
-        say!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
+        say!(
+            "{}",
+            style::bold(&format!(
+                "alrunner {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                env!("ALRUNNER_COMMIT")
+            ))
+        );
+    }
+    // Setup details: --verbose only (see HELP, "Output").
+    if a.verbose {
+        if a.country.is_some() {
+            say!("country: {country}");
+        }
         say!(
             "target: BC {}, runtime {}{}",
             chosen.target.bc,
@@ -923,6 +978,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         capture: a.capture,
         hooks,
         clock_starts: None,
+        quiet_baseline: !a.verbose,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
             && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
@@ -932,6 +988,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             )),
             require: a.require_compile_cache,
             rebuild: a.rebuild_compile_cache,
+            country: country.clone(),
         }),
     };
     let load_time = started.elapsed();
@@ -1140,9 +1197,23 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         let mut hidden_failures = 0;
         for r in &results {
             let line = match &r.outcome {
-                Outcome::Pass if a.verbose => format!("PASS    {} {}.{}", r.codeunit, r.codeunit_name, r.test),
+                Outcome::Pass if a.verbose => format!(
+                    "{} {} {} {}.{}{}",
+                    style::green("PASS   "),
+                    ms(r.time),
+                    r.codeunit,
+                    r.codeunit_name,
+                    r.test,
+                    if r.assumptions.is_empty() {
+                        String::new()
+                    } else {
+                        style::cyan(" (flagged)")
+                    }
+                ),
                 Outcome::NotRun(why) if a.verbose => format!(
-                    "NOT RUN {} {}.{}: {}",
+                    "{} {} {} {}.{}: {}",
+                    style::yellow("NOT RUN"),
+                    ms(r.time),
                     r.codeunit,
                     r.codeunit_name,
                     r.test,
@@ -1155,7 +1226,13 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                     }
                     shown_failures += 1;
                     let mut line = format!(
-                        "FAIL    {} {}.{}: {}",
+                        "{} {}{} {}.{}: {}",
+                        style::red("FAIL   "),
+                        if a.verbose {
+                            format!("{} ", ms(r.time))
+                        } else {
+                            String::new()
+                        },
                         r.codeunit,
                         r.codeunit_name,
                         r.test,
@@ -1188,7 +1265,9 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             )),
             _ => None,
         }));
-        say!("\n{}", refusals::render_top("not-run tests", &list, n));
+        let text = refusals::render_top("not-run tests", &list, n);
+        let (head, rest) = text.split_once('\n').unwrap_or((&text, ""));
+        say!("\n{}\n{rest}", style::bold(head));
     }
 
     // The assumptions the run went through: the counts are kept for `--list-assumptions`; the ranking is printed
@@ -1204,8 +1283,11 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             println!("\n{}", al_testrun::flagged::render_top(&rows, n));
         } else if counts.flagged > 0 && !a.quiet {
             println!(
-                "\n{} passes ran through an unprobed assumption (flagged); --top-assumptions ranks the assumptions, --list-assumptions describes them.",
-                counts.flagged
+                "\n{}",
+                style::cyan(&format!(
+                    "{} passes ran through an unprobed assumption (flagged); --top-assumptions ranks the assumptions, --list-assumptions describes them.",
+                    counts.flagged
+                ))
             );
         }
     }
@@ -1294,7 +1376,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     } else {
         0.0
     };
-    if let Some((data, _)) = &test_data {
+    if let Some((data, _)) = test_data.as_ref().filter(|_| a.verbose) {
         let summary = data.stats.summary();
         say!("{}", summary.line(&data.provider.source(), data.provider.company()));
         let refusals = summary.refusals();
@@ -1305,34 +1387,59 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             say!("... {} more refused tables (--verbose lists them)", refusals.len() - 10);
         }
     }
-    say!("{}", output::summary_line(&counts, test_data.is_some()));
+    // A warning that changes how to read the result stays in the default output, as one line.
+    if let Some(w) = p
+        .baseline_roots
+        .and_then(|(ran, total)| output::baseline_warning(ran, total))
+    {
+        if !a.quiet {
+            say!("{w}");
+        }
+    }
+    say!("{}", style::bold(&output::summary_line(&counts, test_data.is_some())));
+    if !a.quiet && counts.total > 0 {
+        for line in output::summary_table(&counts) {
+            say!("{line}");
+        }
+    }
     if let Some(d) = &disabled {
         say!("{}", disabled_line(d, &results, &found, a.parity));
     }
     if let Some(w) = &dotnet_warning {
         say!("{w}");
     }
-    say!(
-        "Time: load {}, compile {}, install baseline {}, run {} ({:.0} tests/s), total {}{}",
-        secs(load_time),
-        secs(p.compile),
-        secs(p.baseline),
-        secs(p.tests),
-        rate,
-        secs(total_time),
-        peak_memory_mb().map_or(String::new(), |m| format!(", peak memory {m} MB"))
-    );
+    if !a.verbose && !a.quiet && counts.total > 0 {
+        say!("{}", output::time_line(total_time, p.compile, p.tests, rate));
+    }
+    if a.verbose {
+        say!(
+            "Time: load {}, compile {}, install baseline {}, run {} ({:.0} tests/s), total {}{}",
+            secs_w(load_time),
+            secs_w(p.compile),
+            secs_w(p.baseline),
+            secs_w(p.tests),
+            rate,
+            secs_w(total_time),
+            peak_memory_mb().map_or(String::new(), |m| format!(", peak memory {m} MB"))
+        );
+    }
     let code = output::exit_code(&counts, a.allow_not_run);
+    let verdict = match code {
+        0 => "PASSED",
+        1 => "FAILED",
+        6 => "NOTHING SELECTED",
+        7 => "TESTS NOT RUN",
+        8 => "DOTNET UNAVAILABLE",
+        _ => "ERROR",
+    };
+    let result = format!("Result: {verdict} (exit {code})");
     say!(
-        "Result: {} (exit {code})",
-        match code {
-            0 => "PASSED",
-            1 => "FAILED",
-            6 => "NOTHING SELECTED",
-            7 => "TESTS NOT RUN",
-            8 => "DOTNET UNAVAILABLE",
-            _ => "ERROR",
-        }
+        "{}",
+        style::bold(&match code {
+            0 => style::green(&result),
+            1 => style::red(&result),
+            _ => style::yellow(&result),
+        })
     );
     if let Some(w) = warm {
         w.report = Some(Report {
@@ -1363,6 +1470,22 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         match target {
             Some(path) => write_file(path, &doc)?,
             None => println!("{doc}"),
+        }
+    }
+    // Last, so that it never delays the tests: the automatic cleanup of the compile cache folder (at most once a
+    // day, 200 ms at most; ADR-022 "Cleanup of old builds").
+    if !a.no_compile_cache && std::env::var_os("ALRUNNER_NO_COMPILE_CACHE").is_none() {
+        let folder = al_testrun::compile_cache::CompileCache::under(&al_deps::cache::cache_root_from_env(
+            a.cache_dir.as_deref(),
+        ));
+        if let Some(r) = al_testrun::cache_gc::auto_prune(&folder, &al_testrun::cache_gc::this_build())
+            && r.count() > 0
+        {
+            say!(
+                "compile cache: removed {} old file(s), {:.1} MB",
+                r.count(),
+                r.bytes() as f64 / 1e6
+            );
         }
     }
     Ok(code)
@@ -1429,4 +1552,41 @@ fn explain(
         Outcome::Fail(_) => 1,
         Outcome::NotRun(_) => 7,
     })
+}
+
+#[cfg(test)]
+mod country_tests {
+    use super::*;
+
+    fn args(country: Option<&str>, no_test_data: bool) -> TestArgs {
+        TestArgs {
+            country: country.map(str::to_string),
+            no_test_data,
+            ..TestArgs::default()
+        }
+    }
+
+    #[test]
+    fn no_test_data_never_looks_for_a_backup_in_any_country() {
+        for country in [None, Some("us"), Some("gb")] {
+            // Even for a run that uses Microsoft's apps: nothing is located, nothing is downloaded.
+            assert!(
+                !should_choose_test_data(&args(country, true), false, true),
+                "{country:?}"
+            );
+            assert!(
+                !should_choose_test_data(&args(country, true), false, false),
+                "{country:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_data_on_looks_for_the_backup_of_the_country_when_microsoft_apps_are_used() {
+        for country in [None, Some("us")] {
+            assert!(should_choose_test_data(&args(country, false), false, true));
+            assert!(!should_choose_test_data(&args(country, false), false, false));
+            assert!(!should_choose_test_data(&args(country, false), true, true));
+        }
+    }
 }

@@ -208,7 +208,7 @@ runtime defects, not differences between the restored company and a freshly prep
   (`--test-data`, `--test-data PATH`) stops with the reason instead.
 - **A default run with no Microsoft app in it** (no Microsoft APP and no Microsoft dependency loaded) has no test data
   and prints nothing: the CRONUS company means nothing to it, and it must not download 520 MB for nothing.
-- **The country is `w1`.** Other countries are not selectable yet.
+- **The country is `w1` by default.** (Amended 2026-10-17: `--country CODE` selects another; see the amendment at the end.)
 - **`--test-data-company` no longer needs `--test-data`**; it conflicts with `--no-test-data`.
 
 ## Decided without owner review (2026-10-14, npcore-fixes)
@@ -306,3 +306,53 @@ the reader end to end).
 command-line contracts). `cargo test -p al-bcdb-cli --test differential -- --ignored` compares
 with the published bcdb on the fixtures, on every artifact `.bak` in the cache, and on a real
 `.bacpac`. `tools/bcdb-bench.sh` measures speed.
+
+## Amendment (Accepted, owner 2026-10-17): `--country`, flag only
+
+`alrunner test ... --country us` (also `alrunner warm`) runs against another BC country version. The default
+stays `w1`. Only the flag selects a country: it is never read from AL-Go settings or `app.json`.
+
+### What the country selects
+
+The country artifact `<feed>/sandbox/<build>/<country>` (measured on 28.5.54151.56408 and 24.5.23489.42600) holds:
+
+- `BusinessCentral-<COUNTRY>.bak`, the demo database (US 28.5: 610 MB stored, 1.1 GB inflated).
+- `Applications.<COUNTRY>/`: Source.zip files of the country's own Microsoft apps (Base Application, Application,
+  System Application, Business Foundation, Any, Library Assert, test libraries, ...) and Microsoft's test apps
+  `Tests-*.Source.zip` (the buckets), flat in one folder. W1 keeps the same apps in the platform artifact under
+  `Applications/**`.
+- `Extensions/` (compiled packages, not used), `ConfigurationPackages/`, `manifest.json`.
+
+The platform artifact stays the same (`System.app`, the apps no country changes).
+
+### Rules
+
+1. **Apps.** For a country other than `w1`, a Microsoft app that the country artifact has a Source.zip for under
+   `Applications.<COUNTRY>/` comes from there; every other Microsoft app comes from the platform artifact as before.
+   Only that folder is read, by ranged requests, and only the entries the run needs (US 28.5: about 55 MB for Base
+   Application, System Application and Business Foundation, plus the 65 KB central directory).
+2. **Cache.** The country's apps are kept in `artifacts/<build>/country-<country>/apps/`, apart from the platform's
+   (same file names, other contents). A platform copy cached by an earlier w1 run is not used for an app the country
+   has of its own. With `--no-download` and nothing cached, the run stops with a message; it never falls back to the
+   platform's app.
+3. **Demo data.** `artifacts/<build>/demo/<country>/BusinessCentral-<COUNTRY>.bak`, downloaded as for w1. With an
+   explicit `--country`, the extracted-artifact folder `~/.bcartifacts.cache/sandbox/<build>/<country>/` is looked in,
+   and no other country's backup ever answers. The demo company of a backup with several companies is the one named
+   `CRONUS International Ltd.`, else the only company whose name starts with `CRONUS` (US: `CRONUS USA, Inc.`);
+   otherwise `--test-data-company` is needed. `--no-test-data` never looks for, downloads or reads a backup, in any
+   country.
+4. **Compile cache.** The country is part of the key of every layer (`country_seed`); w1 keys are unchanged. The
+   layers also differ by source hash, so this is a second guard.
+5. **Validation.** The code is lower case letters or digits, 2 to 8 characters. Before anything is loaded, the feed's
+   `indexes/<country>.json` must exist (404: "the artifact feed has no such country"). The build list for a country
+   run is that country's index. An unreachable feed does not stop a run that can be served from the cache.
+6. **Not supported with a country**: `--company-data package` (the RapidStart package comes from the platform
+   artifact); the run refuses the combination.
+7. **Buckets.** Microsoft's `Tests-*.Source.zip` of a country artifact are given to `alrunner test` as paths, like the
+   w1 ones; their layout is the same, so nothing else is needed. The runner does not download buckets.
+
+### Measured (28.5.54151.56408, Customizations pair, no test data, empty cache)
+
+Compile cache cold build: w1 24.1 MB in 42.1 s, then US 25.6 MB in 43.3 s; the two share nothing. Of the 8,581 `.al`
+files of the US Base Application, 7,732 are identical to W1, 366 differ and 483 exist only in US (none only in W1); System Application and Business Foundation are identical.
+

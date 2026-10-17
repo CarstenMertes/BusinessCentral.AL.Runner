@@ -58,6 +58,22 @@ pub fn exit_code(c: &Counts, allow_not_run: bool) -> u8 {
     }
 }
 
+/// Whether a dependency-resolution log line shows without `--verbose`. A symbol package without
+/// `NavxManifest.xml` (Microsoft's, in `.alpackages`) is expected and harmless: `--verbose` only.
+pub fn dependency_line_is_problem(line: &str) -> bool {
+    line.starts_with("dependency skipped")
+        || line.starts_with("warning:")
+        || (line.starts_with("dependency note") && !line.ends_with("the package has no NavxManifest.xml"))
+}
+
+/// The one-line warning for an install baseline in which some install roots did not run to their end
+/// (`ran` of `total`): tests may see less setup data than real BC. `None` when all ran or none was tried.
+pub fn baseline_warning(ran: usize, total: usize) -> Option<String> {
+    (ran < total).then(|| {
+        format!("baseline incomplete: {ran} of {total} install roots ran to their end (--verbose for details)")
+    })
+}
+
 /// The warning for a run whose tests were stopped by a missing or unusable .NET helper, so that it
 /// is never mistaken for a lower pass count. `why` is the reason of one such test.
 pub fn dotnet_warning(c: &Counts, why: &str) -> Option<String> {
@@ -107,6 +123,47 @@ pub fn summary_line(c: &Counts, test_data: bool) -> String {
             " (no test data: failures are mostly missing setup data and are not trusted; the not-run counts and reasons are)"
         }
     )
+}
+
+/// The compact time line of the default output, under the totals table: the total wall time, then
+/// compile and run (the two phases a user can act on) and the test rate, the parenthesis dimmed.
+/// The other phases and the peak memory are in the `Time:` line of `--verbose`.
+pub fn time_line(
+    total: std::time::Duration,
+    compile: std::time::Duration,
+    run: std::time::Duration,
+    rate: f64,
+) -> String {
+    let s = |d: std::time::Duration| format!("{:.2} s", d.as_secs_f64());
+    format!(
+        "  {:<8}{:>10}   {}",
+        "time",
+        s(total),
+        crate::style::dim(&format!("(compile {}, run {}, {rate:.0} tests/s)", s(compile), s(run)))
+    )
+}
+
+/// The totals as a small aligned table under the `Tests:` line: count and share per outcome, the flagged
+/// passes in cyan. The `Tests:` line itself stays the parseable form.
+pub fn summary_table(c: &Counts) -> Vec<String> {
+    let pct = |n: usize| {
+        if c.total == 0 {
+            0.0
+        } else {
+            n as f64 * 100.0 / c.total as f64
+        }
+    };
+    let row = |label: &str, n: usize, extra: String| format!("  {label:<8}{n:>7}  {:>5.1} %{extra}", pct(n));
+    let flagged = if c.flagged > 0 {
+        crate::style::cyan(&format!("  ({} flagged)", c.flagged))
+    } else {
+        String::new()
+    };
+    vec![
+        row("passed", c.pass, flagged),
+        row("failed", c.fail, String::new()),
+        row("not run", c.not_run, String::new()),
+    ]
 }
 
 /// JUnit XML grouped by test codeunit. A test that did not run is `<skipped>` with its reason.
@@ -268,6 +325,55 @@ pub fn junit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_time_line_has_the_total_first_then_compile_run_and_rate() {
+        use std::time::Duration as D;
+        let line = time_line(D::from_millis(2280), D::from_millis(1240), D::from_millis(730), 440.0);
+        assert_eq!(line, "  time        2.28 s   (compile 1.24 s, run 0.73 s, 440 tests/s)");
+    }
+
+    #[test]
+    fn the_summary_table_aligns_counts_and_percentages() {
+        let c = Counts {
+            total: 8,
+            pass: 6,
+            fail: 0,
+            not_run: 2,
+            flagged: 0,
+            dotnet_unavailable: 0,
+        };
+        assert_eq!(
+            summary_table(&c),
+            vec![
+                "  passed        6   75.0 %",
+                "  failed        0    0.0 %",
+                "  not run       2   25.0 %"
+            ]
+        );
+    }
+
+    #[test]
+    fn only_dependency_lines_that_matter_show_by_default() {
+        assert!(!dependency_line_is_problem(
+            "dependency note: C/.alpackages/Microsoft_Any_27.app: the package has no NavxManifest.xml"
+        ));
+        assert!(dependency_line_is_problem(
+            "dependency note: X.app: app.json holds a build variable"
+        ));
+        assert!(dependency_line_is_problem("dependency skipped: Y"));
+        assert!(!dependency_line_is_problem("fetching the feed"));
+    }
+
+    #[test]
+    fn an_incomplete_baseline_is_one_short_line_and_a_complete_one_is_silent() {
+        assert_eq!(
+            baseline_warning(16, 17).as_deref(),
+            Some("baseline incomplete: 16 of 17 install roots ran to their end (--verbose for details)")
+        );
+        assert_eq!(baseline_warning(17, 17), None);
+        assert_eq!(baseline_warning(0, 0), None);
+    }
 
     fn r(cu: u32, name: &str, test: &str, outcome: Outcome) -> TestResult {
         TestResult {

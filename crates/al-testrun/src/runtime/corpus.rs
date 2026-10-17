@@ -580,25 +580,29 @@ impl CorpusRuntime {
             .unwrap_or_default();
         let baseline_engine = (workers > 1 && baseline_run.is_some()).then(|| engine.clone());
         let mut baseline_ids: Vec<String> = Vec::new();
+        let mut baseline_roots: Option<(usize, usize)> = None;
         if let Some(b) = &baseline_run {
-            if from_cache {
-                eprintln!("baseline: read from the cache of an earlier run of this program");
+            baseline_roots = Some((b.ran, b.total));
+            if !opts.quiet_baseline {
+                if from_cache {
+                    eprintln!("baseline: read from the cache of an earlier run of this program");
+                }
+                for n in &b.notes {
+                    eprintln!("baseline: {n}");
+                }
+                for l in b.restored_lines() {
+                    eprintln!("baseline: {l}");
+                }
+                eprintln!(
+                    "baseline: {} of {} install roots ran to their end; {} tables hold rows, {} are unseeded, {:.2} s",
+                    b.ran,
+                    b.total,
+                    b.filled,
+                    b.unseeded.len(),
+                    started.elapsed().as_secs_f64()
+                );
             }
             baseline_ids = crate::baseline::assumption_ids(&b.notes);
-            for n in &b.notes {
-                eprintln!("baseline: {n}");
-            }
-            for l in b.restored_lines() {
-                eprintln!("baseline: {l}");
-            }
-            eprintln!(
-                "baseline: {} of {} install roots ran to their end; {} tables hold rows, {} are unseeded, {:.2} s",
-                b.ran,
-                b.total,
-                b.filled,
-                b.unseeded.len(),
-                started.elapsed().as_secs_f64()
-            );
             if baseline_engine.is_some() {
                 engine = spare_engine.take().unwrap_or_else(make_engine);
             }
@@ -919,6 +923,7 @@ impl CorpusRuntime {
             panics,
             phases: Phases {
                 baseline_assumptions: baseline_ids,
+                baseline_roots,
                 compile: compile_time,
                 baseline: baseline_time,
                 tests: tests_time,

@@ -474,6 +474,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.Filename#1", vm_only),
     ("Xmlport.CurrentPath#1", vm_only),
     ("Xmlport.Break#1", vm_only),
+    ("Xmlport.Skip#1", vm_only),
     ("Xmlport.BreakUnbound#1", vm_only),
     ("Xmlport.Quit#1", vm_only),
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
@@ -574,11 +575,16 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         other => Err(Signal::Unsupported(format!("Integer.ToText on {}", other.describe()))),
     }),
     // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
-    // of [Text, Text]): taken as Format(value) with the default format. No corpus test calls them: assumption
-    // primitive-totext-is-format.
+    // of [Text, Text]): Format(value) with the default format, pinned by types/lt-conversions-hidden-parts-doctype/
+    // P142ToTextLang.al:P142_Date_Language and P142_Boolean_Language.
     ("Date.ToText#1", |c, r, a| primitive_to_text(c, r, "Date", a)),
     ("Boolean.ToText#1", |c, r, a| primitive_to_text(c, r, "Boolean", a)),
     ("Decimal.ToText#1", |c, r, a| primitive_to_text(c, r, "Decimal", a)),
+    ("Decimal.ToText#2", |c, r, a| primitive_to_text(c, r, "Decimal", a)),
+    ("Boolean.ToText#2", |c, r, a| primitive_to_text(c, r, "Boolean", a)),
+    ("Time.ToText#1", |c, r, a| primitive_to_text(c, r, "Time", a)),
+    ("DateTime.ToText#1", |c, r, a| primitive_to_text(c, r, "DateTime", a)),
+    ("Duration.ToText#1", |c, r, a| primitive_to_text(c, r, "Duration", a)),
     ("Variant.IsDefaultLayout#1", |_, r, _| is(r, "defaultlayout")),
     ("Variant.IsTestPermissions#1", |_, r, _| is(r, "testpermissions")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
@@ -861,7 +867,7 @@ fn text_arg(args: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
 /// (types/lt-scalars/ScT70050.al:FormatNumbers_*), though a Decimal variable has 3 and 4.
 fn format_variant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let std = int_arg(args, 2).unwrap_or(0) as i32;
-    if (3..=8).contains(&std) && !matches!(&args[0], Value::Null) {
+    if !matches!(std, 0..=2 | 9) && !matches!(&args[0], Value::Null) {
         return Err(Signal::Error(Box::new(AlError {
             message: format!("Standard format number {std} does not exist for the type 'Variant'."),
             code: "InvalidStandardFormat".into(),
@@ -1735,9 +1741,15 @@ fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str, a: &[Va
                 Err(e) => Err(Signal::Unsupported(e)),
             }
         }
-        Some(v @ (Value::Boolean(_) | Value::Decimal(_))) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
-            match crate::format::try_format(v, 0, 0, &*c) {
+        // The text of a Time, DateTime, Duration, Boolean and Decimal is `Format` with the default format, and with `true` the
+        // round-trip form (Format standard 9): `13:45:01`, `2024-03-15T13:45:01Z`, `true`, `1234567.891`, and the Duration words
+        // `1 hour 2 minutes 3 seconds` (types/lt-conversions-hidden-parts-doctype/P142ToTextLang.al:131-135, 156-160, 175-190,
+        // 237-253).
+        Some(
+            v @ (Value::Time(_) | Value::DateTime(_) | Value::Duration(_) | Value::Boolean(_) | Value::Decimal(_)),
+        ) => {
+            let inv = matches!(a.first(), Some(Value::Boolean(true)));
+            match crate::format::try_format(v, 0, if inv { 9 } else { 0 }, &*c) {
                 Ok(t) => Ok(Value::Text(t.into())),
                 Err(e) => Err(Signal::Unsupported(e)),
             }

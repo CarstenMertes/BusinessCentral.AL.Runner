@@ -163,7 +163,7 @@ mod tests {
     fn markdown_counts_flagged_passes_inside_the_passed_number() {
         let marks = |c: &CaseId| {
             if c.name == "a" {
-                vec![Assumption::GuidToText]
+                vec![Assumption::ClearAllKeepsTemporaryRows]
             } else {
                 Vec::new()
             }
@@ -179,14 +179,16 @@ mod tests {
     fn a_flagged_pass_is_still_a_pass_in_junit_and_lists_its_ids() {
         let marks = |c: &CaseId| {
             if c.name == "a" {
-                vec![Assumption::GuidToText, Assumption::RecordGetRecordId]
+                vec![Assumption::ClearAllKeepsTemporaryRows, Assumption::NextWholeDecimal]
             } else {
                 Vec::new()
             }
         };
         let xml = junit_with(&oracle(), &outcome, &|_| 0.0, &marks, None);
         assert!(
-            xml.contains(r#"<property name="assumptions" value="guid-to-text,record-get-record-id" />"#),
+            xml.contains(
+                r#"<property name="assumptions" value="clear-all-keeps-temporary-rows,next-whole-decimal" />"#
+            ),
             "{xml}"
         );
         // The same cases pass and fail as without the property.

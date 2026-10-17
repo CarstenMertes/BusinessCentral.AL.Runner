@@ -4,6 +4,9 @@ impl al_builtins::format::FormatCtx for Session {
     fn language(&self) -> i32 {
         self.global_language
     }
+    fn region(&self) -> Option<String> {
+        self.report.format_region.clone()
+    }
     /// The caption a value declares, else its name (types/TestEnumCaption.al).
     fn enum_name(&self, id: u32, value: i32) -> String {
         let o = &self.engine.program.objects[id as usize];

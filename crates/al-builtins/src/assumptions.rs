@@ -67,30 +67,6 @@ pub struct Info {
 }
 
 registry! {
-    TransferFieldsEnumOption => {
-        id: "transfer-fields-enum-option",
-        assumed: "TransferFields moves the ordinal between an Enum field and an Option field of the same field number; an Option ordinal the Enum lacks is refused.",
-        tests: "Sales Order Entity Buffer next to Sales Header (Shipping Advice); 149 Tests-SCM tests.",
-        probe: "Dst.TransferFields(Src) for an Enum source and an Option target and back, with an ordinal the Enum lacks.",
-    },
-    FieldOfProcedureResult => {
-        id: "field-of-procedure-result",
-        assumed: "A field read off what a procedure returns (GetLocation(Code).\"Bin Mandatory\") is the field of the returned copy.",
-        tests: "Warehouse Receipt Header.BinCodeMandatory; 50 Tests-SCM tests.",
-        probe: "A procedure p(): Record T and p().\"Field\" as an rvalue.",
-    },
-    RecordGetRecordId => {
-        id: "record-get-record-id",
-        assumed: "Record.Get(RecordId) of a row that does not exist fails like Get(key) with the same error text; a RecordId of another table is refused. (A row that exists is pinned by record/TestSetAutoCalcFieldsOnGet.Codeunit.al.)",
-        tests: "Item Category Management (ItemCategory.Get(RecId)); 29 Tests-SCM tests.",
-        probe: "Get(RecordId) on a missing row (result used and unused) and with a RecordId of another table.",
-    },
-    RecordSetFilterEmpty => {
-        id: "record-setfilter-empty",
-        assumed: "Record.SetFilter(Field, '') removes the field's filter in the current filter group, as a Query column does.",
-        tests: "BOM Structure (Item.SetFilter(\"No.\", ItemFilter) with an empty filter); 49 Tests-SCM tests.",
-        probe: "SetFilter(F, '') after SetRange(F, 1) and after SetFilter(F, '>1'), then GetFilters, in filter group 0 and 2.",
-    },
     FindEqualOnAnotherKey => {
         id: "find-equal-on-another-key",
         assumed: "Find with `=` among several directions (`=><`) on a record whose current key is not the primary key finds the row itself when the record's primary key names a row that passes the filters and the fields of the current key still hold the row's values; only then is the neighbour searched.",
@@ -133,11 +109,17 @@ registry! {
         tests: "Import / Export Workflow (\"Workflow Step Argument\".\"Response Option Group\", a Lookup FlowField); 76 Tests-Workflow tests.",
         probe: "An export-only XmlPort with a fieldelement over a Sum FlowField and over a Lookup FlowField of a row with children: the exported text with and without a CalcFields on the row before; an import of the same element.",
     },
-    DateAddWholeDecimal => {
-        id: "date-add-whole-decimal",
-        assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",
-        tests: "Phys. Invt. Count.-Management.CalcPeriod (StartDate + Days with Days: Decimal); 15 Tests-SCM tests.",
-        probe: "D + 2.5, D - 2.5.",
+    RecordRefIntoRecord => {
+        id: "recordref-into-record",
+        assumed: "A RecordRef (held by a Variant) assigned or passed to a Record of the same table gives a copy of the record the RecordRef is on, filters included; another table is refused.",
+        tests: "Approvals Mgmt.InformUserOnStatusChange (ShowSalesApprovalStatus(Variant)); 73 Tests-Workflow tests.",
+        probe: "V := RecRef (a RecordRef on a filtered row); Rec := V and a Record parameter p(V): the fields, GetFilters, position and a later Modify; the same with a RecordRef of another table.",
+    },
+    FieldRefCalcFieldOfABlob => {
+        id: "fieldref-calcfield-of-a-blob",
+        assumed: "FieldRef.CalcField on a Blob field is accepted and loads the blob, as Record.CalcFields does (record/TestCalcFieldsFieldClass.Codeunit.al); on another stored field it stays refused.",
+        tests: "Temp Blob Impl.FromFieldRef (FieldRef.CalcField on each Blob it reads); 14 Tests-SCM-Manufacturing tests (Demand Forecast Card).",
+        probe: "A FieldRef on a Blob field of a stored row read without CalcFields: CalcField() then Value and HasValue; the same on a Code field (the error text) and on a FlowField.",
     },
     NextWholeDecimal => {
         id: "next-whole-decimal",
@@ -145,29 +127,11 @@ registry! {
         tests: "Phys. Invt. Count.-Management.CalcPeriod (Calendar.Next(12 / CountFrequency)).",
         probe: "R.Next(1.5) and R.Next(-1.5).",
     },
-    OptionAsIntegerArgument => {
-        id: "option-as-integer-argument",
-        assumed: "A text builtin that takes an Integer accepts an Option and uses its ordinal, as an assignment to an Integer does.",
-        tests: "Calculate Standard Cost.PrepareAssemblyCalculation (SelectStr(Target, Text)); 14 Tests-SCM tests.",
-        probe: "SelectStr, CopyStr, PadStr and StrPos with an Option value.",
-    },
-    TableRelationFilterCondition => {
-        id: "table-relation-filter-condition",
-        assumed: "A TableRelation arm with a Field = filter(x) condition applies when the field's value passes the filter text (filter('') the blank value, filter(<> '') any other); the first arm that holds wins.",
-        tests: "Bin Content / Warehouse Journal Line \"Bin Code\", Item \"Put-away Unit of Measure Code\"; 307 Tests-SCM tests.",
-        probe: "TableRelation = if (Zone = filter('')) Bin.Code where(...) else if (Zone = filter(<> '')) Bin.Code where(...): Validate of a bin of each zone and FieldRef.Relation.",
-    },
     TableRelationQuotes => {
         id: "table-relation-quotes",
         assumed: "A filter(...) text of a TableRelation where() clause quotes an identifier with \" and is read like a SetFilter text after the quotes are rewritten to '.",
         tests: "Item where(Type = filter(Inventory | \"Non-Inventory\")) (Sales Line No.); tests in Tests-ERM.",
         probe: "TableRelation ... where(F = filter(A | \"B C\")) and Validate with a value of each kind.",
-    },
-    StaleBufferNewerThanRow => {
-        id: "stale-buffer-newer-than-row",
-        assumed: "A buffer whose row version is newer than the stored row (the transaction was rolled back to the last Commit after the buffer's own Modify) is saved without DB:RecordChanged; only a stored row newer than the buffer is stale.",
-        tests: "SMB Service Item TestItem_Reserve (and four siblings).",
-        probe: "Modify, Commit, Modify, asserterror, Modify through the same buffer.",
     },
     TextDigitsToInteger => {
         id: "text-digits-to-integer",
@@ -187,18 +151,6 @@ registry! {
         tests: "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al assigns the result to a Text it never reads (SetName_DoesNotTouchOtherMembers, Copy_AndClear).",
         probe: "Format of the result of C.Name('n') and C.Value('v') on a cookie that had other values before.",
     },
-    PrimitiveToTextIsFormat => {
-        id: "primitive-totext-is-format",
-        assumed: "Date.ToText() and Boolean.ToText() give Format(value) with the default format (en-US).",
-        tests: "Customer Mgt.CalcLastPaymentInfo via the Customer Statistics FactBox: 49 Tests-ERM tests.",
-        probe: "D.ToText() against Format(D) for a Date and a blank Date; B.ToText() for true and false.",
-    },
-    FormatTextCodeWidthPads => {
-        id: "format-text-code-width-pads",
-        assumed: "In a Format picture, `<Month Text,N>` and `<Weekday Text,N>` give the name cut to N characters (pinned for N = 3) and, when it is shorter than N, padded with trailing spaces to N.",
-        tests: "Accounting Period names made with `<Month Text,10>` (Tests-ERM DefaultAccountingPeriodUT and 37 more).",
-        probe: "Format(DMY2Date(5,3,2024), 0, '<Month Text,10>') with its length and a visible delimiter; the same for <Weekday Text,10>.",
-    },
     PageExpressionControlSetValue => {
         id: "page-expression-control-setvalue",
         assumed: "TestPage.SetValue on a field control whose source is an assignable path (a record in an array, `Totals[1].\"Inv. Discount Amount\"`) assigns the path, then runs the control's OnValidate; the value is converted to the type of the value the path holds now. An entry the client would refuse is refused with the variable-control texts.",
@@ -211,29 +163,11 @@ registry! {
         tests: "Incoming Document.FindByDocumentNoAndPostingDate(.., PostingDateFieldRef.Value) behind the Incoming Doc. Attach. FactBox: about 470 Tests-ERM tests.",
         probe: "T := V where V is a Variant holding a Date: compare T with Format(D); Evaluate(D2, T); the same for a blank Date.",
     },
-    GuidToText => {
-        id: "guid-to-text",
-        assumed: "A Guid assigned to a Text or Code is its text form {XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX} in capitals, as Format gives it.",
-        tests: "Config. Package Management.SendTelemetryOnDeleteConfigPackage (Dimensions.Add('PackageCode', Rec.SystemId)); 15 Rapid Start tests.",
-        probe: "T := G with Text[40], Text[10], Code[40]; Dict.Add('k', G); Evaluate(T, G).",
-    },
     GuidAsTextArgument => {
         id: "guid-as-text-argument",
         assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment.",
         tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests.",
         probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G).",
-    },
-    ProcedureAssignIsCall => {
-        id: "procedure-assign-is-call",
-        assumed: "`Proc := value` for a procedure with one value parameter is the call `Proc(value)`.",
-        tests: "Service Line (`SetHideWarrantyWarning := true` in OnValidate of Fault Reason Code): T204_PostedServiceInvoiceContainsPriceCalcMethod and 178 more Tests-ERM tests.",
-        probe: "A codeunit procedure P(V: Boolean) and `P := true;`: does it compile and run P? The same with a var parameter, two parameters, a return value.",
-    },
-    DateFormulaSpacesBetweenTerms => {
-        id: "date-formula-spaces-between-terms",
-        assumed: "Spaces in a date formula are ignored, also between the terms: `<CM + 1D>` is `<CM+1D>` (the corpus pins spaces next to the brackets only).",
-        tests: "Tests-SCM Item.TestField(\"Next Counting Start Date\", CalcDate('<CM + 1D>', WorkDate())), Base Application's `<CM + 1D>` and 16 more Tests-ERM tests.",
-        probe: "CalcDate('<CM + 1D>', D), Evaluate(DF, '<1D + 1W>') and Format(DF), '<1 D>', '<- 1D>'.",
     },
     FeatureKeyEnabledModify => {
         id: "feature-key-enabled-modify",
@@ -252,12 +186,6 @@ registry! {
         assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",
         tests: "Base Application's \"Workflow Instance\" query (column Record_ID), opened by Workflow Step Instance.SetTableRelationValues and Approvals Mgmt.; 142 Tests-Workflow tests.",
         probe: "A query with a column over a RecordId field of a table with rows: Open, Read, Format of the column, grouping and OrderBy on it, SetFilter on the column, SaveAsCsv.",
-    },
-    QueryMethodOverFlowField => {
-        id: "query-method-over-flowfield",
-        assumed: "A query column over a FlowField with Method Sum, Average, Min or Max aggregates the value calculated for each joined row (with the flow filters of its dataitem), as a column without a method shows it.",
-        tests: "Query \"Cust. Ledg. Entry Remain. Amt.\" (Sum of the FlowField \"Remaining Amt. (LCY)\"): T120_NotifyAboutMissingSalesSetupOnLineDiscountValidation and about 425 more Tests-ERM tests.",
-        probe: "A query with column(Total; FlowFieldOfTheTable) { Method = Sum; } over three rows: the total; the same with Min, Max, Average, ReverseSign and a filter() element feeding the flow filter.",
     },
     RecordRefGetTableOfRecordRef => {
         id: "recordref-gettable-of-recordref",
@@ -325,12 +253,6 @@ registry! {
         tests: "VendEntry-Apply Posted Entries / CustEntry-Apply Posted Entries (SetRecord then SetTableView, then Apply Vendor Entries OnOpenPage reads Rec.\"Vendor No.\"): about 39 Tests-ERM tests.",
         probe: "A page variable with SetRecord(A) then SetTableView(B) where B has a filter and another position: the Rec OnOpenPage reads, the rows shown, and the same in the other order.",
     },
-    FormatCurrencyPrefix => {
-        id: "format-currency-prefix",
-        assumed: "In a Format string the code `<C,CODE>` (the currency prefix of Base Application's Amount Auto Format) is accepted and writes nothing.",
-        tests: "Format(Amount, 0, AutoFormat.ResolveAutoFormat(AmountFormat, 'GBP')) in the Remittance Advice and Finance Charge Memo reports: about 28 Tests-ERM tests (FinanceChargeMemoAndApply).",
-        probe: "Format(123.45, 0, '<C,GBP><Precision,2:2><Standard Format,0>') and with the code after the others; Format(5, 0, '<C,GBP><Integer>'); '<C,>' and '<C>'.",
-    },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",
         assumed: "A page whose table has a subscriber to OnDeleteRecordEvent opens; the test client has no operation that deletes the page's row, so the event is never raised.",
@@ -342,18 +264,6 @@ registry! {
         assumed: "A new page row takes the value of a field that has equality filters in several filter groups when they all name the same value; different values are not stamped.",
         tests: "Payment Journal and Incom. Doc. Attach. FactBox tests of Tests-General Journal (Cash Receipt Journal).",
         probe: "Open a page on a record with SetRange(F, 'A') in group 0 and group 2, insert a row, read F.",
-    },
-    GetRangeAcrossFilterGroups => {
-        id: "get-range-across-filter-groups",
-        assumed: "GetRangeMin/Max see a filter on the field set in another filter group when the current group has none. With no filter at all it stays refused.",
-        tests: "GenJnlManagement.OpenJnl after TemplateSelection (Purchase Journal OnOpenPage); 34 Tests-General Journal tests.",
-        probe: "FilterGroup(2); SetRange(F,'T'); FilterGroup(0); GetRangeMax(F).",
-    },
-    InvisiblePartForPageCode => {
-        id: "invisible-part-for-page-code",
-        assumed: "CurrPage.<Part>.Page in the page's own code reaches a part whose Visible came out false, whose Visible is the literal false or whose ApplicationArea is not enabled (its page is created on the first reach, initialised and not opened).",
-        tests: "Cash Receipt Journal OnAfterGetCurrRecord (WorkflowStatusBatch, Visible = variable); 7 Tests-General Journal tests; Sales Credit Memo and other document pages (IncomingDocAttachFactBox), about 230 Tests-ERM tests.",
-        probe: "A page with part(P; ...) { Visible = Flag } where Flag is false at open and OnAfterGetCurrRecord calls CurrPage.P.Page.Method().",
     },
     DatabaseSidNumbers => {
         id: "database-sid-numbers",
@@ -719,15 +629,18 @@ mod tests {
     #[test]
     fn marks_are_collected_per_thread_and_cleared() {
         clear_hits();
-        assume(Assumption::GuidToText);
-        assume(Assumption::GuidToText);
-        assume(Assumption::TransferFieldsEnumOption);
+        assume(Assumption::ClearAllKeepsTemporaryRows);
+        assume(Assumption::ClearAllKeepsTemporaryRows);
+        assume(Assumption::FindEqualOnAnotherKey);
         assert_eq!(
             take_hits(),
-            vec![Assumption::TransferFieldsEnumOption, Assumption::GuidToText]
+            vec![
+                Assumption::FindEqualOnAnotherKey,
+                Assumption::ClearAllKeepsTemporaryRows
+            ]
         );
         assert!(take_hits().is_empty());
-        assume(Assumption::GuidToText);
+        assume(Assumption::ClearAllKeepsTemporaryRows);
         std::thread::spawn(|| assert!(take_hits().is_empty())).join().unwrap();
         clear_hits();
     }

@@ -160,7 +160,7 @@ impl Session {
             // Break, BreakUnbound and Quit end the trigger that calls them (platform/lt-xmlport-session-navapp-cookie/P94XpPathFlow.al:
             // Export_Break, Export_BreakUnbound, Export_Quit); what the run does next is `xp_flow`. Called from a procedure the
             // trigger called, the Exit leaves only that procedure: pinned only where the trigger ends with the call.
-            ids::XMLPORT_BREAK_1 | ids::XMLPORT_BREAKUNBOUND_1 | ids::XMLPORT_QUIT_1 => {
+            ids::XMLPORT_BREAK_1 | ids::XMLPORT_BREAKUNBOUND_1 | ids::XMLPORT_QUIT_1 | ids::XMLPORT_SKIP_1 => {
                 let inst = self.xp_instance(receiver)?;
                 let trigger_depth = inst
                     .borrow()
@@ -168,13 +168,18 @@ impl Session {
                     .iter()
                     .find(|(k, _)| *k == 9)
                     .and_then(|(_, v)| v.parse::<usize>().ok());
+                // From the trigger itself or from any procedure it calls: the whole trigger ends (corpus xml/lt-xml-port-flow/
+                // XmlPortFlowFromTrigger.al:P170_Flow_*ViaProcedure, the code after the call in the trigger does not run).
                 match trigger_depth {
-                    Some(d) if self.depth == d + 1 || self.depth == d + 2 => {}
+                    Some(d) if self.depth > d => {
+                        self.report.flow_unwind = Some(d + 1);
+                    }
                     _ => return unsupported(format!("{id} outside the triggers where it is pinned")),
                 }
                 let kind = match id {
                     ids::XMLPORT_BREAK_1 => "1",
                     ids::XMLPORT_BREAKUNBOUND_1 => "2",
+                    ids::XMLPORT_SKIP_1 => "4",
                     _ => "3",
                 };
                 let mut s = inst.borrow_mut();
@@ -412,18 +417,45 @@ impl Session {
         let routines = &schema.engine.program.objects[schema.object].routines;
         let mut pre = None;
         let mut post = None;
+        let mut init = None;
         for (i, r) in routines.iter().enumerate().filter(|(_, r)| r.is_trigger) {
             if r.name.eq_ignore_ascii_case("OnPreXmlPort") {
                 pre = Some(i);
             } else if r.name.eq_ignore_ascii_case("OnPostXmlPort") {
                 post = Some(i);
             } else if r.name.eq_ignore_ascii_case("OnInitXmlPort") {
-                return unsupported(format!(
-                    "XmlPort \"{}\": trigger {} is not supported yet",
-                    schema.name(),
-                    r.name
+                init = Some(i);
+            }
+        }
+        Self::xp_clear_flow(inst);
+        // OnInitXmlPort runs once, when the variable is first used: a second Export or Import of the same variable does not
+        // run it again, a static call makes a new instance (corpus P112XpXml.al:P112_Export_RoundTrip_SameInstance,
+        // P112_Static_Export_Import). A Quit in it ends the run with nothing written (P112_Export_Init_Quit); Skip and Break
+        // only end the trigger (P112_Import_Init_Actions).
+        if let Some(r) = init {
+            let first = !inst.borrow().xp_text.iter().any(|(k, _)| *k == 11);
+            if first {
+                inst.borrow_mut().xp_text.push((11, String::new()));
+                self.xp_run_object_trigger(inst, r)?;
+                if Self::xp_flow(inst) == Some(Flow::Quit) {
+                    Self::xp_clear_flow(inst);
+                    return Ok(if ret_used { Value::Boolean(true) } else { Value::Null });
+                }
+                Self::xp_clear_flow(inst);
+            }
+        }
+        // The source of a text-format import is read, and found empty, before OnPreXmlPort runs (P112XpCsv.al:
+        // P112_Import_EmptySource, `init 1;init done;`); the text waits for the import.
+        if dir == Dir::Import && schema.xp().format != ir::XmlFormat::Xml {
+            let text = self.xp_read_source(inst, schema.xp())?;
+            if text.is_empty() {
+                return Err(xerr(
+                    "Cannot import the specified XML document because the file is empty.",
+                    "XmlPortData",
                 ));
             }
+            inst.borrow_mut().xp_text.retain(|(k, _)| *k != 12);
+            inst.borrow_mut().xp_text.push((12, text));
         }
         if let Some(r) = pre {
             self.call(schema.object, r, inst.clone(), Vec::new())?;
@@ -434,17 +466,15 @@ impl Session {
             Dir::Import => self.xp_import(inst, &schema, ret_used, static_form),
         };
         // Quit ends the run at once: no OnPostXmlPort, and the run succeeded (Export_Quit).
-        if matches!(run, Err(Signal::Exit(None))) && Self::xp_flow(inst) == Some(Flow::Quit) {
+        if Self::xp_flow(inst) == Some(Flow::Quit) && matches!(run, Err(Signal::Exit(None)) | Ok(_)) {
             Self::xp_clear_flow(inst);
             return Ok(if ret_used { Value::Boolean(true) } else { Value::Null });
         }
         let result = run?;
-        // A Break, BreakUnbound or Quit anywhere else is not pinned.
+        // A Break, BreakUnbound, Skip or Quit anywhere else is not pinned.
         if Self::xp_flow(inst).is_some() {
             Self::xp_clear_flow(inst);
-            return unsupported(
-                "Break, BreakUnbound or Quit in a trigger other than OnAfterGetRecord of an export (not pinned)",
-            );
+            return unsupported("Break, BreakUnbound, Skip or Quit in a trigger the corpus does not pin (not pinned)");
         }
         // OnPostXmlPort runs after the data was passed, in both directions (platform/lt-xmlport-session-navapp-cookie/
         // P94XpPathFlow.al and P94XpFilename.al log it last); after an error it does not run. After a guarded run that
@@ -491,6 +521,11 @@ impl Session {
         self.tx.tx_world += 1;
         let result = self.xp_import_document(inst, schema);
         self.tx.tx_world -= 1;
+        // A Quit ends the import with the records stored so far kept (P112_Import_Quit); `xp_run` reads the request.
+        let result = match result {
+            Err(Signal::Exit(None)) if Self::xp_flow(inst) == Some(Flow::Quit) => Ok(()),
+            other => other,
+        };
         match result {
             Ok(()) if guarded => {
                 // The import's own transaction ends with it, so a second guarded import is not
@@ -521,7 +556,15 @@ impl Session {
 
     fn xp_import_document(&mut self, inst: &Inst, schema: &Schema) -> Result<(), Signal> {
         let xp = schema.xp();
-        let text = self.xp_read_source(inst, xp)?;
+        let stashed = {
+            let mut i = inst.borrow_mut();
+            let at = i.xp_text.iter().position(|(k, _)| *k == 12);
+            at.map(|a| i.xp_text.remove(a).1)
+        };
+        let text = match stashed {
+            Some(t) => t,
+            None => self.xp_read_source(inst, xp)?,
+        };
         // xmlport/TestXmlPortExportImportContracts.al:XmlPortImport_MalformedXml_Throws
         if text.is_empty() {
             return Err(xerr(
@@ -603,6 +646,20 @@ impl Session {
         }
     }
 
+    /// Runs an object trigger (OnInitXmlPort) as a trigger the flow builtins may end.
+    fn xp_run_object_trigger(&mut self, inst: &Inst, routine: usize) -> Result<(), Signal> {
+        let object = inst.borrow().object as usize;
+        {
+            let mut s = inst.borrow_mut();
+            s.xp_text.retain(|(k, _)| *k != 9);
+            s.xp_text.push((9, self.depth.to_string()));
+        }
+        let result = self.call(object, routine, inst.clone(), Vec::new()).map(|_| ());
+        self.report.flow_unwind = None;
+        inst.borrow_mut().xp_text.retain(|(k, _)| *k != 9);
+        result
+    }
+
     fn xp_run_trigger(&mut self, inst: &Inst, schema: &Schema, node: usize, name: &str) -> Result<(), Signal> {
         match schema.node(node).trigger(name) {
             Some(r) => {
@@ -622,6 +679,7 @@ impl Session {
                     s.xp_text.push((9, self.depth.to_string()));
                 }
                 let result = self.call(schema.object, r, inst.clone(), Vec::new()).map(|_| ());
+                self.report.flow_unwind = None;
                 inst.borrow_mut().xp_text.retain(|(k, _)| *k != 7 && *k != 9);
                 result
             }
@@ -636,12 +694,43 @@ impl Session {
             Some("1") => Some(Flow::Break),
             Some("2") => Some(Flow::Unbound),
             Some("3") => Some(Flow::Quit),
+            Some("4") => Some(Flow::Skip),
             _ => None,
         }
     }
 
     fn xp_clear_flow(inst: &Inst) {
-        inst.borrow_mut().xp_text.retain(|(k, _)| *k != 8);
+        inst.borrow_mut().xp_text.retain(|(k, _)| *k != 8 && *k != 10);
+    }
+
+    /// Runs the trigger `name` of `node` and answers what it asked for with Skip, Break or BreakUnbound. Quit ends the run: the
+    /// request stays set and the error unwinds to `xp_run` (corpus pages/lt-pages-xmlport-upload-members/P112XpXml.al:
+    /// P112_Export_Quit, P112_Import_Quit).
+    fn xp_site(&mut self, inst: &Inst, schema: &Schema, node: usize, name: &str) -> Result<Option<Flow>, Signal> {
+        self.xp_run_trigger(inst, schema, node, name)?;
+        match Self::xp_flow(inst) {
+            Some(Flow::Quit) => Err(Signal::Exit(None)),
+            Some(other) => {
+                inst.borrow_mut().xp_text.retain(|(k, _)| *k != 8);
+                Ok(Some(other))
+            }
+            None => Ok(None),
+        }
+    }
+
+    /// Whether a Quit was requested: the export hands back the document written so far (P112_Export_Quit: the stream is not
+    /// empty) and `xp_run` ends the run without OnPostXmlPort.
+    fn xp_quit(inst: &Inst) -> bool {
+        Self::xp_flow(inst) == Some(Flow::Quit)
+    }
+
+    /// An import stops after the record it is on: a Break in a trigger of that record (P112_Import_Break).
+    fn xp_stop_import(inst: &Inst) {
+        inst.borrow_mut().xp_text.push((10, String::new()));
+    }
+
+    fn xp_import_stopped(inst: &Inst) -> bool {
+        inst.borrow().xp_text.iter().any(|(k, _)| *k == 10)
     }
 
     /// `/Root/Item`, `/Root/Item/Id` and `/Root/Item[@Qty]`: the names of the elements above the node, an attribute last in brackets.
@@ -686,7 +775,10 @@ impl Session {
                 ir::XmlNodeKind::Table => {
                     let first = !linked.contains(&child);
                     linked.push(child);
-                    self.xp_import_record(inst, schema, child, ce, first)?
+                    self.xp_import_record(inst, schema, child, ce, first)?;
+                    if Self::xp_import_stopped(inst) {
+                        return Ok(());
+                    }
                 }
                 ir::XmlNodeKind::Text if !schema.children(child).is_empty() => {
                     self.xp_import_container(inst, schema, child, ce)?
@@ -750,6 +842,17 @@ impl Session {
     /// Field element or attribute: the text becomes the field's value, then `OnAfterAssignField`.
     /// Returns the field's position.
     fn xp_assign_field(&mut self, inst: &Inst, schema: &Schema, node: usize, text: &str) -> Result<usize, Signal> {
+        Ok(self.xp_assign_field_flow(inst, schema, node, text)?.0)
+    }
+
+    /// `xp_assign_field`, and what `OnAfterAssignField` asked for.
+    fn xp_assign_field_flow(
+        &mut self,
+        inst: &Inst,
+        schema: &Schema,
+        node: usize,
+        text: &str,
+    ) -> Result<(usize, Option<Flow>), Signal> {
         // White space around a value is dropped, for text too (xmlport/lt-xmlport-query-datatransfer/XpTImportBasic.al:
         // Import_WhitespaceAroundValues).
         let text = text.trim();
@@ -800,8 +903,8 @@ impl Session {
             self.xp_value(text, &ty, false)?
         };
         rec.borrow_mut().fields[pos] = value;
-        self.xp_run_trigger(inst, schema, node, "onafterassignfield")?;
-        Ok(pos)
+        let flow = self.xp_site(inst, schema, node, "onafterassignfield")?;
+        Ok((pos, flow))
     }
 
     /// The value an imported text becomes in a field of type `ty`. An empty text is the type's
@@ -1102,6 +1205,9 @@ impl Session {
                     let first = !linked.contains(&child);
                     linked.push(child);
                     self.xp_import_record(inst, schema, child, ce, first)?;
+                    if Self::xp_import_stopped(inst) {
+                        return Ok(());
+                    }
                 }
                 _ => return unsupported("XmlPort import of a text element with content inside a table element"),
             }
@@ -1138,7 +1244,16 @@ impl Session {
         } else {
             ("onbeforeinsertrecord", "onafterinsertrecord")
         };
-        self.xp_run_trigger(inst, schema, node, before)?;
+        // Skip and BreakUnbound leave this record out (no insert, no after trigger), Break leaves it out and ends the import
+        // (P112_Import_Skip, _Break, _BreakUnbound at beforeIns2).
+        match self.xp_site(inst, schema, node, before)? {
+            Some(Flow::Skip | Flow::Unbound) => return Ok(()),
+            Some(Flow::Break) => {
+                Self::xp_stop_import(inst);
+                return Ok(());
+            }
+            _ => {}
+        }
         if n.auto_save {
             if modify && !n.auto_replace {
                 // AutoUpdate changes only the fields the document carries.
@@ -1176,7 +1291,11 @@ impl Session {
             let method = if modify { RecordOp::Modify } else { RecordOp::Insert };
             self.record_op(method, &rec, &mut [Value::Boolean(true)])?;
         }
-        self.xp_run_trigger(inst, schema, node, after)
+        // A Break after the insert ends the import with this record in (P112_Import_Break, afterIns2).
+        if self.xp_site(inst, schema, node, after)? == Some(Flow::Break) {
+            Self::xp_stop_import(inst);
+        }
+        Ok(())
     }
 
     // ------------------------------------------------- VariableText, FixedText
@@ -1246,6 +1365,7 @@ impl Session {
             rec.borrow_mut().fields = fresh;
             self.xp_run_trigger(inst, schema, table, "onafterinitrecord")?;
             let mut assigned = Vec::new();
+            let mut broke = false;
             for (&f, v) in fields.iter().zip(&values) {
                 let is_text = {
                     let pos = schema.node(f).field.expect("field nodes have a field");
@@ -1262,10 +1382,17 @@ impl Session {
                 } else {
                     v.trim()
                 };
-                assigned.push(self.xp_assign_field(inst, schema, f, v)?);
+                let (pos, flow) = self.xp_assign_field_flow(inst, schema, f, v)?;
+                assigned.push(pos);
+                // A Break after a field is assigned leaves the other fields of the record unassigned (P112XpCsv.al:
+                // P112_Import_Break, idAfter2: `2=/0`); the record is still stored.
+                if flow == Some(Flow::Break) {
+                    broke = true;
+                    break;
+                }
             }
             // Fields are read as the values come; a record of another length is not pinned.
-            if values.len() != fields.len() {
+            if !broke && values.len() != fields.len() {
                 return unsupported(format!(
                     "a record with {} values for a port of {} fields (not pinned)",
                     values.len(),
@@ -1273,6 +1400,9 @@ impl Session {
                 ));
             }
             self.xp_save_record(inst, schema, table, &assigned)?;
+            if Self::xp_import_stopped(inst) {
+                break;
+            }
         }
         Ok(())
     }
@@ -1290,10 +1420,22 @@ impl Session {
             text_separator(set_or_declared(inst, 0, xp.field_delimiter.as_deref()).as_deref(), "\"")?,
         );
         let mut lines = Vec::new();
-        for_each_row(self, inst, schema, table, |me, inst, schema| {
+        let rows = for_each_row(self, inst, schema, table, |me, inst, schema| {
             let mut cells = Vec::new();
             for &f in &fields {
-                let v = me.xp_field_text(inst, schema, f)?;
+                let v = match me.xp_field_pass(inst, schema, f) {
+                    Ok(FieldPass::Value(v)) => v,
+                    Ok(FieldPass::Omit) => continue,
+                    Ok(FieldPass::Stop) => break,
+                    // A Quit in a field leaves what was written, the record cut short (P112_Export_Quit, nameBefore2).
+                    Err(Signal::Exit(None)) if Session::xp_flow(inst) == Some(Flow::Quit) => {
+                        if !cells.is_empty() {
+                            lines.push(cells.join(if variable { fsep.as_str() } else { "" }));
+                        }
+                        return Err(Signal::Exit(None));
+                    }
+                    Err(e) => return Err(e),
+                };
                 cells.push(if variable {
                     format!("{fdelim}{v}{fdelim}")
                 } else {
@@ -1307,7 +1449,12 @@ impl Session {
             }
             lines.push(cells.join(if variable { fsep.as_str() } else { "" }));
             Ok(())
-        })?;
+        });
+        // A Quit ends the export with what was written so far; the request stays set for `xp_run`.
+        match rows {
+            Err(Signal::Exit(None)) if Self::xp_flow(inst) == Some(Flow::Quit) => {}
+            other => other?,
+        }
         let text = lines.join(&record_sep);
         if xp.utf8 {
             let mut out = vec![0xEF, 0xBB, 0xBF];
@@ -1373,30 +1520,43 @@ impl Session {
     /// A text element with content: its attributes, then its children in schema order.
     fn xp_export_container(&mut self, inst: &Inst, schema: &Schema, node: usize) -> Result<Elem, Signal> {
         let mut out = Elem::new(&schema.node(node).xml_name);
-        self.xp_export_content(inst, schema, node, &mut out)?;
+        match self.xp_export_content(inst, schema, node, &mut out) {
+            Err(Signal::Exit(None)) if Self::xp_quit(inst) => {}
+            other => other?,
+        }
         Ok(out)
     }
 
     fn xp_export_content(&mut self, inst: &Inst, schema: &Schema, node: usize, out: &mut Elem) -> Result<(), Signal> {
         for child in schema.children(node) {
             let c = schema.node(child);
+            // A Quit in a trigger of the child leaves it out and ends the document here.
+            macro_rules! got {
+                ($e:expr) => {
+                    match $e {
+                        Ok(v) => v,
+                        Err(Signal::Exit(None)) if Self::xp_quit(inst) => return Ok(()),
+                        Err(e) => return Err(e),
+                    }
+                };
+            }
             match c.kind {
                 ir::XmlNodeKind::TextAttr => {
-                    let v = self.xp_pass_variable(inst, schema, child)?;
+                    let v = got!(self.xp_pass_variable(inst, schema, child));
                     out.attrs.push((c.xml_name.clone(), v));
                 }
                 ir::XmlNodeKind::FieldAttr => {
-                    let v = self.xp_field_text(inst, schema, child)?;
+                    let v = got!(self.xp_field_text(inst, schema, child));
                     out.attrs.push((c.xml_name.clone(), v));
                 }
                 ir::XmlNodeKind::Field => {
-                    let v = self.xp_field_text(inst, schema, child)?;
+                    let v = got!(self.xp_field_text(inst, schema, child));
                     let mut e = Elem::new(&c.xml_name);
                     e.children.push(Node::Text(v));
                     out.children.push(Node::Elem(e));
                 }
                 ir::XmlNodeKind::Text if schema.children(child).is_empty() => {
-                    let v = self.xp_pass_variable(inst, schema, child)?;
+                    let v = got!(self.xp_pass_variable(inst, schema, child));
                     let mut e = Elem::new(&c.xml_name);
                     e.children.push(Node::Text(v));
                     out.children.push(Node::Elem(e));
@@ -1407,10 +1567,16 @@ impl Session {
                 ir::XmlNodeKind::Text => {
                     let e = self.xp_export_container(inst, schema, child)?;
                     out.children.push(Node::Elem(e));
+                    if Self::xp_quit(inst) {
+                        return Ok(());
+                    }
                 }
                 ir::XmlNodeKind::Table => {
                     for e in self.xp_export_table(inst, schema, child)? {
                         out.children.push(Node::Elem(e));
+                    }
+                    if Self::xp_quit(inst) {
+                        return Ok(());
                     }
                 }
             }
@@ -1435,7 +1601,22 @@ impl Session {
     /// (xmlport/TestXmlPortExportImportContracts.al:XmlPortExport_Document_FullText). A blank option
     /// is a single space.
     fn xp_field_text(&mut self, inst: &Inst, schema: &Schema, node: usize) -> Result<String, Signal> {
-        self.xp_run_trigger(inst, schema, node, "onbeforepassfield")?;
+        self.xp_site(inst, schema, node, "onbeforepassfield")?;
+        self.xp_field_value_text(inst, schema, node)
+    }
+
+    /// The field of a text-format export: Skip leaves it out of the record, Break leaves it out and ends the record
+    /// (corpus P112XpCsv.al:P112_Export_Skip and _Break, idBefore2 and nameBefore2).
+    fn xp_field_pass(&mut self, inst: &Inst, schema: &Schema, node: usize) -> Result<FieldPass, Signal> {
+        match self.xp_site(inst, schema, node, "onbeforepassfield")? {
+            Some(Flow::Skip) => return Ok(FieldPass::Omit),
+            Some(Flow::Break) => return Ok(FieldPass::Stop),
+            _ => {}
+        }
+        Ok(FieldPass::Value(self.xp_field_value_text(inst, schema, node)?))
+    }
+
+    fn xp_field_value_text(&mut self, inst: &Inst, schema: &Schema, node: usize) -> Result<String, Signal> {
         let n = schema.node(node);
         let rec = self.xp_record(inst, schema.node(n.table_node.expect("field nodes have a table node")))?;
         let pos = n.field.expect("field nodes have a field");
@@ -1527,7 +1708,15 @@ impl Session {
         let n = schema.node(node);
         let mut out = Vec::new();
         let mut rows = Vec::new();
-        self.xp_run_trigger(inst, schema, node, "onprexmlitem")?;
+        // A Break in OnPreXmlItem leaves the element without rows and without the empty pass (P112_Export_Break, preItem1); a Quit
+        // leaves what was written so far.
+        match self.xp_site(inst, schema, node, "onprexmlitem") {
+            Ok(Some(Flow::Break)) => return Ok(out),
+            Err(Signal::Exit(None)) if Self::xp_quit(inst) => return Ok(out),
+            other => {
+                other?;
+            }
+        }
         self.xp_rows(inst, schema, node, &mut rows)?;
         let rec = self.xp_record(inst, n)?;
         // A table element without rows still passes its fields once, without a row: OnBeforePassField runs and no
@@ -1536,36 +1725,48 @@ impl Session {
         // Export_EmptyTable: 462 bytes, a row of `0`, empty text, `0.00`, `No`).
         if rows.is_empty() && !n.min_zero {
             let mut e = Elem::new(&n.xml_name);
-            self.xp_export_content(inst, schema, node, &mut e)?;
+            let r = self.xp_export_content(inst, schema, node, &mut e);
             out.push(e);
+            match r {
+                Err(Signal::Exit(None)) if Self::xp_quit(inst) => return Ok(out),
+                other => other?,
+            }
         } else if rows.is_empty() {
             for child in schema.children(node) {
                 if matches!(
                     schema.node(child).kind,
                     ir::XmlNodeKind::Field | ir::XmlNodeKind::FieldAttr
                 ) {
-                    self.xp_run_trigger(inst, schema, child, "onbeforepassfield")?;
+                    match self.xp_site(inst, schema, child, "onbeforepassfield") {
+                        Err(Signal::Exit(None)) if Self::xp_quit(inst) => return Ok(out),
+                        other => {
+                            other?;
+                        }
+                    }
                 }
             }
         }
         for row in rows {
             self.load(&rec, row)?;
-            self.xp_run_trigger(inst, schema, node, "onaftergetrecord")?;
-            match Self::xp_flow(inst) {
-                Some(Flow::Break) => {
-                    Self::xp_clear_flow(inst);
-                    break;
-                }
-                Some(Flow::Unbound) => {
-                    Self::xp_clear_flow(inst);
-                    continue;
-                }
-                Some(Flow::Quit) => return Err(Signal::Exit(None)),
-                None => {}
+            // Skip leaves the row out, Break ends the rows; BreakUnbound ends the trigger and the row goes on (P112_Export_Skip,
+            // _Break, _BreakUnbound at getRec2).
+            match self.xp_site(inst, schema, node, "onaftergetrecord") {
+                Ok(Some(Flow::Break)) => break,
+                Ok(Some(Flow::Skip)) => continue,
+                Err(Signal::Exit(None)) if Self::xp_quit(inst) => return Ok(out),
+                Err(e) => return Err(e),
+                Ok(_) => {}
             }
             let mut e = Elem::new(&n.xml_name);
-            self.xp_export_content(inst, schema, node, &mut e)?;
+            let r = self.xp_export_content(inst, schema, node, &mut e);
             out.push(e);
+            match r {
+                Err(Signal::Exit(None)) if Self::xp_quit(inst) => return Ok(out),
+                other => other?,
+            }
+            if Self::xp_quit(inst) {
+                return Ok(out);
+            }
         }
         Ok(out)
     }
@@ -1597,12 +1798,20 @@ impl Session {
 }
 
 /// Runs `body` once for every row of table element `node`, with the row loaded.
+/// What the field of a text export gives.
+enum FieldPass {
+    Value(String),
+    Omit,
+    Stop,
+}
+
 /// What a trigger asked for: leave the table element's rows, skip the rest of the row, or end the run.
 #[derive(Clone, Copy, PartialEq)]
 enum Flow {
     Break,
     Unbound,
     Quit,
+    Skip,
 }
 
 fn for_each_row(
@@ -1613,23 +1822,17 @@ fn for_each_row(
     mut body: impl FnMut(&mut Session, &Inst, &Schema) -> Result<(), Signal>,
 ) -> Result<(), Signal> {
     let mut rows = Vec::new();
-    me.xp_run_trigger(inst, schema, node, "onprexmlitem")?;
+    if me.xp_site(inst, schema, node, "onprexmlitem")? == Some(Flow::Break) {
+        return Ok(());
+    }
     me.xp_rows(inst, schema, node, &mut rows)?;
     let rec = me.xp_record(inst, schema.node(node))?;
     for row in rows {
         me.load(&rec, row)?;
-        me.xp_run_trigger(inst, schema, node, "onaftergetrecord")?;
-        match Session::xp_flow(inst) {
-            Some(Flow::Break) => {
-                Session::xp_clear_flow(inst);
-                break;
-            }
-            Some(Flow::Unbound) => {
-                Session::xp_clear_flow(inst);
-                continue;
-            }
-            Some(Flow::Quit) => return Err(Signal::Exit(None)),
-            None => {}
+        match me.xp_site(inst, schema, node, "onaftergetrecord")? {
+            Some(Flow::Break) => break,
+            Some(Flow::Skip) => continue,
+            _ => {}
         }
         body(me, inst, schema)?;
     }

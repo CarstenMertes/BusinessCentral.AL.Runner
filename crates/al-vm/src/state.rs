@@ -100,6 +100,8 @@ pub(crate) struct ReportState {
     pub(crate) rebind_after_run: bool,
     /// `CurrReport.Language` of the running report (`reports.rs`); `None` until a trigger sets it.
     pub(crate) curr_report_language: Option<i32>,
+    /// `CurrReport.FormatRegion` of the report started by `Run` or `RunModal` (empty text until a trigger sets it).
+    pub(crate) format_region: Option<String>,
     /// The call depth of the `OnInitReport` trigger being run, and whether it called
     /// `CurrReport.Quit` (al-vm reports.rs).
     pub(crate) report_init_depth: Option<usize>,

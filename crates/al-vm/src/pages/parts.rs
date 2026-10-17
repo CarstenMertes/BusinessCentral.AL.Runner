@@ -173,28 +173,23 @@ impl Session {
             .map(|(_, c)| c.clone());
         // The page's own code reaches a part whose Visible came out false (Base Application's journals call
         // `CurrPage.WorkflowStatusBatch.PAGE.SetFilterOnWorkflowRecord` behind `Visible = <variable>`; Tests-General
-        // Journal, 7 tests). Unprobed: docs/probes-needed.md "CurrPage.<Part> of an invisible part".
+        // Journal, 7 tests; corpus pages/lt-hidden-part-currpage/HiddenPartCurrPageEditable.al).
         // A part whose Visible expression came out false is in the test page too, answering Visible() No and First() Yes
         // (misc/lt-probes-needed-7/PnGPartTriggers.al:HiddenPartExpression); only a literal `Visible = false` leaves it out
         // (testpart/TestPartNotOnThePage, which never creates the part).
         let found = found.or_else(|| {
             // Test code finds it only when the Visible expression hid it; a part a literal `Visible = false` left out, which page
             // code created on first reach, stays "not found" (misc/lt-probes-needed-9/P99InvisiblePart.al:P99_StaticInvisible).
-            let hidden = st
-                .borrow()
+            st.borrow()
                 .hidden_parts
                 .iter()
                 .find(|(i, _)| *i == control)
                 .map(|(_, c)| c.clone())
-                .filter(|_| runtime || !self.control_eliminated(st, control));
-            if hidden.is_some() && runtime {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::InvisiblePartForPageCode);
-            }
-            hidden
+                .filter(|_| runtime || !self.control_eliminated(st, control))
         });
         // A part the control tree dropped (Visible = false, or an ApplicationArea the session does not enable) is
         // still there for the page's own code: Base Application's Sales Credit Memo calls
-        // `CurrPage.IncomingDocAttachFactBox.Page.LoadDataFromRecord(Rec)` in OnAfterGetCurrRecord. It is created on the first such reach, not opened, and kept out of the tree. Unprobed (InvisiblePartForPageCode).
+        // `CurrPage.IncomingDocAttachFactBox.Page.LoadDataFromRecord(Rec)` in OnAfterGetCurrRecord. It is created on the first such reach, not opened, and kept out of the tree (corpus pages/lt-hidden-part-currpage/HiddenPartCurrPageEditable.al: Editable_LiteralInvisible_OpenEdit, Editable_ExprInvisible_OpenEdit).
         let found = match found {
             None if runtime => {
                 let engine = self.engine();
@@ -209,9 +204,6 @@ impl Session {
                         // It is not opened: its OnOpenPage and OnAfterGetRecord do not run, only the call that reached it
                         // (pages/lt-page-filtergroup-assumptions/P99InvisiblePart.al:P99_StaticInvisible, the log is
                         // `host-OnAfterGetCurrRecord | part-Ping | host-after-Ping`).
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::InvisiblePartForPageCode,
-                        );
                         Some(child)
                     }
                     None => None,

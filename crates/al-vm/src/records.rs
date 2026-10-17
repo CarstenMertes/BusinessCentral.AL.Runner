@@ -927,6 +927,16 @@ impl Session {
                     *b = al_builtins::stream::copy_blob(b, false);
                 }
             }
+        } else {
+            // A Blob a Modify persisted reads empty after a Get until CalcFields, as a database record's does; one still being
+            // written keeps its content (misc/lt-probes-needed-1/PnABlobAssignRename.al:Assign_Temporary `regot-source = ''`).
+            for v in &mut row {
+                if let Value::Blob(b) = v {
+                    if b.borrow().persisted {
+                        *b = al_builtins::stream::copy_blob(b, false);
+                    }
+                }
+            }
         }
         // A full load (the default) needs no bookkeeping beyond the flag; a partial one is worked
         // out in partial.rs.
@@ -1340,6 +1350,14 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     InsertOutcome::Inserted => {
+                        // The Blob content an Insert of a temporary record stored is persisted, as one a Modify stored (see Rename).
+                        if rec.borrow().temp_id.is_some() {
+                            for v in &rec.borrow().fields {
+                                if let Value::Blob(b) = v {
+                                    b.borrow_mut().persisted = true;
+                                }
+                            }
+                        }
                         if let (Some(a), false) = (auto, taken) {
                             self.note_explicit_key(&t, a, &row, &cx.company);
                         }
@@ -1416,15 +1434,8 @@ impl Session {
                     let version = |v: &Value| if let Value::BigInteger(n) = v { *n } else { 0 };
                     // Stale means the stored row is NEWER than the buffer. A buffer that is newer than the row (the
                     // transaction was rolled back to the last Commit after the buffer's own Modify, as an asserterror
-                    // does) is not stale: Microsoft's SMB Service Item TestItem_Reserve modifies such a buffer
-                    // and passes in BC (assumed from that test; docs/probes-needed.md).
-                    if !rec.borrow().temporary
-                        && version(&mine) > version(&theirs)
-                        && version(&theirs) <= self.tx.committed_row_version
-                    {
-                        // Under the rule "a different version is stale" this write would have been refused.
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::StaleBufferNewerThanRow);
-                    }
+                    // does) is not stale (corpus record/lt-record-conversion-assumptions/StaleBuffer.al:
+                    // P98_Stale_AfterAsserterror_SameBuffer, P98_Stale_CommitThenErrorThenModify_Rec).
                     if !rec.borrow().temporary
                         && version(&mine) != 0
                         && version(&mine) < version(&theirs)
@@ -1636,11 +1647,13 @@ impl Session {
                         al_builtins::value::LibraryValue::RecordId { .. } => {
                             return unsupported("Get of a RecordId of another table (error text not pinned)");
                         }
+                        // An empty RecordId finds no row: false, no error (record/lt-record-conversion-assumptions/
+                        // GetRecordId.al: P98_Get_RecordId_Empty). With the result unused the outcome is not pinned.
+                        al_builtins::value::LibraryValue::Empty if self.ret_used => return Ok(Value::Boolean(false)),
                         _ => None,
                     },
                     _ => None,
                 };
-                let by_record_id = from_id.is_some();
                 let args = from_id.as_deref().unwrap_or(args);
                 let mut pk = Vec::new();
                 for (n, &field) in t.keys[0].iter().enumerate() {
@@ -1660,11 +1673,8 @@ impl Session {
                         Ok(Value::Boolean(true))
                     }
                     None => {
-                        // A row that is there is pinned (record/TestSetAutoCalcFieldsOnGet.Codeunit.al:68-79);
-                        // the not-found outcome of the RecordId form is not.
-                        if by_record_id {
-                            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordGetRecordId);
-                        }
+                        // A row that is there: record/TestSetAutoCalcFieldsOnGet.Codeunit.al:68-79; a row that is not: the
+                        // error of Get(key) (record/lt-record-conversion-assumptions/GetRecordId.al: P98_Get_RecordId_Missing_*).
                         let mut ident = rec.borrow().fields.clone();
                         for (n, &field) in t.keys[0].iter().enumerate() {
                             ident[field] = match (args.get(n), &t.fields[field].ty) {
@@ -1933,11 +1943,9 @@ impl Session {
                 let text = al_builtins::native::text_of(args.get(1).unwrap_or(&Value::Null)).unwrap_or_default();
                 // An empty filter text removes the field's filter: a Query column does so
                 // (query/TestQueryRuntimeContracts.al:208-209, "an empty SetFilter clears the filter"), and the
-                // documentation says the same of a Record. Base Application's BOM Structure does
-                // `Item.SetFilter("No.", ItemFilter)` with an empty `ItemFilter`. The Record form is an assumption
-                // (docs/probes-needed.md).
+                // documentation says the same of a Record, also in a filter group other than 0 (types/lt-filter-enum-relation-duration-guid/
+                // A_BlankFilter.al: Blank_AfterSetFilterGt_Group0, Blank_Group2_AfterSetFilterGt).
                 if text.trim().is_empty() {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordSetFilterEmpty);
                     let mut r = rec.borrow_mut();
                     let group = r.filter_group;
                     r.filters.retain(|f| !(f.field == pos && f.group == group));
@@ -2197,6 +2205,22 @@ impl Session {
                 };
                 match outcome {
                     RenameOutcome::Renamed => {
+                        // The record itself shows no Blob value after a Rename of a temporary record; the row keeps one only when a write came
+                        // after the last Insert or Modify (misc/lt-probes-needed-1/PnABlobAssignRename.al:RenameTemporary_* `A..E-rec-content`).
+                        if rec.borrow().temp_id.is_some() {
+                            let own: Vec<(usize, Value)> = rec
+                                .borrow()
+                                .fields
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, v)| matches!(v, Value::Blob(_)))
+                                .map(|(i, _)| (i, self.default_value(&t.fields[i].ty)))
+                                .collect();
+                            let mut r = rec.borrow_mut();
+                            for (i, empty) in own {
+                                r.fields[i] = empty;
+                            }
+                        }
                         // A company that is renamed takes its data with it
                         // (record/TestChangeCompanyRows... TestChangeCompanyFiltersCopyDeleteContracts.al:170-212).
                         if !same_key && self.is_company_table(&t) && !rec.borrow().temporary {

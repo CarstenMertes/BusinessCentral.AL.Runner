@@ -968,6 +968,8 @@ impl Session {
                         .collect();
                     Value::Array(Rc::new(RefCell::new(items)))
                 }
+                // An HttpContent passed by reference is the caller's own object; only a by-value one is a copy (see `ops::convert`).
+                (a @ Value::Library(..), true) if matches!(&a, Value::Library(n, _) if n == "HttpContent") => a,
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }

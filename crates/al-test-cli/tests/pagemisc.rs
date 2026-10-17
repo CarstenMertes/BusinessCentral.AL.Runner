@@ -213,10 +213,19 @@ page 62330 "PM Temp Host" { PageType = Card; SourceTable = "PM Row"; layout { ar
   procedure Fill(var Src: Record "PM Row" temporary) begin CurrPage.Sub.PAGE.SetRows(Src); end; }
 page 62331 "PM Temp Var" { PageType = List; SourceTable = "PM Row"; SourceTableTemporary = true;
   layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+  var Max: Decimal;
+  procedure SetMax(M: Decimal) begin Max := M; end;
+  procedure GetMax(): Decimal begin exit(Max); end;
   procedure Fill() begin Rec."No." := 'T1'; Rec.Descr := 'before'; Rec.Insert(); end;
   procedure Mark() begin Rec.FindFirst(); Rec.Descr := 'marked'; Rec.Modify(); end;
   procedure Count(): Integer begin Rec.Reset(); exit(Rec.Count()); end;
   procedure First(): Text begin Rec.Reset(); if Rec.FindFirst() then exit(Rec.Descr); end; }
+page 62332 "PM Open Modify" { PageType = List; SourceTable = "PM Row"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+  procedure Fill() begin Rec."No." := 'T1'; Rec.Rank := 5; Rec.Insert(); Rec."No." := 'T2'; Rec.Rank := 6; Rec.Insert(); end;
+  procedure FillView(var Src: Record "PM Row" temporary) var X: Record "PM Row" temporary; begin X.Copy(Rec); Rec.Reset(); Rec.DeleteAll(); if Src.FindSet() then repeat Rec := Src; Rec.Insert(); until Src.Next() = 0; Rec.SetView(X.GetView()); end;
+  procedure Mark() begin if Rec.FindSet() then begin Rec.Descr := 'marked'; Rec.Modify(); if Rec.Next() = 0 then; end; end;
+  trigger OnOpenPage() var P: Codeunit "PM Probe"; X: Record "PM Row"; begin if Rec.Modify() then; X := Rec; Rec.CalcSums(Rank); P.Note('sum=' + Format(Rec.Rank) + ';'); Rec := X; end; }
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -1065,5 +1074,86 @@ fn the_temporary_rows_of_a_page_variable_survive_its_run() {
         procedure Survives() var W: Page \"PM Temp Var\"; begin
             W.Fill(); W.Mark(); W.RunModal(); Check('1', Format(W.Count())); Check('marked', W.First()); end;
         [ModalPageHandler] procedure H(var P: TestPage \"PM Temp Var\") begin Check('marked', P.Descr.Value()); P.OK().Invoke(); end;"
+    ));
+}
+
+// Warehouse Pick Summary.SetRecords hands rows to its part, then Page.Run opens the page a test trapped: the trapped page has those rows.
+#[test]
+fn rows_handed_to_a_part_before_a_trapped_run_are_on_the_trapped_page() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Keeps() var W: Page \"PM Temp Host\"; T: Record \"PM Row\" temporary; P: TestPage \"PM Temp Host\"; begin
+            T.\"No.\" := 'T1'; T.Descr := 'kept'; T.Insert(); P.Trap(); W.Fill(T); W.Run();
+            Check('kept', P.Sub.Descr.Value()); P.Close(); end;"
+    ));
+}
+
+// Item Tracking Summary.SetMaxQuantity stores a global that AutoSelectTrackingNo reads in a later call on the same Page variable.
+#[test]
+fn a_page_variable_keeps_its_globals_between_calls_before_it_runs() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Keeps() var W: Page \"PM Temp Var\"; begin W.SetMax(7); Check('7', Format(W.GetMax())); end;"
+    ));
+}
+
+// Item Tracking Summary: AutoSelectTrackingNo modifies the first row and steps on; OnOpenPage then calls Rec.Modify() on the row the
+// buffer holds, which must not write the first row's old values back.
+#[test]
+fn a_modify_in_on_open_page_writes_the_row_the_buffer_holds() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Keeps() var W: Page \"PM Open Modify\"; begin W.Fill(); W.Mark(); W.RunModal(); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Open Modify\") begin P.First(); Check('marked', P.Descr.Value()); P.OK().Invoke(); end;"
+    ));
+}
+
+#[test]
+fn calc_sums_on_the_temporary_rec_of_a_page_variable_in_on_open_page_sums_its_rows() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Sums() var W: Page \"PM Open Modify\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.Fill(); W.Mark(); W.RunModal(); Check('sum=11;', P.Trace()); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Open Modify\") begin P.OK().Invoke(); end;"
+    ));
+}
+
+#[test]
+fn calc_sums_after_set_table_view_and_set_view_in_on_open_page_sums_the_rows() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Sums() var W: Page \"PM Open Modify\"; P: Codeunit \"PM Probe\"; S: Record \"PM Row\" temporary; begin
+            P.Reset(); S.\"No.\" := 'A'; S.Rank := 1; S.Insert(); S.\"No.\" := 'B'; S.Rank := 2; S.Insert();
+            W.SetTableView(S); W.FillView(S); W.RunModal(); Check('sum=3;', P.Trace()); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Open Modify\") begin P.OK().Invoke(); end;"
+    ));
+}
+
+// Item Tracking Summary: `F.SetTableView(TempSrc)` hands the page a view; the page's own temporary Rec (filled by SetSources, marked by
+// AutoSelectTrackingNo) is what it opens with, not the rows of TempSrc.
+#[test]
+fn set_table_view_of_a_temporary_record_does_not_replace_the_rows_of_a_temporary_page() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Keeps() var W: Page \"PM Open Modify\"; S: Record \"PM Row\" temporary; begin
+            S.\"No.\" := 'S1'; S.Descr := 'source'; S.Insert();
+            W.SetTableView(S); W.Fill(); W.Mark(); W.RunModal(); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Open Modify\") begin P.First(); Check('T1', P.\"No.\".Value()); Check('marked', P.Descr.Value()); P.OK().Invoke(); end;"
+    ));
+}
+
+// SCM RTAM Item Tracking-II sets a Code control to a Decimal (assumption setvalue-whole-number-into-text-control).
+#[test]
+fn set_value_of_a_whole_decimal_on_a_text_control_enters_its_digits() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Digits() var C: TestPage \"PM Card\"; D: Decimal; begin
+            D := 14; C.OpenNew(); C.NoCtl.SetValue(D); Check('14', C.NoCtl.Value()); C.Close(); end;"
     ));
 }

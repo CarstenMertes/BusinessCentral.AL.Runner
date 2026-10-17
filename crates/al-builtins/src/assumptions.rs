@@ -307,6 +307,12 @@ registry! {
         tests: "SCM Transfers (UndoTransShpt_SNTracking and about 20 more Tests-SCM tests): Item Tracking Data Collection.SelectMultipleTrackingNo sets the caption of Item Tracking Summary before it runs.",
         probe: "A page variable with Caption := 'X' before RunModal; read TestPage.Caption in the handler; the same with OnOpenPage assigning CurrPage.Caption.",
     },
+    SetValueWholeNumberIntoTextControl => {
+        id: "setvalue-whole-number-into-text-control",
+        assumed: "TestPage SetValue of an Integer, BigInteger or whole Decimal (below 1000 in size) on a Text or Code control enters the number's digits.",
+        tests: "SCM RTAM Item Tracking-II (RegisterWhseJournalLineWithSNWarehouseTracking): WhseItemTrackingPageHandler sets Serial No. to a Decimal.",
+        probe: "SetValue(14), SetValue(14.0), SetValue(1234) and SetValue(-3) on a Text[30] and a Code[30] control bound to a field and to a variable.",
+    },
     PartOfAPageThatNeverRan => {
         id: "part-of-a-page-that-never-ran",
         assumed: "CurrPage.<Part>.Page in a procedure called on a Page variable that was never run reaches a part page that exists, is initialised and is not open (as a hidden part does).",
@@ -524,17 +530,17 @@ registry! {
         tests: "Microsoft and NP Retail code that sets SetBaseAddress and then Get('/orders').",
         probe: "SetBaseAddress('https://example.invalid/api/v1/') then Get('orders'), Get('/orders'), Get('../x'), Get('?q=1') with a handler printing Request.Path.",
     },
-    HttpContentTypeOfStream => {
-        id: "http-content-type-of-stream",
-        assumed: "HttpContent.WriteFrom(InStream) gives the content the Content-Type application/octet-stream, and a content nobody wrote to has text/plain; charset=utf-8. (WriteFrom(Text) gives text/plain; charset=utf-8: misc/W4XmlJsonHttp.al:WriteFromText_HeadersAndRoundTrip; a fresh content has a Content-Type: network/lt-http/HttpContent.al:ContentTypeHeaderAfterWrite.)",
-        tests: "Code that posts a stream and then reads the content headers.",
-        probe: "Content.WriteFrom(InS); Content.GetHeaders(H); H.GetValues('Content-Type', V) on a fresh content and after WriteFrom(InStream).",
+    HttpHeadersAddUsedResult => {
+        id: "http-headers-add-used-result",
+        assumed: "HttpHeaders.Add whose result is used answers false for a value it refuses with InvalidHeader:Format, where a statement raises it. (Pinned for adding a Content-Type that is there: HttpWriteFromStream.al:P100_PresetContentType_ThenWrite against lt-http-header-rules/P87Twice.al.)",
+        tests: "Code that tests the result of HttpHeaders.Add.",
+        probe: "Format(H.Add(N, V)) for a bad value of each typed header (Accept, Authorization, Date, Content-Type) and for a bad name.",
     },
-    HttpContentWriteResetsHeaders => {
-        id: "http-content-write-resets-headers",
-        assumed: "HttpContent.WriteFrom and Clear give the content a new header collection that holds only the Content-Type: headers added before are gone, and an HttpHeaders handed out before no longer shows the content's headers. (network/lt-http/HttpContent.al:ClearContent pins Clear; the re-fetch of the headers after WriteFrom in ContentTypeHeaderAfterWrite suggests the same.)",
-        tests: "Code that calls GetHeaders and adds headers before WriteFrom.",
-        probe: "Content.GetHeaders(H); H.Add('X-A','1'); Content.WriteFrom('x'); then H.Contains('X-A') and a new GetHeaders(H2).Contains('X-A').",
+    HttpContentLengthAfterRead => {
+        id: "http-content-length-after-read",
+        assumed: "ReadAs(Text) of a content adds a Content-Length header of the body's length to its headers (the headers handed out before show it); a later WriteFrom sets the new length while the header is there. (PnE12HttpContent.al:WriteFromText_ThenReadAndHeaders reads 5 after WriteFrom('hello') and ReadAs; the P87 and P100 cases show none before a read.)",
+        tests: "Code that reads a content and then its headers; ReadAs(InStream) is not covered.",
+        probe: "WriteFrom('hello'), GetHeaders, Contains('Content-Length') before and after ReadAs(Text) and ReadAs(InStream); WriteFrom a longer text after the read and read the header.",
     },
     HttpHeaderRules => {
         id: "http-header-rules",

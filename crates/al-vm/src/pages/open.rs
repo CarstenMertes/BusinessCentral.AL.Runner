@@ -95,10 +95,18 @@ impl Session {
                 }
             }
         }
+        // The part pages the variable's code reached before it ran go with the page (Warehouse Pick Summary.SetRecords hands rows to its
+        // part, then Run opens the page the test trapped).
+        let early = std::mem::take(&mut from.borrow_mut().hidden_parts);
+        for (_, child) in &early {
+            let host = child.borrow().host.as_ref().map(|(_, i)| (Rc::downgrade(to), *i));
+            child.borrow_mut().host = host;
+        }
         let mut t = to.borrow_mut();
         t.instance = instance;
         t.ext_instances = exts;
         t.inited = inited;
+        t.hidden_parts = early;
     }
 
     /// Opens the page: OnInit, OnOpenPage, the control expressions and the first row. `record`
@@ -198,8 +206,11 @@ impl Session {
             dst.filters = src.filters.clone();
             dst.key = src.key;
             dst.adhoc = src.adhoc.clone();
-            dst.temporary = src.temporary;
-            dst.temp_id = src.temp_id.clone();
+            // A record that is no temporary one (a view only, see SetTableView) leaves a page whose source table is temporary on its own rows.
+            if src.temporary || !dst.temporary {
+                dst.temporary = src.temporary;
+                dst.temp_id = src.temp_id.clone();
+            }
             dst.ascending = src.ascending;
         }
         if let (Some(view), true) = (source_view, has_source) {

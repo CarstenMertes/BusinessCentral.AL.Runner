@@ -838,6 +838,8 @@ pub struct HttpContentState {
     pub uninitialized: bool,
     /// The bytes were handed out as an `InStream`: a second `ReadAs(InStream)` gets an empty stream.
     pub stream_taken: bool,
+    /// A `WriteFrom` has put a body here (a second one may add a Content-Length, see `write_body`).
+    pub written: bool,
 }
 
 impl Default for HttpContentState {
@@ -852,6 +854,7 @@ impl Default for HttpContentState {
             headers,
             uninitialized: false,
             stream_taken: false,
+            written: false,
         }
     }
 }

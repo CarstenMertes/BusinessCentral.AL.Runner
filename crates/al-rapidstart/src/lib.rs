@@ -107,7 +107,7 @@ impl Package {
                             orders.clear();
                         }
                         3 => {
-                            if matches!(name.as_str(), "TableID" | "PageID" | "SkipTableTriggers") {
+                            if matches!(name.as_str(), "TableID" | "PageID" | "SkipTableTriggers" | "DimensionsasColumns") {
                                 simple = Some((name, String::new()));
                             } else {
                                 record_name.get_or_insert(name);
@@ -620,6 +620,14 @@ mod tests {
       <LastModifiedDateTime/>
     </PaymentTerms>
   </PaymentTermsList>
+  <DimList>
+    <TableID>18</TableID>
+    <SkipTableTriggers>1</SkipTableTriggers>
+    <DimensionsasColumns>1</DimensionsasColumns>
+    <Customer>
+      <No PrimaryKey="1" ProcessingOrder="1">C1</No>
+    </Customer>
+  </DimList>
   <EmptyList>
     <TableID>5</TableID>
   </EmptyList>
@@ -633,7 +641,7 @@ mod tests {
     fn a_package_is_read_in_processing_order() {
         let p = Package::parse_xml(XML).unwrap();
         assert_eq!((p.code.as_str(), p.product_version.as_str()), ("T.ENU", "NAV27.5"));
-        assert_eq!(p.tables.len(), 3);
+        assert_eq!(p.tables.len(), 4);
         let t = p.table(3).unwrap();
         assert!(t.skip_table_triggers);
         assert_eq!(
@@ -717,6 +725,16 @@ mod tests {
                 0x34, 0xcd, 0x12, 0xab, 0x56, 0xef, 0x78, 0x4a, 0x9b, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd
             ]))
         );
+    }
+
+    #[test]
+    fn the_dimensions_as_columns_flag_of_a_table_is_not_a_row() {
+        // The shipped package has `<DimensionsasColumns>1</DimensionsasColumns>` beside TableID in 3 tables (Customer,
+        // ...). It was read as a record with no fields, which became a row with a blank key.
+        let p = Package::parse_xml(XML).unwrap();
+        let t = p.table(18).unwrap();
+        assert_eq!(t.rows.len(), 1, "{:?}", t.rows);
+        assert_eq!(t.rows[0], vec!["C1".to_string()]);
     }
 
     #[test]

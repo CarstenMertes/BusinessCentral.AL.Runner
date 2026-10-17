@@ -264,10 +264,6 @@ impl Gate {
                     lines: "99",
                 },
                 Evidence {
-                    file: "pages/lt-page-run-overloads-testpart/P106TestFieldAsDateTime.al",
-                    lines: "37",
-                },
-                Evidence {
                     file: "record/lt-testfield-fielderror-typed/P96ErrorInfo.al",
                     lines: "142",
                 },

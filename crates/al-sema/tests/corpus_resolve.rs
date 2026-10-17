@@ -94,10 +94,6 @@ const KNOWN_GAP_FILES: &[(&str, &str)] = &[
         "the checker takes an assignment to a one-parameter procedure for a call without arguments (corpus bump 14)",
     ),
     (
-        "misc/lt-protected-var-abs-query-views/P146TableExtProtected.al",
-        "the checker does not resolve a protected variable of a table in its extension (corpus bump 14)",
-    ),
-    (
         "report/lt-report-this-passed-on/P141ThisEvent.al",
         "the checker does not resolve `this` in a report (corpus bump 14)",
     ),

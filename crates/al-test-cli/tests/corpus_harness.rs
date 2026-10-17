@@ -452,11 +452,8 @@ fn all_versions_runs_each_oracle_writes_per_version_files_and_compares() {
     // The known BC 29 differences are gated (ADR-015 3.4), so the runtime passes the same cases on every version, among the
     // cases every oracle has. One difference is known and open (corpus bump 10, backlog): the runtime passes
     // 71500 Get_Uses_Primary_Key_Not_Current_Key on BC 27 only. A new difference would be listed here.
-    // Corpus bump 14: 69812 CalcFields_BigIntegerIntoInteger passes on BC 29 only, because its BC 27 and 28 branch was re-pinned
-    // to the Windows error text (no carriage returns) that the runtime does not give yet (the Windows switch fixes it).
-    assert!(out.contains("runtime: 2 case(s) differ between versions"), "{out}");
+    assert!(out.contains("runtime: 1 case(s) differ between versions"), "{out}");
     assert!(out.contains("71500 Get_Uses_Primary_Key_Not_Current_Key: 27"), "{out}");
-    assert!(out.contains("69812 CalcFields_BigIntegerIntoInteger: 29"), "{out}");
 }
 
 #[test]

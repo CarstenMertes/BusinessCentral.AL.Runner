@@ -838,6 +838,39 @@ impl Session {
                 }
                 self.flow_op(RecordOp::CalcFields, &rec, &[Value::Integer(pos as i32)])
             }
+            // FieldRef.CalcSum sums a stored Decimal or Integer field over the rows the RecordRef's filters pass, a field in
+            // no SumIndexFields list as well, puts the sum into the field and answers Yes
+            // (recordref/lt-fieldref-calcsum-filters/FieldRefCalcSumFilters.al:P184_FieldRefCalcSum_Decimal_NoFilter_And_GroupFilter,
+            // _Integer_And_TwiceAndEmpty, _DecimalNotInSumIndex). A Text or Code field and a FlowField raise
+            // `Cannot calculate a sum of the values in the <field> field in the <table> table because one or more values are not
+            // normal numeric fields.` (code DB:Ok; same file P184_FieldRefCalcSum_TextField_Errors, recordref/lt-refs/RfTFieldFilters.al:
+            // CalcSum_Variants for a Sum and a Count FlowField). Other types are not pinned.
+            "CalcSum" => {
+                let (stored, flow_filter, ty) = {
+                    let f = &self.engine.program.objects[t.object as usize]
+                        .table
+                        .as_ref()
+                        .expect("table")
+                        .fields[pos];
+                    (f.stored, f.flow_filter, f.ty.clone())
+                };
+                let flow_field = !stored && !flow_filter;
+                if flow_field || (stored && matches!(ty, RtType::Text(_) | RtType::Code(_))) {
+                    return Err(crate::transactions::al_error_code(
+                        &format!(
+                            "Cannot calculate a sum of the values in the {} field in the {} table because one or more values are not normal numeric fields.",
+                            self.field_caption(&t, pos),
+                            self.caption(&t)
+                        ),
+                        "DB:Ok",
+                    ));
+                }
+                if !stored || !matches!(ty, RtType::Decimal | RtType::Integer) {
+                    return unsupported("FieldRef.CalcSum on a field of another type (not pinned)");
+                }
+                self.flow_op(RecordOp::CalcSums, &rec, &[Value::Integer(pos as i32)])?;
+                Ok(Value::Boolean(true))
+            }
             "Validate" => {
                 let mut a = vec![Value::Integer(pos as i32)];
                 a.extend(args.iter().cloned());

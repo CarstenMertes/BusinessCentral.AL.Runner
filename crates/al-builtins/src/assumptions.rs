@@ -277,6 +277,12 @@ registry! {
         tests: "Alloc. Account Sales E2E Tests (TestOverrideGLAllocation) and 20 more Tests-ERM tests that open Edit Dimension Set Entries through Dimension Management.",
         probe: "A page with Caption = 'X' and a procedure returning CurrPage.Caption, called on a Page variable before RunModal and after it closed; also with a Caption assigned in OnOpenPage.",
     },
+    CaptionAssignedBeforeThePageRuns => {
+        id: "caption-assigned-before-the-page-runs",
+        assumed: "`PageVariable.Caption := x` before the variable's first Run or RunModal raises nothing, and the page shows x when it opens (its own OnOpenPage may assign another).",
+        tests: "SCM Transfers (UndoTransShpt_SNTracking and about 20 more Tests-SCM tests): Item Tracking Data Collection.SelectMultipleTrackingNo sets the caption of Item Tracking Summary before it runs.",
+        probe: "A page variable with Caption := 'X' before RunModal; read TestPage.Caption in the handler; the same with OnOpenPage assigning CurrPage.Caption.",
+    },
     PartOfAPageThatNeverRan => {
         id: "part-of-a-page-that-never-ran",
         assumed: "CurrPage.<Part>.Page in a procedure called on a Page variable that was never run reaches a part page that exists, is initialised and is not open (as a hidden part does).",

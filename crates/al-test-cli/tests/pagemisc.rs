@@ -206,6 +206,17 @@ page 62327 "PM Editable Flag" { PageType = Card; SourceTable = "PM Row";
   var Flag: Boolean; }
 page 62328 "PM Xrec Card" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
   trigger OnNewRecord(BelowxRec: Boolean) var P: Codeunit "PM Probe"; begin P.Note('x=' + Rec.PreviousNo() + ';'); end; }
+page 62329 "PM Temp Part" { PageType = ListPart; SourceTable = "PM Row"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+  procedure SetRows(var Src: Record "PM Row" temporary) begin if Src.FindFirst() then Rec.Copy(Src, true); end; }
+page 62330 "PM Temp Host" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } part(Sub; "PM Temp Part") { } } }
+  procedure Fill(var Src: Record "PM Row" temporary) begin CurrPage.Sub.PAGE.SetRows(Src); end; }
+page 62331 "PM Temp Var" { PageType = List; SourceTable = "PM Row"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+  procedure Fill() begin Rec."No." := 'T1'; Rec.Descr := 'before'; Rec.Insert(); end;
+  procedure Mark() begin Rec.FindFirst(); Rec.Descr := 'marked'; Rec.Modify(); end;
+  procedure Count(): Integer begin Rec.Reset(); exit(Rec.Count()); end;
+  procedure First(): Text begin Rec.Reset(); if Rec.FindFirst() then exit(Rec.Descr); end; }
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -1031,4 +1042,28 @@ fn a_page_variable_reaching_a_part_after_the_page_closed_is_refused_not_failed()
         matches!(&o[0].1, Outcome::NotRun(why) if why.contains("not open") && why.contains("not pinned")),
         "{o:?}"
     );
+}
+
+// Warehouse Pick Summary.SetRecords hands its part (a temporary-table page) the rows before the page runs; the part keeps them when it opens.
+#[test]
+fn rows_handed_to_a_part_before_the_host_runs_are_there_when_it_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Keeps() var W: Page \"PM Temp Host\"; T: Record \"PM Row\" temporary; begin
+            T.\"No.\" := 'T1'; T.Descr := 'kept'; T.Insert(); W.Fill(T); W.RunModal(); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Temp Host\") begin Check('kept', P.Sub.Descr.Value()); P.OK().Invoke(); end;"
+    ));
+}
+
+// Item Tracking Summary: SetSources fills the temporary Rec of a Page variable, AutoSelectTrackingNo modifies it, RunModal runs, GetSelected reads Rec.
+#[test]
+fn the_temporary_rows_of_a_page_variable_survive_its_run() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Survives() var W: Page \"PM Temp Var\"; begin
+            W.Fill(); W.Mark(); W.RunModal(); Check('1', Format(W.Count())); Check('marked', W.First()); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Temp Var\") begin Check('marked', P.Descr.Value()); P.OK().Invoke(); end;"
+    ));
 }

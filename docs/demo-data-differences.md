@@ -63,3 +63,7 @@ record/lt-filters-keys-finds/P68C_EmptyFinds.al). The backup holds 5 customers a
 | Cost Type, Responsibility Center | ERM Cost Accounting - Tables and Pages, ERM Sales Quotes (SalesQuoteCreation) |
 
 Not confirmed by a scratch app that seeds the rows; the other rows above are.
+
+Cost Accounting - Pages, date filter: TestCostBudgetPerCostCenterMatrixValidateFiltersForAmountTypeNetChange and 3 siblings read
+`MatrixForm.FILTER.GetFilter("Date Filter")`. The matrix part sets that filter on its Rec in `SetRecordFilters`, which only runs for a row
+(OnAfterGetRecord). The backup holds no Cost Type rows, so no row is read and the filter stays empty. Not confirmed with seeded rows.

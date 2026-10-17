@@ -574,9 +574,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     // `Date.ToText()` and `Boolean.ToText()` (Base Application's Customer Mgt. CalcLastPaymentInfo puts them in a Dictionary
     // of [Text, Text]): taken as Format(value) with the default format. No corpus test calls them: assumption
     // primitive-totext-is-format.
-    ("Date.ToText#1", |c, r, _| primitive_to_text(c, r, "Date")),
-    ("Boolean.ToText#1", |c, r, _| primitive_to_text(c, r, "Boolean")),
-    ("Decimal.ToText#1", |c, r, _| primitive_to_text(c, r, "Decimal")),
+    ("Date.ToText#1", |c, r, a| primitive_to_text(c, r, "Date", a)),
+    ("Boolean.ToText#1", |c, r, a| primitive_to_text(c, r, "Boolean", a)),
+    ("Decimal.ToText#1", |c, r, a| primitive_to_text(c, r, "Decimal", a)),
     ("Variant.IsDefaultLayout#1", |_, r, _| is(r, "defaultlayout")),
     ("Variant.IsTestPermissions#1", |_, r, _| is(r, "testpermissions")),
     ("Variant.IsDotNet#1", |_, r, _| is(r, "DotNet")),
@@ -955,7 +955,13 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
         // (types/lt-variant-is-text-streams/LTP89IsMisc.al:NearTypes_TextVsCode_IntegerVsBigInteger `abs_int`, `abs_bigint`).
         Value::Integer(i) => match i.checked_abs() {
             Some(n) => Value::Integer(n),
-            None => return unsupported("Abs of the smallest Integer (the overflow error is not pinned)"),
+            // types/lt-scalars/ScT70056.al:Integer_Overflow `abs_min`.
+            None => {
+                return raise(
+                    "Negating the minimum value of a twos complement number is invalid.",
+                    "AL:Overflow",
+                );
+            }
         },
         Value::BigInteger(i) => match i.checked_abs() {
             Some(n) => Value::BigInteger(n),
@@ -1317,10 +1323,13 @@ pub fn copystr_of(whole: &crate::text::Txt, pos: i64, len: Option<i64>) -> Resul
     };
     let total = if ascii { whole.len() } else { s.len() };
     // text/TestProbeTextDateFormatContracts.al:Text_SubstringBounds, `copystr_start0`, `copystr_neg_count`.
+    // The two-argument form allows a start up to 2048, the three-argument form up to the largest Integer (text/lt-text-functions/
+    // CopyStr.Codeunit.al:CopyStrErrors `pos0` against `pos0len`).
     if pos < 1 {
+        let top = if len.is_some() { "2,147,483,647" } else { "2048" };
         return raise(
             format!(
-                "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to 2,147,483,647."
+                "The value of COPYSTR parameter 2 is outside of the permitted range. The current value is: {pos}. The permitted range is: from 1 to {top}."
             ),
             "OutsidePermittedRange",
         );
@@ -1335,6 +1344,17 @@ pub fn copystr_of(whole: &crate::text::Txt, pos: i64, len: Option<i64>) -> Resul
                 "OutsidePermittedRange",
             );
         }
+        // The count may reach to the largest Integer counted from the start (CopyStrErrors `af81`).
+        Some(len) if len > 2_147_483_648 - pos => {
+            return raise(
+                format!(
+                    "The value of COPYSTR parameter 3 is outside of the permitted range. The current value is: {}. The permitted range is: from 0 to {}.",
+                    group_thousands(len),
+                    group_thousands(2_147_483_648 - pos)
+                ),
+                "OutsidePermittedRange",
+            );
+        }
         Some(len) => (start + len as usize).min(total),
         None => total,
     };
@@ -1344,17 +1364,29 @@ pub fn copystr_of(whole: &crate::text::Txt, pos: i64, len: Option<i64>) -> Resul
     Ok(Value::Text(String::from_utf16_lossy(&s[start..end]).into()))
 }
 
+fn group_thousands(n: i64) -> String {
+    let digits = n.abs().to_string();
+    let mut out = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            out.push(',');
+        }
+        out.push(c);
+    }
+    if n < 0 { format!("-{out}") } else { out }
+}
+
 fn strsubstno(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let template = text_arg(args, 0)?;
     Ok(Value::Text(substitute(&template, &args[1..], ctx)?.into()))
 }
 
 fn uppercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(text_arg(args, 0)?.to_uppercase().into()))
+    Ok(Value::Text(simple_upper(&text_arg(args, 0)?).into()))
 }
 
 fn lowercase(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
-    Ok(Value::Text(text_arg(args, 0)?.to_lowercase().into()))
+    Ok(Value::Text(simple_lower(&text_arg(args, 0)?).into()))
 }
 
 /// `ArrayLen(Array)` of a one-dimensional array: the length of the array the variable holds. A `var` or value
@@ -1565,7 +1597,7 @@ fn enum_receiver(ctx: &dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<(u3
 }
 
 fn list_of(items: Vec<Value>) -> Value {
-    Value::List(Rc::new(std::cell::RefCell::new(items)))
+    Value::List(Rc::new(std::cell::RefCell::new(items.into())))
 }
 
 /// `Enum.Names()`: every declared name, the blank ordinal included
@@ -1610,9 +1642,39 @@ fn value_kind(v: &Value) -> String {
 }
 
 /// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
-fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str) -> Result<Value, Signal> {
+/// Case mapping one character to one (types/lt-scalars/ScT70509.al:LowerUpperBasic `a9`, LowerUpperLengthsAndTargets `lenu`): an
+/// upper-case `ß` stays `ß` and the dotted capital I is a plain `i`.
+fn simple_upper(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let mut up = c.to_uppercase();
+            match (up.next(), up.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+fn simple_lower(s: &str) -> String {
+    s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
+}
+
+fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str, a: &[Value]) -> Result<Value, Signal> {
     match r.as_deref() {
-        Some(v @ (Value::Date(..) | Value::Boolean(_) | Value::Decimal(_))) => {
+        // `Date.ToText(true)` is the round-trip form `yyyy-mm-dd`, `ToText(false)` the default one; the first of January 1 has
+        // no text (types/lt-totext-bigtext-codeunit-run/P93Date.al:ToText_Normal, ToText_Closing).
+        Some(v @ Value::Date(..)) => {
+            let iso = matches!(a.first(), Some(Value::Boolean(true)));
+            if matches!(v, Value::Date(1, _)) {
+                return raise("The date is not valid.", "DateInvalid");
+            }
+            match crate::format::try_format(v, 0, if iso { 9 } else { 0 }, &*c) {
+                Ok(t) => Ok(Value::Text(t.into())),
+                Err(e) => Err(Signal::Unsupported(e)),
+            }
+        }
+        Some(v @ (Value::Boolean(_) | Value::Decimal(_))) => {
             crate::assumptions::assume(crate::assumptions::Assumption::PrimitiveToTextIsFormat);
             match crate::format::try_format(v, 0, 0, &*c) {
                 Ok(t) => Ok(Value::Text(t.into())),

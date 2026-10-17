@@ -138,6 +138,13 @@ fn canonical_template(template: &str) -> Option<String> {
 
 /// `Err` names the part of the format string that is not understood.
 pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -> Result<String, String> {
+    // A Guid takes no format string without codes: the platform asks for the standard format number -1
+    // (types/lt-scalars/ScT70054.al:Guid_FormatStrings `af79`).
+    if matches!(v, Value::Guid(_)) && !template.contains('<') {
+        return Err(format!(
+            "{RAISE_MARK}InvalidStandardFormat{RAISE_MARK}Standard format number -1 does not exist for the type 'GUID'."
+        ));
+    }
     let canon = canonical_template(template);
     if canon.is_some() {
         crate::assumptions::assume(crate::assumptions::Assumption::FormatCodeSpelling);

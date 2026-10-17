@@ -565,8 +565,17 @@ impl Session {
     fn query_read(&mut self, def: &ir::Query, qs: &Qs) -> Result<Value, Signal> {
         // Read on a query that is not open returns false
         // (query/TestQueryRuntimeContracts.al:Query_StateMisuse_DoesNotThrow).
+        // With the result unused the statement raises (xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:Read_BeforeOpen, Read_AfterClose).
         if qs.borrow().run.is_none() {
-            return Ok(Value::Boolean(false));
+            if self.ret_used {
+                return Ok(Value::Boolean(false));
+            }
+            return Err(Signal::Error(Box::new(AlError {
+                message: "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function.".into(),
+                code: "QueryNoDataSet".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
         }
         if !qs.borrow().run.as_ref().expect("open").started {
             let filters = qs.borrow().filters.clone();

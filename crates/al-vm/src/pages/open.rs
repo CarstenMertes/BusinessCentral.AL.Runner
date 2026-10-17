@@ -662,6 +662,15 @@ impl Session {
             st.borrow_mut().landing_first = true;
             let r = self.arrive(st);
             st.borrow_mut().landing_first = false;
+            // An error of the rows a modal page reads when it opens comes out with the code of the client's abort (misc/
+            // lt-probes-needed-7/PnGPageClose.al:TeardownInHandlerReportsForNonLookupRunModal `af236`, `af260`, `af285`).
+            let r = match r {
+                Err(Signal::Error(mut e)) if st.borrow().modal && e.code == "Dialog" => {
+                    e.code = "ClientPageAbort:FormAbort".into();
+                    Err(Signal::Error(e))
+                }
+                other => other,
+            };
             r?;
             // The window starts at the first row of the view.
             let from_start = self.is_list(st);

@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn a_handle_has_no_form_and_leaves_the_output_alone() {
-        let list = Value::List(std::rc::Rc::new(std::cell::RefCell::new(Vec::new())));
+        let list = Value::List(std::rc::Rc::default());
         let mut out = vec![42];
         assert!(!encode(&list, &mut out));
         assert_eq!(out, vec![42]);
@@ -330,7 +330,7 @@ mod tests {
     #[test]
     fn a_value_has_a_form_exactly_when_it_is_plain() {
         let handles = vec![
-            Value::List(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
+            Value::List(std::rc::Rc::default()),
             Value::Dictionary(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
             Value::Array(std::rc::Rc::new(std::cell::RefCell::new(Vec::new()))),
         ];

@@ -253,6 +253,12 @@ registry! {
         tests: "Pages with SaveValues and page extensions in the buckets.",
         probe: "A SaveValues page extended by a control bound to a variable and by one bound to a field.",
     },
+    TrappedPageLeftOpenIsReplaced => {
+        id: "trapped-testpage-left-open-is-replaced",
+        assumed: "A TestPage variable that trapped a page and was left open (never closed) can trap the next Page.Run or RunObject of its page: the new page replaces the open one, whose close triggers do not run.",
+        tests: "Library - Error Message keeps one TestPage \"Error Messages\" in a codeunit variable, traps it in every VerifyDimErrors and never closes it; Tests-Misc Check Dimensions On Posting (35 tests) trap it again in the next test of the codeunit.",
+        probe: "A codeunit with a TestPage variable that Trap()s and runs a page in test one and leaves it open; test two Trap()s the same variable and runs the page again: does it open, and do OnQueryClosePage and OnClosePage of the first page run?",
+    },
     SubPageLinkEmptyTerm => {
         id: "subpagelink-empty-term-selects-blank",
         assumed: "An empty const('') or filter('') term of a SubPageLink or RunPageLink selects the rows whose field is blank, as the same term of a TableRelation where() does (pinned there, not for links).",

@@ -1317,7 +1317,11 @@ impl Session {
             }
         }
         if st.borrow().open {
-            return unsupported("running a page that is already open");
+            if !trapped {
+                return unsupported("running a page that is already open");
+            }
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TrappedPageLeftOpenIsReplaced);
+            self.mark_closed(&st);
         }
         if modal {
             if let Some(handler) = self.take_typed_modal_handler(object) {

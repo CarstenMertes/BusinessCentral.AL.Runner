@@ -36,6 +36,9 @@ pub struct TestArgs {
     /// `--package-cache DIR`: a folder of `.app` files.
     pub package_caches: Vec<PathBuf>,
     pub bc_version: Option<String>,
+    /// `--country CODE` (lower case): the BC country version whose Microsoft apps and demo data the run uses
+    /// (ADR-020 amendment, owner 2026-10-17). `None`: `w1`. Never read from app.json or AL-Go settings.
+    pub country: Option<String>,
     pub no_download: bool,
     pub cache_dir: Option<PathBuf>,
     /// `--no-compile-cache`: compile the dependency apps on every run, only what the tests reach.
@@ -120,6 +123,11 @@ pub struct TestArgs {
 }
 
 impl TestArgs {
+    /// The country version of the run: `--country`, else `w1`.
+    pub fn country(&self) -> &str {
+        self.country.as_deref().unwrap_or("w1")
+    }
+
     /// Whether the run restores a company: unless `--no-test-data` says otherwise.
     pub fn wants_test_data(&self) -> bool {
         !self.no_test_data
@@ -289,12 +297,20 @@ SERVE
 
 WARM
     alrunner cache clear [--cache-dir DIR]
-    alrunner warm [PATH.bak] [--bc-version BUILD] [--cache-dir DIR] [--no-download]
+    alrunner warm [PATH.bak] [--bc-version BUILD] [--country CODE] [--cache-dir DIR] [--no-download]
                   [--test-data-company NAME]
         Finds the demo backup the way `test` does (downloading it if need be), opens it and
         keeps its page map and catalog in the cache. The first open of a backup verifies the
         whole file (2 to 3 s on a 900 MB backup); later opens take milliseconds. Run it once
         before a demo on a new machine.
+
+COUNTRY
+    --country CODE       The BC country version: `us`, `gb`, `de`, ... (the names of the artifact feed).
+                         Default `w1`. Only this flag selects it; app.json and AL-Go settings are not read.
+                         The country's own Microsoft apps (Base Application and the others under
+                         Applications.<CODE>/ of its artifact) replace the w1 ones, and the demo data is that
+                         country's backup (BusinessCentral-<CODE>.bak, about 600 MB the first time). The
+                         platform artifact stays the same. Not combinable with --company-data package.
 
 TEST DATA
     On by default for a run that uses Microsoft's apps: the CRONUS demo company of the build is
@@ -391,7 +407,7 @@ fn parse_cache(mut it: impl Iterator<Item = String>) -> Result<Command, String> 
     })
 }
 
-/// `alrunner warm [PATH.bak] [--bc-version V] [--cache-dir DIR] [--no-download] [--test-data-company NAME]`.
+/// `alrunner warm [PATH.bak] [--bc-version V] [--country CODE] [--cache-dir DIR] [--no-download] [--test-data-company NAME]`.
 fn parse_warm(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
     let mut a = TestArgs {
         test_data: true,
@@ -402,6 +418,7 @@ fn parse_warm(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
         match flag.as_str() {
             "--help" | "-h" => return Ok(Command::Help),
             "--bc-version" => a.bc_version = Some(text()?),
+            "--country" => a.country = Some(al_deps::artifact::normalize_country(&text()?)?),
             "--cache-dir" => a.cache_dir = Some(text()?.into()),
             "--no-download" => a.no_download = true,
             "--test-data-company" => a.test_data_company = Some(text()?),
@@ -652,6 +669,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 a.test_timeout_secs = Some(number(&flag, &v)? as u64);
             }
             "--test-data-company" => a.test_data_company = Some(text()?),
+            "--country" => a.country = Some(al_deps::artifact::normalize_country(&text()?)?),
             "--company-data" => {
                 let v = text()?;
                 match v.as_str() {
@@ -699,6 +717,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     }
     if a.parity && a.disabled_tests_dir.is_none() {
         return Err("--parity needs --disabled-tests DIR".into());
+    }
+    if a.company_package && !al_deps::artifact::is_w1(a.country()) {
+        return Err("--company-data package supports only the w1 country (its RapidStart package comes from the platform artifact)".into());
     }
     if a.company_package && a.no_test_data {
         return Err("--company-data package cannot be combined with --no-test-data".into());
@@ -973,6 +994,25 @@ mod tests {
         // Test data is on by default, so a company can be named without --test-data.
         let a = test_args("test A --test-data-company X");
         assert!(!a.no_test_data && a.test_data_company.as_deref() == Some("X"));
+    }
+
+    #[test]
+    fn the_country_is_w1_unless_the_flag_names_another() {
+        let a = test_args("test A");
+        assert_eq!(a.country(), "w1");
+        assert!(a.country.is_none());
+        let a = test_args("test A --country US --bc-version 28");
+        assert_eq!(a.country(), "us");
+        let e = p("test A --country").unwrap_err();
+        assert!(e.contains("--country needs a value"), "{e}");
+        let e = p("test A --country u/s").unwrap_err();
+        assert!(e.contains("not a country code"), "{e}");
+        match p("warm --bc-version 28 --country us").unwrap() {
+            Command::Warm(w) => assert_eq!(w.country(), "us"),
+            other => panic!("{other:?}"),
+        }
+        let e = p("test A --country us --company-data package").unwrap_err();
+        assert!(e.contains("only the w1 country"), "{e}");
     }
 
     #[test]

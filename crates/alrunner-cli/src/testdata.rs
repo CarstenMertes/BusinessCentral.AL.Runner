@@ -4,7 +4,7 @@
 //! another build of the same BC version, with a note that says which. Nothing found is not an
 //! error for a default run: test data is off and the run says why.
 
-use al_bcdb_std::default_backup_in;
+use al_bcdb_std::default_backup_in_country;
 use al_deps::build::BuildId;
 use al_deps::demo::cached_backup;
 use std::path::{Path, PathBuf};
@@ -17,6 +17,8 @@ pub struct Where<'a, D: FnMut(&BuildId) -> Result<PathBuf, String>> {
     pub cache_root: &'a Path,
     /// Downloads the backup of a build into the cache. `None` for `--no-download`.
     pub download: Option<D>,
+    /// `--country` was given: only that country's backup answers, never another country's.
+    pub explicit_country: bool,
 }
 
 /// The answer: a backup and the notes to print, or no backup and the reason.
@@ -44,15 +46,17 @@ pub fn locate<D: FnMut(&BuildId) -> Result<PathBuf, String>>(
     let mut notes = Vec::new();
     let in_local = |b: &[String]| {
         let root = w.local_root?;
-        default_backup_in(root, b, major, minor).ok().map(|p| {
-            let name = p
-                .ancestors()
-                .nth(2)
-                .and_then(|d| d.file_name())
-                .map(|n| n.to_string_lossy().into_owned())
-                .unwrap_or_default();
-            (p, name)
-        })
+        default_backup_in_country(root, b, major, minor, w.explicit_country.then_some(country))
+            .ok()
+            .map(|p| {
+                let name = p
+                    .ancestors()
+                    .nth(2)
+                    .and_then(|d| d.file_name())
+                    .map(|n| n.to_string_lossy().into_owned())
+                    .unwrap_or_default();
+                (p, name)
+            })
     };
     // 1. The build the run uses, on disk.
     let wanted: Vec<&String> = builds.iter().collect();
@@ -165,6 +169,7 @@ mod tests {
                     called.set(true);
                     Err("no".into())
                 }),
+                explicit_country: false,
             },
             "w1",
         );
@@ -188,6 +193,7 @@ mod tests {
                 local_root: None,
                 cache_root: &cache,
                 download: no_download(),
+                explicit_country: false,
             },
             "w1",
         );
@@ -210,6 +216,7 @@ mod tests {
                     asked.borrow_mut().push(build.to_string());
                     Ok(PathBuf::from("/cache/x.bak"))
                 }),
+                explicit_country: false,
             },
             "w1",
         );
@@ -231,6 +238,7 @@ mod tests {
                 local_root: Some(&local),
                 cache_root: dir.path(),
                 download: Some(|_: &BuildId| Err::<PathBuf, _>("offline".into())),
+                explicit_country: false,
             },
             "w1",
         );
@@ -255,6 +263,7 @@ mod tests {
                 local_root: None,
                 cache_root: dir.path(),
                 download: Some(|_: &BuildId| Err::<PathBuf, _>("offline".into())),
+                explicit_country: false,
             },
             "w1",
         );
@@ -269,6 +278,7 @@ mod tests {
                 local_root: None,
                 cache_root: dir.path(),
                 download: no_download(),
+                explicit_country: false,
             },
             "w1",
         );
@@ -287,9 +297,84 @@ mod tests {
                 local_root: None,
                 cache_root: dir.path(),
                 download: no_download(),
+                explicit_country: false,
             },
             "w1",
         );
         assert!(got.off.unwrap().contains("no demo data for BC 27"));
+    }
+
+    fn local_country(root: &Path, build: &str, country: &str) {
+        let dir = root.join(build).join(country);
+        std::fs::create_dir_all(&dir).unwrap();
+        std::fs::write(
+            dir.join(format!("BusinessCentral-{}.bak", country.to_uppercase())),
+            b"x",
+        )
+        .unwrap();
+    }
+
+    #[test]
+    fn an_explicit_country_uses_only_its_own_backup() {
+        let dir = tempfile::tempdir().unwrap();
+        let local = dir.path().join("sandbox");
+        local_with(&local, "28.5.1.1");
+        let asked = std::cell::RefCell::new(Vec::new());
+        // Only w1 is on disk: `us` must not be answered with it. It is downloaded for the country.
+        let got = locate(
+            &["28.5.1.1".into()],
+            &[b("28.5.1.1")],
+            28,
+            Some(5),
+            Where {
+                local_root: Some(&local),
+                cache_root: &dir.path().join("cache"),
+                download: Some(|build: &BuildId| {
+                    asked.borrow_mut().push(build.to_string());
+                    Err::<PathBuf, _>("offline".into())
+                }),
+                explicit_country: true,
+            },
+            "us",
+        );
+        assert!(got.path.is_none(), "{got:?}");
+        assert_eq!(*asked.borrow(), ["28.5.1.1"]);
+        // With the country's folder on disk it is found there.
+        local_country(&local, "28.5.1.1", "us");
+        let got = locate(
+            &["28.5.1.1".into()],
+            &[b("28.5.1.1")],
+            28,
+            Some(5),
+            Where {
+                local_root: Some(&local),
+                cache_root: &dir.path().join("cache"),
+                download: no_download(),
+                explicit_country: true,
+            },
+            "us",
+        );
+        assert!(got.path.unwrap().ends_with("28.5.1.1/us/BusinessCentral-US.bak"));
+    }
+
+    #[test]
+    fn without_the_flag_the_old_fallback_to_another_country_stays() {
+        let dir = tempfile::tempdir().unwrap();
+        let local = dir.path().join("sandbox");
+        local_country(&local, "28.5.1.1", "us");
+        let got = locate(
+            &["28.5.1.1".into()],
+            &[b("28.5.1.1")],
+            28,
+            Some(5),
+            Where {
+                local_root: Some(&local),
+                cache_root: &dir.path().join("cache"),
+                download: no_download(),
+                explicit_country: false,
+            },
+            "w1",
+        );
+        assert!(got.path.unwrap().ends_with("us/BusinessCentral-US.bak"));
     }
 }

@@ -440,6 +440,9 @@ impl Session {
         } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
             let before = (self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
                 .then(|| self.page_rec(st).borrow().fields.clone());
+            // A card whose row was never stored (a temporary source nothing inserted into: Tasks over "RM Matrix
+            // Management") has no row for the action to delete, so it stays open.
+            let stored_before = !st.borrow().never_stored;
             st.borrow_mut().save_record_called = false;
             let r = self.control_routine(st, idx, r);
             // An error an action raises comes out of the test page's Invoke with the test framework's prefix on its code
@@ -472,7 +475,13 @@ impl Session {
                     self.save_row(st)?;
                 }
             }
-            self.settle_after_action(st)?;
+            let settle = stored_before || self.is_list(st) || {
+                let rec = self.page_rec(st);
+                self.stored_row(&rec)?.is_some()
+            };
+            if settle {
+                self.settle_after_action(st)?;
+            }
             // The client reads the current row again after every action, so OnAfterGetCurrRecord of
             // the page and of its extensions runs again (corpus
             // handlers/TestPageExtensionBaseMembersContracts.al:195-218: "ext AfterGetCurrRecord"

@@ -222,6 +222,9 @@ impl al_builtins::native::Ctx for Session {
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         Some(self.engine.program.objects[id as usize].enum_values.clone())
     }
+    fn evaluate_record_id(&mut self, text: &str) -> Result<Option<Value>, Signal> {
+        Session::evaluate_record_id(self, text)
+    }
     fn enum_captions(&self, id: u32) -> Vec<(i32, String)> {
         self.engine.program.objects[id as usize].enum_captions.clone()
     }

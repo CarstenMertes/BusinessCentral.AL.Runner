@@ -205,8 +205,11 @@ impl Session {
             dst.filters = src.filters.clone();
             dst.key = src.key;
             dst.adhoc = src.adhoc.clone();
-            dst.temporary = src.temporary;
-            dst.temp_id = src.temp_id.clone();
+            // A record that is no temporary one (a view only, see SetTableView) leaves a page whose source table is temporary on its own rows.
+            if src.temporary || !dst.temporary {
+                dst.temporary = src.temporary;
+                dst.temp_id = src.temp_id.clone();
+            }
             dst.ascending = src.ascending;
         }
         if let (Some(view), true) = (source_view, has_source) {

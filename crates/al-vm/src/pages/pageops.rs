@@ -537,6 +537,10 @@ impl Session {
             PageMethod::SetTableView => match args.first() {
                 Some(Value::Record(r)) => {
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
+                    // The view is its filters and sorting only: the rows of a temporary record stay with it (Item Tracking Summary is handed
+                    // `SetTableView(TempGlobalEntrySummary)` and then fills its own temporary Rec; the page must keep that Rec).
+                    copy.borrow_mut().temporary = false;
+                    copy.borrow_mut().temp_id = None;
                     let table = copy.borrow().table as usize;
                     // A record SetRecord handed the page earlier stays the position the page opens on: SetRecord gives the
                     // position and SetTableView the filters (Microsoft's VendEntry-Apply Posted Entries calls both with the

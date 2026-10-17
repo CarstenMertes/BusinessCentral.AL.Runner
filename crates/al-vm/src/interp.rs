@@ -188,6 +188,12 @@ impl Session {
                 .into_iter()
                 .chain(o.page.as_ref().map(|p| p.curr_page_slot))
                 .collect(),
+            // A report resets every global: the data items' records and their filters, the request page's variables,
+            // plain codeunit variables; a SingleInstance codeunit keeps its state. Called in OnInitReport, OnPreReport,
+            // OnPreDataItem, OnAfterGetRecord, OnPostReport or a procedure they call (corpus
+            // report/lt-clearall-report/ClearAllReport{Init,Pre,Post}Report.al and ...Procedure.al,
+            // errors/lt-ms-refusals-128/P128ClearAllReport.al, errors/lt-ms-refusals-135/P135ClearAllReport.al).
+            al_ir::ObjKind::Report => Vec::new(),
             _ => {
                 return Err(Signal::Unsupported(format!("ClearAll in a {} (not pinned)", o.kind)));
             }

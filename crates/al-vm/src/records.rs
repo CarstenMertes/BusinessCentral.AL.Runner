@@ -1964,7 +1964,7 @@ impl Session {
                     return Ok(Value::Null);
                 }
                 let engine = self.engine.clone();
-                let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+                let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
                 let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
                     Ok(e) => e,
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).

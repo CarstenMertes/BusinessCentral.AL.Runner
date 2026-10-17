@@ -34,7 +34,7 @@ impl Session {
     /// A filter expression over a field of type `ty`, enum members by name included.
     pub(crate) fn parse_filter_text(&self, text: &str, ty: &al_builtins::value::RtType) -> Result<FilterExpr, String> {
         let engine = self.engine.clone();
-        let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+        let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
         al_builtins::filter::parse_filter_with(text, &[], ty, &enums)
     }
 
@@ -610,6 +610,13 @@ fn field_by_name(t: &TableDef, name: &str) -> Result<usize, Signal> {
         .and_then(|n| n.parse::<u32>().ok())
         .and_then(|id| t.fields.iter().position(|f| f.id == id))
         .map_or_else(|| unsupported(format!("view field `{name}`")), Ok)
+}
+
+/// The members of an enum for a text filter: the captions first, then the names (see `filter::parse_filter_with`).
+pub(crate) fn enum_filter_members(o: &al_ir::Object) -> Vec<(i32, String)> {
+    let mut out: Vec<(i32, String)> = o.enum_captions.iter().filter(|(_, c)| !c.is_empty()).cloned().collect();
+    out.extend(o.enum_values.iter().cloned());
+    out
 }
 
 #[cfg(test)]

@@ -327,8 +327,11 @@ impl Session {
         if mode == PageMode::New {
             // corpus handlers/TestPageCreateModeNewRecordArgs.al:243-270: OnOpenPage, then
             // OnNewRecord with BelowxRec true and xRec on the last row.
+            // A page with an OnFindRecord trigger is opened the same way: the trigger is not asked (Microsoft's Service
+            // Credit Memo, Invoice and Order pages, whose tests open them with OpenNew). Assumed, see
+            // Assumption::OpenNewSkipsOnFindRecord.
             if self.declares(st, "onfindrecord") {
-                return unsupported("OpenNew on a page with an OnFindRecord trigger (not pinned)");
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::OpenNewSkipsOnFindRecord);
             }
             self.ret_used = true;
             let rec = self.page_rec(st);

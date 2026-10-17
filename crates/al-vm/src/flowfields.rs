@@ -235,7 +235,10 @@ impl Session {
                         type_name(&f.ty)
                     ));
                 }
-                if !same_kind(&f.ty, &s.ty) {
+                // A lookup into an Enum field from the field of another enum is allowed (record/lt-flowfield-lookup-enum/
+                // FlowFieldLookupOtherEnum.al; Microsoft's VAT Return Period).
+                let enum_pair = matches!((&f.ty, &s.ty), (RtType::Enum(_), RtType::Enum(_)));
+                if !same_kind(&f.ty, &s.ty) && !(enum_pair && calc.method == ir::CalcMethod::Lookup) {
                     return unsupported("min, max or lookup into a field of another type");
                 }
             }
@@ -446,6 +449,12 @@ impl Session {
                 }
             }
         };
+        // A lookup into an Enum field of another enum keeps the looked-up member as it is: `Zero` stays `Zero` and `Five`
+        // (an ordinal the FlowField's enum lacks) stays `Five` (corpus record/lt-flowfield-lookup-enum/
+        // FlowFieldLookupOtherEnum.al: Lookup_MembersPresentInBoth_Result, Lookup_MemberOnlyInSource_Result).
+        if matches!((&value, &f.ty), (Value::Enum(from, _), RtType::Enum(to)) if from != to) {
+            return Ok(value);
+        }
         ops::convert(value, &f.ty)
     }
 
@@ -460,7 +469,7 @@ impl Session {
         let table = rec.borrow().table as usize;
         let own = &engine.program.objects[table].table.as_ref().expect("table").fields;
         let src = &engine.program.objects[calc.table].table.as_ref().expect("table").fields;
-        let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+        let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
         let parse = |text: &str, ty: &RtType| {
             parse_filter_with(text, &[], ty, &enums)
                 .map_err(|e| Signal::Unsupported(format!("CalcFormula filter: {e}")))

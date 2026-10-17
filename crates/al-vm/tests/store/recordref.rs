@@ -798,7 +798,7 @@ fn get_of_a_record_id_on_a_record_ref_never_opened_opens_it_when_the_row_exists(
 
 #[test]
 fn date_and_boolean_to_text_are_the_default_format() {
-    // Customer Mgt.CalcLastPaymentInfo: `Posting Date.ToText()`, `(a < b).ToText()`. Unprobed (primitive-totext-is-format).
+    // Customer Mgt.CalcLastPaymentInfo: `Posting Date.ToText()`, `(a < b).ToText()`.
     let r = run(
         "procedure F(): Text var D: Date; B: Boolean; begin D := DMY2Date(5, 3, 2024); B := true;
             exit(D.ToText() + '|' + B.ToText() + '|' + Format(D)); end;",
@@ -812,7 +812,7 @@ fn date_and_boolean_to_text_are_the_default_format() {
 
 #[test]
 fn decimal_to_text_is_the_default_format() {
-    // Customer Mgt.CalcLastPaymentInfo: `(-Amount).ToText()` (55 Tests-ERM tests). Unprobed (primitive-totext-is-format).
+    // Customer Mgt.CalcLastPaymentInfo: `(-Amount).ToText()` (55 Tests-ERM tests).
     let r = run(
         "procedure F(): Text var D: Decimal; begin D := -12.5; exit(D.ToText() + '|' + Format(D)); end;",
         "F",

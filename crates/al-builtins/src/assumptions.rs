@@ -151,12 +151,6 @@ registry! {
         tests: "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al assigns the result to a Text it never reads (SetName_DoesNotTouchOtherMembers, Copy_AndClear).",
         probe: "Format of the result of C.Name('n') and C.Value('v') on a cookie that had other values before.",
     },
-    PrimitiveToTextIsFormat => {
-        id: "primitive-totext-is-format",
-        assumed: "Date.ToText() and Boolean.ToText() give Format(value) with the default format (en-US).",
-        tests: "Customer Mgt.CalcLastPaymentInfo via the Customer Statistics FactBox: 49 Tests-ERM tests.",
-        probe: "D.ToText() against Format(D) for a Date and a blank Date; B.ToText() for true and false.",
-    },
     PageExpressionControlSetValue => {
         id: "page-expression-control-setvalue",
         assumed: "TestPage.SetValue on a field control whose source is an assignable path (a record in an array, `Totals[1].\"Inv. Discount Amount\"`) assigns the path, then runs the control's OnValidate; the value is converted to the type of the value the path holds now. An entry the client would refuse is refused with the variable-control texts.",

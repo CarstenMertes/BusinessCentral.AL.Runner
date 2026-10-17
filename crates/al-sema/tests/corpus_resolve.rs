@@ -89,6 +89,38 @@ const KNOWN_GAP_FILES: &[(&str, &str)] = &[
         "misc/lt-probes-needed-6/PnF18ThisInTable.al",
         "the checker does not resolve `this` inside a table (corpus bump 11)",
     ),
+    (
+        "codeunit/lt-procedure-assignment/ProcedureAssignmentOneParameter.al",
+        "the checker takes an assignment to a one-parameter procedure for a call without arguments (corpus bump 14)",
+    ),
+    (
+        "report/lt-report-this-passed-on/P141ThisEvent.al",
+        "the checker does not resolve `this` in a report (corpus bump 14)",
+    ),
+    (
+        "events/lt-global-triggers-statements/P114WithStatement.al",
+        "the front end does not read the with statement, so its names stay unresolved (corpus bump 14)",
+    ),
+    (
+        "report/lt-report-this-passed-on/P141ThisStored.al",
+        "the checker does not resolve `this` in a report (corpus bump 14)",
+    ),
+    (
+        "report/lt-report-this-passed-on/P141ThisValueParam.al",
+        "the checker does not resolve `this` in a report (corpus bump 14)",
+    ),
+    (
+        "report/lt-requestpage-savevalues-date-text-setvalue/P147SetValueAssign.al",
+        "the checker does not read `SetValue :=` on a request page control as an assignment (corpus bump 14)",
+    ),
+    (
+        "report/lt-report-this-passed-on/P141ThisManual.al",
+        "the checker does not resolve `this` in a report (corpus bump 14)",
+    ),
+    (
+        "report/lt-report-this-passed-on/P141ThisReportExt.al",
+        "the checker does not resolve `this` in a report extension (corpus bump 14)",
+    ),
 ];
 
 /// Milestone 1: every name, member and call in every corpus body resolves,

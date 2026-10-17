@@ -309,9 +309,15 @@ fn decode_text(raw: &[u8]) -> Result<String, String> {
     Ok(text)
 }
 
-/// The name a field has in a package: the AL name with every character that is not a letter or a digit removed.
+/// The name a field has in a package: the AL name with every character that is not a letter or a digit removed,
+/// except that a hyphen becomes an underscore. The shipped package pins this: `Unit_AmountRoundingPrecision` for
+/// "Unit-Amount Rounding Precision", `Bill_toName` for "Bill-to Name", `Asm_to_OrderShptBinCode` for
+/// "Asm.-to-Order Shpt. Bin Code"; no tag of the package has a dot, slash or percent sign in it.
 pub fn element_name(field_name: &str) -> String {
-    field_name.chars().filter(|c| c.is_alphanumeric()).collect()
+    field_name
+        .chars()
+        .filter_map(|c| if c == '-' { Some('_') } else { c.is_alphanumeric().then_some(c) })
+        .collect()
 }
 
 // ---- values --------------------------------------------------------------------------------------------------------
@@ -711,6 +717,14 @@ mod tests {
                 0x34, 0xcd, 0x12, 0xab, 0x56, 0xef, 0x78, 0x4a, 0x9b, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd
             ]))
         );
+    }
+
+    #[test]
+    fn element_names_turn_a_hyphen_into_an_underscore_and_drop_other_punctuation() {
+        assert_eq!(element_name("Unit-Amount Rounding Precision"), "Unit_AmountRoundingPrecision");
+        assert_eq!(element_name("Bill-to Name"), "Bill_toName");
+        assert_eq!(element_name("Asm.-to-Order Shpt. Bin Code"), "Asm_to_OrderShptBinCode");
+        assert_eq!(element_name("Country/Region Code"), "CountryRegionCode");
     }
 
     #[test]

@@ -237,3 +237,31 @@ fn an_http_content_passed_by_reference_keeps_the_headers_handed_out_before() {
     end;"#,
     );
 }
+
+// Header forms the corpus does not pin are refused (docs/probes-needed.md): a Cache-Control with directives beyond no-store and no-cache, and
+// a known header other than Accept written in lower case.
+#[test]
+fn an_unpinned_cache_control_or_header_case_is_refused() {
+    let why = not_run(
+        "",
+        r#"
+    [Test] procedure Order()
+    var Req: HttpRequestMessage; H: HttpHeaders;
+    begin
+        Req.GetHeaders(H);
+        H.Add('Cache-Control', 'public, no-cache');
+    end;"#,
+    );
+    assert!(why.contains("Cache-Control") && why.contains("not pinned"), "{why}");
+    let why = not_run(
+        "",
+        r#"
+    [Test] procedure Case()
+    var Req: HttpRequestMessage; H: HttpHeaders;
+    begin
+        Req.GetHeaders(H);
+        H.Add('user-agent', 'A/1');
+    end;"#,
+    );
+    assert!(why.contains("user-agent") && why.contains("not pinned"), "{why}");
+}

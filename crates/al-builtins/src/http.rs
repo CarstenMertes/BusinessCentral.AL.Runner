@@ -581,6 +581,22 @@ fn canonical_name(name: &str) -> Option<&'static str> {
     KNOWN_NAMES.iter().copied().find(|k| k.eq_ignore_ascii_case(name))
 }
 
+/// The name a header is stored under. A known header written in another case than .NET's canonical form is stored canonically, which
+/// only `Accept` is pinned for (lt-http-header-rules/P87Twice.al:NameCaseAndKeys); for any other name the canonical form is not
+/// pinned, so it is refused (docs/probes-needed.md).
+fn stored_name(items: &[(String, Vec<String>)], name: &str) -> Result<String, Signal> {
+    if let Some((n, _)) = find(items, name) {
+        return Ok(n.clone());
+    }
+    match canonical_name(name) {
+        Some(c) if c != name && c != "Accept" => unsupported(format!(
+            "the header {name} written in another case than {c}: the case it is stored in is not pinned (docs/probes-needed.md)"
+        )),
+        Some(c) => Ok(c.to_string()),
+        None => Ok(name.to_string()),
+    }
+}
+
 /// `a; b=c` with one "; " between the parts (.NET writes a parameter list that way).
 fn join_params(v: &str) -> String {
     v.split(';').map(str::trim).collect::<Vec<_>>().join("; ")
@@ -666,6 +682,12 @@ fn user_agent_parts(v: &str) -> Option<Vec<String>> {
         }
     }
     (!out.is_empty()).then_some(out)
+}
+
+fn cache_control_pinned(merged: &str) -> bool {
+    let parts: Vec<&str> = merged.split(", ").collect();
+    parts.iter().all(|p| matches!(*p, "no-store" | "no-cache"))
+        || (parts.len() == 1 && parts[0].starts_with("max-age="))
 }
 
 /// The directives of a Cache-Control value merged and written the way .NET's CacheControlHeaderValue writes them.
@@ -766,6 +788,11 @@ fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, 
         "cache-control" => {
             let old: Vec<String> = existing.map(|(_, v)| v.clone()).unwrap_or_default();
             match cache_control(&old, value) {
+                // Only no-store and no-cache together or alone, and a lone max-age, are pinned (P87Values.al KnownHeaderLists_Request_1,
+                // P87Twice.al); what order other directives are written in is not (docs/probes-needed.md).
+                Some(merged) if !cache_control_pinned(&merged) => unsupported(format!(
+                    "Cache-Control {merged}: the order .NET writes these directives in is not pinned (docs/probes-needed.md)"
+                )),
                 Some(merged) => Ok(Some(Typed {
                     values: vec![merged],
                     replace: true,
@@ -881,7 +908,7 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
         push_value(&mut bag.secret, name, value.to_string());
         return Ok(());
     }
-    let stored = canonical_name(name).map_or_else(|| name.to_string(), str::to_string);
+    let stored = stored_name(&bag.items, name)?;
     match typed_add(bag, name, value)? {
         Some(t) if t.replace => {
             bag.items.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
@@ -1034,18 +1061,21 @@ fn headers_try_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
     let (value, secret) = text_or_secret(a, 1)?;
     with_bag(r.as_deref(), |b| {
         if name.is_empty() || name.chars().any(|c| !is_token_char(c)) {
-            return Value::Boolean(false);
+            return Ok(Value::Boolean(false));
         }
         if not_here(b.kind, &name) {
-            return Value::Boolean(false);
+            return Ok(Value::Boolean(false));
         }
         if secret {
             push_value(&mut b.secret, &name, value);
-            return Value::Boolean(true);
+            return Ok(Value::Boolean(true));
         }
         // A known header is parsed here too, so its values read back as Add would have stored them; a value that does not parse is kept
         // as written (lt-http-header-rules/P87Values.al:KnownHeaderLists_*, `raw=Yes;get2=...`).
-        let stored = canonical_name(&name).map_or_else(|| name.clone(), str::to_string);
+        let stored = match stored_name(&b.items, &name) {
+            Ok(n) => n,
+            Err(e) => return Err(e),
+        };
         match typed_add(b, &name, &value) {
             Ok(Some(t)) if t.replace => {
                 b.items.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
@@ -1056,10 +1086,11 @@ fn headers_try_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
                     push_value(&mut b.items, &stored, v);
                 }
             }
+            Err(e @ Signal::Unsupported(_)) => return Err(e),
             _ => push_value(&mut b.items, &stored, value),
         }
-        Value::Boolean(true)
-    })
+        Ok(Value::Boolean(true))
+    })?
 }
 
 // ------------------------------------------------------------------------------------------------ content

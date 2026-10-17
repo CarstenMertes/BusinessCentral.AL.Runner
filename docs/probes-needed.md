@@ -340,6 +340,13 @@ bump.
     subforms refreshed). Refused where our model raises DB:RecordChanged from the page's own save. Probe: a card with a part, a
     SetValue on the card, a line added in the part whose code modifies the header, then an action on the card: does the action
     raise "The changes to the Sales Header record cannot be saved..." or does the client read the header again first.
+8b. **HTTP header output forms** (refused, no test counted yet). Probe for a corpus topic: (a) Cache-Control: every directive (no-store,
+    no-transform, only-if-cached, public, no-cache, max-age, max-stale, min-fresh, private, must-revalidate, proxy-revalidate, s-maxage and
+    an extension) added alone and in every pair and order, then GetValues; the directive order .NET writes is pinned only for no-store
+    before no-cache. (b) The stored case of every known header name written in lower case (accept-charset, accept-encoding, accept-language,
+    allow, authorization, cache-control, connection, content-*, date, expect, expires, from, host, if-*, last-modified, max-forwards, pragma,
+    proxy-authorization, range, referer, te, trailer, transfer-encoding, upgrade, user-agent, via, warning), read back with Keys(); pinned only
+    for Accept (lt-http-header-rules/P87Twice.al:NameCaseAndKeys).
 9. **Permission, "Security Filter" (11)**, 3; **Metadata Permission, column 14**, 10; **All Profile, "Disable Personalization" (13)**, 1;
     **Published Application, Description (15, a Blob)**, 1.
 10. **Tables with no provider** (reads and writes of their persistent rows are refused; a temporary record works):

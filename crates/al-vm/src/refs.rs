@@ -339,9 +339,67 @@ impl Session {
         Ok(Value::Null)
     }
 
+    /// `RecordRef.Get(RecordId)` where the RecordRef is not open or is open on another table than the RecordId's. Pinned:
+    /// a found row opens the RecordRef on the RecordId's table, from a never opened or closed ref and from one open on another table
+    /// (errors/lt-ms-refusals-131/P131RecordRefGet.al:P131_Get_Unopened_ExistingRow, P131_Get_Closed_RecordRef, P131_Get_OpenOnAnotherTable
+    /// `A existing`; errors/lt-ms-refusals-135/P135RecordRefGet.al:P135_Get_RecordId_OtherTable_ThenOwn). A missing row leaves a ref that was
+    /// not open closed, answering No (P131_Get_Unopened_MissingRow, P135 `get deleted`) or, with the result unused, raising "does not
+    /// exist" (P131_Get_Unopened_ResultUnused `missing`). A blank RecordId answers No and changes nothing (P131_Get_EmptyRecordId).
+    /// Returns `None` when the ref is open on the RecordId's table (the ordinary Get applies).
+    fn rr_get_record_id(&mut self, lib: &Lib, args: &[Value]) -> Result<Option<Value>, Signal> {
+        let id = match args.first() {
+            Some(Value::Library(_, l)) => match &*l.borrow() {
+                LibraryValue::RecordId { table, key, .. } => Some((*table, key.clone())),
+                LibraryValue::Empty => None,
+                other => return unsupported(format!("RecordRef.Get of {}", other.describe())),
+            },
+            other => return unsupported(format!("RecordRef.Get of {}", other.describe())),
+        };
+        let current = match &*lib.borrow() {
+            LibraryValue::RecordRef(r) => Some(r.clone()),
+            LibraryValue::Empty => None,
+            _ => return Ok(None),
+        };
+        let Some((table, key)) = id else {
+            if !self.ret_used {
+                return unsupported("RecordRef.Get of a blank RecordId with the result unused (not pinned)");
+            }
+            return Ok(Some(Value::Boolean(false)));
+        };
+        if let Some(cur) = &current {
+            if cur.borrow().table == table {
+                return Ok(None);
+            }
+            let c = cur.borrow();
+            if c.temporary || !c.filters.is_empty() || c.marked_only {
+                return unsupported(
+                    "RecordRef.Get of a RecordId of another table on a ref with filters, marks or a temporary table (not pinned)",
+                );
+            }
+        }
+        let Value::Record(rec) = self.default_value(&RtType::Record(table, false)) else {
+            return unsupported("record buffer for RecordRef.Get");
+        };
+        let mut a = key;
+        let found = self.record_op(RecordOp::Get, &rec, &mut a)?;
+        match found {
+            Value::Boolean(true) => {
+                *lib.borrow_mut() = LibraryValue::RecordRef(rec);
+                Ok(Some(found))
+            }
+            Value::Boolean(false) if current.is_none() => Ok(Some(found)),
+            _ => unsupported("RecordRef.Get of a missing row of another table than the open one (not pinned)"),
+        }
+    }
+
     fn recordref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
         match method {
             "Open" => return self.rr_open(lib, args),
+            "Get" if matches!(args.first(), Some(Value::Library(n, _)) if n.eq_ignore_ascii_case("RecordId")) => {
+                if let Some(v) = self.rr_get_record_id(lib, args)? {
+                    return Ok(v);
+                }
+            }
             // Close and Clear leave the ref unusable; closing an unopened ref is harmless.
             "Close" => {
                 *lib.borrow_mut() = LibraryValue::Empty;

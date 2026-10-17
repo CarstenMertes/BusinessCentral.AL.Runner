@@ -1005,8 +1005,8 @@ impl Session {
     }
 
     /// The values a column's aggregate reads, one per joined row that has the dataitem. A FlowField is calculated per row
-    /// with the flow filters of its dataitem, as `project` does (Method over a FlowField is assumed to add those values,
-    /// see Assumption::QueryMethodOverFlowField).
+    /// with the flow filters of its dataitem, as `project` does (Method over a FlowField: corpus
+    /// query/lt-query-flowfield-methods/QueryFlowFieldAvgMinMax.al).
     fn aggregated_values(
         &mut self,
         def: &ir::Query,
@@ -1027,10 +1027,17 @@ impl Session {
             if stored {
                 out.push(j[c.item][field].clone());
             } else {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryMethodOverFlowField);
                 let row = self.filled(item.table, &j[c.item]);
                 self.check_calc_field(item.table, field)?;
                 let probe = self.probe(item.table, &row, &plan.flow[c.item]);
+                // A FlowField over no source row is NULL to an average, a minimum and a maximum (QueryFlowFieldAvgMinMax.al).
+                if matches!(
+                    c.method,
+                    Some(ir::QueryMethod::Average | ir::QueryMethod::Min | ir::QueryMethod::Max)
+                ) && !self.calc_has_source_rows(&probe, field)?
+                {
+                    continue;
+                }
                 out.push(self.calc_value(&probe, field, &mut Vec::new())?);
             }
         }

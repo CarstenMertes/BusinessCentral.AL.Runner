@@ -570,11 +570,10 @@ impl Lowerer<'_> {
             && matches!(self.res(&kids[0]), Some(Res::Proc { .. }))
             && sig_tokens(n).iter().any(|t| t.kind() == SyntaxKind::Assign)
         {
-            self.assume(al_builtins::assumptions::Assumption::ProcedureAssignIsCall);
             return self.call(&kids[0], &kids[0], &kids[1..2]).map(ir::Stmt::Expr);
         }
         // `Proc := value` calls a procedure of this object that takes one value parameter (Base Application's Service
-        // Line writes `SetHideWarrantyWarning := true`). Assumed, see ProcedureAssignIsCall. The checker leaves the
+        // Line writes `SetHideWarrantyWarning := true`; corpus codeunit/lt-procedure-assignment/ProcedureAssignmentOneParameter.al). The checker leaves the
         // name unresolved (it looks for a call with no arguments), so the procedure is found here by its name.
         if kids[0].kind() == SyntaxKind::NameRef
             && self.res(&kids[0]).is_none()
@@ -592,7 +591,6 @@ impl Lowerer<'_> {
                 if params.len() == 1 && !params[0].by_var {
                     let routine = self.routine_at.get(&(self.oi, *offset)).ok_or("procedure not found")?;
                     self.declared_in_both_proc(self.oi, *offset)?;
-                    self.assume(al_builtins::assumptions::Assumption::ProcedureAssignIsCall);
                     let value = self.expr(&kids[1])?;
                     let value = self.convert_to(&params[0].ty, self.ty_ref(&kids[1]), value)?;
                     self.calls.push((self.oi, routine));

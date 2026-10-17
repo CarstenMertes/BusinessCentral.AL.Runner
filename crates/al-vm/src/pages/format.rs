@@ -255,7 +255,34 @@ impl Session {
                 .map(|(_, c)| c.clone())
                 .unwrap_or_else(|| ordinal.to_string())
         };
-        let text = pagefmt::control_text(v, &f, &caption);
+        let mut text = pagefmt::control_text(v, &f, &caption);
+        // ExtendedDatatype = Ratio shows a percentage: zero is `0%` (pages/lt-page-presentation-properties/P119PageFields.al:P119_FieldState); another
+        // value is not pinned.
+        {
+            let ext = self
+                .control_field(st, idx)
+                .and_then(|fl| {
+                    fl.properties
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("ExtendedDatatype"))
+                        .map(|(_, v)| v.clone())
+                })
+                .or_else(
+                    || match page_of(&self.engine(), st).controls[idx].prop("extendeddatatype") {
+                        Some(ir::PropVal::Lit(l)) => Some(l.clone()),
+                        _ => None,
+                    },
+                );
+            if ext.is_some_and(|e| e.trim().eq_ignore_ascii_case("ratio")) {
+                match v {
+                    Value::Decimal(d) if d.is_zero() => text = "0%".to_string(),
+                    Value::Decimal(_) => {
+                        return unsupported("a Ratio control that shows a value other than zero (not pinned)");
+                    }
+                    _ => {}
+                }
+            }
+        }
         // A DateTime control writes a plain space before AM / PM on every version (the corpus re-pinned it for the newer
         // service image: pages/lt-page-runtime/P82TestField.al `dt-value`, pages/lt-page-run-overloads-testpart/
         // P106TestFieldAsDateTime.al:P106_AsDateTime_Values; the older pin with a narrow no-break space is gone).
@@ -497,12 +524,28 @@ impl Session {
         }
         let mut cue = page_of(&engine, st).controls[idx].parent;
         while let Some(p) = cue {
-            if page_of(&engine, st).controls[p].kind == ir::ControlKind::CueGroup
-                && !self.prop_bool_now(st, p, "editable", true)?
+            // A group (a grid is one) with `Editable = false` does the same (pages/lt-page-editability-width-lookups/P115GridLabel.al:
+            // P115_GridAndLabel_Editable `ro-grid-field-editable = No`).
+            if matches!(
+                page_of(&engine, st).controls[p].kind,
+                ir::ControlKind::CueGroup | ir::ControlKind::Group
+            ) && !self.prop_bool_now(st, p, "editable", true)?
             {
                 return Ok(false);
             }
             cue = page_of(&engine, st).controls[p].parent;
+        }
+        // ModifyAllowed = false makes the fields of a stored row read-only (pages/lt-page-autoformat-lookups/P113ModifyAllowed.al:
+        // P113_MA_CardEditable: the page is editable, its controls are not; a new row, which can be inserted, is).
+        if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Field(_))
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && engine.program.objects[st.borrow().object as usize]
+                .properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("ModifyAllowed") && v.trim().eq_ignore_ascii_case("false"))
+        {
+            return Ok(false);
         }
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }

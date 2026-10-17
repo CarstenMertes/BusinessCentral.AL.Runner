@@ -141,22 +141,22 @@ mod tests {
 
     #[test]
     fn rank_counts_flagged_passes_and_other_tests_and_orders_by_flagged() {
-        let a = [Assumption::GuidToText, Assumption::RecordGetRecordId];
-        let b = [Assumption::RecordGetRecordId];
+        let a = [Assumption::ClearAllKeepsTemporaryRows, Assumption::NextWholeDecimal];
+        let b = [Assumption::NextWholeDecimal];
         let c: [Assumption; 0] = [];
         let rows = rank([(true, &a[..]), (true, &b[..]), (false, &b[..]), (true, &c[..])]);
         assert_eq!(rows.len(), 2);
         assert_eq!(
             (rows[0].assumption, rows[0].flagged, rows[0].other),
-            (Assumption::RecordGetRecordId, 2, 1)
+            (Assumption::NextWholeDecimal, 2, 1)
         );
         assert_eq!(
             (rows[1].assumption, rows[1].flagged, rows[1].other),
-            (Assumption::GuidToText, 1, 0)
+            (Assumption::ClearAllKeepsTemporaryRows, 1, 0)
         );
         let text = render_top(&rows, 1);
         assert!(
-            text.contains("record-get-record-id") && !text.contains("guid-to-text"),
+            text.contains("next-whole-decimal") && !text.contains("clear-all-keeps-temporary-rows"),
             "{text}"
         );
         assert!(text.contains("... 1 more"), "{text}");
@@ -166,8 +166,8 @@ mod tests {
     #[test]
     fn id_list_joins_the_ids() {
         assert_eq!(
-            id_list(&[Assumption::GuidToText, Assumption::RecordGetRecordId]),
-            "guid-to-text,record-get-record-id"
+            id_list(&[Assumption::ClearAllKeepsTemporaryRows, Assumption::NextWholeDecimal]),
+            "clear-all-keeps-temporary-rows,next-whole-decimal"
         );
     }
 
@@ -175,20 +175,20 @@ mod tests {
     fn the_counts_of_a_run_are_read_back() {
         let dir = std::env::temp_dir().join(format!("al-flagged-{}", std::process::id()));
         let rows = [Row {
-            assumption: Assumption::GuidToText,
+            assumption: Assumption::ClearAllKeepsTemporaryRows,
             flagged: 3,
             other: 1,
         }];
         save_hits(&dir, &rows);
         let loaded = load_hits(&dir);
-        assert_eq!(loaded.get("guid-to-text"), Some(&(3, 1)));
+        assert_eq!(loaded.get("clear-all-keeps-temporary-rows"), Some(&(3, 1)));
         let text = list(&dir);
         assert!(
-            text.contains("guid-to-text  (3 flagged passes, 1 other tests)"),
+            text.contains("clear-all-keeps-temporary-rows  (3 flagged passes, 1 other tests)"),
             "{text}"
         );
         assert!(
-            text.contains("transfer-fields-enum-option  (not hit in the last run)"),
+            text.contains("find-equal-on-another-key  (not hit in the last run)"),
             "{text}"
         );
         let _ = std::fs::remove_dir_all(&dir);

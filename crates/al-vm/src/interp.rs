@@ -332,6 +332,10 @@ impl Session {
             B::Ge => Value::Boolean(ops::compare_operator(l, r, true)? != Ordering::Less),
             B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(l, r)?),
             B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(l, r)?),
+            B::DotNetLt => Value::Boolean(dotnet::dotnet_order(l, r)? == Ordering::Less),
+            B::DotNetLe => Value::Boolean(dotnet::dotnet_order(l, r)? != Ordering::Greater),
+            B::DotNetGt => Value::Boolean(dotnet::dotnet_order(l, r)? == Ordering::Greater),
+            B::DotNetGe => Value::Boolean(dotnet::dotnet_order(l, r)? != Ordering::Less),
         })
     }
 

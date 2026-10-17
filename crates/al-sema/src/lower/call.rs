@@ -164,6 +164,7 @@ impl Lowerer<'_> {
                     "builtin {id}: what a media export writes to the server's file system is not pinned (docs/probes-needed.md)"
                 )))
             }
+            Some(Res::Builtin(id)) if id == "System.GetDotNetType#1" => self.get_dotnet_type_call(args),
             Some(Res::Builtin(id)) => {
                 if al_builtins::native::lookup(&id).is_none() {
                     return Err(match al_builtins::native::refusal(&id) {
@@ -285,7 +286,15 @@ impl Lowerer<'_> {
                         // `ToString()`). A scalar parameter takes a DotNet result (no static type)
                         // when its run-time kind fits the parameter, as in an assignment (ADR-024
                         // section 2). Anything else is refused.
-                        let scalar = match p.ty.as_str() {
+                        // A collection method's element parameter (`Dictionary.Add(Key: TKey, Value: TValue)`,
+                        // `List.Add(Value: T)`) is the element type of the receiver's declared collection.
+                        let pty: String = match (p.ty.as_str(), receiver_node.as_ref().map(|r| self.ty_of(r))) {
+                            ("TKey", Some(Ty::Dictionary(k, _))) => element_param_name(&k),
+                            ("TValue", Some(Ty::Dictionary(_, v))) => element_param_name(&v),
+                            ("T", Some(Ty::List(e))) => element_param_name(&e),
+                            _ => p.ty.clone(),
+                        };
+                        let scalar = match pty.as_str() {
                             "Text" | "Code" => Some(RtType::Text(None)),
                             "Integer" => Some(RtType::Integer),
                             "BigInteger" => Some(RtType::BigInteger),
@@ -300,7 +309,7 @@ impl Lowerer<'_> {
                             "Guid" => Some(RtType::Guid),
                             _ => None,
                         };
-                        let value = match p.ty.as_str() {
+                        let value = match pty.as_str() {
                             "DotNet" => self.expr(a)?,
                             // CopyStream takes a DotNet stream as it is; the VM copies the bytes
                             // through the host (ADR-024 section 3).
@@ -509,4 +518,28 @@ impl Lowerer<'_> {
 /// this fails only when `builtin_ids.rs` is stale.
 pub(super) fn builtin_id(id: &str) -> Result<ir::BuiltinId, String> {
     ir::BuiltinId::of(id).ok_or_else(|| format!("builtin {id} has no builtin id (regenerate builtin_ids.rs)"))
+}
+
+/// The parameter type name a collection element of type `t` stands for, in the spelling of the
+/// builtin catalog (empty when no DotNet value may be passed for it).
+fn element_param_name(t: &Ty) -> String {
+    match t {
+        Ty::Integer => "Integer",
+        Ty::BigInteger => "BigInteger",
+        Ty::Decimal => "Decimal",
+        Ty::Boolean => "Boolean",
+        Ty::Char => "Char",
+        Ty::Byte => "Byte",
+        Ty::Text(_) => "Text",
+        Ty::Code(_) => "Code",
+        Ty::Date => "Date",
+        Ty::Time => "Time",
+        Ty::DateTime => "DateTime",
+        Ty::Duration => "Duration",
+        Ty::Guid => "Guid",
+        Ty::Variant => "Variant",
+        Ty::DotNet(_) => "DotNet",
+        _ => "",
+    }
+    .to_string()
 }

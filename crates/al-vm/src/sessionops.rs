@@ -179,6 +179,9 @@ impl Session {
         if let Some(answer) = self.encryption_op(id, args) {
             return answer;
         }
+        if id == ids::SYSTEM_GETDOTNETTYPE_1 {
+            return self.get_dotnet_type(args);
+        }
         if id == ids::SESSIONINFORMATION_CALLSTACK_1 {
             // Frames innermost first, a backslash after each, the runner's below
             // (session/TestSessionInformationCallstackContracts.al:130-143).

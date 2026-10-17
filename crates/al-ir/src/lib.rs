@@ -1193,6 +1193,12 @@ pub enum BinOp {
     /// any other pair of kinds compares as `Eq` and `Ne` do.
     DotNetEq,
     DotNetNe,
+    /// `<`, `<=`, `>`, `>=` with a `DotNet` operand: two .NET enum members by number (the same enum), two texts only when
+    /// every reading of the order agrees (see `dotnet_order`), anything else as AL does.
+    DotNetLt,
+    DotNetLe,
+    DotNetGt,
+    DotNetGe,
 }
 
 /// How a settled `DotNet` operand may be used (ADR-024).
@@ -1202,14 +1208,15 @@ pub enum OperandUse {
     Value,
     /// `+`, `=`, `<>`: as `Value`, and a .NET enum is its number.
     Enum,
-    /// `<`, `<=`, `>`, `>=`: as `Value`, but a text is refused (its ordering is not pinned).
-    NoText,
     /// A `Variant` parameter: a primitive, a .NET object or enum as the handle, a null `string`
     /// as the empty Variant.
     Variant,
     /// An argument for a scalar parameter of a builtin: a primitive only. A null is refused
     /// because `StrLen(null string)` raises an error `asserterror` cannot catch.
     Strict,
+    /// An operand of `<`, `<=`, `>`, `>=`: a .NET enum stays an enum (the
+    /// comparison orders members of one enum by number), a text stays a text.
+    Order,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]

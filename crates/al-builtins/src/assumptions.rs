@@ -565,6 +565,12 @@ registry! {
         tests: "Microsoft tests that call a report procedure which filters a data item and then RunModal the report with its request page.",
         probe: "A report procedure RowDi.SetFilter(Code, 'B*'), RunModal with a handler that clicks OK and a report that counts the rows in OnPreDataItem and OnAfterGetRecord: are the B rows alone read?",
     },
+    DotNetTypeOfUnassignedPrimitive => {
+        id: "dotnet-type-of-unassigned-primitive",
+        assumed: "GetDotNetType of a DotNet variable that holds nothing and is declared as System.String, System.Char, System.Byte or System.Int32 answers the declared type (such a variable reads as its default value); the pinned unassigned case, System.Object, raises DotNetVariableNotCreated.",
+        tests: "DotNet Array.StringArray, CharArray, ByteArray and Int32Array (GetDotNetType(DotNetString) and the like on a variable nothing was assigned to), reached through Web Request Helper and the Cryptography Management wrappers.",
+        probe: "An unassigned DotNet String, Char, Byte and Int32 variable: GetDotNetType(X).FullName, and the same for an unassigned DotNet StringBuilder and Type.",
+    },
 }
 
 thread_local! {

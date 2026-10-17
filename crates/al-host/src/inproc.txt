@@ -22,3 +22,10 @@ System.Security.Cryptography.HashAlgorithm.ComputeHash
 System.Security.Cryptography.HashAlgorithm.Dispose
 System.Convert.ToBase64String
 System.Convert.FromBase64String
+System.TimeZoneInfo.FindSystemTimeZoneById
+System.TimeZoneInfo.BaseUtcOffset
+System.DateTimeOffset..ctor
+System.DateTimeOffset.Offset
+System.DateTimeOffset.LocalDateTime
+System.DateTimeOffset.DateTime
+System.DateTimeOffset.ToLocalTime

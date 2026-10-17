@@ -18,7 +18,10 @@ fn run(tests: &str) -> Vec<(String, Outcome)> {
             id: "a".into(),
             name: "a".into(),
             dependencies: vec![],
-            files: vec![("f.al".into(), format!("{OBJECTS} codeunit 69402 T {{ Subtype = Test; {tests} }}"))],
+            files: vec![(
+                "f.al".into(),
+                format!("{OBJECTS} codeunit 69402 T {{ Subtype = Test; {tests} }}"),
+            )],
         }],
         &Default::default(),
     );

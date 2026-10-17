@@ -360,6 +360,14 @@ impl Session {
                     other => return unsupported(format!("TestFilter.SetFilter with {}", other.describe())),
                 };
                 let ty = table.fields[pos].ty.clone();
+                // An empty text takes the filter off the field (see pages/filter.rs).
+                if text.trim().is_empty() {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TestFilterSetFilterEmptyClears,
+                    );
+                    rec.borrow_mut().filters.retain(|f| !(f.field == pos && f.group == 0));
+                    return Ok(Value::Null);
+                }
                 let expr = self
                     .parse_filter_text(&text, &ty)
                     .map_err(|e| Signal::Unsupported(format!("TestFilter.SetFilter: {e}")))?;

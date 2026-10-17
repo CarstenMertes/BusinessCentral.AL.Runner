@@ -103,6 +103,29 @@ pub fn parse_filter(text: &str, args: &[crate::value::Value], ty: &crate::value:
 pub const INVALID_BOOLEAN: &str = "invalid Boolean filter value: ";
 /// The prefix of the error for a text no Guid filter reads (types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al:P143_GuidInvalid).
 pub const INVALID_GUID: &str = "invalid Guid filter value: ";
+/// The prefix of the error for a date text no Date filter reads; the failing value follows (types/lt-in-precedence-date-guid-filters/
+/// P143Date_DePlain.al: `Das Format Date „17.01.27“ ...`).
+pub const INVALID_DATE: &str = "invalid Date filter value: ";
+
+/// What the text of a Date filter needs from the session: today, the work date and the language of the messages.
+#[derive(Debug, Clone, Copy)]
+pub struct DateFilterContext {
+    pub today: i32,
+    pub work_date: i32,
+    pub language: i32,
+}
+
+thread_local! {
+    static DATE_CONTEXT: std::cell::Cell<Option<DateFilterContext>> = const { std::cell::Cell::new(None) };
+}
+
+/// Runs `f` with the date context of the session in force for the Date filters it parses.
+pub fn with_date_context<R>(ctx: DateFilterContext, f: impl FnOnce() -> R) -> R {
+    let old = DATE_CONTEXT.with(|c| c.replace(Some(ctx)));
+    let r = f();
+    DATE_CONTEXT.with(|c| c.set(old));
+    r
+}
 
 pub fn parse_filter_with(
     text: &str,
@@ -373,22 +396,12 @@ impl Parser<'_> {
                 Some(v) if !text.trim().starts_with('(') => v,
                 _ => return Err(format!("{INVALID_GUID}{text}")),
             },
-            // Date text built with `Format` reads as `Evaluate` reads it (Microsoft's tests filter dates this way;
-            // assumption `filter-text-read-as-evaluate`). A formula, an empty text or anything else stays refused.
-            T::Date if !text.trim().is_empty() && !text.contains(['<', '>']) => {
-                match crate::evaluate::read_text(self.ty, text.trim()).ok_or(()) {
-                    Ok(v) => {
-                        crate::assumptions::assume(crate::assumptions::Assumption::FilterTextReadAsEvaluate);
-                        v
-                    }
-                    Err(_) => {
-                        return Err(format!(
-                            "text filter value `{text}` for {}: not a date, time or Guid in the form Format gives (formulas and other region formats are not pinned, docs/probes-needed.md)",
-                            self.ty.describe()
-                        ));
-                    }
-                }
-            }
+            // A date in a filter (types/lt-in-precedence-date-guid-filters/P143Date_EnPlain.al, _EnRanges.al, _EnFormulas.al, _DePlain.al,
+            // _DeRanges.al, _DeFormulas.al): month, day and year in that order with `/` (and `.` when the language is German), a closing date
+            // as `C` and a date, `T` and `W` (any case) for today and the work date, and in English `CD` the closing date of today, `cd` and
+            // `0D` today. The empty text is no filter. A text that is none of these is an error in German (its text is pinned there);
+            // in any other language it is refused.
+            T::Date if !text.trim().is_empty() && !text.contains(['<', '>']) => date_filter_value(text.trim())?,
             // The empty text is the empty formula (Microsoft's Library - ERM `GetDiscountPaymentTerm`).
             T::DateFormula if text.trim().is_empty() => {
                 crate::assumptions::assume(crate::assumptions::Assumption::FilterEmptyTextDateFormula);
@@ -536,13 +549,46 @@ pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
     a.len().cmp(&b.len())
 }
 
+/// The value of one Date filter text, or the error: `INVALID_DATE` and the text for a German session, a refusal otherwise.
+fn date_filter_value(t: &str) -> Result<Value, String> {
+    let ctx = DATE_CONTEXT.with(std::cell::Cell::get);
+    let german = ctx.is_some_and(|c| c.language == 1031);
+    let english = ctx.is_some_and(|c| c.language == 1033);
+    let needs_session =
+        || format!("text filter value `{t}` for Date: the session's dates are not known here (not pinned)");
+    match t {
+        "T" | "t" => return ctx.map(|c| Value::Date(c.today, false)).ok_or_else(needs_session),
+        "W" | "w" => return ctx.map(|c| Value::Date(c.work_date, false)).ok_or_else(needs_session),
+        "CD" if english => return ctx.map(|c| Value::Date(c.today, true)).ok_or_else(needs_session),
+        "cd" | "0D" if english => return ctx.map(|c| Value::Date(c.today, false)).ok_or_else(needs_session),
+        _ => {}
+    }
+    // The dotted spelling reads like the slashed one in German: `1.1.2027` is the first of January, `17.01.27` has no month 17.
+    let slashed;
+    let text = if german && !t.contains('/') && t.matches('.').count() == 2 {
+        slashed = t.replace('.', "/");
+        slashed.as_str()
+    } else {
+        t
+    };
+    if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, text) {
+        return Ok(v);
+    }
+    if german {
+        return Err(format!("{INVALID_DATE}{t}"));
+    }
+    Err(format!(
+        "text filter value `{t}` for Date: no form pinned for this language (formulas and other region formats are not pinned, docs/probes-needed.md)"
+    ))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
 
     /// Microsoft's Tests-SCM and Tests-ERM filter Date and Guid fields with text they built with `Format`
     /// (`SetFilter("Posting Date", '..' + Format(D))`, `SetFilter(SystemId, Format(G))`): the text reads as `Evaluate`
-    /// reads it. Not pinned by a corpus test (assumption `filter-text-read-as-evaluate`, docs/probes-needed.md); a
+    /// reads it (pinned by types/lt-in-precedence-date-guid-filters/P143Date_EnPlain.al and the Guid tests); a
     /// formula or an empty text stays refused.
     #[test]
     fn a_date_or_guid_filter_reads_formatted_text_as_evaluate_does() {
@@ -560,6 +606,22 @@ mod tests {
         assert!(closing.matches(&Value::Date(crate::format::day_from_civil(2027, 1, 17), true)));
         assert!(!closing.matches(&d), "the closing date is not the date");
         assert!(parse_filter("1M", &[], &T::Date).is_err(), "a formula stays refused");
+        // T and W need the session's dates (P143Date_EnFormulas.al).
+        assert!(parse_filter("T", &[], &T::Date).is_err());
+        let today = crate::format::day_from_civil(2026, 10, 15);
+        let ctx = DateFilterContext {
+            today,
+            work_date: today + 1,
+            language: 1033,
+        };
+        with_date_context(ctx, || {
+            let t = parse_filter("..t", &[], &T::Date).expect("a range up to today");
+            assert!(t.matches(&Value::Date(today, false)) && !t.matches(&Value::Date(today + 1, false)));
+            let w = parse_filter("W", &[], &T::Date).expect("the work date");
+            assert!(w.matches(&Value::Date(today + 1, false)));
+            let cd = parse_filter("CD", &[], &T::Date).expect("the closing date of today");
+            assert!(cd.matches(&Value::Date(today, true)) && !cd.matches(&Value::Date(today, false)));
+        });
     }
 
     /// Microsoft's Library - ERM `GetDiscountPaymentTerm` filters a DateFormula field with `<>` and the empty text: there the

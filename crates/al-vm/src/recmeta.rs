@@ -183,17 +183,25 @@ impl Session {
         Ok(self.field_caption(t, pos))
     }
 
-    /// A field's caption: its `Caption` property, else its name.
+    /// A field's caption: its `Caption` property, else the ENU entry of its `CaptionML` (record/lt-record-write/RcBInit.al:
+    /// Props_BlankZero_Option_Caption `field caption`), else its name.
     pub(crate) fn field_caption(&self, t: &TableDef, pos: usize) -> String {
         self.engine.program.objects[t.object as usize]
             .table
             .as_ref()
             .and_then(|s| s.fields.get(pos))
             .and_then(|f| {
-                f.properties
-                    .iter()
-                    .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
-                    .and_then(|(_, v)| string_literal(v))
+                let prop = |n: &str| {
+                    f.properties
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                        .map(|(_, v)| v.as_str())
+                };
+                match (prop("Caption"), prop("CaptionML")) {
+                    (Some(c), _) => string_literal(c),
+                    (None, Some(ml)) => crate::platform::objects::declared_caption(None, Some(ml), "").ok(),
+                    (None, None) => None,
+                }
             })
             .unwrap_or_else(|| t.fields[pos].name.clone())
     }
@@ -661,6 +669,9 @@ impl Session {
                 // Mark_Separate_Variables_Do_Not_Share `copied`).
                 d.marks = s.marks;
                 d.marked_only = s.marked_only;
+                // The SetAutoCalcFields set comes over (record/lt-record-write/RcBFlowFields.al:SetAutoCalcFields_AfterInsertRead
+                // `copy keeps autocalc`).
+                d.auto_calc = s.auto_calc;
                 // SetLoadFields comes over with Copy (record/lt-record-read/RcAMisc.al:SetLoadFields_Copy_And_Assignment).
                 d.load.request = s.load.request;
                 d.load.buffer = s.load.buffer;
@@ -1176,6 +1187,22 @@ impl Session {
             after = Some(al_data::position(t, key, &row));
             rows.push(row);
         }
+        // A field of the primary key is refused (events/lt-db-events/DbtTransactions.al:ModifyAll_PrimaryKeyField, two rows, names as
+        // captions). Over no rows, and for a name that differs from its caption, the text is not pinned.
+        if t.keys[0].contains(&pos) {
+            let (field, table) = (t.fields[pos].name.clone(), t.name.clone());
+            if rows.is_empty() || self.field_caption(t, pos) != field || self.caption(t) != table {
+                return unsupported(
+                    "ModifyAll on a primary key field with no rows or with a caption (error text not pinned)",
+                );
+            }
+            return Err(error(
+                format!(
+                    "The MODIFYALL function cannot be used on the {field} field in the {table} table because it is part of the primary key."
+                ),
+                "DB:Ok",
+            ));
+        }
         // One fresh set of table globals for all rows, not the caller's (ADR-021 decision 6; corpus
         // probe TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee).
         let shared = al_builtins::value::TableGlobals::new_shared();
@@ -1235,7 +1262,9 @@ impl Session {
             return Ok(None);
         };
         let Some(t) = self.engine.tables.get(index).cloned().flatten() else {
-            return unsupported(format!("Evaluate into a RecordId of table `{name}`, which has no compiled schema"));
+            return unsupported(format!(
+                "Evaluate into a RecordId of table `{name}`, which has no compiled schema"
+            ));
         };
         let key = match key_text {
             None => Vec::new(),
@@ -1294,7 +1323,9 @@ impl Session {
                     for (v, &p) in parts.iter().zip(fields) {
                         let ty = &t.fields[p].ty;
                         match ty {
-                            RtType::Code(_) | RtType::Text(_) => key.push(ops::convert(Value::Text(v.as_str().into()), ty)?),
+                            RtType::Code(_) | RtType::Text(_) => {
+                                key.push(ops::convert(Value::Text(v.as_str().into()), ty)?)
+                            }
                             RtType::Integer | RtType::Enum(..) => match self.parse_filter_text(v, ty) {
                                 Ok(al_builtins::filter::FilterExpr::Eq(x)) if !v.is_empty() => key.push(x),
                                 _ => return Ok(None),
@@ -1308,7 +1339,9 @@ impl Session {
                             }
                         }
                     }
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::EvaluateRecordIdCompositeKey);
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::EvaluateRecordIdCompositeKey,
+                    );
                     key
                 }
             }

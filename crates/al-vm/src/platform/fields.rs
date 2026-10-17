@@ -197,6 +197,11 @@ fn field_row(
             .take(80)
             .collect(),
     );
+    // Type Name of a Text field is `Text` and its length (record/PZFieldObsoleteRows.al:FieldRows_AllColumns_OfLivePendingAndRemovedField,
+    // `Text30`). The other types' names are not pinned and stay blank.
+    if let RtType::Text(Some(n)) = &f.ty {
+        r[pos(t, 9)] = Value::Text(format!("Text{n}").into());
+    }
     // OptionString: the member names of an option or enum field, comma-joined (TestFieldEnumTypeVirtualTable.al:19-47).
     let option_string = match &f.ty {
         RtType::Option(m) => m.join(","),

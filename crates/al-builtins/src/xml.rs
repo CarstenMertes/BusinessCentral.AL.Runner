@@ -2482,6 +2482,7 @@ fn eval(e: &Expr, node: &Handle, pos: usize, last: usize, ctx: &XCtx) -> XRes<XV
                         })
                         .unwrap_or_default(),
                 ),
+                ("concat", n) if n >= 2 => XVal::Str(vals.iter().map(to_str).collect::<String>()),
                 ("string", 0) => XVal::Str(string_value(node)),
                 ("string", 1) => XVal::Str(to_str(&vals[0])),
                 ("number", 1) => XVal::Num(to_num(&vals[0])),
@@ -3608,8 +3609,73 @@ fn select(c: &mut dyn Ctx, h: &Handle, path: &str, prefixes: Prefixes) -> Result
         Err(XFail::Malformed(why)) if !c.ret_used() => {
             unsupported(format!("XPath `{path}`: {why} (statement form, error text not pinned)"))
         }
-        Err(_) => Ok(None),
+        // A call whose result is used answers false and leaves the error as the last error (misc/lt-probes-needed-1/
+        // PnAXmlXPath.al:NamespacePaths, MalformedPaths: `Yes|-1` with the text and the code `Xml:XPath` readable afterwards).
+        Err(XFail::NotNodeSet) => {
+            set_xpath_error(c, "Expression must evaluate to a node-set.");
+            Ok(None)
+        }
+        Err(XFail::Malformed(why)) => {
+            if let Some(text) = xpath_error_text(&why) {
+                set_xpath_error(c, &text);
+            }
+            Ok(None)
+        }
     }
+}
+
+fn set_xpath_error(c: &mut dyn Ctx, text: &str) {
+    c.set_last_error(crate::native::AlError {
+        message: text.to_string(),
+        code: "Xml:XPath".into(),
+        call_stack: String::new(),
+        ..Default::default()
+    });
+}
+
+/// The text .NET gives for the reasons the corpus pins (PnAXmlXPath.al:NamespacePaths, MalformedPaths); the other reasons leave no text.
+fn xpath_error_text(why: &str) -> Option<String> {
+    const NS_MANAGER: &str =
+        "Namespace Manager or XsltContext needed. This query has a prefix, variable, or user-defined function.";
+    const KNOWN: [&str; 17] = [
+        "boolean",
+        "contains",
+        "count",
+        "false",
+        "last",
+        "local-name",
+        "name",
+        "namespace-uri",
+        "normalize-space",
+        "not",
+        "number",
+        "position",
+        "starts-with",
+        "string",
+        "string-length",
+        "true",
+        "concat",
+    ];
+    if why == "a prefixed name needs a namespace manager" {
+        return Some(NS_MANAGER.into());
+    }
+    if let Some(p) = why
+        .strip_prefix("prefix ")
+        .and_then(|r| r.strip_suffix(" is not declared"))
+    {
+        return Some(format!("Namespace prefix '{p}' is not defined."));
+    }
+    if why == "unterminated literal" {
+        return Some("This is an unclosed string.".into());
+    }
+    if let Some(name) = why.strip_prefix("function ").and_then(|r| r.split(" with ").next()) {
+        return (!KNOWN.contains(&name)).then(|| NS_MANAGER.to_string());
+    }
+    matches!(
+        why,
+        "empty expression" | "unclosed [" | "a step without a name" | "trailing characters"
+    )
+    .then(|| "Expression must evaluate to a node-set.".to_string())
 }
 
 fn select_single_node(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
@@ -3992,10 +4058,19 @@ fn list_get(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
 
 // ---------------------------------------------------------- Variant.Is*
 
+/// A Variant holding an `XmlNode` reports the kind of the node it holds, never `XmlNode` itself (types/lt-variant-is-text-streams/
+/// LTP89IsXmlNodes.al:Node_FromEachKind, NodeVsSpecific_Casting: `IsXmlDocument` for a document node, `IsXmlNode` No).
+fn variant_has(v: &Value, tag: &str) -> bool {
+    match v {
+        Value::Library(n, h) if n.eq_ignore_ascii_case("XmlNode") && is_xml(h) => tag != "XmlNode" && kind(h) == tag,
+        v => v.is(tag),
+    }
+}
+
 macro_rules! variant_is {
     ($($fname:ident => $tag:literal),* $(,)?) => {
         $(fn $fname(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-            Ok(Value::Boolean(r.is_some_and(|v| v.is($tag))))
+            Ok(Value::Boolean(r.is_some_and(|v| variant_has(v, $tag))))
         })*
 
         fn variant_is_fn(method: &str) -> Option<NativeFn> {

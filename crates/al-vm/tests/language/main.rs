@@ -10,6 +10,7 @@ mod clear_all_temp_rows;
 mod clear_enum;
 mod code_compare;
 mod continue_stmt;
+mod corpus_failures_1;
 mod dataformats;
 mod duration_date_arith;
 mod enum_in_set;

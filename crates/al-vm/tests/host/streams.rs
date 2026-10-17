@@ -191,10 +191,11 @@ fn calc_fields_keeps_an_uncommitted_in_memory_write() {
 
 #[test]
 fn what_the_corpus_does_not_pin_about_streams_is_refused() {
-    // A Decimal of more than 18 significant digits has no measured binary form (a literal never has more: it keeps 18).
+    // A Decimal of more than 18 significant digits writes the first 18 (misc/lt-probes-needed-1/PnAStreamDecimalBytes.al:
+    // Write_Decimal_Tiny); a 19th digit of 5 or more is refused, as whether it rounds up is not pinned.
     assert!(refused(
         BASE,
-        "B.Data.CreateOutStream(O); O.Write(100000000000000000.0 * 10 + 0.5); exit('');"
+        "B.Data.CreateOutStream(O); O.Write(100000000000000000.0 * 10 + 5); exit('');"
     ));
 }
 

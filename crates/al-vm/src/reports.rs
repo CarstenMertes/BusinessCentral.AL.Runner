@@ -795,6 +795,14 @@ impl Session {
         }
         let target = self.base_item_record(inst, item)?;
         let mut t = target.borrow_mut();
+        let key = Rc::as_ptr(&target) as usize;
+        let origin: Vec<crate::state::ViewFilterKey> = v
+            .filters
+            .iter()
+            .map(|f| Ok((f.field, f.group, self.filter_text(&f.expr)?)))
+            .collect::<Result<_, Signal>>()?;
+        self.report.set_view_filters.retain(|(k, _)| *k != key);
+        self.report.set_view_filters.push((key, origin));
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
         t.key = v.key;
@@ -1023,6 +1031,65 @@ impl Session {
         Ok(run)
     }
 
+    /// A filter a procedure of the report set on a data item (`RowDi.SetFilter`) before the request page opens is not on the page: the
+    /// page shows the filters of a `SetTableView` and what was stored (report/lt-requestpage-savevalues-date-text-setvalue/
+    /// P147SaveValuesFilter.al:P147_Filter_ProcedureFilterVsStored, `procedure filter B* code filter = []`; the view of
+    /// P147_Filter_SetTableViewVsStored is shown). The page's own filters replace the item's user filters when it closes with OK, so what a
+    /// procedure set is gone for that run; with a cancelled page there is no run. Whether the run keeps it is not pinned (registry entry
+    /// report-procedure-filter-under-request-page).
+    fn hide_procedure_filters(&mut self, run: &Run) -> Result<bool, Signal> {
+        let mut any = false;
+        for r in run.all_items() {
+            let rec = self.report_item_record(run, r)?;
+            let key = Rc::as_ptr(&rec) as usize;
+            let from_view: Vec<crate::state::ViewFilterKey> = self
+                .report
+                .set_view_filters
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            let mut dropped = false;
+            let mut kept = Vec::new();
+            let filters = rec.borrow().filters.clone();
+            for f in filters {
+                let keep = f.group != 0 || from_view.contains(&(f.field, f.group, self.filter_text(&f.expr)?));
+                dropped |= !keep;
+                if keep {
+                    kept.push(f);
+                }
+            }
+            rec.borrow_mut().filters = kept;
+            any |= dropped;
+        }
+        Ok(any)
+    }
+
+    /// The error of a rendering run of a report with columns and no layout of any kind (none of DefaultLayout, the layout properties,
+    /// a rendering section), `None` when the report has a layout, is processing only or has no column to render.
+    fn no_valid_layout(&self, schema: &Schema) -> Result<Option<al_builtins::native::AlError>, Signal> {
+        let report = schema.report();
+        if report.processing_only
+            || report.layout != ir::ReportLayout::None
+            || report.layout_file_missing
+            || report.output.iter().any(|r| r.contains("(a layout)"))
+        {
+            return Ok(None);
+        }
+        if !report.items.iter().any(|i| !i.columns.is_empty()) {
+            return Ok(None);
+        }
+        Ok(Some(al_builtins::native::AlError {
+            message: format!(
+                "Report {} does not have a valid layout. Valid layout types are: Word, RDLC, Excel, and Custom.",
+                self.object_id_of(schema.object as u32)
+            ),
+            code: "Dialog".into(),
+            call_stack: String::new(),
+            ..Default::default()
+        }))
+    }
+
     /// `OnPreReport`, every top-level data item, `OnPostReport`; a reportextension's triggers
     /// follow the base report's own. The order of the report triggers among themselves is pinned
     /// by reportextension/TestReportExtensionTriggers.al:244-250 (base pre, extension pre, base
@@ -1048,6 +1115,7 @@ impl Session {
         // the run without an error (handlers/TestReportRunWithRequestPage.al:
         // Report_Run_CancelledRequestPageRunsNothingAndRaisesNoError).
         if shows_page {
+            let hidden = self.hide_procedure_filters(&run)?;
             let ext: Vec<(usize, Inst)> = run.exts.iter().map(|(i, e)| (*e, i.clone())).collect();
             match self.run_request_page(inst, schema.object, None, ext, false)?.0 {
                 RequestClosed::Cancel => return Ok(false),
@@ -1055,7 +1123,13 @@ impl Session {
                 // (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:
                 // SaveAsXml_RunsTheReportOnce_AndClosesTheRequestPage): it does not run a second time.
                 RequestClosed::SavedAsXml => return Ok(true),
-                RequestClosed::Ok => {}
+                RequestClosed::Ok => {
+                    if hidden {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::ReportProcedureFilterUnderRequestPage,
+                        );
+                    }
+                }
             }
         }
         self.report_after_page(&run, schema)
@@ -1064,6 +1138,15 @@ impl Session {
     /// Everything of a run after its request page: the triggers and the data items.
     pub(crate) fn report_after_page(&mut self, run: &Run, schema: &Schema) -> Result<bool, Signal> {
         let report = schema.report();
+        // A report that renders and declares no layout at all stops after OnInitReport and the request page with an error: no
+        // OnPreReport, no data item (report/lt-report-pre-rendering/ReportPreRenderingRun.al: P195_ReportRun_PreRenderingOrder,
+        // P195_ReportExecute_PreRenderingOrder; a cancelled request page ends the run first, pages/lt-page-presentation-properties/
+        // P119ReportColumn.al).
+        if !run.dataset {
+            if let Some(e) = self.no_valid_layout(schema)? {
+                return Err(Signal::Error(Box::new(e)));
+            }
+        }
         // A report that renders output runs up to its request page and no further: there is no
         // renderer (docs/probes-needed.md). The dataset a `SaveAs` writes is not rendered output.
         if let Some(why) = report.output.first().filter(|_| !run.dataset) {
@@ -1085,10 +1168,12 @@ impl Session {
                 .iter()
                 .any(|f| item.link.iter().any(|&(own, _)| f.field == own))
             {
-                return unsupported(format!(
-                    "data item {} filters a field its DataItemLink joins (how they combine is not pinned)",
-                    item.name
-                ));
+                // The corpus pins filters a trigger sets on a link field (misc/lt-probes-needed-8/PnH3Link.al:
+                // Link_ChildSetsOwnFilters_InPreDataItem: both apply). One the view or the caller sets before the run is in
+                // the report's filter group, where the link replaces the filter on its field: an assumption.
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::ReportItemFilterOnLinkFieldReplaced,
+                );
             }
         }
         // A filter an item gets in OnPreReport is discarded: OnPreDataItem sees the view the item
@@ -1121,6 +1206,16 @@ impl Session {
             if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None, &[])? {
                 return Ok(false);
             }
+        }
+        // OnPreRendering runs once the data items are done and before OnPostReport, with an empty payload, in a run that writes the dataset
+        // (report/lt-report-pre-rendering/ReportPreRenderingSaveAsXml.al: P195_SaveAsXml_PreRenderingOrder `OnPreRendering keys=0`). A
+        // run that renders is refused above or stops on its missing layout; the trigger of such a run is not pinned.
+        if let Some(r) = report.on_pre_rendering {
+            let payload = Value::Library(
+                "JsonObject".into(),
+                std::rc::Rc::new(std::cell::RefCell::new(al_builtins::value::LibraryValue::Empty)),
+            );
+            self.call(run.object, r, run.base.clone(), vec![payload])?;
         }
         if let Some(r) = report.on_post {
             self.report_trigger_call(run.object, r, run.base.clone(), TrigKind::PostReport)?;
@@ -1235,6 +1330,17 @@ impl Session {
         let mut iterations = 0u32;
         'rows: while more {
             iterations += 1;
+            // The CalcFields property: the listed FlowFields of the row, before its triggers. Pinned for one field of a
+            // top-level item (misc/lt-probes-needed-8/PnH3Link.al:CalcFields_Property_CalculatesTheFlowField); a nested
+            // item or a list of several fields is the same on an assumption.
+            if !item.calc_fields.is_empty() {
+                if item.parent.is_some() || item.calc_fields.len() > 1 {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::ReportItemCalcFieldsNestedOrList,
+                    );
+                }
+                self.calc_fields(&rec, &item.calc_fields)?;
+            }
             if run.dataset {
                 self.dataset_autocalc(run, r, &rec)?;
             }
@@ -1609,6 +1715,21 @@ impl Session {
         } else {
             self.custom_layout(&schema)?
         };
+        // A report with columns and no layout at all: the rendering formats stop after OnInitReport with the error, which a used result
+        // turns into false (report/lt-report-pre-rendering/ReportPreRenderingSaveAsPdf.al: P195_SaveAsPdf_PreRenderingOrder and its
+        // Word, Excel and Html siblings, the call in a TryFunction).
+        if matches!(format.as_str(), "Pdf" | "Html" | "Word" | "Excel") {
+            if let Some(e) = self.no_valid_layout(&schema)? {
+                if self.report_init(&inst)? {
+                    return unsupported("CurrReport.Quit in OnInitReport of a report with no layout (not pinned)");
+                }
+                if result_used {
+                    self.last_error = e;
+                    return Ok(Value::Boolean(false));
+                }
+                return Err(Signal::Error(Box::new(e)));
+            }
+        }
         match format.as_str() {
             "Xml" => {}
             // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Html_WithAnRdlcLayout_IsRefused: false, the

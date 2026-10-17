@@ -298,9 +298,10 @@ impl Session {
                 table.keys[0].contains(&f.field)
                     && match &f.expr {
                         al_builtins::filter::FilterExpr::Eq(Value::Text(t) | Value::Code(t)) => t.is_empty(),
-                        al_builtins::filter::FilterExpr::Range(Some(Value::Text(a) | Value::Code(a)), Some(Value::Text(b) | Value::Code(b))) => {
-                            a.is_empty() && b.is_empty()
-                        }
+                        al_builtins::filter::FilterExpr::Range(
+                            Some(Value::Text(a) | Value::Code(a)),
+                            Some(Value::Text(b) | Value::Code(b)),
+                        ) => a.is_empty() && b.is_empty(),
                         _ => false,
                     }
             });

@@ -1004,8 +1004,12 @@ fn walk_report_item<V: RefVisitor>(i: &mut ReportItem, parent: TableOf, v: &mut 
         columns,
         max_iteration: _,
         print_only_if_detail: _,
+        calc_fields,
     } = i;
     let own = TableOf::object(*table);
+    for f in calc_fields {
+        fld(v, f, own);
+    }
     for (mine, theirs) in link {
         fld(v, mine, own);
         fld(v, theirs, parent);
@@ -1038,6 +1042,7 @@ fn walk_report<V: RefVisitor>(r: &mut Report, v: &mut V) {
         on_init: _,
         on_pre: _,
         on_post: _,
+        on_pre_rendering: _,
         extensions,
         request_flag_slot: _,
         output: _,

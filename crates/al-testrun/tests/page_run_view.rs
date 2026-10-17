@@ -15,6 +15,11 @@ page 50101 "PV List"
     PageType = List; SourceTable = "PV Row"; SourceTableView = where(Kind = const(B));
     layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } }
 }
+page 50103 "PV Desc List"
+{
+    PageType = List; SourceTable = "PV Row"; SourceTableView = sorting(Id) order(descending);
+    layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } }
+}
 codeunit 50102 "T"
 {
     Subtype = Test;
@@ -43,6 +48,23 @@ codeunit 50102 "T"
                 n += 1;
             until not P.Next();
         if n <> 2 then Error('the page alone showed %1 rows', n);
+    end;
+    [PageHandler]
+    procedure HDesc(var P: TestPage "PV Desc List")
+    begin
+        if P.First() then
+            Ids := P.Id.Value;
+    end;
+    [Test]
+    [HandlerFunctions('HDesc')]
+    procedure RunOnARecordWithAnOrderInTheView()
+    var R: Record "PV Row" temporary;
+    begin
+        R.Id := 1; R.Insert();
+        R.Id := 2; R.Insert();
+        R.Id := 3; R.Insert();
+        Page.Run(Page::"PV Desc List", R);
+        if Ids <> '3' then Error('the first row was %1', Ids);
     end;
     [Test]
     [HandlerFunctions('H')]
@@ -83,6 +105,13 @@ fn a_page_run_on_a_record_shows_the_rows_its_source_table_view_admits() {
     let o = rt.first_outcome(&CaseId {
         codeunit: 50102,
         name: "RunOnARecord".into(),
+    });
+    assert_eq!(o, Outcome::Pass);
+    // A view with order(descending) on a page run on a record is read as the view alone is (an assumption,
+    // page-run-record-view-order-applies); P145PageRunView.al pins SORTING and the record's direction only.
+    let o = rt.first_outcome(&CaseId {
+        codeunit: 50102,
+        name: "RunOnARecordWithAnOrderInTheView".into(),
     });
     assert_eq!(o, Outcome::Pass);
 }

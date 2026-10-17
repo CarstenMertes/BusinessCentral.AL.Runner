@@ -614,6 +614,7 @@ impl Session {
                 report_executed: Vec::new(),
                 prepared: Vec::new(),
                 report_preview_pinned: Vec::new(),
+                set_view_filters: Vec::new(),
                 dataset: None,
             },
         };
@@ -972,7 +973,9 @@ impl Session {
                     if rc.borrow().temporary
                         && matches!(r.locals[i].ty, RtType::Record(t, false) if !self.engine.object_facts[t as usize].temporary()) =>
                 {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TempRecordByValueToPersistentParameter);
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TempRecordByValueToPersistentParameter,
+                    );
                     let mut st = rc.borrow().clone();
                     st.temporary = false;
                     st.temp_id = None;

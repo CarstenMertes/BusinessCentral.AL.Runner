@@ -181,6 +181,12 @@ registry! {
         tests: "To-do.InsertTask / InsertTaskAndRelatedData (Task2: Record \"To-do\" receives the temporary Rec of CreateTaskFromTask, Task2.Insert(true), then Task2.Get); Tests-Marketing Marketing Matrix Management TaskWith* (10 tests).",
         probe: "A temporary record with a row, passed by value to a procedure with a parameter of the same table not declared temporary: the callee's IsTemporary, Insert then Count of the stored table, and whether the caller's temporary rows change.",
     },
+    EventVarAliasThroughSender => {
+        id: "event-var-alias-through-sender",
+        assumed: "A `var` parameter of an event is a reference to the publisher's variable: when a subscriber changes that variable through the sender (Sender.Proc()) and leaves its own parameter as it was sent, the change stays after the event (a scalar parameter is not written back over it). Records, lists and other shared values already alias.",
+        tests: "Create Inventory Pick/Movement.AutoCreatePickOrMove passes its globals LineCreated and CurrWarehouseActivityHeader to OnAutoCreatePickOrMoveFromWhseRequest; the manufacturing subscriber fills them through sender.CreatePickOrMoveLine. Tests-SCM SCM Extend Warehouse (35 tests).",
+        probe: "A codeunit with global Boolean, Integer and Text variables passed as var arguments to an IncludeSender event; a subscriber with `var Sender` that calls a procedure setting the globals and does not assign its own parameters: the globals after the event; the same when the subscriber also assigns one of the parameters.",
+    },
     TestPageAssertEqualsIntegerOnTextControl => {
         id: "testpage-assertequals-integer-on-text-control",
         assumed: "TestPageField.AssertEquals(<Integer>) on a control over a Text or Code value compares the plain digits of the integer with the control's text, instead of raising TypeConversion; another number or an Enum there stays refused.",

@@ -27,3 +27,20 @@ fn foreach_over_a_json_array_copied_from_a_never_used_one() {
     );
     assert_eq!(r, "[]");
 }
+
+#[test]
+fn text_builder_append_of_a_variant_number_raises_the_type_conversion() {
+    // types/lt-number-to-text/NumberToTextIsFormat.al:193-216 (TextBuilderAppend_VariantNumber_Result): Integer, BigInteger
+    // and Decimal field values appended through a Variant raise and leave the builder unchanged.
+    for (ty, lit) in [("Integer", "4222"), ("BigInteger", "4222"), ("Decimal", "1.5")] {
+        let r = text(
+            &format!("V: Variant; N: {ty}; B: TextBuilder;"),
+            &format!("N := {lit}; V := N; B.Append(V); exit('no error');"),
+        );
+        assert_eq!(
+            r,
+            "error:The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.|TypeConversion",
+            "{ty}"
+        );
+    }
+}

@@ -707,7 +707,13 @@ fn grow_capacity(h: &Rc<RefCell<LibraryValue>>) {
 }
 
 fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let (h, t) = (string_of(r)?, text(a, 0)?);
+    let h = string_of(r)?;
+    // A Variant holding an Integer, BigInteger or Decimal raises the Variant-to-Text conversion error and appends nothing
+    // (types/lt-number-to-text/NumberToTextIsFormat.al:193-216, TextBuilderAppend_VariantNumber_Result).
+    if let Some(n @ (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_))) = a.first() {
+        crate::ops::convert(n.clone(), &crate::value::RtType::Text(None))?;
+    }
+    let t = text(a, 0)?;
     with_string(&h, |s| s.push_str(&t));
     grow_capacity(&h);
     Ok(Value::Boolean(true))

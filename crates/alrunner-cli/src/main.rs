@@ -7,6 +7,7 @@ mod coverage;
 mod output;
 mod run;
 mod serve;
+mod style;
 mod testdata;
 
 use args::Command;

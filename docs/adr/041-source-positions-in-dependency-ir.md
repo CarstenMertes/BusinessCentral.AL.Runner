@@ -26,6 +26,18 @@ positions the call is refused ("a frame whose format is not pinned"): 197 Tests-
 | Compile cache entry for BC 27.5 | about 21 MB | about 29 MB |
 | Run time of the tests | 13.4 s | 10.9 s to 12.2 s (noise) |
 
+### Measured again on main with bump 15 (2026-10-17)
+
+| | Without | With |
+|---|---:|---:|
+| Tests-Misc passed (BC 27.5) | 1353 | 1527 |
+| Tests-SCM-Service passed | 1083 | 1099 |
+| Compile cache entry, BC 27.5 | 19.0 MB | 25.3 MB (+33 %) |
+| Full corpus run with the apps (BC 29) | 137.1 G instructions | 143.9 G (+5 %); limit 155 G |
+| Cold compile of the corpus | 662 399 per KiB | 664 306 per KiB (the corpus has no dependency code); limit 695 000 |
+
+Both budgets hold; no limit is raised.
+
 ## Decision
 
 The routines of dependency apps carry source positions like those of the workspace. `AL_NO_DEP_POSITIONS=1` turns it off

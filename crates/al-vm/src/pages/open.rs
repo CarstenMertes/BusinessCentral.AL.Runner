@@ -199,7 +199,7 @@ impl Session {
         // A record handed to Page.Run brings its own filters, key and order; they come first and the page's
         // SourceTableView then adds to them (how the two combine is not pinned: assumption
         // `page-run-record-and-source-table-view`). A view that names a sorting or an order would fight the record's key,
-        // so that stays refused.
+        // a sorting or order the view names is applied on top (assumption `page-run-record-source-view-sorting`).
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
             let src = r.borrow();
@@ -219,10 +219,9 @@ impl Session {
             if record.is_some() {
                 let lower = view.to_ascii_lowercase();
                 if lower.contains("sorting(") || lower.contains("order(") {
-                    self.mark_closed(st);
-                    return unsupported(
-                        "Page.Run with a record on a page whose SourceTableView names a sorting or an order (not pinned)",
-                    );
+                    // The view sets the key and direction it names on top of the record's (Microsoft's Service Orders list
+                    // run with a record). Assumed, see Assumption::PageRunRecordSourceViewSorting.
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageRunRecordSourceViewSorting);
                 }
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageRunRecordAndSourceTableView);
             }
@@ -327,8 +326,11 @@ impl Session {
         if mode == PageMode::New {
             // corpus handlers/TestPageCreateModeNewRecordArgs.al:243-270: OnOpenPage, then
             // OnNewRecord with BelowxRec true and xRec on the last row.
+            // A page with an OnFindRecord trigger is opened the same way: the trigger is not asked (Microsoft's Service
+            // Credit Memo, Invoice and Order pages, whose tests open them with OpenNew). Assumed, see
+            // Assumption::OpenNewSkipsOnFindRecord.
             if self.declares(st, "onfindrecord") {
-                return unsupported("OpenNew on a page with an OnFindRecord trigger (not pinned)");
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::OpenNewSkipsOnFindRecord);
             }
             self.ret_used = true;
             let rec = self.page_rec(st);

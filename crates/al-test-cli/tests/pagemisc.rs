@@ -183,6 +183,11 @@ page 62343 "PM SH Card" { PageType = Document; SourceTable = "PM SH"; SourceTabl
   layout { area(Content) { group(G) { field("No."; Rec."No.") { } field("Customer No."; Rec."Customer No.") { } }
     part(Lines; "PM SIL Part") { SubPageLink = "Document No." = field("No."); } } }
   trigger OnNewRecord(BelowxRec: Boolean) begin Rec."Document Type" := Rec."Document Type"::"Order"; end; }
+page 62344 "PM OpenNew Find Card" { PageType = Card; SourceTable = "PM Row";
+  layout { area(Content) { field("No."; Rec."No.") { } } }
+  trigger OnFindRecord(Which: Text): Boolean begin if Rec.Find(Which) then exit(true); Rec.SetRange("No."); exit(Rec.Find(Which)); end; }
+page 62345 "PM SortView List" { PageType = List; SourceTable = "PM Row"; SourceTableView = sorting("No.") order(descending);
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } } } } }
 table 62304 "PM Pick" { LookupPageId = "PM Pick List"; fields { field(1; Id; Code[10]) { } field(2; Grp; Integer) { } } keys { key(PK; Id) { } } }
 page 62305 "PM Pick List" { PageType = List; SourceTable = "PM Pick"; Editable = false;
   layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } } }
@@ -1183,5 +1188,34 @@ fn a_new_document_with_a_part_linked_on_its_number_opens_activates_a_field_and_c
         procedure OpenNewActivateOk() var C: TestPage \"PM SH Card\"; H: Record \"PM SH\"; begin
             H.DeleteAll(); C.OpenNew(); C.\"Customer No.\".Activate(); Check('SVO001', C.\"No.\".Value()); C.OK().Invoke();
             if not H.Get(H.\"Document Type\"::\"Order\", 'SVO001') then Error('host not saved'); end;"
+    ));
+}
+
+// Microsoft's Service Credit Memo, Invoice and Order pages declare OnFindRecord, and their tests open them with OpenNew
+// (Tests-SCM-Service ServiceCreditMemoByPage and about 30 more were refused). The page is opened as one without the trigger.
+// Assumed, open-new-skips-onfindrecord.
+#[test]
+fn open_new_on_a_page_with_on_find_record_gets_to_the_new_row() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure OpenNewWithFind() var C: TestPage \"PM OpenNew Find Card\"; R: Record \"PM Row\"; begin
+            R.DeleteAll(); R.\"No.\" := 'F1'; R.Insert();
+            C.OpenNew(); C.\"No.\".SetValue('F2'); C.Close();
+            if not R.Get('F2') then Error('new row not stored'); end;"
+    ));
+}
+
+// Microsoft's Service Orders list declares SourceTableView with a sorting and tests run it with a record (Tests-SCM-Service
+// AcceptOnServiceOrderPromising and about 20 more were refused). Assumed, page-run-record-source-view-sorting.
+#[test]
+fn page_run_with_a_record_on_a_page_whose_view_names_a_sorting_opens_it() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('Pick')]
+        procedure SortedView() var R: Record \"PM Row\"; begin
+            R.DeleteAll(); R.\"No.\" := 'S1'; R.Insert(); R.\"No.\" := 'S2'; R.Insert();
+            Page.RunModal(Page::\"PM SortView List\", R); end;
+        [ModalPageHandler] procedure Pick(var T: TestPage \"PM SortView List\") begin T.First(); Check('S2', T.\"No.\".Value()); end;"
     ));
 }

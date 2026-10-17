@@ -518,6 +518,18 @@ registry! {
         tests: "Service Item Line CalculateResponseDateTime through Calendar Management: about 820 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
         probe: "T + 1000.0 and T - 1000.0 for a Decimal variable holding a whole number, and 0.",
     },
+    OpenNewSkipsOnFindRecord => {
+        id: "open-new-skips-onfindrecord",
+        assumed: "TestPage.OpenNew on a page with an OnFindRecord trigger does not run that trigger: the page finds its last row for xRec by itself (as for a page without the trigger) and goes to OnNewRecord.",
+        tests: "Service Credit Memo, Service Invoice and Service Order pages (OnFindRecord: Rec.Find(Which), else SetRange(\"No.\") and Find again): ServiceCreditMemoByPage, ServiceInvoiceByPage and about 30 more Tests-SCM-Service tests, and the 24 that follow them in their codeunits.",
+        probe: "A list or card with OnFindRecord(Which) that notes Which in a trace, a source table with and without rows: OpenNew, then the trace, xRec of OnNewRecord and the first Rec.",
+    },
+    PageRunRecordSourceViewSorting => {
+        id: "page-run-record-source-view-sorting",
+        assumed: "Page.Run(Page, Rec) on a page whose SourceTableView names a SORTING or an ORDER: the record's key and direction come first, then the view sets the halves it names, as a part's own SourceTableView does after its SubPageView (handlers/TestPartOwnSortVsSubPageView.al).",
+        tests: "Service Orders list (SourceTableView = sorting(\"Document Type\", \"No.\") ...) run on a filtered record: AcceptOnServiceOrderPromising and about 20 more Tests-SCM-Service tests, 19 Tests-Misc tests.",
+        probe: "A page with SourceTableView = sorting(B) order(descending) where(...), run with Page.Run(Page, Rec) on a record that has SetCurrentKey(A) and its own filter: the order of the rows a handler sees.",
+    },
     PartLinkNotValidatedForUnsavedHost => {
         id: "part-link-not-validated-for-unsaved-host",
         assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",

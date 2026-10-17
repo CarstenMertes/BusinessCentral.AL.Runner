@@ -533,8 +533,33 @@ impl Session {
             }
         }
         if has_before || find {
+            // The way back is read in blocks of 20 rows: after a block the client reads the row it started from, then goes on from the
+            // last row of the block again (pages/lt-testpage-list-rows/ListRowsActionNew.al:NewRowThenAction_Ping30Rows_ReadsLogged:
+            // `G100;G30;...;G11;G100;G11;G10;...;G1;G100;G100;C100`).
+            let mut block = 0;
             while self.nav_next(st, -1)? {
                 self.populate_current(st)?;
+                block += 1;
+                if block == Self::WINDOW && !find {
+                    let stop = rec.borrow().fields.clone();
+                    let here = self.row_key(rec)?;
+                    self.ret_used = true;
+                    let before = matches!(
+                        self.record_op(RecordOp::Next, rec, &mut [Value::Integer(-1)])?,
+                        Value::Integer(n) if n != 0
+                    );
+                    rec.borrow_mut().fields = stop.clone();
+                    if before {
+                        let mut at = here.clone();
+                        self.ret_used = true;
+                        self.record_op(RecordOp::Get, rec, &mut pk)?;
+                        self.populate_current(st)?;
+                        self.ret_used = true;
+                        self.record_op(RecordOp::Get, rec, &mut at)?;
+                        self.populate_current(st)?;
+                        block = 1;
+                    }
+                }
             }
         }
         self.ret_used = true;
@@ -599,7 +624,11 @@ impl Session {
                 st.borrow_mut().refresh = false;
                 return self.sync_parts(st);
             }
-            st.borrow_mut().stale = true;
+            // The rows the client held are the old ones: it asks the triggers again for whatever it does next.
+            let mut s = st.borrow_mut();
+            s.stale = true;
+            s.window.clear();
+            s.window_from_start = false;
             return Ok(());
         }
         let rec = self.page_rec(st);

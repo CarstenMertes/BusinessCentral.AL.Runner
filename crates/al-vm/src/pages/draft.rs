@@ -142,6 +142,24 @@ impl Session {
         // A new line of a list starts below the last row the client holds: OnNewRecord sees that row as xRec, while the
         // insert sees the row the cursor was on (misc/W2BelowXRec.al:NewInTheMiddle_CursorOnFirstRow_KeyBetween,
         // NewInTheMiddle_CursorOnMiddleRow_KeyBefore, NewTwice_InTheMiddle: xRec=30 at OnNewRecord, 10 at OnInsertRecord).
+        // A list longer than its window first reads on to the end of the view (the new line goes after the last row).
+        let reads_on = {
+            let s = st.borrow();
+            keep_focus
+                && s.host.is_none()
+                && s.cursor == Cursor::Row
+                && !s.draft
+                && s.window_from_start
+                && s.window.len() == Self::WINDOW
+                && !s.window_eof
+        } && self.is_list(st)
+            && self.declares(st, "onaftergetrecord")
+            && self.declares(st, "onaftergetcurrrecord")
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord");
+        if reads_on {
+            self.read_block_past_the_window(st, false)?;
+        }
         let last_held = {
             let s = st.borrow();
             (keep_focus
@@ -150,7 +168,7 @@ impl Session {
                 && s.cursor == Cursor::Row
                 && !s.draft
                 && s.window_from_start
-                && s.window.len() < Self::WINDOW)
+                && (s.window.len() < Self::WINDOW || s.window_whole))
                 .then(|| s.window.last().map(|w| w.stored.clone()))
                 .flatten()
         };

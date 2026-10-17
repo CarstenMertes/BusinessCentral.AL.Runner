@@ -214,6 +214,9 @@ impl Session {
             | Value::Enum(..)
             | Value::Guid(_)
             | Value::Date(..)
+            // A DateTime reads as Format gives it, to the minute (record/lt-testfield-typed-values/FieldRefTestFieldTypedTemporalCode.al:
+            // P189_FldRef_DateTime_Value, `03/15/24 12:00 PM` for 12:00:00 and 12:00:01).
+            | Value::DateTime(_)
             | Value::DateFormula(_) => al_builtins::format::try_format(v, 0, 0, self).map_err(Signal::Unsupported),
             // A RecordId reads as Format gives it (`Table: key`, record/TestProbeRecordRefContracts.al:472-502); an error
             // message shows it the same way (record/lt-record-id-in/RecordIdInMessage.al:P168_Error_RecordIdAsArgument_PlainKey and siblings).

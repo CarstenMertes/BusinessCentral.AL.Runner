@@ -418,6 +418,8 @@ pub struct Session {
     pub(crate) work_date: Option<i32>,
     /// The language `GlobalLanguage(Id)` set.
     pub(crate) global_language: i32,
+    /// The row `load` is about to read came from `Get` (partial.rs: a `Get` of the row the buffer holds keeps what is loaded).
+    pub(crate) get_load: bool,
     /// Transactions: the depth of transaction-beginning constructs, and where the open transaction stands.
     pub(crate) tx: TxState,
     /// Handler functions and notifications of the running test method.
@@ -503,6 +505,7 @@ impl Session {
         let sequences = restored_sequences(&engine, &company);
         let mut session = Session {
             global_language: host.identity.global_language(),
+            get_load: false,
             host,
             waited_ms: 0,
             encrypted: Default::default(),
@@ -981,6 +984,22 @@ impl Session {
                 // VariantNumberToVarParam.al:VarTextParam_VariantArgument, `integer ok = Yes`, `variant after = filled`). Another
                 // number is not pinned and keeps the conversion.
                 (a @ Value::Integer(_), true) if matches!(r.locals[i].ty, RtType::Text(_)) => a,
+                // A Variant holding a number, a Boolean, a Date, an Enum or an Option handed to a by-value Text or Code parameter
+                // raises TypeConversion (types/lt-variant-to-text-fields/VariantNumberToTextParam.al:TextParam_ByValue_VariantNumbers,
+                // CodeParam_ByValue_VariantNumbers, TextParam_ByValue_VariantTextAndBoolean; report/lt-requestpage-savevalues-date-text-setvalue/
+                // P147DateToText.al:P147_DateVariant_DefaultLanguage for a Date).
+                (
+                    Value::Integer(_)
+                    | Value::BigInteger(_)
+                    | Value::Decimal(_)
+                    | Value::Boolean(_)
+                    | Value::Date(..)
+                    | Value::Enum(..)
+                    | Value::Option(..),
+                    false,
+                ) if matches!(r.locals[i].ty, RtType::Text(_) | RtType::Code(_)) => {
+                    return Err(self.variant_to_text_error(matches!(r.locals[i].ty, RtType::Code(_))));
+                }
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }
@@ -1111,6 +1130,29 @@ impl Session {
         };
         frame.locals.truncate(r.params);
         Ok((value, frame.locals))
+    }
+
+    /// The TypeConversion a Variant raises when it holds something that is no text and meets a Text or Code. The text follows
+    /// the session language: English, and German for Text (report/lt-requestpage-savevalues-date-text-setvalue/P147DateToText.al:
+    /// P147_DateVariant_German, `Der Ausdruck ... kann nicht in einen ...NavText-Wert typkonvertiert werden.`); another language and the
+    /// German text for Code are not pinned and are refused.
+    pub(crate) fn variant_to_text_error(&self, code: bool) -> Signal {
+        let kind = if code { "NavCode" } else { "NavText" };
+        match (self.global_language, code) {
+            (1033, _) => crate::transactions::al_error_code(
+                &format!(
+                    "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.{kind} value."
+                ),
+                "TypeConversion",
+            ),
+            (1031, false) => crate::transactions::al_error_code(
+                "Der Ausdruck Microsoft.Dynamics.Nav.Runtime.NavIndirectValue kann nicht in einen Microsoft.Dynamics.Nav.Runtime.NavText-Wert typkonvertiert werden.",
+                "TypeConversion",
+            ),
+            (lang, _) => Signal::Unsupported(format!(
+                "the TypeConversion text of a Variant into {kind} in language {lang} (not pinned)"
+            )),
+        }
     }
 
     /// The flag that stops this session's AL code (see `stop`). Setting it from another thread

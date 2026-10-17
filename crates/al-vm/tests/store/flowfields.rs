@@ -1321,9 +1321,10 @@ fn min_max_and_lookup_accept_text_for_code_and_the_same_enum() {
 }
 
 #[test]
-fn min_max_and_lookup_into_another_type_or_another_enum_are_refused() {
+fn min_max_and_lookup_into_another_type_are_refused_and_a_lookup_into_another_enum_keeps_the_member() {
     assert!(unsupported(calc_one("MinWrong")).contains("another type"));
-    assert!(unsupported(calc_one("EnumOther")).contains("another type"));
+    // corpus record/lt-flowfield-lookup-enum/FlowFieldLookupOtherEnum.al: the looked-up member stays as it is.
+    assert_eq!(text(calc_one("EnumOther")), "B");
 }
 
 // A sum over a BigInteger source works past the Int32 range.

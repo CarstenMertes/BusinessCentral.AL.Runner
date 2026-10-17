@@ -352,7 +352,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
     }
     for t in obj.triggers() {
         let n = t.name().to_ascii_lowercase();
-        if !["oninitreport", "onprereport", "onpostreport"].contains(&n.as_str()) {
+        if !["oninitreport", "onprereport", "onpostreport", "onprerendering"].contains(&n.as_str()) {
             out.reasons.push(format!("report trigger {n} is not supported yet"));
         }
     }
@@ -1027,6 +1027,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         on_init: object_trigger(&o, obj, "OnInitReport"),
         on_pre: object_trigger(&o, obj, "OnPreReport"),
         on_post: object_trigger(&o, obj, "OnPostReport"),
+        on_pre_rendering: object_trigger(&o, obj, "OnPreRendering"),
         extensions: cx.extensions.clone(),
         request_flag_slot: cx.request_flag_slot,
         output: layout.output.clone(),

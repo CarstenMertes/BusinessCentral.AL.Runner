@@ -1023,6 +1023,27 @@ impl Session {
         Ok(run)
     }
 
+    /// The error of a rendering run of a report with columns and no layout of any kind (none of DefaultLayout, the layout properties,
+    /// a rendering section), `None` when the report has a layout, is processing only or has no column to render.
+    fn no_valid_layout(&self, schema: &Schema) -> Result<Option<al_builtins::native::AlError>, Signal> {
+        let report = schema.report();
+        if report.processing_only || report.layout != ir::ReportLayout::None || report.layout_file_missing {
+            return Ok(None);
+        }
+        if !report.items.iter().any(|i| !i.columns.is_empty()) {
+            return Ok(None);
+        }
+        Ok(Some(al_builtins::native::AlError {
+            message: format!(
+                "Report {} does not have a valid layout. Valid layout types are: Word, RDLC, Excel, and Custom.",
+                self.object_id_of(schema.object as u32)
+            ),
+            code: "Dialog".into(),
+            call_stack: String::new(),
+            ..Default::default()
+        }))
+    }
+
     /// `OnPreReport`, every top-level data item, `OnPostReport`; a reportextension's triggers
     /// follow the base report's own. The order of the report triggers among themselves is pinned
     /// by reportextension/TestReportExtensionTriggers.al:244-250 (base pre, extension pre, base
@@ -1038,6 +1059,17 @@ impl Session {
         shows_page: bool,
         save_as: Option<&str>,
     ) -> Result<bool, Signal> {
+        // A report that renders and declares no layout at all stops after OnInitReport with an error: no OnPreReport, no data item
+        // (report/lt-report-pre-rendering/ReportPreRenderingRun.al: P195_ReportRun_PreRenderingOrder, P195_ReportExecute_PreRenderingOrder).
+        // Only a report with a column is pinned; whether the request page opens first is not.
+        if save_as.is_none() {
+            if let Some(e) = self.no_valid_layout(schema)? {
+                if shows_page {
+                    return unsupported("a run with a request page of a report that declares no layout (not pinned)");
+                }
+                return Err(Signal::Error(Box::new(e)));
+            }
+        }
         let mut run = self.report_prepare(inst, schema)?;
         run.dataset = save_as.is_some();
         if let Some(xml) = save_as.filter(|x| !x.is_empty()) {
@@ -1121,6 +1153,16 @@ impl Session {
             if report.items[i].parent.is_none() && self.report_item(run, ItemRef::Base(i), None, &[])? {
                 return Ok(false);
             }
+        }
+        // OnPreRendering runs once the data items are done and before OnPostReport, with an empty payload, in a run that writes the dataset
+        // (report/lt-report-pre-rendering/ReportPreRenderingSaveAsXml.al: P195_SaveAsXml_PreRenderingOrder `OnPreRendering keys=0`). A
+        // run that renders is refused above or stops on its missing layout; the trigger of such a run is not pinned.
+        if let Some(r) = report.on_pre_rendering {
+            let payload = Value::Library(
+                "JsonObject".into(),
+                std::rc::Rc::new(std::cell::RefCell::new(al_builtins::value::LibraryValue::Empty)),
+            );
+            self.call(run.object, r, run.base.clone(), vec![payload])?;
         }
         if let Some(r) = report.on_post {
             self.report_trigger_call(run.object, r, run.base.clone(), TrigKind::PostReport)?;
@@ -1606,6 +1648,21 @@ impl Session {
         } else {
             self.custom_layout(&schema)?
         };
+        // A report with columns and no layout at all: the rendering formats stop after OnInitReport with the error, which a used result
+        // turns into false (report/lt-report-pre-rendering/ReportPreRenderingSaveAsPdf.al: P195_SaveAsPdf_PreRenderingOrder and its
+        // Word, Excel and Html siblings, the call in a TryFunction).
+        if matches!(format.as_str(), "Pdf" | "Html" | "Word" | "Excel") {
+            if let Some(e) = self.no_valid_layout(&schema)? {
+                if self.report_init(&inst)? {
+                    return unsupported("CurrReport.Quit in OnInitReport of a report with no layout (not pinned)");
+                }
+                if result_used {
+                    self.last_error = e;
+                    return Ok(Value::Boolean(false));
+                }
+                return Err(Signal::Error(Box::new(e)));
+            }
+        }
         match format.as_str() {
             "Xml" => {}
             // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Html_WithAnRdlcLayout_IsRefused: false, the

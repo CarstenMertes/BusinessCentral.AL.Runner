@@ -1059,17 +1059,6 @@ impl Session {
         shows_page: bool,
         save_as: Option<&str>,
     ) -> Result<bool, Signal> {
-        // A report that renders and declares no layout at all stops after OnInitReport with an error: no OnPreReport, no data item
-        // (report/lt-report-pre-rendering/ReportPreRenderingRun.al: P195_ReportRun_PreRenderingOrder, P195_ReportExecute_PreRenderingOrder).
-        // Only a report with a column is pinned; whether the request page opens first is not.
-        if save_as.is_none() {
-            if let Some(e) = self.no_valid_layout(schema)? {
-                if shows_page {
-                    return unsupported("a run with a request page of a report that declares no layout (not pinned)");
-                }
-                return Err(Signal::Error(Box::new(e)));
-            }
-        }
         let mut run = self.report_prepare(inst, schema)?;
         run.dataset = save_as.is_some();
         if let Some(xml) = save_as.filter(|x| !x.is_empty()) {
@@ -1096,6 +1085,15 @@ impl Session {
     /// Everything of a run after its request page: the triggers and the data items.
     pub(crate) fn report_after_page(&mut self, run: &Run, schema: &Schema) -> Result<bool, Signal> {
         let report = schema.report();
+        // A report that renders and declares no layout at all stops after OnInitReport and the request page with an error: no
+        // OnPreReport, no data item (report/lt-report-pre-rendering/ReportPreRenderingRun.al: P195_ReportRun_PreRenderingOrder,
+        // P195_ReportExecute_PreRenderingOrder; a cancelled request page ends the run first, pages/lt-page-presentation-properties/
+        // P119ReportColumn.al).
+        if !run.dataset {
+            if let Some(e) = self.no_valid_layout(schema)? {
+                return Err(Signal::Error(Box::new(e)));
+            }
+        }
         // A report that renders output runs up to its request page and no further: there is no
         // renderer (docs/probes-needed.md). The dataset a `SaveAs` writes is not rendered output.
         if let Some(why) = report.output.first().filter(|_| !run.dataset) {

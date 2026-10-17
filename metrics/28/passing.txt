@@ -6589,6 +6589,8 @@
 70251 P147_Option_CallerSelectedOverStoredAll
 70251 P147_Text_StoredVsCaller_Cancel
 70251 P147_Text_StoredVsCaller_Ok
+70253 P147_DateVariant_DefaultLanguage
+70253 P147_DateVariant_German
 70257 P147_SetValue_AssignmentForm
 70261 P147_SetValue_CallForm
 70264 P147_Urp_InitSetFalse_RunModalVariable
@@ -6907,6 +6909,7 @@
 70551 List_IndexErrors
 70551 List_IndexErrors_InsertAndRanges
 70552 AddLoadFields_WithoutSet
+70552 SetBaseLoadFields_OnPartialRecord
 70553 DataTransfer_OutsideInstall
 70553 ModuleInfo_Properties
 70553 WebServiceActionContext_Ordinals_AndDuplicateKey
@@ -7301,6 +7304,7 @@
 70743 Temporal_Boolean_Date_1
 70743 Temporal_Boolean_Date_2
 70743 Temporal_Guid
+70743 Temporal_Time_DateTime_2
 70744 EnumOption_Option_Value_1
 70745 Empty_Field_Against_Default_Value
 70745 NoValue_EmptyRow_AllTypes
@@ -7566,6 +7570,8 @@
 70960 P189_FldRef_Decimal_WithErrorInfo
 70961 P189_FldRef_Code_Value
 70961 P189_FldRef_Code_WithErrorInfo
+70961 P189_FldRef_DateTime_Value
+70961 P189_FldRef_DateTime_WithErrorInfo
 70961 P189_FldRef_Date_Value
 70961 P189_FldRef_Date_WithErrorInfo
 70962 P189_FldRef_Boolean_Value
@@ -8909,8 +8915,12 @@
 72217 ReadConsistency_Tables
 72217 RecordLevelLocking_Tables
 72217 SecurityFiltering_GetSet
+72218 LoadFields_GetTableCarriesToRecordRef
+72218 RecRef_AddLoadFields_Accumulates
+72218 RecRef_AreFieldsLoaded
 72218 RecRef_LoadFields_ModifyKeepsUnloaded
 72218 RecRef_SetLoadFields_ReadsOnlyThose
+72218 Record_LoadFields_ThenAreFieldsLoaded
 72222 NoValue_BlankRow_RefVersusRecord
 72222 NoValue_FilledRow_Passes
 72222 NoValue_OptionFirstMemberIsEmpty
@@ -10579,6 +10589,7 @@
 74200 PositionAndReset
 74200 ReadFromEmptyBlob
 74200 ReadTextLength
+74200 ReadTextLengthZeroAndNegative
 74200 ReadTextLineEndings
 74200 ReadWriteCodeAndEmptyText
 74200 ReadWriteTextBinary
@@ -11190,6 +11201,7 @@
 74929 TextField_FromVariantNumber_TooLong
 74930 CodeParam_ByValue_VariantNumbers
 74930 TextParam_ByValue_VariantNumbers
+74930 TextParam_ByValue_VariantTextAndBoolean
 74931 VarTextParam_VariantArgument
 74933 CodeField_FromFieldRefValue_Numbers
 74933 TextField_FromFieldRefValue_InsertedRow

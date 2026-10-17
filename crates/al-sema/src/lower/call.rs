@@ -77,6 +77,13 @@ impl Lowerer<'_> {
                         out.push(self.by_var_arg(a)?);
                     } else {
                         let value = self.expr(a)?;
+                        // A Variant handed to a by-value Text or Code parameter goes in as it is: the callee's binding converts it, and
+                        // raises TypeConversion for a number, Boolean, Date, Enum or Option (types/lt-variant-to-text-fields/
+                        // VariantNumberToTextParam.al; the text follows the session language, P147DateToText.al).
+                        if matches!(p.ty, Ty::Text(_) | Ty::Code(_)) && matches!(self.ty_ref(a), Ty::Variant) {
+                            out.push(ir::Arg::Value(value));
+                            continue;
+                        }
                         out.push(ir::Arg::Value(self.convert_to(&p.ty, self.ty_ref(a), value)?));
                     }
                 }

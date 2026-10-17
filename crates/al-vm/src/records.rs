@@ -1489,7 +1489,21 @@ impl Session {
                 if self.is_user_row(&t, rec.borrow().temporary) {
                     self.user_before_modify(&t, rec)?;
                 }
-                let old_version = self.bump_row_version(&t, rec);
+                // A Modify that changes no field leaves the row version as it is: Microsoft's tests Modify a record after a refresh report
+                // modified its row without a change (Create Prod. Order Lines.Copy) and pass, which a bumped version would make a
+                // stale write (assumption modify-without-change-keeps-row-version).
+                let old_version = match stored_row.as_deref() {
+                    Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::ModifyWithoutChangeKeepsRowVersion,
+                        );
+                        if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
+                            rec.borrow_mut().fields[i] = old[i].clone();
+                        }
+                        None
+                    }
+                    _ => self.bump_row_version(&t, rec),
+                };
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());
                 let mut row = rec.borrow().fields.clone();
                 for (i, v) in kept {

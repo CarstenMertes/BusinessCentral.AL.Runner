@@ -249,6 +249,11 @@ impl Session {
                         (*pf, FilterExpr::Range(Some(value.clone()), Some(value)))
                     }
                     ir::LinkEntry::Filter(pf, text) => {
+                        if text == "''" {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::SubPageLinkEmptyTerm,
+                            );
+                        }
                         let ty = table.fields[*pf].ty.clone();
                         let expr = self
                             .parse_filter_text(text, &ty)

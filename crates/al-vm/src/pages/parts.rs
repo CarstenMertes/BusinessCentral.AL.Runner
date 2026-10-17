@@ -350,6 +350,11 @@ impl Session {
                         });
                     }
                     ir::LinkEntry::Filter(pf, text) => {
+                        if text == "''" {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::SubPageLinkEmptyTerm,
+                            );
+                        }
                         fields.push(*pf);
                         let ty = table.fields[*pf].ty.clone();
                         let expr = self

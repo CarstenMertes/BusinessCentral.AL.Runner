@@ -10,6 +10,8 @@
 60006 ReportVarRun_OnInitReportRunsOnceBeforeTheBody
 60006 ReportVarSetterBeforeRun_SurvivesOnInitReport
 60006 StaticReportRun_OnInitReportRunsOnce
+60008 BaseAppReport20_VATDateDisabled_VATDtIsHidden
+60008 BaseAppReport20_VATDateEnabled_VATDtIsVisible
 60008 BaseAppReport296_VATDateEnabledLeftFalse_VATDateIsHiddenAndReadOnly
 60008 BaseAppReport91_GroupBoundToFalseGlobal_HidesItsField
 60008 OwnReport_BothBoundToTrueGlobals_VisibleAndEditable
@@ -6486,6 +6488,7 @@
 70180 HostCloseAfterPartMove
 70180 HostCloseRunsPartTriggers
 70180 OpenOrderOfHostAndPart
+70180 OpenOrderOfHostWithSixParts
 70180 PartControlEnabledAndVisible
 70180 PartModeFollowsHost
 70181 PendingPartRowSavedOnHostClose
@@ -6582,8 +6585,17 @@
 70234 P144_SetCapacity_NegativeOnEmpty
 70234 P144_SetCapacity_OnEmpty
 70235 P144_FieldIsInvisibleOnPage_NoHandler
+70235 P144_PageRun_CardWithField
+70235 P144_PageRun_FilteredRecordWithField
+70235 P144_PageRun_ListWithField
+70235 P144_PageRun_ListWithQtyField
 70235 P144_PageRun_ListWithoutField
+70235 P144_RunModal_CardWithField_Edit
+70235 P144_RunModal_CardWithField_OK
 70235 P144_RunModal_CardWithoutField_OK
+70235 P144_RunModal_EmptyRecWithField
+70235 P144_RunModal_ListWithField_Cancel
+70235 P144_RunModal_ListWithField_OK
 70236 P144_IncludeCaptionOnly_Order
 70251 P147_Boolean_CallerFalseOverStoredTrue
 70251 P147_Option_CallerSelectedOverStoredAll
@@ -7858,6 +7870,7 @@
 71200 RunModal_UnknownPageNumber
 71200 RunModal_WithoutHandler
 71200 Run_NumberAndRecord_Modeless
+71200 Run_NumberRecordField_Modeless
 71200 Run_Number_Modeless
 71202 ActionError_Surfaces
 71202 Caption_List_Open
@@ -7957,8 +7970,10 @@
 71246 P174_TwoSeparateTempVars_DoNotShare
 71254 P174_OpenNew_KeyThenClose_WithoutOtherField
 71279 OpenView_GreaterThanTenView_RowsShownPerHostRow
+71290 OpenEdit_SixParts_ReadsPerPartLogged
 71290 OpenNew_SixParts_ReadsPerPartLogged
 71290 OpenView_SixParts_ReadsAfterPartNavigation
+71290 OpenView_SixParts_ReadsPerPartLogged
 71290 OpenView_SixParts_RowsPerPartAtEachHostRow
 71303 RunModal_EmptyTable_LogsTriggerOrder
 71303 RunModal_HandlerCancels_LogsTriggerOrder
@@ -8968,6 +8983,10 @@
 72363 P123_RunPageView
 72378 P123_ExtensionViewDeclaredOnly
 72381 P123_LockedCaptionInExtension
+72410 P106_Run_LiteralNumbers
+72410 P106_Run_NumRecFieldAny
+72410 P106_Run_NumRecFieldNo_Card
+72410 P106_Run_NumRecFieldNo_CardEdit
 72411 P106_Err_FieldNoNotExisting
 72411 P106_Err_FieldRefVariants
 72411 P106_Err_UnknownPage
@@ -9663,9 +9682,12 @@
 73079 Run_FieldNoZeroAndUnknown
 73079 Run_ListNoRecord
 73079 Run_ListWithFilteredRecord
+73079 Run_ListWithRecordAndFieldNo
 73079 Run_NumberOnly
 73079 Run_UnknownPageWithoutTry
 73079 Run_WithRecord
+73079 Run_WithRecordAndFieldNo
+73079 Run_WithRecordAndFieldValue
 73080 RunModal_FieldNoZeroAndUnknown
 73080 RunModal_RecordOnly_EachResponse
 73081 IsSessionActive_AfterStop

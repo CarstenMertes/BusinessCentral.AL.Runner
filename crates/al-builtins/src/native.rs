@@ -968,21 +968,20 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
             Some(n) => Value::BigInteger(n),
             None => return unsupported("Abs of the smallest BigInteger (the overflow error is not pinned)"),
         },
-        // A Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned by a corpus test; Microsoft's
-        // manufacturing code does `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests).
+        // A Duration takes the BigInteger overload: its milliseconds (misc/lt-protected-var-abs-query-views/P146AbsDuration.al,
+        // P146AbsDurationBigInt.al).
         other => return abs_other(other),
     })
 }
 
-/// `Abs` of a Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned; Microsoft's manufacturing code does
-/// `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests; assumption abs-of-duration-is-decimal).
+/// `Abs` of a Duration is the BigInteger of its milliseconds: `Format(Abs(D))` is `1500`, assigned to a Decimal it is `1,500`
+/// (misc/lt-protected-var-abs-query-views/P146AbsDuration.al:P146_Abs_Duration_ResultFormats, P146AbsDurationBigInt.al).
 #[cold]
 #[inline(never)]
 fn abs_other(v: &Value) -> Result<Value, Signal> {
     match v {
         Value::Duration(ms) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::AbsOfDuration);
-            Ok(Value::Decimal(rust_decimal::Decimal::from(*ms).abs()))
+            Ok(Value::BigInteger(ms.abs()))
         }
         other => unsupported(&format!("Abs of {}", other.describe())),
     }

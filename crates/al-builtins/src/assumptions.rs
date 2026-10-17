@@ -367,12 +367,6 @@ registry! {
         tests: "Pages with SaveValues and page extensions in the buckets.",
         probe: "A SaveValues page extended by a control bound to a variable and by one bound to a field.",
     },
-    AbsOfDuration => {
-        id: "abs-of-duration-is-decimal",
-        assumed: "Abs of a Duration takes the Decimal overload: the Duration counts as its milliseconds and the answer is a Decimal.",
-        tests: "Microsoft's production order and routing code (Abs of a DateTime difference): Tests-SCM-Manufacturing and Tests-SCM-Costing, about 230 tests.",
-        probe: "D: Duration := -5000; X := Abs(D) into a Decimal and into a Duration; Format both; Abs(D) > 4999.",
-    },
     DateToDateTime => {
         id: "date-to-datetime-is-midnight",
         assumed: "A Date assigned or converted to a DateTime is that day at midnight; the blank Date is the blank DateTime.",

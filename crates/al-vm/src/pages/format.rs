@@ -497,8 +497,12 @@ impl Session {
         }
         let mut cue = page_of(&engine, st).controls[idx].parent;
         while let Some(p) = cue {
-            if page_of(&engine, st).controls[p].kind == ir::ControlKind::CueGroup
-                && !self.prop_bool_now(st, p, "editable", true)?
+            // A group (a grid is one) with `Editable = false` does the same (pages/lt-page-editability-width-lookups/P115GridLabel.al:
+            // P115_GridAndLabel_Editable `ro-grid-field-editable = No`).
+            if matches!(
+                page_of(&engine, st).controls[p].kind,
+                ir::ControlKind::CueGroup | ir::ControlKind::Group
+            ) && !self.prop_bool_now(st, p, "editable", true)?
             {
                 return Ok(false);
             }

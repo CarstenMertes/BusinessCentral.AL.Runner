@@ -143,6 +143,35 @@ pub(super) fn report_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         r[pos(t, 4)] = Value::Boolean(prop(o, "UseRequestPage").is_none_or(truthy));
         r[pos(t, 9)] = Value::Boolean(prop(o, "ProcessingOnly").is_some_and(truthy));
         r[pos(t, 17)] = Value::Text(prop(o, "WordMergeDataItem").map(ident).unwrap_or_default().into());
+        // DefaultLayoutName: the layout `DefaultRenderingLayout` names, else the file the Word, RDLC or Excel layout property gives, as
+        // written (metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:ReportMetadata_DefaultLayoutName_OwnAndBase:
+        // `RdlcFixture`, `StandardSalesInvoice.docx`, `./System/Notifications/NotificationEmail.docx`, blank for a report with neither).
+        // DefaultLayout: the kind the property names (`Word` for report 1306), RDLC when it names none.
+        let rendering_kind = rep
+            .default_rendering_layout
+            .as_ref()
+            .and_then(|n| rep.rendering_layouts.iter().find(|l| l.name.eq_ignore_ascii_case(n)))
+            .map(|l| l.kind.clone());
+        let kind_text = prop(o, "DefaultLayout").map(ident).or(rendering_kind);
+        if let (Some(col), Some(kind)) = (t.fields.iter().position(|x| x.name == "DefaultLayout"), kind_text) {
+            if let Value::Option(_, members) = &r[col] {
+                if let Some(n) = members.iter().position(|m| m.eq_ignore_ascii_case(&kind)) {
+                    r[col] = Value::Option(n as i32, members.clone());
+                }
+            }
+        }
+        if let Some(col) = t.fields.iter().position(|x| x.name == "DefaultLayoutName") {
+            let name = prop(o, "DefaultRenderingLayout")
+                .map(ident)
+                .or_else(|| {
+                    ["WordLayout", "RDLCLayout", "ExcelLayout"]
+                        .iter()
+                        .find_map(|n| prop(o, n))
+                        .and_then(string_lit)
+                })
+                .unwrap_or_default();
+            r[col] = Value::Text(name.into());
+        }
         let first = rep
             .items
             .iter()

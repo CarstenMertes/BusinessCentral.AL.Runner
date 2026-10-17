@@ -259,17 +259,29 @@ registry! {
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
     },
-    XrecBlankForTheFirstLineOfAPart => {
-        id: "xrec-blank-for-the-first-line-of-a-part",
-        assumed: "OnNewRecord of a list part whose view holds no row sees a blank xRec, not the buffer stamped with the link values.",
-        tests: "Test Item Lookup (TestSalesInvoiceItemLookupInDescription and four siblings): Sales Invoice Subform.SetDefaultType defaults the line type only when xRec.\"Document No.\" is blank.",
-        probe: "A card with a list part linked on the card's key and no lines: New on the part, log xRec's key and Rec's key in the part's OnNewRecord.",
-    },
     PageRecProcedureSeesPageXrec => {
         id: "page-rec-procedure-sees-page-xrec",
         assumed: "A table procedure the page's code calls on Rec (Rec.InitType()) sees the page's xRec as its xRec, not a blank record.",
         tests: "Test Item Lookup (TestSalesInvoiceItemLookupInDescription and four siblings): Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type.",
         probe: "A table with a procedure returning xRec.\"No.\"; a page whose OnAfterGetCurrRecord returns it through Rec.Proc() after moving between two rows; the same in OnNewRecord.",
+    },
+    UpdateRefreshListOnFindRecord => {
+        id: "update-refresh-list-onfindrecord",
+        assumed: "CurrPage.Update on a list with OnFindRecord (with or without OnNextRecord) reads the rows as the pinned table of 3 rows with the cursor on the middle one does (misc/W2FindRecordUpdate.al), for any number of rows and any cursor position below a window.",
+        tests: "ERM Sales Subform (InvoiceAddingLinesUpdatesTotals) and about 120 more Tests-ERM tests whose sales and purchase subforms refresh.",
+        probe: "The same list with 1, 2, 5 and 25 rows and the cursor on the first, last and a middle row; a list with OnFindRecord only; a list part of a card.",
+    },
+    CaptionReadBeforeThePageRuns => {
+        id: "caption-read-before-the-page-runs",
+        assumed: "CurrPage.Caption read in a procedure the caller invokes on a Page variable before Run or RunModal answers the page's Caption property, and raises nothing.",
+        tests: "Alloc. Account Sales E2E Tests (TestOverrideGLAllocation) and 20 more Tests-ERM tests that open Edit Dimension Set Entries through Dimension Management.",
+        probe: "A page with Caption = 'X' and a procedure returning CurrPage.Caption, called on a Page variable before RunModal and after it closed; also with a Caption assigned in OnOpenPage.",
+    },
+    PartOfAPageThatNeverRan => {
+        id: "part-of-a-page-that-never-ran",
+        assumed: "CurrPage.<Part>.Page in a procedure called on a Page variable that was never run reaches a part page that exists, is initialised and is not open (as a hidden part does).",
+        tests: "O365 Simplify UI Sales Invoice (CreateInvoiceForCustomerWithCreditLimit) and the other Tests-SMB and Tests-ERM tests that send the credit limit notification.",
+        probe: "A page with a part and a procedure that calls a procedure of the part page and returns what it set; call it on a Page variable before Run and read the result.",
     },
     SetTableViewKeepsSetRecordPosition => {
         id: "set-table-view-keeps-set-record-position",

@@ -131,7 +131,25 @@ impl Session {
 
     /// The page shown by part control `control` of `st`.
     pub(super) fn part_page(&mut self, st: &St, control: usize, runtime: bool) -> Result<St, Signal> {
-        self.require_open(st)?;
+        // A Page variable's procedure that reaches a part before the page ever ran (Check Credit Limit.PopulateDataOnNotification,
+        // which Cust-Check Cr. Limit calls on a Page variable to fill a notification) gets the part page created and not opened, as
+        // a hidden part is (assumption part-of-a-page-that-never-ran); after the page ran and closed it stays refused.
+        let never_ran = runtime && !st.borrow().open && !st.borrow().ran;
+        if never_ran {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartOfAPageThatNeverRan);
+        } else {
+            match self.require_open(st) {
+                // The page's own code reaching a part after the page ran and closed is not a TestPage the test closed (Posted Purchase
+                // Document Lines.CopyLineToDoc reads `CurrPage.PostedRcpts.PAGE` after its RunModal returned): refused, as the other
+                // calls of such a page are (see test_page_op).
+                Err(Signal::Error(e)) if runtime && e.code == "TestPageNotOpened" => {
+                    return unsupported(
+                        "a part of a page that is not open, reached by the code of that page (what it does then is not pinned)",
+                    );
+                }
+                r => r?,
+            }
+        }
         let found = st
             .borrow()
             .parts

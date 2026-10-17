@@ -454,7 +454,9 @@ impl Session {
                         }
                     };
                     if page_xrec.is_some() {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageRecProcedureSeesPageXrec);
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::PageRecProcedureSeesPageXrec,
+                        );
                     }
                     let (inst, saved) = self.enter_record(object, rc, page_xrec.as_ref())?;
                     let r = self.finish_call(object, routine, inst.clone(), args, values, try_call, f);

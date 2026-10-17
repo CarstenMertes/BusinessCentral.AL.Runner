@@ -100,15 +100,22 @@ impl Session {
                             .prop_routine_value(st, idx, routine)?
                             .expect("a routine-valued property");
                         if name == "captionclass" {
+                            // Area 3 raises no event, so '3,' with nothing after it (a matrix column whose caption nobody set)
+                            // costs the open nothing; only reading that caption is refused.
                             if let Value::Text(t) | Value::Code(t) = &v {
-                                self.caption_class_text(st, t)?;
+                                if !t.starts_with("3,") {
+                                    self.caption_class_text(st, t)?;
+                                }
                             }
                         }
                     }
                     // An area no built-in resolver claims goes to the Caption Class codeunit's
                     // OnResolveCaptionClass event (corpus autoformat/TestCaptionClassResolverFailure.al:1-12).
                     Some(ir::PropVal::Lit(l)) if name == "captionclass" => {
-                        self.caption_class_text(st, &unquote(l))?;
+                        let c = unquote(l);
+                        if !c.starts_with("3,") {
+                            self.caption_class_text(st, &c)?;
+                        }
                     }
                     _ => {}
                 }

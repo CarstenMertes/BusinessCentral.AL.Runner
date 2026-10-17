@@ -48,3 +48,18 @@ shows `'10' < '9'` is No for Code (observation `tenlt`). The fix orders two Code
 numbers in the `<`, `<=`, `>`, `>=` operators. Leading zeros, signs and mixed codes are not pinned and stay as before.
 It is registered as the assumption `code-digits-compare-as-numbers`. Test: `crates/al-vm/tests/language/code_compare.rs`.
 Results without any scratch app are in the hand-back; the prepayment and return-flag rows above remain data findings.
+
+## Tables the backup holds no rows of (found with the empty-table text of FindFirst, FindLast and FindSet)
+
+`al-bcdb read <bak> --table <T> --company CRONUS` returns no rows for these, and the tests below call `FindFirst` or `FindSet`
+without creating a row first, so they fail with "The <table> table is empty." (DB:TableIsEmpty, pinned by
+record/lt-filters-keys-finds/P68C_EmptyFinds.al). The backup holds 5 customers and no Service Item.
+
+| Table | Tests that fail on it (Tests-Misc, Tests-SCM, Tests-ERM) |
+|---|---|
+| Service Item | Test Planning/Req.Wksh (PlanForServiceDemandNetChange, PlanAfterNeededByDateNetChange, MultipleDemandsSameDayNetChange) |
+| Warehouse Entry | SCM Warehouse Unit Tests, 27 tests |
+| Cost Journal Template | ERM CA Cost Journal, 16 tests |
+| Cost Type, Responsibility Center | ERM Cost Accounting - Tables and Pages, ERM Sales Quotes (SalesQuoteCreation) |
+
+Not confirmed by a scratch app that seeds the rows; the other rows above are.

@@ -211,3 +211,57 @@ fn a_request_with_no_handler_and_no_policy_is_refused_not_sent() {
     );
     assert!(why.contains("connection"), "{why}");
 }
+
+// An HttpContent passed by reference is the caller's own object: headers handed out before still show it afterwards
+// (lt-http-header-rules/P87Content.al:RewriteKeepsHeader reads the body through `Read(var C)` between header changes).
+#[test]
+fn an_http_content_passed_by_reference_keeps_the_headers_handed_out_before() {
+    all_pass(
+        "",
+        r#"
+    local procedure Rd(var C: HttpContent): Text
+    var T: Text;
+    begin
+        C.ReadAs(T);
+        exit(T);
+    end;
+    [Test] procedure Alias()
+    var C: HttpContent; H: HttpHeaders; H2: HttpHeaders;
+    begin
+        C.WriteFrom('x');
+        C.GetHeaders(H);
+        if Rd(C) <> 'x' then Error('read');
+        H.Remove('Content-Type');
+        C.GetHeaders(H2);
+        if H2.Contains('Content-Type') then Error('the old handle no longer reaches the content');
+    end;"#,
+    );
+}
+
+// Header forms the corpus does not pin are refused (docs/probes-needed.md): a Cache-Control with directives beyond no-store and no-cache, and
+// a known header other than Accept written in lower case.
+#[test]
+fn an_unpinned_cache_control_or_header_case_is_refused() {
+    let why = not_run(
+        "",
+        r#"
+    [Test] procedure Order()
+    var Req: HttpRequestMessage; H: HttpHeaders;
+    begin
+        Req.GetHeaders(H);
+        H.Add('Cache-Control', 'public, no-cache');
+    end;"#,
+    );
+    assert!(why.contains("Cache-Control") && why.contains("not pinned"), "{why}");
+    let why = not_run(
+        "",
+        r#"
+    [Test] procedure Case()
+    var Req: HttpRequestMessage; H: HttpHeaders;
+    begin
+        Req.GetHeaders(H);
+        H.Add('user-agent', 'A/1');
+    end;"#,
+    );
+    assert!(why.contains("user-agent") && why.contains("not pinned"), "{why}");
+}

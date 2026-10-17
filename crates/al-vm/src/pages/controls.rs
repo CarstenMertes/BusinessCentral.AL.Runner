@@ -109,6 +109,33 @@ impl Session {
         let arg = args.first().cloned().unwrap_or(Value::Null);
         let text = match &arg {
             Value::Text(t) | Value::Code(t) => t.clone(),
+            // A whole number handed to a text or code control is its digits (WhseItemTrackingPageHandler of SCM RTAM Item Tracking-II sets
+            // `Serial No.` to `TrackingQuantity2 + AssignTracking`, a Decimal); unprobed (assumption setvalue-whole-number-into-text-control).
+            // Beyond 999 Format adds a thousands separator, which is not pinned for a control, so that stays refused.
+            Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)
+                if matches!(ty, RtType::Text(_) | RtType::Code(_)) =>
+            {
+                let n = match &arg {
+                    Value::Integer(i) => Some(i64::from(*i)),
+                    Value::BigInteger(i) => Some(*i),
+                    Value::Decimal(d) if d.fract().is_zero() => i64::try_from(d.trunc()).ok(),
+                    _ => None,
+                };
+                match n {
+                    Some(n) if n.abs() < 1000 => {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::SetValueWholeNumberIntoTextControl,
+                        );
+                        n.to_string().into()
+                    }
+                    _ => {
+                        return unsupported(format!(
+                            "SetValue of {} on a text control (how BC writes it is not pinned)",
+                            arg.describe()
+                        ));
+                    }
+                }
+            }
             other => {
                 let converted = ops::convert(other.clone(), &ty)?;
                 self.control_text(st, idx, &converted)?.into()

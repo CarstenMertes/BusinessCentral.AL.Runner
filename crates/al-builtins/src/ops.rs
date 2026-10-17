@@ -524,18 +524,18 @@ fn date_to_datetime(n: i32) -> Value {
     Value::DateTime((i64::from(n) - 1) * 86_400_000 + 1)
 }
 
-/// A whole number and a Duration add and subtract as milliseconds, into a Duration. Not pinned; Microsoft's routing code
+/// A whole number and a Duration add and subtract as milliseconds, into a BigInteger (types/lt-duration-arithmetic/DurationPlusInteger.al
+/// `sum_format_default = 2000`, IntegerPlusDuration.al, IntegerMinusDuration.al); the amount is not pinned for overflow. Used to be assumed; Microsoft's routing code
 /// adds a day in milliseconds to a Duration (Tests-SCM-Manufacturing, 20 tests; assumption duration-arithmetic-with-number).
 #[cold]
 #[inline(never)]
 fn duration_with_number(op: Arith, duration_first: bool, d: i64, k: i64) -> Result<Value, Signal> {
     let (a, b) = if duration_first { (d, k) } else { (k, d) };
-    crate::assumptions::assume(crate::assumptions::Assumption::DurationArithmeticWithNumber);
     match op {
         Arith::Add => a.checked_add(b),
         _ => a.checked_sub(b),
     }
-    .map(Value::Duration)
+    .map(Value::BigInteger)
     .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()))
 }
 
@@ -659,7 +659,7 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::BigInteger)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
-        // A whole number and a Duration add and subtract as milliseconds, into a Duration (`duration_with_number`).
+        // A whole number and a Duration add and subtract as milliseconds, into a BigInteger (`duration_with_number`).
         (V::Duration(d), n) | (n, V::Duration(d)) if matches!(op, Arith::Add | Arith::Sub) && int_of(n).is_some() => {
             return duration_with_number(op, matches!(l, V::Duration(_)), *d, int_of(n).unwrap_or(0));
         }

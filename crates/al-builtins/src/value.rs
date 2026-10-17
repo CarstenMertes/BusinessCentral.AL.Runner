@@ -308,6 +308,8 @@ pub struct PageState {
     pub window_from_start: bool,
     /// A read has run to the end of the view and read the last two rows once more.
     pub window_eof: bool,
+    /// The window holds every row of the view, read by `Last` past a full window (see `last_past_the_window`).
+    pub window_whole: bool,
     /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
     pub landing_first: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
@@ -359,6 +361,11 @@ pub struct PageState {
     pub lower_key: Option<Vec<Value>>,
     /// The record `Page.SetRecord` handed a page variable, shown when the page runs.
     pub set_record: Option<Rc<RefCell<RecordState>>>,
+    /// `Page.SetTableView` gave `set_record` its filters and order: a later `SetRecord` moves the position only
+    /// (pages/lt-page-setrecord-settableview/PageVarSetRecordTableView.al:P157_List_SetTableViewThenSetRecord_*).
+    pub set_view: bool,
+    /// The line the page stands on was started by a `New()` call, not reached by moving onto the blank line.
+    pub new_by_call: bool,
     /// A `Page`-typed modal handler is running on this page: the page never opened, `GetRecord` and `SetRecord`
     /// read and write its Rec (handlers/PSModalPageHandlerTyped.al).
     pub typed_handler: bool,
@@ -416,6 +423,7 @@ impl PageState {
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,
+            window_whole: false,
             landing_first: false,
             focus: None,
             focus_in_row: false,
@@ -439,6 +447,8 @@ impl PageState {
             hidden_parts: Vec::new(),
             lower_key: None,
             set_record: None,
+            set_view: false,
+            new_by_call: false,
             typed_handler: false,
             host: None,
             ext_instances: Vec::new(),
@@ -828,6 +838,8 @@ pub struct HttpContentState {
     pub uninitialized: bool,
     /// The bytes were handed out as an `InStream`: a second `ReadAs(InStream)` gets an empty stream.
     pub stream_taken: bool,
+    /// A `WriteFrom` has put a body here (a second one may add a Content-Length, see `write_body`).
+    pub written: bool,
 }
 
 impl Default for HttpContentState {
@@ -842,6 +854,7 @@ impl Default for HttpContentState {
             headers,
             uninitialized: false,
             stream_taken: false,
+            written: false,
         }
     }
 }

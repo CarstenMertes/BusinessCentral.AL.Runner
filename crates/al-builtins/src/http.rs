@@ -103,10 +103,16 @@ fn new_content() -> Value {
 }
 
 fn fresh_response() -> HttpResponseState {
+    // The content of a response nobody filled has no Content-Type yet (lt-http-header-rules/P87Content.al:ResponseContentHeaders,
+    // `freshKeys` is `0:`); the first WriteFrom gives it one.
+    let content = HttpContentState {
+        headers: new_header_list(HeaderKind::Content),
+        ..HttpContentState::default()
+    };
     HttpResponseState {
         status: 200,
         reason: "OK".into(),
-        content: new_content(),
+        content: lib("HttpContent", LibraryValue::HttpContent(content)),
         headers: new_header_list(HeaderKind::Response),
         blocked: false,
     }
@@ -445,6 +451,29 @@ fn is_token_char(c: char) -> bool {
     c.is_ascii_alphanumeric() || "!#$%&'*+-.^_`|~".contains(c)
 }
 
+/// A name the collection of `kind` refuses: the content headers on request, response or client headers, and on the headers of a content
+/// the request headers the matrix measured (lt-http-header-rules/P87Matrix.al, the Standalone, Request and Response content parts).
+fn not_here(kind: HeaderKind, name: &str) -> bool {
+    if kind != HeaderKind::Content {
+        return is_content_header(name);
+    }
+    [
+        "cache-control",
+        "range",
+        "if-match",
+        "if-none-match",
+        "authorization",
+        "user-agent",
+        "accept",
+        "accept-encoding",
+        "host",
+        "connection",
+        "transfer-encoding",
+    ]
+    .iter()
+    .any(|h| name.eq_ignore_ascii_case(h))
+}
+
 /// The headers `HttpContentHeaders` owns: a request, response or client header collection refuses them.
 fn is_content_header(name: &str) -> bool {
     [
@@ -504,45 +533,348 @@ fn is_http_date(v: &str) -> bool {
         && time_ok
 }
 
-/// The checks `HttpHeaders.Add` makes beyond the name and the value: the headers .NET types (the probes measured
-/// Accept, Authorization, Date, Content-Type); the others are accepted as written (registry entry http-header-rules).
-fn check_typed(bag: &HeaderBag, name: &str, value: &str) -> Result<(), Signal> {
+const KNOWN_NAMES: &[&str] = &[
+    "Accept",
+    "Accept-Charset",
+    "Accept-Encoding",
+    "Accept-Language",
+    "Allow",
+    "Authorization",
+    "Cache-Control",
+    "Connection",
+    "Content-Disposition",
+    "Content-Encoding",
+    "Content-Language",
+    "Content-Length",
+    "Content-Location",
+    "Content-MD5",
+    "Content-Range",
+    "Content-Type",
+    "Date",
+    "Expect",
+    "Expires",
+    "From",
+    "Host",
+    "If-Match",
+    "If-Modified-Since",
+    "If-None-Match",
+    "If-Range",
+    "If-Unmodified-Since",
+    "Last-Modified",
+    "Max-Forwards",
+    "Pragma",
+    "Proxy-Authorization",
+    "Range",
+    "Referer",
+    "TE",
+    "Trailer",
+    "Transfer-Encoding",
+    "Upgrade",
+    "User-Agent",
+    "Via",
+    "Warning",
+];
+
+/// The name a known header is stored under, whatever case it was added in (lt-http-header-rules/P87Twice.al:NameCaseAndKeys, `accept`
+/// reads back as `Accept`); a custom header keeps the case of its first Add.
+fn canonical_name(name: &str) -> Option<&'static str> {
+    KNOWN_NAMES.iter().copied().find(|k| k.eq_ignore_ascii_case(name))
+}
+
+/// The name a header is stored under. A known header written in another case than .NET's canonical form is stored canonically, which
+/// only `Accept` is pinned for (lt-http-header-rules/P87Twice.al:NameCaseAndKeys); for any other name the canonical form is not
+/// pinned, so it is refused (docs/probes-needed.md).
+fn stored_name(items: &[(String, Vec<String>)], name: &str) -> Result<String, Signal> {
+    if let Some((n, _)) = find(items, name) {
+        return Ok(n.clone());
+    }
+    match canonical_name(name) {
+        Some(c) if c != name && c != "Accept" => unsupported(format!(
+            "the header {name} written in another case than {c}: the case it is stored in is not pinned (docs/probes-needed.md)"
+        )),
+        Some(c) => Ok(c.to_string()),
+        None => Ok(name.to_string()),
+    }
+}
+
+/// `a; b=c` with one "; " between the parts (.NET writes a parameter list that way).
+fn join_params(v: &str) -> String {
+    v.split(';').map(str::trim).collect::<Vec<_>>().join("; ")
+}
+
+fn is_token(s: &str) -> bool {
+    !s.is_empty() && s.chars().all(is_token_char)
+}
+
+/// Splits a list header value at the commas outside quotes.
+fn split_list(v: &str) -> Vec<String> {
+    let (mut out, mut cur, mut quoted) = (Vec::new(), String::new(), false);
+    for c in v.chars() {
+        match c {
+            '"' => {
+                quoted = !quoted;
+                cur.push(c);
+            }
+            ',' if !quoted => out.push(std::mem::take(&mut cur)),
+            _ => cur.push(c),
+        }
+    }
+    out.push(cur);
+    out.into_iter()
+        .map(|x| x.trim().to_string())
+        .filter(|x| !x.is_empty())
+        .collect()
+}
+
+/// A list item `token` or `token;name=value`, written with "; " between the parts.
+fn token_with_params(item: &str) -> Option<String> {
+    let head = item.split(';').next().unwrap_or("").trim();
+    if !is_token(head) {
+        return None;
+    }
+    let mut parts = item.split(';').skip(1);
+    parts
+        .all(|p| matches!(p.split_once('='), Some((n, v)) if is_token(n.trim()) && !v.trim().is_empty()))
+        .then(|| join_params(item))
+}
+
+/// `"tag"`, `W/"tag"` or `*`.
+fn is_entity_tag(item: &str) -> bool {
+    let t = item.strip_prefix("W/").unwrap_or(item);
+    item == "*" || (t.len() >= 2 && t.starts_with('"') && t.ends_with('"') && !t[1..t.len() - 1].contains('"'))
+}
+
+/// The tokens of a User-Agent: products `name/version` and comments `(...)`, each a value of its own.
+fn user_agent_parts(v: &str) -> Option<Vec<String>> {
+    let chars: Vec<char> = v.chars().collect();
+    let (mut i, mut out) = (0, Vec::new());
+    while i < chars.len() {
+        if chars[i].is_whitespace() {
+            i += 1;
+        } else if chars[i] == '(' {
+            let (mut depth, start) = (0, i);
+            loop {
+                match chars.get(i)? {
+                    '(' => depth += 1,
+                    ')' => depth -= 1,
+                    _ => {}
+                }
+                i += 1;
+                if depth == 0 {
+                    break;
+                }
+            }
+            out.push(chars[start..i].iter().collect());
+        } else {
+            let start = i;
+            while i < chars.len() && !chars[i].is_whitespace() && chars[i] != '(' {
+                i += 1;
+            }
+            let product: String = chars[start..i].iter().collect();
+            let ok = match product.split_once('/') {
+                Some((n, ver)) => is_token(n) && is_token(ver),
+                None => is_token(&product),
+            };
+            if !ok {
+                return None;
+            }
+            out.push(product);
+        }
+    }
+    (!out.is_empty()).then_some(out)
+}
+
+fn cache_control_pinned(merged: &str) -> bool {
+    let parts: Vec<&str> = merged.split(", ").collect();
+    parts.iter().all(|p| matches!(*p, "no-store" | "no-cache"))
+        || (parts.len() == 1 && parts[0].starts_with("max-age="))
+}
+
+/// The directives of a Cache-Control value merged and written the way .NET's CacheControlHeaderValue writes them.
+fn cache_control(existing: &[String], added: &str) -> Option<String> {
+    const ORDER: &[&str] = &[
+        "no-store",
+        "no-transform",
+        "only-if-cached",
+        "public",
+        "no-cache",
+        "max-age",
+        "max-stale",
+        "min-fresh",
+        "private",
+        "must-revalidate",
+        "proxy-revalidate",
+        "s-maxage",
+    ];
+    let mut directives: Vec<(String, Option<String>)> = Vec::new();
+    for item in existing.iter().flat_map(|e| split_list(e)).chain(split_list(added)) {
+        let (n, v) = match item.split_once('=') {
+            Some((n, v)) => (n.trim().to_string(), Some(v.trim().to_string())),
+            None => (item.trim().to_string(), None),
+        };
+        if !is_token(&n) || v.as_deref().is_some_and(str::is_empty) {
+            return None;
+        }
+        let n = n.to_ascii_lowercase();
+        if !directives.iter().any(|(d, _)| *d == n) {
+            directives.push((n, v));
+        }
+    }
+    let mut out: Vec<String> = Vec::new();
+    for known in ORDER {
+        if let Some((n, v)) = directives.iter().find(|(d, _)| d == known) {
+            out.push(match v {
+                Some(v) => format!("{n}={v}"),
+                None => n.clone(),
+            });
+        }
+    }
+    for (n, v) in directives.iter().filter(|(d, _)| !ORDER.contains(&d.as_str())) {
+        out.push(match v {
+            Some(v) => format!("{n}={v}"),
+            None => n.clone(),
+        });
+    }
+    Some(out.join(", "))
+}
+
+/// What `HttpHeaders.Add` stores for a header .NET types, or `None` for one it accepts as written. The values come from the probes of
+/// lt-http-header-rules/P87Values.al (KnownHeaderLists_*), P87Twice.al and P87Matrix.al; a refused value is `InvalidHeader:Format`.
+/// A header .NET holds once (`single`) refuses a second Add the same way.
+struct Typed {
+    values: Vec<String>,
+    /// The collection holds these values instead of what it held (Cache-Control is one merged value).
+    replace: bool,
+}
+
+fn typed_add(bag: &HeaderBag, name: &str, value: &str) -> Result<Option<Typed>, Signal> {
     let lower = name.to_ascii_lowercase();
-    let existing = find(&bag.items, name).is_some();
+    let existing = find(&bag.items, name);
+    let fail = || header_error::<Option<Typed>>("Format");
+    let single = |values: Vec<String>| {
+        if existing.is_some() {
+            fail()
+        } else {
+            Ok(Some(Typed { values, replace: false }))
+        }
+    };
+    let list = |values: Vec<String>| Ok(Some(Typed { values, replace: false }));
+    let v = value.trim();
     match lower.as_str() {
         "accept" => {
-            if value.split(',').all(|m| {
-                let m = m.trim();
-                !m.is_empty() && (is_media_type(m) || m.starts_with("*/"))
-            }) {
-                Ok(())
+            let items = split_list(value);
+            if !items.is_empty() && items.iter().all(|m| is_media_type(m) || m.starts_with("*/")) {
+                list(items.iter().map(|m| join_params(m)).collect())
             } else {
-                header_error("Format")
+                fail()
+            }
+        }
+        "accept-encoding" | "connection" | "content-encoding" | "content-language" | "transfer-encoding" => {
+            let items = split_list(value);
+            let normalized: Option<Vec<String>> = items.iter().map(|i| token_with_params(i)).collect();
+            match normalized {
+                Some(n) if !n.is_empty() => list(n),
+                _ => fail(),
+            }
+        }
+        "if-match" | "if-none-match" => {
+            let items = split_list(value);
+            if !items.is_empty() && items.iter().all(|i| is_entity_tag(i)) {
+                list(items)
+            } else {
+                fail()
+            }
+        }
+        "cache-control" => {
+            let old: Vec<String> = existing.map(|(_, v)| v.clone()).unwrap_or_default();
+            match cache_control(&old, value) {
+                // Only no-store and no-cache together or alone, and a lone max-age, are pinned (P87Values.al KnownHeaderLists_Request_1,
+                // P87Twice.al); what order other directives are written in is not (docs/probes-needed.md).
+                Some(merged) if !cache_control_pinned(&merged) => unsupported(format!(
+                    "Cache-Control {merged}: the order .NET writes these directives in is not pinned (docs/probes-needed.md)"
+                )),
+                Some(merged) => Ok(Some(Typed {
+                    values: vec![merged],
+                    replace: true,
+                })),
+                None => fail(),
+            }
+        }
+        "user-agent" => match user_agent_parts(value) {
+            Some(parts) => list(parts),
+            None => fail(),
+        },
+        "range" => match v.split_once('=') {
+            Some((unit, rest)) if is_token(unit) && !rest.trim().is_empty() => single(vec![v.to_string()]),
+            _ => fail(),
+        },
+        "host" => {
+            let (host, port) = match v.rsplit_once(':') {
+                Some((h, p)) => (h, Some(p)),
+                None => (v, None),
+            };
+            if !host.is_empty()
+                && !host.contains(char::is_whitespace)
+                && port.is_none_or(|p| !p.is_empty() && p.chars().all(|c| c.is_ascii_digit()))
+            {
+                single(vec![v.to_string()])
+            } else {
+                fail()
             }
         }
         "authorization" | "proxy-authorization" => {
-            let scheme = value.trim().split(' ').next().unwrap_or("");
-            if !scheme.is_empty() && scheme.chars().all(is_token_char) {
-                Ok(())
+            let (scheme, creds) = match v.split_once(char::is_whitespace) {
+                Some((s, c)) => (s, Some(c.trim())),
+                None => (v, None),
+            };
+            if is_token(scheme) {
+                let shown = match creds {
+                    Some(c) if !c.is_empty() => format!("{scheme} {c}"),
+                    _ => scheme.to_string(),
+                };
+                single(vec![shown])
             } else {
-                header_error("Format")
+                fail()
+            }
+        }
+        "content-disposition" => {
+            let head = v.split(';').next().unwrap_or("").trim();
+            if is_token(head) {
+                single(vec![join_params(v)])
+            } else {
+                fail()
+            }
+        }
+        "content-length" => {
+            if !v.is_empty() && v.chars().all(|c| c.is_ascii_digit()) && v.parse::<u64>().is_ok() {
+                single(vec![v.to_string()])
+            } else {
+                fail()
             }
         }
         "date" | "if-modified-since" | "if-unmodified-since" | "last-modified" | "expires" => {
-            if existing || !is_http_date(value.trim()) {
-                header_error("Format")
+            if existing.is_some() || !is_http_date(v) {
+                fail()
             } else {
-                Ok(())
+                Ok(Some(Typed {
+                    values: vec![value.to_string()],
+                    replace: false,
+                }))
             }
         }
+        // A media type is written back with "; " between its parameters (.NET's MediaTypeHeaderValue): 'text/plain;charset=utf-8' reads
+        // 'text/plain; charset=utf-8', upper case and quotes stay (lt-http-header-rules/P87ContentType.al:ContentTypeVariantsStayVerbatim).
         "content-type" => {
-            if existing || !is_media_type(value.trim()) {
-                header_error("Format")
+            if existing.is_some() || !is_media_type(v) {
+                fail()
             } else {
-                Ok(())
+                Ok(Some(Typed {
+                    values: vec![join_params(v)],
+                    replace: false,
+                }))
             }
         }
-        _ => Ok(()),
+        _ => Ok(None),
     }
 }
 
@@ -566,11 +898,8 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
     if name.chars().any(|c| !is_token_char(c)) {
         return header_error("Format");
     }
-    if bag.kind != HeaderKind::Content && is_content_header(name) {
+    if not_here(bag.kind, name) {
         return raise(INVALID_OPERATION, "InvalidOperation");
-    }
-    if bag.kind == HeaderKind::Content && name.eq_ignore_ascii_case("content-length") {
-        return unsupported("Add of Content-Length to the headers of a content: not measured");
     }
     if value.contains(['\r', '\n']) {
         return header_error("Format");
@@ -579,8 +908,19 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
         push_value(&mut bag.secret, name, value.to_string());
         return Ok(());
     }
-    check_typed(bag, name, value)?;
-    push_value(&mut bag.items, name, value.to_string());
+    let stored = stored_name(&bag.items, name)?;
+    match typed_add(bag, name, value)? {
+        Some(t) if t.replace => {
+            bag.items.retain(|(n, _)| !n.eq_ignore_ascii_case(name));
+            bag.items.push((stored, t.values));
+        }
+        Some(t) => {
+            for v in t.values {
+                push_value(&mut bag.items, &stored, v);
+            }
+        }
+        None => push_value(&mut bag.items, &stored, value.to_string()),
+    }
     Ok(())
 }
 
@@ -599,31 +939,44 @@ fn with_bag<R>(r: Option<&Value>, f: impl FnOnce(&mut HeaderBag) -> R) -> Result
     }
 }
 
-fn headers_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = text(a, 0)?;
     let (value, secret) = text_or_secret(a, 1)?;
-    with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))??;
-    Ok(Value::Boolean(true))
+    let ret_used = c.ret_used();
+    let added = with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))?;
+    match added {
+        Ok(()) => Ok(Value::Boolean(true)),
+        // A statement raises the invalid header; `Format(H.Add(...))` answers false instead, as a Boolean method does when its
+        // result is used (HttpWriteFromStream.al:P100_PresetContentType_ThenWrite, `add_type` No on a Content-Type that is there;
+        // lt-http-header-rules/P87Twice.al raises it for the statement). Assumption http-headers-add-used-result.
+        Err(Signal::Error(e)) if ret_used && e.code == "InvalidHeader:Format" => {
+            assume(crate::assumptions::Assumption::HttpHeadersAddUsedResult);
+            Ok(Value::Boolean(false))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// `Remove(Name)` drops every value of the name and answers true, whether or not it was there.
 fn headers_remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = text(a, 0)?;
-    with_bag(r.as_deref(), |b| {
-        if b.kind != HeaderKind::Content && is_content_header(&name) {
-            return unsupported("Remove of a content header from request, response or client headers: not measured");
+    let removed = with_bag(r.as_deref(), |b| {
+        // A content header on request, response or client headers is no header there: Remove answers false and raises nothing
+        // (lt-http-header-rules/P87Matrix.al `rm=No` for every content header name of those collections).
+        if not_here(b.kind, &name) {
+            return Ok(false);
         }
         b.items.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
         b.secret.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
-        Ok(())
+        Ok(true)
     })??;
-    Ok(Value::Boolean(true))
+    Ok(Value::Boolean(removed))
 }
 
 /// Asking a request, response or client header collection for a content header raises
 /// `InvalidHeader:InvalidOperation` (network/lt-http/HttpHeaders.al:TryAddWithoutValidationBasics, HttpResponse.al).
 fn restricted_lookup(b: &HeaderBag, name: &str) -> Result<(), Signal> {
-    if b.kind != HeaderKind::Content && is_content_header(name) {
+    if not_here(b.kind, name) {
         return header_error("InvalidOperation");
     }
     if name.chars().any(|c| !is_token_char(c)) {
@@ -667,8 +1020,12 @@ fn headers_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out 
 /// not there answers false and leaves the target as it was.
 fn headers_get_values(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = text(a, 0)?;
+    // A content header name asked of request, response or client headers is no header there: GetValues answers false
+    // (lt-http-header-rules/P87Matrix.al `get=No/n=0`), where Contains raises.
     let values = with_bag(r.as_deref(), |b| {
-        restricted_lookup(b, &name)?;
+        if restricted_lookup(b, &name).is_err() {
+            return Ok::<_, Signal>(None);
+        }
         Ok(find(&b.items, &name).map(|(_, v)| v.clone()))
     })??;
     let Some(values) = values else {
@@ -704,45 +1061,116 @@ fn headers_try_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
     let (value, secret) = text_or_secret(a, 1)?;
     with_bag(r.as_deref(), |b| {
         if name.is_empty() || name.chars().any(|c| !is_token_char(c)) {
-            return Value::Boolean(false);
+            return Ok(Value::Boolean(false));
         }
-        if b.kind != HeaderKind::Content && is_content_header(&name) {
-            return Value::Boolean(false);
+        if not_here(b.kind, &name) {
+            return Ok(Value::Boolean(false));
         }
-        push_value(if secret { &mut b.secret } else { &mut b.items }, &name, value);
-        Value::Boolean(true)
-    })
+        if secret {
+            push_value(&mut b.secret, &name, value);
+            return Ok(Value::Boolean(true));
+        }
+        // A known header is parsed here too, so its values read back as Add would have stored them; a value that does not parse is kept
+        // as written (lt-http-header-rules/P87Values.al:KnownHeaderLists_*, `raw=Yes;get2=...`).
+        let stored = match stored_name(&b.items, &name) {
+            Ok(n) => n,
+            Err(e) => return Err(e),
+        };
+        match typed_add(b, &name, &value) {
+            Ok(Some(t)) if t.replace => {
+                b.items.retain(|(n, _)| !n.eq_ignore_ascii_case(&name));
+                b.items.push((stored, t.values));
+            }
+            Ok(Some(t)) => {
+                for v in t.values {
+                    push_value(&mut b.items, &stored, v);
+                }
+            }
+            Err(e @ Signal::Unsupported(_)) => return Err(e),
+            _ => push_value(&mut b.items, &stored, value),
+        }
+        Ok(Value::Boolean(true))
+    })?
 }
 
 // ------------------------------------------------------------------------------------------------ content
 
 fn write_from(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let t = text(a, 0)?;
-    with_content(r, |s| s.replace(t.into_bytes(), "text/plain; charset=utf-8")).map(|()| Value::Null)
+    with_content(r, |s| s.write_body(t.into_bytes())).map(|()| Value::Null)
 }
 
 /// `WriteFrom(InStream)` takes the bytes the stream has left.
 fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let bytes = crate::stream::drain_in(&mut a[0])?;
-    assume(crate::assumptions::Assumption::HttpContentTypeOfStream);
-    with_content(r, |s| s.replace(bytes, "application/octet-stream")).map(|()| Value::Null)
+    with_content(r, |s| s.write_body(bytes)).map(|()| Value::Null)
 }
 
 /// `ReadAs(var Text)` gives the body back, UTF-8 decoded; a content nobody wrote to reads as an empty text and
 /// answers true (misc/W4XmlJsonHttp.al:ReadAs_FreshContent); the content a request has when none was set answers
 /// false and leaves the text (network/lt-http/HttpRequest.al:FreshRequestContent).
 fn read_as(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let (data, uninit) = with_content(r, |s| (s.data.clone(), s.uninitialized))?;
+    let (data, uninit, charset) = with_content(r, |s| {
+        let charset = s
+            .headers
+            .borrow()
+            .items
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("Content-Type"))
+            .and_then(|(_, v)| v.first().cloned())
+            .and_then(|t| {
+                t.split(';').skip(1).find_map(|p| {
+                    let (k, v) = p.split_once('=')?;
+                    k.trim()
+                        .eq_ignore_ascii_case("charset")
+                        .then(|| v.trim().trim_matches('"').to_ascii_lowercase())
+                })
+            });
+        // Reading the body makes the content buffer it, and its headers then list a Content-Length (misc/lt-probes-needed-5/PnE12HttpContent.al:
+        // WriteFromText_ThenReadAndHeaders reads `5` after WriteFrom('hello') and ReadAs; the headers fetched before the read show it too, and
+        // none shows it before: lt-http-header-rules/P87Content.al:RewriteKeepsHeader, HttpWriteFromStream.al:P100_*). Assumption
+        // http-content-length-after-read.
+        if !s.uninitialized {
+            assume(crate::assumptions::Assumption::HttpContentLengthAfterRead);
+            let len = vec![s.data.len().to_string()];
+            let mut bag = s.headers.borrow_mut();
+            match bag
+                .items
+                .iter_mut()
+                .find(|(n, _)| n.eq_ignore_ascii_case("Content-Length"))
+            {
+                Some((_, v)) => *v = len,
+                None => bag.items.push(("Content-Length".into(), len)),
+            }
+        }
+        (s.data.clone(), s.uninitialized, charset)
+    })?;
     if uninit {
         return Ok(Value::Boolean(false));
     }
-    match String::from_utf8(data) {
-        Ok(t) => {
-            a[0] = Value::Text(t.into());
-            Ok(Value::Boolean(true))
+    // The body is read with the charset of the Content-Type header (lt-http-header-rules/P87ContentType.al:ReadAsIgnoresCharsetHeader,
+    // whatever its name says: iso-8859-1 reads each byte as a character, utf-16 reads little-endian units, a lone last byte is U+FFFD;
+    // no charset, or another type, is UTF-8). A charset not measured stays refused.
+    let decoded = match charset.as_deref() {
+        None | Some("utf-8") => String::from_utf8_lossy(&data).into_owned(),
+        Some("iso-8859-1" | "latin1") => data.iter().map(|b| char::from(*b)).collect(),
+        Some("utf-16" | "utf-16le") => {
+            let mut units: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let mut text = String::from_utf16_lossy(&units);
+            if data.len() % 2 == 1 {
+                text.push('\u{FFFD}');
+            }
+            units.clear();
+            text
         }
-        Err(_) => unsupported("HttpContent.ReadAs(Text) of bytes that are not UTF-8: not measured"),
-    }
+        Some(other) => {
+            return unsupported(format!(
+                "HttpContent.ReadAs(Text) with the charset {other}: not measured"
+            ));
+        }
+    };
+    a[0] = Value::Text(decoded.into());
+    Ok(Value::Boolean(true))
 }
 
 /// `ReadAs(var InStream)` hands the body out once: a second read gets an empty stream
@@ -780,7 +1208,7 @@ fn get_headers(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 /// `Clear` empties the body and gives the content its own fresh headers, the Content-Type among them
 /// (network/lt-http/HttpContent.al:ClearContent).
 fn content_clear(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    with_content(r, |s| s.replace(Vec::new(), "text/plain; charset=utf-8")).map(|()| Value::Null)
+    with_content(r, |s| s.clear_body()).map(|()| Value::Null)
 }
 
 // ------------------------------------------------------------------------------------------------ client
@@ -1298,22 +1726,57 @@ impl HttpContentState {
             headers: copy,
             uninitialized: self.uninitialized,
             stream_taken: self.stream_taken,
+            written: self.written,
         }
     }
 
-    /// `WriteFrom` and `Clear`: the content gets the new bytes and a header collection of its own that holds the
-    /// Content-Type (network/lt-http/HttpContent.al:ContentTypeHeaderAfterWrite, ClearContent).
-    fn replace(&mut self, data: Vec<u8>, content_type: &str) {
-        assume(crate::assumptions::Assumption::HttpContentWriteResetsHeaders);
+    /// `Clear`: the content gets no body and a header collection of its own that holds the Content-Type; a header
+    /// collection handed out before keeps what it held (network/lt-http/HttpContent.al:ClearContent,
+    /// lt-http-header-rules/P87Content.al:ClearAfterAdd, ClearBeforeWrite, ClearFresh).
+    fn clear_body(&mut self) {
         let headers = new_header_list(HeaderKind::Content);
         headers
             .borrow_mut()
             .items
-            .push(("Content-Type".into(), vec![content_type.into()]));
-        self.data = data;
+            .push(("Content-Type".into(), vec!["text/plain; charset=utf-8".into()]));
+        self.data = Vec::new();
         self.headers = headers;
         self.uninitialized = false;
         self.stream_taken = false;
+        self.written = false;
+    }
+
+    /// `WriteFrom` of text or a stream: the body is replaced, the header collection stays the one every `HttpHeaders` handed out
+    /// shows, with its Content-Type set to `text/plain; charset=utf-8` (put first when it was removed) and the other headers kept
+    /// (lt-http-header-rules/P87Content.al:AddThenWrite_Text, WriteThenAdd_Text, RewriteKeepsHeader, P87ContentType.al:HeaderBeforeWrite,
+    /// P87ContentStream.al, HttpWriteFromStream.al:P100_*). A Content-Length the headers already hold (see `read_as`) shows the new
+    /// body's length (P100_SecondWrite_ReplacesBody; assumption http-content-length-after-read).
+    fn write_body(&mut self, data: Vec<u8>) {
+        {
+            let mut bag = self.headers.borrow_mut();
+            match bag
+                .items
+                .iter_mut()
+                .find(|(n, _)| n.eq_ignore_ascii_case("Content-Type"))
+            {
+                Some((_, v)) => *v = vec!["text/plain; charset=utf-8".into()],
+                None => bag
+                    .items
+                    .insert(0, ("Content-Type".into(), vec!["text/plain; charset=utf-8".into()])),
+            }
+            if let Some((_, v)) = bag
+                .items
+                .iter_mut()
+                .find(|(n, _)| n.eq_ignore_ascii_case("Content-Length"))
+            {
+                assume(crate::assumptions::Assumption::HttpContentLengthAfterRead);
+                *v = vec![data.len().to_string()];
+            }
+        }
+        self.data = data;
+        self.uninitialized = false;
+        self.stream_taken = false;
+        self.written = true;
     }
 }
 

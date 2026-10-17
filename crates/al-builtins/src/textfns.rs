@@ -274,11 +274,11 @@ fn remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
 // ---------------------------------------------------- transforming
 
 fn to_upper(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    Ok(Value::Text(recv_text(&r)?.to_uppercase().into()))
+    Ok(Value::Text(crate::native::method_upper(&recv_text(&r)?).into()))
 }
 
 fn to_lower(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    Ok(Value::Text(recv_text(&r)?.to_lowercase().into()))
+    Ok(Value::Text(crate::native::method_lower(&recv_text(&r)?).into()))
 }
 
 /// Trim removes white space (the corpus only has spaces); with a character set, those characters.
@@ -686,9 +686,26 @@ fn with_string<T>(h: &Rc<RefCell<LibraryValue>>, f: impl FnOnce(&mut String) -> 
     }
 }
 
+/// A TextBuilder whose text outgrew its capacity takes the larger of the length it needs and twice the capacity it had (types/
+/// lt-format-codes-textbuilder-pagerun-labels/P144TextBuilderCapacity.al:P144_Growth_ByAppend: 16, 32, 64, 128, then 1000 for an append
+/// that needs 1000; P144_Growth_BigAppendAtOnce: 40, 500, then 1000 for the 503 an AppendLine needs).
+fn grow_capacity(h: &Rc<RefCell<LibraryValue>>) {
+    let (len, cap) = match &*h.borrow() {
+        LibraryValue::Text(s) => (Value::text_len(s) as i64, 16i64),
+        LibraryValue::TextCap(s, c) => (Value::text_len(s) as i64, i64::from(*c)),
+        _ => return,
+    };
+    if len > cap {
+        let new = len.max(cap * 2).min(i64::from(i32::MAX)) as i32;
+        let s = with_string(h, std::mem::take);
+        *h.borrow_mut() = LibraryValue::TextCap(s, new);
+    }
+}
+
 fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (h, t) = (string_of(r)?, text(a, 0)?);
     with_string(&h, |s| s.push_str(&t));
+    grow_capacity(&h);
     Ok(Value::Boolean(true))
 }
 
@@ -705,6 +722,7 @@ fn tb_append_line(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NR
         s.push_str(&t);
         s.push_str("\r\n");
     });
+    grow_capacity(&h);
     Ok(Value::Boolean(true))
 }
 
@@ -743,15 +761,10 @@ fn tb_clear(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult 
 /// then the set value; it grows by doubling when the text outgrows it (only "at least the length" is pinned:
 /// Capacity_GrowsWithAppend, Length_Larger_Than_Capacity; docs/probes-needed.md "TextBuilder.Capacity").
 fn capacity_of(h: &Rc<RefCell<LibraryValue>>) -> i32 {
-    let (len, mut cap) = match &*h.borrow() {
-        LibraryValue::Text(s) => (Value::text_len(s), 16),
-        LibraryValue::TextCap(s, c) => (Value::text_len(s), *c),
-        _ => (0, 16),
-    };
-    while (cap as usize) < len && cap < i32::MAX / 2 {
-        cap = cap.max(1) * 2;
+    match &*h.borrow() {
+        LibraryValue::TextCap(_, c) => *c,
+        _ => 16,
     }
-    cap
 }
 
 /// `Capacity()` reads and `Capacity(N)` sets the capacity (TxCTextBuilderBasics.al:Capacity_Setter: `Capacity(100)` reads 100;
@@ -788,6 +801,7 @@ fn tb_insert(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     out.extend(t.encode_utf16());
     out.extend_from_slice(&u[at..]);
     with_string(&h, |s| *s = from_u16(&out));
+    grow_capacity(&h);
     Ok(Value::Boolean(true))
 }
 
@@ -817,6 +831,16 @@ fn tb_ensure_capacity(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -
     if n > i64::from(i32::MAX) {
         return crate::native::raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
     }
+    // A negative capacity on a builder that holds text is an argument error (types/lt-format-codes-textbuilder-pagerun-labels/
+    // P144TextBuilderCapacity.al:P144_EnsureCapacity_Negative: 'abc' appended, capacity 16); on an empty builder with capacity 50 it
+    // changes nothing (text/lt-label-textbuilder/TxCTextBuilderBasics.al:EnsureCapacity_Basics). The two files differ in the text
+    // held and the capacity; which of them decides is not probed (docs/probes-needed.md).
+    if n < 0 && with_string(&h, |s| !s.is_empty()) {
+        return crate::native::raise::<Value>(
+            "An invalid argument was passed to a 'TextBuilder' data type method.".to_string(),
+            "ArgumentOutOfRange",
+        );
+    }
     if n > i64::from(capacity_of(&h)) {
         let s = with_string(&h, std::mem::take);
         *h.borrow_mut() = LibraryValue::TextCap(s, n as i32);
@@ -834,6 +858,7 @@ fn tb_replace(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResul
         );
     }
     with_string(&h, |s| *s = s.replace(old.as_str(), new.as_str()));
+    grow_capacity(&h);
     Ok(Value::Boolean(true))
 }
 

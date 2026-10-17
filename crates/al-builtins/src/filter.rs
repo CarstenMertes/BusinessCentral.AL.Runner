@@ -60,6 +60,10 @@ fn blank_if_spaces(v: &Value) -> std::borrow::Cow<'_, Value> {
         Value::Code(s) if !s.is_empty() && s.bytes().all(|c| c == b' ') => {
             Cow::Owned(Value::Code(String::new().into()))
         }
+        // Trailing blanks do not count in a filter comparison: `SetRange(K, 'abc  ')` finds the row 'abc' (record/lt-key-case-trailing-blank/
+        // TableKeyCaseTrailingBlank.al:P184_TextKey_Get_And_Filter_OtherCase_Blanks `range blanks count = 1`).
+        Value::Text(s) if s.ends_with(' ') => Cow::Owned(Value::Text(s.trim_end_matches(' ').to_string().into())),
+        Value::Code(s) if s.ends_with(' ') => Cow::Owned(Value::Code(s.trim_end_matches(' ').to_string().into())),
         other => Cow::Borrowed(other),
     }
 }

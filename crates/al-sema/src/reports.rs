@@ -62,6 +62,10 @@ const FORMAT_ONLY_COLUMN_PROPERTIES: &[&str] = &[
     "autoformatexpression",
     "decimalplaces",
     "includecaption",
+    // A pending-obsolete column is written to the dataset like any other (corpus errors/lt-ms-refusals-138/P138ColObsolete.al).
+    "obsoletestate",
+    "obsoletereason",
+    "obsoletetag",
 ];
 
 /// Whether the data item `sec` states `UseTemporary = true`: its record is a temporary one, which

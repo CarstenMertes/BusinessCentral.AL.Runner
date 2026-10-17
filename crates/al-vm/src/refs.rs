@@ -816,10 +816,26 @@ impl Session {
             // error for a field that is not a FlowField (record/TestCalcFieldsFieldClass.Codeunit.al);
             // whether FieldRef.CalcField says the same is not pinned, so it is refused.
             "CalcField" => {
-                let stored = self.engine.program.objects[t.object as usize]
+                // A Blob is accepted by Record.CalcFields (record/TestCalcFieldsFieldClass.Codeunit.al), and Temp Blob Impl.FromFieldRef
+                // calls CalcField on every Blob it reads; FieldRef.CalcField of a Blob goes the same way (assumption
+                // fieldref-calcfield-of-a-blob).
+                let blob = self.engine.program.objects[t.object as usize]
                     .table
                     .as_ref()
-                    .is_some_and(|s| s.fields[pos].stored || s.fields[pos].flow_filter);
+                    .is_some_and(|s| {
+                        matches!(
+                            s.fields[pos].ty,
+                            RtType::Library(al_builtins::library_kind::LibraryKind::Blob)
+                        )
+                    });
+                if blob {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldRefCalcFieldOfABlob);
+                }
+                let stored = !blob
+                    && self.engine.program.objects[t.object as usize]
+                        .table
+                        .as_ref()
+                        .is_some_and(|s| s.fields[pos].stored || s.fields[pos].flow_filter);
                 if stored {
                     return unsupported("FieldRef.CalcField of a field that is not a FlowField (not pinned)");
                 }

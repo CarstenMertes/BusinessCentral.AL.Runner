@@ -67,6 +67,12 @@ pub struct Info {
 }
 
 registry! {
+    RenameFollowsFilterConditionArms => {
+        id: "rename-follows-filter-condition-arms",
+        assumed: "A rename of a primary key rewrites a referencing field through a TableRelation arm whose conditions include `Field = filter(x)`, when the referencing row's field passes the filter, as it does for `const` conditions.",
+        tests: "Tests-ERM price list tests that rename an Item, Resource, G/L Account or Item Variant (Assembly Header.\"Bin Code\" `Quantity = filter(< 0)`, Purchase Line.\"No.\" and \"Variant Code\" `Document Type = filter(<> \"Credit Memo\" & <> \"Return Order\")`); about 28 Tests-ERM tests.",
+        probe: "A table with a field whose TableRelation is `if (Kind = filter(<> B)) Parent else Other`: rename a Parent row with a referencing row of Kind A and one of Kind B; read both fields.",
+    },
     RelationOptionBlankConst => {
         id: "relation-option-blank-const",
         assumed: "A TableRelation condition `Field = const(\" \")` on an Option field selects the arm when the field holds the option's blank member (ordinal of the member written \" \"), as it does for an Enum.",

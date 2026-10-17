@@ -17,6 +17,7 @@ mod relation_where_enum_filter;
 mod relation_where_flowfilter;
 mod relations;
 mod rename;
+mod rename_filter_arm;
 mod scm_round2;
 mod scm_service_41;
 mod set_view_adhoc;

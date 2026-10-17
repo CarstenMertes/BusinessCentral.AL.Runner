@@ -299,12 +299,15 @@ mod tests {
         }
         // The ErrorInfo overloads registered are those of FieldError (handlers/PWRefusedBuiltins.al:113-168)
         // and Record.TestField's, whose check that holds raises nothing and whose failure is refused
-        // (issue 41, docs/probes-needed.md). FieldRef.TestField has none.
+        // (issue 41, docs/probes-needed.md). FieldRef.TestField's are those of the Record's, pinned by record/lt-testfield-typed-values/
+        // FieldRefTestFieldTypedNumeric.al:P189_FldRef_Byte_WithErrorInfo and its siblings.
         for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {
             let has = cat.by_id(id).unwrap().params.iter().any(|p| p.ty == "ErrorInfo");
             if has {
                 assert!(
-                    id.contains("FieldError#3") || id.starts_with("Record.TestField#"),
+                    id.contains("FieldError#3")
+                        || id.starts_with("Record.TestField#")
+                        || id.starts_with("FieldRef.TestField#"),
                     "{id}"
                 );
             }

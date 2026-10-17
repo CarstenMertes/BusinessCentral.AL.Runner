@@ -3850,9 +3850,12 @@ fn remove_attribute(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> 
             let Some((name, ns)) = key else {
                 return unsupported("RemoveAttribute with something that is no attribute");
             };
-            let found = attrs_of(&h)
-                .into_iter()
-                .find(|x| with(x, |d| matches!(d, XData::Attribute { local, ns: n, .. } if *local == name && *n == ns)));
+            let found = attrs_of(&h).into_iter().find(|x| {
+                with(
+                    x,
+                    |d| matches!(d, XData::Attribute { local, ns: n, .. } if *local == name && *n == ns),
+                )
+            });
             match found {
                 Some(x) => x,
                 None => return Ok(Value::Null),
@@ -4211,12 +4214,16 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         // The byte order mark and the markup, as for an element (xml/lt-xml-cdata-comment-pi-text/P90CDataRead.al:
         // WriteTo_OutStream_Attached_AndText, `Ù‹<![CDATA[x]]>`, 16 bytes; the Text, Comment and ProcessingInstruction files pin their own).
         (
-            "XmlDocument" | "XmlElement" | "XmlNode" | "XmlText" | "XmlCData" | "XmlComment" | "XmlProcessingInstruction",
+            "XmlDocument"
+            | "XmlElement"
+            | "XmlNode"
+            | "XmlText"
+            | "XmlCData"
+            | "XmlComment"
+            | "XmlProcessingInstruction",
             "WriteTo",
             ["OutStream"] | ["XmlWriteOptions", "OutStream"],
-        ) => {
-            write_to_outstream
-        }
+        ) => write_to_outstream,
         ("XmlWriteOptions", "PreserveWhitespace", ["Boolean"]) => write_options_preserve_whitespace,
         ("XmlReadOptions", "PreserveWhitespace", ["Boolean"]) => read_options_preserve_whitespace,
         ("XmlReadOptions" | "XmlWriteOptions", "PreserveWhitespace", []) => options_preserve_whitespace_get,

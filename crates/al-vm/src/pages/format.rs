@@ -582,7 +582,9 @@ impl Session {
             let engine = self.engine();
             let mut at = page_of(&engine, st).controls[idx].parent;
             while let Some(p) = at {
-                if page_of(&engine, st).controls[p].kind == ir::ControlKind::Group && !self.prop_bool_now(st, p, "enabled", true)? {
+                if page_of(&engine, st).controls[p].kind == ir::ControlKind::Group
+                    && !self.prop_bool_now(st, p, "enabled", true)?
+                {
                     return Ok(false);
                 }
                 at = page_of(&engine, st).controls[p].parent;

@@ -1432,7 +1432,7 @@ mod tests {
         ));
         assert!(matches!(
             arith(Arith::Sub, &Value::Time(46_800_001), &noon),
-            Ok(Value::Duration(3_600_000))
+            Ok(Value::BigInteger(3_600_000))
         ));
         for (op, l, r, text) in [
             (
@@ -1604,15 +1604,15 @@ mod tests {
     // corpus record/TestCalcFormulaValidationTests.Codeunit.al:60,129: `1 * OneHour()` and
     // `10 * OneHour()` with a Duration in milliseconds.
     #[test]
-    fn a_whole_number_times_a_duration_is_a_duration() {
+    fn a_whole_number_times_a_duration_is_a_number_of_milliseconds() {
         let hour = Value::Duration(3_600_000);
         assert!(matches!(
             arith(Arith::Mul, &Value::Integer(10), &hour),
-            Ok(Value::Duration(36_000_000))
+            Ok(Value::BigInteger(36_000_000))
         ));
         assert!(matches!(
             arith(Arith::Mul, &hour, &Value::Integer(2)),
-            Ok(Value::Duration(7_200_000))
+            Ok(Value::BigInteger(7_200_000))
         ));
         assert!(
             matches!(
@@ -1652,7 +1652,7 @@ mod tests {
         let d1 = Value::Duration(90_000);
         assert!(matches!(
             arith(Arith::Div, &d1, &Value::Integer(4)),
-            Ok(Value::Duration(22_500))
+            Ok(Value::Decimal(x)) if x == Decimal::from(22_500)
         ));
         assert!(matches!(
             arith(Arith::IntDiv, &d1, &Value::Integer(7)),

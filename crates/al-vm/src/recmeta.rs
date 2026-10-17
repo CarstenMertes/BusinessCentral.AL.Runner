@@ -787,10 +787,16 @@ impl Session {
                 let mut shown: Option<String> = None;
                 let mut never_equal = false;
                 match (&current, want) {
-                    (Value::Integer(_), Value::Enum(id, o)) => shown = Some(al_builtins::format::FormatCtx::enum_name(self, *id, *o)),
+                    (Value::Integer(_), Value::Enum(id, o)) => {
+                        shown = Some(al_builtins::format::FormatCtx::enum_name(self, *id, *o))
+                    }
                     (Value::Text(_) | Value::Code(_), Value::Guid(g)) => {
                         let braced = al_builtins::format::format_guid(g);
-                        shown = Some(if from28 { braced } else { braced.trim_matches(['{', '}']).to_string() });
+                        shown = Some(if from28 {
+                            braced
+                        } else {
+                            braced.trim_matches(['{', '}']).to_string()
+                        });
                         never_equal = true;
                     }
                     (_, Value::Byte(b)) if from28 && matches!(current, Value::Integer(_)) => {
@@ -800,7 +806,9 @@ impl Session {
                         shown = Some(format!("\\u{:04X}", b));
                     }
                     (Value::Guid(_), Value::Guid(_)) => {}
-                    (_, Value::Guid(_)) => return unsupported("TestField against a Guid on a field that is not Text (not pinned)"),
+                    (_, Value::Guid(_)) => {
+                        return unsupported("TestField against a Guid on a field that is not Text (not pinned)");
+                    }
                     _ => {}
                 }
                 let want = if text_pair || number_pair || never_equal {

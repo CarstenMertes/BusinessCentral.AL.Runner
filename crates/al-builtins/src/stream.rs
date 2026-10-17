@@ -914,7 +914,9 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
 pub fn write_raw_bytes_rewinding(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
     let (b, _) = out_buf(Some(stream))?;
     if b.borrow().write_pos != 0 {
-        return unsupported("WriteTo(OutStream) on a stream that was written to (the place it writes at is not pinned)");
+        return unsupported(
+            "WriteTo(OutStream) on a stream that was written to (the place it writes at is not pinned)",
+        );
     }
     write_bytes(&b, bytes);
     b.borrow_mut().write_pos = 0;

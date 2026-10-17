@@ -139,6 +139,12 @@ registry! {
         tests: "Contact Profile Answers.SetRunFromForm (Rec := ProfileQuestionnaireLine) then RunModal, handler calls UpdateProfileAnswer: Tests-Marketing Marketing Profiling CreateContactProfileManually, ContactToSegmentUsingProfile.",
         probe: "A page variable: SetTableView(T) then a page procedure that does Rec := T (a row), then RunModal with a Page-typed handler reading Rec.Id through another page procedure and GetRecord.",
     },
+    TypedHandlerLookupOkHandsBackRec => {
+        id: "typed-handler-lookupok-hands-back-rec",
+        assumed: "When a Page-typed ModalPageHandler answers LookupOK, the record the code passed to Page.RunModal(Id, Rec) takes the page's record as the handler left it (SetRecord), as a TestPage handler's selected row does.",
+        tests: "Segment Header.ReuseCriteria (PAGE.RunModal(PAGE::\"Saved Segment Criteria List\", SavedSegCriteria) answered by ModalFrmHandleSavedSegCriteria); Tests-Marketing SegmentSaveCriteriaAndReuse, ReuseSegmentCriteria, ContactToSegmentUsingProfile.",
+        probe: "Page.RunModal(Page::P, Rec) with Rec on row 1 and a Page-typed handler that does Row.Get(3); P.SetRecord(Row); Response := LookupOK: Rec afterwards; the same with Cancel and with no SetRecord.",
+    },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
         assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",

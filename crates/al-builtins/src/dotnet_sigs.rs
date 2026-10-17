@@ -36,6 +36,22 @@ pub const TENANT_INFO: &str = "Microsoft.Dynamics.Nav.LicensingService.Model.Ten
 pub const USER_ACCOUNT_HELPER: &str = "Microsoft.Dynamics.Nav.NavUserAccount.NavUserAccountHelper";
 
 /// `System.IO.Compression.GZipStream`, behind System Application's "Data Compression".
+/// The exceptions `GetLastErrorObject` answers and the `System.Type` of `GetType()` on them
+/// (tests/al-language-onprem-dotnet/lt-dotnet-interop/GetLastErrorObject.al).
+pub const NCL_DIALOG_EXCEPTION: &str = "Microsoft.Dynamics.Nav.Types.Exceptions.NavNCLDialogException";
+pub const RECORD_NOT_FOUND_EXCEPTION: &str = "Microsoft.Dynamics.Nav.Types.Exceptions.NavCSideRecordNotFoundException";
+pub const AL_EXCEPTION: &str = "Microsoft.Dynamics.Nav.Types.Exceptions.NavALException";
+/// The inner exception of a `NavALException`: only that it is not null is pinned, so it has no member.
+pub const AL_INNER_EXCEPTION: &str = "<inner exception of NavALException (type not pinned)>";
+/// What `GetLastErrorObject` answers when there is no last error (after `ClearLastError`): `IsNull` is true and
+/// `Format` is 'null' (GetLastErrorObject.al:295-298), but a member raises the not-instantiated error, as for an
+/// unassigned variable. It is not `Value::Null`, because `Format` of an unassigned variable is not 'null'
+/// (TestDotNetValueKindsContracts.al:15).
+pub const NULL_EXCEPTION: &str = "<no last error>";
+/// What `GetType()` answers. The real class is `System.RuntimeType`; a registry type must not be named
+/// `System.Type`, which a `dotnet { }` block also declares for host objects.
+pub const RUNTIME_TYPE: &str = "System.RuntimeType";
+
 pub const GZIP_STREAM: &str = "System.IO.Compression.GZipStream";
 /// `System.IO.Compression.CompressionMode`.
 pub const COMPRESSION_MODE: &str = "System.IO.Compression.CompressionMode";
@@ -91,6 +107,22 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (USER_ACCOUNT_HELPER, "IsDelegatedUser", Ret::Boolean),
     (USER_ACCOUNT_HELPER, "GetEffectivePermissionForObject", Ret::Text),
     (TEST_EXECUTION, "IsInTestMode", Ret::Boolean),
+    (NCL_DIALOG_EXCEPTION, "Message", Ret::Text),
+    (NCL_DIALOG_EXCEPTION, "GetType", Ret::Object),
+    (NCL_DIALOG_EXCEPTION, "InnerException", Ret::Object),
+    (NCL_DIALOG_EXCEPTION, "ToString", Ret::Text),
+    (RECORD_NOT_FOUND_EXCEPTION, "Message", Ret::Text),
+    (RECORD_NOT_FOUND_EXCEPTION, "GetType", Ret::Object),
+    (RECORD_NOT_FOUND_EXCEPTION, "InnerException", Ret::Object),
+    (RECORD_NOT_FOUND_EXCEPTION, "ToString", Ret::Text),
+    (AL_EXCEPTION, "Message", Ret::Text),
+    (AL_EXCEPTION, "GetType", Ret::Object),
+    (AL_EXCEPTION, "InnerException", Ret::Object),
+    (AL_EXCEPTION, "ToString", Ret::Text),
+    (RUNTIME_TYPE, "FullName", Ret::Text),
+    (NULL_EXCEPTION, "Message", Ret::Text),
+    (NULL_EXCEPTION, "GetType", Ret::Object),
+    (NULL_EXCEPTION, "ToString", Ret::Text),
     (GZIP_STREAM, "GZipStream", Ret::Object),
     (GZIP_STREAM, "CopyTo", Ret::Void),
     (GZIP_STREAM, "Dispose", Ret::Void),

@@ -409,6 +409,7 @@ fn al_runner(what: &str) -> Pin {
 /// The shipped types.
 pub fn types() -> Vec<RegistryType> {
     let mut all = super::compression::types();
+    all.extend(super::last_error::types());
     all.extend(own_types());
     all
 }

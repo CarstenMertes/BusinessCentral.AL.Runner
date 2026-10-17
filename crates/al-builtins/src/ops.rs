@@ -471,6 +471,54 @@ fn duration_with_number(op: Arith, duration_first: bool, d: i64, k: i64) -> Resu
     .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()))
 }
 
+/// Duration `/`, `div` and `mod` by a whole number, and Duration / Duration (pinned by corpus
+/// types/lt-filter-enum-relation-duration-guid/D_Duration.al:354-370 with 90000 ms: `/ 4` is 22500 ms, `div 7` is 12,857, `mod 7` is 1,
+/// Duration / Duration is the Decimal 3, `/ 7` raises ConversionCast because the quotient is no whole number of milliseconds).
+#[cold]
+#[inline(never)]
+fn duration_divide(op: Arith, a: i64, r: &Value) -> Result<Value, Signal> {
+    let (b, by_duration) = match r {
+        Value::Duration(ms) => (*ms, true),
+        other => (int_of(other).unwrap_or(0), false),
+    };
+    if b == 0 {
+        return raise("Attempted to divide by zero.", "AL:DivideByZero");
+    }
+    if by_duration {
+        // Only the quotient of two Durations is pinned.
+        if op != Arith::Div {
+            return unsupported(format!("{} of two Durations (not pinned)", op.describe()));
+        }
+        let q = Decimal::from(a)
+            .checked_div(Decimal::from(b))
+            .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+            .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
+        return Ok(Value::Decimal(q));
+    }
+    match op {
+        Arith::IntDiv | Arith::Mod => {
+            let n = if op == Arith::IntDiv { a / b } else { a % b };
+            i32::try_from(n).map(Value::Integer).or_else(|_| {
+                unsupported("a Duration div or mod whose result is beyond an Integer (type not pinned)".to_string())
+            })
+        }
+        Arith::Div if a % b == 0 => Ok(Value::Duration(a / b)),
+        Arith::Div => {
+            let q = Decimal::from(a)
+                .checked_div(Decimal::from(b))
+                .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+                .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
+            raise(
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {q} to System.Int64."
+                ),
+                "ConversionCast",
+            )
+        }
+        _ => unsupported("Duration arithmetic (not pinned)".to_string()),
+    }
+}
+
 fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     use Value as V;
     // An Option takes part in arithmetic as its ordinal, an Integer (types/PROptionInteger.al:OptionMember_AsInteger:
@@ -528,6 +576,14 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .and_then(|n| n.checked_mul(*ms))
                 .map(V::Duration)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
+        }
+        // Duration `/`, `div` and `mod` a whole number, and Duration / Duration (types/lt-filter-enum-relation-duration-guid/
+        // D_Duration.al:Duration_Arithmetic).
+        (V::Duration(a), n)
+            if matches!(op, Arith::Div | Arith::IntDiv | Arith::Mod)
+                && (int_of(n).is_some() || matches!(n, V::Duration(_))) =>
+        {
+            return duration_divide(op, *a, n);
         }
         // Duration +/- Duration is a Duration in milliseconds. Assumed (registry entry duration-add-duration): Match Bank
         // Payments adds the Durations of its telemetry timers.
@@ -1349,10 +1405,41 @@ mod tests {
         ));
         assert!(
             matches!(
-                arith(Arith::Div, &hour, &Value::Integer(2)),
+                arith(Arith::Mul, &hour, &Value::Duration(2)),
                 Err(Signal::Unsupported(_))
             ),
             "other Duration arithmetic is not pinned"
+        );
+    }
+
+    /// Duration `/`, `div` and `mod` with a whole number, and Duration / Duration, as corpus
+    /// types/lt-filter-enum-relation-duration-guid/D_Duration.al:Duration_Arithmetic pins them (D1 = 90000 ms, D2 = 30000 ms).
+    #[test]
+    fn a_duration_divides_and_takes_the_remainder_by_a_whole_number() {
+        let d1 = Value::Duration(90_000);
+        assert!(matches!(
+            arith(Arith::Div, &d1, &Value::Integer(4)),
+            Ok(Value::Duration(22_500))
+        ));
+        assert!(matches!(
+            arith(Arith::IntDiv, &d1, &Value::Integer(7)),
+            Ok(Value::Integer(12_857))
+        ));
+        assert!(matches!(
+            arith(Arith::Mod, &d1, &Value::Integer(7)),
+            Ok(Value::Integer(1))
+        ));
+        assert!(matches!(
+            arith(Arith::Div, &d1, &Value::Duration(30_000)),
+            Ok(Value::Decimal(x)) if x == Decimal::from(3)
+        ));
+        let Err(Signal::Error(e)) = arith(Arith::Div, &d1, &Value::Integer(7)) else {
+            panic!("a fraction of a millisecond raises");
+        };
+        assert_eq!(e.code, "ConversionCast");
+        assert_eq!(
+            e.message,
+            "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value 12857.1428571428571 to System.Int64."
         );
     }
 

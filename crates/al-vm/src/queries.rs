@@ -922,6 +922,9 @@ impl Session {
             }
             let item = &def.items[c.item];
             let field = c.field.expect("a column over a field");
+            if matches!(c.ty, RtType::Library(al_builtins::library_kind::LibraryKind::RecordId)) {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryColumnRecordId);
+            }
             let row = &self.filled(item.table, &joined[c.item]);
             let schema = &engine.program.objects[item.table].table.as_ref().expect("table").fields[field];
             let mut v = if schema.stored {

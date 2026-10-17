@@ -569,6 +569,14 @@ fn visit(
                 pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
             if pn == "dataitemlinkreference" {
                 // Read by `item_ir` (corpus handlers/TestReportDataItemLinkReferenceContracts.al).
+            } else if pn == "maxiteration" {
+                // Read by `item_ir`; pinned for an Integer item only (misc/lt-probes-needed-8/PnH3Link.al:MaxIteration_*).
+                let positive = p.value_text().trim().parse::<u32>().is_ok_and(|n| n > 0);
+                if !table.trim_matches('"').eq_ignore_ascii_case("Integer") || !positive {
+                    reasons.push(format!(
+                        "property maxiteration of dataitem {name} is not supported yet (pinned for an Integer item with a positive number)"
+                    ));
+                }
             } else if !["dataitemtableview", "dataitemlink"].contains(&pn.as_str())
                 && !INERT_ITEM_PROPERTIES.contains(&pn.as_str())
                 && !temporary_ok
@@ -970,6 +978,7 @@ fn item_ir(
         on_after_get: trigger("OnAfterGetRecord"),
         on_post: trigger("OnPostDataItem"),
         columns: o.columns(sec, table),
+        max_iteration: prop("MaxIteration").and_then(|v| v.trim().parse::<u32>().ok()).filter(|n| *n > 0),
     }
 }
 

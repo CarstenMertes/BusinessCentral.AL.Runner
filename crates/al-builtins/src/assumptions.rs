@@ -379,12 +379,6 @@ registry! {
         tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
         probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
     },
-    DurationArithmeticWithNumber => {
-        id: "duration-arithmetic-with-number",
-        assumed: "A whole number added to or subtracted from a Duration (or a Duration from a whole number) is a Duration, as milliseconds.",
-        tests: "Microsoft's routing code (a day in milliseconds added to a Duration): Tests-SCM-Manufacturing, about 20 tests.",
-        probe: "D: Duration; I: Integer; Format(D + I), Format(I + D), Format(D - I), Format(I - D).",
-    },
     SetViewSortingWithoutKey => {
         id: "set-view-sorting-without-a-key",
         assumed: "SetView of a SORTING(...) that no key starts with orders the rows by those fields, then by the primary key, as SetCurrentKey of such fields does.",

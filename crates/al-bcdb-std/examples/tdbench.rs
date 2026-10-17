@@ -22,6 +22,7 @@ fn main() {
             name: name.clone(),
             app_id: None,
             per_company: true,
+            ..Default::default()
         };
         let mut best = f64::MAX;
         let mut rows = 0;

@@ -21,7 +21,9 @@ use al_builtins::format::day_from_civil;
 use al_builtins::value::{RtType, Value};
 use al_data::memory::{Backing, Rows};
 use al_data::{Row, TableDef};
-use al_host::testdata::{Cell, Dropped, Outcome, Refusal, TableError, TableRequest, TableRows, TestData};
+use al_host::testdata::{
+    Cell, Dropped, FieldKind, Outcome, Refusal, RequestField, TableError, TableRequest, TableRows, TestData,
+};
 use rust_decimal::Decimal;
 use std::cell::RefCell;
 use std::collections::HashMap;
@@ -116,6 +118,32 @@ fn kind_of_field(ty: &RtType, compressed: bool) -> Kind {
             al_builtins::library_kind::LibraryKind::Media | al_builtins::library_kind::LibraryKind::MediaSet,
         ) => Kind::Guid,
         other => Kind::Unsupported(other.describe()),
+    }
+}
+
+/// The kind of a field's value for a source whose values are text.
+fn field_kind(ty: &RtType) -> FieldKind {
+    match ty {
+        RtType::DateFormula => FieldKind::DateFormula,
+        RtType::Text(_) => FieldKind::Text,
+        RtType::Code(_) => FieldKind::Code,
+        RtType::Boolean => FieldKind::Boolean,
+        RtType::Integer => FieldKind::Integer,
+        RtType::BigInteger => FieldKind::BigInteger,
+        RtType::Byte => FieldKind::Byte,
+        RtType::Option(_) | RtType::Enum(_) => FieldKind::Ordinal,
+        RtType::Decimal => FieldKind::Decimal,
+        RtType::Date => FieldKind::Date,
+        RtType::Time => FieldKind::Time,
+        RtType::DateTime => FieldKind::DateTime,
+        RtType::Duration => FieldKind::Duration,
+        RtType::Guid => FieldKind::Guid,
+        RtType::Library(
+            al_builtins::library_kind::LibraryKind::Blob
+            | al_builtins::library_kind::LibraryKind::Media
+            | al_builtins::library_kind::LibraryKind::MediaSet,
+        ) => FieldKind::Binary,
+        _ => FieldKind::Other,
     }
 }
 
@@ -528,6 +556,35 @@ impl TestBacking {
             .map_err(|n| format!("{n} rows share a primary key of the compiled table"))
     }
 
+    /// The fields of a table for a source that needs the schema to type its values: each with the column name the
+    /// plan below expects (the SQL name; `<SQL name>$<app id>` for a field a table extension of another app declares).
+    fn request_fields(&self, obj: &al_ir::Object) -> Vec<RequestField> {
+        let Some(schema) = obj.table.as_ref() else {
+            return Vec::new();
+        };
+        let table_app = self.app_id(obj.app);
+        schema
+            .fields
+            .iter()
+            .filter(|f| f.id < PLATFORM_FIRST)
+            .map(|f| {
+                let owner = f
+                    .declared_in
+                    .and_then(|d| self.app_id(self.engine.program.objects[d as usize].app));
+                let column = match (owner, table_app) {
+                    (Some(o), Some(t)) if !eq_ci(o, t) => format!("{}${o}", sql_name(&f.name)),
+                    _ => sql_name(&f.name),
+                };
+                RequestField {
+                    id: f.id,
+                    name: f.name.clone(),
+                    column,
+                    kind: field_kind(&f.ty),
+                }
+            })
+            .collect()
+    }
+
     fn load(&self, object: u32, t: &TableDef) -> Option<Rows> {
         let program = &self.engine.program;
         let obj = &program.objects[object as usize];
@@ -543,11 +600,16 @@ impl TestBacking {
             record(Outcome::Refused(Refusal::Platform));
             return None;
         }
-        let request = TableRequest {
+        let mut request = TableRequest {
             name: obj.name.clone(),
             app_id: self.app_id(obj.app).map(str::to_string),
             per_company: t.per_company,
+            ..Default::default()
         };
+        if self.data.provider.wants_fields() {
+            request.table_id = obj.id;
+            request.fields = self.request_fields(obj);
+        }
         let rows = match self.data.read(&request) {
             Ok(r) => r,
             Err(TableError::Absent) => {

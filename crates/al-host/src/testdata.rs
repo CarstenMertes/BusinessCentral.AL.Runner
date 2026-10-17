@@ -90,7 +90,7 @@ impl std::fmt::Display for Cell {
 }
 
 /// What the runtime asks for: one table of the restored company.
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Default)]
 pub struct TableRequest {
     /// The table's AL name (`G/L Entry`).
     pub name: String,
@@ -98,6 +98,48 @@ pub struct TableRequest {
     pub app_id: Option<String>,
     /// `DataPerCompany`: false reads the table without a company.
     pub per_company: bool,
+    /// The table's AL object id. Filled only for a provider that asks for it ([`TableProvider::wants_fields`]).
+    pub table_id: Option<u32>,
+    /// The fields of the compiled table, with the kind of value each holds. Filled only for a provider that
+    /// asks for them: a source that stores its values as text (a configuration package) needs the schema to type them.
+    pub fields: Vec<RequestField>,
+}
+
+/// One field of the compiled table a provider may need to type its values.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct RequestField {
+    /// The field number.
+    pub id: u32,
+    /// The AL name of the field (`Due Date Calculation`).
+    pub name: String,
+    /// The column name the runtime expects for this field in [`TableRows::columns`].
+    pub column: String,
+    pub kind: FieldKind,
+}
+
+/// The kind of value a field holds, as far as a source with untyped values needs it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum FieldKind {
+    Text,
+    Code,
+    Boolean,
+    Integer,
+    BigInteger,
+    Byte,
+    /// An Option or Enum: the ordinal.
+    Ordinal,
+    Decimal,
+    Date,
+    Time,
+    DateTime,
+    /// Milliseconds.
+    Duration,
+    Guid,
+    DateFormula,
+    /// A Blob, Media or MediaSet.
+    Binary,
+    /// Anything else; only a blank value can be given.
+    Other,
 }
 
 /// The rows of one table, columns named as the database names them: a base column by its SQL
@@ -153,6 +195,11 @@ pub trait TableProvider: Send + Sync {
     /// the same text means the same rows. `None`: the source cannot say, and nothing is kept for it.
     fn identity(&self) -> Option<String> {
         None
+    }
+    /// Whether [`TableRequest::table_id`] and [`TableRequest::fields`] are filled for this provider. A backup knows
+    /// its columns' types and says no; a configuration package stores text and says yes. Additive.
+    fn wants_fields(&self) -> bool {
+        false
     }
     /// The number sequences of the restored database (a company's own and the global ones). Additive: a
     /// provider without any answers none.
@@ -417,6 +464,7 @@ mod tests {
             name: n.into(),
             app_id: None,
             per_company: true,
+            ..Default::default()
         };
         std::thread::scope(|s| {
             let hs: Vec<_> = (0..8)

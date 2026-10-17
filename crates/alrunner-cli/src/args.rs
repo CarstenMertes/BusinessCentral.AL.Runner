@@ -96,6 +96,15 @@ pub struct TestArgs {
     pub test_data_path: Option<PathBuf>,
     /// `--test-data-company NAME`: which company of the backup (default: the demo company).
     pub test_data_company: Option<String>,
+    /// `--company-data package` (or `--package PATH`): build the company from the artifact's RapidStart package instead of
+    /// restoring the backup's company, as Microsoft's Legacy test lane does (Company-Initialize, then the package).
+    pub company_package: bool,
+    /// `--package PATH`: the `.rapidstart` file; else the one of the artifact that holds the backup.
+    pub package_path: Option<PathBuf>,
+    /// `--disabled-tests DIR`: BCApps' `src/DisabledTests` (or one app's folder); tests Microsoft turns off are marked.
+    pub disabled_tests_dir: Option<PathBuf>,
+    /// `--parity`: skip the tests Microsoft turns off instead of running and marking them.
+    pub parity: bool,
 }
 
 impl TestArgs {
@@ -107,7 +116,7 @@ impl TestArgs {
     /// Whether the command line asked for test data (a backup or `--test-data`), so a failure to
     /// find it stops the run instead of turning the data off with a message.
     pub fn test_data_asked_for(&self) -> bool {
-        self.test_data || self.test_data_path.is_some()
+        self.test_data || self.test_data_path.is_some() || self.company_package
     }
 }
 
@@ -271,6 +280,16 @@ TEST DATA
                          company, else 'CRONUS International Ltd.'.
     The summary says what was loaded and every exclusion: tables the runtime could not rebuild,
     tables the reader failed on (with its text), and columns left out.
+    --company-data bak|package  `bak` (default) restores the CRONUS company of the backup. `package`
+                         builds the company the way Microsoft's Legacy test lane does: a fresh
+                         company, Company-Initialize, then the RapidStart package of the artifact
+                         (platform/ConfigurationPackages/*.rapidstart, the DemoTool's Extended data).
+                         Opt-in; nothing else changes.
+    --package PATH       The .rapidstart file to use (implies --company-data package).
+    --disabled-tests DIR  Microsoft's list of disabled tests: BCApps' src/DisabledTests, or one
+                         app's folder (every *.json below DIR is read). Those tests still run and
+                         the summary and the JUnit file mark them (property disabled_by_microsoft).
+    --parity             With --disabled-tests: do not run those tests.
 
 OTHER
     --environment ENV    The server Environment Information describes: `saas` (default; the probed
@@ -580,6 +599,20 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 a.test_timeout_secs = Some(number(&flag, &v)? as u64);
             }
             "--test-data-company" => a.test_data_company = Some(text()?),
+            "--company-data" => {
+                let v = text()?;
+                match v.as_str() {
+                    "bak" | "backup" => a.company_package = false,
+                    "package" | "rapidstart" => a.company_package = true,
+                    other => return Err(format!("--company-data takes `bak` or `package`, not `{other}`")),
+                }
+            }
+            "--package" => {
+                a.package_path = Some(text()?.into());
+                a.company_package = true;
+            }
+            "--disabled-tests" => a.disabled_tests_dir = Some(text()?.into()),
+            "--parity" => a.parity = true,
             "--test-data-normalize-company" => {
                 return Err(format!(
                     "{flag} is not available: AL Runner v2's company normalization rules are not ported (ADR-020)"
@@ -610,6 +643,12 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     }
     if a.no_test_data && a.test_data_company.is_some() {
         return Err("--test-data-company cannot be combined with --no-test-data".into());
+    }
+    if a.parity && a.disabled_tests_dir.is_none() {
+        return Err("--parity needs --disabled-tests DIR".into());
+    }
+    if a.company_package && a.no_test_data {
+        return Err("--company-data package cannot be combined with --no-test-data".into());
     }
     if a.verbose && a.quiet {
         return Err("--verbose and --quiet cannot be combined".into());
@@ -668,6 +707,24 @@ mod tests {
         assert!(!test_args("test A").rebuild_compile_cache);
         assert!(p("test A --rebuild-compile-cache --no-compile-cache").is_err());
         assert!(p("test A --rebuild-compile-cache --require-compile-cache").is_err());
+    }
+
+    #[test]
+    fn company_data_and_parity_flags_parse_and_check_each_other() {
+        assert!(!test_args("test A").company_package);
+        assert!(test_args("test A --company-data package").company_package);
+        assert!(!test_args("test A --company-data bak").company_package);
+        let a = test_args("test A --package p.rapidstart");
+        assert!(a.company_package && a.package_path == Some(PathBuf::from("p.rapidstart")));
+        assert!(p("test A --company-data tape").unwrap_err().contains("tape"));
+        assert!(p("test A --company-data package --no-test-data").is_err());
+        let a = test_args("test A --disabled-tests d --parity");
+        assert!(a.parity && a.disabled_tests_dir == Some(PathBuf::from("d")));
+        assert!(p("test A --parity").unwrap_err().contains("--disabled-tests"));
+        assert!(test_args("test A --company-data package").test_data_asked_for());
+        for needle in ["--company-data", "--package", "--disabled-tests", "--parity"] {
+            assert!(HELP.contains(needle), "{needle}");
+        }
     }
 
     #[test]

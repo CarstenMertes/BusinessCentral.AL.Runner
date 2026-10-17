@@ -1518,12 +1518,10 @@ impl Session {
                 }
                 // A Modify that changes no field leaves the row version as it is: Microsoft's tests Modify a record after a refresh report
                 // modified its row without a change (Create Prod. Order Lines.Copy) and pass, which a bumped version would make a
-                // stale write (assumption modify-without-change-keeps-row-version).
+                // stale write (record/lt-priority-assumptions/PriorityAssumptions.al:143-244, real BC 29: after a Modify that changes nothing and a Commit, the
+                // other variable's Modify of a changed field is accepted, while a Modify that changed a field makes it fail with DB:RecordChanged).
                 let old_version = match stored_row.as_deref() {
                     Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::ModifyWithoutChangeKeepsRowVersion,
-                        );
                         if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
                             rec.borrow_mut().fields[i] = old[i].clone();
                         }

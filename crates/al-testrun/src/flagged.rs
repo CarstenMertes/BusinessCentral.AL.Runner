@@ -141,7 +141,7 @@ mod tests {
 
     #[test]
     fn rank_counts_flagged_passes_and_other_tests_and_orders_by_flagged() {
-        let a = [Assumption::ClearAllKeepsTemporaryRows, Assumption::NextWholeDecimal];
+        let a = [Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal];
         let b = [Assumption::NextWholeDecimal];
         let c: [Assumption; 0] = [];
         let rows = rank([(true, &a[..]), (true, &b[..]), (false, &b[..]), (true, &c[..])]);
@@ -152,11 +152,11 @@ mod tests {
         );
         assert_eq!(
             (rows[1].assumption, rows[1].flagged, rows[1].other),
-            (Assumption::ClearAllKeepsTemporaryRows, 1, 0)
+            (Assumption::QueryClosedAfterLastRow, 1, 0)
         );
         let text = render_top(&rows, 1);
         assert!(
-            text.contains("next-whole-decimal") && !text.contains("clear-all-keeps-temporary-rows"),
+            text.contains("next-whole-decimal") && !text.contains("query-closed-after-last-row"),
             "{text}"
         );
         assert!(text.contains("... 1 more"), "{text}");
@@ -166,8 +166,8 @@ mod tests {
     #[test]
     fn id_list_joins_the_ids() {
         assert_eq!(
-            id_list(&[Assumption::ClearAllKeepsTemporaryRows, Assumption::NextWholeDecimal]),
-            "clear-all-keeps-temporary-rows,next-whole-decimal"
+            id_list(&[Assumption::QueryClosedAfterLastRow, Assumption::NextWholeDecimal]),
+            "query-closed-after-last-row,next-whole-decimal"
         );
     }
 
@@ -175,16 +175,16 @@ mod tests {
     fn the_counts_of_a_run_are_read_back() {
         let dir = std::env::temp_dir().join(format!("al-flagged-{}", std::process::id()));
         let rows = [Row {
-            assumption: Assumption::ClearAllKeepsTemporaryRows,
+            assumption: Assumption::QueryClosedAfterLastRow,
             flagged: 3,
             other: 1,
         }];
         save_hits(&dir, &rows);
         let loaded = load_hits(&dir);
-        assert_eq!(loaded.get("clear-all-keeps-temporary-rows"), Some(&(3, 1)));
+        assert_eq!(loaded.get("query-closed-after-last-row"), Some(&(3, 1)));
         let text = list(&dir);
         assert!(
-            text.contains("clear-all-keeps-temporary-rows  (3 flagged passes, 1 other tests)"),
+            text.contains("query-closed-after-last-row  (3 flagged passes, 1 other tests)"),
             "{text}"
         );
         assert!(text.contains("next-whole-decimal  (not hit in the last run)"), "{text}");

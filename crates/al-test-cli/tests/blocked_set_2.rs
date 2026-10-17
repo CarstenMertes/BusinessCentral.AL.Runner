@@ -45,7 +45,7 @@ fn all_pass(tests: &str) {
 }
 
 // Sales Line SetLoadFieldsForInvDiscoundCalculation passes the FlowField "Reserved Quantity" to SetLoadFields, in about
-// 2,350 Microsoft tests, and real BC runs it. The FlowField is not a loaded column, so it adds nothing to the request.
+// 2,350 Microsoft tests, and real BC runs it (record/lt-priority-assumptions/PriorityAssumptions.al:282-312 pins that SetLoadFields accepts it).
 #[test]
 fn set_load_fields_accepts_a_flow_field() {
     all_pass(

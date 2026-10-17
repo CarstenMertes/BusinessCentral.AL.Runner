@@ -237,8 +237,11 @@ fn cancel_stops_the_run_after_the_current_test_and_reports_what_ran() {
     // The CPU limit ends the first test after 2 s; the second never starts.
     let mut s = Server::start(&["--no-download", "--no-test-data", "--test-timeout", "2"]);
     s.line();
-    s.send(json!({"command": "runTests", "sourcePaths": [a]}));
-    std::thread::sleep(std::time::Duration::from_millis(700));
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "announceStart": true}));
+    // A cancel that arrives while the app still compiles ends the run with no test at all (also correct, but not what
+    // this test is about), so wait until the first test starts.
+    let started = s.line();
+    assert_eq!(started["type"], "started", "{started}");
     s.send(json!({"command": "cancel"}));
     assert_eq!(s.line(), json!({"type": "ack", "command": "cancel", "noop": false}));
     let lines = s.until_summary();
@@ -626,8 +629,11 @@ fn execute_and_runtests_share_the_server() {
 #[test]
 fn cancel_stops_an_execute_that_does_not_end() {
     let mut s = started();
-    s.send(json!({"command": "execute", "code": "Message('start'); while true do ;"}));
-    std::thread::sleep(std::time::Duration::from_millis(600));
+    s.send(json!({"command": "execute", "code": "Message('start'); while true do ;", "announceStart": true}));
+    // A cancel during the compile gives cancelled, exit code 6 and no error: also correct, but not what this test is
+    // about. Wait until the code starts to run.
+    let started = s.line();
+    assert_eq!(started["type"], "started", "{started}");
     s.send(json!({"command": "cancel"}));
     // The acknowledgement comes at once, and then the answer of the stopped run.
     let ack = s.line();
@@ -770,6 +776,23 @@ fn run_tests_puts_the_capture_on_the_test_line() {
     let lines = s.until_summary();
     let t = lines.iter().find(|l| l["type"] == "test").unwrap();
     assert!(t.get("capturedValues").is_none() && t.get("loops").is_none(), "{t}");
+    s.send(json!({"command": "shutdown"}));
+    s.line();
+}
+
+#[test]
+fn announce_start_writes_one_started_line_before_the_first_test() {
+    let d = tempfile::tempdir().unwrap();
+    let a = app(d.path(), "mixed", MIXED);
+    let mut s = started();
+    // Without the field no `started` line is written.
+    s.send(json!({"command": "runTests", "sourcePaths": [a]}));
+    let lines = s.until_summary();
+    assert!(lines.iter().all(|l| l["type"] != "started"), "{lines:?}");
+    s.send(json!({"command": "runTests", "sourcePaths": [a], "announceStart": true}));
+    let lines = s.until_summary();
+    let started: Vec<usize> = (0..lines.len()).filter(|&i| lines[i]["type"] == "started").collect();
+    assert_eq!(started, vec![0], "{lines:?}");
     s.send(json!({"command": "shutdown"}));
     s.line();
 }

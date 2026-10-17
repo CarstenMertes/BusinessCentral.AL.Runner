@@ -52,6 +52,8 @@ struct Selection {
     filters: Vec<String>,
     exact: Vec<String>,
     excludes: Vec<String>,
+    /// `--parity`: the tests Microsoft turns off are not picked.
+    parity: Option<Arc<al_testrun::disabled::DisabledTests>>,
 }
 
 /// `Codeunit<ID>.<Method>`, the name AL Runner v2 reports and accepts.
@@ -62,7 +64,7 @@ fn qualified(codeunit: u32, test: &str) -> String {
 impl Selection {
     /// Whether the run is narrowed by anything.
     fn active(&self) -> bool {
-        !self.includes_none() || !self.excludes.is_empty()
+        !self.includes_none() || !self.excludes.is_empty() || self.parity.is_some()
     }
 
     fn includes_none(&self) -> bool {
@@ -88,8 +90,67 @@ impl Selection {
                 .exact
                 .iter()
                 .any(|e| e.eq_ignore_ascii_case(test) || e.eq_ignore_ascii_case(&qualified(codeunit, test)));
-        included && !self.excludes.iter().any(|x| Self::matches(x, codeunit, test))
+        included
+            && !self.excludes.iter().any(|x| Self::matches(x, codeunit, test))
+            && !self.parity.as_ref().is_some_and(|d| d.is_disabled(codeunit, test))
     }
+}
+
+/// `--disabled-tests DIR`: every `*.json` below DIR, as Microsoft's list of disabled tests.
+fn load_disabled(a: &TestArgs) -> Result<Option<Arc<al_testrun::disabled::DisabledTests>>, String> {
+    let Some(dir) = &a.disabled_tests_dir else {
+        return Ok(None);
+    };
+    let mut d = al_testrun::disabled::DisabledTests::default();
+    let mut stack = vec![dir.clone()];
+    let mut seen_any = false;
+    while let Some(p) = stack.pop() {
+        let meta = std::fs::metadata(&p).map_err(|e| format!("--disabled-tests {}: {e}", p.display()))?;
+        if meta.is_dir() {
+            let mut kids: Vec<PathBuf> = std::fs::read_dir(&p)
+                .map_err(|e| format!("--disabled-tests {}: {e}", p.display()))?
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .collect();
+            kids.sort();
+            stack.extend(kids.into_iter().rev());
+        } else if p.extension().is_some_and(|e| e.eq_ignore_ascii_case("json")) {
+            seen_any = true;
+            let text = std::fs::read_to_string(&p).map_err(|e| format!("--disabled-tests {}: {e}", p.display()))?;
+            d.add_file(&text)
+                .map_err(|e| format!("--disabled-tests {}: {e}", p.display()))?;
+        }
+    }
+    if !seen_any {
+        return Err(format!("--disabled-tests {}: no *.json file below it", dir.display()));
+    }
+    Ok(Some(Arc::new(d)))
+}
+
+/// The line about the tests Microsoft turns off: how they came out, or how many `--parity` left out.
+fn disabled_line(
+    d: &al_testrun::disabled::DisabledTests,
+    results: &[&TestResult],
+    found: &[Found],
+    parity: bool,
+) -> String {
+    let list = format!("{} entries of {} files", d.entries(), d.files());
+    if parity {
+        let skipped: usize = found
+            .iter()
+            .map(|f| f.tests.iter().filter(|t| d.is_disabled(f.id, t)).count())
+            .sum();
+        return format!("Disabled by Microsoft: {skipped} tests not run (--parity; {list})");
+    }
+    let (mut n, mut pass, mut fail, mut not_run) = (0usize, 0usize, 0usize, 0usize);
+    for r in results.iter().filter(|r| d.is_disabled(r.codeunit, &r.test)) {
+        n += 1;
+        match r.outcome {
+            Outcome::Pass => pass += 1,
+            Outcome::Fail(_) => fail += 1,
+            Outcome::NotRun(_) => not_run += 1,
+        }
+    }
+    format!("Disabled by Microsoft: {n} of the tests run ({pass} passed, {fail} failed, {not_run} not run; {list})")
 }
 
 /// How many worker threads a phase uses: the variable's value, else one per core.
@@ -173,6 +234,47 @@ fn open_backup_fresh(a: &TestArgs, path: PathBuf) -> Result<(TestData, PathBuf),
     Ok((TestData::new(Arc::new(provider)), path))
 }
 
+/// `--company-data package`: the artifact's RapidStart package as the company data (the Legacy lane's company: a fresh
+/// company, Company-Initialize, then the package). `bak` is the located backup, whose artifact folder holds the package.
+fn open_package(a: &TestArgs, bak: Option<&Path>) -> Result<(TestData, PathBuf), String> {
+    let path = match &a.package_path {
+        Some(p) => p.clone(),
+        None => {
+            let dir = bak
+                .and_then(|b| b.parent())
+                .and_then(|b| b.parent())
+                .map(|root| root.join("platform").join("ConfigurationPackages"))
+                .ok_or("no artifact folder to find the package in; name it with --package PATH")?;
+            let mut found: Vec<PathBuf> = std::fs::read_dir(&dir)
+                .map_err(|e| format!("{}: {e}; name the package with --package PATH", dir.display()))?
+                .filter_map(|e| e.ok().map(|e| e.path()))
+                .filter(|p| p.extension().is_some_and(|e| e.eq_ignore_ascii_case("rapidstart")))
+                .collect();
+            found.sort();
+            // The Extended English package is the DemoTool's Legacy data; any other is a fallback.
+            found
+                .iter()
+                .find(|p| p.to_string_lossy().to_ascii_uppercase().contains("ENU.EXTENDED"))
+                .or(found.first())
+                .cloned()
+                .ok_or_else(|| {
+                    format!(
+                        "no *.rapidstart file in {}; name one with --package PATH",
+                        dir.display()
+                    )
+                })?
+        }
+    };
+    let bytes = std::fs::read(&path).map_err(|e| format!("--package {}: {e}", path.display()))?;
+    let name = path
+        .file_name()
+        .map_or_else(String::new, |n| n.to_string_lossy().into_owned());
+    let company = a.test_data_company.as_deref().unwrap_or("CRONUS International Ltd.");
+    let provider = al_rapidstart::PackageProvider::from_bytes(&bytes, &name, company)
+        .map_err(|e| format!("--package {}: {e}", path.display()))?;
+    Ok((TestData::new(Arc::new(provider)), path))
+}
+
 /// What the test data of a run came to.
 struct DataChoice {
     data: Option<(TestData, PathBuf)>,
@@ -191,7 +293,17 @@ fn choose_test_data(
     major: u16,
     minor: Option<u16>,
 ) -> Result<DataChoice, String> {
-    let asked = a.test_data_asked_for();
+    // A named package needs no backup at all.
+    if a.company_package && a.package_path.is_some() {
+        return match open_package(a, None) {
+            Ok(d) => Ok(DataChoice {
+                data: Some(d),
+                notes: Vec::new(),
+            }),
+            Err(e) => Err(format!("--company-data package: {e}")),
+        };
+    }
+    let asked = a.test_data_asked_for() || a.company_package;
     let fail = |why: String| -> Result<DataChoice, String> {
         if asked {
             Err(format!("--test-data: {why}"))
@@ -246,6 +358,15 @@ fn choose_test_data(
             }
         }
     };
+    if a.company_package {
+        return match open_package(a, Some(&path)) {
+            Ok(d) => Ok(DataChoice {
+                data: Some(d),
+                notes: std::mem::take(&mut notes),
+            }),
+            Err(e) => Err(format!("--company-data package: {e}")),
+        };
+    }
     match open_backup(a, path) {
         Ok(d) => Ok(DataChoice {
             data: Some(d),
@@ -312,6 +433,8 @@ pub struct WarmCtx {
     /// Called for each selected test as it finishes.
     /// With a capture asked for, the second argument is its JSON for that test (`capture::json`).
     pub on_test: Option<OnTest>,
+    /// Called just before each selected test starts to run.
+    pub on_start: Option<al_testrun::events::OnStart>,
     /// Set from outside: the run stops after the current test.
     pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// What the last run came to.
@@ -422,10 +545,12 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             }
         }
     }
+    let disabled = load_disabled(a)?;
     let selection = Selection {
         codeunits: a.codeunits.clone(),
         exact: a.exact.clone(),
         excludes: a.excludes.clone(),
+        parity: a.parity.then(|| disabled.clone()).flatten(),
         // `--explain NAME --codeunit ID` explains the test of that one codeunit; the name alone
         // selects every codeunit that has a test of that name.
         filters: a
@@ -754,6 +879,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                         }
                     }) as Arc<dyn Fn(al_testrun::events::TestEvent) + Send + Sync>
                 }),
+                on_start: w.on_start.clone(),
                 cancel: w.cancel.clone(),
             }
         }
@@ -1131,7 +1257,9 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     if let Some(path) = &a.junit {
         write_file(
             path,
-            &output::junit(&results, bc_build.as_deref(), total_time.as_secs_f64()),
+            &output::junit(&results, bc_build.as_deref(), total_time.as_secs_f64(), &|cu, t| {
+                disabled.as_ref().is_some_and(|d| d.is_disabled(cu, t))
+            }),
         )?;
     }
 
@@ -1152,6 +1280,9 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         }
     }
     say!("{}", output::summary_line(&counts, test_data.is_some()));
+    if let Some(d) = &disabled {
+        say!("{}", disabled_line(d, &results, &found, a.parity));
+    }
     if let Some(w) = &dotnet_warning {
         say!("{w}");
     }

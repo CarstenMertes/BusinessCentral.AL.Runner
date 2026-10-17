@@ -43,12 +43,16 @@ pub struct TestEvent {
 }
 
 type OnTest = Arc<dyn Fn(TestEvent) + Send + Sync>;
+/// What is told when a test is about to run: codeunit id and test name.
+pub type OnStart = Arc<dyn Fn(u32, &str) + Send + Sync>;
 
 /// The callbacks of a run.
 #[derive(Clone, Default)]
 pub struct Hooks {
     /// Called on the thread that ran the test, as soon as its outcome is known.
     pub on_test: Option<OnTest>,
+    /// Called on the worker thread just before a test starts to run (after the cancel check): codeunit id and test name.
+    pub on_start: Option<OnStart>,
     /// Set from outside: no test starts after it is set; the running one finishes.
     pub cancel: Option<Arc<AtomicBool>>,
 }
@@ -57,6 +61,7 @@ impl std::fmt::Debug for Hooks {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("Hooks")
             .field("on_test", &self.on_test.is_some())
+            .field("on_start", &self.on_start.is_some())
             .field("cancel", &self.cancel.is_some())
             .finish()
     }
@@ -86,6 +91,14 @@ pub(crate) fn cancelled() -> bool {
 /// The flag that stops the run (for a scratch run, whose one routine is stopped while it runs).
 pub(crate) fn cancel_flag() -> Option<Arc<AtomicBool>> {
     CURRENT.with(|c| c.borrow().0.cancel.clone())
+}
+
+/// Tells the run's hook that a test is about to run.
+pub(crate) fn starting(codeunit: u32, test: &str) {
+    let hook = CURRENT.with(|c| c.borrow().0.on_start.clone());
+    if let Some(h) = hook {
+        h(codeunit, test);
+    }
 }
 
 pub(crate) fn wants_events() -> bool {

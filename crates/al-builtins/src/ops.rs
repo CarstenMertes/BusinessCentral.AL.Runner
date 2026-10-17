@@ -1034,7 +1034,12 @@ pub fn hyphen_filter_order(a: &Value, b: &Value) -> Option<Ordering> {
 /// CodeDigitsCompare.al:P182b_SecondaryKeyOrder_Mixed, _DigitsAndEmpty; both are Code fields). Only a hyphen at the start of a text
 /// of letters, digits and that hyphen is pinned, and only for Code; a Text key keeps [`text_key_order`] (docs/probes-needed.md).
 pub fn code_key_order(a: &str, b: &str) -> Ordering {
-    let hyphen_shape = |t: &str| t.strip_prefix('-').unwrap_or(t).bytes().all(|c| c.is_ascii_alphanumeric());
+    let hyphen_shape = |t: &str| {
+        t.strip_prefix('-')
+            .unwrap_or(t)
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric())
+    };
     if (a.starts_with('-') || b.starts_with('-')) && hyphen_shape(a) && hyphen_shape(b) {
         let (sa, sb) = (a.strip_prefix('-').unwrap_or(a), b.strip_prefix('-').unwrap_or(b));
         let first = text_key_order(sa, sb);

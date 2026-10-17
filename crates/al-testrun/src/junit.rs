@@ -31,6 +31,8 @@ pub struct Case<'a> {
     pub assumptions: &'a [Assumption],
     /// The failure body of the Runner dialect: the frames of the call stack, one per line, or empty for none.
     pub stack: String,
+    /// Microsoft turns this test off in its own CI (BCApps `src/DisabledTests`). Written as a property in the Runner dialect.
+    pub disabled: bool,
 }
 
 /// The tests of one test codeunit.
@@ -104,13 +106,20 @@ pub fn write(suites: &[Suite<'_>], dialect: Dialect, bc_build: Option<&str>, wal
             );
             // The assumptions a test ran through are a property of the test case, also of a pass: a flagged pass is
             // still a pass for the tools that read this file.
-            let props = if c.assumptions.is_empty() {
+            let mut prop_list = String::new();
+            if !c.assumptions.is_empty() {
+                prop_list.push_str(&format!(
+                    "<property name=\"assumptions\" value=\"{}\" />",
+                    esc(&crate::flagged::id_list(c.assumptions))
+                ));
+            }
+            if c.disabled && dialect == Dialect::Runner {
+                prop_list.push_str("<property name=\"disabled_by_microsoft\" value=\"1\" />");
+            }
+            let props = if prop_list.is_empty() {
                 String::new()
             } else {
-                format!(
-                    "<properties><property name=\"assumptions\" value=\"{}\" /></properties>",
-                    esc(&crate::flagged::id_list(c.assumptions))
-                )
+                format!("<properties>{prop_list}</properties>")
             };
             match (dialect, c.outcome) {
                 (_, Outcome::Pass) if props.is_empty() => s.push_str(&format!("{head} />\n")),
@@ -128,7 +137,13 @@ pub fn write(suites: &[Suite<'_>], dialect: Dialect, bc_build: Option<&str>, wal
                     esc(&c.stack)
                 )),
                 (_, Outcome::NotRun(m)) => {
-                    s.push_str(&format!("{head}><skipped message=\"{}\" /></testcase>\n", esc(m)))
+                    // A test that was not run has no assumptions; only the disabled mark can be a property of it.
+                    let np = if c.disabled && dialect == Dialect::Runner {
+                        "<properties><property name=\"disabled_by_microsoft\" value=\"1\" /></properties>"
+                    } else {
+                        ""
+                    };
+                    s.push_str(&format!("{head}>{np}<skipped message=\"{}\" /></testcase>\n", esc(m)))
                 }
             }
         }
@@ -387,6 +402,7 @@ mod tests {
                         } else {
                             texts[(k + 2 * i) % texts.len()].to_string()
                         },
+                        disabled: false,
                     })
                     .collect(),
             });

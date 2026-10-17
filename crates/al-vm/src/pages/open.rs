@@ -846,9 +846,19 @@ impl Session {
             }
             stamped.push((pos, v.clone()));
         }
-        for (pos, v) in stamped {
-            rec.borrow_mut().fields[pos] = v.clone();
-            if validate {
+        // Every value is on the record before the first validation runs: the table relation of a link field filters on
+        // Document Type of the same line (Service Item Line: "Document No." is field 1, "Document Type" field 43).
+        // Assumed, see Assumption::NewLineStampsAllBeforeValidating.
+        for (pos, v) in &stamped {
+            rec.borrow_mut().fields[*pos] = v.clone();
+        }
+        if validate {
+            if stamped.len() > 1 {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::NewLineStampsAllBeforeValidating,
+                );
+            }
+            for (pos, v) in stamped {
                 self.ret_used = false;
                 self.record_op(RecordOp::Validate, &rec, &mut [Value::Integer(pos as i32), v])?;
             }

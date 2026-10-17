@@ -116,6 +116,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "al-rapidstart"
+version = "3.0.0-alpha.1"
+dependencies = [
+ "al-host",
+ "flate2",
+ "quick-xml",
+]
+
+[[package]]
 name = "al-sema"
 version = "3.0.0-alpha.1"
 dependencies = [
@@ -225,6 +234,7 @@ dependencies = [
  "al-bcdb-std",
  "al-deps",
  "al-host",
+ "al-rapidstart",
  "al-sema",
  "al-testrun",
  "al-version",

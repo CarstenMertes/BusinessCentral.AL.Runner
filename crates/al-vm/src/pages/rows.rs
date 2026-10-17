@@ -1431,8 +1431,8 @@ impl Session {
                 // SetTableView; its handler then reads Rec."Line No."). Not pinned: Microsoft's Tests-Marketing Marketing Profiling.
                 // Assumption typed-handler-keeps-rec-after-settableview.
                 let table = r.borrow().table as usize;
-                let blank = format!("{:?}", self.initial_fields(table));
-                let view_only = st.borrow().set_view && format!("{:?}", r.borrow().fields) == blank;
+                let blank = self.initial_fields(table);
+                let view_only = st.borrow().set_view && Value::all_identical(&r.borrow().fields, &blank);
                 if view_only {
                     al_builtins::assumptions::assume(
                         al_builtins::assumptions::Assumption::TypedHandlerKeepsRecAfterSetTableView,
@@ -1483,7 +1483,7 @@ impl Session {
                         && page_rec.borrow().fields.len() == r.borrow().fields.len()
                     {
                         let fields = page_rec.borrow().fields.clone();
-                        if format!("{fields:?}") != format!("{:?}", r.borrow().fields) {
+                        if !Value::all_identical(&fields, &r.borrow().fields) {
                             al_builtins::assumptions::assume(
                                 al_builtins::assumptions::Assumption::TypedHandlerLookupOkHandsBackRec,
                             );

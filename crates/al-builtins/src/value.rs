@@ -1105,6 +1105,78 @@ pub enum LibraryValue {
 }
 
 impl Value {
+    /// Exact structural identity: the same variant with the same contents, down to a decimal's scale and sign, a
+    /// list's mutation count and every flag of a Blob buffer. This is NOT AL equality (`=` coerces, ignores case
+    /// and compares numbers by value); use it only to ask "is this exactly what it was". Handle-like variants
+    /// (record, codeunit, library, test page, query, DotNet) are compared by what their `Debug` prints, as the
+    /// page rows did before this function existed.
+    pub fn identical(&self, other: &Value) -> bool {
+        fn all(a: &[Value], b: &[Value]) -> bool {
+            a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.identical(y))
+        }
+        use Value::*;
+        match (self, other) {
+            (Null, Null) => true,
+            (Boolean(a), Boolean(b)) => a == b,
+            (Integer(a), Integer(b)) => a == b,
+            (BigInteger(a), BigInteger(b)) => a == b,
+            (Decimal(a), Decimal(b)) => a.serialize() == b.serialize(),
+            (Byte(a), Byte(b)) => a == b,
+            (Char(a), Char(b)) => a == b,
+            (Text(a), Text(b)) | (Code(a), Code(b)) => a.as_str() == b.as_str(),
+            (Date(a, f), Date(b, g)) => a == b && f == g,
+            (Time(a), Time(b)) | (DateTime(a), DateTime(b)) | (Duration(a), Duration(b)) => a == b,
+            (Guid(a), Guid(b)) => a == b,
+            (DateFormula(a), DateFormula(b)) => a == b,
+            (Option(a, n), Option(b, m)) => a == b && n[..] == m[..],
+            (Enum(a, x), Enum(b, y)) => a == b && x == y,
+            (List(a), List(b)) => {
+                let (a, b) = (a.borrow(), b.borrow());
+                a.version == b.version && all(&a, &b)
+            }
+            (Array(a), Array(b)) => all(&a.borrow(), &b.borrow()),
+            (Dictionary(a), Dictionary(b)) => {
+                let (a, b) = (a.borrow(), b.borrow());
+                a.len() == b.len()
+                    && a.iter()
+                        .zip(b.iter())
+                        .all(|((k, v), (l, w))| k.identical(l) && v.identical(w))
+            }
+            (Blob(a), Blob(b)) => {
+                let (a, b) = (a.borrow(), b.borrow());
+                a.bytes == b.bytes
+                    && a.write_pos == b.write_pos
+                    && a.loaded == b.loaded
+                    && a.fetched == b.fetched
+                    && a.refetch == b.refetch
+                    && a.persisted == b.persisted
+                    && a.written == b.written
+                    && a.render_pending == b.render_pending
+            }
+            (Codeunit(_), Codeunit(_))
+            | (Library(..), Library(..))
+            | (Record(_), Record(_))
+            | (TestPage(_), TestPage(_))
+            | (TestControl(_), TestControl(_))
+            | (Query(_), Query(_))
+            | (DotNet(_), DotNet(_)) => {
+                struct Shown<'a>(&'a Value);
+                impl std::fmt::Display for Shown<'_> {
+                    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+                        std::fmt::Debug::fmt(self.0, f)
+                    }
+                }
+                Shown(self).to_string() == Shown(other).to_string()
+            }
+            _ => false,
+        }
+    }
+
+    /// `identical` over two rows of fields.
+    pub fn all_identical(a: &[Value], b: &[Value]) -> bool {
+        a.len() == b.len() && a.iter().zip(b).all(|(x, y)| x.identical(y))
+    }
+
     /// Whether the value holds no `Rc` handle: plain data (`Option` member lists and blob buffers
     /// are `Arc`s), so
     /// that rows made of such values can be read from several threads.
@@ -1339,5 +1411,84 @@ mod tests {
         assert!(plain.iter().all(Value::is_plain));
         assert!(!Value::List(Default::default()).is_plain());
         assert!(!Value::Library("X".into(), Default::default()).is_plain());
+    }
+}
+
+#[cfg(test)]
+mod identical_tests {
+    use super::*;
+    use rust_decimal::Decimal;
+
+    fn t(s: &str) -> Text {
+        Text::new(s.to_string())
+    }
+    type Text = crate::text::Txt;
+
+    #[test]
+    fn same_contents_are_identical_and_different_are_not() {
+        assert!(Value::Integer(1).identical(&Value::Integer(1)));
+        assert!(!Value::Integer(1).identical(&Value::Integer(2)));
+        assert!(!Value::Integer(1).identical(&Value::BigInteger(1)));
+        assert!(Value::Null.identical(&Value::Null));
+    }
+
+    #[test]
+    fn text_and_code_are_distinct() {
+        assert!(Value::Text(t("A")).identical(&Value::Text(t("A"))));
+        assert!(!Value::Text(t("A")).identical(&Value::Code(t("A"))));
+        assert!(!Value::Text(t("A")).identical(&Value::Text(t("a"))));
+    }
+
+    #[test]
+    fn enum_needs_id_and_ordinal() {
+        assert!(Value::Enum(5, 1).identical(&Value::Enum(5, 1)));
+        assert!(!Value::Enum(5, 1).identical(&Value::Enum(6, 1)));
+        assert!(!Value::Enum(5, 1).identical(&Value::Enum(5, 2)));
+    }
+
+    #[test]
+    fn decimals_by_exact_representation() {
+        let z = Decimal::ZERO;
+        let mut nz = Decimal::ZERO;
+        nz.set_sign_negative(true);
+        assert!(!Value::Decimal(z).identical(&Value::Decimal(nz)));
+        assert!(!Value::Decimal(Decimal::new(10, 1)).identical(&Value::Decimal(Decimal::new(100, 2))));
+        assert!(Value::Decimal(Decimal::new(10, 1)).identical(&Value::Decimal(Decimal::new(10, 1))));
+    }
+
+    #[test]
+    fn blob_bytes_and_flags_are_compared() {
+        let a = crate::stream::new_blob();
+        let b = crate::stream::new_blob();
+        assert!(Value::Blob(a.clone()).identical(&Value::Blob(b.clone())));
+        crate::stream::write_bytes(&a, b"xy");
+        assert!(!Value::Blob(a.clone()).identical(&Value::Blob(b.clone())));
+        crate::stream::write_bytes(&b, b"xy");
+        assert!(Value::Blob(a.clone()).identical(&Value::Blob(b.clone())));
+        b.borrow_mut().loaded = false;
+        assert!(!Value::Blob(a).identical(&Value::Blob(b)));
+    }
+
+    #[test]
+    fn collections_compare_element_wise() {
+        let l = |v: Vec<Value>| Value::List(Rc::new(RefCell::new(ListVec::from(v))));
+        assert!(l(vec![Value::Integer(1)]).identical(&l(vec![Value::Integer(1)])));
+        assert!(!l(vec![Value::Integer(1)]).identical(&l(vec![Value::Integer(2)])));
+        assert!(!l(vec![Value::Integer(1)]).identical(&l(vec![])));
+        let d = |v: Vec<(Value, Value)>| Value::Dictionary(Rc::new(RefCell::new(v)));
+        let kv = |a: i32, b: i32| (Value::Integer(a), Value::Integer(b));
+        assert!(d(vec![kv(1, 2)]).identical(&d(vec![kv(1, 2)])));
+        assert!(!d(vec![kv(1, 2)]).identical(&d(vec![kv(1, 3)])));
+        // A list nested in an array.
+        let a = |v: Vec<Value>| Value::Array(Rc::new(RefCell::new(v)));
+        assert!(a(vec![l(vec![Value::Byte(1)])]).identical(&a(vec![l(vec![Value::Byte(1)])])));
+        assert!(!a(vec![l(vec![Value::Byte(1)])]).identical(&a(vec![l(vec![Value::Byte(2)])])));
+    }
+
+    #[test]
+    fn rows_of_fields() {
+        let x = vec![Value::Integer(1), Value::Text(t("a"))];
+        assert!(Value::all_identical(&x, &x.clone()));
+        assert!(!Value::all_identical(&x, &x[..1]));
     }
 }

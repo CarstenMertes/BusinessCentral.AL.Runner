@@ -1058,3 +1058,41 @@ fn coverage_off_writes_nothing_and_a_selection_counts_only_the_selected_tests() 
     assert!(x.contains("<line number=\"27\" hits=\"1\""), "{x}");
     assert!(x.contains("<line number=\"13\" hits=\"0\""), "{x}");
 }
+
+#[test]
+fn server_url_is_checked_printed_and_taken_from_the_variable() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let a = app.to_str().unwrap();
+    let o = alrunner(&["test", a, "--no-download", "--server-url", "bc.example"]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(text(&o).contains("--server-url"), "{}", text(&o));
+    let o = alrunner(&[
+        "test",
+        a,
+        "--no-download",
+        "--server-url",
+        "https://bc.example:7048/BC1/",
+    ]);
+    assert!(
+        text(&o).contains("server address: https://bc.example:7048/BC1/ (--server-url)"),
+        "{}",
+        text(&o)
+    );
+    let o = alrunner(&["test", a, "--no-download"]);
+    assert!(
+        text(&o).contains("server address: http://localhost:8080/BC/ (default)"),
+        "{}",
+        text(&o)
+    );
+    let o = std::process::Command::new(env!("CARGO_BIN_EXE_alrunner"))
+        .env("ALRUNNER_SERVER_URL", "http://env.example/BC/")
+        .args(["test", a, "--no-download"])
+        .output()
+        .unwrap();
+    assert!(
+        text(&o).contains("server address: http://env.example/BC/ (ALRUNNER_SERVER_URL)"),
+        "{}",
+        text(&o)
+    );
+}

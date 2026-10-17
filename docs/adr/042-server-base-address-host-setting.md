@@ -1,6 +1,6 @@
 # ADR-042: The server base address behind `GetUrl` is a host setting
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-17, with the default `http://localhost:8080/BC/`)
 - Date: 2026-10-17
 
 ## Context
@@ -27,14 +27,13 @@ Owner decision 2026-10-17: "host setting + probe".
    anything else is a start-up error (exit 2).
 3. **Default.** `http://localhost:8080/BC/` when nothing is set. It is a stated host value, not a claim about BC: the
    run summary prints `server address: <value> (default)` or `(--server-url)`. A test whose result depends on the
-   host value is, like any other, free to differ from real BC only in that value. (Owner: confirm the default, or
-   choose "no default: `GetUrl` stays refused until set".)
+   host value is, like any other, free to differ from real BC only in that value.
 4. **What `GetUrl` builds from it.** Only the part that is pinned. Until the probe below lands, `GetUrl(ClientType::Web)`
    without company and without object returns the base address; every form with a company, an object, a record or
    another client type stays refused with the reason "not pinned (docs/probes-needed.md)". The base address is
    returned verbatim, so code that cuts the path (`OAuth2Impl.GetDefaultRedirectUrl`) works on a value the user chose.
-5. **Marked as an assumption.** The path through `GetUrl` registers an assumption id (hard rule 3 exception does not
-   apply: no Microsoft test pins the string), so a test that passes through it is a flagged pass.
+5. **Marked as an assumption.** The path through `GetUrl` is the registered assumption `geturl-web-base-address`
+   (`al-builtins/src/assumptions.rs`), so a test that passes through it is a flagged pass.
 
 ## Pinned and to be probed
 
@@ -60,3 +59,11 @@ Owner decision 2026-10-17: "host setting + probe".
 - Test: `GetUrl(ClientType::Web)` returns exactly the configured address; a form with a company is refused.
 - Test: the baseline-cache key differs for two addresses.
 - Probe topic in `docs/probes-needed.md` (row `GetUrl(ClientType::Web)`).
+
+## As built (2026-10-17)
+
+`al_host::Identity::server_base_url()` (default `DEFAULT_SERVER_URL`), `Host::with_server_url`, `check_server_url`.
+`alrunner test --server-url`, `ALRUNNER_SERVER_URL`, the `serverUrl` field of `runTests`/`execute` (set per request).
+`al-test-cli` has no flag (it is the corpus tool; it uses the default). The summary prints `server address: <url> (default|--server-url|ALRUNNER_SERVER_URL)`.
+The baseline cache key holds the address. `GetUrl#1` with `ClientType::Web` and one argument is built; every other form is refused.
+Tests: `al-host` (default, wrappers, check), `al-vm/tests/store/hostvalues.rs` (the value, the mark, the refusals), `alrunner-cli` (arguments, summary, serve request).

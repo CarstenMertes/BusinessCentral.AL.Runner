@@ -744,3 +744,48 @@ fn stop_session_is_false_for_an_unknown_id_and_refused_for_the_running_session()
     let r = run("procedure F(): Boolean begin exit(Session.StopSession(Database.SessionId())); end;");
     assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
 }
+
+// ADR-042 (assumption geturl-web-base-address): GetUrl(ClientType::Web) is the host's server base address as set; the forms
+// that add a company, an object or another client type are not pinned and are refused.
+fn get_url(body: &str, url: Option<&str>) -> Result<Value, Signal> {
+    let (engine, oi) = compile(&format!("procedure F(): Text begin {body} end;"));
+    let mut host = al_host::Host::deterministic();
+    if let Some(u) = url {
+        host = host.with_server_url(u);
+    }
+    al_builtins::assumptions::clear_hits();
+    call(&mut Session::with_host(engine, host), oi, "F")
+}
+
+#[test]
+fn geturl_web_is_the_host_server_address_and_marks_its_assumption() {
+    let r = get_url("exit(GetUrl(ClientType::Web));", None);
+    assert!(
+        matches!(&r, Ok(Value::Text(t)) if &**t == "http://localhost:8080/BC/"),
+        "{r:?}"
+    );
+    assert_eq!(
+        al_builtins::assumptions::take_hits(),
+        vec![al_builtins::assumptions::Assumption::GetUrlWebBaseAddress]
+    );
+    let r = get_url("exit(GetUrl(ClientType::Web));", Some("https://bc.example:7048/BC1/"));
+    assert!(
+        matches!(&r, Ok(Value::Text(t)) if &**t == "https://bc.example:7048/BC1/"),
+        "{r:?}"
+    );
+}
+
+#[test]
+fn geturl_with_a_company_or_another_client_type_is_refused() {
+    for body in [
+        "exit(GetUrl(ClientType::Web, 'CRONUS'));",
+        "exit(GetUrl(ClientType::Phone));",
+        "exit(GetUrl(ClientType::Web, CompanyName(), ObjectType::Page, 21));",
+    ] {
+        let r = get_url(body, None);
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(w)) if w.contains("GetUrl")),
+            "{body}: {r:?}"
+        );
+    }
+}

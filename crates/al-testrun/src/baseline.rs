@@ -129,6 +129,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
     let mut notes = Vec::new();
     let mut touched = BTreeSet::new();
     let mut ran = 0;
+    al_builtins::assumptions::clear_hits();
     let company = session.set_company("");
     session.set_company(&company);
     for &(oi, ri, keep_prefix, no_company) in &roots {
@@ -176,6 +177,13 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
         }
     }
     session.trace_faults(false);
+    // The baseline is not a test, so no test carries its marks; the run says what the shared start relied on.
+    for a in al_builtins::assumptions::take_hits() {
+        notes.push(format!(
+            "the baseline relied on the unprobed assumption `{}` (--list-assumptions describes it)",
+            a.info().id
+        ));
+    }
     // The workspace app's own install codeunits run here, once, so that the data they write is part of what every
     // test codeunit starts from (publishing the app runs them once; they are not re-run for each codeunit).
     let workspace_installs = crate::runtime::run_install_codeunits(lowered, &mut session);

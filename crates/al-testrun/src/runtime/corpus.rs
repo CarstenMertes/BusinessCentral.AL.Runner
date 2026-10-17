@@ -1077,6 +1077,8 @@ fn baseline_key(
         None => key.text("target", "none"),
     };
     key.text("environment", crate::host::environment_text());
+    // GetUrl answers with it, and Company-Initialize stores that answer (ADR-042).
+    key.text("server_url", &crate::host::server_url().0);
     // Read the wall clock without starting the run clock: a run that finds its baseline starts the clock at the
     // instant the baseline's run began (`SystemClock::begin_at`).
     let day = crate::host::SystemClock::wall().div_euclid(86_400_000);

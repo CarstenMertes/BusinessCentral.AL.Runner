@@ -400,4 +400,5 @@ mod tys;
 
 pub use self::assemble::*;
 pub use self::compile::*;
+pub use self::shared::dependency_positions;
 pub(crate) use self::shared::*;

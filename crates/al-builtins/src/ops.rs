@@ -912,13 +912,12 @@ pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering,
 /// Ordering for `<`, `<=`, `>` and `>=`: as [`compare`], except that text follows the culture order
 /// (types/TestFormatEvaluateTextContracts.al:Operators_TextComparison_IsCultureOrderAndCaseSensitiveEquality).
 pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
-    // Two Codes of digits only are ordered as numbers: `'10' < '9'` is No
-    // (text/lt-text-functions/TextCompare.Codeunit.al:CodeComparison `tenlt`, lines 231-232 and 245). A Text keeps the
-    // culture order (a25 and a26 of the same file). The pin is one pair; leading zeros, a sign or a Code that mixes digits
-    // and letters are not pinned and keep the order of a text (assumption code-digits-compare-as-numbers).
+    // Two Codes of digits only (leading zeros and the empty Code included) are ordered by length first, then as text: `'9' < '10'`, `'0010'
+    // > '10'`, `'9' < '0010'`, `'0009' > '10'`, `'' < '0'` (types/lt-code-digits-page-run-view/P145CodeCompare.al:P145_CodeVars_DigitsOnly,
+    // P145_CodeVars_NumberSeriesPair; text/lt-text-functions/TextCompare.Codeunit.al:CodeComparison `tenlt`). A Text on either side, and a Code
+    // with a letter, keep the culture order (P145_CodeVars_WithLetters, P145_TextVsText_DigitStrings, P145_TextVsCode_Mixed).
     if let (Value::Code(a), Value::Code(b)) = (l, r) {
         if let Some(o) = digit_code_order(a, b) {
-            crate::assumptions::assume(crate::assumptions::Assumption::CodeDigitsCompareAsNumbers);
             return Ok(o);
         }
     }
@@ -930,11 +929,10 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     compare(l, r)
 }
 
-/// The order of two Codes that are digits only and have no leading zero: the shorter is the smaller, else the text order.
-/// `None` for anything else.
+/// The order of two Codes that are digits only: the shorter is the smaller, else the text order. `None` for anything else.
 fn digit_code_order(a: &str, b: &str) -> Option<Ordering> {
-    let plain = |t: &str| !t.is_empty() && !t.starts_with('0') && t.bytes().all(|c| c.is_ascii_digit());
-    (plain(a) && plain(b)).then(|| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+    let digits = |t: &str| t.bytes().all(|c| c.is_ascii_digit());
+    (digits(a) && digits(b)).then(|| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
 }
 
 /// The order of two text key values: trailing blanks do not count, the letters compare without regard to their case first

@@ -315,7 +315,10 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             );
             // SumIndexFields: the names of the property, comma-joined without the blanks and quotes
             // (metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:KeyTable_SumIndexFields_OwnTable, _BaseApp).
-            if let (Some(col), Some(sum)) = (t.fields.iter().position(|x| x.name == "SumIndexFields"), kprop("SumIndexFields")) {
+            if let (Some(col), Some(sum)) = (
+                t.fields.iter().position(|x| x.name == "SumIndexFields"),
+                kprop("SumIndexFields"),
+            ) {
                 let names: Vec<String> = sum.split(',').map(|n| n.trim().trim_matches('"').to_string()).collect();
                 r[col] = Value::Text(names.join(",").into());
             }

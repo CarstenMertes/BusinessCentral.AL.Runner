@@ -337,7 +337,9 @@ impl Session {
             other => {
                 let converted = match self.control_type(st, idx, &actual) {
                     Some(RtType::Text(_) | RtType::Code(_)) if matches!(other, Value::Enum(..)) => {
-                        return unsupported("AssertEquals of an Enum on a text control (how BC writes it is not pinned)");
+                        return unsupported(
+                            "AssertEquals of an Enum on a text control (how BC writes it is not pinned)",
+                        );
                     }
                     Some(rt) => ops::convert(other.clone(), &rt)?,
                     None => other.clone(),

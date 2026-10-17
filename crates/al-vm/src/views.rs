@@ -133,7 +133,7 @@ impl Session {
 
     /// `e` with the Option values of field `pos` carrying the field's OptionCaption entries: `GetFilter` and `GetFilters`
     /// show the caption (record/TestProbeRecordRefContracts.al:Filters_GetFiltersText, `option_filter` is `Second`).
-    fn with_option_captions(&self, t: &TableDef, pos: usize, e: &FilterExpr) -> FilterExpr {
+    pub(crate) fn with_option_captions(&self, t: &TableDef, pos: usize, e: &FilterExpr) -> FilterExpr {
         let Ok(Some((false, members))) = self.members_of_field(t, pos) else {
             return e.clone();
         };

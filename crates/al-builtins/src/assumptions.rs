@@ -397,6 +397,12 @@ registry! {
         tests: "Create Pick's CalcQtyInWhseEntries (OrderBy Block_Movement, ten grouping columns): SCM Extend Warehouse CheckItemAvailabilityWhenCreatingPickAndExistReservedQtyForProdOrder and the tests that create a pick for a directed put-away location; about 77 Tests-SCM tests.",
         probe: "An aggregated query with an OrderBy on a column most groups share and several grouping columns, rows inserted in non-key order: the order of the tied groups on Read.",
     },
+    PageGetValidationErrorNoIndex => {
+        id: "page-getvalidationerror-no-index",
+        assumed: "TestPage.GetValidationError() without an index answers the first validation error of the page, and an empty text while the page has none.",
+        tests: "SCM Item Tracking III (Job Journal, Purchase Order and Prod. Order Components pages: Assert.AreEqual('', Page.GetValidationError(), ...) and StrPos(Page.GetValidationError(), ItemTrackingExistErr) > 0); about 28 Tests-SCM tests.",
+        probe: "A TestPage with no error: GetValidationError(); after one refused SetValue and after two refused SetValues on different controls: GetValidationError() next to GetValidationError(1) and (2).",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

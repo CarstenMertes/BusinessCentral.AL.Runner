@@ -73,4 +73,56 @@ impl Lowerer<'_> {
             args,
         })
     }
+
+    /// `GetDotNetType(x)` (tests/al-language-onprem-dotnet/lt-dotnet-interop/DotNetType*.al). The static type of the argument
+    /// says what the VM does with its value (`al-vm/src/dotnet/gettype.rs`): the second argument is that decision as text.
+    pub(crate) fn get_dotnet_type_call(&mut self, args: &[SyntaxNode]) -> L<ir::Expr> {
+        let [arg] = args else {
+            return Err("GetDotNetType takes one argument".into());
+        };
+        let fixed = |clr: &str| format!("fixed:{clr}");
+        let (spec, with_value) = match self.ty_of(arg) {
+            // DotNetTypeScalars.al: an Option is an Int32, a Code and a Text a String, a Date and a Time a DateTime.
+            Ty::Integer | Ty::Option(_) => (fixed("System.Int32"), true),
+            Ty::BigInteger => (fixed("System.Int64"), true),
+            Ty::Decimal => (fixed("System.Decimal"), true),
+            Ty::Boolean => (fixed("System.Boolean"), true),
+            Ty::Byte => (fixed("System.Byte"), true),
+            Ty::Char => (fixed("System.Char"), true),
+            Ty::Text(_) | Ty::Code(_) => (fixed("System.String"), true),
+            Ty::Date | Ty::Time | Ty::DateTime => (fixed("System.DateTime"), true),
+            Ty::Duration => (fixed("System.TimeSpan"), true),
+            Ty::Guid => (fixed("System.Guid"), true),
+            // DotNetTypeRecord.al:`record_error`, `temporary_error`, `recordref_error`.
+            Ty::Record { .. } => (
+                "error:GetDotNetType() does not support the type <record class>.".to_string(),
+                false,
+            ),
+            Ty::Builtin(b) if b.eq_ignore_ascii_case("RecordRef") => (
+                "error:GetDotNetType() does not support the type Microsoft.Dynamics.Nav.Runtime.NavRecordRef.".to_string(),
+                false,
+            ),
+            Ty::Variant => ("variant".to_string(), true),
+            Ty::DotNet(alias) => (
+                format!("dotnet:{}", self.declared_clr_type(&alias).unwrap_or_default()),
+                true,
+            ),
+            other => {
+                return Err(format!(
+                    "GetDotNetType of a {other} is not pinned (docs/probes-needed.md)"
+                ));
+            }
+        };
+        let value = if with_value {
+            self.expr(arg)?
+        } else {
+            ir::Expr::Const(ir::Const::Boolean(false))
+        };
+        Ok(ir::Expr::Builtin {
+            id: super::call::builtin_id("System.GetDotNetType#1")?,
+            receiver: None,
+            args: vec![ir::Arg::Value(value), ir::Arg::Value(ir::Expr::Const(ir::Const::Text(spec)))],
+            ret_used: true,
+        })
+    }
 }

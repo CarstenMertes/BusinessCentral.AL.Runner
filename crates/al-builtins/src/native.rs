@@ -1966,6 +1966,8 @@ pub(crate) mod tests {
         // Ids lowering picks for a call of a catalog overload that needs another implementation (`Evaluate` into an Option variable).
         let derived = [
             "System.EvaluateVariableOption#1",
+            "System.EvaluateBounded#1",
+            "System.EvaluateOptionField#1",
             "System.FormatVariant#1",
             "System.FormatDecimalField#1",
             "Dialog.ErrorNotLiteral#1",

@@ -48,18 +48,15 @@ fn an_integer_key_for_an_enum_field_is_refused_with_its_reason() {
     );
 }
 
+// Get(RecordId) on a RecordRef never opened opens the RecordId's table (branch ms-top-refusals-1): the row is then looked up.
 #[test]
-fn get_by_record_id_on_a_closed_record_ref_is_refused_with_its_reason() {
+fn get_by_record_id_on_a_closed_record_ref_opens_the_table_of_the_record_id() {
     let o =
         outcomes("[Test] procedure Closed() var R: Record \"B6 Row\"; RR: RecordRef; begin RR.Get(R.RecordId); end;");
-    let why = not_run(&o[0]);
-    assert!(
-        why.contains("RecordRef.Get")
-            && why.contains("not open")
-            && why.contains("not pinned")
-            && why.contains("probes-needed"),
-        "{why}"
-    );
+    match &o[0].1 {
+        Outcome::Fail(m) => assert!(m.contains("does not exist"), "{m}"),
+        other => panic!("{other:?}"),
+    }
 }
 
 /// `Database.SID()` without a user name: the probe (corpus branch al-runtime-rs-staging, ae3fe88,

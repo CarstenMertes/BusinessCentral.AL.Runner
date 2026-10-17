@@ -7,12 +7,19 @@ failure is not chased in the runtime twice. Each row was found by reading the ba
 `BusinessCentral-W1.bak`) and confirmed by an experiment: the same tests, run with the value set by an install codeunit
 of a scratch app (`alrunner test <test app> <scratch app>`), pass.
 
-| Table, field | In the backup | A test needs | Effect (main 0b414672, full run) |
+| Table, field | In the backup | A test needs | Effect (main 0b414672 or 23cc1e8f, full run) |
 |---|---|---|---|
 | Sales & Receivables Setup, `Posted Prepmt. Inv. Nos.`, `Posted Prepmt. Cr. Memo Nos.` | empty | a series | "Specify the code for the number series that will be used to assign numbers to posted sales prepayment invoices" and "You cannot get a No. Series Line with empty No. Series Code." in the prepayment codeunits |
 | Purchases & Payables Setup, the same two fields | empty | a series | the same, for purchase prepayments |
 | Purchases & Payables Setup, `Return Shipment on Credit Memo` | No | Yes (`PurchaseHeader."Return Shipment No. Series"` is only set then) | `PeekNextNo('')`: "You cannot get a No. Series Line with empty No. Series Code." in ERM Purchase Credit Memo and its neighbours |
 | Sales & Receivables Setup, `Return Receipt on Credit Memo` | No | Yes | the same, for sales |
+| Whse. Worksheet Template, Whse. Worksheet Name | no rows (0 pages) | a template of type Pick | "There is no Whse. Worksheet Template within the filter. Filters: Type: Pick": 55 failures in the full run of main 23cc1e8f (Service Order Warehouse Orange 33, SCM Pick Worksheet 14) |
+| Warehouse Journal Template and Batch, Warehouse Employee, Bin Content | no rows (0 pages) | a template of type Item | "There is no Warehouse Journal Template within the filter. Filters: Type: Item": 9 failures (SCM Assembly Item Tracking, SCM Whse.-Asm. To Stock) |
+| Item Journal Batch | one row (ITEM/DEFAULT) | a batch for the OUTPUT template | "There is no Item Journal Batch within the filter. Filters: Journal Template Name: OUTPUT" (SCM Order Tracking) |
+| Service Cost, Service Zone | no rows (0 pages) | a cost with an account | "There is no Service Cost within the filter. Filters: Account No.: <>'', Service Zone Code: ''": 18 failures (Service - Price Management, Service Line Update Validation) |
+| General Posting Setup | 14 rows; the product groups `FREIGHT` and `MISC` exist, the rows (`DOMESTIC`, `FREIGHT`) and (`DOMESTIC`, `MISC`) do not | those rows | "The General Posting Setup does not exist ... Gen. Prod. Posting Group='FREIGHT'" (6.0SP1 - VAT 1 to 1, 35) and `'MISC'` (ERM Invoice Discount And VAT, ERM VAT Serv. Charge, SCM Copy Document Mgt. and others) |
+| VAT Posting Setup | 13 rows; (`DOMESTIC`, blank product group) is missing | that row | "The VAT Posting Setup does not exist ... VAT Prod. Posting Group=''" in ERM Prepayment III and Service Warehouse Integration (2 failures; not proven further) |
+| Cost Type, Cost Journal Template, Cost Journal Batch, G/L Budget Name | no rows (0 pages) | at least one | "There are no records within the filters specified for table Cost Type", "The Cost Journal Template table is empty", "The G/L Budget Name table is empty": about 55 failures (ERM Cost Acc. Allocations, ERM CA Cost Journal, ERM KPI Web Service) |
 
 ## Proof
 
@@ -63,3 +70,17 @@ record/lt-filters-keys-finds/P68C_EmptyFinds.al). The backup holds 5 customers a
 | Cost Type, Responsibility Center | ERM Cost Accounting - Tables and Pages, ERM Sales Quotes (SalesQuoteCreation) |
 
 Not confirmed by a scratch app that seeds the rows; the other rows above are.
+
+## Group 1 of ms-fails-2 was runtime, and mostly fixed by earlier merges
+
+"Location Code GU... cannot be found in Location" (95), "Bin Code ... Bin" (about 190), "Item Tracking Code SN-PRON" (24) and
+"Warehouse handling is required" (about 107) were values the test had just created. They are gone from the failures after
+the merges that followed the full run of main 0b414672 (3273 failures then, 924 on main 23cc1e8f). The
+remaining part is a runtime defect fixed on branch ms-fails-2: a `where()` condition of a TableRelation that names the
+validated field itself (`Item Variant.Code where("Item No." = field("Item No."), Code = field("Variant Code"), ...)` of Prod.
+Order Line, Assembly Header and Assembly Line) read the old, blank value of the field, so it contradicted the key and the
+variant "cannot be found". It reads the value being validated now (assumption `relation-where-reads-the-validated-value`,
+test `crates/al-vm/tests/store/relation_where_enum_filter.rs`).
+
+How the data rows above were proven: `bcdb tables BusinessCentral-W1.bak` lists the page count of every table of the
+company; the tables above have 0 pages, and a scratch test that counts the rows through the runtime agrees.

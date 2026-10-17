@@ -12,6 +12,7 @@ mod loadfields;
 mod record_builtins;
 mod recordref;
 mod records;
+mod relation_where_enum_filter;
 mod relation_where_flowfilter;
 mod relations;
 mod rename;

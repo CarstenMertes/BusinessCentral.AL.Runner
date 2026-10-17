@@ -13,13 +13,12 @@ of a scratch app (`alrunner test <test app> <scratch app>`), pass.
 | Purchases & Payables Setup, the same two fields | empty | a series | the same, for purchase prepayments |
 | Purchases & Payables Setup, `Return Shipment on Credit Memo` | No | Yes (`PurchaseHeader."Return Shipment No. Series"` is only set then) | `PeekNextNo('')`: "You cannot get a No. Series Line with empty No. Series Code." in ERM Purchase Credit Memo and its neighbours |
 | Sales & Receivables Setup, `Return Receipt on Credit Memo` | No | Yes | the same, for sales |
-| No. Series Line `P-CR+` | starts 109001, ends 1010999, warns at 1010995 | an end above the start | `NoIsWithinValidRange` compares Codes as text (`'109001' > '1010999'` is true; corpus text/lt-text-functions/TextCompare.Codeunit.al:145-146 pins `'10' < '9'` and not `'9' < '10'`), so the series reads as exhausted: "no unused posted credit memo numbers" in Purch. Correct Cr. Memo, O365 Cancel Purch Cr Memo Dim. and others |
 
 ## Proof
 
 The scratch app was one install codeunit that sets the fields above (`Posted Prepmt. Inv. Nos.` to `S-INV+`/`P-INV+`,
 `Posted Prepmt. Cr. Memo Nos.` to `S-CR+`/`P-CR+`, both credit memo flags to true, `P-CR+` ending and warning number to
-`109999` and `109995`). Same binary, same tests:
+`109999` and `109995`; the last change is no longer needed, see below). Same binary, same tests:
 
 | Codeunit | Without the scratch app | With it |
 |---|---|---|
@@ -37,3 +36,15 @@ Nothing in the runtime is wrong here: the AL code of the Base Application runs a
 choice about the database, not a fix: the runner would have to prepare the demo company the way Microsoft's test
 database is prepared. That changes the data a test sees, so it is an owner decision (see docs/owner-review.md); the scratch app
 is a one-file way to try it.
+
+## The `P-CR+` range was a runtime defect, not data
+
+No. Series Line `P-CR+` starts at 109001 and ends at 1010999. `NoIsWithinValidRange` takes Code[20] parameters and checks
+`CurrentNo > EndingNo`. The runtime ordered two Code values as text, so `'109001' > '1010999'` was true and the series
+read as used up ("no unused posted credit memo numbers").
+
+The corpus pins Code apart from Text: text/lt-text-functions/TextCompare.Codeunit.al `CodeComparison` (lines 205-246)
+shows `'10' < '9'` is No for Code (observation `tenlt`). The fix orders two Codes of plain digits (no leading zero) as
+numbers in the `<`, `<=`, `>`, `>=` operators. Leading zeros, signs and mixed codes are not pinned and stay as before.
+It is registered as the assumption `code-digits-compare-as-numbers`. Test: `crates/al-vm/tests/language/code_compare.rs`.
+Results without any scratch app are in the hand-back; the prepayment and return-flag rows above remain data findings.

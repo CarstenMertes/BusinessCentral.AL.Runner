@@ -745,12 +745,29 @@ fn int_of(v: &Value) -> Option<i64> {
 /// Ordering for `<`, `<=`, `>` and `>=`: as [`compare`], except that text follows the culture order
 /// (types/TestFormatEvaluateTextContracts.al:Operators_TextComparison_IsCultureOrderAndCaseSensitiveEquality).
 pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
+    // Two Codes of digits only are ordered as numbers: `'10' < '9'` is No
+    // (text/lt-text-functions/TextCompare.Codeunit.al:CodeComparison `tenlt`, lines 231-232 and 245). A Text keeps the
+    // culture order (a25 and a26 of the same file). The pin is one pair; leading zeros, a sign or a Code that mixes digits
+    // and letters are not pinned and keep the order of a text (assumption code-digits-compare-as-numbers).
+    if let (Value::Code(a), Value::Code(b)) = (l, r) {
+        if let Some(o) = digit_code_order(a, b) {
+            crate::assumptions::assume(crate::assumptions::Assumption::CodeDigitsCompareAsNumbers);
+            return Ok(o);
+        }
+    }
     if let (Value::Text(_) | Value::Code(_), Value::Text(_) | Value::Code(_)) = (l, r) {
         if let (Some(a), Some(b)) = (crate::native::text_of(l), crate::native::text_of(r)) {
             return crate::collation::compare(&a, &b).map_err(Signal::Unsupported);
         }
     }
     compare(l, r)
+}
+
+/// The order of two Codes that are digits only and have no leading zero: the shorter is the smaller, else the text order.
+/// `None` for anything else.
+fn digit_code_order(a: &str, b: &str) -> Option<Ordering> {
+    let plain = |t: &str| !t.is_empty() && !t.starts_with('0') && t.bytes().all(|c| c.is_ascii_digit());
+    (plain(a) && plain(b)).then(|| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
 }
 
 /// The order of two text key values: trailing blanks do not count, the letters compare without regard to their case first

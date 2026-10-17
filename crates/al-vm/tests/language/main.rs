@@ -5,6 +5,7 @@ mod append_char;
 mod array_params;
 mod builtins;
 mod calc_const_guid;
+mod code_compare;
 mod call_stack;
 mod clear_enum;
 mod continue_stmt;

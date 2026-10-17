@@ -137,7 +137,9 @@ impl Session {
             // After a refresh the table stays the snapshot the refresh wrote; whether BC shows later hits live is not pinned
             // (the test cannot tell the two apart): assumption code-coverage-snapshot-while-logging.
             if self.coverage.recorder.refreshed_while_logging {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::CodeCoverageSnapshotWhileLogging);
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::CodeCoverageSnapshotWhileLogging,
+                );
             }
             return Ok(());
         }

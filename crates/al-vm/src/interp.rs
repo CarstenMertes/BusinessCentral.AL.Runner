@@ -516,10 +516,26 @@ impl Session {
         };
         for (a, v) in args.iter().zip(finals) {
             if let ir::Arg::Ref(p) = a {
-                self.write(p, v, f)?;
+                self.write_back(p, v, f)?;
             }
         }
         Ok(ret)
+    }
+
+    /// The final value of a by-reference parameter goes back to the caller's place. An `HttpContent` the callee only worked on is the
+    /// caller's own object: writing it back would store a copy (an HttpContent is a value on assignment) and cut the headers handed
+    /// out before from it.
+    fn write_back(&mut self, p: &ir::Place, v: Value, f: &mut Frame) -> Result<(), Signal> {
+        if let Value::Library(n, cell) = &v {
+            if n == "HttpContent" {
+                if let Ok(Value::Library(_, current)) = self.read(p, f) {
+                    if Rc::ptr_eq(&current, cell) {
+                        return Ok(());
+                    }
+                }
+            }
+        }
+        self.write(p, v, f)
     }
 
     /// The instance a call on codeunit value `i` runs on: the session's

@@ -645,10 +645,9 @@ impl Session {
             AuxSite::InterfaceTest { objects, cast } => self.interface_test(v, objects, *cast)?,
             AuxSite::EnumImpl { by_ordinal, unknown } => self.enum_implementation(v, by_ordinal, *unknown)?,
             AuxSite::Control { control, runtime } => self.page_control(v, *control, *runtime)?,
-            AuxSite::FieldOf { pos } => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FieldOfProcedureResult);
-                self.read_record_field(v, *pos)?
-            }
+            // A field read off what a procedure returns is the field of the returned copy (corpus record/
+            // lt-record-conversion-assumptions/RecordResultField.al).
+            AuxSite::FieldOf { pos } => self.read_record_field(v, *pos)?,
             AuxSite::QueryColumn { column } => self.query_column(v, *column)?,
         };
         set(&mut f.locals[d as usize], r);
@@ -752,6 +751,19 @@ impl Session {
             values.push(take(f, r, nl));
         }
         if site.vm_class {
+            // `Report.Run` on a variable: the variable gets a new instance afterwards (see `report_fresh_instance`).
+            if site.id == al_builtins::builtin_id::ids::REPORT_RUN_1 {
+                if let (Some(Value::Codeunit(old)), Some(ir::Arg::Ref(place))) = (recv.clone(), &site.receiver_arg) {
+                    self.report.rebind_after_run = true;
+                    let r = self.vm_class_call(site.id, site.class, recv, values, site.ret_used, f);
+                    self.report.rebind_after_run = false;
+                    self.report.report_executed.retain(|w| w.strong_count() > 0);
+                    self.report.report_executed.push(std::rc::Rc::downgrade(&old));
+                    let fresh = self.report_fresh_instance(&old);
+                    self.write(place, Value::Codeunit(fresh), f)?;
+                    return r;
+                }
+            }
             return self.vm_class_call(site.id, site.class, recv, values, site.ret_used, f);
         }
         let Some(native) = site.native else {

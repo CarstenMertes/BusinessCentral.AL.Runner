@@ -387,9 +387,9 @@ fn fail(f: crate::format::FormatFail) -> String {
 
 fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -> Result<String, String> {
     // `<C,GBP>`: the currency code Base Application's Amount Auto Format puts in front of a format string. Format accepts it
-    // and writes nothing for it (assumption `format-currency-prefix`).
+    // and writes nothing for it (corpus types/lt-format-currency-prefix/FormatCurrencyPrefix.al: P157_Gbp_AmountAutoFormatShape,
+    // P157_Gbp_PrefixPlusOtherTags).
     if code.starts_with("C,") && code.len() > 2 {
-        crate::assumptions::assume(crate::assumptions::Assumption::FormatCurrencyPrefix);
         return Ok(String::new());
     }
     if let Some(n) = numeric {
@@ -430,18 +430,17 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
             ms / 3_600_000 % 12
         }
     };
-    // `<Month Text,N>` and `<Weekday Text,N>`: the name cut to N characters (misc/lt-system-functions/RandomFormat.al:
-    // `<Month Text,3>` gives 'Mar'), and padded with spaces to N when it is shorter: not pinned (Accounting Period
-    // names are made with `<Month Text,10>`, Tests-ERM DefaultAccountingPeriodUT and 37 more), assumption
-    // format-text-code-width-pads.
+    // `<Month Text,N>` and `<Weekday Text,N>`: the name cut to N characters and padded with spaces to N when it is shorter;
+    // N = 0 is the whole name (types/lt-format-codes-textbuilder-pagerun-labels/P144DateTextWidth.al: P144_MonthText_March,
+    // P144_MonthText_December, P144_WeekdayText_Monday).
     if let Some((base, width)) = code.split_once(',') {
         if matches!(base, "Month Text" | "Weekday Text") {
             if let (Ok(w), Some(_)) = (width.trim().parse::<usize>(), date) {
                 let name = code_name(base, date, day_no, ctx.language())?;
-                let cut: String = name.chars().take(w).collect();
-                if cut.chars().count() < w {
-                    crate::assumptions::assume(crate::assumptions::Assumption::FormatTextCodeWidthPads);
+                if w == 0 {
+                    return Ok(name);
                 }
+                let cut: String = name.chars().take(w).collect();
                 return Ok(format!("{cut:<w$}"));
             }
         }

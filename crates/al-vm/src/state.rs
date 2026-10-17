@@ -96,6 +96,8 @@ pub(crate) struct CoverageState {
 
 /// The report being run: language, trigger flow, dataset.
 pub(crate) struct ReportState {
+    /// `Report.Run` on a variable: the variable gets a new instance when the run ends and the old one keeps its state for whoever holds it.
+    pub(crate) rebind_after_run: bool,
     /// `CurrReport.Language` of the running report (`reports.rs`); `None` until a trigger sets it.
     pub(crate) curr_report_language: Option<i32>,
     /// The call depth of the `OnInitReport` trigger being run, and whether it called

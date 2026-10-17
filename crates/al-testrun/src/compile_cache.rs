@@ -232,8 +232,10 @@ pub fn key_layer(
         format!(
             "{}{}",
             target.map(target_text).unwrap_or_default(),
-            std::env::var("AL_UNPINNED_BASE_ACCESS").map_or(String::new(), |v| format!(" base-access {v}"))
-        ),
+            std::env::var("AL_UNPINNED_BASE_ACCESS").map_or(String::new(), |v| format!(" base-access {v}")),
+        )
+        // Positions in the dependency IR change what the entry holds (ADR-041).
+        + if al_sema::lower::dependency_positions() { "" } else { " no-dep-positions" },
         apps,
         below,
     )

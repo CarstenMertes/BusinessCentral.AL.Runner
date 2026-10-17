@@ -228,6 +228,42 @@ impl Lowerer<'_> {
         Ok(ir::Expr::Convert(RtType::Option(captions), Box::new(value)))
     }
 
+    /// The places `min:max` a Decimal table field declares for `Format`: its `DecimalPlaces`, else the precision of its
+    /// `AutoFormatExpression` (type 10), else the 2:2 of a blank-expression amount (type 1) or 2:5 of a unit amount (type 2)
+    /// (pages/lt-page-autoformat-lookups/P113AutoFormat.al:P113_AF_TableFieldFormatIsPlain, pages/lt-page-presentation-properties/
+    /// P119Table.al:P119_DecimalPlaces). `None` for any other argument or field.
+    pub(crate) fn decimal_field_places(&mut self, arg: &SyntaxNode) -> Option<String> {
+        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+            return None;
+        };
+        let f = self.members[table].fields.iter().find(|f| f.id == field)?;
+        if !matches!(f.ty, Ty::Decimal) {
+            return None;
+        }
+        let prop = |n: &str| {
+            f.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                .map(|(_, v)| v.trim().to_string())
+        };
+        let digits = |p: &str| p.split(':').all(|x| x.trim().parse::<u32>().is_ok());
+        if let Some(p) = prop("DecimalPlaces").filter(|p| digits(p)) {
+            return Some(p.replace(' ', ""));
+        }
+        let expr = prop("AutoFormatExpression");
+        match prop("AutoFormatType").as_deref() {
+            Some("10") => {
+                let text = expr?;
+                let rest = text.split("<Precision,").nth(1)?;
+                let p = rest.split('>').next()?.trim().to_string();
+                digits(&p).then_some(p)
+            }
+            Some("1") if expr.as_deref() == Some("''") => Some("2:2".into()),
+            Some("2") if expr.as_deref() == Some("''") => Some("2:5".into()),
+            _ => None,
+        }
+    }
+
     pub(crate) fn attributes_of(&self, r: &ast::Routine) -> Vec<ir::Attribute> {
         r.attributes()
             .map(|a| ir::Attribute {
@@ -534,11 +570,10 @@ impl Lowerer<'_> {
             && matches!(self.res(&kids[0]), Some(Res::Proc { .. }))
             && sig_tokens(n).iter().any(|t| t.kind() == SyntaxKind::Assign)
         {
-            self.assume(al_builtins::assumptions::Assumption::ProcedureAssignIsCall);
             return self.call(&kids[0], &kids[0], &kids[1..2]).map(ir::Stmt::Expr);
         }
         // `Proc := value` calls a procedure of this object that takes one value parameter (Base Application's Service
-        // Line writes `SetHideWarrantyWarning := true`). Assumed, see ProcedureAssignIsCall. The checker leaves the
+        // Line writes `SetHideWarrantyWarning := true`; corpus codeunit/lt-procedure-assignment/ProcedureAssignmentOneParameter.al). The checker leaves the
         // name unresolved (it looks for a call with no arguments), so the procedure is found here by its name.
         if kids[0].kind() == SyntaxKind::NameRef
             && self.res(&kids[0]).is_none()
@@ -556,7 +591,6 @@ impl Lowerer<'_> {
                 if params.len() == 1 && !params[0].by_var {
                     let routine = self.routine_at.get(&(self.oi, *offset)).ok_or("procedure not found")?;
                     self.declared_in_both_proc(self.oi, *offset)?;
-                    self.assume(al_builtins::assumptions::Assumption::ProcedureAssignIsCall);
                     let value = self.expr(&kids[1])?;
                     let value = self.convert_to(&params[0].ty, self.ty_ref(&kids[1]), value)?;
                     self.calls.push((self.oi, routine));

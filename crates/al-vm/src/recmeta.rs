@@ -305,36 +305,66 @@ impl Session {
                 rec.borrow_mut().marks.clear();
                 Ok(Value::Null)
             }
-            // The bounds of a range filter on the field in the current group. With no filter BC raises an
-            // error whose text the corpus does not pin (record/TestFilterContracts.al:190-211): refused.
+            // The bounds of a range filter on the field, whatever filter group it sits in (corpus record/lt-get-range-filter/
+            // GetRangeFilterGroups.al: P168_GetRange_FilterOnlyInGroup2, P168_GetRange_FilterInGroup0ReadFromGroup2). The filters of
+            // several groups on the field intersect; an empty intersection and a field with no filter raise the errors that file pins.
             RecordOp::GetRangeMin | RecordOp::GetRangeMax => {
                 use al_builtins::filter::FilterExpr as F;
                 let pos = arg_pos(args, 0)?;
-                let r = rec.borrow();
-                // A filter set in another group counts too (Microsoft's GenJnlManagement.OpenJnl reads the template
-                // that TemplateSelection set in group 2, Tests-General Journal; unprobed, docs/probes-needed.md
-                // "GetRangeMax across filter groups"; hard rule 3 exception).
-                let Some(f) = r
+                let found: Vec<al_builtins::filter::FieldFilter> = rec
+                    .borrow()
                     .filters
                     .iter()
-                    .find(|f| f.field == pos && f.group == r.filter_group)
-                    .or_else(|| {
-                        r.filters.iter().find(|f| f.field == pos).inspect(|_| {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::GetRangeAcrossFilterGroups,
-                            )
-                        })
-                    })
-                else {
-                    return unsupported(format!("{method} without a filter (error text not pinned)"));
-                };
-                match (&f.expr, method) {
-                    (F::Range(Some(lo), _), RecordOp::GetRangeMin) | (F::Eq(lo), RecordOp::GetRangeMin) => {
-                        Ok(lo.clone())
+                    .filter(|f| f.field == pos)
+                    .cloned()
+                    .collect();
+                let t_cap = self.caption(t);
+                let f_cap = self.field_caption(t, pos);
+                if found.is_empty() {
+                    return Err(Signal::Error(Box::new(AlError {
+                        message: format!("Specify a filter for the {f_cap} field in the {t_cap} table."),
+                        code: "DB:NoFilter".into(),
+                        call_stack: String::new(),
+                        ..Default::default()
+                    })));
+                }
+                // The bounds of every filter, as (low, high); a filter that is not a single range is not modelled.
+                let mut lo: Option<Value> = None;
+                let mut hi: Option<Value> = None;
+                for f in &found {
+                    let (a, b) = match &f.expr {
+                        F::Eq(v) => (Some(v.clone()), Some(v.clone())),
+                        F::Range(a, b) => (a.clone(), b.clone()),
+                        _ => return unsupported(format!("{method} of a filter that is not a single range")),
+                    };
+                    if let Some(a) = a {
+                        if lo.as_ref().is_none_or(|l| ops::compare(&a, l).is_ok_and(|o| o.is_gt())) {
+                            lo = Some(a);
+                        }
                     }
-                    (F::Range(_, Some(hi)), RecordOp::GetRangeMax) | (F::Eq(hi), RecordOp::GetRangeMax) => {
-                        Ok(hi.clone())
+                    if let Some(b) = b {
+                        if hi.as_ref().is_none_or(|h| ops::compare(&b, h).is_ok_and(|o| o.is_lt())) {
+                            hi = Some(b);
+                        }
                     }
+                }
+                // One reversed range gives its bounds as written (record/lt-filters-keys-finds/P68B_RangeMinMax.al: RangeFilters_Integer,
+                // `4..2`); only the filters of several groups can be empty together.
+                if let (true, Some(l), Some(h)) = (found.len() > 1, &lo, &hi) {
+                    if ops::compare(l, h).is_ok_and(|o| o.is_gt()) {
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter expression \"<><>\" applied to the field {f_cap} in the {t_cap} table results in empty set."
+                            ),
+                            code: "DB:NotIntervalFilter".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
+                }
+                match (method, lo, hi) {
+                    (RecordOp::GetRangeMin, Some(l), _) => Ok(l),
+                    (RecordOp::GetRangeMax, _, Some(h)) => Ok(h),
                     _ => unsupported(format!("{method} of a filter that is not a single range")),
                 }
             }
@@ -949,7 +979,7 @@ impl Session {
             // An Enum field and an Option field with the same field number are the same kind of field to
             // TransferFields: Base Application's "Sales Order Entity Buffer" holds `Shipping Advice` as an
             // Option and `Sales Header` as an Enum, and its TransferFields from the header works in BC
-            // (assumed from Microsoft's passing tests; no corpus test, docs/probes-needed.md). The ordinal moves.
+            // (corpus record/lt-record-conversion-assumptions/TransferEnumOption.al). The ordinal moves.
             let enum_option = |a: &al_builtins::value::RtType, b: &al_builtins::value::RtType| {
                 use al_builtins::value::RtType as T;
                 matches!((a, b), (T::Enum(_), T::Option(_)) | (T::Option(_), T::Enum(_)))
@@ -966,24 +996,11 @@ impl Session {
                 };
                 let moved = match &df.ty {
                     al_builtins::value::RtType::Option(m) => Value::Option(ordinal, std::sync::Arc::from(m.as_slice())),
-                    al_builtins::value::RtType::Enum(id) => {
-                        if !self
-                            .engine
-                            .program
-                            .objects
-                            .get(*id as usize)
-                            .is_some_and(|o| o.enum_values.iter().any(|(v, _)| *v == ordinal))
-                        {
-                            return unsupported(format!(
-                                "TransferFields of the Option ordinal {ordinal} into the Enum field {}, which has no such value (not pinned)",
-                                df.name
-                            ));
-                        }
-                        Value::Enum(*id, ordinal)
-                    }
+                    // An ordinal the Enum lacks moves too, with no error (corpus record/lt-record-conversion-assumptions/
+                    // TransferEnumOption.al: P98_OptionToEnum_MissingOrdinal, P98_EnumToOption_MissingOrdinal).
+                    al_builtins::value::RtType::Enum(id) => Value::Enum(*id, ordinal),
                     _ => unreachable!("enum_option"),
                 };
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TransferFieldsEnumOption);
                 updates.push((dp, moved));
                 continue;
             }

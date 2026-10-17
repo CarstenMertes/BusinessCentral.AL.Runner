@@ -259,15 +259,9 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             Err(_) => return unsupported(format!("{n} as an Enum ordinal (beyond Integer)")),
         },
         // A Guid assigns into a Text or Code as its text form `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`, as
-        // Format gives it (`Dimensions.Add('PackageCode', Rec.SystemId)` into a Dictionary of [Text, Text] in Base
-        // Application's Config. Package Management). No corpus test assigns a Guid to a Text
-        // (docs/probes-needed.md).
-        (Value::Guid(g), T::Text(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
-            Value::Text(fit(crate::format::format_guid(&g), *max)?.into())
-        }
-        (Value::Guid(g), T::Code(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
-            Value::Code(fit(crate::format::format_guid(&g), *max)?.into())
-        }
+        // Format gives it (corpus types/lt-filter-enum-relation-duration-guid/E_Guid.al: Guid_To_Text40_Text_Code40).
+        (Value::Guid(g), T::Text(max)) => Value::Text(fit(crate::format::format_guid(&g), *max)?.into()),
+        (Value::Guid(g), T::Code(max)) => Value::Code(fit(crate::format::format_guid(&g), *max)?.into()),
         // A Text of digits converts into an Integer or BigInteger where a Variant meets a number (a Get key).
         // Not pinned by the corpus: Microsoft's Incoming Document `Get(Format(Value))`, registry entry text-digits-to-integer.
         (Value::Text(s) | Value::Code(s), T::Integer | T::BigInteger)
@@ -444,6 +438,22 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
 fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
     match (&v, t) {
         (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
+        // A RecordRef a Variant holds, into a record of its own table: the record with the RecordRef's row and filters, a copy
+        // (Base Application's Approvals Mgmt.InformUserOnStatusChange passes its Variant to a `Record "Sales Header"` parameter;
+        // 73 Tests-Workflow tests; assumption recordref-into-record). Another table is not pinned.
+        (Value::Library(_, h), RtType::Record(table, _)) => {
+            let copy = match &*h.borrow() {
+                LibraryValue::RecordRef(rec) if rec.borrow().table == *table => Some(rec.borrow().clone()),
+                _ => None,
+            };
+            match copy {
+                Some(state) => {
+                    crate::assumptions::assume(crate::assumptions::Assumption::RecordRefIntoRecord);
+                    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(state))))
+                }
+                None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
+            }
+        }
         // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
         // The same for an Enum (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer, `text_big`).
@@ -761,11 +771,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         }
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
         // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
-        // would round or truncate: not pinned, so it stays refused below (docs/probes-needed.md).
+        // would round or truncate: not pinned, so it stays refused below. Pinned for a whole Decimal: corpus
+        // record/lt-record-conversion-assumptions/DateDecimalWhole.al:P98_DatePlusMinusWholeDecimal.
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && whole_days(n).is_some() => {
-            if matches!(n, V::Decimal(_)) {
-                crate::assumptions::assume(crate::assumptions::Assumption::DateAddWholeDecimal);
-            }
             // The result stays within 0001-01-01 and 9999-12-31, an undefined date takes no days, and the sum of days is
             // computed in 32 bits (Arithmetic.al:Date_Arithmetic_Errors, Date_Plus_Minus_Integer `af39`, `af41`).
             let n = whole_days(n).expect("whole");
@@ -889,13 +897,12 @@ pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering,
 /// Ordering for `<`, `<=`, `>` and `>=`: as [`compare`], except that text follows the culture order
 /// (types/TestFormatEvaluateTextContracts.al:Operators_TextComparison_IsCultureOrderAndCaseSensitiveEquality).
 pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
-    // Two Codes of digits only are ordered as numbers: `'10' < '9'` is No
-    // (text/lt-text-functions/TextCompare.Codeunit.al:CodeComparison `tenlt`, lines 231-232 and 245). A Text keeps the
-    // culture order (a25 and a26 of the same file). The pin is one pair; leading zeros, a sign or a Code that mixes digits
-    // and letters are not pinned and keep the order of a text (assumption code-digits-compare-as-numbers).
+    // Two Codes of digits only (leading zeros and the empty Code included) are ordered by length first, then as text: `'9' < '10'`, `'0010'
+    // > '10'`, `'9' < '0010'`, `'0009' > '10'`, `'' < '0'` (types/lt-code-digits-page-run-view/P145CodeCompare.al:P145_CodeVars_DigitsOnly,
+    // P145_CodeVars_NumberSeriesPair; text/lt-text-functions/TextCompare.Codeunit.al:CodeComparison `tenlt`). A Text on either side, and a Code
+    // with a letter, keep the culture order (P145_CodeVars_WithLetters, P145_TextVsText_DigitStrings, P145_TextVsCode_Mixed).
     if let (Value::Code(a), Value::Code(b)) = (l, r) {
         if let Some(o) = digit_code_order(a, b) {
-            crate::assumptions::assume(crate::assumptions::Assumption::CodeDigitsCompareAsNumbers);
             return Ok(o);
         }
     }
@@ -907,11 +914,10 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     compare(l, r)
 }
 
-/// The order of two Codes that are digits only and have no leading zero: the shorter is the smaller, else the text order.
-/// `None` for anything else.
+/// The order of two Codes that are digits only: the shorter is the smaller, else the text order. `None` for anything else.
 fn digit_code_order(a: &str, b: &str) -> Option<Ordering> {
-    let plain = |t: &str| !t.is_empty() && !t.starts_with('0') && t.bytes().all(|c| c.is_ascii_digit());
-    (plain(a) && plain(b)).then(|| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+    let digits = |t: &str| t.bytes().all(|c| c.is_ascii_digit());
+    (digits(a) && digits(b)).then(|| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
 }
 
 /// The order of two text key values: trailing blanks do not count, the letters compare without regard to their case first

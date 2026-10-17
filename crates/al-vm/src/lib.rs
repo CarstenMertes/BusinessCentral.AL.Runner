@@ -595,6 +595,7 @@ impl Session {
                 recorder: Default::default(),
             },
             report: ReportState {
+                rebind_after_run: false,
                 curr_report_language: None,
                 report_init_depth: None,
                 report_quit: false,
@@ -968,6 +969,8 @@ impl Session {
                         .collect();
                     Value::Array(Rc::new(RefCell::new(items)))
                 }
+                // An HttpContent passed by reference is the caller's own object; only a by-value one is a copy (see `ops::convert`).
+                (a @ Value::Library(..), true) if matches!(&a, Value::Library(n, _) if n == "HttpContent") => a,
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }

@@ -40,6 +40,15 @@ impl Session {
                     other => return unsupported(format!("TestFilter.SetFilter with {}", other.describe())),
                 };
                 let ty = table.fields[pos].ty.clone();
+                // `Filter.SetFilter(Active, 'true')` and `'false'` on a Boolean field change nothing the handler of a modal list sees: the rows
+                // stay as the record handed to RunModal left them (pages/lt-modal-list-new-row/ModalListNewRowKeyFilters.al:
+                // P157_HandlerSetFilter_NoRecFilters, _WithTwoKeyFilters, _MatchesNothing, _NonKeyRecFilter). Whether it is the Boolean
+                // words or the modal list that matters is not probed (docs/probes-needed.md).
+                if matches!(ty, al_builtins::value::RtType::Boolean)
+                    && matches!(text.trim().to_ascii_lowercase().as_str(), "true" | "false")
+                {
+                    return Ok(Value::Null);
+                }
                 let expr = self
                     .parse_filter_text(&text, &ty)
                     .map_err(|e| Signal::Unsupported(format!("TestFilter.SetFilter: {e}")))?;
@@ -121,6 +130,16 @@ impl Session {
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FilterChangeLandsOnNewLine);
                 if new_mode {
                     self.start_draft(st, false)?;
+                    // The blank line of a list is read twice here too (pages/lt-filter-change-new-line/FilterChangeNewLine.al:
+                    // OpenNew_FilterSetFilter_ThenSetValueDescr_StoresRowWithFilterKey: `NewRecord(G1);AGCR(G1,0)` twice).
+                    if self.is_list(st) && st.borrow().host.is_none() {
+                        self.start_draft(st, false)?;
+                    }
+                    // No control has the focus yet, as on the new line an OpenEdit list lands on: a SetValue on a non-key field does not
+                    // insert the row (the same test: `log_after_setvalue` has no InsertRecord, the row is stored when the page closes).
+                    let mut s = st.borrow_mut();
+                    s.focus = None;
+                    s.focus_in_row = false;
                 } else {
                     self.land_on_new_line(st)?;
                 }

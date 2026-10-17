@@ -68,12 +68,9 @@ impl Session {
                     continue;
                 }
                 let ok = if c.filter {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::TableRelationFilterCondition,
-                    );
                     // `Field = filter(x)`: the arm applies when the field's value passes the filter, which reads
-                    // like a SetFilter text (`filter('')` the blank value, `filter(<> '')` any other). Only the
-                    // `const` form is pinned by the corpus; this one is an assumption (docs/probes-needed.md).
+                    // like a SetFilter text (`filter('')` the blank value, `filter(<> '')` any other; corpus types/
+                    // lt-filter-enum-relation-duration-guid/C_TableRelation.al: Zone_Blank_Arm_Loc and the `A|B`, `C` arms).
                     let al_ir::Const::Text(text) = &c.value else {
                         return unsupported("a filter condition of a TableRelation without its text");
                     };

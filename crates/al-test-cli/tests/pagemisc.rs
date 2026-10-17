@@ -9,6 +9,7 @@ table 62000 "PM Row"
 {
     fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } field(3; Rank; Integer) { } }
     keys { key(PK; "No.") { } }
+    procedure PreviousNo(): Code[20] begin exit(xRec."No."); end;
 }
 codeunit 62002 "PM Probe"
 {
@@ -200,6 +201,22 @@ page 62326 "PM Never Ran Host" { PageType = Card; SourceTable = "PM Row"; layout
 page 62325 "PM Empty Class" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { CaptionClass = '3,'; } } } }
 page 62322 "PM Selection Own Update" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
   procedure UseAfterClose() begin CurrPage.Update(false); end; }
+page 62327 "PM Editable Flag" { PageType = Card; SourceTable = "PM Row";
+  layout { area(Content) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { trigger OnValidate() begin Flag := Rec.Descr = ''; end; } field(Other; Rec.Rank) { Editable = not Flag; } } }
+  var Flag: Boolean; }
+page 62328 "PM Xrec Card" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
+  trigger OnNewRecord(BelowxRec: Boolean) var P: Codeunit "PM Probe"; begin P.Note('x=' + Rec.PreviousNo() + ';'); end; }
+page 62329 "PM Temp Part" { PageType = ListPart; SourceTable = "PM Row"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+  procedure SetRows(var Src: Record "PM Row" temporary) begin if Src.FindFirst() then Rec.Copy(Src, true); end; }
+page 62330 "PM Temp Host" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } part(Sub; "PM Temp Part") { } } }
+  procedure Fill(var Src: Record "PM Row" temporary) begin CurrPage.Sub.PAGE.SetRows(Src); end; }
+page 62331 "PM Temp Var" { PageType = List; SourceTable = "PM Row"; SourceTableTemporary = true;
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { } } } }
+  procedure Fill() begin Rec."No." := 'T1'; Rec.Descr := 'before'; Rec.Insert(); end;
+  procedure Mark() begin Rec.FindFirst(); Rec.Descr := 'marked'; Rec.Modify(); end;
+  procedure Count(): Integer begin Rec.Reset(); exit(Rec.Count()); end;
+  procedure First(): Text begin Rec.Reset(); if Rec.FindFirst() then exit(Rec.Descr); end; }
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -936,6 +953,31 @@ fn a_page_variable_procedure_using_curr_page_after_the_page_closed_is_refused_no
     );
 }
 
+#[test]
+fn a_control_editable_expression_follows_a_variable_set_by_another_controls_on_validate() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Follows() var C: TestPage \"PM Editable Flag\"; begin
+            C.OpenNew(); C.Descr.SetValue('x');
+            if not C.Other.Editable() then Error('should be editable'); C.Descr.SetValue('');
+            if C.Other.Editable() then Error('should not be editable'); C.Close(); end;"
+    ));
+}
+
+// handlers/TestPageCreateModeNewRecordArgs.al:OpenNew_TableWithRows pins xRec `B` in OnNewRecord; a table procedure the page's code calls
+// on Rec sees that xRec (Sales Invoice Subform.OnNewRecord -> Rec.InitType; assumption page-rec-procedure-sees-page-xrec).
+#[test]
+fn a_table_procedure_called_on_rec_in_a_page_trigger_sees_the_pages_xrec() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Sees() var C: TestPage \"PM Xrec Card\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'B'; R.Insert();
+            P.Reset(); C.OpenNew(); Check('x=B;', P.Trace()); C.Close(); end;"
+    ));
+}
+
 // misc/W2FindRecordUpdate.al:Update_False_OnOpenedPage, Update_True_OnOpenedPage (3 rows, the cursor on the middle one): a list refresh
 // re-reads the row, asks `=>`, reads on to the end, steps back to the start and asks `=` (Base Application's sales subforms have
 // OnFindRecord alone; there Next moves the record: assumption update-refresh-list-onfindrecord, docs/probes-needed.md).
@@ -984,5 +1026,44 @@ fn a_page_variable_reaches_the_part_of_a_page_that_never_ran() {
         "{HELPERS}
         [Test]
         procedure Reaches() var W: Page \"PM Never Ran Host\"; begin Check('reached', W.Reach()); end;"
+    ));
+}
+
+// Posted Purchase Document Lines.CopyLineToDoc reads a part after RunModal returned: refused, not failed with the TestPage error.
+#[test]
+fn a_page_variable_reaching_a_part_after_the_page_closed_is_refused_not_failed() {
+    let o = outcomes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Closed() var W: Page \"PM Never Ran Host\"; begin W.RunModal(); W.Reach(); end;
+        [ModalPageHandler] procedure H(var T: TestPage \"PM Never Ran Host\") begin T.OK().Invoke(); end;"
+    ));
+    assert!(
+        matches!(&o[0].1, Outcome::NotRun(why) if why.contains("not open") && why.contains("not pinned")),
+        "{o:?}"
+    );
+}
+
+// Warehouse Pick Summary.SetRecords hands its part (a temporary-table page) the rows before the page runs; the part keeps them when it opens.
+#[test]
+fn rows_handed_to_a_part_before_the_host_runs_are_there_when_it_opens() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Keeps() var W: Page \"PM Temp Host\"; T: Record \"PM Row\" temporary; begin
+            T.\"No.\" := 'T1'; T.Descr := 'kept'; T.Insert(); W.Fill(T); W.RunModal(); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Temp Host\") begin Check('kept', P.Sub.Descr.Value()); P.OK().Invoke(); end;"
+    ));
+}
+
+// Item Tracking Summary: SetSources fills the temporary Rec of a Page variable, AutoSelectTrackingNo modifies it, RunModal runs, GetSelected reads Rec.
+#[test]
+fn the_temporary_rows_of_a_page_variable_survive_its_run() {
+    passes(&format!(
+        "{HELPERS}
+        [Test] [HandlerFunctions('H')]
+        procedure Survives() var W: Page \"PM Temp Var\"; begin
+            W.Fill(); W.Mark(); W.RunModal(); Check('1', Format(W.Count())); Check('marked', W.First()); end;
+        [ModalPageHandler] procedure H(var P: TestPage \"PM Temp Var\") begin Check('marked', P.Descr.Value()); P.OK().Invoke(); end;"
     ));
 }

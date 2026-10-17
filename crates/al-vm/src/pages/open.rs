@@ -137,6 +137,7 @@ impl Session {
         self.page_instance(st)?;
         {
             let mut s = st.borrow_mut();
+            let first_run = !s.ran;
             s.open = true;
             s.ran = true;
             s.mode = mode;
@@ -154,7 +155,10 @@ impl Session {
             s.pending = None;
             s.result = None;
             s.editable_off = false;
-            s.caption = None;
+            // A caption assigned to the variable before its first run stays (assumption caption-assigned-before-the-page-runs).
+            if !first_run {
+                s.caption = None;
+            }
             s.opening = true;
             s.parts = Vec::new();
             s.areas = self.application_areas.clone();

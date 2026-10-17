@@ -749,20 +749,37 @@ fn get_ascending_reads_the_direction_of_a_key_field() {
     assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
 }
 
-// A per-field direction on a multi-field key, or on a field outside the key, is not pinned.
+// A field outside the current sorting raises the pinned error (record/lt-filters-keys-finds/P68D_Ascending.al:Field_Not_In_Key);
+// a field of a multi-field key has a direction of its own (same file: Composite_Key_Second_Descending).
 #[test]
-fn set_ascending_outside_a_single_field_key_is_refused() {
-    for body in [
-        "R.SetCurrentKey(Grp, \"No.\"); R.SetAscending(Grp, false);",
-        "R.SetCurrentKey(Amount); R.SetAscending(Grp, false);",
-        "R.SetCurrentKey(Amount); if R.GetAscending(Grp) then;",
+fn set_ascending_outside_the_sorting_raises_and_inside_a_composite_key_is_per_field() {
+    for (body, text) in [
+        (
+            "R.SetCurrentKey(Amount); R.SetAscending(Grp, false);",
+            "Cannot call SetAscending on field Grp because it is not part of the current sorting.",
+        ),
+        (
+            "R.SetCurrentKey(Amount); if R.GetAscending(Grp) then;",
+            "Cannot call GetAscending on field Grp because it is not part of the current sorting.",
+        ),
     ] {
         let r = run(
             &format!("procedure F() var R: Record \"ALT T\"; begin {body} end;"),
             "F",
         );
-        assert!(matches!(r, Err(Signal::Unsupported(_))), "{body}: {r:?}");
+        assert!(
+            matches!(&r, Err(Signal::Error(e)) if e.message == text && e.code == "DB:Ok"),
+            "{body}: {r:?}"
+        );
     }
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; begin
+            R.SetCurrentKey(Grp, \"No.\"); R.SetAscending(Grp, false);
+            exit(Format(R.GetAscending(Grp)) + Format(R.GetAscending(\"No.\")) + Format(R.Ascending()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "NoYesNo");
 }
 
 // A key value whose Format is not pinned (a Duration) used to panic the whole codeunit when a failed

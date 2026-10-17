@@ -407,7 +407,14 @@ const INERT_REQUEST_PAGE_PROPERTIES: &[&str] = &[
 
 /// Request page triggers the test client runs: it opens the page (`OnInit`, `OnOpenPage`) and
 /// closes it (`OnQueryClosePage`, `OnClosePage`).
-const REQUEST_PAGE_TRIGGERS: &[&str] = &["oninit", "onopenpage", "onqueryclosepage", "onclosepage", "onaftergetcurrrecord", "onaftergetrecord"];
+const REQUEST_PAGE_TRIGGERS: &[&str] = &[
+    "oninit",
+    "onopenpage",
+    "onqueryclosepage",
+    "onclosepage",
+    "onaftergetcurrrecord",
+    "onaftergetrecord",
+];
 
 /// What a reportextension can add to a request page that the client runs: the void page triggers
 /// after the report's own, and the triggers of a `modify` block that a page extension has

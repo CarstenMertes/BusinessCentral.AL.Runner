@@ -726,6 +726,15 @@
           "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:120"
         },
         {
+          "corpus_uses": 3,
+          "group": "report",
+          "ms_uses": 3,
+          "name": "OnPreRendering",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "report/lt-report-pre-rendering/ReportPreRenderingRun.al:85"
+        },
+        {
           "corpus_uses": 5,
           "group": "tableextension/modify",
           "ms_uses": 3,
@@ -814,15 +823,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "events/lt-system-events-upgrade-subs/P118RiskyUserControls.al:144"
-        },
-        {
-          "corpus_uses": 3,
-          "group": "report",
-          "ms_uses": 3,
-          "name": "OnPreRendering",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "report/lt-report-pre-rendering/ReportPreRenderingRun.al:85"
         },
         {
           "corpus_uses": 8,
@@ -13590,7 +13590,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 901,
+        "line": 902,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -13635,7 +13635,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2172,
+        "line": 2195,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."

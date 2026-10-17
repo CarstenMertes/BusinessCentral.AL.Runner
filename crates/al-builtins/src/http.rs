@@ -711,21 +711,30 @@ fn cache_control_item(item: &str) -> Result<Option<(String, String)>, Signal> {
         "max-age" | "s-maxage" | "min-fresh" | "max-stale" => match value {
             // `max-age=` with nothing, text, a sign or a number beyond Int32 are invalid; the value is read as seconds.
             Some(v) if v.is_empty() || !v.bytes().all(|b| b.is_ascii_digit()) || v.parse::<i32>().is_err() => Ok(None),
-            Some(v) => Ok(Some((lower.clone(), format!("{lower}={}", v.parse::<i32>().expect("checked"))))),
+            Some(v) => Ok(Some((
+                lower.clone(),
+                format!("{lower}={}", v.parse::<i32>().expect("checked")),
+            ))),
             None => unpinned("a directive that takes seconds written without them"),
         },
         "no-cache" | "private" => match value {
             None => Ok(Some((lower.clone(), lower))),
-            Some(v) if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') => Ok(Some((lower.clone(), format!("{lower}={v}")))),
+            Some(v) if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') => {
+                Ok(Some((lower.clone(), format!("{lower}={v}"))))
+            }
             Some(_) => unpinned("a field list without quotes"),
         },
-        "no-store" | "no-transform" | "only-if-cached" | "public" | "must-revalidate" | "proxy-revalidate" => match value {
-            None => Ok(Some((lower.clone(), lower))),
-            Some(_) => unpinned("a flag directive with a value"),
-        },
+        "no-store" | "no-transform" | "only-if-cached" | "public" | "must-revalidate" | "proxy-revalidate" => {
+            match value {
+                None => Ok(Some((lower.clone(), lower))),
+                Some(_) => unpinned("a flag directive with a value"),
+            }
+        }
         _ => match value {
             None => Ok(Some((name.to_string(), name.to_string()))),
-            Some(v) if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') => Ok(Some((name.to_string(), format!("{name}={v}")))),
+            Some(v) if v.len() >= 2 && v.starts_with('"') && v.ends_with('"') => {
+                Ok(Some((name.to_string(), format!("{name}={v}"))))
+            }
             Some(v) if is_token(v) => Ok(Some((name.to_string(), format!("{name}={v}")))),
             Some(_) => Ok(None),
         },

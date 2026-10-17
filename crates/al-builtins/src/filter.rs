@@ -555,7 +555,8 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
     let ctx = DATE_CONTEXT.with(std::cell::Cell::get);
     let german = ctx.is_some_and(|c| c.language == 1031);
     let english = ctx.is_some_and(|c| c.language == 1033);
-    let needs_session = || format!("text filter value `{t}` for Date: the session's dates are not known here (not pinned)");
+    let needs_session =
+        || format!("text filter value `{t}` for Date: the session's dates are not known here (not pinned)");
     match t {
         "T" | "t" => return ctx.map(|c| Value::Date(c.today, false)).ok_or_else(needs_session),
         "W" | "w" => return ctx.map(|c| Value::Date(c.work_date, false)).ok_or_else(needs_session),
@@ -609,7 +610,11 @@ mod tests {
         // T and W need the session's dates (P143Date_EnFormulas.al).
         assert!(parse_filter("T", &[], &T::Date).is_err());
         let today = crate::format::day_from_civil(2026, 10, 15);
-        let ctx = DateFilterContext { today, work_date: today + 1, language: 1033 };
+        let ctx = DateFilterContext {
+            today,
+            work_date: today + 1,
+            language: 1033,
+        };
         with_date_context(ctx, || {
             let t = parse_filter("..t", &[], &T::Date).expect("a range up to today");
             assert!(t.matches(&Value::Date(today, false)) && !t.matches(&Value::Date(today + 1, false)));

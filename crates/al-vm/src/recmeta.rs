@@ -469,7 +469,11 @@ impl Session {
                 let pos = arg_pos(args, 0)?;
                 let key = rec.borrow().key;
                 let Some(bit) = t.keys[key].iter().chain(&t.keys[0]).position(|&p| p == pos) else {
-                    let name = if method == RecordOp::GetAscending { "GetAscending" } else { "SetAscending" };
+                    let name = if method == RecordOp::GetAscending {
+                        "GetAscending"
+                    } else {
+                        "SetAscending"
+                    };
                     return Err(crate::transactions::al_error_code(
                         &format!(
                             "Cannot call {name} on field {} because it is not part of the current sorting.",

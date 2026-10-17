@@ -266,7 +266,13 @@ impl Session {
                 return unsupported("GetView of a record with SetAscending on these fields of a sorting (not pinned)");
             }
             let dirs: Vec<&str> = (0..fields)
-                .map(|i| if mask & (1 << i) != 0 { "Descending" } else { "Ascending" })
+                .map(|i| {
+                    if mask & (1 << i) != 0 {
+                        "Descending"
+                    } else {
+                        "Ascending"
+                    }
+                })
                 .collect();
             out.push_str(&format!(" ORDER({})", dirs.join(",")));
         } else if !ascending {

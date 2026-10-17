@@ -40,6 +40,9 @@ pub struct RunOptions {
     /// oracle recorded values derived from `Today` on the day real BC ran, so the harness starts each codeunit at the
     /// time of that codeunit's suite in the oracle.
     pub clock_starts: Option<Arc<std::collections::HashMap<u32, i64>>>,
+    /// Do not print the `baseline:` detail lines to stderr (`alrunner test` prints them only with `--verbose`). The counts
+    /// stay in `Phases::baseline_roots`. Default `false`: print, as the corpus job does.
+    pub quiet_baseline: bool,
 }
 
 /// What the compile phase of a run leaves for its run phase (`CorpusRuntime::compile_suites`).

@@ -141,8 +141,10 @@ impl Session {
                     Ok(Value::Text(self.host.identity.server_base_url().into()))
                 }
                 other => unsupported(format!(
-                    "GetUrl({}): only ClientType::Web is built, from the host's server address (ADR-042); the rest is not pinned",
-                    other.describe()
+                    "GetUrl({}; the call had {} argument{}): only GetUrl(ClientType::Web) with no further arguments is built, from the host's server address (ADR-042); the other forms are not pinned",
+                    other.describe(),
+                    args.len(),
+                    if args.len() == 1 { "" } else { "s" }
                 )),
             },
             ids::SESSION_CURRENTCLIENTTYPE_1 => Ok(client_type(self.host.identity.current_client_type())),

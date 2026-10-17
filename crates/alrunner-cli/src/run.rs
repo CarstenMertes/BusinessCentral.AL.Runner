@@ -5,6 +5,7 @@ use crate::args::{DEFAULT_TOP, TestArgs};
 use crate::capture;
 use crate::coverage;
 use crate::output::{self, Counts};
+use crate::style;
 use crate::testdata;
 use al_bcdb_std::BackupProvider;
 use al_deps::load::WorkspaceApp;
@@ -175,6 +176,16 @@ fn peak_memory_mb() -> Option<u64> {
         .parse()
         .ok()?;
     Some(kb / 1024)
+}
+
+/// A test's run time for the per-test lines: milliseconds down to microseconds, right-aligned.
+fn ms(d: Duration) -> String {
+    format!("{:>10.3} ms", d.as_secs_f64() * 1000.0)
+}
+
+/// [`secs`] right-aligned, so the numbers of the `Time:` line stack up from run to run.
+fn secs_w(d: Duration) -> String {
+    format!("{:>6.2} s", d.as_secs_f64())
 }
 
 fn secs(d: Duration) -> String {
@@ -500,6 +511,18 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         matches!(a.output_json, Some(None)) || warm.is_some(),
         std::sync::atomic::Ordering::Relaxed,
     );
+    {
+        use std::io::IsTerminal;
+        let to_stderr = REPORT_TO_STDERR.load(std::sync::atomic::Ordering::Relaxed);
+        let terminal = if to_stderr {
+            std::io::stderr().is_terminal()
+        } else {
+            std::io::stdout().is_terminal()
+        };
+        let no_color = std::env::var_os("NO_COLOR").is_some_and(|v| !v.is_empty());
+        // A server request is never colored.
+        style::set(warm.is_none() && a.color.enabled(terminal, no_color));
+    }
     let test_timeout = test_timeout_secs(a)?;
     // The key of the compile cache starts with a hash of this executable (10 ms): make it beside the loading.
     if !a.no_compile_cache {
@@ -731,9 +754,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     let mut seen = BTreeSet::new();
     let mut hidden = 0;
     for line in &dependencies.log {
-        let is_problem = line.starts_with("dependency skipped")
-            || line.starts_with("dependency note")
-            || line.starts_with("warning:");
+        let is_problem = output::dependency_line_is_problem(line);
         if (a.verbose || is_problem) && seen.insert(line.as_str()) {
             if a.verbose || seen.len() <= 12 {
                 // A missing-dependency line repeats the whole search list; the start says it all.
@@ -758,7 +779,17 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     }
 
     if !a.quiet {
-        say!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
+        say!(
+            "{}",
+            style::bold(&format!(
+                "alrunner {} ({})",
+                env!("CARGO_PKG_VERSION"),
+                env!("ALRUNNER_COMMIT")
+            ))
+        );
+    }
+    // Setup details: --verbose only (see HELP, "Output").
+    if a.verbose {
         say!(
             "target: BC {}, runtime {}{}",
             chosen.target.bc,
@@ -923,6 +954,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         capture: a.capture,
         hooks,
         clock_starts: None,
+        quiet_baseline: !a.verbose,
         test_data: test_data.as_ref().map(|(d, _)| d.clone()),
         compile_cache: (!a.no_compile_cache
             && !std::env::var("ALRUNNER_NO_COMPILE_CACHE").is_ok_and(|v| !v.is_empty() && v != "0"))
@@ -1140,9 +1172,23 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         let mut hidden_failures = 0;
         for r in &results {
             let line = match &r.outcome {
-                Outcome::Pass if a.verbose => format!("PASS    {} {}.{}", r.codeunit, r.codeunit_name, r.test),
+                Outcome::Pass if a.verbose => format!(
+                    "{} {} {} {}.{}{}",
+                    style::green("PASS   "),
+                    ms(r.time),
+                    r.codeunit,
+                    r.codeunit_name,
+                    r.test,
+                    if r.assumptions.is_empty() {
+                        String::new()
+                    } else {
+                        style::cyan(" (flagged)")
+                    }
+                ),
                 Outcome::NotRun(why) if a.verbose => format!(
-                    "NOT RUN {} {}.{}: {}",
+                    "{} {} {} {}.{}: {}",
+                    style::yellow("NOT RUN"),
+                    ms(r.time),
                     r.codeunit,
                     r.codeunit_name,
                     r.test,
@@ -1155,7 +1201,13 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                     }
                     shown_failures += 1;
                     let mut line = format!(
-                        "FAIL    {} {}.{}: {}",
+                        "{} {}{} {}.{}: {}",
+                        style::red("FAIL   "),
+                        if a.verbose {
+                            format!("{} ", ms(r.time))
+                        } else {
+                            String::new()
+                        },
                         r.codeunit,
                         r.codeunit_name,
                         r.test,
@@ -1188,7 +1240,9 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             )),
             _ => None,
         }));
-        say!("\n{}", refusals::render_top("not-run tests", &list, n));
+        let text = refusals::render_top("not-run tests", &list, n);
+        let (head, rest) = text.split_once('\n').unwrap_or((&text, ""));
+        say!("\n{}\n{rest}", style::bold(head));
     }
 
     // The assumptions the run went through: the counts are kept for `--list-assumptions`; the ranking is printed
@@ -1204,8 +1258,11 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             println!("\n{}", al_testrun::flagged::render_top(&rows, n));
         } else if counts.flagged > 0 && !a.quiet {
             println!(
-                "\n{} passes ran through an unprobed assumption (flagged); --top-assumptions ranks the assumptions, --list-assumptions describes them.",
-                counts.flagged
+                "\n{}",
+                style::cyan(&format!(
+                    "{} passes ran through an unprobed assumption (flagged); --top-assumptions ranks the assumptions, --list-assumptions describes them.",
+                    counts.flagged
+                ))
             );
         }
     }
@@ -1294,7 +1351,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     } else {
         0.0
     };
-    if let Some((data, _)) = &test_data {
+    if let Some((data, _)) = test_data.as_ref().filter(|_| a.verbose) {
         let summary = data.stats.summary();
         say!("{}", summary.line(&data.provider.source(), data.provider.company()));
         let refusals = summary.refusals();
@@ -1305,34 +1362,56 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             say!("... {} more refused tables (--verbose lists them)", refusals.len() - 10);
         }
     }
-    say!("{}", output::summary_line(&counts, test_data.is_some()));
+    // A warning that changes how to read the result stays in the default output, as one line.
+    if let Some(w) = p
+        .baseline_roots
+        .and_then(|(ran, total)| output::baseline_warning(ran, total))
+    {
+        if !a.quiet {
+            say!("{w}");
+        }
+    }
+    say!("{}", style::bold(&output::summary_line(&counts, test_data.is_some())));
+    if !a.quiet && counts.total > 0 {
+        for line in output::summary_table(&counts) {
+            say!("{line}");
+        }
+    }
     if let Some(d) = &disabled {
         say!("{}", disabled_line(d, &results, &found, a.parity));
     }
     if let Some(w) = &dotnet_warning {
         say!("{w}");
     }
-    say!(
-        "Time: load {}, compile {}, install baseline {}, run {} ({:.0} tests/s), total {}{}",
-        secs(load_time),
-        secs(p.compile),
-        secs(p.baseline),
-        secs(p.tests),
-        rate,
-        secs(total_time),
-        peak_memory_mb().map_or(String::new(), |m| format!(", peak memory {m} MB"))
-    );
+    if a.verbose {
+        say!(
+            "Time: load {}, compile {}, install baseline {}, run {} ({:.0} tests/s), total {}{}",
+            secs_w(load_time),
+            secs_w(p.compile),
+            secs_w(p.baseline),
+            secs_w(p.tests),
+            rate,
+            secs_w(total_time),
+            peak_memory_mb().map_or(String::new(), |m| format!(", peak memory {m} MB"))
+        );
+    }
     let code = output::exit_code(&counts, a.allow_not_run);
+    let verdict = match code {
+        0 => "PASSED",
+        1 => "FAILED",
+        6 => "NOTHING SELECTED",
+        7 => "TESTS NOT RUN",
+        8 => "DOTNET UNAVAILABLE",
+        _ => "ERROR",
+    };
+    let result = format!("Result: {verdict} (exit {code})");
     say!(
-        "Result: {} (exit {code})",
-        match code {
-            0 => "PASSED",
-            1 => "FAILED",
-            6 => "NOTHING SELECTED",
-            7 => "TESTS NOT RUN",
-            8 => "DOTNET UNAVAILABLE",
-            _ => "ERROR",
-        }
+        "{}",
+        style::bold(&match code {
+            0 => style::green(&result),
+            1 => style::red(&result),
+            _ => style::yellow(&result),
+        })
     );
     if let Some(w) = warm {
         w.report = Some(Report {

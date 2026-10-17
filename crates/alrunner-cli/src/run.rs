@@ -510,6 +510,23 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     if let Some(env) = a.environment {
         al_testrun::host::set_environment(env);
     }
+    // ADR-042: --server-url, else $ALRUNNER_SERVER_URL, else the default. A request of a server sets it for that run.
+    let server_url = match &a.server_url {
+        Some(u) => Some(u.clone()),
+        None => match std::env::var("ALRUNNER_SERVER_URL") {
+            Ok(v) if !v.trim().is_empty() => {
+                Some(al_host::check_server_url(&v).map_err(|e| format!("ALRUNNER_SERVER_URL: {e}"))?)
+            }
+            _ => None,
+        },
+    };
+    let server_url_from = if a.server_url.is_some() {
+        "--server-url"
+    } else {
+        "ALRUNNER_SERVER_URL"
+    };
+    let server_url_set = server_url.is_some();
+    al_testrun::host::set_server_url(server_url);
     if let Some(dir) = &a.files_dir {
         al_testrun::host::set_files_dir(dir.clone());
     }
@@ -775,6 +792,11 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                 say!("isolation: TestIsolation = Codeunit (the default of Microsoft's test runner)")
             }
             Some(i) => say!("isolation: TestIsolation = {} (--isolation)", i.name()),
+        }
+        {
+            let (url, _) = al_testrun::host::server_url();
+            let from = if server_url_set { server_url_from } else { "default" };
+            say!("server address: {url} ({from})");
         }
         if let Some((data, path)) = &test_data {
             say!(
@@ -1257,9 +1279,13 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
     if let Some(path) = &a.junit {
         write_file(
             path,
-            &output::junit(&results, bc_build.as_deref(), total_time.as_secs_f64(), &|cu, t| {
-                disabled.as_ref().is_some_and(|d| d.is_disabled(cu, t))
-            }),
+            &output::junit(
+                &results,
+                bc_build.as_deref(),
+                total_time.as_secs_f64(),
+                &|cu, t| disabled.as_ref().is_some_and(|d| d.is_disabled(cu, t)),
+                &rt.phases.baseline_assumptions,
+            ),
         )?;
     }
 

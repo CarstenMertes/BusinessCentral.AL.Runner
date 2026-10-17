@@ -983,3 +983,24 @@ fn a_member_can_be_called_on_a_boxed_primitive() {
     assert_eq!(r.value, DotNetValue::Str("7".into()));
     sess.close();
 }
+
+#[test]
+fn a_settable_property_called_with_one_argument_is_assigned() {
+    // System Application "XML DOM Management".XMLEscape: `XMLNode.InnerText(Text); exit(XMLNode.InnerXml);` AL lets a
+    // property be written as a call, with the value as the one argument. A read-only property stays refused.
+    let Some(h) = host() else { return };
+    let mut sess = h.open_session(&DotNetSessionConfig::default());
+    let doc = handle_of(&sess.construct(&ty("System.Xml.XmlDocument"), vec![]).unwrap());
+    let el = handle_of(
+        &sess
+            .invoke(DotNetTarget::Instance(doc), "CreateElement", vec![s("E")])
+            .unwrap(),
+    );
+    sess.invoke(DotNetTarget::Instance(el), "InnerText", vec![s("a<b & c")])
+        .unwrap();
+    let xml = sess.get_property(DotNetTarget::Instance(el), "InnerXml").unwrap();
+    assert_eq!(xml.value, DotNetValue::Str("a&lt;b &amp; c".into()));
+    let why = refused(sess.invoke(DotNetTarget::Instance(el), "LocalName", vec![s("x")]));
+    assert!(why.contains("not found"), "{why}");
+    sess.close();
+}

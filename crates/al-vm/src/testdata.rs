@@ -517,6 +517,15 @@ impl TestBacking {
         let blobs: Vec<usize> = (0..t.fields.len())
             .filter(|&i| matches!(defaults[i], Value::Blob(_)))
             .collect();
+        // The AutoIncrement field of the table and whether the source holds a value for it. A source of untyped values
+        // (a configuration package) holds none: the database numbered those rows as it inserted them.
+        let auto = self.engine.program.objects[t.object as usize]
+            .table
+            .as_ref()
+            .and_then(|s| s.fields.iter().position(|f| f.auto_increment));
+        let numbered = auto
+            .filter(|&i| self.data.provider.wants_fields() && !plan.mapped.iter().any(|m| m.field == i))
+            .filter(|&i| matches!(t.fields[i].ty, RtType::Integer | RtType::BigInteger));
         let mut out: Vec<Row> = Vec::with_capacity(rows.rows.len());
         for r in &rows.rows {
             let mut row = defaults.clone();
@@ -535,12 +544,19 @@ impl TestBacking {
                     self.data.stats.note_row_version(*v);
                 }
             }
+            if let Some(i) = numbered {
+                let n = out.len() as i64 + 1;
+                row[i] = if matches!(t.fields[i].ty, RtType::BigInteger) {
+                    Value::BigInteger(n)
+                } else {
+                    Value::Integer(n as i32)
+                };
+            }
             out.push(row);
         }
-        let auto = self.engine.program.objects[t.object as usize]
-            .table
-            .as_ref()
-            .and_then(|s| s.fields.iter().position(|f| f.auto_increment));
+        if numbered.is_some() && !out.is_empty() {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PackageAutoIncrementFromOne);
+        }
         let floor = auto.map_or(0, |i| {
             out.iter()
                 .filter_map(|r| match &r[i] {

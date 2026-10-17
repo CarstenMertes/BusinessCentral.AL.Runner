@@ -67,6 +67,12 @@ pub struct Info {
 }
 
 registry! {
+    PageFieldFollowsSourceFieldEditableFalse => {
+        id: "page-field-follows-source-field-editable-false",
+        assumed: "A page field over a source table field that declares Editable = false, with no Editable of its own on the control, reads Editable() No on a TestPage.",
+        tests: "Payment Export Mgt Unit Test.FilterByHasPaymentExportError (Gen. Journal Line.\"Has Payment Export Error\", a FlowField with Editable = false, on the Payment Journal).",
+        probe: "A table field with Editable = false (stored, and a FlowField) and one without; a page with a plain field control over each and one that sets Editable = true itself: Editable() of each control on an open TestPage, and whether SetValue on the first is refused.",
+    },
     ClearAllKeepsTemporaryRows => {
         id: "clear-all-keeps-temporary-rows",
         assumed: "ClearAll() resets the fields and filters of a global temporary record but keeps its rows, as Clear(Rec) does.",

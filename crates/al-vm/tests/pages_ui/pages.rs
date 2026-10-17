@@ -273,6 +273,24 @@ page 50031 "PG Dynamic Caption"
     layout { area(Content) { field(NoCtl; Rec."No.") { } } }
     trigger OnOpenPage() begin CurrPage.Caption := 'Dynamic Caption'; end;
 }
+
+table 50040 "PG RO Row"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(2; Locked; Boolean) { Editable = false; }
+        field(3; Free; Boolean) { }
+    }
+    keys { key(PK; "No.") { } }
+}
+
+page 50041 "PG RO Card"
+{
+    PageType = Card;
+    SourceTable = "PG RO Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } field(LockedCtl; Rec.Locked) { } field(FreeCtl; Rec.Free) { } } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -1037,4 +1055,20 @@ fn find_first_field_takes_a_bare_control_name() {
         "F",
     );
     assert_eq!(text(r), "B");
+}
+
+// Microsoft's Payment Export Mgt Unit Test.FilterByHasPaymentExportError needs a page field over a source field
+// that says `Editable = false` to read No (the field is also a FlowField). Unprobed: assumption
+// page-field-follows-source-field-editable-false.
+#[test]
+fn a_page_field_over_a_source_field_with_editable_false_is_not_editable() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PG RO Row\"; TP: TestPage \"PG RO Card\"; begin
+            R.\"No.\" := 'A'; R.Insert();
+            TP.OpenEdit();
+            exit(Format(TP.NoCtl.Editable()) + Format(TP.LockedCtl.Editable()) + Format(TP.FreeCtl.Editable()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesNoYes");
 }

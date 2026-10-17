@@ -536,6 +536,12 @@ registry! {
         tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
         probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again.",
     },
+    NewLineStampsAllBeforeValidating => {
+        id: "new-line-stamps-all-before-validating",
+        assumed: "The blank line of a part (or list) takes every single-valued filter value (key fields, Document Type from SourceTableView and the SubPageLink fields) onto the record first, and only then runs the OnValidate and table relation of each, in field order; a link field declared before Document Type is validated with the Document Type already set.",
+        tests: "Library - Service.CreateServiceOrderHeaderUsingPage (TestPage Service Order OpenNew, Customer No. Activate, OK): the part Service Order Subform links on \"Document No.\" (field 1), its table relation of Document No. filters on \"Document Type\" (field 43); about 9 Tests-SCM-Service tests.",
+        probe: "A part page with SourceTableView where(Type = const(B)) and SubPageLink on a field declared before Type whose table relation filters on Type, and an OnValidate on the first field that reads Type: open the host, read the draft line and what the OnValidate saw.",
+    },
     FilterChangeLandsOnNewLine => {
         id: "filter-change-lands-on-new-line",
         assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",

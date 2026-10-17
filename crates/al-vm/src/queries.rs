@@ -725,7 +725,9 @@ impl Session {
                     // Microsoft's own queries do this (Create Pick's CalcQtyInWhseEntries orders by one Option column
                     // and groups by ten): the groups stay in the order of their grouping columns, which
                     // `group_rows` produced and the stable sort kept. Not pinned: an assumption.
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::GroupedQueryTiesInGroupingOrder);
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::GroupedQueryTiesInGroupingOrder,
+                    );
                     break;
                 }
             }

@@ -1293,8 +1293,20 @@ fn calcdate_reads_a_percent_sign_after_a_plus_as_the_number_that_follows() {
     );
     assert_eq!(r.unwrap(), "2024-01-16|2024-01-16");
     // A minus or no sign in front of the percent sign is not pinned.
-    assert!(text_of("D: Date;", "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<-%1D>', D), 0, 9));").is_err());
-    assert!(text_of("D: Date;", "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<%1D>', D), 0, 9));").is_err());
+    assert!(
+        text_of(
+            "D: Date;",
+            "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<-%1D>', D), 0, 9));"
+        )
+        .is_err()
+    );
+    assert!(
+        text_of(
+            "D: Date;",
+            "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<%1D>', D), 0, 9));"
+        )
+        .is_err()
+    );
 }
 
 // session/TestEnvironmentUserTenantContracts.al:195-201 and session/TestNavAppExtended.al:116-117:

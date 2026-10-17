@@ -53,7 +53,9 @@ impl Session {
                 // errors/lt-ms-refusals-134/P134DateTextFilters.al:P134_FieldRef_Date_EmptyAndBlankForms); for a page filter
                 // that is an assumption.
                 if text.trim().is_empty() {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestFilterSetFilterEmptyClears);
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TestFilterSetFilterEmptyClears,
+                    );
                     rec.borrow_mut().filters.retain(|f| !(f.field == pos && f.group == 0));
                     self.filter_changed(st)?;
                     return Ok(Value::Null);

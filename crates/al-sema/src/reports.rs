@@ -977,7 +977,12 @@ fn item_ir(
     if let Some(text) = prop("CalcFields") {
         for name in crate::scan::split_double(&text, ',') {
             let name = crate::scan::unquote_double(name.trim());
-            let pos = table.and_then(|t| o.members[t].fields.iter().position(|x| x.name.eq_ignore_ascii_case(&name)));
+            let pos = table.and_then(|t| {
+                o.members[t]
+                    .fields
+                    .iter()
+                    .position(|x| x.name.eq_ignore_ascii_case(&name))
+            });
             match pos {
                 Some(p) => calc_fields.push(p),
                 None => reasons.push(format!(

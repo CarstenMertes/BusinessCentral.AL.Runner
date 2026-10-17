@@ -1088,7 +1088,9 @@ impl Session {
                 // The corpus pins filters a trigger sets on a link field (misc/lt-probes-needed-8/PnH3Link.al:
                 // Link_ChildSetsOwnFilters_InPreDataItem: both apply). One the view or the caller sets before the run is in
                 // the report's filter group, where the link replaces the filter on its field: an assumption.
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportItemFilterOnLinkFieldReplaced);
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::ReportItemFilterOnLinkFieldReplaced,
+                );
             }
         }
         // A filter an item gets in OnPreReport is discarded: OnPreDataItem sees the view the item
@@ -1240,7 +1242,9 @@ impl Session {
             // item or a list of several fields is the same on an assumption.
             if !item.calc_fields.is_empty() {
                 if item.parent.is_some() || item.calc_fields.len() > 1 {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportItemCalcFieldsNestedOrList);
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::ReportItemCalcFieldsNestedOrList,
+                    );
                 }
                 self.calc_fields(&rec, &item.calc_fields)?;
             }

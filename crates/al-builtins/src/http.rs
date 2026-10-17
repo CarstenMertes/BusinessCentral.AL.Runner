@@ -204,8 +204,13 @@ pub fn normalize_uri(input: &str) -> Result<String, bool> {
     }
     // A text with no colon has no scheme, so it is no absolute uri: `Req.SetRequestUri('orders')` raises like '/orders'
     // (network/lt-http-relative-request/HttpRelativeRequestPath.al:P168_Send_RelativeRequestUri `af109`).
+    // Only a plain word is pinned; other texts with no colon are not measured.
     let Some(colon) = input.find(':') else {
-        return Err(false);
+        return if input.chars().all(|c| c.is_ascii_alphanumeric()) || input.chars().any(char::is_whitespace) {
+            Err(false)
+        } else {
+            Err(true)
+        };
     };
     let scheme = &input[..colon];
     let scheme_ok = !scheme.is_empty()
@@ -335,10 +340,11 @@ fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal
     if path.contains("://") || base.is_empty() {
         return match normalize_uri(path) {
             Ok(u) => Ok((u, false)),
-            Err(_) if !path.is_empty() && !path.contains(char::is_whitespace) && !path.contains("://") => {
-                Ok((path.to_string(), false))
-            }
-            Err(_) => invalid_url(),
+            Err(_) if is_pinned_relative(path) => Ok((path.to_string(), false)),
+            Err(true) => unsupported(format!(
+                "HttpClient with the request path `{path}` and no base address: whether it is valid is not measured"
+            )),
+            Err(false) => invalid_url(),
         };
     }
     let Some(after) = base.find("://").map(|i| i + 3) else {
@@ -353,6 +359,13 @@ fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal
         format!("{origin}{dir}{path}")
     };
     normalize_uri(&joined).map(|u| (u, true)).or_else(|_| invalid_url())
+}
+
+/// The relative paths the corpus pins as reaching the request policy with no base address: a plain word and a rooted path
+/// (HttpRelativeRequestPath.al:P168_Get_NoBaseAddress `orders`, `/orders`).
+fn is_pinned_relative(path: &str) -> bool {
+    let word = path.strip_prefix('/').unwrap_or(path);
+    !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 fn invalid_url<T>() -> Result<T, Signal> {

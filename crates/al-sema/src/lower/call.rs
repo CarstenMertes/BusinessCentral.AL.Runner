@@ -84,6 +84,13 @@ impl Lowerer<'_> {
                             out.push(ir::Arg::Value(value));
                             continue;
                         }
+                        // A Notification handed to a by-value parameter is the caller's own (the binding in al-vm lib.rs shares it too): no copy.
+                        let is_notification =
+                            |t: &Ty| matches!(t, Ty::Builtin(n) if n.eq_ignore_ascii_case("notification"));
+                        if is_notification(&p.ty) && is_notification(self.ty_ref(a)) {
+                            out.push(ir::Arg::Value(value));
+                            continue;
+                        }
                         out.push(ir::Arg::Value(self.convert_to(&p.ty, self.ty_ref(a), value)?));
                     }
                 }

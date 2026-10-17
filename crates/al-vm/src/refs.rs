@@ -763,8 +763,17 @@ impl Session {
                     Ok(v)
                 }
                 Some(v) => {
-                    // Assigning Value does not run OnValidate (that is `Validate`).
-                    let v = ops::convert(v.clone(), &field.ty)?;
+                    // Assigning Value does not run OnValidate (that is `Validate`). An Enum value goes into a Text or Code field as its caption
+                    // (Code in upper case): types/lt-enum-to-text-fieldref/EnumToTextFieldRef.al:FieldRefValue_EnumToTextField_PerMember,
+                    // FieldRefValue_EnumToCodeField.
+                    let converted = match v {
+                        Value::Enum(..) => ops::number_into_text_field(v, &field.ty, &*self),
+                        _ => None,
+                    };
+                    let v = match converted {
+                        Some(r) => r?,
+                        None => ops::convert(v.clone(), &field.ty)?,
+                    };
                     rec.borrow_mut().fields[pos] = v;
                     Ok(Value::Null)
                 }

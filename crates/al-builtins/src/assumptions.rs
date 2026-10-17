@@ -79,12 +79,6 @@ registry! {
         tests: "Item Tracking Lines (InsertRecord inserts into the page's temporary source, ValidateAndInsert answers false); Tests-Manufacturing PostProductionJournalUsingLotItemTracking and the item tracking tests that set a lot and a quantity.",
         probe: "A page with OnInsertRecord { Rec.Insert(); exit(false) } and OnModifyRecord { Rec.Modify(); exit(false) }: OpenNew, set the key, set a second field, OK; read the row and count the trigger calls.",
     },
-    NumberToTextIsFormat => {
-        id: "number-to-text-is-format",
-        assumed: "An Enum value that FieldRef.Value() returns, assigned to a record's Text or Code field, is its member name as Format gives it. (A number from FieldRef.Value() is pinned by types/lt-variant-to-text-fields/VariantFieldRefBigIntToText.al; a Variant holding a number or an Enum raises TypeConversion there.)",
-        tests: "Workflow Table Relation Value.CreateNew (Value := FieldRef.Value()); 114 Tests-Workflow tests.",
-        probe: "An enum field's FieldRef.Value() assigned to a Text[50] and a Code[50] field; compare with Format.",
-    },
     QueryClosedAfterLastRow => {
         id: "query-closed-after-last-row",
         assumed: "A query whose Read has returned false after its last row is closed: SetRange and SetFilter take a new filter and Open runs it again.",

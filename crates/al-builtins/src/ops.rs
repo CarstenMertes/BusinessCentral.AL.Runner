@@ -472,7 +472,7 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
 }
 
 /// A number `FieldRef.Value()` returns, assigned to a Text or Code field of a record: its default `Format` text (types/lt-variant-to-text-fields/
-/// VariantFieldRefBigIntToText.al:TextField_FromFieldRefValue_Numbers); an Enum is assumed (number-to-text-is-format). Base Application's Workflow Table Relation Value.CreateNew does `Value := FieldRef.Value()` into
+/// VariantFieldRefBigIntToText.al:TextField_FromFieldRefValue_Numbers); an Enum goes in as its caption (types/lt-enum-to-text-fieldref/EnumToTextFieldRef.al:FieldRefValue_EnumToTextField_PerMember). Base Application's Workflow Table Relation Value.CreateNew does `Value := FieldRef.Value()` into
 /// a Text[250] field (114 Tests-Workflow tests). A Variant into a Text *variable* is not this: it raises (VaTCompare.al:af117).
 /// `None` when the value is no number or the target no Text or Code.
 #[cold]
@@ -493,9 +493,6 @@ pub fn number_into_text_field(
         RtType::Code(max) => (max, true),
         _ => return None,
     };
-    if matches!(v, Value::Enum(..)) {
-        crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
-    }
     let text = match crate::format::try_format(v, 0, 0, ctx) {
         Ok(text) => text,
         Err(e) => return Some(Err(Signal::Unsupported(e))),
@@ -1558,7 +1555,7 @@ mod tests {
 
     /// Duration `/`, `div` and `mod` with a whole number, and Duration / Duration, as corpus
     /// types/lt-filter-enum-relation-duration-guid/D_Duration.al:Duration_Arithmetic pins them (D1 = 90000 ms, D2 = 30000 ms).
-    /// A Variant's number into a record's Text or Code field is its Format text (assumption number-to-text-is-format; a BigInteger has
+    /// A number `FieldRef.Value()` returns, into a record's Text or Code field, is its Format text (VariantFieldRefBigIntToText.al; a BigInteger has
     /// no thousands separator in Format); into a Text variable an Integer raises TypeConversion (corpus VaTCompare.al af117).
     #[test]
     fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {

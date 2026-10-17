@@ -756,7 +756,7 @@ impl Lowerer<'_> {
             && matches!(op_kind, Some(SyntaxKind::Assign) | None);
         // A Variant holding an Integer or a Date assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117 and af121); the conversion into a field, a parameter
-        // or a returned value is another path (assumptions number-to-text-is-format, date-to-text-is-format).
+        // or a returned value is another path (VariantNumberToField.al; assumption date-to-text-is-format).
         let variant_into_text_variable = matches!(
             place,
             ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_)

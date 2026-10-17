@@ -799,6 +799,7 @@ impl Session {
                         }
                         shown = Some(format!("\\u{:04X}", b));
                     }
+                    (Value::Guid(_), Value::Guid(_)) => {}
                     (_, Value::Guid(_)) => return unsupported("TestField against a Guid on a field that is not Text (not pinned)"),
                     _ => {}
                 }

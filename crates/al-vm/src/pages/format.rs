@@ -255,7 +255,30 @@ impl Session {
                 .map(|(_, c)| c.clone())
                 .unwrap_or_else(|| ordinal.to_string())
         };
-        let text = pagefmt::control_text(v, &f, &caption);
+        let mut text = pagefmt::control_text(v, &f, &caption);
+        // ExtendedDatatype = Ratio shows a percentage: zero is `0%` (pages/lt-page-presentation-properties/P119PageFields.al:P119_FieldState); another
+        // value is not pinned.
+        {
+            let ext = self
+                .control_field(st, idx)
+                .and_then(|fl| {
+                    fl.properties
+                        .iter()
+                        .find(|(k, _)| k.eq_ignore_ascii_case("ExtendedDatatype"))
+                        .map(|(_, v)| v.clone())
+                })
+                .or_else(|| match page_of(&self.engine(), st).controls[idx].prop("extendeddatatype") {
+                    Some(ir::PropVal::Lit(l)) => Some(l.clone()),
+                    _ => None,
+                });
+            if ext.is_some_and(|e| e.trim().eq_ignore_ascii_case("ratio")) {
+                match v {
+                    Value::Decimal(d) if d.is_zero() => text = "0%".to_string(),
+                    Value::Decimal(_) => return unsupported("a Ratio control that shows a value other than zero (not pinned)"),
+                    _ => {}
+                }
+            }
+        }
         // A DateTime control writes a plain space before AM / PM on every version (the corpus re-pinned it for the newer
         // service image: pages/lt-page-runtime/P82TestField.al `dt-value`, pages/lt-page-run-overloads-testpart/
         // P106TestFieldAsDateTime.al:P106_AsDateTime_Values; the older pin with a narrow no-break space is gone).

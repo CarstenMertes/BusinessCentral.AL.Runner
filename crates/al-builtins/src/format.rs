@@ -83,7 +83,12 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             // `Option` declared without members is the one empty name: it shows the number
             // (types/lt-scalars/ScT70062.al:Option_Defaults `nomembers_len`, `nomembers_3`).
             _ if members.len() == 1 && members[0].is_empty() => o.to_string(),
-            _ => members.get(*o as usize).cloned().unwrap_or_else(|| o.to_string()),
+            // A member with a blank name shows as one space (types/lt-scalars/ScT70053.al:Option_Format `blank_len`).
+            _ => match members.get(*o as usize) {
+                Some(m) if m.is_empty() => " ".to_string(),
+                Some(m) => m.clone(),
+                None => o.to_string(),
+            },
         },
         Value::Enum(id, o) => match standard {
             2 | 9 => o.to_string(),
@@ -264,6 +269,19 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             "{cut}{}",
             " ".repeat((length as usize).saturating_sub(cut.chars().count()))
         ));
+    }
+    // A Text shorter than the length is padded on the right (types/lt-scalars/ScT70053.al:Text_FormatNumbers `len30`).
+    if let (Value::Text(_) | Value::Code(_), true) = (v, length > 0) {
+        let n = s.chars().count();
+        if n < length as usize {
+            return Ok(format!("{s}{}", " ".repeat(length as usize - n)));
+        }
+    }
+    // A negative length cuts a Text the same way (types/lt-scalars/ScT70053.al:Text_FormatNumbers `len-5`).
+    if let (Value::Text(_) | Value::Code(_), true) = (v, length < 0) {
+        if s.chars().count() > length.unsigned_abs() as usize {
+            return Ok(s.chars().take(length.unsigned_abs() as usize).collect());
+        }
     }
     // A text longer than the length is cut to it (text/lt-label-textbuilder/TxCLabel.al:Label_Value_And_Format `Format(Plain, 5)`).
     if matches!(

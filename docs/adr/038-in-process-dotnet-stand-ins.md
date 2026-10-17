@@ -128,3 +128,69 @@ user who suspects a stand-in run the old path.
 
 `crates/al-vm/tests/dotnet_diff.rs` (differential, with the sidecar as oracle), the `inproc.txt` list test, the
 Pageworks and Microsoft-bucket junit comparisons, and the request-count line of `alrunner test --timings`.
+
+## Amendment 2026-10-17: TimeZoneInfo and DateTimeOffset
+
+- Status: Accepted (owner, 2026-10-17, in conversation). The library choice was made by the orchestrator; the owner may still object.
+- Reason: measured on six Microsoft buckets (`docs`-external inventory, 2026-10-16), these two types are 87.2 % of all
+  sidecar member calls (210,751 of 241,697) and, with their handle releases, about 87 % of all requests. A request costs
+  about 0.14 ms and a full Microsoft run sends about 500,000. The goal is run time, not replacing the sidecar.
+
+### Members added to the closed set (exactly what Microsoft's code calls, and nothing more)
+
+Source of the list: the traced calls of the six buckets (7 members of `DateTimeOffset`, 2 of `TimeZoneInfo`; the counts
+add up to the 210,751) and the AL that makes them (`TypeHelper.GetUserTimezoneOffset` and `GetTimezoneOffset`,
+`DotNet_DateTimeOffset.ConvertToUtcDateTime` and `GetOffset`, `Unix Timestamp Impl`).
+
+| Type | Member | Calls traced | Served in process |
+|---|---|---|---|
+| `System.TimeZoneInfo` | `FindSystemTimeZoneById(String)` | 81,751 | yes, for `UTC` and the Windows ids of the bundled CLDR table (below); any other id goes to the sidecar |
+| `System.TimeZoneInfo` | `BaseUtcOffset` (get) | 81,751 | yes |
+| `System.DateTimeOffset` | constructor `(DateTime)` | 11,808 | yes |
+| `System.DateTimeOffset` | constructor `(Int64 ticks, TimeSpan offset)` (what `DateTimeOffset.Now` builds, ADR-024) | 11,808 | yes |
+| `System.DateTimeOffset` | `Offset` (get) | 11,812 | yes |
+| `System.DateTimeOffset` | `LocalDateTime` (get) | 11,807 | yes |
+| `System.DateTimeOffset` | `DateTime` (get) | 4 | yes |
+| `System.DateTimeOffset` | `ToLocalTime()` | 5 | yes |
+| `System.DateTimeOffset` | `Parse(String, IFormatProvider, DateTimeStyles)` | 4 | no: culture dependent, goes to the sidecar |
+| `System.DateTimeOffset` | `ToString(String)` | 1 | no: format dependent, goes to the sidecar |
+
+Everything else on both types (`GetUtcOffset`, `ConvertTime`, `IsDaylightSavingTime`, `SupportsDaylightSavingTime`,
+`DisplayName`, `StandardName`, `GetAdjustmentRules`, `FromUnixTimeSeconds`, `ToUnixTimeSeconds`, `UtcDateTime`, arithmetic,
+`TimeZoneInfo.Local`, ...) goes to the sidecar. They are not in the traces; `TimeZoneImpl` calls some of them, and they run
+once per call of that codeunit, not in the hot loop. A later amendment can add one when a measurement asks for it.
+
+### Semantics served
+
+- The session's local time zone is UTC (`TZ=UTC`, ADR-014 section 9). So `DateTimeOffset(DateTime)` has offset zero and
+  `LocalDateTime` is the UTC ticks as a `DateTime` of kind Local. The stand-in does not read the machine time zone.
+- `FindSystemTimeZoneById` answers a `TimeZoneInfo` object holding the id and the base offset. `BaseUtcOffset` is the
+  standard (non-DST) offset of the zone as .NET on Linux computes it from the tz data.
+- Windows ids come from a table generated from Unicode CLDR `windowsZones.xml` (territory 001 rows, the mapping .NET reads
+  from ICU), committed with its generator (`crates/al-host/examples/gen_windows_zones.rs`). Version: CLDR 48
+  (`release-48`). Zone rules come from the `jiff` crate with its bundled tz database (`jiff-tzdb`, no file is read from
+  `/usr/share/zoneinfo`, ADR-006). Both crates are pinned to an exact version.
+- Where jiff could differ from the .NET on the oracle machine (a zone whose standard offset is ambiguous, such as zones with
+  negative DST, or a tz database release that differs), the differential test lists the id and the stand-in forwards that
+  id to the sidecar (an exclusion list in the code). The sidecar answer wins by definition.
+- Exceptions (unknown id, out-of-range ticks, an offset that is not whole minutes or beyond 14 hours) are not produced
+  here: the stand-in forwards the call and the sidecar throws, so the CLR type and message are .NET's own.
+
+### Mixing with sidecar objects
+
+As in section 2. A `TimeZoneInfo` or `DateTimeOffset` made in process migrates when AL code hands it to a member that is
+not in the list: a `DateTimeOffset` is rebuilt in the sidecar with `DateTimeOffset(Int64, TimeSpan)`, a `TimeZoneInfo`
+with `FindSystemTimeZoneById(id)`. A sidecar `DateTimeOffset` or `TimeZoneInfo` (from `Parse`, or an id outside the table)
+stays a handle and every call on it goes to the sidecar.
+
+### Licenses
+
+`jiff` and `jiff-tzdb`: Unlicense OR MIT (the tz data is public domain). CLDR `windowsZones.xml`: Unicode License v3
+(permissive, needs the notice); the license text is committed next to the generated table
+(`crates/al-host/THIRD-PARTY-UNICODE.txt`).
+
+### Conformance
+
+The differential test (`crates/al-test-cli/tests/dotnet_diff.rs`) covers every served member on every Windows id of the
+table, on UTC, and on edge ticks (year 1, year 9999, leap days, DST switch instants of several zones); `inproc.txt`
+lists the members as before.

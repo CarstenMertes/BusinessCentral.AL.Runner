@@ -464,6 +464,25 @@ impl Lowerer<'_> {
                 })()
             }
             CaseStmt => self.case(&kids),
+            // `with Rec do Stmt`: the names the checker took from the record read and write that record
+            // (corpus events/lt-global-triggers-statements/P114WithStatement.al,
+            // events/lt-with-statement-scopes/WithStatementNested.al). The record is read as a place each time.
+            WithStmt => {
+                let start = usize::from(n.text_range().start());
+                let place = match self.ty_ref(&kids[0]) {
+                    Ty::Record { .. } => self.place(&kids[0]),
+                    other => Err(format!("with on a value of type {other} is not lowered (only records)")),
+                };
+                match place {
+                    Ok(p) => {
+                        self.with_places.insert(start, p);
+                        let body = self.stmt_or_empty(kids.get(1));
+                        self.with_places.remove(&start);
+                        return body;
+                    }
+                    Err(e) => Err(e),
+                }
+            }
             ExitStmt => match kids.first() {
                 None => Ok(ir::Stmt::Exit(None)),
                 Some(e) => self.expr(e).and_then(|v| {
@@ -621,9 +640,10 @@ impl Lowerer<'_> {
             // Without a receiver the member is a global function (`WorkDate := d`) or a Record
             // member of the implicit Rec of table, page and dataitem code (`FilterGroup := 2`).
             let implicit = !member
-                && sig
-                    .as_ref()
-                    .is_some_and(|s| !s.instance || (s.receiver == "Record" && self.rec_slot.is_some()));
+                && sig.as_ref().is_some_and(|s| {
+                    !s.instance
+                        || (s.receiver == "Record" && (self.rec_slot.is_some() || self.supplied_by_with(&kids[0])))
+                });
             if let Some(sig) = sig.filter(|_| member || implicit) {
                 // A test page control's setter form is run by the test client, not a native builtin.
                 if al_builtins::native::lookup(&id).is_none() && !id.starts_with("TestField.") {
@@ -675,8 +695,7 @@ impl Lowerer<'_> {
                         }))
                     }
                 } else if sig.instance {
-                    let rec = self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?;
-                    Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec))))
+                    Some(Box::new(ir::Arg::Ref(self.implicit_rec(&kids[0])?)))
                 } else {
                     None
                 };
@@ -945,7 +964,7 @@ impl Lowerer<'_> {
                     let field = self.field_ref(table, id);
                     let base = match n.kind() {
                         SyntaxKind::MemberExpr => self.place(&n.children().next().ok_or("member base")?)?,
-                        _ => ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
+                        _ => self.implicit_rec(n)?,
                     };
                     Ok(ir::Place::Field(Box::new(base), field))
                 }

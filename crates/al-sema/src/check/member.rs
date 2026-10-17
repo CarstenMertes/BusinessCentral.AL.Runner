@@ -67,6 +67,7 @@ impl<'a> Checker<'a> {
                     fields: Vec::new(),
                     rest_field: false,
                     hidden: None,
+                    with_off: None,
                 }]));
             }
             Ty::Unknown | Ty::Variant if receiver_of(t).is_none() => return Some(E::Val(Ty::Unknown)),

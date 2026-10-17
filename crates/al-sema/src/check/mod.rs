@@ -117,6 +117,32 @@ pub enum Res {
     },
     /// A member of a `DotNet` value: only its name is known at compile time (ADR-014).
     DotNetMember(String),
+    /// A bare name that the record of a `with` statement supplied (corpus events/lt-with-statement-scopes/
+    /// WithStatementAmbiguous.al, WithStatementNested.al): `with` is the offset of the `WithStmt` node in its
+    /// file, `inner` what the name resolved to as a member of that record. Lowering reads `inner` through
+    /// [`Res::inner`] and takes the record from the statement.
+    With {
+        with: usize,
+        inner: Box<Res>,
+    },
+}
+
+impl Res {
+    /// What the name resolved to, without the `with` statement that supplied it.
+    pub fn inner(&self) -> &Res {
+        match self {
+            Res::With { inner, .. } => inner,
+            r => r,
+        }
+    }
+
+    /// The `WithStmt` (its start offset) that supplied the name, if one did.
+    pub fn with_stmt(&self) -> Option<usize> {
+        match self {
+            Res::With { with, .. } => Some(*with),
+            _ => None,
+        }
+    }
 }
 
 /// Extra roots of the demand-driven check, besides the workspace's own code (ADR-013 decision 5).
@@ -473,6 +499,8 @@ pub(crate) struct Cand {
     /// Set when this overload exists only in a newer runtime than the target's
     /// (ADR-015 3.3). Such a candidate is never called; it only explains a refusal.
     hidden: Option<al_version::Runtime>,
+    /// Set when the candidate is a member of the record of a `with` statement (its start offset).
+    with_off: Option<usize>,
 }
 
 impl Cand {
@@ -499,6 +527,9 @@ pub(crate) struct Scope {
     /// The names of the base object's variables that this extension sees (they are also in
     /// `globals`).
     base_vars: std::rc::Rc<std::collections::HashSet<String>>,
+    /// The `with` statements around the code being checked, the innermost last: the record's type and the
+    /// start offset of the statement.
+    withs: Vec<(Ty, usize)>,
 }
 
 /// A section with its first argument (its name, for controls and data items).

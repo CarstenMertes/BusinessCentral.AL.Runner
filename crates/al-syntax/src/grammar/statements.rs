@@ -27,7 +27,7 @@ fn stmt_list(p: &mut Parser, terminators: &[&str]) {
 }
 
 /// The keywords that start a statement, in the order `stmt` tests them.
-const STMT_KWS: [&str; 11] = [
+const STMT_KWS: [&str; 12] = [
     "begin",
     "if",
     "case",
@@ -39,6 +39,7 @@ const STMT_KWS: [&str; 11] = [
     "break",
     "asserterror",
     "continue",
+    "with",
 ];
 
 /// The keyword that starts a statement. `continue` is one only where a statement of one word ends: before `;`, `end`,
@@ -129,6 +130,13 @@ pub(crate) fn stmt(p: &mut Parser) {
     } else if kw == Some(10) {
         p.start(ContinueStmt);
         p.bump_any();
+        p.finish();
+    } else if kw == Some(11) {
+        p.start(WithStmt);
+        p.bump_any();
+        expr(p);
+        p.expect_kw("do");
+        opt_stmt(p);
         p.finish();
     } else if kw == Some(9) {
         p.start(AssertErrorStmt);
@@ -314,6 +322,19 @@ mod tests {
         assert_eq!(
             s("asserterror Rec.Insert(false)"),
             "(AssertErrorStmt asserterror (ExprStmt (CallExpr (MemberExpr (NameRef Rec) . (NameRef Insert)) (ArgList ( (Literal false) )))))"
+        );
+    }
+
+    #[test]
+    fn with_statement_takes_an_expression_and_one_statement() {
+        // corpus events/lt-global-triggers-statements/P114WithStatement.al:30-60
+        assert_eq!(
+            s("with Row do Id := 7"),
+            "(WithStmt with (NameRef Row) do (AssignStmt (NameRef Id) := (Literal 7)))"
+        );
+        assert_eq!(
+            s("with A do with B do begin end"),
+            "(WithStmt with (NameRef A) do (WithStmt with (NameRef B) do (Block begin end)))"
         );
     }
 

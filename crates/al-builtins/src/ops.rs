@@ -20,6 +20,13 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
     // The conversions between the plain numbers that cannot fail, without the Decimal detour.
     match (&v, t) {
+        // A Decimal keeps 18 significant digits when it is stored: `Dec := 123456789012345.12345` holds `123456789012345.123`, so
+        // `Dec * 2` is `246913578024690.246` (types/lt-expression-operators-literals/ExpressionLiteralsRisky.al:
+        // P195_Literal_DecimalTwentyDigits). Fewer digits leave the value, and its scale, as it is.
+        (Value::Decimal(d), T::Decimal) if d.abs().mantissa() > 999_999_999_999_999_999 => {
+            let kept = d.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero);
+            return Ok(Value::Decimal(kept.unwrap_or(*d)));
+        }
         (Value::Integer(_), T::Integer) | (Value::BigInteger(_), T::BigInteger) | (Value::Decimal(_), T::Decimal) => {
             return Ok(v);
         }
@@ -566,7 +573,8 @@ fn duration_divide(op: Arith, a: i64, r: &Value) -> Result<Value, Signal> {
                 a % b
             })))
         }
-        Arith::Div if a % b == 0 => Ok(Value::Duration(a / b)),
+        // The quotient is a number too (`slash-int` is `22500`, ExpressionBinaryDateTimeOperands.al:P195_Binary_DurationOperands).
+        Arith::Div if a % b == 0 => Ok(Value::Decimal(Decimal::from(a / b))),
         Arith::Div => {
             let q = Decimal::from(a)
                 .checked_div(Decimal::from(b))
@@ -636,9 +644,11 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     match (l, r) {
         // A whole number of Durations (milliseconds); other Duration arithmetic is not pinned.
         (V::Duration(ms), n) | (n, V::Duration(ms)) if op == Arith::Mul && int_of(n).is_some() => {
+            // The product is a number of milliseconds, not a Duration: `Format(A * 2, 0, 9)` answers `180000` (types/lt-expression-operators-literals/
+            // ExpressionBinaryDateTimeOperands.al:P195_Binary_DurationOperands, `mul-int`); `D := D1 * 2` converts it back (D_Duration.al:344).
             return int_of(n)
                 .and_then(|n| n.checked_mul(*ms))
-                .map(V::Duration)
+                .map(V::BigInteger)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
         // Duration +/- Duration is a BigInteger of milliseconds: `Format(D1 + D2)` answers '4000', not a duration text, and `R := D1 + D2`
@@ -765,7 +775,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             if *b == 0 {
                 return unsupported("subtraction of an undefined Time from a Time (not pinned)".to_string());
             }
-            return Ok(V::Duration(a - b));
+            // Time - Time is a number of milliseconds (`Format(T1 - T2, 0, 9)` is `-9000000`; ExpressionBinaryDateTimeOperands.al:
+            // P195_Binary_TimeAndDateTimeOperands), which a Duration variable takes back (`Diff := T2 - T1`).
+            return Ok(V::BigInteger(a - b));
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         // An undefined date has no difference, and the whole range is too wide a difference (types/lt-datetime/
@@ -937,6 +949,18 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         }
     }
     compare(l, r)
+}
+
+/// The order a range end of `in [a .. z]` or `case` uses. A Code on either side follows the order of `<` (the culture order, so the Code `K`
+/// is inside `'a' .. 'z'`: types/lt-expression-operators-literals/ExpressionBinaryOperators.al:P195_Binary_InOperatorOverTypes,
+/// `code-in-range` is Yes); two Text values compare by code point (`'K' in ['a' .. 'z']` is No, `char-range-upper`). Other pairs as
+/// [`compare`].
+pub fn compare_range_end(l: &Value, r: &Value) -> Result<Ordering, Signal> {
+    if matches!(l, Value::Code(_)) || matches!(r, Value::Code(_)) {
+        compare_order(l, r)
+    } else {
+        compare(l, r)
+    }
 }
 
 /// The order of two Codes that are digits only: the shorter is the smaller, else the text order. Between a Code of digits only

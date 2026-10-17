@@ -377,13 +377,14 @@ impl Session {
                         pc = t as usize;
                     }
                 }
+                // The ends of a range of `in [a .. z]` and of a `case`: see `ops::compare_range_end`.
                 Op::JumpLt { a, b, t } => {
-                    if ops::compare(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Less {
+                    if ops::compare_range_end(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Less {
                         pc = t as usize;
                     }
                 }
                 Op::JumpGt { a, b, t } => {
-                    if ops::compare(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Greater {
+                    if ops::compare_range_end(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Greater {
                         pc = t as usize;
                     }
                 }

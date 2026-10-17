@@ -222,6 +222,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 
 - `baseline.rs` (336): The install baseline (ADR-013 decision 5), mirroring AL Runner (`InstallTriggerRunner`, `CompanyInitializer`, `TestExecu. Entry: `BaselineRun` 22, `run` 51, `tables_written` 152.
 - `compile_cache.rs` (220): The OS side of the compile cache (ADR-022): the key of a run (hash of the executable and of each app's source), reading, writing (temporary file, rename) and building the entry file. Entry: `CompileCache` 14, `key_for` 83, `read_entry` 108, `write_entry` 128, `open_or_build` 170.
+- `cache_gc.rs` (412): Cleanup of the compile cache folder (ADR-022 amendment): other-build entries after 7 days, any entry after 30, old temp files after 1 day; automatic once a day within 200 ms (`alrunner test`), by hand with `alrunner cache prune|info`. Stat only, never reads an entry. Entry: `prune`, `auto_prune`, `info`.
 - `deps.rs` (158): Dependency apps for a corpus run (ADR-013). Entry: `Dependencies` 11, `Provision` 26, `load` 46, `load_with` 54.
 - `discover.rs` (90): Finds `Subtype = Test` codeunits and their `[Test]` procedure names in AL text, without a syntax tree. Entry: `test_codeunits`.
 - `dotnet.rs` (1084): The .NET sidecar host (ADR-014): one process per session, standby processes started at run start (`prewarm`), start-up stats. Entry: `SidecarConfig` 26, `SidecarStats` 72, `SidecarHost` 247, `prewarm` 279, `encode` 944, `decode` 964.
@@ -247,7 +248,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `args.rs` (262): Command-line parsing and the `--help` text of `alrunner`. Entry: `parse`, `HELP`.
 - `testdata.rs` (300): Which demo backup a run restores: disk, cache, download, other build; or why test data is off (ADR-020). Entry: `locate`, `Where`, `Located`.
 - `main.rs` (51): The `alrunner` binary: runs on a thread with a large stack, maps results to exit codes. Entry: `main`.
-- `output.rs` (182): Counts, exit codes (0, 1, 6, 7), the summary line and JUnit XML of a run. Entry: `exit_code`, `junit`.
+- `output.rs` (182): Counts, exit codes (0, 1, 6, 7), the summary line, the one-line warnings shown by default (`baseline_warning`, `dependency_line_is_problem`; the rest is `--verbose`) and JUnit XML of a run. Entry: `exit_code`, `junit`.
 - `run.rs` (433): `alrunner test`: load APPs, select test codeunits, resolve dependencies, compile, run, print. Entry: `test`.
 
 ### al-version

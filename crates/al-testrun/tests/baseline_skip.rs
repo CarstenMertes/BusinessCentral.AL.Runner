@@ -74,6 +74,7 @@ fn run(only: &[u32], cache: Option<&std::path::Path>) -> CorpusRuntime {
                 dir: dir.to_path_buf(),
                 require: false,
                 rebuild: false,
+                country: String::new(),
             }),
             ..Default::default()
         },
@@ -224,6 +225,7 @@ fn run_lazy(only: &[u32], cache: &std::path::Path, base: &str) -> (CorpusRuntime
                 dir: cache.to_path_buf(),
                 require: false,
                 rebuild: false,
+                country: String::new(),
             }),
             lazy: vec![
                 None,

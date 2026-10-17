@@ -879,6 +879,42 @@ number; a change of the layout makes old files unreadable, and an unreadable fil
   command and the build pin are the guard.
 - Whether the key should hold the assembly folders of `--dotnet-assembly-dir`.
 
+## Amendment (2026-10-17): cleanup of old builds (branch `cache-prune`)
+
+Status: additive; no seam changes. Decided by the orchestrator, for the owner's request that old entries go by themselves.
+
+### Why
+
+An entry can only be loaded by the alrunner build that wrote it (`runtime_build` is in every key). Every new build
+therefore makes new entries and leaves the old ones. The only cleanup was the 30 day rule of `compile_cache::prune`,
+which ran after a write and never fired on a folder where everything is younger than 30 days: on 2026-10-17 the folder
+held 2958 files, 7.1 GB, all younger than 2 days.
+
+### Decision
+
+1. **The build is in the file name.** Every entry file starts with the first 16 hex digits of its `runtime_build`:
+   `<tag>-deps-<32 hex>.alcc`, `<tag>-index-<32 hex>.alci`, `<tag>-<key>.albr` (`al_cache::build_tag`). The cleanup
+   reads no header and no body, only the directory and the modification time. The file contents, the keys and `FORMAT`
+   are unchanged. A name without a tag (from before this amendment) can not be loaded by any build now, so it counts
+   as another build.
+2. **A hit renews the entry.** Layer, index and baseline reads already set the modification time to now
+   (`compile_cache::touch`, errors ignored).
+3. **The rules** (`al_testrun::cache_gc::prune`):
+   - an entry of another build, unused for 7 days, goes. Not at once: several builds run side by side on one machine
+     (CI, worktrees, concurrent agents), and deleting at once would make them evict each other;
+   - any entry unused for 30 days goes;
+   - a temporary file (`.<name>.tmp-<pid>-<n>`) older than 1 day goes.
+   Files of other names (including the stamp `.last-prune`) are never touched. A file that is already gone is skipped;
+   a reader that finds a file gone treats it as a miss and rebuilds.
+4. **Automatic.** At the end of `alrunner test` (after the result is printed, so never before tests), at most once in
+   24 hours per folder (the modification time of `.last-prune`), for at most 200 ms. A cleanup that runs out of time
+   does not update the stamp, so the next run continues. `ALRUNNER_NO_CACHE_PRUNE=1` turns it off. The folder is the
+   one `--cache-dir` / `$ALRUNNER_CACHE` names. Not run with `--no-compile-cache`.
+5. **By hand.** `alrunner cache prune [--dry-run] [--all-other-builds]` runs the rules with no time limit and prints
+   count and bytes (and the split by rule). `--all-other-builds` removes entries of other builds whatever their age.
+   `alrunner cache info` prints entries and bytes, this build and the other builds by tag.
+6. **Scope.** Only `<cache dir>/compile/`. The downloaded artifacts and demo backups are per BC build and stay.
+
 ## Consequences
 
 - **IR serialization becomes a seam.** The format is versioned by an integer in the header and the key. Changing an

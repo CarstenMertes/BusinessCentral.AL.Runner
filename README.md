@@ -111,7 +111,17 @@ When several apply, the order is 2, 6, 1, 8, 7. `--allow-not-run` makes 7 and 8 
 reason, usually a feature that is missing. The test neither passed nor failed. The runtime
 never guesses.
 
-- `--verbose` prints one line per test, with the reason for each "NOT RUN".
+- The default output has the version line, failures, the top refusals, the `Tests:` line, the totals
+  table, one time line (total, compile, run, tests per second) and the `Result:` line. A warning that changes how to read the result is one line, only when it applies
+  (for example "baseline incomplete: 16 of 17 install roots ran to their end").
+- `--verbose` adds everything else: setup details first (dependency notes, target, apps,
+  dependencies, threads, isolation, server address, test data, baseline details), then one line
+  per test (with its run time in ms) and the reason for each "NOT RUN", then the test data rows and the full `Time:` line (load, compile, install baseline, run, total, peak memory) in place of the short time line.
+  `--quiet` prints the summary only. Errors go to stderr.
+- `--color auto|always|never` (default auto) colors PASS green, FAIL red, NOT RUN yellow,
+  flagged passes cyan and headings bold. Auto colors only on a terminal and never with `NO_COLOR`.
+  The `Tests:` and `Result:` lines keep their text; a small table of counts and shares follows
+  the `Tests:` line.
 - `--top-refusals [N]` ranks the most common reasons (default 10).
 - `--explain TEST` runs one test and prints its outcome, and for a refusal the routine and
   source line it stopped at.

@@ -5,6 +5,7 @@
 
 pub mod baseline;
 pub mod baseline_cache;
+pub mod cache_gc;
 pub mod capture;
 pub mod compile_cache;
 pub mod coverage;

@@ -4,6 +4,7 @@
 
 pub mod contract;
 pub mod memory;
+pub(crate) mod pmap;
 
 use al_builtins::filter::FieldFilter;
 use al_builtins::value::{RtType, Value};

@@ -14,4 +14,4 @@ mod key;
 
 pub use format::{CacheError, Entry, build, build_layer, build_layer_with_dictionary};
 pub use index::{build_index, index_file_name, open_index};
-pub use key::{AppKey, FORMAT, Key};
+pub use key::{AppKey, FORMAT, Key, build_tag, tag_of_file_name};

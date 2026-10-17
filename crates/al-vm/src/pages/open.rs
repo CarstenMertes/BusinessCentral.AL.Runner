@@ -717,6 +717,9 @@ impl Session {
         self.stamp_from_filters(st, !host_unsaved)?;
         self.page_trigger(st, "onnewrecord", vec![Value::Boolean(true)])?;
         self.page_event(st, "onnewrecordevent", None, Some(true))?;
+        // xRec is the new record itself there (misc/lt-probes-needed-7/PnGNewRecord.al:HandedRecordNoFilters `AGCR(,)`,
+        // PnGHandedRecord `AGCR(FILTERED,FILTERED)`).
+        self.set_xrec(st);
         self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
         self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
         Ok(())

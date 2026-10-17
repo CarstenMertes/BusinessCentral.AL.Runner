@@ -243,6 +243,18 @@ fn the_default_output_leaves_setup_details_to_verbose() {
         assert!(!t.contains(hidden), "{hidden} belongs to --verbose: {t}");
     }
     assert!(!t.contains("PASS    "), "one line per passing test is --verbose: {t}");
+    // The default output keeps one compact time line, between the totals table and `Result:`.
+    let time = t
+        .lines()
+        .position(|l| l.starts_with("  time "))
+        .unwrap_or_else(|| panic!("no time line: {t}"));
+    let l: Vec<&str> = t.lines().collect();
+    assert!(
+        l[time].contains("(compile ") && l[time].contains(", run ") && l[time].contains(" tests/s)"),
+        "{t}"
+    );
+    assert!(l[time - 1].starts_with("  not run "), "the table comes first: {t}");
+    assert!(l[time + 1].starts_with("Result: "), "{t}");
     let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--quiet"]);
     let t = text(&o);
     assert!(!t.contains("threads: ") && !t.contains("Time: "), "{t}");

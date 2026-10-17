@@ -266,15 +266,9 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             Err(_) => return unsupported(format!("{n} as an Enum ordinal (beyond Integer)")),
         },
         // A Guid assigns into a Text or Code as its text form `{XXXXXXXX-XXXX-XXXX-XXXX-XXXXXXXXXXXX}`, as
-        // Format gives it (`Dimensions.Add('PackageCode', Rec.SystemId)` into a Dictionary of [Text, Text] in Base
-        // Application's Config. Package Management). No corpus test assigns a Guid to a Text
-        // (docs/probes-needed.md).
-        (Value::Guid(g), T::Text(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
-            Value::Text(fit(crate::format::format_guid(&g), *max)?.into())
-        }
-        (Value::Guid(g), T::Code(max)) if crate::assumptions::hit(crate::assumptions::Assumption::GuidToText) => {
-            Value::Code(fit(crate::format::format_guid(&g), *max)?.into())
-        }
+        // Format gives it (corpus types/lt-filter-enum-relation-duration-guid/E_Guid.al: Guid_To_Text40_Text_Code40).
+        (Value::Guid(g), T::Text(max)) => Value::Text(fit(crate::format::format_guid(&g), *max)?.into()),
+        (Value::Guid(g), T::Code(max)) => Value::Code(fit(crate::format::format_guid(&g), *max)?.into()),
         // A Text of digits converts into an Integer or BigInteger where a Variant meets a number (a Get key).
         // Not pinned by the corpus: Microsoft's Incoming Document `Get(Format(Value))`, registry entry text-digits-to-integer.
         (Value::Text(s) | Value::Code(s), T::Integer | T::BigInteger)
@@ -784,11 +778,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         }
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
         // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
-        // would round or truncate: not pinned, so it stays refused below (docs/probes-needed.md).
+        // would round or truncate: not pinned, so it stays refused below. Pinned for a whole Decimal: corpus
+        // record/lt-record-conversion-assumptions/DateDecimalWhole.al:P98_DatePlusMinusWholeDecimal.
         (V::Date(a, c), n) if matches!(op, Arith::Add | Arith::Sub) && whole_days(n).is_some() => {
-            if matches!(n, V::Decimal(_)) {
-                crate::assumptions::assume(crate::assumptions::Assumption::DateAddWholeDecimal);
-            }
             // The result stays within 0001-01-01 and 9999-12-31, an undefined date takes no days, and the sum of days is
             // computed in 32 bits (Arithmetic.al:Date_Arithmetic_Errors, Date_Plus_Minus_Integer `af39`, `af41`).
             let n = whole_days(n).expect("whole");

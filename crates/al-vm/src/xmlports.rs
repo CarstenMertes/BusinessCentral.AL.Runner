@@ -168,8 +168,12 @@ impl Session {
                     .iter()
                     .find(|(k, _)| *k == 9)
                     .and_then(|(_, v)| v.parse::<usize>().ok());
+                // From the trigger itself or from any procedure it calls: the whole trigger ends (corpus xml/lt-xml-port-flow/
+                // XmlPortFlowFromTrigger.al:P170_Flow_*ViaProcedure, the code after the call in the trigger does not run).
                 match trigger_depth {
-                    Some(d) if self.depth == d + 1 || self.depth == d + 2 => {}
+                    Some(d) if self.depth > d => {
+                        self.report.flow_unwind = Some(d + 1);
+                    }
                     _ => return unsupported(format!("{id} outside the triggers where it is pinned")),
                 }
                 let kind = match id {
@@ -651,6 +655,7 @@ impl Session {
             s.xp_text.push((9, self.depth.to_string()));
         }
         let result = self.call(object, routine, inst.clone(), Vec::new()).map(|_| ());
+        self.report.flow_unwind = None;
         inst.borrow_mut().xp_text.retain(|(k, _)| *k != 9);
         result
     }
@@ -674,6 +679,7 @@ impl Session {
                     s.xp_text.push((9, self.depth.to_string()));
                 }
                 let result = self.call(schema.object, r, inst.clone(), Vec::new()).map(|_| ());
+                self.report.flow_unwind = None;
                 inst.borrow_mut().xp_text.retain(|(k, _)| *k != 7 && *k != 9);
                 result
             }

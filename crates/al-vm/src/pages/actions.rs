@@ -123,6 +123,27 @@ impl Session {
             st.borrow_mut().refresh = false;
         }
         let v = result?;
+        // The client refreshes the page after an AssistEdit trigger: OnAfterGetRecord runs again
+        // (pages/lt-page-runtime/P82Lookups.al:AssistEdit_Trigger, `OnAssistEdit;OnAfterGetRecord(L1)`). A DrillDown and a Lookup are not pinned to.
+        // The row is not read again: a field the trigger set on the record stays (pages/lt-page-editability-width-lookups/
+        // P115Lookups.al:P115_AssistEdit_Trigger `after = assisted`).
+        if method == PageMethod::AssistEdit
+            && st.borrow().open
+            && self.has_source(st)
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord")
+            && (self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord"))
+        {
+            let r = (|| {
+                self.populate_current(st)?;
+                self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+                self.page_event(st, "onaftergetcurrrecordevent", None, None)
+            })();
+            self.torn_down_on_error(st, r)?;
+            self.sync_parts(st)?;
+        }
         self.run_refresh(st)?;
         Ok(v)
     }
@@ -229,6 +250,31 @@ impl Session {
         let pos = arm.field.unwrap_or(table_def.keys[0][0]);
         let value = picked.borrow().fields[pos].clone();
         st.borrow_mut().refresh = false;
+        // The control's OnAfterLookup(Selected: RecordRef) runs with the picked row before the value is written, so Rec still holds
+        // the old value (pages/lt-pages-xmlport-upload-members/P112Pages.al:P112_Lookup_BasePageField_OK `base afterLookup sel=B rec=[]`,
+        // P112_Lookup_ExtensionField_OK, P112_Lookup_ViewMode).
+        {
+            let engine = self.engine();
+            let ctl = &page_of(&engine, st).controls[idx];
+            let own = ctl.trigger("onafterlookup").map(|r| (ctl.owner, r));
+            let added: Vec<(Option<usize>, usize)> = ctl
+                .ext_triggers
+                .iter()
+                .filter(|(n, _, _)| n == "onafterlookup")
+                .map(|(_, e, r)| (Some(*e), *r))
+                .collect();
+            let selected = Value::Library(
+                "RecordRef".into(),
+                Rc::new(RefCell::new(al_builtins::value::LibraryValue::RecordRef(
+                    picked.clone(),
+                ))),
+            );
+            for (owner, routine) in own.into_iter().chain(added) {
+                let object = owner.unwrap_or(st.borrow().object as usize);
+                let inst = self.owner_instance(st, owner);
+                self.call(object, routine, inst, vec![selected.clone()])?;
+            }
+        }
         self.control_set_value(st, idx, &mut [value])?;
         Ok(Value::Null)
     }
@@ -816,9 +862,10 @@ impl Session {
             // No stored row is left: the list shows its blank line, which raises
             // OnAfterGetCurrRecord three times after an action that called CurrPage.Update (corpus
             // pageupdate/TestPageUpdateGoneRow.al:List_DeletedByAction_OnlyRow_ShowsNoStoredRow);
-            // what an action that did not call it raises is not pinned.
+            // what an action that did not call it raises is not pinned: the same three, on an assumption
+            // (list-gone-only-row-without-update).
             if !st.borrow().refresh {
-                return unsupported("a list whose only row an action deleted, without CurrPage.Update");
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListGoneOnlyRowWithoutUpdate);
             }
             st.borrow_mut().refresh = false;
             let table = rec.borrow().table as usize;

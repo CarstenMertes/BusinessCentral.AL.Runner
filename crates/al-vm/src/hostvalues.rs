@@ -225,7 +225,9 @@ fn changed(t: &al_data::TableDef, stored: &[Value], buffer: &[Value]) -> bool {
             return false;
         }
         match (&stored[i], &buffer[i]) {
-            (Value::Blob(a), Value::Blob(b)) => !std::sync::Arc::ptr_eq(a, b) && a.borrow().bytes != b.borrow().bytes,
+            (Value::Blob(a), Value::Blob(b)) => {
+                b.borrow().written || (!std::sync::Arc::ptr_eq(a, b) && a.borrow().bytes != b.borrow().bytes)
+            }
             (a, b) => al_builtins::ops::compare(a, b).map_or(true, |o| o != std::cmp::Ordering::Equal),
         }
     })

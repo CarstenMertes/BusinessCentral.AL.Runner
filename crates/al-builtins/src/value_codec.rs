@@ -160,7 +160,12 @@ fn encode_in(v: &Value, out: &mut Vec<u8>) -> bool {
             put_u64(out, b.write_pos as u64);
             put_u8(
                 out,
-                (b.loaded as u8) | ((b.refetch as u8) << 1) | ((b.persisted as u8) << 2) | ((b.temp_row as u8) << 3),
+                (b.loaded as u8)
+                    | ((b.refetch as u8) << 1)
+                    | ((b.persisted as u8) << 2)
+                    | ((b.fetched as u8) << 3)
+                    | ((b.written as u8) << 4)
+                    | ((b.temp_row as u8) << 5),
             );
         }
         // Handles (`Rc`) have no form: they cannot leave their thread. Every variant is named, so a new one is a
@@ -225,7 +230,9 @@ pub fn decode(r: &mut Reader) -> Option<Value> {
                 b.loaded = flags & 1 != 0;
                 b.refetch = flags & 2 != 0;
                 b.persisted = flags & 4 != 0;
-                b.temp_row = flags & 8 != 0;
+                b.fetched = flags & 8 != 0;
+                b.written = flags & 16 != 0;
+                b.temp_row = flags & 32 != 0;
             }
             Value::Blob(blob)
         }

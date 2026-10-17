@@ -308,6 +308,16 @@ impl Session {
 
     /// `RecordRef.Open(No, Temp, CompanyName)`.
     fn rr_open(&mut self, lib: &Lib, args: &[Value]) -> Result<Value, Signal> {
+        // Open on a RecordRef that holds a table raises (types/lt-variant/VaTIsChecks.al:Is_Record_RecordRef_FieldRef `af137`,
+        // after GetTable).
+        if matches!(&*lib.borrow(), LibraryValue::RecordRef(_)) {
+            return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                message: "The record is already open.".into(),
+                code: "RecordAlreadyOpened".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
+        }
         let no = int_arg(args, 0)?;
         let temp = match args.get(1) {
             Some(v) => ops::truthy(v)?,
@@ -795,6 +805,8 @@ impl Session {
                     // SetTable does not move the target either (:123-127); GetTable takes the company.
                     let mut d = dst.borrow_mut();
                     d.field_descending = s.field_descending;
+                    // The ReadIsolation passes too (recordref/lt-recordref-fieldref-members/P92ReadIsolation.al:ReadIsolation_FromRecordAndToRecord).
+                    d.read_isolation = s.read_isolation;
                     d.fields = s.fields.clone();
                     d.filters = s.filters.clone();
                     d.key = s.key;

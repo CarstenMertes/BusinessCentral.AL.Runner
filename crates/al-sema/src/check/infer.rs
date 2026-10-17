@@ -630,9 +630,11 @@ impl<'a> Checker<'a> {
                     E::TypeName(t) | E::Val(t) => {
                         // `Kinds::Purchase` with `Kinds: array[3] of Option ...` names a member of
                         // the element's option (Microsoft's SCM Supply Planning tests).
-                        let t = match t {
-                            Ty::Array(_, el) if matches!(*el, Ty::Option(_)) => *el,
-                            t => t,
+                        // The member is then a plain Integer, not an Option: `Format(Kinds::Released)` is `1`
+                        // (misc/lt-probes-needed-3/PnC14OptionArray.al:OptionArray_MemberOnArrayName).
+                        let (t, via_array) = match t {
+                            Ty::Array(_, el) if matches!(*el, Ty::Option(_)) => (*el, true),
+                            t => (t, false),
                         };
                         // `Mode::Decompress` on a `DotNet CompressionMode` variable: a static member of the
                         // .NET type (a .NET enum's member), read like `Mode.Decompress`.
@@ -640,7 +642,7 @@ impl<'a> Checker<'a> {
                             self.record(sc, node, Res::DotNetMember(rhs.clone()));
                         }
                         self.scope_member(sc, node, &t, &rhs);
-                        E::Val(t)
+                        E::Val(if via_array { Ty::Integer } else { t })
                     }
                     // `Rec.ReadIsolation::ReadUncommitted`: the property name is also the way to name the
                     // members of the option it takes (Base Application writes it).

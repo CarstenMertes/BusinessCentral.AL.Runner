@@ -992,9 +992,11 @@ impl Session {
                 return unsupported("CalcFields of a Blob field that holds no Blob");
             };
             // A temporary record's row that was never inserted has no stored content: CalcFields empties a Blob a stream
-            // wrote (P94XpDelim.al:Export_NothingDeclared exports into such a Blob and reads back nothing).
+            // wrote (P94XpDelim.al:Export_NothingDeclared exports into such a Blob and reads back nothing). A Blob of a row read
+            // with `Get` and written in memory is read back from the row too (record/lt-blob-calcfields-length/
+            // BlobCalcFieldsLength.al:BlobCalcFields_UnsavedContent_Result, 17 bytes in memory, 6 after CalcFields): see `BlobBuf::fetched`.
             let temporary = rec.borrow().temporary;
-            if buf.borrow().loaded && !buf.borrow().refetch && !temporary {
+            if buf.borrow().fetched && !buf.borrow().refetch && !temporary {
                 continue;
             }
             if stored.is_none() {
@@ -1016,12 +1018,25 @@ impl Session {
             };
             let mut b = buf.borrow_mut();
             b.bytes = bytes;
+            b.written = false;
+            b.fetched = true;
             // ADR-040: the stored row carries the mark of an output that was never produced.
             b.render_pending = pending;
             b.loaded = true;
             b.refetch = false;
         }
         Ok(())
+    }
+
+    /// A save makes the Blobs of the buffer what is stored: none counts as written any more.
+    fn clear_blob_written(rec: &Rec) {
+        for v in &rec.borrow().fields {
+            if let Value::Blob(b) = v {
+                let mut b = b.borrow_mut();
+                b.written = false;
+                b.fetched = true;
+            }
+        }
     }
 
     /// The first use of a record of a `TableType = CRM` table fails while no CRM table connection is
@@ -1070,11 +1085,12 @@ impl Session {
             self.coverage_read(&t, temporary)?;
         }
         let cx = self.cx_for(rec, &t)?;
-        // The next access of the table raises a deferred duplicate-key Insert.
+        // The next access of the table raises a deferred duplicate-key Insert, an Insert of another row not (the buffered inserts
+        // stay buffered: misc/lt-protected-var-abs-query-views/P146TableExtProtected.al:P146_Triggers_BaseThenExtension, where
+        // `R2.Insert(true)` succeeds and the next Modify raises it).
         if matches!(
             method,
-            RecordOp::Insert
-                | RecordOp::Modify
+            RecordOp::Modify
                 | RecordOp::Delete
                 | RecordOp::DeleteAll
                 | RecordOp::ModifyAll
@@ -1352,6 +1368,7 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     InsertOutcome::Inserted => {
+                        Self::clear_blob_written(rec);
                         // The Blob content an Insert of a temporary record stored is persisted, as one a Modify stored (see Rename).
                         if rec.borrow().temp_id.is_some() {
                             for v in &rec.borrow().fields {
@@ -1525,6 +1542,7 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     WriteOutcome::Done => {
+                        Self::clear_blob_written(rec);
                         // A Blob a Modify of a temporary record persisted does not survive a later Rename
                         // (streams/TestBlobRenameIsolation.al:TempBlob_CommittedWrite_Rename_SameInstanceReGet_LosesBlobValue);
                         // one written after the Insert and never modified does.

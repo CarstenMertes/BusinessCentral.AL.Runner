@@ -203,6 +203,43 @@ impl Session {
     /// populates a new window). The window is 20 rows: the corpus pins it only between 20 and 24.
     pub(super) const WINDOW: usize = 20;
 
+    /// The window of a part that reads its rows last to first, once each, without reading the first row again. Pinned
+    /// for 2 and 3 rows (pages/lt-part-reads/PartReadsOpen.al:OpenView_SixParts_ReadsPerPartLogged `open-Same`;
+    /// misc/lt-probes-needed-7/PnGPartTriggers.al:OpenOrderOfHostWithSixParts); one row or more than 3 is refused.
+    fn populate_window_backwards(&mut self, st: &St, start: Vec<Value>) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        let mut rows: Vec<al_builtins::value::WindowRow> = Vec::new();
+        loop {
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            rows.push(al_builtins::value::WindowRow {
+                key,
+                stored: stored.clone(),
+                shown: stored,
+            });
+            if rows.len() > 3 || !self.nav_next(st, 1)? {
+                break;
+            }
+        }
+        if rows.len() == 1 || rows.len() > 3 {
+            return unsupported(
+                "a part viewing its linked field with a number of rows other than 2 or 3 (reads not pinned)",
+            );
+        }
+        for row in rows.iter_mut().rev() {
+            rec.borrow_mut().fields = row.stored.clone();
+            self.populate_current(st)?;
+            row.shown = rec.borrow().fields.clone();
+        }
+        self.ret_used = true;
+        self.record_op(RecordOp::Get, &rec, &mut start.clone())?;
+        rec.borrow_mut().fields = rows[0].shown.clone();
+        let first_stored = rows[0].stored.clone();
+        self.set_xrec_fields(st, first_stored);
+        st.borrow_mut().window = rows;
+        Ok(())
+    }
+
     pub(super) fn populate_window(&mut self, st: &St) -> Result<(), Signal> {
         st.borrow_mut().window_from_start = false;
         st.borrow_mut().window_eof = false;
@@ -213,6 +250,9 @@ impl Session {
         let mut walked = 0;
         let mut end_reached = false;
         let opening = std::mem::take(&mut st.borrow_mut().landing_first);
+        if std::mem::take(&mut st.borrow_mut().read_backwards) {
+            return self.populate_window_backwards(st, start);
+        }
         for i in 0..Self::WINDOW {
             let key = self.row_key(&rec)?;
             let stored = rec.borrow().fields.clone();
@@ -939,10 +979,12 @@ impl Session {
         // missing and the result is not used (corpus testpart/TestTestPart.al:
         // TestPart_GoToKey_ErrorsWhenTheKeyFieldCountIsWrong, _ErrorsForAMissingKeyWhenTheReturnIsDiscarded).
         // Texts and codes: handlers/TestPageRuntimeContracts.al:300-312 (TestPart_GoToKey_Arity_AndMissingKey).
-        if st.borrow().host.is_some() {
+        // A page too raises for more values than the key has fields (pages/lt-page-runtime/P82TestPage.al:Navigation_GoToKey
+        // `too-many-key-values`); fewer is pinned for a part only.
+        {
             let rec = self.page_rec(st);
             let wanted = self.table(&rec)?.keys[0].len();
-            if key.len() != wanted {
+            if key.len() != wanted && (st.borrow().host.is_some() || key.len() > wanted) {
                 return Err(error_code(
                     "The number of arguments does not match the number of primary key fields.",
                     "TestInvalidNumberOfKeyFieldValues",
@@ -952,14 +994,38 @@ impl Session {
         self.save_row(st)?;
         let rec = self.page_rec(st);
         let table = self.table(&rec)?;
-        let want: Vec<Value> = table.keys[0]
+        // A lowercase text is no key of a Code field: the client compares as typed (pages/lt-page-runtime/P82TestPage.al:
+        // Navigation_GoToKey `lowercase` = No for 'n2' against N2). A row that is not found, as for any other missing key.
+        let lowercase_code = table.keys[0].iter().enumerate().any(|(n, &f)| {
+            matches!(&table.fields[f].ty, RtType::Code(_))
+                && matches!(key.get(n), Some(Value::Text(t)) if *t != t.to_uppercase())
+        });
+        if lowercase_code {
+            if !result_used {
+                return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+            }
+            return Ok(Value::Boolean(false));
+        }
+        let want: Result<Vec<Value>, Signal> = table.keys[0]
             .iter()
             .enumerate()
             .map(|(n, &f)| match key.get(n) {
                 Some(v) => ops::convert(v.clone(), &table.fields[f].ty),
                 None => Ok(self.default_value(&table.fields[f].ty)),
             })
-            .collect::<Result<_, _>>()?;
+            .collect();
+        // A value that is no value of the key's type is no key of any row (pages/lt-page-runtime/P82TestPage.al:Navigation_GoToKey
+        // `wrong-type`: GoToKey(1) over a Code key raises the row error).
+        let want = match want {
+            Ok(w) => w,
+            Err(Signal::Error(_)) => {
+                if !result_used {
+                    return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+                }
+                return Ok(Value::Boolean(false));
+            }
+            Err(e) => return Err(e),
+        };
         // GoToKey onto the first row while standing on it reads nothing and runs no trigger (pages/lt-testpage-list-rows/
         // ListRowsGoToFirst.al:GoToKeyFirstWhileOnIt_Both5Rows_ReadsLogged and _OnlyCurr30Rows_ReadsLogged: `first-on-first-total = 0`,
         // also the second time).
@@ -1281,14 +1347,16 @@ impl Session {
             }
         }
         if st.borrow().open {
-            return unsupported("running a page that is already open");
+            if !trapped {
+                return unsupported("running a page that is already open");
+            }
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TrappedPageLeftOpenIsReplaced);
+            self.mark_closed(&st);
         }
         if modal {
             if let Some(handler) = self.take_typed_modal_handler(object) {
-                if field {
-                    return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
-                }
-                return self.answer_typed_modal(&st, record, handler);
+                let answer = self.answer_typed_modal(&st, record, handler)?;
+                return self.field_argument_answer(field, answer);
             }
         }
         let kind = if modal { UiKind::ModalPage } else { UiKind::Page };
@@ -1302,10 +1370,8 @@ impl Session {
         let Some(handler) = handler else {
             return Ok(Value::Null);
         };
-        if field {
-            return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
-        }
         let answer = self.answer_page(&st, handler, modal)?;
+        let answer = self.field_argument_answer(field, answer)?;
         self.hand_back_selection(&st, &handed, &answer);
         // After a LookupOK the page variable holds the row the page closed on, and the next run of the variable opens on it;
         // after OK it does not (pages/lt-page-run-overloads-testpart/P106RunInstance.al:P106_Inst_RunModal_LookupMode,
@@ -1322,6 +1388,23 @@ impl Session {
                 }
             }
         }
+        Ok(answer)
+    }
+
+    /// What `Page.RunModal(Id, Rec, Field)` does with the field when a handler answered. Only an answer other than LookupOK is
+    /// accepted, and then the field keeps its value (documented: the field takes the page's value on LookupOK; the corpus pins no
+    /// handler with a field argument, P70_06RunModalField.al has none bound). Microsoft's tests need it: Segment Line.RunCreateInteraction
+    /// runs `PAGE.RunModal(PAGE::"Create Interaction", Rec, "Interaction Template Code")` and Tests-Marketing answer it with a
+    /// Page-typed handler that leaves Response alone (33 tests). A LookupOK answer stays refused.
+    fn field_argument_answer(&self, field: bool, answer: Value) -> Result<Value, Signal> {
+        if !field {
+            return Ok(answer);
+        }
+        let lookup_ok = matches!(&answer, Value::Option(o, m) if m.get(*o as usize).is_some_and(|n| n == "LookupOK"));
+        if lookup_ok {
+            return unsupported(FIELD_ARGUMENT_WITH_HANDLER);
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RunModalFieldKeptUnlessLookupOk);
         Ok(answer)
     }
 

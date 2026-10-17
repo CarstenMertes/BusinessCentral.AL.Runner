@@ -724,7 +724,18 @@ impl Session {
                     }
                     self.check_calc_field(table, p)?;
                 }
-                rec.borrow_mut().auto_calc = positions;
+                // A call adds its fields to the set, and a call without fields empties it
+                // (record/lt-record-write/RcBFlowFields.al:SetAutoCalcFields_Reset_And_Replace `replaced`, `cleared`).
+                let mut r = rec.borrow_mut();
+                if positions.is_empty() {
+                    r.auto_calc.clear();
+                } else {
+                    for p in positions {
+                        if !r.auto_calc.contains(&p) {
+                            r.auto_calc.push(p);
+                        }
+                    }
+                }
             }
             other => return unsupported(format!("Record.{other}")),
         }

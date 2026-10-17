@@ -421,6 +421,7 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
                 "Evaluate",
             );
         }
+        let mut plus = false;
         let negative = match b[i] {
             b'-' => {
                 i += 1;
@@ -428,10 +429,17 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
             }
             b'+' => {
                 i += 1;
+                plus = true;
                 false
             }
             _ => false,
         };
+        // `<+%1D>` adds one day: the percent sign between a plus and the number is skipped
+        // (misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al:P146_CalcDate_FormatBuilt_Formula, `literal placeholder`).
+        // Only the plus sign is pinned; `-%1D` and `%1D` stay refused.
+        if plus && b.get(i) == Some(&b'%') && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
+            i += 1;
+        }
         if b.get(i) == Some(&b'C') {
             let Some(unit) = unit_of(b.get(i + 1)) else {
                 return refuse();
@@ -562,6 +570,9 @@ pub fn evaluate_formula(text: &str) -> Result<Evaluated, Signal> {
         }
     }
     parse_formula(&n)?;
+    if n.contains('%') {
+        crate::assumptions::assume(crate::assumptions::Assumption::DateFormulaEvaluatePercentPlaceholder);
+    }
     Ok(Evaluated::Stored(format!("<{n}>")))
 }
 
@@ -645,7 +656,15 @@ fn calcdate(ctx: &dyn Ctx, formula: &str, base: Option<&Value>) -> Out {
     }
     // Evaluate takes a formula with one bracket missing (DateFormula_EvaluateForms, `<1D`); CalcDate of one is not pinned.
     let t = formula.trim();
-    if t.starts_with('<') != t.ends_with('>') && !t.is_empty() {
+    // `<+%1D` (the closing bracket missing, after a plus) adds one day
+    // (misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al:P146_CalcDate_FormatBuilt_Formula, `format 5 result`). Another
+    // formula that starts with `<+` and has no closing bracket is read the same way on an assumption; any other
+    // single bracket stays refused.
+    let plus_open = t.starts_with("<+") && !t.ends_with('>');
+    if plus_open && !t.contains('%') {
+        crate::assumptions::assume(crate::assumptions::Assumption::CalcDateClosingBracketMissingAfterPlus);
+    }
+    if !plus_open && t.starts_with('<') != t.ends_with('>') && !t.is_empty() {
         return unsupported(format!(
             "CalcDate of `{formula}`, a formula with one angle bracket (not pinned)"
         ));

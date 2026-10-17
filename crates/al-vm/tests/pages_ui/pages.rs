@@ -733,6 +733,27 @@ fn a_refused_write_is_recorded_as_a_validation_error() {
     );
 }
 
+// GetValidationError() of a TestPage without an index (an assumption, page-getvalidationerror-no-index): the first
+// error of the page's ledger, the empty text while there is none.
+#[test]
+fn page_get_validation_error_without_an_index_is_the_first_error_or_empty() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PG Row\"; TP: TestPage \"PG Edit\"; X: Text; begin
+                {}
+                TP.OpenEdit();
+                X := '[' + TP.GetValidationError() + ']';
+                asserterror TP.Guard.SetValue('REFUSE');
+                X += '[' + TP.GetValidationError() + ']';
+                exit(X);
+            end;",
+            rows(&[("A", 1)])
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "[][guard refused]");
+}
+
 // handlers/TestPageBooleanSpelling_Tests.al: SetValue('False') is not an acceptable Boolean text.
 // (TextBool: a Text value written to an Integer control that cannot parse it.)
 #[test]

@@ -398,7 +398,7 @@
           "ms_uses": 32,
           "name": "OnAfterLookup",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "pages/lt-pages-xmlport-upload-members/P112Pages.al:99"
         },
         {
@@ -1224,6 +1224,15 @@
           "corpus_uses": 1,
           "group": "pageextension/field",
           "ms_uses": 0,
+          "name": "OnAfterLookup",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-pages-xmlport-upload-members/P112Pages.al:131"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "pageextension/field",
+          "ms_uses": 0,
           "name": "OnAssistEdit",
           "pinned": true,
           "runtime_reads": true,
@@ -1489,15 +1498,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pageext/POPageExtTriggers.al:61"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "pageextension/field",
-          "ms_uses": 0,
-          "name": "OnAfterLookup",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-pages-xmlport-upload-members/P112Pages.al:131"
         },
         {
           "corpus_uses": 1,
@@ -13320,7 +13320,7 @@
         "code": "InvalidPath",
         "file": "crates/al-builtins/src/media.rs",
         "generic": false,
-        "line": 235,
+        "line": 245,
         "pinned": false,
         "site": null,
         "template": "The specified path is invalid."
@@ -13329,7 +13329,7 @@
         "code": "InvalidPath",
         "file": "crates/al-builtins/src/media.rs",
         "generic": false,
-        "line": 238,
+        "line": 248,
         "pinned": false,
         "site": null,
         "template": "Could not find a part of the path '%'."
@@ -13356,7 +13356,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 431,
+        "line": 442,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13365,7 +13365,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 580,
+        "line": 591,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13374,7 +13374,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 756,
+        "line": 767,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -13383,7 +13383,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 801,
+        "line": 821,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
@@ -13392,7 +13392,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 828,
+        "line": 848,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13401,7 +13401,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 836,
+        "line": 856,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13410,7 +13410,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 861,
+        "line": 881,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13419,7 +13419,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 886,
+        "line": 906,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13428,7 +13428,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 915,
+        "line": 935,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13437,7 +13437,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 920,
+        "line": 940,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13446,16 +13446,25 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 948,
+        "line": 968,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
       },
       {
+        "code": "Notification",
+        "file": "crates/al-builtins/src/sessiontypes.rs",
+        "generic": false,
+        "line": 304,
+        "pinned": true,
+        "site": "errorinfo/lt-errnotif/EnTNotification.al:288",
+        "template": "Message cannot be empty when sending a Notification."
+      },
+      {
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 530,
+        "line": 545,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -13464,7 +13473,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 692,
+        "line": 707,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -13473,7 +13482,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 845,
+        "line": 865,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -13482,7 +13491,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 877,
+        "line": 897,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -13491,7 +13500,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/textfns.rs",
         "generic": false,
-        "line": 830,
+        "line": 823,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13522,6 +13531,15 @@
         "pinned": true,
         "site": "misc/lt-probes-needed-3/PnC03Truncate.al:100",
         "template": "Temporary tables does not support truncation."
+      },
+      {
+        "code": "DB:Ok",
+        "file": "crates/al-vm/src/autoinc.rs",
+        "generic": false,
+        "line": 136,
+        "pinned": true,
+        "site": "misc/lt-probes-needed-3/PnC03Truncate.al:66",
+        "template": "Truncate is not supported when the field has Media and/or MediaSet fields."
       },
       {
         "code": "EventBinding",
@@ -13590,7 +13608,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 905,
+        "line": 906,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -13599,7 +13617,7 @@
         "code": "",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 267,
+        "line": 271,
         "pinned": true,
         "site": "query/TestQueryTopProperty.al:179",
         "template": "Top number of rows cannot be negative"
@@ -13608,16 +13626,25 @@
         "code": "QueryNoDataSet",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 595,
+        "line": 599,
         "pinned": true,
         "site": "xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:84",
         "template": "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function."
       },
       {
+        "code": "Query",
+        "file": "crates/al-vm/src/queries.rs",
+        "generic": false,
+        "line": 612,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-131/P131QuerySetRangeAfterRead.al:111",
+        "template": "The READ function is called on a query after query metadata has been changed by one of the following: SETFILTER, SETRANGE, SECURITYFILTERING, or TOPNUMBEROFROWS. After metadata changes, you must reopen the query by calling the OPEN function before calling the READ function."
+      },
+      {
         "code": "DB:NoFilter",
         "file": "crates/al-vm/src/recmeta.rs",
         "generic": false,
-        "line": 328,
+        "line": 336,
         "pinned": true,
         "site": "pages/lt-page-filtergroup-assumptions/P99RangeGroups.al:115",
         "template": "Specify a filter for the % field in the % table."
@@ -13626,7 +13653,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 1560,
+        "line": 1578,
         "pinned": true,
         "site": "record/TestPlatformTablesWritableContracts.al:107",
         "template": "It is not possible to delete any record in the Tenant License State table."
@@ -13635,7 +13662,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2199,
+        "line": 2217,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -13659,10 +13686,19 @@
         "template": "The record is not open."
       },
       {
+        "code": "RecordAlreadyOpened",
+        "file": "crates/al-vm/src/refs.rs",
+        "generic": false,
+        "line": 261,
+        "pinned": true,
+        "site": "recordref/lt-recordref-fieldref-members/P92Open.al:168",
+        "template": "The record is already open."
+      },
+      {
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 384,
+        "line": 394,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -13671,7 +13707,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 610,
+        "line": 620,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds."
@@ -13680,7 +13716,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 630,
+        "line": 640,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -13689,7 +13725,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 723,
+        "line": 735,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds"
@@ -13698,7 +13734,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 743,
+        "line": 755,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -13716,7 +13752,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 441,
+        "line": 440,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -13725,7 +13761,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 469,
+        "line": 468,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -13749,7 +13785,7 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 52,
-    "sites": 55
+    "pinned": 56,
+    "sites": 59
   }
 }

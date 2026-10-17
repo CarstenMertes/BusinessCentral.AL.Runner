@@ -130,8 +130,16 @@ fn decimal(text: &str) -> Result<Parsed, Signal> {
         .trim_start_matches('0')
         .to_string();
     // An integer part of 18 digits does not fit either (`123456789012345678` fails, `123456789012.345678` reads).
-    if digits.len() > 18 || int.trim_start_matches('0').len() >= 18 {
+    if int.trim_start_matches('0').len() >= 18 {
         return Ok(Parsed::Rejected);
+    }
+    // With an integer part of zero, up to 29 fractional digits read (types/lt-decimal-digits/DecimalDigits.al:
+    // P163_Decimal_Operands_RoundTrip `19_decimals`, `28_decimals`, `29_decimals`; Format shows 18 of them).
+    // With a nonzero integer part, only 18 significant digits are pinned: more is refused.
+    if digits.len() > 18 && !int.bytes().all(|b| b == b'0') {
+        return unsupported(format!(
+            "Evaluate of `{text}` into Decimal with more than 18 significant digits and a nonzero integer part (not pinned)"
+        ));
     }
     match text.parse::<Decimal>() {
         Ok(d) => Ok(Parsed::Value(Value::Decimal(d))),

@@ -146,20 +146,6 @@ impl Session {
                 self.control_text(st, idx, &converted)?.into()
             }
         };
-        // A blank value in a control bound to a NotBlank field is refused by the client with a TestValidation error whose
-        // text no corpus test pins (Tests-SCM-Planning ManufacturerCodeCannotBeBlank asserts only the code): refused.
-        if rec_bound
-            && text.is_empty()
-            && self.control_field(st, idx).is_some_and(|f| {
-                f.properties
-                    .iter()
-                    .any(|(k, v)| k.eq_ignore_ascii_case("NotBlank") && v.trim().eq_ignore_ascii_case("true"))
-            })
-        {
-            return unsupported(
-                "SetValue of a blank value on a control bound to a NotBlank field (the client's TestValidation text is not pinned)",
-            );
-        }
         let enum_engine = engine.clone();
         let by_text = move |id: u32, t: &str| {
             let o = &enum_engine.program.objects[id as usize];
@@ -198,6 +184,40 @@ impl Session {
         // The bounds and the length of a Text variable raise a TestValidation error
         // (handlers/TestPageVariableMinMaxContracts.al:15-16, :119).
         let refuse_bound = |msg: String| -> Signal { refuse_code(msg, "TestValidation") };
+        // A blank value in a control bound to a NotBlank field is refused with a TestValidation error naming the caption
+        // (pages/lt-page-presentation-properties/P119PageFields.al:P119_NotBlankPageField; Tests-SCM-Planning
+        // ManufacturerCodeCannotBeBlank asserts the code). The text is pinned on a card with a row; on a list or a page
+        // without a row it is not.
+        if rec_bound
+            && text.is_empty()
+            && self.control_field(st, idx).is_some_and(|f| {
+                f.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("NotBlank") && v.trim().eq_ignore_ascii_case("true"))
+            })
+        {
+            if no_row || self.is_list(st) {
+                return unsupported(
+                    "SetValue of a blank value on a NotBlank control of a list or of a page without a row (the client's text is not pinned)",
+                );
+            }
+            return Err(refuse_bound(format!("{caption} must be filled in. Enter a value.")));
+        }
+        // A Numeric page field takes digits only (pages/lt-page-presentation-properties/P119PageNumeric.al:P119_PageNumericSetValue:
+        // letters are refused with a TestValidation error). Other non-digits are not pinned.
+        if matches!(ty, RtType::Text(_) | RtType::Code(_))
+            && matches!(page_of(&engine, st).controls[idx].prop("numeric"), Some(ir::PropVal::Lit(v)) if v.trim().eq_ignore_ascii_case("true"))
+            && !text.chars().all(|c| c.is_ascii_digit())
+        {
+            if !text.chars().any(|c| c.is_ascii_alphabetic()) {
+                return unsupported(
+                    "SetValue on a Numeric field with a character that is neither a digit nor a letter (not pinned)",
+                );
+            }
+            return Err(refuse_bound(format!(
+                "Your entry of '{text}' is not an acceptable value for '{caption}'. Only numeric characters are allowed in field."
+            )));
+        }
         let parsed = match al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text) {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
@@ -226,7 +246,9 @@ impl Session {
                 // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,
                 // Enum_VariableControl_*); one bound to a table field keeps the empty code.
                 return Err(
-                    if rec_bound && !no_row && !matches!(ty, RtType::DateTime) && !self.is_list(st) {
+                    // An Enum control raises TestValidation on a card with a row too (pages/lt-page-enum-control/
+                    // PageEnumControlCaptionless.al:P161_EnumControl_SetValueSpellings_Captionless `spaceOrdinal`).
+                    if rec_bound && !no_row && !matches!(ty, RtType::DateTime | RtType::Enum(_)) && !self.is_list(st) {
                         refuse(self, msg)
                     } else {
                         refuse_bound(msg)
@@ -262,16 +284,28 @@ impl Session {
         // (handlers/TestPageVariableMinMaxContracts.al:60-130). The value shows as typed for an
         // integer and with two decimals for a decimal (2.60, 0.40; more decimals are not pinned).
         {
-            let bound = |n: &str| match self.control_field(st, idx) {
-                Some(f) => f
+            // The page field's own MinValue / MaxValue count on a control bound to a table field too (pages/
+            // lt-page-presentation-properties/P119PageNumeric.al:P119_PageMinMax); then the value shows as the control shows it.
+            let page_bound = |n: &str| match page_of(&engine, st).controls[idx].prop(n) {
+                Some(ir::PropVal::Lit(v)) => Some(v.trim().to_string()),
+                _ => None,
+            };
+            // Pinned for a Decimal field only: an Integer field with the same page properties takes 11 above a MaxValue of 10
+            // without an error (handlers/TestPageValidationGetError_Tests.al:GetValidationError_IndexPastLast `setValueOutOfRange`).
+            let on_the_page = self.control_field(st, idx).is_some()
+                && matches!(parsed, Value::Decimal(_))
+                && (page_bound("minvalue").is_some() || page_bound("maxvalue").is_some());
+            let bound = |n: &str| match (
+                on_the_page.then(|| page_bound(n)).flatten(),
+                self.control_field(st, idx),
+            ) {
+                (Some(v), _) => Some(v),
+                (None, Some(f)) => f
                     .properties
                     .iter()
                     .find(|(k, _)| k.eq_ignore_ascii_case(n))
                     .map(|(_, v)| v.trim().to_string()),
-                None => match page_of(&engine, st).controls[idx].prop(n) {
-                    Some(ir::PropVal::Lit(v)) => Some(v.trim().to_string()),
-                    _ => None,
-                },
+                (None, None) => page_bound(n),
             };
             let num = match &parsed {
                 Value::Integer(i) => Some((rust_decimal::Decimal::from(*i), i.to_string())),
@@ -303,6 +337,11 @@ impl Session {
                 );
             }
             if let Some((_, shown)) = num {
+                let shown = if on_the_page && (under || over) {
+                    self.control_text(st, idx, &parsed)?.to_string()
+                } else {
+                    shown
+                };
                 if under {
                     let min = min.unwrap_or_default();
                     return Err(refuse_bound(format!(
@@ -702,7 +741,23 @@ impl Session {
                     None if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Caption) => {
                         Ok(Value::Boolean(false))
                     }
-                    None => Ok(Value::Boolean(m == PageMethod::ShowMandatory)),
+                    // ShowMandatory without the property is Yes when another control of the page shows the same table field with
+                    // ShowMandatory = true, else No (misc/lt-probes-needed-7/PnGFindField.al:HideValueAndShowMandatoryLiterals:
+                    // `PlainGrpCtl` Yes next to `MandatoryCtl` on the same field, `NameCtl` No; pages/lt-page-runtime/P82TestField.al:
+                    // Properties_DynamicVisible_And_ShowMandatory `no-showmandatory` No; handlers/TestProbePageHandlerContracts.al:
+                    // TestPage_Members_ShowMandatoryHideValue_Defaults `name_showmandatory` Yes next to `ShowMandatoryField`). For
+                    // a control bound to something else than a table field the answer is not pinned.
+                    None if m == PageMethod::ShowMandatory => {
+                        let page = page_of(&engine, st);
+                        match &page.controls[idx].binding {
+                            ir::Binding::Field(pos) => Ok(Value::Boolean(page.controls.iter().any(|c| {
+                                matches!(&c.binding, ir::Binding::Field(p) if p == pos)
+                                    && matches!(c.prop("showmandatory"), Some(ir::PropVal::Lit(l)) if unquote(l).eq_ignore_ascii_case("true"))
+                            }))),
+                            _ => unsupported("ShowMandatory of a control that is no table field, without the property (not pinned)"),
+                        }
+                    }
+                    None => Ok(Value::Boolean(false)),
                     Some(ir::PropVal::Lit(l)) => Ok(Value::Boolean(unquote(l).eq_ignore_ascii_case("true"))),
                     Some(_) => unsupported(format!("TestField.{m} of a computed property")),
                 }

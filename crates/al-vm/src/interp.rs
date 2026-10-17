@@ -782,9 +782,11 @@ impl Session {
                                             // A source whose content was not fetched (a Get without CalcFields) gives a copy that reads
                                             // empty (misc/lt-probes-needed-1/PnABlobAssignRename.al:Assign_Stored `copy-content-notloaded`).
                                             loaded: b.loaded,
+                                            fetched: b.fetched,
                                             refetch: true,
                                             persisted: false,
                                             temp_row: b.temp_row,
+                                            written: false,
                                             render_pending: b.render_pending.clone(),
                                         },
                                     )))

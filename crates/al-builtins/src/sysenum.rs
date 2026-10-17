@@ -152,6 +152,12 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
     }
 }
 
+/// Whether `members` is the `IsolationLevel` option.
+pub fn is_isolation_level(members: &[String]) -> bool {
+    let known = members_static("isolationlevel");
+    members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
+}
+
 /// Whether `members` is the `ClientType` option: an ordinal or a member name evaluates into it, any other text does not.
 pub fn is_client_type(members: &[String]) -> bool {
     let known = members_static("clienttype");

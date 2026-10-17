@@ -576,6 +576,18 @@ impl Session {
             _ => None,
         };
         let Some(item) = item else { return Ok(false) };
+        // An Integer item into a loop variable that is an Enum (`foreach Connector in Connector.Ordinals do`) is the enum
+        // value of that ordinal. Not pinned by a corpus test; Base Application's Email Account Impl.GetAllAccounts does it.
+        let item = match item {
+            Value::Integer(n) => match self.read(&site.var, f) {
+                Ok(Value::Enum(id, _)) => {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForeachIntegerIntoEnum);
+                    Value::Enum(id, n)
+                }
+                _ => Value::Integer(n),
+            },
+            other => other,
+        };
         f.locals[site.at as usize] = Value::Integer(i + 1);
         if let Some(r) = site.cap_loop {
             self.cap_loop_pass(cap_id(f, r));
@@ -777,7 +789,22 @@ impl Session {
             // `Clear` of a Variant empties it, whatever it holds (types/lt-variant/VaTIs*.al:Is_Empty_Variant `V := 5; Clear(V)`
             // has no type flag left); the native clears a value to the default of its own kind.
             if let Some(ir::Arg::Ref(p)) = site.args.first() {
-                if matches!(self.place_type(p, f), al_builtins::value::RtType::Variant) {
+                // What Clear does to a row of a multi-dimensional array is not pinned (only a row as an argument is).
+                if let ir::Place::Index(base, idx) = p {
+                    if let al_builtins::value::RtType::Array(d, _) = self.place_type(base, f) {
+                        if idx.len() < d.len() {
+                            return Err(Signal::Unsupported(
+                                "Clear of a row of a multi-dimensional array: what BC does with a row is not pinned (docs/probes-needed.md)".into(),
+                            ));
+                        }
+                    }
+                }
+                // An Interface variable too: it is unassigned afterwards and a call raises "Interface not initialized"
+                // (platform/lt-system-database-members/ClearInterface.al:ClearInterface; codeunit/lt-enums-interfaces/OjT71047.al:Uninitialized_AfterClear).
+                if matches!(
+                    self.place_type(p, f),
+                    al_builtins::value::RtType::Variant | al_builtins::value::RtType::Interface(_)
+                ) {
                     drop(values);
                     self.write(p, Value::Null, f)?;
                     return Ok(Value::Null);

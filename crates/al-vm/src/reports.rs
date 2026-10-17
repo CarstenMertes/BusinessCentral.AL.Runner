@@ -1072,7 +1072,7 @@ impl Session {
         if report.processing_only
             || report.layout != ir::ReportLayout::None
             || report.layout_file_missing
-            || !report.output.is_empty()
+            || report.output.iter().any(|r| r.contains("(a layout)"))
         {
             return Ok(None);
         }

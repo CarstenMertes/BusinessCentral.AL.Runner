@@ -326,6 +326,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         "System.EvaluateVariableOption#1",
         crate::evaluate::evaluate_variable_option,
     ),
+    ("System.EvaluateBounded#1", crate::evaluate::evaluate_bounded),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
     (

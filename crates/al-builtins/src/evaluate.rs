@@ -546,7 +546,57 @@ pub fn evaluate_variable_option(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut 
     evaluate_with(c, a, true)
 }
 
+/// `Evaluate` into a Text or Code variable of a declared length: the lowering appends the length as a fourth argument.
+pub fn evaluate_bounded(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let Some(Value::Integer(max)) = a.get(3).cloned() else {
+        return unsupported("Evaluate into a bounded text without its length");
+    };
+    let max = u32::try_from(max).ok();
+    evaluate_with_max(c, &mut a[..3], false, max)
+}
+
 fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Result<Value, Signal> {
+    evaluate_with_max(c, a, variable_option, None)
+}
+
+/// `Evaluate` into a Text or a Code (corpus errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText,
+/// P128_Evaluate_IntoCode, P128_Evaluate_IntoCode_ResultUnused, P128_Evaluate_IntoShortText_ResultUnused): a Text takes the
+/// text as written (blanks kept), a Code takes it trimmed and in capitals; text that is too long for the variable gives
+/// `false` when the result is used and the length error (with the text as given) when it is not, and the variable keeps
+/// its value. A format number is not pinned.
+fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option<u32>) -> Result<Parsed, Signal> {
+    if number != 0 {
+        return unsupported(format!("Evaluate into a Text or Code with format number {number} (not pinned)"));
+    }
+    let code = matches!(a, Value::Code(_));
+    let kept = if code { text.trim() } else { text };
+    if let Some(m) = max {
+        if Value::text_len(text) > m as usize {
+            // Whether the length of the trimmed text or of the text as given counts for a Code is not pinned.
+            if code && kept.len() != text.len() && Value::text_len(kept) <= m as usize {
+                return unsupported("Evaluate into a Code of a text whose blanks decide whether it fits (not pinned)");
+            }
+            if c.ret_used() {
+                return Ok(Parsed::Rejected);
+            }
+            return crate::native::raise(
+                format!(
+                    "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                    Value::text_len(text),
+                    crate::ops::shown_in_length_error(text)
+                ),
+                "StringLengthExceeded",
+            );
+        }
+    }
+    Ok(Parsed::Value(if code {
+        Value::Code(crate::ops::upper_code(kept).into())
+    } else {
+        Value::Text(text.to_string().into())
+    }))
+}
+
+fn evaluate_with_max(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool, max: Option<u32>) -> Result<Value, Signal> {
     let Some(text) = crate::native::text_of(&a[1]) else {
         return unsupported("Evaluate of a source that is not text");
     };
@@ -562,6 +612,7 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
         ));
     }
     let parsed = match &a[0] {
+        Value::Text(_) | Value::Code(_) => text_or_code(c, &a[0], &text, number, max)?,
         Value::Integer(_) => integer(&text, number)?,
         Value::BigInteger(_) => big_integer(&text)?,
         Value::Decimal(_) => decimal(&text)?,

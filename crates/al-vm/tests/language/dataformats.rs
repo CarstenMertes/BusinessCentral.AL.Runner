@@ -345,6 +345,28 @@ fn evaluate_numbers() {
     assert_eq!(t, "-7");
 }
 
+// errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, P128_Evaluate_IntoCode (`lower`, `padded`,
+// `one too long`), P128_Evaluate_IntoCode_ResultUnused and P128_Evaluate_IntoShortText_ResultUnused (`too long`).
+#[test]
+fn evaluate_into_text_and_code() {
+    let t = text_of(
+        "T: Text; C: Code[5]; O: Boolean;",
+        "T := 'KEEP'; C := 'KEEP'; O := Evaluate(T, ' hello '); Evaluate(C, ' ab '); exit(Format(O) + '[' + T + '][' + C + ']');",
+    );
+    assert_eq!(t, "Yes[ hello ][AB]");
+    let t = text_of(
+        "C: Code[5]; O: Boolean;",
+        "C := 'KEEP'; O := Evaluate(C, 'abcdef'); exit(Format(O) + '[' + C + ']');",
+    );
+    assert_eq!(t, "No[KEEP]");
+    let (m, code) = raised("S: Text[5];", "S := 'KEEP'; Evaluate(S, 'abcdef'); exit(S);");
+    assert_eq!(
+        m,
+        "The length of the string is 6, but it must be less than or equal to 5 characters. Value: abcdef"
+    );
+    assert_eq!(code, "StringLengthExceeded");
+}
+
 #[test]
 fn evaluate_reports_failure_through_its_result() {
     // text/TestEvaluate.al: Evaluate_InvalidInteger_ReturnsFalse and Evaluate_EmptyString_ReturnsFalse;

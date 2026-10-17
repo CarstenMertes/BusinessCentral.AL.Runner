@@ -33,7 +33,7 @@ struct Weight {
     upper: bool,
 }
 
-fn weight(c: char) -> Result<Weight, String> {
+fn weight(c: char, total: bool) -> Result<Weight, String> {
     let lower: char = c.to_lowercase().next().unwrap_or(c);
     let upper = c != lower;
     if let Some((_, base)) = ACCENTED.iter().find(|(set, _)| set.contains(lower)) {
@@ -64,6 +64,14 @@ fn weight(c: char) -> Result<Weight, String> {
             upper: false,
         });
     }
+    if total {
+        // Only for the order of keys, which must be total: a character without a weight follows every weighted one, by code point.
+        return Ok(Weight {
+            primary: 100_000 + c as u32,
+            accent: None,
+            upper: false,
+        });
+    }
     Err(format!(
         "ordering of the character U+{:04X} (no collation weight)",
         c as u32
@@ -72,11 +80,21 @@ fn weight(c: char) -> Result<Weight, String> {
 
 /// The order of two texts; `Err` names a character that has no weight.
 pub fn compare(a: &str, b: &str) -> Result<Ordering, String> {
+    compare_with(a, b, false)
+}
+
+/// [`compare`] as a total order, for sorting keys: a character without a weight follows the weighted ones (by code point), and
+/// two different accents on one letter are ordered by the accent. Never an `Err`. Unpinned beyond what [`compare`] pins.
+pub fn compare_total(a: &str, b: &str) -> Ordering {
+    compare_with(a, b, true).unwrap_or_else(|_| a.cmp(b))
+}
+
+fn compare_with(a: &str, b: &str, total: bool) -> Result<Ordering, String> {
     if a == b {
         return Ok(Ordering::Equal);
     }
-    let wa: Vec<Weight> = a.chars().map(weight).collect::<Result<_, _>>()?;
-    let wb: Vec<Weight> = b.chars().map(weight).collect::<Result<_, _>>()?;
+    let wa: Vec<Weight> = a.chars().map(|c| weight(c, total)).collect::<Result<_, _>>()?;
+    let wb: Vec<Weight> = b.chars().map(|c| weight(c, total)).collect::<Result<_, _>>()?;
     let primary = wa.iter().map(|w| w.primary).cmp(wb.iter().map(|w| w.primary));
     if primary != Ordering::Equal {
         return Ok(primary);
@@ -86,6 +104,7 @@ pub fn compare(a: &str, b: &str) -> Result<Ordering, String> {
         match (x.accent, y.accent) {
             (None, Some(_)) => return Ok(Ordering::Less),
             (Some(_), None) => return Ok(Ordering::Greater),
+            (Some(p), Some(q)) if p != q && total => return Ok(p.cmp(&q)),
             (Some(p), Some(q)) if p != q => {
                 return Err(format!(
                     "ordering of the accents {p} and {q} on one letter (not pinned)"

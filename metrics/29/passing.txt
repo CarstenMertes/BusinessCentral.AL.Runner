@@ -3146,6 +3146,10 @@
 60808 PageVariableControl_AcceptedWrite_RecordsNoValidationError
 60808 PageVariableControl_GetValidationError_HasNoRefreshSuffix
 60808 PageVariableControl_GetValidationError_SuffixPresenceIsStated
+60810 MissingValueRaisesRowDoesNotExist
+60810 PositionsOnTheEarlierRowToo
+60810 PositionsOnTheNamedRow
+60810 ReadsTheWholePositionedRow
 60815 PartFiresOnHostOpen_NoTouch
 60815 PartRefires_OnGoToRecord
 60815 PartValueMatchesEagerRow_WithTouch
@@ -6647,6 +6651,7 @@
 70279 P147_AutoIncrement_Rename_RelativeText
 70296 P115_ExtensionField_Editable
 70298 P115_GridAndLabel_Editable
+70303 CalcFields_OnNotLoadedFlowAndBlob
 70303 LoadFields_FindSet_Loop
 70303 Modify_AfterLoadingOnlyBlob_NewText
 70303 Modify_AfterLoadingOnlyFlowField
@@ -7032,6 +7037,8 @@
 70720 BlankFilter_Text
 70721 FilterOnOtherField
 70721 NoFilter_Integer_Text_Date
+70721 NonRangeFilters_Integer
+70721 NonRangeFilters_Text_Date
 70721 RangeFilters_Integer
 70722 Empty_Asserterror_FindFirst_FindLast
 70722 Filtered_Out_Comp_Table
@@ -8286,6 +8293,12 @@
 71572 P175_GuidText_ModuleScope
 71572 P175_GuidText_OverwriteAndEmptyValue
 71572 P175_GuidText_UserScope
+71573 P175_GuidKey_CompanyScope
+71573 P175_GuidKey_EmptyGuid
+71573 P175_GuidKey_ModuleScope
+71573 P175_GuidKey_SetGuidGetText
+71573 P175_GuidKey_SetTextGetGuid
+71573 P175_GuidKey_UserAndCompanyAndUserScope
 71574 P175_Raw_EAcute_ReadText
 71574 P175_Raw_Euro_ReadText
 71574 P175_Raw_UUml_ReadText
@@ -9672,6 +9685,7 @@
 73025 CalcField_FlowFields
 73025 CalcSum_Variants
 73025 GetFilter_Forms
+73025 GetRangeMinMax
 73025 RecordRef_FlowFilter_Via_FieldRef
 73025 Relation_Values
 73025 SetFilter_Forms
@@ -10455,6 +10469,15 @@
 73552 P130_EvaluateDate_Format9_Forms
 73552 P130_EvaluateDate_Raises_OnFormat9WithSlashForm
 73577 P130_Query_FlowFieldOfInnerJoinedItem_Control
+73578 DateTime_DateAndTimeMethods_DateZeroWithTime
+73578 DateTime_DateAndTimeMethods_SetValue
+73578 DateTime_DateAndTimeMethods_Undefined
+73579 Guid_AsTextArgument_NotificationData
+73579 Guid_AsTextArgument_NullGuidAndCreated
+73579 Guid_AsTextArgument_StringFunctions
+73584 Query_AfterLastRow_OpenAgainNoFilter
+73584 Query_AfterLastRow_OpenTwice
+73584 Query_AfterLastRow_SetRangeThenOpen
 73624 P131_EvaluateCode_BlankTexts
 73624 P131_EvaluateCode_IntoTableField
 73627 P131_EvaluateOption_FieldCaptionsDifferentWords
@@ -10783,6 +10806,13 @@
 74046 P133_FormatRecord_FilledFields
 74046 P133_FormatRecord_Temporary_AndCopies
 74062 P133_Query_StaticFiltersOnTheOuterItem_TableAndColumn
+74064 Option_FromBigInteger_InRangeAndLacking
+74068 Validate_ByConst_QuotedFilter
+74068 Validate_ByKind_QuotedFilter
+74068 Validate_ByNot_QuotedFilter
+74068 Validate_ByOpt_QuotedFilter
+74068 Validate_ByPlain_QuotedFilter
+74068 Validate_ByQuotedOnly_QuotedFilter
 74116 P134_ModalPageOpensAnotherModalPage
 74116 P134_OneTestPageOneTyped_BThenA
 74116 P134_OneTypedOneTestPage_AThenB
@@ -10797,6 +10827,14 @@
 74131 P134_Left_ColumnFilter_OnQty
 74131 P134_Left_ColumnFilter_ReplacedByRuntimeSetRange
 74131 P134_Left_TableFilterAndColumnFilter
+74141 PartB_ExistingHeaderTypeA_NewLine
+74141 PartB_OpenNewHeader_NoThenType
+74141 PartPlain_ExistingHeaderTypeA_NewLine
+74146 Card_OpenNew_KeyOnly_Close
+74146 Card_OpenNew_KeyThenField_Close
+74146 Card_OpenNew_KeyThenField_OK
+74146 List_ExistingRow_ModifyField
+74146 List_New_KeyThenField
 74180 DifferentEnums_CompatVsPlain
 74180 DifferentEnums_PlainVsCompat
 74180 DifferentEnums_PlainVsPlain2
@@ -11130,6 +11168,7 @@
 74463 Card_OpenNew_EmptyTable
 74463 Card_OpenNew_TableWithRows
 74463 List_OpenNew_EmptyTable
+74472 AddLoadFields_FlowFieldAndNormal
 74472 ClearAll_TemporaryGlobalRecord_DirectCall
 74472 ClearAll_TemporaryGlobalRecord_ThroughCodeunitRun
 74472 Modify_ChangeByOther_ThenChange
@@ -11137,6 +11176,7 @@
 74472 Modify_NoChangeByOther_ThenChange
 74472 Modify_NoChangeByOther_ThenNoChange
 74472 Modify_SameValueAssignedByOther_ThenChange
+74472 SetLoadFields_FlowFieldAndNormal
 74477 DataItemTableView_ThenSetTableViewOnBothFields
 74477 DataItemTableView_ThenSetTableViewOnOtherField
 74477 DataItemTableView_ThenSetTableViewOnOtherRange
@@ -11428,6 +11468,7 @@
 74822 P168_GetRange_FilterInGroup0ReadFromGroup2
 74822 P168_GetRange_FilterOnlyInGroup2
 74822 P168_GetRange_OtherFieldAndReset
+74822 P168_GetRange_RangeInGroup2
 74836 P168_Chained_ThreeDimensionsAndText
 74836 P168_Chained_TwoDimensions_ReadWrite
 74838 P168_Chained_ArrayOfRecords

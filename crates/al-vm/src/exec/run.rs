@@ -576,6 +576,18 @@ impl Session {
             _ => None,
         };
         let Some(item) = item else { return Ok(false) };
+        // An Integer item into a loop variable that is an Enum (`foreach Connector in Connector.Ordinals do`) is the enum
+        // value of that ordinal. Not pinned by a corpus test; Base Application's Email Account Impl.GetAllAccounts does it.
+        let item = match item {
+            Value::Integer(n) => match self.read(&site.var, f) {
+                Ok(Value::Enum(id, _)) => {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForeachIntegerIntoEnum);
+                    Value::Enum(id, n)
+                }
+                _ => Value::Integer(n),
+            },
+            other => other,
+        };
         f.locals[site.at as usize] = Value::Integer(i + 1);
         if let Some(r) = site.cap_loop {
             self.cap_loop_pass(cap_id(f, r));

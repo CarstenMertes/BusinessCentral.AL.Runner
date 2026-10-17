@@ -421,6 +421,18 @@ registry! {
         tests: "Item Blocked Test and Item Variant Blocked Test (Item where(Blocked = const(false), \"Service Blocked\" = const(false)) and the sales and purchase variants), SCM Dedicated Bins; about 26 Tests-SCM tests. They compare the message only.",
         probe: "A relation with two non-key where() conditions and a value that fails one of them, and one that is missing: GetLastErrorCode; the same with one key and one non-key condition.",
     },
+    EnumFromIntegerVariantEnum => {
+        id: "enum-from-integer-variant-enum",
+        assumed: "Enum.FromInteger(V) with a Variant V that holds an Enum value takes the ordinal, as an assignment of that Variant to an Integer does (pinned by B_EnumOptionVariant.al:EnumVariant_To_Integer).",
+        tests: "SCM Performance Tests ItemTrackingLinesPageHandler (\"Item Tracking Entry Type\".FromInteger(OptionValue), OptionValue dequeued from Library - Variable Storage after an enum was enqueued): 9 Tests-SCM tests.",
+        probe: "V := EnumValue; E := \"Enum\".FromInteger(V): the ordinal or the error; the same with an Option in the Variant.",
+    },
+    ForeachIntegerIntoEnum => {
+        id: "foreach-integer-into-enum",
+        assumed: "A foreach over a List of Integer whose loop variable is an Enum gives the variable the enum value of each ordinal (an ordinal the enum does not declare is kept).",
+        tests: "Email Account Impl.GetAllAccounts (`foreach Connector in Connector.Ordinals do`), which Job Planning Lines.OnInit reaches through Email Account.IsAnyAccountRegistered: SCM Fulfillment and other tests that open the Job Planning Lines page; 6 Tests-SCM tests.",
+        probe: "foreach E in E.Ordinals with E an Enum variable: Format(E) and E.AsInteger() in the body; the same with a List of Integer that holds an ordinal the enum lacks.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

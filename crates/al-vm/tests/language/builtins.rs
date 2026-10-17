@@ -80,6 +80,32 @@ fn enum_as_integer_returns_the_ordinal() {
     assert_eq!(int_of(v, "exit(S.AsInteger());").unwrap(), 0);
 }
 
+// types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer pins an Enum in a Variant read as an
+// Integer by assignment; FromInteger taking such a Variant is the same conversion, on an assumption (enum-from-integer-variant-enum).
+#[test]
+fn enum_from_integer_takes_a_variant_that_holds_an_enum() {
+    let v = "S: Enum \"ALT Status\"; T: Enum \"ALT Status\"; V: Variant;";
+    assert_eq!(
+        int_of(
+            v,
+            "T := \"ALT Status\"::Closed; V := T; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());"
+        )
+        .unwrap(),
+        5
+    );
+}
+
+// foreach over Ordinals into an Enum variable (foreach-integer-into-enum, an assumption): the variable holds the enum value.
+#[test]
+fn foreach_over_ordinals_into_an_enum_variable_gives_enum_values() {
+    // Draft (1) and Closed (5) are the ordinals after the blank one: the loop sees the enum value of each.
+    let r = int_of(
+        "S: Enum \"ALT Status\"; N: Integer;",
+        "foreach S in S.Ordinals() do if S = \"ALT Status\"::Closed then N += 10 else if S = \"ALT Status\"::Draft then N += 1; exit(N);",
+    );
+    assert_eq!(r.unwrap(), 11);
+}
+
 #[test]
 fn enum_from_integer_carries_any_ordinal() {
     // types/TestEnum.al:15-22 (a declared ordinal), :83-91 and types/TestEnumDefaultImplTests.Codeunit.al:70

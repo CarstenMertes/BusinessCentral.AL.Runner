@@ -139,3 +139,33 @@ codeunit 50961 C
         "Ref must have a value in TRI Row: Id=1. It cannot be zero or empty."
     );
 }
+
+/// misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob: a Blob with no content fails TestField with the plain text, with or
+/// without CalcFields (noDataNoCalc, noDataCalc); one written through a stream and not yet saved passes (dataNoCalcPassed).
+/// A Blob that holds content the database gave is not pinned: it passes only as a flagged assumption (Tests-ERM, 25 tests).
+#[test]
+fn test_field_of_a_blob_field() {
+    let src = r#"
+table 50970 "TBF Row" { fields { field(1; Id; Integer) { } field(2; Pic; Blob) { } } keys { key(PK; Id) { } } }
+codeunit 50971 C
+{
+    procedure F(): Text
+    var R: Record "TBF Row"; T: Text; Out: OutStream;
+    begin
+        R.Id := 1;
+        R.Insert();
+        asserterror R.TestField(Pic);
+        T := GetLastErrorText();
+        R.CalcFields(Pic);
+        asserterror R.TestField(Pic);
+        T := T + '|' + GetLastErrorText();
+        R.Pic.CreateOutStream(Out);
+        Out.WriteText('x');
+        R.TestField(Pic);
+        exit(T + '|passed');
+    end;
+}
+"#;
+    let e = "Pic must have a value in TBF Row: Id=1. It cannot be zero or empty.";
+    assert_eq!(text(al_testkit::run_in(src, "C", "F")), format!("{e}|{e}|passed"));
+}

@@ -337,6 +337,12 @@ registry! {
         tests: "Sales Line SetLoadFieldsForInvDiscoundCalculation (\"Reserved Quantity\"): about 2,350 Tests-ERM and Tests-SCM tests.",
         probe: "SetLoadFields(FlowField) and SetLoadFields(Normal, FlowField) then FindFirst and AreFieldsLoaded of the normal field; AddLoadFields the same; the result of SetLoadFields used as a value.",
     },
+    TestFieldBlobWithStoredContent => {
+        id: "test-field-blob-with-stored-content",
+        assumed: "TestField of a Blob field that holds content from the database (after CalcFields) passes. (An empty Blob fails and a Blob written through a stream and not saved passes: misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob.)",
+        tests: "Tests-ERM tests that call TestField on a Blob after CalcFields (XSD Parser `XMLSchema.TestField(XSD)`, about 25 tests).",
+        probe: "Save a Blob with content, Get the record, CalcFields, then TestField(Blob); and TestField(Blob) after Get without CalcFields.",
+    },
     HttpRelativeRequestPath => {
         id: "http-relative-request-path",
         assumed: "HttpClient.Get/Post/Put/Delete/Patch with a path that is not an absolute uri joins it to the client's base address like new Uri(base, path), as a [HttpClientHandler] sees it: a rooted path replaces the base path, any other joins the base path's directory. (That a plain word and a rooted path with no base address, and the forms of P168 with a base address, are blocked without a handler is pinned by network/lt-http-relative-request/HttpRelativeRequestPath.al.)",

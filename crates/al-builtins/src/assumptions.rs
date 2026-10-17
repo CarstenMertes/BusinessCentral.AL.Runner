@@ -145,6 +145,12 @@ registry! {
         tests: "Phys. Invt. Count.-Management.CalcPeriod (Calendar.Next(12 / CountFrequency)).",
         probe: "R.Next(1.5) and R.Next(-1.5).",
     },
+    NotificationByValueShares => {
+        id: "notification-by-value-shares",
+        assumed: "A Notification passed by value to a procedure is the caller's own notification: SetData, Message and Scope set in the callee are seen by the caller. An assignment copies (pinned).",
+        tests: "Check Credit Limit.PopulateDataOnNotification(CreditLimitNotification: Notification) sets the data the Tests-ERM SendNotificationHandler reads: 8 tests of ERM Sales Documents II.",
+        probe: "A procedure P(N: Notification) that calls N.SetData('k','v') and N.Message('m'); the caller reads HasData('k') and Message() after the call; the same with a var parameter.",
+    },
     TableRelationQuotes => {
         id: "table-relation-quotes",
         assumed: "A filter(...) text of a TableRelation where() clause quotes an identifier with \" and is read like a SetFilter text after the quotes are rewritten to '.",

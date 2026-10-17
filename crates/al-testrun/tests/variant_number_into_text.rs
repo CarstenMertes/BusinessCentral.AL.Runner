@@ -1,4 +1,5 @@
-//! A Variant holding a number: into a record's Text field it becomes its Format text (assumption number-to-text-is-format; Base
+//! A Variant variable holding a number into a record's Text or Code field raises TypeConversion (corpus types/lt-variant-to-text-fields/
+//! VariantNumberToField.al); a call result as below, into a record's Text field it becomes its Format text (assumption number-to-text-is-format; Base
 //! Application's Workflow Table Relation Value.CreateNew, `Value := FieldRef.Value()`); into a Text variable an Integer raises
 //! TypeConversion (corpus types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117).
 
@@ -17,10 +18,10 @@ codeunit 50500 "T"
     var V: Variant; Row: Record "VNT Row"; B: BigInteger;
     begin
         B := 2645; V := B;
-        Row.Txt := V;
-        Row.Cd := V;
-        if Row.Txt <> '2645' then Error('text %1', Row.Txt);
-        if Row.Cd <> '2645' then Error('code %1', Row.Cd);
+        asserterror Row.Txt := V;
+        if GetLastErrorCode() <> 'TypeConversion' then Error('code %1', GetLastErrorCode());
+        asserterror Row.Cd := V;
+        if GetLastErrorCode() <> 'TypeConversion' then Error('code %1', GetLastErrorCode());
     end;
     [Test]
     procedure FromAFieldRef()

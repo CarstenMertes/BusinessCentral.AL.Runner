@@ -259,6 +259,12 @@ impl Session {
                 } else {
                     "DB:NothingInsideFilter".into()
                 }
+            } else if wheres.len() > 1 && covers_primary_key(&related, rel_pos, wheres) {
+                // Conditions on primary key fields only, which with the related field name the whole key, answer RecordNotFound:
+                // `Item Variant.Code where("Item No." = field("Item No."), Code = field("Variant Code"))`
+                // (record/lt-relation-where-validated/RelationWhereValidated.al:Validate_OldBlank_ExistingAndMissing,
+                // Validate_OldNonBlank_NewMissing, Validate_OtherItemNo_SameValue). Any other set of several conditions is refused below.
+                "DB:RecordNotFound".into()
             } else if !wheres.is_empty() {
                 // Several conditions: which code BC answers is not pinned (probe wanted), so the error path is refused.
                 return Err(Signal::Unsupported(
@@ -271,4 +277,14 @@ impl Session {
             ..Default::default()
         })))
     }
+}
+
+/// Whether every condition of a relation's `where()` is on a primary key field of the related table and, with the related field
+/// itself, they name the whole key.
+fn covers_primary_key(related: &TableDef, rel_pos: usize, wheres: &[ir::RelationWhere]) -> bool {
+    let pk = &related.keys[0];
+    let on = |w: &ir::RelationWhere| match w {
+        ir::RelationWhere::Value { related, .. } | ir::RelationWhere::Field { related, .. } => *related,
+    };
+    wheres.iter().all(|w| pk.contains(&on(w))) && pk.iter().all(|k| *k == rel_pos || wheres.iter().any(|w| on(w) == *k))
 }

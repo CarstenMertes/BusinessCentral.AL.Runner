@@ -972,6 +972,11 @@ impl Session {
                 }
                 // An HttpContent passed by reference is the caller's own object; only a by-value one is a copy (see `ops::convert`).
                 (a @ Value::Library(..), true) if matches!(&a, Value::Library(n, _) if n == "HttpContent") => a,
+                // A Variant holding an Integer handed to a `var` Text parameter is passed as it is: no conversion, the callee's
+                // assignment replaces it and the Variant then holds that text (types/lt-variant-to-text-fields/
+                // VariantNumberToVarParam.al:VarTextParam_VariantArgument, `integer ok = Yes`, `variant after = filled`). Another
+                // number is not pinned and keeps the conversion.
+                (a @ Value::Integer(_), true) if matches!(r.locals[i].ty, RtType::Text(_)) => a,
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }

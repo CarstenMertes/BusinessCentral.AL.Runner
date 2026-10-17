@@ -12744,7 +12744,7 @@
           "site": "ALTCallstackModuleInfos.al:9"
         },
         {
-          "corpus_uses": 180834,
+          "corpus_uses": 180796,
           "group": "statement",
           "ms_uses": 248561,
           "name": "ExprStmt",
@@ -13239,16 +13239,16 @@
           "site": null
         },
         {
-          "corpus_uses": 0,
+          "corpus_uses": 38,
           "group": "statement",
           "ms_uses": 0,
           "name": "WithStmt",
-          "pinned": false,
+          "pinned": true,
           "runtime_reads": false,
-          "site": null
+          "site": "events/lt-global-triggers-statements/P114WithStatement.al:43"
         }
       ],
-      "pinned": 54
+      "pinned": 55
     }
   ],
   "errors": {
@@ -13743,7 +13743,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 406,
+        "line": 417,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"

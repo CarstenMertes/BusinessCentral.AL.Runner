@@ -357,6 +357,17 @@ impl Session {
                             return unsupported(format!("view condition `{item}`"));
                         }
                         let ty = t.fields[pos].ty.clone();
+                        // `filter('>10')` is an AL text literal: the filter is what it holds, operators included
+                        // (misc/lt-probes-needed-7/PnGFixtures.al:666 `SubPageView = where("Line No." = filter('>10'))`, opened by
+                        // PnGPartTriggers.al:DisabledPartControlEnabled). A literal with a quote inside is not stripped.
+                        let value = value
+                            .trim()
+                            .strip_prefix('\'')
+                            .and_then(|v| v.strip_suffix('\''))
+                            // Only a literal that starts with a comparison operator (`'>10'`, `'>=2'`) is read as a filter; a quoted name such as a
+            // member with parentheses keeps its quotes (record/TestCalcFormulaQuotedFilterTests.Codeunit.al:60308).
+            .filter(|v| !v.contains('\'') && !v.contains('"') && v.starts_with(['<', '>']))
+                            .unwrap_or(value);
                         let expr = self
                             .parse_filter_text(value, &ty)
                             .map_err(|e| Signal::Unsupported(format!("SetView: {e}")))?;

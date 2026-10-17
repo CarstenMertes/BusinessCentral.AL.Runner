@@ -240,10 +240,13 @@ impl Session {
             let engine = self.engine();
             // A label keeps showing its caption (pages/lt-page-presentation-properties/P119LabelHideValue.al:P119_HideValue `label-value`).
             let is_label = matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Caption);
-            if let Some(ir::PropVal::Lit(l)) = page_of(&engine, st).controls[idx].prop("hidevalue") {
-                if !is_label && unquote(l).eq_ignore_ascii_case("true") {
-                    return Ok(String::new());
-                }
+            // HideValue may name a variable: `HideValue = HideName` set in OnAfterGetRecord hides the value of that row
+            // (pages/lt-page-presentation-properties/P119LabelHideValue.al:P119_HideValue `name-value`).
+            if !is_label
+                && page_of(&engine, st).controls[idx].prop("hidevalue").is_some()
+                && self.prop_bool_now(st, idx, "hidevalue", false)?
+            {
+                return Ok(String::new());
             }
         }
         let f = self.control_format(st, idx)?;
@@ -284,7 +287,9 @@ impl Session {
                     if n >= 10 {
                         text = "\u{2022}".repeat(10);
                     } else if n > 0 {
-                        return unsupported("a Masked control that shows a text shorter than ten characters (not pinned)");
+                        return unsupported(
+                            "a Masked control that shows a text shorter than ten characters (not pinned)",
+                        );
                     }
                 }
             }

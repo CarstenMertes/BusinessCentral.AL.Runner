@@ -602,7 +602,12 @@ impl Session {
                 ..Default::default()
             })));
         }
-        if qs.borrow().run.as_ref().is_some_and(|r| !r.started && r.filters_changed) {
+        if qs
+            .borrow()
+            .run
+            .as_ref()
+            .is_some_and(|r| !r.started && r.filters_changed)
+        {
             return Err(Signal::Error(Box::new(AlError {
                 message: "The READ function is called on a query after query metadata has been changed by one of the following: SETFILTER, SETRANGE, SECURITYFILTERING, or TOPNUMBEROFROWS. After metadata changes, you must reopen the query by calling the OPEN function before calling the READ function.".into(),
                 code: "Query".into(),
@@ -1138,7 +1143,8 @@ impl Session {
                                         avg.trunc().abs().to_string().len() as u32
                                     };
                                     let places = 18u32.saturating_sub(int_digits);
-                                    let cut = avg.round_dp_with_strategy(places, rust_decimal::RoundingStrategy::ToZero);
+                                    let cut =
+                                        avg.round_dp_with_strategy(places, rust_decimal::RoundingStrategy::ToZero);
                                     let rounded = avg.round_dp_with_strategy(
                                         places,
                                         rust_decimal::RoundingStrategy::MidpointAwayFromZero,

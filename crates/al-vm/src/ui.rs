@@ -295,8 +295,7 @@ impl Session {
         // handler's error keeps its own code (misc/lt-probes-needed-3/PnC09UnhandledUi.al:Handler_Error_StrMenu `Dialog`).
         match result {
             Err(Signal::Error(mut e))
-                if matches!(kind, UiKind::Message | UiKind::Confirm)
-                    && !e.code.starts_with("TestWrapped") =>
+                if matches!(kind, UiKind::Message | UiKind::Confirm) && !e.code.starts_with("TestWrapped") =>
             {
                 e.code = format!("TestWrapped:{}", e.code);
                 Err(Signal::Error(e))

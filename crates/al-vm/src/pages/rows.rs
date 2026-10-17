@@ -966,14 +966,26 @@ impl Session {
             }
             return Ok(Value::Boolean(false));
         }
-        let want: Vec<Value> = table.keys[0]
+        let want: Result<Vec<Value>, Signal> = table.keys[0]
             .iter()
             .enumerate()
             .map(|(n, &f)| match key.get(n) {
                 Some(v) => ops::convert(v.clone(), &table.fields[f].ty),
                 None => Ok(self.default_value(&table.fields[f].ty)),
             })
-            .collect::<Result<_, _>>()?;
+            .collect();
+        // A value that is no value of the key's type is no key of any row (pages/lt-page-runtime/P82TestPage.al:Navigation_GoToKey
+        // `wrong-type`: GoToKey(1) over a Code key raises the row error).
+        let want = match want {
+            Ok(w) => w,
+            Err(Signal::Error(_)) => {
+                if !result_used {
+                    return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+                }
+                return Ok(Value::Boolean(false));
+            }
+            Err(e) => return Err(e),
+        };
         // GoToKey onto the first row while standing on it reads nothing and runs no trigger (pages/lt-testpage-list-rows/
         // ListRowsGoToFirst.al:GoToKeyFirstWhileOnIt_Both5Rows_ReadsLogged and _OnlyCurr30Rows_ReadsLogged: `first-on-first-total = 0`,
         // also the second time).

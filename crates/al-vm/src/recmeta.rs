@@ -1187,6 +1187,22 @@ impl Session {
             after = Some(al_data::position(t, key, &row));
             rows.push(row);
         }
+        // A field of the primary key is refused (events/lt-db-events/DbtTransactions.al:ModifyAll_PrimaryKeyField, two rows, names as
+        // captions). Over no rows, and for a name that differs from its caption, the text is not pinned.
+        if t.keys[0].contains(&pos) {
+            let (field, table) = (t.fields[pos].name.clone(), t.name.clone());
+            if rows.is_empty() || self.field_caption(t, pos) != field || self.caption(t) != table {
+                return unsupported(
+                    "ModifyAll on a primary key field with no rows or with a caption (error text not pinned)",
+                );
+            }
+            return Err(error(
+                format!(
+                    "The MODIFYALL function cannot be used on the {field} field in the {table} table because it is part of the primary key."
+                ),
+                "DB:Ok",
+            ));
+        }
         // One fresh set of table globals for all rows, not the caller's (ADR-021 decision 6; corpus
         // probe TableGlobals_ModifyAll_WhatTheTriggersAndSubscribersSee).
         let shared = al_builtins::value::TableGlobals::new_shared();

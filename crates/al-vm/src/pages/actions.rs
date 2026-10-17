@@ -134,6 +134,7 @@ impl Session {
             && !st.borrow().draft
             && !self.declares(st, "onfindrecord")
             && !self.declares(st, "onnextrecord")
+            && (self.declares(st, "onaftergetrecord") || self.declares(st, "onaftergetcurrrecord"))
         {
             let r = (|| {
                 self.populate_current(st)?;
@@ -249,6 +250,31 @@ impl Session {
         let pos = arm.field.unwrap_or(table_def.keys[0][0]);
         let value = picked.borrow().fields[pos].clone();
         st.borrow_mut().refresh = false;
+        // The control's OnAfterLookup(Selected: RecordRef) runs with the picked row before the value is written, so Rec still holds
+        // the old value (pages/lt-pages-xmlport-upload-members/P112Pages.al:P112_Lookup_BasePageField_OK `base afterLookup sel=B rec=[]`,
+        // P112_Lookup_ExtensionField_OK, P112_Lookup_ViewMode).
+        {
+            let engine = self.engine();
+            let ctl = &page_of(&engine, st).controls[idx];
+            let own = ctl.trigger("onafterlookup").map(|r| (ctl.owner, r));
+            let added: Vec<(Option<usize>, usize)> = ctl
+                .ext_triggers
+                .iter()
+                .filter(|(n, _, _)| n == "onafterlookup")
+                .map(|(_, e, r)| (Some(*e), *r))
+                .collect();
+            let selected = Value::Library(
+                "RecordRef".into(),
+                Rc::new(RefCell::new(al_builtins::value::LibraryValue::RecordRef(
+                    picked.clone(),
+                ))),
+            );
+            for (owner, routine) in own.into_iter().chain(added) {
+                let object = owner.unwrap_or(st.borrow().object as usize);
+                let inst = self.owner_instance(st, owner);
+                self.call(object, routine, inst, vec![selected.clone()])?;
+            }
+        }
         self.control_set_value(st, idx, &mut [value])?;
         Ok(Value::Null)
     }

@@ -2482,6 +2482,7 @@ fn eval(e: &Expr, node: &Handle, pos: usize, last: usize, ctx: &XCtx) -> XRes<XV
                         })
                         .unwrap_or_default(),
                 ),
+                ("concat", n) if n >= 2 => XVal::Str(vals.iter().map(to_str).collect::<String>()),
                 ("string", 0) => XVal::Str(string_value(node)),
                 ("string", 1) => XVal::Str(to_str(&vals[0])),
                 ("number", 1) => XVal::Num(to_num(&vals[0])),
@@ -3637,13 +3638,31 @@ fn xpath_error_text(why: &str) -> Option<String> {
     const NS_MANAGER: &str =
         "Namespace Manager or XsltContext needed. This query has a prefix, variable, or user-defined function.";
     const KNOWN: [&str; 17] = [
-        "boolean", "contains", "count", "false", "last", "local-name", "name", "namespace-uri", "normalize-space", "not", "number",
-        "position", "starts-with", "string", "string-length", "true", "concat",
+        "boolean",
+        "contains",
+        "count",
+        "false",
+        "last",
+        "local-name",
+        "name",
+        "namespace-uri",
+        "normalize-space",
+        "not",
+        "number",
+        "position",
+        "starts-with",
+        "string",
+        "string-length",
+        "true",
+        "concat",
     ];
     if why == "a prefixed name needs a namespace manager" {
         return Some(NS_MANAGER.into());
     }
-    if let Some(p) = why.strip_prefix("prefix ").and_then(|r| r.strip_suffix(" is not declared")) {
+    if let Some(p) = why
+        .strip_prefix("prefix ")
+        .and_then(|r| r.strip_suffix(" is not declared"))
+    {
         return Some(format!("Namespace prefix '{p}' is not defined."));
     }
     if why == "unterminated literal" {

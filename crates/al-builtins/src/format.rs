@@ -159,14 +159,16 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             }
             // The IsolationLevel option shows member names for format 2 (misc/lt-probes-needed-1/PnAPlatformOptions.al:
             // IsolationLevel_Members: Default, UpdLock, ReadCommitted, RepeatableRead). ReadUncommitted is not pinned.
-            2 | 9 if crate::sysenum::is_isolation_level(members) => match members.get(*o as usize).map(String::as_str) {
-                Some("ReadUncommitted") | None => {
-                    return Err(FormatFail::Unsupported(
-                        "Format 2 of IsolationLevel::ReadUncommitted (not pinned)".into(),
-                    ));
+            2 | 9 if crate::sysenum::is_isolation_level(members) => {
+                match members.get(*o as usize).map(String::as_str) {
+                    Some("ReadUncommitted") | None => {
+                        return Err(FormatFail::Unsupported(
+                            "Format 2 of IsolationLevel::ReadUncommitted (not pinned)".into(),
+                        ));
+                    }
+                    Some(m) => m.to_string(),
                 }
-                Some(m) => m.to_string(),
-            },
+            }
             2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
             // `Option` declared without members is the one empty name: it shows the number
             // (types/lt-scalars/ScT70062.al:Option_Defaults `nomembers_len`, `nomembers_3`).

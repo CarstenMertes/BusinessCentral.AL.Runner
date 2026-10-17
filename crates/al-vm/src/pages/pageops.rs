@@ -533,7 +533,20 @@ impl Session {
                 dst.borrow_mut().filters.clear();
                 let fields = src.borrow().fields.clone();
                 dst.borrow_mut().fields = fields;
-                self.record_op(RecordOp::SetRecFilter, dst, &mut [])?;
+                // The primary key's fields alone get the filter, whatever the current key: a record with `SetCurrentKey(Grp, Name)` ends
+                // with `Id: 2` only and keeps its key (errors/lt-ms-refusals-135/P135SelectionFilter.al:
+                // P135_SelFilter_FreshRecord_AndOtherFieldFilters `keyed`).
+                let t = self.table(dst)?;
+                let group = dst.borrow().filter_group;
+                let mut d = dst.borrow_mut();
+                for &p in &t.keys[0] {
+                    let v = d.fields[p].clone();
+                    d.filters.push(al_builtins::filter::FieldFilter {
+                        field: p,
+                        expr: al_builtins::filter::FilterExpr::Range(Some(v.clone()), Some(v)),
+                        group,
+                    });
+                }
                 Ok(Value::Null)
             }
             // Which record a page variable reports after it ran is not pinned: no corpus test calls GetRecord

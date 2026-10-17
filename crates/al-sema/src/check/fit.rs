@@ -96,6 +96,8 @@ pub(crate) fn fits_proc(arg: &Ty, param: &str) -> bool {
     match (arg, p) {
         (Ty::BigInteger | Ty::Decimal, "integer") => false,
         (Ty::Char, "text") => true,
+        // An Option takes the Integer overload over the Variant one (`option_var`).
+        (Ty::Option(_), "integer") => true,
         _ => fits(arg, param),
     }
 }

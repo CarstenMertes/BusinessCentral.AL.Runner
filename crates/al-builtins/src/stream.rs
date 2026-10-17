@@ -29,11 +29,19 @@ pub struct BlobBuf {
     /// fetched with `CalcFields` before a stream reads it
     /// (streams/TestBlob.al Blob_Get_WithoutCalcFields_InStreamReadsEmpty).
     pub loaded: bool,
+    /// The content is what the database holds or was saved there, or the buffer never came from a row: a stream write does not
+    /// change it. `CalcFields` fetches a Blob that is not (a `Get` row written in memory is read back from the database:
+    /// record/lt-blob-calcfields-length/BlobCalcFieldsLength.al:BlobCalcFields_UnsavedContent_Result) and leaves one that is
+    /// (streams/TestBlobCalcFieldsUncommittedWrite.al:Blob_CalcFields_AfterUncommittedWriteWithoutModify_KeepsWrite).
+    pub fetched: bool,
     /// The buffer is the copy a record assignment made: its bytes show, but `CalcFields` fetches the Blob from the stored
     /// row (types/ProbeTypeFormsAndFilters.al:FormatRecord_AssignmentCopiesBlobBytes) unless a write came first.
     pub refetch: bool,
     /// A `Modify` of a temporary record wrote this content to the row; a write through a stream clears it.
     pub persisted: bool,
+    /// A stream wrote to the buffer since it was fetched or saved: `Modify` counts the Blob as changed whatever it holds now
+    /// (misc/lt-probes-needed-1/PnASystemFields.al:Modify_StampsOnlyWhenStoredFieldDiffers `same-blob-content-keeps-stamp`).
+    pub written: bool,
     /// ADR-040: a report on the allow-list was saved to this buffer in a rendered format and nothing was written:
     /// the name of the report. Any look at the buffer is refused (`observe`); a copy of the buffer carries the mark
     /// (`copy_blob`, a record assignment, `CalcFields`); creating the stream again clears it.
@@ -118,8 +126,10 @@ pub fn new_blob() -> BlobRef {
         bytes: Vec::new(),
         write_pos: 0,
         loaded: true,
+        fetched: true,
         refetch: false,
         persisted: false,
+        written: false,
         render_pending: None,
     }))
 }
@@ -131,8 +141,10 @@ pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
         bytes: b.bytes.clone(),
         write_pos: 0,
         loaded,
+        fetched: loaded,
         refetch: false,
         persisted: false,
+        written: false,
         render_pending: b.render_pending.clone(),
     }))
 }
@@ -149,6 +161,7 @@ pub fn write_bytes(b: &BlobRef, bytes: &[u8]) {
     buf.loaded = true;
     buf.refetch = false;
     buf.persisted = false;
+    buf.written = true;
 }
 
 /// How text becomes bytes in a stream. MSDos is code page 437 and the default (streams/TestStreamsRuntimeContracts.al:
@@ -440,8 +453,10 @@ pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
         bytes: Vec::new(),
         write_pos: 0,
         loaded: true,
+        fetched: true,
         refetch: false,
         persisted: false,
+        written: false,
         render_pending: None,
     });
     set_stream(

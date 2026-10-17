@@ -210,7 +210,9 @@ impl Session {
             && !text.chars().all(|c| c.is_ascii_digit())
         {
             if !text.chars().any(|c| c.is_ascii_alphabetic()) {
-                return unsupported("SetValue on a Numeric field with a character that is neither a digit nor a letter (not pinned)");
+                return unsupported(
+                    "SetValue on a Numeric field with a character that is neither a digit nor a letter (not pinned)",
+                );
             }
             return Err(refuse_bound(format!(
                 "Your entry of '{text}' is not an acceptable value for '{caption}'. Only numeric characters are allowed in field."
@@ -244,7 +246,9 @@ impl Session {
                 // A control bound to a variable raises TestValidation (controls/W2ValueControls.al:Date_IsoSpellings,
                 // Enum_VariableControl_*); one bound to a table field keeps the empty code.
                 return Err(
-                    if rec_bound && !no_row && !matches!(ty, RtType::DateTime) && !self.is_list(st) {
+                    // An Enum control raises TestValidation on a card with a row too (pages/lt-page-enum-control/
+                    // PageEnumControlCaptionless.al:P161_EnumControl_SetValueSpellings_Captionless `spaceOrdinal`).
+                    if rec_bound && !no_row && !matches!(ty, RtType::DateTime | RtType::Enum(_)) && !self.is_list(st) {
                         refuse(self, msg)
                     } else {
                         refuse_bound(msg)
@@ -291,7 +295,10 @@ impl Session {
             let on_the_page = self.control_field(st, idx).is_some()
                 && matches!(parsed, Value::Decimal(_))
                 && (page_bound("minvalue").is_some() || page_bound("maxvalue").is_some());
-            let bound = |n: &str| match (on_the_page.then(|| page_bound(n)).flatten(), self.control_field(st, idx)) {
+            let bound = |n: &str| match (
+                on_the_page.then(|| page_bound(n)).flatten(),
+                self.control_field(st, idx),
+            ) {
                 (Some(v), _) => Some(v),
                 (None, Some(f)) => f
                     .properties

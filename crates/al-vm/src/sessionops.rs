@@ -204,6 +204,19 @@ impl Session {
             return Ok(Value::Text(self.cx.company.clone().into()));
         }
         if id == ids::COMPANYPROPERTY_ID_1 {
+            // The `Id` of the company's row of the Company table (session/lt-company-record/CompanyRecord.al:ID_EqualsTheCompanyRecordId).
+            if let Some(t) = self.company_table() {
+                let key = al_builtins::ops::convert(Value::Text(self.cx.company.to_string().into()), &t.fields[0].ty);
+                if let (Ok(key), Some(at)) = (key, t.fields.iter().position(|f| f.name == "Id")) {
+                    if let Ok(Some(row)) = al_data::Store::get(&self.store, &self.cx, &t, &[key]) {
+                        if let Value::Guid(g) = &row[at] {
+                            if g.iter().any(|b| *b != 0) {
+                                return Ok(Value::Guid(*g));
+                            }
+                        }
+                    }
+                }
+            }
             // A Guid that identifies the company; stable for a name (the Company table's SystemId is not modelled).
             let mut h: u64 = 0xcbf2_9ce4_8422_2325;
             for b in self.cx.company.bytes() {

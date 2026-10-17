@@ -377,7 +377,11 @@ impl Parser<'_> {
                     // An unquoted key (`{a:1}`: `unquoted_key`); only plain names are taken.
                     Some(c) if c.is_ascii_alphabetic() || *c == b'_' => {
                         let from = self.i;
-                        while self.s.get(self.i).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_') {
+                        while self
+                            .s
+                            .get(self.i)
+                            .is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_')
+                        {
                             self.i += 1;
                         }
                         String::from_utf8_lossy(&self.s[from..self.i]).into_owned()
@@ -515,7 +519,9 @@ impl Parser<'_> {
         // `007` reads as 7 (json/lt-json-overloads/P88ValueReadFrom.al:ReadFrom_Invalid `leading_zero`); what a leading zero
         // does in front of a fraction or an exponent is not pinned.
         if int_len > 1 && self.s[int_start] == b'0' && matches!(self.s.get(self.i), Some(b'.' | b'e' | b'E')) {
-            return Err(ParseError::Unsupported("a JSON number with leading zeros and a fraction or exponent (not pinned)"));
+            return Err(ParseError::Unsupported(
+                "a JSON number with leading zeros and a fraction or exponent (not pinned)",
+            ));
         }
         let mut is_int = true;
         if self.eat(b'.') {
@@ -869,7 +875,9 @@ fn as_text(s: &Scalar) -> Result<Value, Signal> {
         Scalar::Val(Value::BigInteger(n)) => Ok(Value::Text(n.to_string().into())),
         // A whole number read as a double keeps the one decimal place only in the written JSON, not in its text
         // (json/lt-json-overloads/P88ValueReadFrom.al:ReadFrom_Scalars `exp`: text 1000, json 1000.0).
-        Scalar::Val(Value::Decimal(d)) if d.scale() == 1 && d.fract().is_zero() => Ok(Value::Text(d.trunc().to_string().into())),
+        Scalar::Val(Value::Decimal(d)) if d.scale() == 1 && d.fract().is_zero() => {
+            Ok(Value::Text(d.trunc().to_string().into()))
+        }
         Scalar::Val(Value::Decimal(d)) => Ok(Value::Text(d.to_string().into())),
         Scalar::Val(Value::Boolean(b)) => Ok(Value::Text(if *b { "True" } else { "False" }.into())),
         Scalar::Raw(t) => Ok(Value::Text(t.clone().into())),
@@ -1464,7 +1472,10 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
         with_node(p, |n| {
             matches!(
                 (n, want),
-                (JsonNode::Object(_), Some("object")) | (JsonNode::Array(_), Some("array")) | (_, None)
+                (JsonNode::Object(_), Some("object"))
+                    | (JsonNode::Array(_), Some("array"))
+                    | (JsonNode::Scalar(_), Some("value"))
+                    | (_, None)
             )
         })
     });
@@ -1493,7 +1504,9 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
                 })
             });
             let Some(Some(kind)) = kind else {
-                return unsupported("ReadFrom of a number with a fraction into an object or array (token type name not pinned)");
+                return unsupported(
+                    "ReadFrom of a number with a fraction into an object or array (token type name not pinned)",
+                );
             };
             Err(error(
                 format!("JSON tokens of type '{kind}' are not supported by this implementation."),
@@ -1530,6 +1543,11 @@ fn array_read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> R
 }
 fn any_read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
     read_from(c, r, a, None)
+}
+/// A JsonValue takes scalars only: an object or an array is refused like a scalar into an object (misc/lt-probes-needed-1/
+/// PnAJsonReadKinds.al:StatementForm_WrongKind `val<-object`, `val<-array`).
+fn value_read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    read_from(c, r, a, Some("value"))
 }
 
 fn write_to_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
@@ -1917,7 +1935,8 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         ("JsonArray.ReadFrom", ["Text" | "InStream"]) => array_read_from,
         ("JsonArray.WriteTo", ["Text"]) if first_by_var => write_to_text,
         ("JsonArray.WriteTo", ["OutStream"]) => write_to_stream,
-        ("JsonToken.ReadFrom" | "JsonValue.ReadFrom", ["Text" | "InStream"]) => any_read_from,
+        ("JsonToken.ReadFrom", ["Text" | "InStream"]) => any_read_from,
+        ("JsonValue.ReadFrom", ["Text" | "InStream"]) => value_read_from,
         ("JsonToken.WriteTo" | "JsonValue.WriteTo", ["Text"]) if first_by_var => write_to_text,
         ("JsonToken.WriteTo" | "JsonValue.WriteTo", ["OutStream"]) => write_to_stream,
         ("JsonToken.AsObject", []) => token_as_object,

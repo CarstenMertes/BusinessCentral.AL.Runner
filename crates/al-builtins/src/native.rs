@@ -1166,7 +1166,9 @@ fn dialog_update(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Res
         };
         if !fields.contains(n) {
             if template.contains('@') {
-                return unsupported("Dialog.Update of a field number the template lacks, with an @ field (message not pinned)");
+                return unsupported(
+                    "Dialog.Update of a field number the template lacks, with an @ field (message not pinned)",
+                );
             }
             let mut shown = String::new();
             let chars: Vec<char> = template.chars().collect();

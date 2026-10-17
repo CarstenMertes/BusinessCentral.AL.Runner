@@ -97,6 +97,7 @@ fn run_full(
                 dir: dir.to_path_buf(),
                 require: false,
                 rebuild,
+                country: String::new(),
             }),
             ..Default::default()
         },

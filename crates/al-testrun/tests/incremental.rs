@@ -201,6 +201,7 @@ fn opts(dir: &std::path::Path) -> RunOptions {
             dir: dir.to_path_buf(),
             require: false,
             rebuild: false,
+            country: String::new(),
         }),
         only: SELECTION.with(|s| s.borrow().clone()),
         ..Default::default()

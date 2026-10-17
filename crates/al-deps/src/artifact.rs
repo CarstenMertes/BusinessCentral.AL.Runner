@@ -12,7 +12,7 @@
 //! is a hint; the `app.json` inside decides, by app id.
 
 use crate::build::{BuildId, BuildQuery, Origin, Selection, parse_index, select_build};
-use crate::cache::{BuildDir, Store, local_builds, local_platform_files};
+use crate::cache::{BuildDir, Store, local_builds_for, local_country_files, local_platform_files};
 use crate::load::{Loaded, Planned, Request, ScanCache, plan_dependencies, read_planned};
 use crate::package::{Vars, read_info_with};
 use crate::remote::{HttpSource, RangeSource, RemoteError, RemoteZip, fetch_all, http_agent};
@@ -33,9 +33,59 @@ pub trait Cdn {
     fn index(&self) -> Result<Vec<u8>, RemoteError>;
     /// The platform artifact of a build: its URL, for messages, and a range source for it.
     fn platform(&self, build: &BuildId) -> (String, Self::Src);
+    /// The list of builds published for `country` (`indexes/<country>.json`). A feed that does not
+    /// know the country answers `NotFound`.
+    fn index_for(&self, country: &str) -> Result<Vec<u8>, RemoteError> {
+        if is_w1(country) {
+            self.index()
+        } else {
+            Err(RemoteError::NotFound {
+                url: format!("{}/indexes/{country}.json", self.base_url()),
+            })
+        }
+    }
     /// The country artifact of a build (`w1`): its URL, for messages, and a range source for it.
-    /// It holds the demo database backup (ADR-020).
+    /// It holds the demo database backup (ADR-020) and, for a country other than `w1`, that
+    /// country's own Microsoft apps under `Applications.<COUNTRY>/` (ADR-020 amendment 2026-10-17).
     fn country(&self, build: &BuildId, country: &str) -> (String, Self::Src);
+}
+
+/// Whether `country` is the default, `w1` (or not named). The platform artifact serves the
+/// Microsoft apps of `w1`; any other country adds its own apps from its country artifact.
+pub fn is_w1(country: &str) -> bool {
+    country.is_empty() || country.eq_ignore_ascii_case("w1")
+}
+
+/// The country code as the feed spells it (lower case), or why it cannot be a country: the feed
+/// names are two to eight letters or digits. `w1` is the default and is always accepted.
+pub fn normalize_country(text: &str) -> Result<String, String> {
+    let c = text.trim().to_ascii_lowercase();
+    if (2..=8).contains(&c.len()) && c.chars().all(|ch| ch.is_ascii_alphanumeric()) {
+        Ok(c)
+    } else {
+        Err(format!(
+            "`{text}` is not a country code; use the feed's name, for example `us`, `gb`, `de` or `w1`"
+        ))
+    }
+}
+
+/// The folder of a country artifact that holds that country's Microsoft apps: `Applications.US`.
+pub fn applications_folder(country: &str) -> String {
+    format!("Applications.{}", country.to_ascii_uppercase())
+}
+
+/// Says whether the feed knows `country` (it has `indexes/<country>.json`). A feed that cannot be
+/// reached is not an answer: the caller goes on, and a missing artifact is reported when it is read.
+pub fn check_country<C: Cdn>(cdn: &C, country: &str) -> Result<(), String> {
+    if is_w1(country) {
+        return Ok(());
+    }
+    match cdn.index_for(country) {
+        Err(RemoteError::NotFound { url }) => Err(format!(
+            "--country {country}: the artifact feed has no such country ({url} does not exist); use the feed's name, for example `us`, `gb`, `de` or `w1`"
+        )),
+        _ => Ok(()),
+    }
 }
 
 pub struct HttpCdn {
@@ -72,6 +122,11 @@ impl Cdn for HttpCdn {
         fetch_all(&self.agent, &format!("{}/indexes/w1.json", self.base))
     }
 
+    fn index_for(&self, country: &str) -> Result<Vec<u8>, RemoteError> {
+        let c = if is_w1(country) { "w1" } else { country };
+        fetch_all(&self.agent, &format!("{}/indexes/{c}.json", self.base))
+    }
+
     fn platform(&self, build: &BuildId) -> (String, HttpSource) {
         let url = format!("{}/{build}/platform", self.base);
         (url.clone(), HttpSource::new(self.agent.clone(), url))
@@ -95,6 +150,10 @@ pub struct Fetch {
     /// exactly is taken from there before the feed is asked, and any matching build there is the
     /// last resort when the feed has none or cannot be reached.
     pub local_artifacts: Option<PathBuf>,
+    /// `--country` (lower case); empty or `w1`: the platform artifact's Microsoft apps. Any other
+    /// country takes the apps its country artifact holds under `Applications.<COUNTRY>/` (Base
+    /// Application and the others) before the platform artifact's.
+    pub country: String,
 }
 
 /// The build a run took Microsoft's apps from.
@@ -102,6 +161,8 @@ pub struct Fetch {
 pub struct ArtifactUse {
     pub build: BuildId,
     pub origin: Origin,
+    /// The country whose Microsoft apps were taken (`w1`: the platform artifact's).
+    pub country: String,
     /// Entries fetched from the feed in this run (empty when the cache sufficed).
     pub fetched: Vec<String>,
 }
@@ -182,8 +243,8 @@ struct LocalPlatform {
 
 /// The build of `root` that the query picks. With `exact_only`, only a query that names one whole
 /// build (four numbers) picks, and it picks that build or none.
-fn pick_local(root: &Path, q: &BuildQuery, exact_only: bool) -> Option<Selection> {
-    let builds = local_builds(root);
+fn pick_local(root: &Path, q: &BuildQuery, exact_only: bool, country: &str) -> Option<Selection> {
+    let builds = local_builds_for(root, country);
     if exact_only && !q.exact().is_some_and(|e| builds.contains(&e)) {
         return None;
     }
@@ -195,13 +256,83 @@ fn pick_local(root: &Path, q: &BuildQuery, exact_only: bool) -> Option<Selection
 /// The newest published build that satisfies the query, ignoring the cache. CI uses it to key its
 /// artifact cache by build before anything is downloaded.
 pub fn newest_published<C: Cdn>(cdn: &C, query: &BuildQuery) -> Result<Selection, String> {
-    let published = published_builds(cdn)?;
+    let published = published_builds(cdn, "w1")?;
     select_build(query, &[], Some(&published), "(none consulted)").map_err(|e| e.to_string())
 }
 
-fn published_builds<C: Cdn>(cdn: &C) -> Result<Vec<BuildId>, String> {
-    let bytes = cdn.index().map_err(|e| format!("artifact index: {e}"))?;
+fn published_builds<C: Cdn>(cdn: &C, country: &str) -> Result<Vec<BuildId>, String> {
+    let bytes = cdn.index_for(country).map_err(|e| format!("artifact index: {e}"))?;
     parse_index(&String::from_utf8_lossy(&bytes))
+}
+
+/// The country artifact of a build, open for ranged reads, as far as the Microsoft apps go.
+struct CountryZip<S> {
+    url: String,
+    zip: RemoteZip<S>,
+    /// The entries under `Applications.<COUNTRY>/`: the country's own apps. (`Extensions/` holds
+    /// the same apps again as compiled packages; those are not used.)
+    entries: Vec<Entry>,
+    /// Lower-case names of the apps that have a `<name>.Source.zip` there.
+    names: HashSet<String>,
+}
+
+/// The names of the apps the entries hold sources of (`<name>.Source.zip`), lower case.
+fn source_names(entries: &[Entry]) -> HashSet<String> {
+    entries
+        .iter()
+        .filter_map(|e| {
+            let base = e.name.rsplit('/').next().unwrap_or(&e.name);
+            base.strip_suffix(".Source.zip").map(str::to_ascii_lowercase)
+        })
+        .collect()
+}
+
+/// Opens the country artifact of `build`: the central directory from the saved copy in `cbd`, else
+/// by range from the feed (and saved). Fails when the feed does not have the artifact, or when
+/// downloading is off and nothing is saved: the apps of a country are never replaced by the platform's.
+fn open_country<C: Cdn>(cdn: &C, fetch: &Fetch, cbd: &BuildDir, build: &BuildId) -> Result<CountryZip<C::Src>, String> {
+    let (url, src) = cdn.country(build, &fetch.country);
+    let zip = match cbd.load_tail() {
+        Some((total, tail)) => RemoteZip::from_tail(src, total, tail).map_err(|e| format!("{url}: {e}"))?,
+        None if !fetch.download => {
+            return Err(format!(
+                "--country {}: the Microsoft apps of that country for build {build} are not cached and --no-download is set",
+                fetch.country
+            ));
+        }
+        None => {
+            let zip = RemoteZip::open(src).map_err(|e| match e {
+                RemoteError::NotFound { .. } => format!(
+                    "--country {}: build {build} has no artifact for that country ({url} does not exist)",
+                    fetch.country
+                ),
+                e => format!("{url}: {e}"),
+            })?;
+            let (total, tail) = zip.tail();
+            cbd.save_tail(&url, total, tail)?;
+            zip
+        }
+    };
+    let prefix = format!("{}/", applications_folder(&fetch.country));
+    let entries: Vec<Entry> = zip
+        .entries
+        .iter()
+        .filter(|e| e.name.starts_with(&prefix))
+        .cloned()
+        .collect();
+    if entries.is_empty() {
+        return Err(format!(
+            "--country {}: {url} has no {prefix} folder with Microsoft apps",
+            fetch.country
+        ));
+    }
+    let names = source_names(&entries);
+    Ok(CountryZip {
+        url,
+        zip,
+        entries,
+        names,
+    })
 }
 
 /// Resolves the dependencies of `req.project`, downloading from the feed what no directory supplies.
@@ -219,16 +350,40 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
     let mut local: Option<LocalPlatform> = None;
     let mut local_files: Vec<PathBuf> = Vec::new();
     let mut fetched: Vec<String> = Vec::new();
+    // A country other than w1 takes the Microsoft apps of its own artifact (`Applications.<COUNTRY>/`) first.
+    let localized = !is_w1(&fetch.country);
+    let mut country_remote: Option<CountryZip<C::Src>> = None;
     let mut tried: HashSet<String> = HashSet::new();
     let mut scans = ScanCache::new();
     let mut planned: Option<Planned> = None;
     for _ in 0..ROUNDS {
         let mut dirs = req.search_dirs.to_vec();
-        if let Some((bd, _)) = &chosen {
+        if let Some((bd, sel)) = &chosen {
             if local.is_none() {
+                if localized {
+                    // The country's apps first: the nearest place searched wins a tie of versions.
+                    let cbd = store.country_build(&sel.build, &fetch.country);
+                    let (_, notes) = cbd.verify();
+                    log.extend(notes);
+                    dirs.push(cbd.apps_dir());
+                    if country_remote.is_none() {
+                        country_remote = Some(open_country(cdn, fetch, &cbd, &sel.build)?);
+                    }
+                }
                 let (_, notes) = bd.verify();
                 log.extend(notes);
                 dirs.push(bd.apps_dir());
+                // The platform's copy of an app that the country artifact has of its own is not the app of
+                // this country: leave it out, so that the country's is fetched.
+                if let Some(cz) = &country_remote {
+                    let dir = bd.apps_dir();
+                    let (found, _) = scans
+                        .entry(dir.clone())
+                        .or_insert_with(|| crate::load::scan_path(&dir, req.source_build));
+                    {
+                        found.retain(|f| !cz.names.contains(&f.manifest.name.to_ascii_lowercase()));
+                    }
+                }
             }
         }
         dirs.extend(local_files.iter().cloned());
@@ -298,9 +453,14 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
         let local_root = fetch.local_artifacts.as_deref();
         let choose_local = |sel: Selection, local: &mut Option<LocalPlatform>, root: &Path, log: &mut Vec<String>| {
             log.extend(sel.warnings.iter().map(|w| format!("warning: {w}")));
-            *local = Some(LocalPlatform {
-                files: local_platform_files(root, &sel.build),
-            });
+            // A country's own apps rank before the platform's: the search takes the first match.
+            let mut files = if localized {
+                local_country_files(root, &sel.build, &fetch.country)
+            } else {
+                Vec::new()
+            };
+            files.extend(local_platform_files(root, &sel.build));
+            *local = Some(LocalPlatform { files });
             Some((store.build(&sel.build), sel))
         };
         if chosen.is_none() {
@@ -318,7 +478,9 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                 continue; // resolve again with the cached build's apps in the pool
             }
             // A build named exactly and found on disk is used without asking the feed.
-            if let Some((root, sel)) = local_root.and_then(|r| pick_local(r, &fetch.query, true).map(|s| (r, s))) {
+            if let Some((root, sel)) =
+                local_root.and_then(|r| pick_local(r, &fetch.query, true, &fetch.country).map(|s| (r, s)))
+            {
                 chosen = choose_local(sel, &mut local, root, &mut log);
             }
         }
@@ -329,7 +491,9 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                 chosen = Some((store.build(&sel.build), sel));
                 continue;
             }
-            if let Some((root, sel)) = local_root.and_then(|r| pick_local(r, &fetch.query, false).map(|s| (r, s))) {
+            if let Some((root, sel)) =
+                local_root.and_then(|r| pick_local(r, &fetch.query, false, &fetch.country).map(|s| (r, s)))
+            {
                 chosen = choose_local(sel, &mut local, root, &mut log);
             }
         }
@@ -337,7 +501,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             break;
         }
         if chosen.is_none() {
-            let picked = published_builds(cdn).and_then(|published| {
+            let picked = published_builds(cdn, &fetch.country).and_then(|published| {
                 select_build(&fetch.query, &store.list_builds(), Some(&published), &cache_dir)
                     .map_err(|e| e.to_string())
             });
@@ -348,13 +512,15 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
                 }
                 // The feed has no such build (it keeps recent ones) or cannot be reached: a
                 // matching build already on disk still answers.
-                Err(e) => match local_root.and_then(|r| pick_local(r, &fetch.query, false).map(|s| (r, s))) {
-                    Some((root, sel)) => {
-                        log.push(format!("artifact: {e}; using the local artifacts instead"));
-                        chosen = choose_local(sel, &mut local, root, &mut log);
+                Err(e) => {
+                    match local_root.and_then(|r| pick_local(r, &fetch.query, false, &fetch.country).map(|s| (r, s))) {
+                        Some((root, sel)) => {
+                            log.push(format!("artifact: {e}; using the local artifacts instead"));
+                            chosen = choose_local(sel, &mut local, root, &mut log);
+                        }
+                        None => return Err(e),
                     }
-                    None => return Err(e),
-                },
+                }
             }
         }
         if let Some(l) = &local {
@@ -389,6 +555,45 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             continue;
         }
         let (bd, sel) = chosen.as_ref().expect("a build is chosen");
+        // The country's own apps first (Base Application and the others it has sources of).
+        let mut from_country: HashSet<String> = HashSet::new();
+        if localized && country_remote.is_none() {
+            let cbd = store.country_build(&sel.build, &fetch.country);
+            country_remote = Some(open_country(cdn, fetch, &cbd, &sel.build)?);
+        }
+        if let Some(cz) = &country_remote {
+            let cbd = store.country_build(&sel.build, &fetch.country);
+            for dep in &todo {
+                for entry in find_entries(&cz.entries, dep) {
+                    let bytes = cz
+                        .zip
+                        .read(entry)
+                        .map_err(|e| format!("{}: entry `{}`: {e}", cz.url, entry.name))?;
+                    if !entry_is(&bytes, &entry.name, dep, &sel.build, &mut log) {
+                        continue;
+                    }
+                    cbd.put_entry(&entry.name, &cz.url, &bytes)?;
+                    scans.remove(&cbd.apps_dir());
+                    log.push(format!(
+                        "artifact: fetched {} ({} bytes) from {}",
+                        entry.name,
+                        bytes.len(),
+                        cz.url
+                    ));
+                    fetched.push(entry.name.clone());
+                    tried.insert(dep_key(dep));
+                    from_country.insert(dep_key(dep));
+                    break;
+                }
+            }
+        }
+        let todo: Vec<DepDecl> = todo
+            .into_iter()
+            .filter(|d| !from_country.contains(&dep_key(d)))
+            .collect();
+        if todo.is_empty() {
+            continue;
+        }
         if remote.is_none() {
             let (url, src) = cdn.platform(&sel.build);
             let zip = match bd.load_tail() {
@@ -403,7 +608,7 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
             remote = Some((url, zip));
         }
         let (url, zip) = remote.as_ref().expect("the archive is open");
-        let mut progress = false;
+        let mut progress = !from_country.is_empty();
         for dep in &todo {
             tried.insert(dep_key(dep));
             let mut stored = false;
@@ -459,6 +664,11 @@ pub fn load_with_artifacts<C: Cdn>(req: &Request<'_>, fetch: &Fetch, cdn: &C) ->
         ArtifactUse {
             build: sel.build,
             origin: sel.origin,
+            country: if is_w1(&fetch.country) {
+                "w1".to_string()
+            } else {
+                fetch.country.to_ascii_lowercase()
+            },
             fetched,
         }
     });
@@ -621,6 +831,8 @@ mod tests {
     struct FixtureCdn {
         index: String,
         platform: HashMap<String, PathBuf>,
+        /// Country artifacts by country, built by `with_country`.
+        countries: HashMap<String, PathBuf>,
         index_calls: Cell<u32>,
         platform_calls: Cell<u32>,
     }
@@ -644,9 +856,38 @@ mod tests {
             FixtureCdn {
                 index,
                 platform,
+                countries: HashMap::new(),
                 index_calls: Cell::new(0),
                 platform_calls: Cell::new(0),
             }
+        }
+
+        /// A country artifact in miniature: its own Base Application under `Applications.<CC>/`, a compiled
+        /// copy under `Extensions/` that must never be used, and the demo backup's place.
+        fn with_country(mut self, dir: &Path, country: &str) -> FixtureCdn {
+            let base_json = format!(
+                r#"{{"id":"437dbf0e-84ff-417a-965d-ed2bb9650972","name":"Base Application","publisher":"Microsoft",
+                "version":"$(app_currentVersion)","platform":"$(app_platformVersion)",
+                "dependencies":[{{"id":"{SA}","name":"System Application","publisher":"Microsoft","version":"$(app_minimumVersion)"}}]}}"#
+            );
+            let base = source_zip(
+                &base_json,
+                &[("T.Table.al", &format!("table 18 Customer {{ }} // {country}"))],
+            );
+            let folder = applications_folder(country);
+            let bytes = Builder::new()
+                .add(&format!("{folder}/Base Application.Source.zip"), &base, false)
+                .add(
+                    "Extensions/Microsoft_Base Application_27.5.46862.56249.app",
+                    b"compiled",
+                    false,
+                )
+                .add("manifest.json", b"{}", true)
+                .finish();
+            let p = dir.join(format!("country-{country}.zip"));
+            std::fs::write(&p, bytes).unwrap();
+            self.countries.insert(country.to_string(), p);
+            self
         }
     }
 
@@ -668,8 +909,24 @@ mod tests {
                 .unwrap_or_else(|| PathBuf::from("/nonexistent/platform.zip"));
             (format!("https://cdn.test/{build}/platform"), FileSource(p))
         }
-        fn country(&self, _: &BuildId, _: &str) -> (String, FileSource) {
-            panic!("the country artifact was requested")
+        fn index_for(&self, country: &str) -> Result<Vec<u8>, RemoteError> {
+            if is_w1(country) {
+                self.index()
+            } else if self.countries.contains_key(country) {
+                Ok(self.index.clone().into_bytes())
+            } else {
+                Err(RemoteError::NotFound {
+                    url: format!("https://cdn.test/indexes/{country}.json"),
+                })
+            }
+        }
+        fn country(&self, build: &BuildId, country: &str) -> (String, FileSource) {
+            let p = self
+                .countries
+                .get(country)
+                .cloned()
+                .unwrap_or_else(|| PathBuf::from("/nonexistent/country.zip"));
+            (format!("https://cdn.test/{build}/{country}"), FileSource(p))
         }
     }
 
@@ -686,8 +943,12 @@ mod tests {
         fn platform(&self, _: &BuildId) -> (String, FileSource) {
             panic!("the platform artifact was requested")
         }
-        fn country(&self, _: &BuildId, _: &str) -> (String, FileSource) {
-            panic!("the country artifact was requested")
+        fn country(&self, build: &BuildId, country: &str) -> (String, FileSource) {
+            // A range source does no I/O until it is read: reading this one fails.
+            (
+                format!("https://cdn.test/{build}/{country}"),
+                FileSource(PathBuf::from("/nonexistent/country.zip")),
+            )
         }
     }
 
@@ -738,6 +999,7 @@ mod tests {
             download,
             query: BuildQuery::new(requested, 27, Some((27, 0))),
             local_artifacts: None,
+            country: String::new(),
         }
     }
 
@@ -1288,6 +1550,157 @@ mod tests {
         assert!(!dir.path().join("cache").exists(), "nothing was written either");
     }
 
+    fn base_project() -> AppJson {
+        let mut p = project();
+        p.dependencies = vec![dep("437dbf0e-84ff-417a-965d-ed2bb9650972", "Base Application")];
+        p
+    }
+
+    fn with_country(mut f: Fetch, country: &str) -> Fetch {
+        f.country = country.to_string();
+        f
+    }
+
+    fn base_text(p: &Provisioned) -> String {
+        let base = p.loaded.apps.iter().find(|a| a.app.name == "Base Application").unwrap();
+        base.app
+            .files
+            .iter()
+            .map(|(_, t)| t.as_str())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
+    #[test]
+    fn a_country_run_takes_base_application_from_the_country_artifact() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]).with_country(dir.path(), "us");
+        let alpkg = alpackages(dir.path());
+        let f = with_country(fetch(&dir.path().join("cache"), true, Some("27.5")), "us");
+        let out = run(&alpkg, &f, &cdn, MissingPolicy::Error, &base_project()).unwrap();
+        assert!(base_text(&out).contains("// us"), "{}", base_text(&out));
+        assert_eq!(out.artifact.as_ref().unwrap().country, "us");
+        // The country's apps are cached apart from the platform's.
+        let cached = dir
+            .path()
+            .join("cache/artifacts/27.5.46862.56249/country-us/apps/Base Application.Source.zip");
+        assert!(cached.is_file(), "{cached:?}");
+        // The compiled copy under Extensions/ was not read.
+        assert!(!out.log.iter().any(|l| l.contains("Extensions/")), "{:?}", out.log);
+        // Warm: the second run needs neither the feed nor the platform artifact.
+        let again = run(&alpkg, &f, &NoNetwork, MissingPolicy::Error, &base_project()).unwrap();
+        assert!(base_text(&again).contains("// us"));
+    }
+
+    #[test]
+    fn a_w1_run_never_asks_for_a_country_artifact() {
+        let dir = tempfile::tempdir().unwrap();
+        // No country artifact at all: asking for one would point at a missing file.
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        for country in ["", "w1", "W1"] {
+            let f = with_country(
+                fetch(&dir.path().join(format!("cache{country}")), true, Some("27.5")),
+                country,
+            );
+            let out = run(&alpkg, &f, &cdn, MissingPolicy::Error, &base_project()).unwrap();
+            assert!(!base_text(&out).contains("// "), "{}", base_text(&out));
+            assert_eq!(out.artifact.unwrap().country, "w1");
+        }
+    }
+
+    #[test]
+    fn a_platform_copy_cached_by_a_w1_run_does_not_stand_in_for_the_country() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]).with_country(dir.path(), "us");
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        let w1 = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &base_project(),
+        )
+        .unwrap();
+        assert!(!base_text(&w1).contains("// us"));
+        let us = run(
+            &alpkg,
+            &with_country(fetch(&cache, true, Some("27.5")), "us"),
+            &cdn,
+            MissingPolicy::Error,
+            &base_project(),
+        )
+        .unwrap();
+        assert!(base_text(&us).contains("// us"), "{}", base_text(&us));
+        // And the other way: the w1 run still gets the platform's.
+        let w1_again = run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &NoNetwork,
+            MissingPolicy::Error,
+            &base_project(),
+        )
+        .unwrap();
+        assert!(!base_text(&w1_again).contains("// us"));
+    }
+
+    #[test]
+    fn a_country_run_without_the_artifact_and_without_downloads_says_so_and_does_not_use_the_platform() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]).with_country(dir.path(), "us");
+        let alpkg = alpackages(dir.path());
+        let cache = dir.path().join("cache");
+        // The platform's apps are cached by a w1 run.
+        run(
+            &alpkg,
+            &fetch(&cache, true, Some("27.5")),
+            &cdn,
+            MissingPolicy::Error,
+            &base_project(),
+        )
+        .unwrap();
+        let e = run(
+            &alpkg,
+            &with_country(fetch(&cache, false, Some("27.5")), "us"),
+            &NoNetwork,
+            MissingPolicy::Error,
+            &base_project(),
+        )
+        .unwrap_err();
+        assert!(e.contains("--country us") && e.contains("--no-download"), "{e}");
+    }
+
+    #[test]
+    fn a_build_without_the_country_artifact_names_the_country() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]);
+        let alpkg = alpackages(dir.path());
+        let f = with_country(fetch(&dir.path().join("cache"), true, Some("27.5")), "us");
+        let e = run(&alpkg, &f, &cdn, MissingPolicy::Error, &base_project()).unwrap_err();
+        assert!(e.contains("--country us") || e.contains("not found"), "{e}");
+    }
+
+    #[test]
+    fn the_feed_index_tells_a_known_country_from_an_unknown_one() {
+        let dir = tempfile::tempdir().unwrap();
+        let cdn = FixtureCdn::new(dir.path(), &["27.5.46862.56249"]).with_country(dir.path(), "us");
+        assert!(check_country(&cdn, "us").is_ok());
+        assert!(check_country(&cdn, "w1").is_ok());
+        let e = check_country(&cdn, "xx").unwrap_err();
+        assert!(e.contains("--country xx") && e.contains("no such country"), "{e}");
+    }
+
+    #[test]
+    fn country_codes_are_normalized_and_nonsense_is_refused() {
+        assert_eq!(normalize_country(" US ").unwrap(), "us");
+        assert_eq!(normalize_country("w1").unwrap(), "w1");
+        assert_eq!(applications_folder("us"), "Applications.US");
+        for bad in ["", "u", "us/../x", "a b", "waytoolongcode"] {
+            assert!(normalize_country(bad).is_err(), "{bad}");
+        }
+    }
+
     #[test]
     fn the_default_build_is_the_newest_of_the_floors_major() {
         let dir = tempfile::tempdir().unwrap();
@@ -1298,6 +1711,7 @@ mod tests {
             download: true,
             query: BuildQuery::new(None, 27, Some((27, 0))),
             local_artifacts: None,
+            country: String::new(),
         };
         let p = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap();
         assert_eq!(p.artifact.unwrap().build.to_string(), "27.5.46862.56249");
@@ -1307,6 +1721,7 @@ mod tests {
             download: true,
             query: BuildQuery::new(None, 27, Some((27, 9))),
             local_artifacts: None,
+            country: String::new(),
         };
         let e = run(&alpkg, &f, &cdn, MissingPolicy::Error, &project()).unwrap_err();
         assert!(e.contains("floor 27.9") && e.contains("27.5.46862.56249"), "{e}");

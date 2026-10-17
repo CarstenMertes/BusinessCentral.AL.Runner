@@ -25,12 +25,6 @@ allow = [
 private = { ignore = true }
 
 exceptions = [
-    # MPL-2.0, used unmodified; owner decision pending (2026-10-17)
-    { crate = "im", allow = ["MPL-2.0"] },
-    # MPL-2.0, used unmodified; owner decision pending (2026-10-17)
-    { crate = "bitmaps", allow = ["MPL-2.0"] },
-    # MPL-2.0, used unmodified; owner decision pending (2026-10-17)
-    { crate = "sized-chunks", allow = ["MPL-2.0"] },
     # Workspace crates: this project's own BUSL-1.1 license.
     { crate = "al-bcdb", allow = ["BUSL-1.1"] },
     { crate = "al-bcdb-cli", allow = ["BUSL-1.1"] },

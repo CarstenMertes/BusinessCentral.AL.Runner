@@ -514,6 +514,19 @@ impl Session {
             ControlTarget::BuiltIn(name) if m == PageMethod::Invoke => {
                 // OK and Yes confirm, Cancel and No cancel; a refused save keeps the page open
                 // (corpus testpageclose/TestPageClosingActions.al).
+                // The client reads the row of a card before Cancel, as before any action (pages/lt-page-runtime/P82PageRun.al:
+                // RunModal_NumberAndRecord_Cancel `OnAfterGetRecord(C);OnAfterGetRecord(C);OnQueryClosePage(LookupCancel)`); OK reads nothing
+                // (RunModal_Number_OnCard).
+                if name == "Cancel"
+                    && self.has_source(st)
+                    && !self.is_list(st)
+                    && !self.is_request_page(st)
+                    && st.borrow().cursor == Cursor::Row
+                    && !st.borrow().draft
+                    && self.declares(st, "onaftergetrecord")
+                {
+                    self.populate_current(st)?;
+                }
                 return self.close_with(st, name, true, true);
             }
             // The built-in OK and Cancel are visible (report/TestProbeReportContracts.al:RequestPage_InvokeActionNotFound).

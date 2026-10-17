@@ -446,6 +446,14 @@ impl Session {
             if !find_pinned {
                 self.run_refresh(st)?;
             }
+            // An action that closed the page: the client still reads the row once more (pages/lt-page-runtime/P82PageRun.al:
+            // RunModal_CurrPageClose_Action `...;OnClosePage;OnAfterGetRecord(A)`).
+            if reads_rows && !st.borrow().open && !self.is_list(st) && !self.declares(st, "onaftergetcurrrecord") {
+                let rec = self.page_rec(st);
+                if self.stored_row(&rec)?.is_some() {
+                    self.populate_current(st)?;
+                }
+            }
         }
         Ok(Value::Null)
     }

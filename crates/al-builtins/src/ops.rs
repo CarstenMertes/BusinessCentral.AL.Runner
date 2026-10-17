@@ -811,6 +811,24 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             {
                 return duration_divide(op, *d, r);
             }
+            // Duration / Decimal: the Duration counts as its milliseconds and the quotient is a Decimal. Microsoft's
+            // Calculate Routing Line CalcDuration (Time difference / CalendarMgt.TimeFactor) needs it; Tests-SCM-Manufacturing,
+            // about 20 tests. Assumption duration-divided-by-decimal.
+            if op == Arith::Div {
+                if let V::Decimal(b) = r {
+                    crate::assumptions::assume(crate::assumptions::Assumption::DurationDividedByDecimal);
+                    if b.is_zero() {
+                        return raise("Attempted to divide by zero.", "AL:DivideByZero");
+                    }
+                    return Decimal::from(*d)
+                        .checked_div(*b)
+                        .and_then(|q| {
+                            q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+                        })
+                        .map(|q| V::Decimal(q.normalize()))
+                        .ok_or_else(|| Signal::Unsupported("decimal overflow".into()));
+                }
+            }
         }
         return unsupported(format!(
             "{} of {l} and {r}",
@@ -1583,6 +1601,24 @@ mod tests {
             e.message,
             "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value 12857.1428571428571 to System.Int64."
         );
+    }
+
+    #[test]
+    fn a_duration_divided_by_a_decimal_is_a_decimal() {
+        // Microsoft's Calculate Routing Line CalcDuration divides a Time difference by CalendarMgt.TimeFactor (a Decimal);
+        // the quotient need not be whole, so it cannot be a Duration (assumption duration-divided-by-decimal).
+        let q = arith(
+            Arith::Div,
+            &Value::Duration(26_820_000),
+            &Value::Decimal(Decimal::from(60_000)),
+        );
+        assert!(matches!(q, Ok(Value::Decimal(x)) if x == Decimal::from(447)), "{q:?}");
+        let q = arith(
+            Arith::Div,
+            &Value::Duration(30_000),
+            &Value::Decimal(Decimal::from(60_000)),
+        );
+        assert!(matches!(q, Ok(Value::Decimal(x)) if x == Decimal::new(5, 1)), "{q:?}");
     }
 
     #[test]

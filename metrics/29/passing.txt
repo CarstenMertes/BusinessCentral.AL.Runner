@@ -7297,6 +7297,7 @@
 70777 P100_Item_FilterByHand
 70777 P100_Validate_EachKind
 70777 P100_Validate_ErrorAsserterror
+70784 P100_ArmsWithOwnWhere
 70784 P100_KindArms_A_And_B
 70784 P100_KindArms_NeitherApplies
 70784 P100_ThreeArms
@@ -7389,6 +7390,8 @@
 70876 CalcFormula_CountWhereEmptyTerms
 70876 CalcFormula_SetAutoCalcFieldsAndFilterOnFlowField
 70876 CalcFormula_SumExistLookupWithEmptySource
+70876 Relation_ErrorTextOfFailedValidate
+70876 Relation_WhereBlankFilterAndConst
 70876 Relation_WhereFieldSourceEmptyAndFilled
 70876 Relation_WhereNotBlank
 70903 P140_DecimalToText
@@ -8923,6 +8926,8 @@
 72689 Where_Field
 72689 Where_ValidateTableRelation_False
 72689 Zone_Blank_Arm_Loc
+72689 Zone_Error_Text_Asserterror
+72689 Zone_Filled_Arm_Bin
 72691 Duration_To_BigInteger_Decimal
 72691 Duration_To_Integer_InRange
 72692 Duration_Arithmetic
@@ -10049,7 +10054,10 @@
 73889 OptionAsInteger_PadStrStrPosSubstring
 73889 OptionAsInteger_ProcedureParameter
 73889 OptionAsInteger_SelectStr
+73893 RelationConst_Arms
+73893 RelationFilter_BlankZone
 73893 RelationFilter_FieldRefRelation
+73893 RelationFilter_FilledZone
 73895 StaleModify_AfterRollback_Raises
 73895 StaleModify_AfterRollback_RunTrigger_Raises
 73895 StaleModify_AfterRollback_RunTrigger_Succeeds

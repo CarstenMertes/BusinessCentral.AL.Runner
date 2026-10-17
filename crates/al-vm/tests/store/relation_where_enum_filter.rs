@@ -38,5 +38,9 @@ fn a_relation_naming_the_validated_field_and_an_enum_filter_finds_the_row() {
 
 #[test]
 fn a_row_the_enum_filter_excludes_is_refused() {
-    assert_eq!(text(al_testkit::run_in(SRC, "C", "G")), "DB:NothingInsideFilter");
+    // Three where() conditions: the error code BC answers is not pinned, so the failing check is refused.
+    assert!(matches!(
+        al_testkit::run_in(SRC, "C", "G"),
+        Err(al_builtins::native::Signal::Unsupported(_))
+    ));
 }

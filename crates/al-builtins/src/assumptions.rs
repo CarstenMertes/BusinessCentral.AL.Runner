@@ -121,6 +121,18 @@ registry! {
         tests: "Temp Blob Impl.FromFieldRef (FieldRef.CalcField on each Blob it reads); 14 Tests-SCM-Manufacturing tests (Demand Forecast Card).",
         probe: "A FieldRef on a Blob field of a stored row read without CalcFields: CalcField() then Value and HasValue; the same on a Code field (the error text) and on a FlowField.",
     },
+    ModifyWithoutChangeKeepsRowVersion => {
+        id: "modify-without-change-keeps-row-version",
+        assumed: "A Modify of a persistent record whose fields equal the stored row's does not change the row's SystemRowVersion, so a buffer another variable read before it is not stale afterwards.",
+        tests: "Create Prod. Order Lines.Copy (ProdOrder.Modify after Refresh Production Order) followed by the test's Modify of the same Production Order; 4 Tests-SCM-Manufacturing tests (SCM Prod. Whse. Handling).",
+        probe: "Two variables Get the same row; one Modifies with no change and Commit; the other changes a field and Modifies: accepted or DB:RecordChanged; the same after a Modify that changes a field.",
+    },
+    EvaluateTimeDigitForms => {
+        id: "evaluate-time-digit-forms",
+        assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",
+        tests: "Calendar Management CalcTimeDelta tests (Evaluate of '085606') and Evaluate(RandomTime, Format(RandInt(23))); 11 Tests-SCM-Manufacturing tests.",
+        probe: "Evaluate(T, '085606'), '23', '5', '246000', '24', '0856', '8:56' into a Time: the result and the return value; with and without a format number.",
+    },
     NextWholeDecimal => {
         id: "next-whole-decimal",
         assumed: "Record.Next(Decimal) with a whole number steps like the Integer; a fraction is refused.",
@@ -300,6 +312,18 @@ registry! {
         assumed: "Abs of a Duration takes the Decimal overload: the Duration counts as its milliseconds and the answer is a Decimal.",
         tests: "Microsoft's production order and routing code (Abs of a DateTime difference): Tests-SCM-Manufacturing and Tests-SCM-Costing, about 230 tests.",
         probe: "D: Duration := -5000; X := Abs(D) into a Decimal and into a Duration; Format both; Abs(D) > 4999.",
+    },
+    SubPageLinkEmptyTerm => {
+        id: "subpagelink-empty-term-selects-blank",
+        assumed: "An empty const('') or filter('') term of a SubPageLink or RunPageLink selects the rows whose field is blank, as the same term of a TableRelation where() does (pinned there, not for links).",
+        tests: "Microsoft's Production BOM page (part ProdBOMLine: SubPageLink \"Version Code\" = const('')), opened by SCM Manufacturing 7.0 CalculateProdOrderWithSKUWithRoutingAndProdBOMNo and about 10 more Tests-SCM-Manufacturing tests.",
+        probe: "A part page with SubPageLink F = const('') and another with F = filter(''), over rows with blank and non-blank F: which rows show; the same for RunPageLink.",
+    },
+    DurationDividedByDecimal => {
+        id: "duration-divided-by-decimal",
+        assumed: "A Duration divided by a Decimal counts the Duration as its milliseconds and answers a Decimal (no whole-millisecond requirement, unlike the pinned division by an Integer).",
+        tests: "Microsoft's Calculate Routing Line CalcDuration (Time difference / CalendarMgt.TimeFactor): Tests-SCM-Manufacturing, SCM Production Journal CheckAllocatedCapacityTimeCalculation and about 20 more.",
+        probe: "D: Duration := 26820000 and 30000; X := D / Dec60000 into a Decimal; Format(D / Dec60000); a Decimal divisor that is zero.",
     },
     DateToDateTime => {
         id: "date-to-datetime-is-midnight",

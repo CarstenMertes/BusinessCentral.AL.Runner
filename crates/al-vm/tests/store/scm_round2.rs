@@ -233,14 +233,27 @@ codeunit 69342 C
         Bn.Loc := 'L1'; Bn.Zone := 'Z1'; Bn.Code := 'B2'; Bn.Insert();
         L.Loc := 'L1';
         L.Zone := '';
-        s := Try(L, 'B1') + Try(L, 'B2') + Try(L, 'B9');
+        s := Try(L, 'B1') + Try(L, 'B2');
         L.Zone := 'Z1';
-        exit(s + '|' + Try(L, 'B2') + Try(L, 'B1'));
+        exit(s + '|' + Try(L, 'B2'));
+    end;
+    procedure G(): Text
+    var Bn: Record Bin; L: Record Line;
+    begin
+        Bn.Loc := 'L1'; Bn.Zone := ''; Bn.Code := 'B1'; Bn.Insert();
+        L.Loc := 'L1';
+        L.Zone := 'Z1';
+        exit(Try(L, 'B9'));
     end;
 }
 "#;
-    // No zone: any bin of the location (B1 and B2 exist, B9 does not). Zone Z1: the bins of that zone only (B2).
-    assert_eq!(text(run(src, "F")), "okokno|okno");
+    // No zone: any bin of the location (B1 and B2 exist). Zone Z1: the bins of that zone only (B2).
+    assert_eq!(text(run(src, "F")), "okok|ok");
+    // A failing check with several where() conditions is refused: the error code BC answers is not pinned.
+    assert!(matches!(
+        run(src, "G"),
+        Err(al_builtins::native::Signal::Unsupported(_))
+    ));
 }
 
 #[test]

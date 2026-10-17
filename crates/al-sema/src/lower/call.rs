@@ -163,6 +163,11 @@ impl Lowerer<'_> {
                 // Evaluate into an Option variable: a variable has no OptionCaption, so a text that is neither an ordinal nor a
                 // member name is a plain rejection (P86Eval.al:Eval Option, `Bet`, `-1`, `1,0`). A field may name a member by its
                 // caption, which the value does not carry, so a field keeps the id that refuses it.
+                let decimal_field_places = if id == "System.Format#1" {
+                    args.first().and_then(|a| self.decimal_field_places(a))
+                } else {
+                    None
+                };
                 let emit_id = if id == "System.Evaluate#1"
                     && args.first().is_some_and(|a| {
                         matches!(self.ty_of(a), Ty::Option(_))
@@ -178,6 +183,8 @@ impl Lowerer<'_> {
                     && args.first().is_some_and(|a| matches!(self.ty_of(a), Ty::Variant))
                 {
                     "System.FormatVariant#1".to_string()
+                } else if id == "System.Format#1" && decimal_field_places.is_some() {
+                    "System.FormatDecimalField#1".to_string()
                 } else {
                     id.clone()
                 };
@@ -390,6 +397,12 @@ impl Lowerer<'_> {
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });
+                }
+                if let (true, Some(places)) = (emit_id == "System.FormatDecimalField#1", decimal_field_places) {
+                    while out.len() < 3 {
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))));
+                    }
+                    out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Text(places))));
                 }
                 Ok(ir::Expr::Builtin {
                     id: builtin_id(&emit_id)?,

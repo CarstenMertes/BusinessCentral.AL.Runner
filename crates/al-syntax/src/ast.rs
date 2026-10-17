@@ -157,6 +157,41 @@ pub struct DotNetTypeDecl {
     pub offset: usize,
 }
 
+/// `'text', Locked = true` / `, MaxLength = 40` / `, Comment = '..'`: a text property keeps its literal and drops the attributes that follow
+/// it (corpus pageext/lt-page-ext-properties/TableKeyProps.al:P123_TableCaptionsLocked, P123_MaxLengthCaptions).
+pub(crate) fn strip_text_attributes(text: String) -> String {
+    if !text.starts_with('\'') {
+        return text;
+    }
+    let bytes = text.as_bytes();
+    let mut i = 1;
+    while i < bytes.len() {
+        if bytes[i] == b'\'' {
+            if bytes.get(i + 1) == Some(&b'\'') {
+                i += 2;
+                continue;
+            }
+            let rest = text[i + 1..].trim_start();
+            if let Some(after) = rest.strip_prefix(',') {
+                let name = after
+                    .trim_start()
+                    .split(|c: char| !c.is_ascii_alphabetic())
+                    .next()
+                    .unwrap_or("");
+                if ["Locked", "MaxLength", "Comment"]
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(name))
+                {
+                    return text[..=i].to_string();
+                }
+            }
+            return text;
+        }
+        i += 1;
+    }
+    text
+}
+
 fn unquote_literal(v: &str) -> String {
     let v = v.trim();
     match v.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
@@ -393,11 +428,13 @@ impl Property {
             .unwrap_or_default()
     }
     pub fn value_text(&self) -> String {
-        self.0
+        let text = self
+            .0
             .children()
             .find(|n| n.kind() == SyntaxKind::PropertyValue)
             .map(|v| trimmed_code(&v))
-            .unwrap_or_default()
+            .unwrap_or_default();
+        strip_text_attributes(text)
     }
 }
 

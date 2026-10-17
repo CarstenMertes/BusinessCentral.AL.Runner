@@ -121,6 +121,11 @@ impl Session {
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FilterChangeLandsOnNewLine);
                 if new_mode {
                     self.start_draft(st, false)?;
+                    // The blank line of a list is read twice here too (pages/lt-filter-change-new-line/FilterChangeNewLine.al:
+                    // OpenNew_FilterSetFilter_ThenSetValueDescr_StoresRowWithFilterKey: `NewRecord(G1);AGCR(G1,0)` twice).
+                    if self.is_list(st) && st.borrow().host.is_none() {
+                        self.start_draft(st, false)?;
+                    }
                 } else {
                     self.land_on_new_line(st)?;
                 }

@@ -770,14 +770,14 @@ fn test_page_close_reports_ok_for_list_and_document_pages() {
 // Issue 33: Base Application's Tests-ERM declare `[ModalPageHandler] procedure H(var P: Page "X"; var
 // Response: Action)` (22 tests). No corpus test has a handler whose parameter is a Page rather than a
 // TestPage, and none has a page with triggers. Microsoft's `PaymentToleranceWarning` handler (page 591, whose OnOpenPage and
-// OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: assumed
-// (typed-modal-handler-skips-page-triggers, docs/probes-needed.md).
+// OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: pinned by
+// errors/lt-ms-refusals-136/P136PageTyped.al (OnInit runs before the handler, nothing else does).
 #[test]
-fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_none_of_its_triggers() {
+fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_only_its_oninit() {
     passes(&format!(
         "{HELPERS}
         [Test] [HandlerFunctions('PageHandler')]
-        procedure WithPage() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.RunModal(); Check('', P.Trace()); end;
+        procedure WithPage() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.RunModal(); Check('I', P.Trace()); end;
         [ModalPageHandler] procedure PageHandler(var P: Page \"PM Wizard\"; var Response: Action) begin Response := Action::OK; end;"
     ));
 }
@@ -878,7 +878,7 @@ fn a_part_linked_to_a_new_unsaved_host_does_not_validate_the_link_when_the_key_i
 
 // Base Application's lookups run `Page.RunModal(0, Rec) = Action::LookupOK` and read the record afterwards (Gen. Journal
 // Management's template selection: 10 Tests-ERM tests failed with an empty template name). On LookupOK the record holds
-// the row the page was left on. Not pinned by a corpus test (assumption page-run-modal-record-takes-selection).
+// the row the page was left on. Pinned by pages/lt-page-runmodal-rec/PageRunModalRecAfterClose.al.
 #[test]
 fn page_run_modal_with_a_record_hands_back_the_selected_row_on_lookup_ok() {
     passes(&format!(

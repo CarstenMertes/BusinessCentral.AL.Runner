@@ -88,6 +88,7 @@ pub const SIGS: &[(&str, &str, Ret)] = &[
     (TENANT_SETTINGS_HELPER, "TryGetStringTenantSetting", Ret::Boolean),
     (USER_ACCOUNT_HELPER, "IsAzure", Ret::Boolean),
     (USER_ACCOUNT_HELPER, "IsUserDelegatedAdmin", Ret::Boolean),
+    (USER_ACCOUNT_HELPER, "IsDelegatedUser", Ret::Boolean),
     (USER_ACCOUNT_HELPER, "GetEffectivePermissionForObject", Ret::Text),
     (TEST_EXECUTION, "IsInTestMode", Ret::Boolean),
     (GZIP_STREAM, "GZipStream", Ret::Object),

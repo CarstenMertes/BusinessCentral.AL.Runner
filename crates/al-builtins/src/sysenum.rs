@@ -68,9 +68,9 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
             "SystemMetadata",
             "AnonymousData",
         ]),
-        // Only CRM and ExternalSQL are named by the corpus (session/TestDatabaseTableConnectionCrm.al,
-        // session/TestMiscComplete.al:192); the ordinals are not pinned.
-        "tableconnectiontype" => Some(&["CRM", "ExternalSQL"]),
+        // The platform's members and ordinals, probed (misc/W5TableConnections.al:`members`, `crm_format_2`,
+        // `externalsql_format_2`): CRM 0, ExternalSQL 1, Exchange 2, MicrosoftGraph 3, Query 4.
+        "tableconnectiontype" => Some(&["CRM", "ExternalSQL", "Exchange", "MicrosoftGraph", "Query"]),
         // The members in the order the documentation lists them (TransactionType option type); the
         // ordinals are not pinned and nothing may print them as numbers.
         "transactiontype" => Some(&["UpdateNoLocks", "Update", "Snapshot", "Browse", "Report"]),

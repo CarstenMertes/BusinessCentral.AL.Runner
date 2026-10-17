@@ -1136,6 +1136,22 @@ fn the_session_user_is_not_a_delegated_admin() {
     );
 }
 
+/// System Application `Azure AD Graph User Impl.IsUserDelegated` calls `NavUserAccountHelper.IsDelegatedUser()`; 165 Microsoft
+/// tests (for example Suggest Price Lines UT T202) need it. The session user is not delegated (assumption
+/// nav-user-account-helper-is-delegated-user).
+#[test]
+fn the_session_user_is_not_a_delegated_user() {
+    assert_eq!(
+        text(run_as(
+            Some("27.5"),
+            "U: DotNet NavUserAccountHelper;",
+            "exit(Format(U.IsDelegatedUser()));",
+            ": Text"
+        )),
+        "No"
+    );
+}
+
 /// `Environment Information.IsSaaSInfrastructure` is `NavUserAccountHelper.IsAzure()`: true on the
 /// BC 27.5 and 28.5 oracle runs, false on the 29.0 run (corpus
 /// `session/TestEnvironmentUserTenantContracts.al:164-174`, `#if BC29PLUS`). No target is the newest.

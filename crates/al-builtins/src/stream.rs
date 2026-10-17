@@ -39,6 +39,9 @@ pub struct BlobBuf {
     pub refetch: bool,
     /// A `Modify` of a temporary record wrote this content to the row; a write through a stream clears it.
     pub persisted: bool,
+    /// The buffer is the unloaded copy a Get of a temporary record handed out: its `Length` is the content's, not the
+    /// stored size of a database row (misc/lt-probes-needed-1/PnABlobLength.al:Length_InMemoryAndFindVariants `temporary-regot`).
+    pub temp_row: bool,
     /// A stream wrote to the buffer since it was fetched or saved: `Modify` counts the Blob as changed whatever it holds now
     /// (misc/lt-probes-needed-1/PnASystemFields.al:Modify_StampsOnlyWhenStoredFieldDiffers `same-blob-content-keeps-stamp`).
     pub written: bool,
@@ -129,12 +132,20 @@ pub fn new_blob() -> BlobRef {
         fetched: true,
         refetch: false,
         persisted: false,
+        temp_row: false,
         written: false,
         render_pending: None,
     }))
 }
 
 /// A copy with its own buffer (what a database table stores and returns).
+/// The unloaded copy a Get of a temporary record hands out for a persisted Blob.
+pub fn copy_blob_temp_row(b: &BlobRef) -> BlobRef {
+    let c = copy_blob(b, false);
+    c.borrow_mut().temp_row = true;
+    c
+}
+
 pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
     let b = b.borrow();
     std::sync::Arc::new(BlobCell::new(BlobBuf {
@@ -144,6 +155,7 @@ pub fn copy_blob(b: &BlobRef, loaded: bool) -> BlobRef {
         fetched: loaded,
         refetch: false,
         persisted: false,
+        temp_row: false,
         written: false,
         render_pending: b.render_pending.clone(),
     }))
@@ -456,6 +468,7 @@ pub(crate) fn create_empty_in_stream(a: &mut [Value]) -> Result<(), Signal> {
         fetched: true,
         refetch: false,
         persisted: false,
+        temp_row: false,
         written: false,
         render_pending: None,
     });
@@ -482,8 +495,8 @@ fn blob_length(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResu
         // (:Blob_Length_WithoutCalcFields_ReportsTheStoredSize, one measurement: 5 bytes read as 11).
         // Whether the 6 is constant is docs/probes-needed.md; an empty blob is 0 (streams/TestProbeStreamContracts.al:
         // BlobLength_EmptyUnloaded).
-        if buf.bytes.is_empty() {
-            return Ok(Value::Integer(0));
+        if buf.bytes.is_empty() || buf.temp_row {
+            return Ok(Value::Integer(buf.bytes.len() as i32));
         }
         return Ok(Value::Integer(buf.bytes.len() as i32 + 6));
     }

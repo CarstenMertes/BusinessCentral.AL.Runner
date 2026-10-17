@@ -228,6 +228,26 @@ impl Lowerer<'_> {
         Ok(ir::Expr::Convert(RtType::Option(captions), Box::new(value)))
     }
 
+    /// The OptionCaption entries of an Option table field passed as `arg`, as a comma list, when the field has a literal
+    /// OptionCaption of as many entries as members that differs from them. `None` for any other argument.
+    pub(crate) fn option_field_captions(&mut self, arg: &SyntaxNode) -> Option<String> {
+        let Some(Res::Field { table, id: field }) = self.res(arg).cloned() else {
+            return None;
+        };
+        let f = self.members[table].fields.iter().find(|f| f.id == field)?;
+        let (Ty::Option(names), Some((_, text))) = (
+            &f.ty,
+            f.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("OptionCaption")),
+        ) else {
+            return None;
+        };
+        let list = crate::members::first_string_literal(text)?;
+        let captions: Vec<&str> = list.split(',').collect();
+        (captions.len() == names.len() && captions.iter().zip(names).any(|(c, n)| c != n)).then(|| list.to_string())
+    }
+
     /// The places `min:max` a Decimal table field declares for `Format`: its `DecimalPlaces`, else the precision of its
     /// `AutoFormatExpression` (type 10), else the 2:2 of a blank-expression amount (type 1) or 2:5 of a unit amount (type 2)
     /// (pages/lt-page-autoformat-lookups/P113AutoFormat.al:P113_AF_TableFieldFormatIsPlain, pages/lt-page-presentation-properties/

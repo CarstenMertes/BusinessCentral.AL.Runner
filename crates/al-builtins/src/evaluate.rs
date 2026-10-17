@@ -554,7 +554,189 @@ pub fn evaluate_variable_option(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut 
     evaluate_with(c, a, true)
 }
 
+/// `Evaluate` into an Option field that declares an OptionCaption (the lowering appends the captions as a comma list): the
+/// text names a member by its caption first, else by its name, else it is an ordinal of any size (corpus errors/
+/// lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoOptionField_NumericCaptions: with captions `1,2,3` the text `1`
+/// is the first member, `3` the third and `4` the ordinal 4; with `Ten,Twenty,Thirty` `twenty` is the second member, `Two`
+/// the third by its name and `Three` is rejected). A rejected text gives `false`; a format number and a failure with the
+/// result unused are not pinned.
+pub fn evaluate_option_field(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let (Some(text), Some(Value::Text(captions)), Value::Option(_, names)) =
+        (crate::native::text_of(&a[1]), a.get(3).cloned(), a[0].clone())
+    else {
+        return unsupported("Evaluate into an Option field without its captions");
+    };
+    if !matches!(a.get(2), Some(Value::Integer(0))) {
+        return unsupported("Evaluate into an Option field with a format number (not pinned)");
+    }
+    let t = text.trim();
+    let by_caption = (!t.is_empty())
+        .then(|| captions.as_str().split(',').position(|n| n.eq_ignore_ascii_case(t)))
+        .flatten();
+    let by_name = (!t.is_empty())
+        .then(|| names.iter().position(|n| n.eq_ignore_ascii_case(t)))
+        .flatten();
+    let digits = t.strip_prefix('+').unwrap_or(t);
+    let ordinal = (!digits.is_empty() && digits.bytes().all(|b| b.is_ascii_digit()))
+        .then(|| digits.parse::<i32>().ok())
+        .flatten();
+    match by_caption.or(by_name).map(|p| p as i32).or(ordinal) {
+        Some(o) => {
+            a[0] = Value::Option(o, names);
+            Ok(Value::Boolean(true))
+        }
+        None if c.ret_used() => Ok(Value::Boolean(false)),
+        None => unsupported("Evaluate into an Option field failing with the result unused (error text not pinned yet)"),
+    }
+}
+
+/// `Evaluate` into a Text or Code variable of a declared length: the lowering appends the length as a fourth argument.
+pub fn evaluate_bounded(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let Some(Value::Integer(max)) = a.get(3).cloned() else {
+        return unsupported("Evaluate into a bounded text without its length");
+    };
+    let max = u32::try_from(max).ok();
+    evaluate_with_max(c, &mut a[..3], false, max)
+}
+
 fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Result<Value, Signal> {
+    evaluate_with_max(c, a, variable_option, None)
+}
+
+/// `Evaluate` into a Text or a Code (corpus errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText,
+/// P128_Evaluate_IntoCode, P128_Evaluate_IntoCode_ResultUnused, P128_Evaluate_IntoShortText_ResultUnused): a Text takes the
+/// text as written (blanks kept), a Code takes it trimmed and in capitals; text that is too long for the variable gives
+/// `false` when the result is used and the length error (with the text as given) when it is not, and the variable keeps
+/// its value. A format number is not pinned.
+fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option<u32>) -> Result<Parsed, Signal> {
+    if number != 0 {
+        return unsupported(format!(
+            "Evaluate into a Text or Code with format number {number} (not pinned)"
+        ));
+    }
+    let code = matches!(a, Value::Code(_));
+    let kept = if code { text.trim() } else { text };
+    if let Some(m) = max {
+        if Value::text_len(text) > m as usize {
+            // Whether the length of the trimmed text or of the text as given counts for a Code is not pinned.
+            if code && kept.len() != text.len() && Value::text_len(kept) <= m as usize {
+                return unsupported("Evaluate into a Code of a text whose blanks decide whether it fits (not pinned)");
+            }
+            if c.ret_used() {
+                return Ok(Parsed::Rejected);
+            }
+            return crate::native::raise(
+                format!(
+                    "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                    Value::text_len(text),
+                    crate::ops::shown_in_length_error(text)
+                ),
+                "StringLengthExceeded",
+            );
+        }
+    }
+    Ok(Parsed::Value(if code {
+        Value::Code(crate::ops::upper_code(kept).into())
+    } else {
+        Value::Text(text.to_string().into())
+    }))
+}
+
+/// The value `text` reads as for type `ty` (`Evaluate` into a fresh variable of that type): `None` where it is rejected.
+pub fn evaluate_typed(
+    c: &mut dyn Ctx,
+    ty: &crate::value::RtType,
+    text: &str,
+    number: i64,
+) -> Result<Option<Value>, Signal> {
+    let max = match ty {
+        crate::value::RtType::Text(m) | crate::value::RtType::Code(m) => *m,
+        _ => None,
+    };
+    let mut tmp = vec![
+        Value::default_for(ty),
+        Value::Text(text.to_string().into()),
+        Value::Integer(number as i32),
+    ];
+    // The caller says the result is used: a rejected text is `false`, not an error.
+    Ok(match evaluate_with_max(c, &mut tmp, false, max)? {
+        Value::Boolean(true) => Some(tmp.swap_remove(0)),
+        _ => None,
+    })
+}
+
+/// `Evaluate(RecordId, Text)` (corpus errors/lt-ms-refusals-128/P128EvalRecordId.al): a table name and the primary key
+/// after a colon, or only the table name; the empty text gives the blank RecordId; a text that names no table, or a key that
+/// is no value of the key's type, gives `false`. The RecordId an evaluation fails on or empties is not pinned for a
+/// RecordId that is not blank: the test starts from a blank one.
+fn into_record_id(c: &mut dyn Ctx, a: &mut [Value], text: &str, number: i64) -> Result<Value, Signal> {
+    let Value::Library(_, cell) = &a[0] else {
+        return unsupported("Evaluate into a RecordId that is no RecordId");
+    };
+    let cell = cell.clone();
+    let blank = matches!(&*cell.borrow(), crate::value::LibraryValue::Empty);
+    let new = if text.is_empty() {
+        if !blank {
+            return unsupported("Evaluate of the empty text into a RecordId that is not blank (not pinned)");
+        }
+        Some(crate::value::LibraryValue::Empty)
+    } else {
+        match c.evaluate_record_id(text, number) {
+            Some(r) => r?,
+            None => return unsupported("Evaluate into a RecordId without a program"),
+        }
+    };
+    match new {
+        Some(v) => {
+            *cell.borrow_mut() = v;
+            Ok(Value::Boolean(true))
+        }
+        // Not pinned for a RecordId that is not blank: the failed text leaves it as it was
+        // (assumption evaluate-recordid-composite-key).
+        None if !blank && c.ret_used() => {
+            crate::assumptions::assume(crate::assumptions::Assumption::EvaluateRecordIdCompositeKey);
+            Ok(Value::Boolean(false))
+        }
+        None if !blank => {
+            unsupported("a failed Evaluate into a RecordId that is not blank with the result unused (not pinned)")
+        }
+        None if c.ret_used() => Ok(Value::Boolean(false)),
+        None => unsupported("Evaluate into a RecordId failing with the result unused (error text not pinned yet)"),
+    }
+}
+
+/// `Evaluate(FieldRef, Text)`: the field takes the value the text reads as for the field's type, a Text or Code that is too
+/// long for it, or a text that is no value, gives `false` and leaves the field (corpus errors/lt-ms-refusals-128/
+/// P128EvalFieldRef.al: a Text, Code, Integer, Decimal, Boolean, Date and Option field, with the result used). A failure
+/// with the result unused, and an Option field with an OptionCaption, are not pinned and stay refused.
+fn into_field_ref(c: &mut dyn Ctx, a: &mut [Value], number: i64) -> Result<Value, Signal> {
+    let target = match c.evaluate_field_target(&a[0]) {
+        Some(t) => t?,
+        None => return unsupported("Evaluate into a FieldRef that is not assigned (not pinned)"),
+    };
+    let current = target.rec.borrow().fields[target.pos].clone();
+    if !c.ret_used() {
+        return unsupported("Evaluate into a FieldRef with the result unused (not pinned)");
+    }
+    let max = match &target.ty {
+        crate::value::RtType::Text(m) | crate::value::RtType::Code(m) => *m,
+        _ => None,
+    };
+    let mut tmp = vec![current, a[1].clone(), Value::Integer(number as i32)];
+    let ok = evaluate_with_max(c, &mut tmp, !target.option_caption, max)?;
+    if matches!(ok, Value::Boolean(true)) {
+        let v = crate::ops::convert(tmp.swap_remove(0), &target.ty)?;
+        target.rec.borrow_mut().fields[target.pos] = v;
+    }
+    Ok(ok)
+}
+
+fn evaluate_with_max(
+    c: &mut dyn Ctx,
+    a: &mut [Value],
+    variable_option: bool,
+    max: Option<u32>,
+) -> Result<Value, Signal> {
     let Some(text) = crate::native::text_of(&a[1]) else {
         return unsupported("Evaluate of a source that is not text");
     };
@@ -569,7 +751,14 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
             "Evaluate with format number {number} (not pinned by the corpus)"
         ));
     }
+    if matches!(&a[0], Value::Library(crate::library_kind::LibraryKind::FieldRef, _)) {
+        return into_field_ref(c, a, number);
+    }
+    if matches!(&a[0], Value::Library(crate::library_kind::LibraryKind::RecordId, _)) {
+        return into_record_id(c, a, &text, number);
+    }
     let parsed = match &a[0] {
+        Value::Text(_) | Value::Code(_) => text_or_code(c, &a[0], &text, number, max)?,
         Value::Integer(_) => integer(&text, number)?,
         Value::BigInteger(_) => big_integer(&text)?,
         Value::Decimal(_) => decimal(&text)?,
@@ -731,17 +920,6 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
             crate::datefns::Evaluated::Stored(f) => Parsed::Value(Value::DateFormula(f)),
             crate::datefns::Evaluated::Rejected => Parsed::Rejected,
         },
-        // A RecordId reads the text `Format` gives: a table name and its key, in any case, with format 0 and 9; the
-        // empty text is a blank RecordId, a table name alone is that table with no key, anything else is rejected
-        // (errors/lt-ms-refusals-128/P128EvalRecordId.al).
-        Value::Library(crate::library_kind::LibraryKind::RecordId, _) => match c.evaluate_record_id(&text)? {
-            Some(v) => Parsed::Value(v),
-            None => Parsed::Rejected,
-        },
-        // A Text keeps the text as written, a Code is trimmed and upper case
-        // (errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, P128_Evaluate_IntoCode).
-        Value::Text(_) => Parsed::Value(Value::Text(text.clone())),
-        Value::Code(_) => Parsed::Value(Value::Code(text.trim().to_uppercase().into())),
         other => return unsupported(format!("Evaluate into {} (not pinned by the corpus)", other.describe())),
     };
     match parsed {

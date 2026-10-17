@@ -221,7 +221,7 @@ impl Session {
             return;
         }
         if st.borrow().instance.is_some() {
-            self.page_rec(st).borrow_mut().field_descending = false;
+            self.page_rec(st).borrow_mut().field_descending = 0;
         }
     }
 

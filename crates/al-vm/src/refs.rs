@@ -185,6 +185,66 @@ impl Session {
         }
     }
 
+    /// `Evaluate(RecordId, text)`: see `al_builtins::evaluate`. A one-field key is pinned; a composite key is an assumption.
+    pub(crate) fn evaluate_record_id_text(&mut self, text: &str, number: i64) -> Result<Option<LibraryValue>, Signal> {
+        let (name, key_text) = match text.split_once(':') {
+            Some((n, k)) => (n.trim(), Some(k)),
+            None => (text.trim(), None),
+        };
+        let tables: Vec<usize> = self
+            .engine
+            .program
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.table.is_some() && o.name.eq_ignore_ascii_case(name))
+            .map(|(i, _)| i)
+            .collect();
+        let object = match tables.as_slice() {
+            [] => return Ok(None),
+            [one] => *one,
+            _ => return unsupported("Evaluate into a RecordId of a table name that two tables share (not pinned)"),
+        };
+        let o = &self.engine.program.objects[object];
+        if o.uncompiled {
+            return unsupported("Evaluate into a RecordId of a table of an app that is not compiled");
+        }
+        let table_no = o.id.unwrap_or(0);
+        let table_name = o.name.clone();
+        let schema = o.table.as_ref().expect("filtered on a table");
+        let key = match key_text {
+            None => Vec::new(),
+            Some(k) => {
+                let k = k.strip_prefix(' ').unwrap_or(k);
+                if schema.keys[0].len() > 1 {
+                    // Composite key: the values as Format writes them (assumption evaluate-recordid-composite-key).
+                    let Some(t) = self.engine.tables.get(object).cloned().flatten() else {
+                        return unsupported("Evaluate into a RecordId of a table without a compiled schema");
+                    };
+                    match self.evaluate_composite_record_key(&t, k)? {
+                        Some(v) => v,
+                        None => return Ok(None),
+                    }
+                } else {
+                    let ty = schema.fields[schema.keys[0][0]].ty.clone();
+                    if k.is_empty() {
+                        return unsupported("Evaluate into a RecordId with an empty key text (not pinned)");
+                    }
+                    match al_builtins::evaluate::evaluate_typed(self, &ty, k, number)? {
+                        Some(v) => vec![v],
+                        None => return Ok(None),
+                    }
+                }
+            }
+        };
+        Ok(Some(LibraryValue::RecordId {
+            table: object as u32,
+            table_no,
+            name: table_name,
+            key,
+        }))
+    }
+
     fn open_ref(lib: &Lib, what: &str) -> Result<Rec, Signal> {
         match &*lib.borrow() {
             LibraryValue::RecordRef(r)
@@ -349,9 +409,67 @@ impl Session {
         Ok(Value::Null)
     }
 
+    /// `RecordRef.Get(RecordId)` where the RecordRef is not open or is open on another table than the RecordId's. Pinned:
+    /// a found row opens the RecordRef on the RecordId's table, from a never opened or closed ref and from one open on another table
+    /// (errors/lt-ms-refusals-131/P131RecordRefGet.al:P131_Get_Unopened_ExistingRow, P131_Get_Closed_RecordRef, P131_Get_OpenOnAnotherTable
+    /// `A existing`; errors/lt-ms-refusals-135/P135RecordRefGet.al:P135_Get_RecordId_OtherTable_ThenOwn). A missing row leaves a ref that was
+    /// not open closed, answering No (P131_Get_Unopened_MissingRow, P135 `get deleted`) or, with the result unused, raising "does not
+    /// exist" (P131_Get_Unopened_ResultUnused `missing`). A blank RecordId answers No and changes nothing (P131_Get_EmptyRecordId).
+    /// Returns `None` when the ref is open on the RecordId's table (the ordinary Get applies).
+    fn rr_get_record_id(&mut self, lib: &Lib, args: &[Value]) -> Result<Option<Value>, Signal> {
+        let id = match args.first() {
+            Some(Value::Library(_, l)) => match &*l.borrow() {
+                LibraryValue::RecordId { table, key, .. } => Some((*table, key.clone())),
+                LibraryValue::Empty => None,
+                other => return unsupported(format!("RecordRef.Get of {}", other.describe())),
+            },
+            other => return unsupported(format!("RecordRef.Get of {}", other.describe())),
+        };
+        let current = match &*lib.borrow() {
+            LibraryValue::RecordRef(r) => Some(r.clone()),
+            LibraryValue::Empty => None,
+            _ => return Ok(None),
+        };
+        let Some((table, key)) = id else {
+            if !self.ret_used {
+                return unsupported("RecordRef.Get of a blank RecordId with the result unused (not pinned)");
+            }
+            return Ok(Some(Value::Boolean(false)));
+        };
+        if let Some(cur) = &current {
+            if cur.borrow().table == table {
+                return Ok(None);
+            }
+            let c = cur.borrow();
+            if c.temporary || !c.filters.is_empty() || c.marked_only {
+                return unsupported(
+                    "RecordRef.Get of a RecordId of another table on a ref with filters, marks or a temporary table (not pinned)",
+                );
+            }
+        }
+        let Value::Record(rec) = self.default_value(&RtType::Record(table, false)) else {
+            return unsupported("record buffer for RecordRef.Get");
+        };
+        let mut a = key;
+        let found = self.record_op(RecordOp::Get, &rec, &mut a)?;
+        match found {
+            Value::Boolean(true) => {
+                *lib.borrow_mut() = LibraryValue::RecordRef(rec);
+                Ok(Some(found))
+            }
+            Value::Boolean(false) if current.is_none() => Ok(Some(found)),
+            _ => unsupported("RecordRef.Get of a missing row of another table than the open one (not pinned)"),
+        }
+    }
+
     fn recordref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
         match method {
             "Open" => return self.rr_open(lib, args),
+            "Get" if matches!(args.first(), Some(Value::Library(n, _)) if n.eq_ignore_ascii_case("RecordId")) => {
+                if let Some(v) = self.rr_get_record_id(lib, args)? {
+                    return Ok(v);
+                }
+            }
             // Close and Clear leave the ref unusable; closing an unopened ref is harmless.
             "Close" => {
                 *lib.borrow_mut() = LibraryValue::Empty;
@@ -849,6 +967,39 @@ impl Session {
                     return unsupported("FieldRef.CalcField of a field that is not a FlowField (not pinned)");
                 }
                 self.flow_op(RecordOp::CalcFields, &rec, &[Value::Integer(pos as i32)])
+            }
+            // FieldRef.CalcSum sums a stored Decimal or Integer field over the rows the RecordRef's filters pass, a field in
+            // no SumIndexFields list as well, puts the sum into the field and answers Yes
+            // (recordref/lt-fieldref-calcsum-filters/FieldRefCalcSumFilters.al:P184_FieldRefCalcSum_Decimal_NoFilter_And_GroupFilter,
+            // _Integer_And_TwiceAndEmpty, _DecimalNotInSumIndex). A Text or Code field and a FlowField raise
+            // `Cannot calculate a sum of the values in the <field> field in the <table> table because one or more values are not
+            // normal numeric fields.` (code DB:Ok; same file P184_FieldRefCalcSum_TextField_Errors, recordref/lt-refs/RfTFieldFilters.al:
+            // CalcSum_Variants for a Sum and a Count FlowField). Other types are not pinned.
+            "CalcSum" => {
+                let (stored, flow_filter, ty) = {
+                    let f = &self.engine.program.objects[t.object as usize]
+                        .table
+                        .as_ref()
+                        .expect("table")
+                        .fields[pos];
+                    (f.stored, f.flow_filter, f.ty.clone())
+                };
+                let flow_field = !stored && !flow_filter;
+                if flow_field || (stored && matches!(ty, RtType::Text(_) | RtType::Code(_))) {
+                    return Err(crate::transactions::al_error_code(
+                        &format!(
+                            "Cannot calculate a sum of the values in the {} field in the {} table because one or more values are not normal numeric fields.",
+                            self.field_caption(&t, pos),
+                            self.caption(&t)
+                        ),
+                        "DB:Ok",
+                    ));
+                }
+                if !stored || !matches!(ty, RtType::Decimal | RtType::Integer) {
+                    return unsupported("FieldRef.CalcSum on a field of another type (not pinned)");
+                }
+                self.flow_op(RecordOp::CalcSums, &rec, &[Value::Integer(pos as i32)])?;
+                Ok(Value::Boolean(true))
             }
             "Validate" => {
                 let mut a = vec![Value::Integer(pos as i32)];

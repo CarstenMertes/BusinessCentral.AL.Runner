@@ -246,6 +246,16 @@ fn is_user_delegated_admin(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: 
     Ok(Value::Boolean(false))
 }
 
+/// `NavUserAccountHelper.IsDelegatedUser()`: false, on the same ground as `IsUserDelegatedAdmin` (the session user is not a
+/// delegated user, `session/TestEnvironmentUserTenantContracts.al:245`). The member itself is in no corpus test: the
+/// owner's exception of 2026-10-15 applies (165 Microsoft tests reach it through `Azure AD Graph User Impl.IsUserDelegated`),
+/// so a test that passes through it is a flagged pass (assumption nav-user-account-helper-is-delegated-user).
+fn is_delegated_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "NavUserAccountHelper.IsDelegatedUser")?;
+    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::NavUserAccountHelperIsDelegatedUser);
+    Ok(Value::Boolean(false))
+}
+
 /// `NavUserAccountHelper.GetEffectivePermissionForObject(user, company, objectType, objectId)`:
 /// five comma-separated Permission ordinals (Read, Insert, Modify, Delete, Execute) of the
 /// session user. A test session is SUPER; on table data it holds the four data rights and no
@@ -482,6 +492,11 @@ fn own_types() -> Vec<RegistryType> {
                             .into(),
                     ),
                     is_user_delegated_admin,
+                ),
+                member(
+                    "IsDelegatedUser",
+                    Pin::Corpus("session/TestEnvironmentUserTenantContracts.al:245 (inferred: IsUserDelegated false; the member itself is unprobed, assumption nav-user-account-helper-is-delegated-user)".into()),
+                    is_delegated_user,
                 ),
                 member(
                     "GetEffectivePermissionForObject",

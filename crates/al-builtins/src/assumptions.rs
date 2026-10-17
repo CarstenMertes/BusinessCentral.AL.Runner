@@ -67,6 +67,18 @@ pub struct Info {
 }
 
 registry! {
+    PageFieldFollowsSourceFieldEditableFalse => {
+        id: "page-field-follows-source-field-editable-false",
+        assumed: "A page field over a source table field that declares Editable = false, with no Editable of its own on the control, reads Editable() No on a TestPage.",
+        tests: "Payment Export Mgt Unit Test.FilterByHasPaymentExportError (Gen. Journal Line.\"Has Payment Export Error\", a FlowField with Editable = false, on the Payment Journal).",
+        probe: "A table field with Editable = false (stored, and a FlowField) and one without; a page with a plain field control over each and one that sets Editable = true itself: Editable() of each control on an open TestPage, and whether SetValue on the first is refused.",
+    },
+    ListPlusBlankRecordOnEmptyView => {
+        id: "listplus-blank-record-on-empty-view",
+        assumed: "A ListPlus page without a repeater, opened for edit over an empty view, stands on a blank record: OnNewRecord and OnAfterGetCurrRecord run after OnOpenPage. A Card or Document over an empty view is not covered.",
+        tests: "Suggest Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted (Purchase Price List sets PriceListIsEditable in OnAfterGetCurrRecord).",
+        probe: "A ListPlus, a Card and a Document page over an empty table, each with OnOpenPage, OnNewRecord, OnAfterGetRecord and OnAfterGetCurrRecord logging, opened with OpenEdit and OpenView: the trigger sequence and the field values.",
+    },
     UpperLimitOfASingleValue => {
         id: "upperlimit-of-a-single-value",
         assumed: "field(upperlimit(F)) of a flow filter that holds one value (SetFilter(F, Format(d))) applies the range ..d, so the single value is its own upper limit; other non-range filters stay refused.",
@@ -139,6 +151,12 @@ registry! {
         tests: "Approvals Mgmt.InformUserOnStatusChange (ShowSalesApprovalStatus(Variant)); 73 Tests-Workflow tests.",
         probe: "V := RecRef (a RecordRef on a filtered row); Rec := V and a Record parameter p(V): the fields, GetFilters, position and a later Modify; the same with a RecordRef of another table.",
     },
+    NavUserAccountHelperIsDelegatedUser => {
+        id: "nav-user-account-helper-is-delegated-user",
+        assumed: "DotNet NavUserAccountHelper.IsDelegatedUser() answers false for the test session user (the member is in no corpus test; the plan-based Azure AD User Management.IsUserDelegated is false in session/TestEnvironmentUserTenantContracts.al:245).",
+        tests: "Azure AD Graph User Impl.IsUserDelegated, reached by 165 Microsoft tests (for example Suggest Price Lines UT T202_NotificationActionFixOpensJobQueueEntryCard).",
+        probe: "A DotNet NavUserAccountHelper variable in a test session: IsDelegatedUser(), IsUserDelegatedAdmin(); and Codeunit \"Azure AD Graph User\".IsUserDelegated().",
+    },
     FieldRefCalcFieldOfABlob => {
         id: "fieldref-calcfield-of-a-blob",
         assumed: "FieldRef.CalcField on a Blob field is accepted and loads the blob, as Record.CalcFields does (record/TestCalcFieldsFieldClass.Codeunit.al); on another stored field it stays refused.",
@@ -153,7 +171,7 @@ registry! {
     },
     EvaluateRecordIdCompositeKey => {
         id: "evaluate-recordid-composite-key",
-        assumed: "Evaluate into a RecordId of a table whose primary key has several fields reads `Table: v1,v2,...` as Format writes it (a value that is empty or holds a comma is in double quotes): one value per key field, each read as Evaluate reads that field's type (a Code as written, an Integer or an Enum by its name or ordinal); a count of values other than the key's field count is rejected.",
+        assumed: "Evaluate into a RecordId of a table whose primary key has several fields reads `Table: v1,v2,...` as Format writes it (a value that is empty or holds a comma is in double quotes): one value per key field, each read as Evaluate reads that field's type (a Code as written, an Integer or an Enum by its name or ordinal); a count of values other than the key's field count is rejected. A rejected text leaves a RecordId that is not blank as it was and answers false (any key).",
         tests: "Library - Error Message.LoadErrorMessages (Evaluate(TempErrorMessage.\"Record ID\", ErrorMessages.Source.Value, 9)); 36 Tests-Misc tests (Check Dimensions On Posting: Default Dimension, Sales Header, Dimension Value keys).",
         probe: "Evaluate(Rid, Format(Rid)) and Format(Rid, 0, 9) for a table with a Code+Code key, an Enum+Code key (Sales Header), an Integer+Code+Code key (Default Dimension), a Date key part and a Code value holding a comma; the result and Rid; and too few and too many values.",
     },

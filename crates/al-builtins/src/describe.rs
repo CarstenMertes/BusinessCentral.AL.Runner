@@ -279,7 +279,7 @@ mod tests {
             key: 0,
             adhoc: None,
             ascending: true,
-            field_descending: false,
+            field_descending: 0,
             position: None,
             auto_calc: Vec::new(),
             load: Default::default(),

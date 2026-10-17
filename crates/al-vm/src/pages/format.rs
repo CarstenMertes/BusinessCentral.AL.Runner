@@ -593,6 +593,21 @@ impl Session {
         {
             return Ok(false);
         }
+        // A field whose source table field says `Editable = false` and whose control declares no Editable of its
+        // own is not editable. Not pinned by the corpus; Microsoft's Payment Export Mgt Unit Test
+        // FilterByHasPaymentExportError needs it (assumption page-field-follows-source-field-editable-false).
+        if page_of(&engine, st).controls[idx].prop("editable").is_none()
+            && self.control_field(st, idx).is_some_and(|f| {
+                f.properties
+                    .iter()
+                    .any(|(k, v)| k.eq_ignore_ascii_case("Editable") && v.trim().eq_ignore_ascii_case("false"))
+            })
+        {
+            al_builtins::assumptions::assume(
+                al_builtins::assumptions::Assumption::PageFieldFollowsSourceFieldEditableFalse,
+            );
+            return Ok(false);
+        }
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }
 

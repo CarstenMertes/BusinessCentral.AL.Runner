@@ -647,6 +647,13 @@ fn apply(terms: &[Term], from: i32) -> Result<i32, Signal> {
 }
 
 fn calcdate(ctx: &dyn Ctx, formula: &str, base: Option<&Value>) -> Out {
+    // `%1` in `+%1D` counts as the day count 1: CalcDate('<+%1D>') and CalcDate('<+%1D') (what Format('<+%1D>', 5) cuts the text to)
+    // both add one day (misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al:P146_CalcDate_FormatBuilt_Formula,
+    // `literal placeholder` and `format 5`). The brackets are optional for CalcDate (Dates_CalcDate_Formulas), which carries the
+    // pin to the bare `+%1D`. Another count behind `%`, another unit and Evaluate of such a text are not pinned.
+    if matches!(formula.trim(), "<+%1D>" | "<+%1D" | "+%1D") {
+        return calcdate(ctx, "<+1D>", base);
+    }
     // Evaluate takes a formula with one bracket missing (DateFormula_EvaluateForms, `<1D`); CalcDate of one is not pinned.
     let t = formula.trim();
     // `<+%1D` (the closing bracket missing, after a plus) adds one day

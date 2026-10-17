@@ -8,6 +8,7 @@ mod calc_const_guid;
 mod call_stack;
 mod clear_all_temp_rows;
 mod clear_enum;
+mod code_compare;
 mod continue_stmt;
 mod dataformats;
 mod duration_date_arith;

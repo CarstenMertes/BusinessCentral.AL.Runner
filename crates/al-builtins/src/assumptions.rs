@@ -259,6 +259,18 @@ registry! {
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
     },
+    XrecBlankForTheFirstLineOfAPart => {
+        id: "xrec-blank-for-the-first-line-of-a-part",
+        assumed: "OnNewRecord of a list part whose view holds no row sees a blank xRec, not the buffer stamped with the link values.",
+        tests: "Test Item Lookup (TestSalesInvoiceItemLookupInDescription and four siblings): Sales Invoice Subform.SetDefaultType defaults the line type only when xRec.\"Document No.\" is blank.",
+        probe: "A card with a list part linked on the card's key and no lines: New on the part, log xRec's key and Rec's key in the part's OnNewRecord.",
+    },
+    PageRecProcedureSeesPageXrec => {
+        id: "page-rec-procedure-sees-page-xrec",
+        assumed: "A table procedure the page's code calls on Rec (Rec.InitType()) sees the page's xRec as its xRec, not a blank record.",
+        tests: "Test Item Lookup (TestSalesInvoiceItemLookupInDescription and four siblings): Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type.",
+        probe: "A table with a procedure returning xRec.\"No.\"; a page whose OnAfterGetCurrRecord returns it through Rec.Proc() after moving between two rows; the same in OnNewRecord.",
+    },
     SetTableViewKeepsSetRecordPosition => {
         id: "set-table-view-keeps-set-record-position",
         assumed: "On a Page variable, SetTableView(Rec) after SetRecord(Rec) takes the filters of the view and keeps the record SetRecord handed over as the position the page opens on, so OnOpenPage reads it as Rec.",

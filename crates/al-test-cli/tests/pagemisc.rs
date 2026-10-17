@@ -9,6 +9,7 @@ table 62000 "PM Row"
 {
     fields { field(1; "No."; Code[20]) { } field(2; Descr; Text[50]) { } field(3; Rank; Integer) { } }
     keys { key(PK; "No.") { } }
+    procedure PreviousNo(): Code[20] begin exit(xRec."No."); end;
 }
 codeunit 62002 "PM Probe"
 {
@@ -189,6 +190,11 @@ page 62321 "PM Hidden Host" { PageType = Card; SourceTable = "PM Row";
   trigger OnAfterGetCurrRecord() var P: Codeunit "PM Probe"; begin CurrPage.Hid.PAGE.Ping(Rec."No."); P.Note('host;'); end; }
 page 62322 "PM Selection Own Update" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
   procedure UseAfterClose() begin CurrPage.Update(false); end; }
+page 62327 "PM Editable Flag" { PageType = Card; SourceTable = "PM Row";
+  layout { area(Content) { field("No."; Rec."No.") { } field(Descr; Rec.Descr) { trigger OnValidate() begin Flag := Rec.Descr = ''; end; } field(Other; Rec.Rank) { Editable = not Flag; } } }
+  var Flag: Boolean; }
+page 62328 "PM Xrec Card" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
+  trigger OnNewRecord(BelowxRec: Boolean) var P: Codeunit "PM Probe"; begin P.Note('x=' + Rec.PreviousNo() + ';'); end; }
 page 62098 "PM Find Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -923,4 +929,29 @@ fn a_page_variable_procedure_using_curr_page_after_the_page_closed_is_refused_no
         matches!(&o[0].1, Outcome::NotRun(why) if why.contains("not open") && why.contains("not pinned")),
         "{o:?}"
     );
+}
+
+#[test]
+fn a_control_editable_expression_follows_a_variable_set_by_another_controls_on_validate() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Follows() var C: TestPage \"PM Editable Flag\"; begin
+            C.OpenNew(); C.Descr.SetValue('x');
+            if not C.Other.Editable() then Error('should be editable'); C.Descr.SetValue('');
+            if C.Other.Editable() then Error('should not be editable'); C.Close(); end;"
+    ));
+}
+
+// handlers/TestPageCreateModeNewRecordArgs.al:OpenNew_TableWithRows pins xRec `B` in OnNewRecord; a table procedure the page's code calls
+// on Rec sees that xRec (Sales Invoice Subform.OnNewRecord -> Rec.InitType; assumption page-rec-procedure-sees-page-xrec).
+#[test]
+fn a_table_procedure_called_on_rec_in_a_page_trigger_sees_the_pages_xrec() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Sees() var C: TestPage \"PM Xrec Card\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'B'; R.Insert();
+            P.Reset(); C.OpenNew(); Check('x=B;', P.Trace()); C.Close(); end;"
+    ));
 }

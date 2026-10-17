@@ -53,6 +53,8 @@ impl Lowerer<'_> {
                         Some(Box::new(self.expr(r)?))
                     }
                     Some(_) => return Err("procedure calls on this receiver are not lowered yet".into()),
+                    // A procedure of the record of a `with` statement runs on that record.
+                    None if self.from_with(node) => Some(Box::new(ir::Expr::Load(self.implicit_rec(node)?))),
                     None if object == self.oi => {
                         self.declared_in_both_proc(object, offset)?;
                         None
@@ -235,9 +237,7 @@ impl Lowerer<'_> {
                     })),
                     // An unqualified record method in table code runs on the implicit Rec.
                     None if sig.instance && matches!(sig.receiver.as_str(), "Record" | "Query") => {
-                        Some(Box::new(ir::Arg::Ref(ir::Place::Global(
-                            self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?,
-                        ))))
+                        Some(Box::new(ir::Arg::Ref(self.implicit_rec(node)?)))
                     }
                     _ => None,
                 };
@@ -328,9 +328,7 @@ impl Lowerer<'_> {
                         let field = self.field_ref(table, fid);
                         let base = match a.kind() {
                             SyntaxKind::MemberExpr => self.place(&a.children().next().ok_or("member base")?)?,
-                            _ => ir::Place::Global(
-                                self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?,
-                            ),
+                            _ => self.implicit_rec(a)?,
                         };
                         out.push(ir::Arg::Ref(base));
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::FieldPos(field as u32))));

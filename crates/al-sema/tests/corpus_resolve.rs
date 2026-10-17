@@ -98,10 +98,6 @@ const KNOWN_GAP_FILES: &[(&str, &str)] = &[
         "the checker does not resolve `this` in a report (corpus bump 14)",
     ),
     (
-        "events/lt-global-triggers-statements/P114WithStatement.al",
-        "the front end does not read the with statement, so its names stay unresolved (corpus bump 14)",
-    ),
-    (
         "report/lt-report-this-passed-on/P141ThisStored.al",
         "the checker does not resolve `this` in a report (corpus bump 14)",
     ),

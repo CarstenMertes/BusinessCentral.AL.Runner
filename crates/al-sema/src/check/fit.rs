@@ -14,6 +14,7 @@ pub(crate) fn proc_cand(p: &ProcSig) -> Cand {
         fields: Vec::new(),
         rest_field: false,
         hidden: None,
+        with_off: None,
     }
 }
 
@@ -130,6 +131,7 @@ pub(crate) fn sig_cand(s: &Signature, recv: &Ty, id: String) -> Cand {
         fields,
         rest_field,
         hidden: None,
+        with_off: None,
     }
 }
 

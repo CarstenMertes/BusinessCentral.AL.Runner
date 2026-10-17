@@ -161,6 +161,8 @@ pub(crate) struct Lowerer<'a> {
     /// Declared text of Label variables, by lowercase name; reads lower to that constant.
     global_labels: HashMap<String, String>,
     local_labels: HashMap<String, String>,
+    /// The record of each `with` statement being lowered, by the start offset of the statement.
+    with_places: HashMap<usize, ir::Place>,
     reasons: Vec<String>,
     calls: Vec<(usize, usize)>,
     /// Per object: why the test client cannot drive it yet (pages).

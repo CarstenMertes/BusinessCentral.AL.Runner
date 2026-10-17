@@ -797,10 +797,15 @@ impl Session {
     /// (`CurrPage.Close()`) reads as OK in a plain modal and as LookupCancel in lookup mode (corpus
     /// handlers/TestPageModalQueryClose_Tests.al, TestPageModalSelfClose_Tests.al).
     pub(super) fn close_action(&self, st: &St, requested: &str) -> String {
-        let (modal, lookup) = {
+        let (modal, lookup, object) = {
             let s = st.borrow();
-            (s.modal, s.lookup)
+            (s.modal, s.lookup, s.object as usize)
         };
+        // A confirmation dialog stays Cancel even where the lookup form reads Cancel as LookupCancel (misc/lt-probes-needed-7/
+        // PnGActionOrdinals.al:ModalResultsOfAConfirmationDialog `nothing-invoked`).
+        if requested == "Cancel" && self.engine.object_facts[object].page_type_lower() == "confirmationdialog" {
+            return "Cancel".into();
+        }
         match (requested, modal, lookup) {
             ("OK", true, true) => "LookupOK".into(),
             ("Cancel", true, true) => "LookupCancel".into(),

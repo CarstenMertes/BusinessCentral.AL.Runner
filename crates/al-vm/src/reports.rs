@@ -1168,7 +1168,7 @@ impl Session {
     ) -> Result<bool, Signal> {
         let item = run.item(r);
         let (owner, object) = run.owner(r);
-        let rec = self.report_item_record(run, r)?;
+        let mut rec = self.report_item_record(run, r)?;
         // A `DataItemLinkReference` names another enclosing item than the parent.
         let parent_rec = match item.link_item {
             Some(li) => enclosing
@@ -1227,6 +1227,9 @@ impl Session {
                 self.call(*e, t, ext_inst.clone(), Vec::new())?;
             }
         }
+        // A `ClearAll` in `OnPreDataItem` gave the item a fresh record, with no filters; the rows are read into that one
+        // (corpus errors/lt-ms-refusals-135/P135ClearAllReport.al:P135_ClearAll_In_OnPreDataItem: `row 1`, `row 2`).
+        rec = self.report_item_record(run, r)?;
         self.ret_used = true;
         let mut more = !no_rows && matches!(self.record_op(RecordOp::FindSet, &rec, &mut [])?, Value::Boolean(true));
         let mut iterations = 0u32;

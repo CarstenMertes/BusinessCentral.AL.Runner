@@ -355,6 +355,8 @@ impl Parser<'_> {
                 ),
             },
             T::Enum(id) => {
+                // The list holds the captions first, then the names, so a caption wins over a name that spells the same
+                // (corpus record/lt-enum-filter-caption/EnumFilterByCaption.al: SetFilter_CaptionEqualsOtherName_Result).
                 let named = (self.enums)(*id)
                     .into_iter()
                     .find(|(_, n)| !n.is_empty() && n.trim().eq_ignore_ascii_case(text.trim()))

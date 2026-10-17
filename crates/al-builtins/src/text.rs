@@ -21,7 +21,7 @@ struct Inner {
     /// 0 not known yet, 1 ASCII only, 2 not. (Atomic: rows of the test data are shared between threads, and
     /// the flags are only hints that any thread computes the same way.)
     ascii: AtomicU8,
-    /// 0 not known yet, 1 holds the call-stack marker U+E000, 2 does not.
+    /// 0 not known yet, 1 holds the call-stack marker (`CALL_STACK_MARK`), 2 does not.
     marked: AtomicU8,
 }
 
@@ -33,6 +33,15 @@ impl Clone for Inner {
             marked: AtomicU8::new(self.marked.load(Relaxed)),
         }
     }
+}
+
+/// How many times a text was scanned for the call-stack mark (the first `has_marker` of a text the flag is not known
+/// of). A loop that builds a text must not scan the whole text each round; the test of the append counts this.
+static MARKER_SCANS: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
+/// The number of scans so far (see `MARKER_SCANS`).
+pub fn marker_scans() -> u64 {
+    MARKER_SCANS.load(Relaxed)
 }
 
 /// A shared, copy-on-write text.
@@ -65,14 +74,15 @@ impl Txt {
         }
     }
 
-    /// Whether the text holds U+E000, the marker of a call stack with an untracked frame (no text function reads
+    /// Whether the text holds `CALL_STACK_MARK`, the marker of a call stack with an untracked frame (no text function reads
     /// such a text). Computed once for this string.
     pub fn has_marker(&self) -> bool {
         match self.0.marked.load(Relaxed) {
             1 => true,
             2 => false,
             _ => {
-                let m = self.0.s.contains('\u{E000}');
+                MARKER_SCANS.fetch_add(1, Relaxed);
+                let m = self.0.s.contains(crate::native::CALL_STACK_MARK);
                 self.0.marked.store(if m { 1 } else { 2 }, Relaxed);
                 m
             }
@@ -103,7 +113,7 @@ impl Txt {
         let inner = Arc::make_mut(&mut self.0);
         let mut buf = [0u8; 4];
         inner.s.replace_range(i..=i, char::from(c).encode_utf8(&mut buf));
-        // U+E000 is not ASCII, so the marker flag cannot change.
+        // The mark is not ASCII, so the marker flag cannot change.
     }
 
     pub fn push(&mut self, c: char) {
@@ -115,7 +125,7 @@ impl Txt {
         let was_ascii = self.0.ascii.load(Relaxed);
         let was_marked = self.0.marked.load(Relaxed);
         let more_ascii = more.is_ascii();
-        let more_marked = more.contains('\u{E000}');
+        let more_marked = more.contains(crate::native::CALL_STACK_MARK);
         let s = self.make_mut();
         s.push_str(more);
         // What is known of the parts is known of the whole.

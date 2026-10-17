@@ -845,7 +845,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if !a.has_marker() && !b.has_marker() => {
             return Ok(a.cmp(b));
         }
-        // A call stack with an untracked frame holds the marker U+E000, so it is not empty: against the empty text the
+        // A call stack with an untracked frame holds the marker `CALL_STACK_MARK`, so it is not empty: against the empty text the
         // answer is exact (Assert.ExpectedError: `GetLastErrorCallstack = ''`; Tests-ERM, 92 tests). Against any other
         // text it stays refused.
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if (a.has_marker() && b.as_str().is_empty()) => {
@@ -986,7 +986,7 @@ mod tests {
 
     #[test]
     fn a_text_with_the_call_stack_marker_is_not_equal_to_the_empty_text() {
-        let marked = Value::Text("a\u{E000}b".into());
+        let marked = Value::Text("a\u{FDD0}b".into());
         let empty = Value::Text("".into());
         assert_eq!(compare(&marked, &empty).unwrap(), Ordering::Greater);
         assert_eq!(compare(&empty, &marked).unwrap(), Ordering::Less);

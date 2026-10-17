@@ -111,7 +111,7 @@ A variable read, an argument, a return value and `text_of` clone the handle (a c
 (`make_mut`, `push_str`) copies only when another value shares the string. `S += x` and `S := S + x` on a Text
 variable take the text out of the variable and append in place (`Session::append_text`), so a loop is linear.
 `Txt` remembers whether it is ASCII (then a UTF-16 position is a byte position) and whether it holds the call-stack
-marker U+E000; both are computed once per string and dropped on a write. The counter and flags are atomic because
+marker U+FDD0 (a noncharacter: private-use characters are real text); both are computed once per string and dropped on a write. The counter and flags are atomic because
 the rows of the test data are shared between threads (`SharedMat`). This is an internal representation (ADR-009):
 nothing AL code can see changed. Still linear per call: `Text.Contains`, `IndexOf`, `Substring` on a long text
 (they scan it, as BC does), and any write to a text that is also held elsewhere (it copies once).

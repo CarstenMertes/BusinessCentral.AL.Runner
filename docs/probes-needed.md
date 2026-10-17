@@ -876,3 +876,11 @@ Sales/Purchase header pages and tables (about 1,000 tests stop at these shapes o
 | Empty list shows a row inserted by page code | Counts known (pages/lt-testpage-list-rows with misc/lt-probes-needed-7/PnGShowRow.al) but the dump is read once at the end, so the reads of the action and of the First() call after it cannot be told apart. | PnGShowRow with a log dump after the action and another after First(). |
 | Format of a record field with `AutoFormatType` 1/2 and an expression that is not blank | Only blank expressions and `<Precision,a:b>` are pinned for `Format(Rec.Field)`. | Format(Rec.Field) with expression 'GBP' for types 1, 2, 4 and 5. |
 | Code comparison of digit-only codes | pages/types lt-code-digits-page-run-view/P145CodeCompare.al pins an order that is not text order and not number order (`1.5` > `10`, `1e3` > `999`, `0009` > `10`). | The same pairs with culture-aware and ordinal compare of the same strings through Text. |
+
+## Left open by lang-pinned-14
+
+| Case | What is assumed or open | Probe that decides it |
+|---|---|---|
+| `TestPage.Filter.SetFilter(Boolean field, 'true' or 'false')` | Changes nothing in a handler of a modal list (pages/lt-modal-list-new-row/ModalListNewRowKeyFilters.al, four cases). The runtime ignores the call for a Boolean field and the words true and false. It is not known whether the Boolean words or the modal list matter. | The same call on a non-modal list with Yes, No, true, false, and on a modal list with a Text field filter. |
+| Digit-only Code compare | Length first, then text, pinned for digits with and without leading zeros (P145). Code pairs with a sign, a point or an exponent (`'1.5' > '10'`, `'-1' > '1'`, `'1E3' > '999'`) keep the culture order and fail. | The pairs `1.5/10`, `-1/1`, `1E3/999`, `1E3/1000`, `+1/1`, `1,5/10` for Code and for Text, and a Code pair compared through a Code field. |
+| Temporary source of RunModal (P81PageTempSource.al, five cases) | The page shows the temporary rows with no blank line until `New()`; a new row is placed after the row the cursor stands on. Not modelled; the five cases fail. | The same handler with a log of the rows read, the order of New() rows by key, and a Page variable with SetRecord of a temporary record. |

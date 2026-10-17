@@ -3,6 +3,7 @@
 //! too.
 
 pub mod compression;
+mod gettype;
 pub mod policy;
 pub mod registry;
 pub mod server_classes;
@@ -160,11 +161,21 @@ impl Session {
             (_, Value::DotNet(o)) => match &o.kind {
                 DotNetKind::Host { handle, clr_type } => Target::Host(*handle, clr_type.clone()),
                 DotNetKind::Internal { type_name, .. } => Target::Internal(o.clone(), type_name.clone()),
-                DotNetKind::Enum { clr_type, .. } => {
-                    return unsupported(format!(
-                        "DotNet {clr_type}.{member}: members of a .NET enum value are not supported (ADR-014)"
-                    ));
-                }
+                // An enum value is boxed for the call, as a primitive is: its members (`Equals`, `ToString`,
+                // the static members of its type) are .NET's
+                // (tests/al-language-onprem-dotnet/lt-dotnet-interop/XmlNodeTypeEquals.al, XmlNodeTypeFormat.al).
+                DotNetKind::Enum {
+                    clr_type,
+                    name,
+                    ordinal,
+                } => Target::Boxed(
+                    DotNetValue::Enum {
+                        ty: clr_type.clone(),
+                        name: name.clone(),
+                        ordinal: *ordinal,
+                    },
+                    clr_type.clone(),
+                ),
             },
             (_, Value::Null) => match &decl {
                 Some(d) => Target::Static(d.clone()),
@@ -561,7 +572,7 @@ impl Session {
     }
 
     /// `System.DateTime.Now|UtcNow|Today` and `System.DateTimeOffset.Now|UtcNow` from the host
-    /// clock. The session time zone is UTC (al-host), so `Now` and `UtcNow` agree and the offset is
+    /// clock, and `System.Guid.NewGuid` from the host's Guids. The session time zone is UTC (al-host), so `Now` and `UtcNow` agree and the offset is
     /// zero. A `DateTime` comes back by value, as the marshalling table has it; a `DateTimeOffset`
     /// is an object, so the host builds it from the clock's ticks. `None`: not a clock member.
     fn host_clock_member(
@@ -580,6 +591,10 @@ impl Session {
         };
         match d.name.as_str() {
             "System.DateTime" if is("Now") || is("UtcNow") => Some(Ok(Value::DateTime(ticks() / TICKS_PER_MS + 1))),
+            // `Guid.NewGuid()` is the host's fresh Guid, the one `CreateGuid` gives, so a run stays repeatable. The corpus pins
+            // that the result is a System.Guid (tests/al-language-onprem-dotnet/lt-dotnet-interop/DotNetTypeOfDotNet.al:`TryGuid`),
+            // not that it differs from the next one; a version 4 Guid does.
+            "System.Guid" if is("NewGuid") => Some(Ok(Value::Guid(self.fresh_guid()))),
             "System.DateTime" if is("Today") => {
                 let midnight = ticks().div_euclid(TICKS_PER_DAY) * TICKS_PER_DAY;
                 Some(Ok(Value::DateTime(midnight / TICKS_PER_MS + 1)))
@@ -798,9 +813,6 @@ impl Session {
             | Value::DateTime(_)
             | Value::Duration(_)
             | Value::Guid(_) => Ok(v),
-            Value::Text(_) | Value::Code(_) if how == U::NoText => {
-                unsupported("ordering a .NET string with <, <=, > or >= (what BC compares is not pinned)")
-            }
             Value::Text(_) | Value::Code(_) => Ok(v),
             Value::Null if self.dotnet.null_string => match how {
                 U::Variant => Ok(Value::Null),
@@ -814,6 +826,9 @@ impl Session {
             ),
             Value::DotNet(o) => match (&o.kind, how) {
                 (_, U::Variant) => Ok(Value::DotNet(o)),
+                // Order operators keep an enum an enum: `dotnet_order` compares members of one enum by number
+                // (tests/al-language-onprem-dotnet/lt-dotnet-interop/XmlNodeTypeOrder.al).
+                (DotNetKind::Enum { .. }, U::Order) => Ok(Value::DotNet(o)),
                 (DotNetKind::Enum { ordinal, .. }, U::Enum) => Ok(match i32::try_from(*ordinal) {
                     Ok(i) => Value::Integer(i),
                     Err(_) => Value::BigInteger(*ordinal),
@@ -837,6 +852,46 @@ impl Session {
 /// (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al, codeunit 61400,
 /// `IntegerProperties_TakePartInIntegerExpressions_AndStringCompareIsCaseSensitive`); any other
 /// pair compares as AL does.
+/// `<`, `<=`, `>`, `>=` with a settled `DotNet` operand. Two members of one .NET enum order by number
+/// (tests/al-language-onprem-dotnet/lt-dotnet-interop/XmlNodeTypeOrder.al: `Element < Attribute`,
+/// `Attribute > Element`, `Element <= Element` are Yes). Two texts order as .NET orders them only when
+/// that is certain: the corpus pins lower case ASCII words (DotNetOperandStringLess.al, 61407), where an ordinal
+/// and a culture order agree, so any text with another character, or where the ordinal order and AL's
+/// case-insensitive order differ, is refused. Everything else orders as AL does.
+pub(crate) fn dotnet_order(l: &Value, r: &Value) -> Result<std::cmp::Ordering, Signal> {
+    match (l, r) {
+        (Value::DotNet(a), Value::DotNet(b)) => match (&a.kind, &b.kind) {
+            (
+                DotNetKind::Enum {
+                    clr_type: ta,
+                    ordinal: oa,
+                    ..
+                },
+                DotNetKind::Enum {
+                    clr_type: tb,
+                    ordinal: ob,
+                    ..
+                },
+            ) if ta == tb => Ok(oa.cmp(ob)),
+            _ => unsupported("ordering two .NET values that are not members of one enum (not pinned)"),
+        },
+        (Value::DotNet(_), _) | (_, Value::DotNet(_)) => {
+            unsupported("ordering a .NET enum against a value that is not a member of it (not pinned)")
+        }
+        (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) => {
+            let plain = |s: &str| s.bytes().all(|c| c.is_ascii_alphanumeric());
+            let ordinal = a.as_str().cmp(b.as_str());
+            if plain(a.as_str()) && plain(b.as_str()) && ordinal == a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase())
+            {
+                Ok(ordinal)
+            } else {
+                unsupported("ordering .NET strings whose order is not the same under every reading (not pinned)")
+            }
+        }
+        _ => ops::compare_operator(l, r, true),
+    }
+}
+
 pub(crate) fn dotnet_equal(l: &Value, r: &Value) -> Result<bool, Signal> {
     match (l, r) {
         (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) => Ok(a == b),

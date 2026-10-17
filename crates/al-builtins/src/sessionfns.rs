@@ -35,6 +35,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = via_session![
     "IsolatedStorage.SetEncrypted#1",
     "IsolatedStorage.SetEncrypted#2",
     "System.CodeCoverageLog#1",
+    "System.GetDotNetType#1",
     "System.EncryptionEnabled#1",
     "System.EncryptionKeyExists#1",
     "System.Encrypt#1",

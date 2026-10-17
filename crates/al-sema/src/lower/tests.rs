@@ -599,7 +599,7 @@ fn a_dotnet_result_used_as_an_operand_is_settled_at_run_time() {
     }
     let (_, p) = routine(&l, "P");
     let dump = format!("{:?}", p.body);
-    assert!(dump.contains("DotNetOperand(") && dump.contains("NoText)"), "{dump}");
+    assert!(dump.contains("DotNetOperand(") && dump.contains("Order)"), "{dump}");
     let (_, q) = routine(&l, "Q");
     assert!(format!("{:?}", q.body).contains("DotNetEq"), "{:?}", q.body);
     // The bound of a for loop is settled too.

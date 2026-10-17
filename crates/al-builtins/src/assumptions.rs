@@ -181,6 +181,12 @@ registry! {
         tests: "To-do.InsertTask / InsertTaskAndRelatedData (Task2: Record \"To-do\" receives the temporary Rec of CreateTaskFromTask, Task2.Insert(true), then Task2.Get); Tests-Marketing Marketing Matrix Management TaskWith* (10 tests).",
         probe: "A temporary record with a row, passed by value to a procedure with a parameter of the same table not declared temporary: the callee's IsTemporary, Insert then Count of the stored table, and whether the caller's temporary rows change.",
     },
+    EventVarAliasThroughSender => {
+        id: "event-var-alias-through-sender",
+        assumed: "A `var` parameter of an event is a reference to the publisher's variable: when a subscriber changes that variable through the sender (Sender.Proc()) and leaves its own parameter as it was sent, the change stays after the event (a scalar parameter is not written back over it). Records, lists and other shared values already alias.",
+        tests: "Create Inventory Pick/Movement.AutoCreatePickOrMove passes its globals LineCreated and CurrWarehouseActivityHeader to OnAutoCreatePickOrMoveFromWhseRequest; the manufacturing subscriber fills them through sender.CreatePickOrMoveLine. Tests-SCM SCM Extend Warehouse (35 tests).",
+        probe: "A codeunit with global Boolean, Integer and Text variables passed as var arguments to an IncludeSender event; a subscriber with `var Sender` that calls a procedure setting the globals and does not assign its own parameters: the globals after the event; the same when the subscriber also assigns one of the parameters.",
+    },
     TestPageAssertEqualsIntegerOnTextControl => {
         id: "testpage-assertequals-integer-on-text-control",
         assumed: "TestPageField.AssertEquals(<Integer>) on a control over a Text or Code value compares the plain digits of the integer with the control's text, instead of raising TypeConversion; another number or an Enum there stays refused.",
@@ -582,6 +588,12 @@ registry! {
         assumed: "A filter a procedure of the report set on a data item before a run with a request page is not in that run: the page does not show it (pinned) and the filters of the page replace it when the page closes with OK (assumed).",
         tests: "Microsoft tests that call a report procedure which filters a data item and then RunModal the report with its request page.",
         probe: "A report procedure RowDi.SetFilter(Code, 'B*'), RunModal with a handler that clicks OK and a report that counts the rows in OnPreDataItem and OnAfterGetRecord: are the B rows alone read?",
+    },
+    DotNetTypeOfUnassignedPrimitive => {
+        id: "dotnet-type-of-unassigned-primitive",
+        assumed: "GetDotNetType of a DotNet variable that holds nothing and is declared as System.String, System.Char, System.Byte or System.Int32 answers the declared type (such a variable reads as its default value); the pinned unassigned case, System.Object, raises DotNetVariableNotCreated.",
+        tests: "DotNet Array.StringArray, CharArray, ByteArray and Int32Array (GetDotNetType(DotNetString) and the like on a variable nothing was assigned to), reached through Web Request Helper and the Cryptography Management wrappers.",
+        probe: "An unassigned DotNet String, Char, Byte and Int32 variable: GetDotNetType(X).FullName, and the same for an unassigned DotNet StringBuilder and Type.",
     },
 }
 

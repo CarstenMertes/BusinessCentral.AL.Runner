@@ -682,9 +682,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
 /// `docs/probes-needed.md`, "Builtins refused until a probe pins them").
 pub fn refusal(id: &str) -> Option<&'static str> {
     Some(match id {
-        "System.GetDotNetType#1" => {
-            "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
-        }
         "Xmlport.Run#1" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
@@ -939,7 +936,9 @@ fn format_1(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Res
     // The text of a DotNet object is its ToString(); the length and the format number change
     // nothing for the numbers 0 and 2 (tests/al-language-onprem-dotnet/TestDotNetValueKindsContracts.al,
     // codeunit 61400, FormatOfDotNetObjects_IsToString). Other format numbers are not pinned.
-    if matches!(&args[0], Value::DotNet(_)) && matches!(std, 0 | 2) {
+    // The number 9 is pinned for an enum member only (XmlNodeTypeFormat.al: `Format(NodeType, 0, 9)` is `Element`).
+    let enum_member = matches!(&args[0], Value::DotNet(o) if matches!(o.kind, crate::value::DotNetKind::Enum { .. }));
+    if matches!(&args[0], Value::DotNet(_)) && (matches!(std, 0 | 2) || (std == 9 && enum_member)) {
         if let Some(r) = ctx.format_dotnet(&args[0]) {
             return r.map(|s| Value::Text(s.into()));
         }
@@ -1940,12 +1939,12 @@ pub(crate) mod tests {
         }
     }
 
-    // Base Application's Web Request Helper casts a caught .NET exception with `GetDotNetType(WebException)`
-    // after a web request failed; no corpus test calls GetDotNetType (issue 34).
+    // GetDotNetType is pinned by the OnPrem DotNet corpus app (tests/al-language-onprem-dotnet/lt-dotnet-interop,
+    // DotNetType*.al); the VM runs it through `Ctx::session_op`.
     #[test]
-    fn get_dot_net_type_is_refused_with_its_reason() {
-        let why = refusal("System.GetDotNetType#1").unwrap_or_default();
-        assert!(why.contains("GetDotNetType") && why.contains("not pinned"), "{why}");
+    fn get_dot_net_type_is_implemented_not_refused_at_lowering() {
+        assert!(refusal("System.GetDotNetType#1").is_none());
+        assert!(lookup("System.GetDotNetType#1").is_some());
     }
 
     #[derive(Default)]

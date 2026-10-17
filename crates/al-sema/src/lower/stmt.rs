@@ -710,7 +710,53 @@ impl Lowerer<'_> {
             }
             _ => rhs,
         };
+        // A Variant into a record's Text or Code field stays unconverted here: the field write turns a number it holds into its
+        // Format text (assumption number-to-text-is-format), where the same into a variable raises (VaTCompare.al af117).
+        let variant_into_text_field = matches!(place, ir::Place::Field(..))
+            && matches!(target_ty, Ty::Text(_) | Ty::Code(_))
+            // `FieldRef.Value()` is typed Unknown by the checker: a value only known at run time, like a Variant.
+            && matches!(self.ty_ref(&kids[1]), Ty::Variant | Ty::Unknown)
+            && matches!(op_kind, Some(SyntaxKind::Assign) | None);
+        // A Variant holding an Integer or a Date assigned to a Text variable raises TypeConversion (corpus
+        // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117 and af121); the conversion into a field, a parameter
+        // or a returned value is another path (assumptions number-to-text-is-format, date-to-text-is-format).
+        let variant_into_text_variable = matches!(
+            place,
+            ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_)
+        ) && matches!(target_ty, Ty::Text(_))
+            && matches!(self.ty_ref(&kids[1]), Ty::Variant)
+            && matches!(op_kind, Some(SyntaxKind::Assign) | None)
+            && matches!(&value, ir::Expr::Load(p) if matches!(p, ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_)));
+        if variant_into_text_variable {
+            let ir::Expr::Load(src_place) = value.clone() else {
+                unreachable!()
+            };
+            let is = |id: &str| -> L<ir::Expr> {
+                Ok(ir::Expr::Builtin {
+                    id: super::call::builtin_id(id)?,
+                    receiver: Some(Box::new(ir::Arg::Ref(src_place.clone()))),
+                    args: Vec::new(),
+                    ret_used: true,
+                })
+            };
+            let cond = ir::Expr::Binary(
+                ir::BinOp::Or,
+                Box::new(is("Variant.IsInteger#1")?),
+                Box::new(is("Variant.IsDate#1")?),
+            );
+            let converted = self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?;
+            let guarded = ir::Expr::Ternary(
+                Box::new(cond),
+                Box::new(ir::Expr::Fail {
+                    message: "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.".into(),
+                    code: "TypeConversion".into(),
+                }),
+                Box::new(converted),
+            );
+            return Ok(ir::Stmt::Assign(place, guarded));
+        }
         let value = match op_kind {
+            _ if variant_into_text_field => value,
             Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,
             Some(_) => ir::Expr::Convert(self.rt(&target_ty)?, Box::new(value)),
         };

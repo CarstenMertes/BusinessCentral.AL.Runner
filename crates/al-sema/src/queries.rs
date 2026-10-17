@@ -491,6 +491,16 @@ impl Builder<'_> {
                 self.reason(format!("column {name}: {e}"));
                 RtType::Variant
             }
+            // A RecordId column passes the stored value through (Base Application's "Workflow Instance" query has one and no
+            // code reads it); no corpus test pins a RecordId column, so a Method, a ColumnFilter or a ReverseSign on it stays refused
+            // (assumption query-column-record-id).
+            None if ty == Ty::Builtin("RecordId".into())
+                && source.is_some()
+                && method.is_none()
+                && filter_text.is_none() =>
+            {
+                RtType::Library(al_builtins::library_kind::LibraryKind::RecordId)
+            }
             None => {
                 if ty != Ty::Unknown {
                     self.reason(format!("column {name}: a column of type {ty}"));

@@ -109,6 +109,18 @@ registry! {
         tests: "Item Tracking Lines (InsertRecord inserts into the page's temporary source, ValidateAndInsert answers false); Tests-Manufacturing PostProductionJournalUsingLotItemTracking and the item tracking tests that set a lot and a quantity.",
         probe: "A page with OnInsertRecord { Rec.Insert(); exit(false) } and OnModifyRecord { Rec.Modify(); exit(false) }: OpenNew, set the key, set a second field, OK; read the row and count the trigger calls.",
     },
+    NumberToTextIsFormat => {
+        id: "number-to-text-is-format",
+        assumed: "An Integer, BigInteger or Decimal (a Variant from FieldRef.Value) assigned to a Text or Code is its default Format text, as Format gives it.",
+        tests: "Workflow Table Relation Value.CreateNew (Value := FieldRef.Value()); 114 Tests-Workflow tests.",
+        probe: "A Variant holding an Integer, a BigInteger (2645 and 1234567) and a Decimal assigned to a Text[50] and a Code[50]; compare with Format.",
+    },
+    QueryClosedAfterLastRow => {
+        id: "query-closed-after-last-row",
+        assumed: "A query whose Read has returned false after its last row is closed: SetRange and SetFilter take a new filter and Open runs it again.",
+        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 125 Tests-Workflow tests.",
+        probe: "Open a query, Read to false, SetRange on a column, Open and Read again; the same without the SetRange; Open twice after the last row.",
+    },
     DateAddWholeDecimal => {
         id: "date-add-whole-decimal",
         assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",
@@ -228,6 +240,12 @@ registry! {
         assumed: "A [ModalPageHandler] typed as the Page itself stands in for the page: none of the page's triggers (OnInit, OnOpenPage, OnQueryClosePage, ...) run for that call.",
         tests: "Tests-ERM `PaymentToleranceWarning` handler (`PaymentToleranceWarning.InitializeOption(OptionValue)`, page 591, whose OnOpenPage and OnQueryClosePage would overwrite the result) and about 47 more tests.",
         probe: "A page with Trace logging in OnInit, OnOpenPage, OnQueryClosePage and OnClosePage, run with RunModal under a ModalPageHandler typed as the Page that logs and sets Response.",
+    },
+    QueryColumnRecordId => {
+        id: "query-column-record-id",
+        assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",
+        tests: "Base Application's \"Workflow Instance\" query (column Record_ID), opened by Workflow Step Instance.SetTableRelationValues and Approvals Mgmt.; 142 Tests-Workflow tests.",
+        probe: "A query with a column over a RecordId field of a table with rows: Open, Read, Format of the column, grouping and OrderBy on it, SetFilter on the column, SaveAsCsv.",
     },
     QueryMethodOverFlowField => {
         id: "query-method-over-flowfield",
@@ -595,12 +613,6 @@ registry! {
         assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",
         tests: "Item Vendor Catalog (OpenNew, Filter.SetFilter(\"Item No.\"), then SetValue of the vendor): ERM Item Reference Purchase and about 12 more Tests-ERM tests.",
         probe: "An editable list opened with OpenNew and with OpenEdit over an empty filtered result: SetValue of a non-key field and the stored row's key; Next() and the row triggers that run.",
-    },
-    DurationAddDuration => {
-        id: "duration-add-duration",
-        assumed: "A Duration plus or minus a Duration is a Duration of the summed or subtracted milliseconds; an overflow is refused. (Duration times a whole number, DateTime and Time with a Duration are pinned by types/TestDurationContracts.al and types/PUTimeArithmetic.al.)",
-        tests: "Match Bank Payments (the telemetry timers of MatchEntries) through Tests-Bank ERM Bank Reconciliation and ERM Cash Manager: about 268 tests.",
-        probe: "D1 + D2, D1 - D2 and a negative result for two Duration variables, Format(Result, 0, 9), and the overflow at the BigInteger edge.",
     },
     CalcSumsFlowFieldFilter => {
         id: "calcsums-flowfield-filter",

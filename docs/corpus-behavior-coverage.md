@@ -9,10 +9,10 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Dimension | Catalog | Pinned | Used by Microsoft | Microsoft-used and unpinned | of those, runtime does not read |
 |---|---:|---:|---:|---:|---:|
 | Triggers per object kind | 167 | 142 | 128 | 21 | 19 |
-| Object properties per object kind | 1119 | 443 | 1074 | 676 | 549 |
+| Object properties per object kind | 1119 | 443 | 1074 | 676 | 547 |
 | Platform and system events | 123 | 20 | 17 | 0 | 0 |
 | Statements and expressions | 59 | 54 | 53 | 0 | 0 |
-| Runtime error sites (text pinned) | 40 | 37 | - | 3 | - |
+| Runtime error sites (text pinned) | 51 | 48 | - | 3 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -135,6 +135,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | pageextension/field | `DrillDown` | 4 | yes | 0 |
 | pageextension/field | `Enabled` | 4 | yes | 0 |
 | pageextension/part | `ShowFilter` | 4 | yes | 0 |
+| table | `MaxLength` | 4 | yes | 0 |
 | xmlport | `ObsoleteReason` | 4 | yes | 0 |
 | xmlport | `ObsoleteState` | 4 | yes | 0 |
 | xmlport | `ObsoleteTag` | 4 | yes | 0 |
@@ -145,7 +146,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | report/labels | `DocNoCaption` | 4 | no | 0 |
 | report/labels | `EntryNoCaption` | 4 | no | 0 |
 | report/labels | `PeriodCaption` | 4 | no | 0 |
-| table | `MaxLength` | 4 | no | 0 |
 | enumextension/value | `ObsoleteReason` | 3 | yes | 0 |
 | enumextension/value | `ObsoleteState` | 3 | yes | 0 |
 | enumextension/value | `ObsoleteTag` | 3 | yes | 0 |
@@ -229,6 +229,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | report/labels | `TotalLbl` | 2 | no | 0 |
 | table | `ExternalSchema` | 2 | no | 0 |
 | xmlport | `DefaultFieldsValidation` | 2 | no | 0 |
+| page | `MaxLength` | 1 | yes | 0 |
 | page/cuegroup | `ObsoleteReason` | 1 | yes | 0 |
 | page/cuegroup | `ObsoleteState` | 1 | yes | 0 |
 | page/cuegroup | `ObsoleteTag` | 1 | yes | 0 |
@@ -264,7 +265,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | reportextension/field | `TableRelation` | 1 | yes | 0 |
 | tableextension/field | `AutoFormatExpression` | 1 | yes | 0 |
 | page | `IsPreview` | 1 | no | 0 |
-| page | `MaxLength` | 1 | no | 0 |
 | pageextension | `Locked` | 1 | no | 0 |
 | pageextension/action | `InFooterBar` | 1 | no | 0 |
 | pageextension/action | `Locked` | 1 | no | 0 |
@@ -308,6 +308,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | Group | Name | MS uses | Runtime reads | Corpus uses (not reached) |
 |---|---|---:|---|---:|
 | codeunit | `ChangeCompany` | 0 | yes | 0 |
+| codeunit | `CustomDocumentMergerEx` | 0 | yes | 0 |
 | codeunit | `GetDatabaseTableTriggerSetup` | 0 | yes | 0 |
 | codeunit | `GetGlobalTableTriggerMask` | 0 | yes | 0 |
 | codeunit | `OnDatabaseDelete` | 0 | yes | 0 |
@@ -321,7 +322,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `AutoFormatTranslate` | 0 | no | 0 |
 | codeunit | `CaptionClassTranslate` | 0 | no | 0 |
 | codeunit | `ConfirmPrivacyNoticeApproval` | 0 | no | 0 |
-| codeunit | `CustomDocumentMergerEx` | 0 | no | 0 |
 | codeunit | `CustomizeChart` | 0 | no | 0 |
 | codeunit | `FetchReportLayoutByCode` | 0 | no | 0 |
 | codeunit | `GetApplicationBuild` | 0 | no | 0 |
@@ -421,10 +421,10 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | statement | `EmptyStmt` | 0 | no | 0 |
 | statement | `WithStmt` | 0 | no | 0 |
 
-## Runtime error sites without a corpus test (3 of 40; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (3 of 51; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 
 - crates/al-builtins/src/media.rs:235 `The specified path is invalid.` code `InvalidPath`
 - crates/al-builtins/src/media.rs:238 `Could not find a part of the path '%'.` code `InvalidPath`
-- crates/al-vm/src/usertable.rs:373 `There should be at least one enabled 'SUPER' user.` code `Dialog`
+- crates/al-vm/src/usertable.rs:374 `There should be at least one enabled 'SUPER' user.` code `Dialog`

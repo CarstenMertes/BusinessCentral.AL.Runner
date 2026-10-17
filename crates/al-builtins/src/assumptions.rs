@@ -172,8 +172,8 @@ registry! {
     GuidAsTextArgument => {
         id: "guid-as-text-argument",
         assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment.",
-        tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests.",
-        probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G).",
+        tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests. Error Message Handler.ShowNotification (Notification.SetData with a Guid); 27 Tests-ERM tests.",
+        probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G), Notification.SetData('k', G) then GetData('k').",
     },
     FeatureKeyEnabledModify => {
         id: "feature-key-enabled-modify",

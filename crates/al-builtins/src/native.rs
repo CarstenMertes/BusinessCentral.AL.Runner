@@ -326,6 +326,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         "System.EvaluateVariableOption#1",
         crate::evaluate::evaluate_variable_option,
     ),
+    ("System.EvaluateText#1", crate::evaluate::evaluate_text),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
     (
@@ -1936,6 +1937,7 @@ pub(crate) mod tests {
         // Ids lowering picks for a call of a catalog overload that needs another implementation (`Evaluate` into an Option variable).
         let derived = [
             "System.EvaluateVariableOption#1",
+            "System.EvaluateText#1",
             "System.FormatVariant#1",
             "System.FormatDecimalField#1",
             "Dialog.ErrorNotLiteral#1",

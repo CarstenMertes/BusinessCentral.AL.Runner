@@ -183,6 +183,13 @@ impl Lowerer<'_> {
                             && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
                     }) {
                     "System.EvaluateVariableOption#1".to_string()
+                } else if id == "System.Evaluate#1"
+                    && args
+                        .first()
+                        .is_some_and(|a| matches!(self.ty_of(a), Ty::Text(_) | Ty::Code(_)))
+                {
+                    // Evaluate into a Text or Code: the target's declared length and kind go along as two trailing constants.
+                    "System.EvaluateText#1".to_string()
                 } else if id == "Dialog.Error#2" && args.first().is_some_and(|a| a.kind() != SyntaxKind::Literal) {
                     // `Error(Label, ...)` and `Error(Variable, ...)`: only a string literal has its text for
                     // `GetLastErrorText(true)` pinned (corpus P86LastError.al:PlainError_Exclude).
@@ -408,6 +415,20 @@ impl Lowerer<'_> {
                         out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))));
                     }
                     out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Text(places))));
+                }
+                if emit_id == "System.EvaluateText#1" {
+                    let (max, is_code) = match args.first().map(|a| self.ty_of(a)) {
+                        Some(Ty::Text(m)) => (m, false),
+                        Some(Ty::Code(m)) => (m, true),
+                        _ => (None, false),
+                    };
+                    while out.len() < 3 {
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))));
+                    }
+                    out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(
+                        max.map_or(-1, |m| m as i32),
+                    ))));
+                    out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Boolean(is_code))));
                 }
                 Ok(ir::Expr::Builtin {
                     id: builtin_id(&emit_id)?,

@@ -91,3 +91,43 @@ fn name_of_a_field_ref_that_was_never_assigned_raises_not_initialized() {
         "{r:?}"
     );
 }
+
+/// Base Application's `Error Message Handler.ShowNotification` does `Notification.SetData('RegisterID', RegisterID)`
+/// with a Guid (27 Tests-ERM tests). The Guid is its text form (assumption guid-as-text-argument).
+#[test]
+fn notification_set_data_takes_a_guid_as_its_text_form() {
+    let r = run(
+        "procedure F(): Boolean var N: Notification; G: Guid; begin G := CreateGuid(); N.SetData('k', G); exit(N.GetData('k') = Format(G)); end;",
+    );
+    assert!(matches!(&r, Ok(Value::Boolean(true))), "{r:?}");
+}
+
+/// Evaluate into a Text takes the source as it is, an empty one too; into a Code it trims and upper-cases (corpus
+/// errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, P128_Evaluate_IntoCode). Purchase Prices.GetRecFilters
+/// does `Evaluate(StartingDateFilter, Rec.GetFilter("Starting Date"))` into a Text (52 Tests-ERM tests).
+#[test]
+fn evaluate_into_text_and_code() {
+    let r = run(
+        "procedure F(): Text var T: Text; C: Code[5]; Ok: Boolean; begin T := 'KEEP'; Ok := Evaluate(T, ''); C := 'KEEP'; Ok := Ok and Evaluate(C, ' ab '); exit(Format(Ok) + '|[' + T + ']|[' + C + ']'); end;",
+    );
+    assert_eq!(text(r), "Yes|[]|[AB]");
+}
+
+/// P128EvalBasic.al:P128_Evaluate_IntoCode `one too long`: a Code that is too long gives No and keeps its value when the
+/// result is used; unused (P128_Evaluate_IntoCode_ResultUnused) it raises StringLengthExceeded.
+#[test]
+fn evaluate_into_a_code_that_is_too_long() {
+    let r = run(
+        "procedure F(): Text var C: Code[5]; Ok: Boolean; begin C := 'KEEP'; Ok := Evaluate(C, 'abcdef'); exit(Format(Ok) + '|[' + C + ']'); end;",
+    );
+    assert_eq!(text(r), "No|[KEEP]");
+    let r = run("procedure F() var C: Code[5]; begin Evaluate(C, 'abcdef'); end;");
+    assert!(matches!(&r, Err(Signal::Error(e)) if e.code == "StringLengthExceeded"), "{r:?}");
+}
+
+/// A Text[n] given more than n characters with the result used is not pinned: refused.
+#[test]
+fn evaluate_into_a_short_text_that_is_too_long_with_the_result_used_is_refused() {
+    let r = run("procedure F(): Boolean var T: Text[5]; begin exit(Evaluate(T, 'abcdef')); end;");
+    assert!(matches!(&r, Err(Signal::Unsupported(m)) if m.contains("not pinned")), "{r:?}");
+}

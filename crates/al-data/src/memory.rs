@@ -26,11 +26,11 @@ impl Ord for Key {
     }
 }
 
-type Table = im::OrdMap<Key, Row>;
+type Table = crate::pmap::PMap<Key, Row>;
 /// A table's place in the store: its company (empty for a table that is not per company) and its object. The company
 /// is a shared name, so building a slot for an operation copies a pointer, not a string.
 type Slot = (std::sync::Arc<str>, u32);
-type Tables = im::OrdMap<Slot, Table>;
+type Tables = crate::pmap::PMap<Slot, Table>;
 
 /// The rows of one table, built to be handed to a [`MemStore`] by a [`Backing`].
 #[derive(Clone)]
@@ -126,13 +126,13 @@ pub struct MemStore {
     committed: Tables,
     /// The value of `counter` when each table last changed. It follows `tables` through commit and
     /// rollback, so a table has the same stamp exactly when it has the same content history.
-    versions: im::OrdMap<Slot, u64>,
-    committed_versions: im::OrdMap<Slot, u64>,
+    versions: crate::pmap::PMap<Slot, u64>,
+    committed_versions: crate::pmap::PMap<Slot, u64>,
     /// The value of `counter` when the *shape* of each table last changed: a row was inserted, deleted or
     /// renamed, or a Modify changed a field some key is made of. It follows `tables` like `versions`, so
     /// equal stamps mean the same rows in the same places in every key.
-    shapes: im::OrdMap<Slot, u64>,
-    committed_shapes: im::OrdMap<Slot, u64>,
+    shapes: crate::pmap::PMap<Slot, u64>,
+    committed_shapes: crate::pmap::PMap<Slot, u64>,
     /// The primary keys of a big table in the order of one of its other keys, as of a shape stamp.
     order_cache: std::cell::RefCell<std::collections::HashMap<(Slot, usize), OrderEntry>>,
     /// The rows that pass one set of filters, in the order of one key, for scans whose filters bound the leading

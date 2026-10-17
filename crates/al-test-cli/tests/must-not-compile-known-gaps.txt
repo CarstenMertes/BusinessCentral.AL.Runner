@@ -264,3 +264,9 @@
 29 0450-integer-to-biginteger-to-enum-field
 27 0451-biginteger-to-enum-variable
 28 0451-biginteger-to-enum-variable
+27 0453-tableconnectiontype-query
+27 0481-table-field-format-property
+28 0453-tableconnectiontype-query
+28 0481-table-field-format-property
+29 0453-tableconnectiontype-query
+29 0481-table-field-format-property

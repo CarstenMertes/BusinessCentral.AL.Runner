@@ -480,7 +480,7 @@ impl Session {
             // The load set of a RecordRef is given by field numbers (record/TestRecordPartialLoad.al
             // PartialLoad_SetLoadFields_UnknownFieldNo_Throws: a number no field has is an error that
             // names it; its text is not pinned). The rest is the Record rule (partial.rs).
-            "SetLoadFields" | "AddLoadFields" => {
+            "SetLoadFields" | "AddLoadFields" | "AreFieldsLoaded" => {
                 let mut positions = Vec::with_capacity(args.len());
                 for a in args.iter() {
                     let Value::Integer(n) = a else {
@@ -491,7 +491,12 @@ impl Session {
                         None => return Err(Signal::Error(Box::new(al_builtins::native::unpinned_error()))),
                     }
                 }
-                self.load_fields_op(record_method(method), &rec, &t, &positions)
+                let op = if method == "AreFieldsLoaded" {
+                    RecordOp::AreFieldsLoaded
+                } else {
+                    record_method(method)
+                };
+                self.load_fields_op(op, &rec, &t, &positions)
             }
             // Doc (RecordRef.Duplicate): a new ref with the same table, buffer and filters, independent of the original.
             "RecordId" => Ok(self.record_id(&rec, &t)),

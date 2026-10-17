@@ -418,6 +418,8 @@ pub struct Session {
     pub(crate) work_date: Option<i32>,
     /// The language `GlobalLanguage(Id)` set.
     pub(crate) global_language: i32,
+    /// The row `load` is about to read came from `Get` (partial.rs: a `Get` of the row the buffer holds keeps what is loaded).
+    pub(crate) get_load: bool,
     /// Transactions: the depth of transaction-beginning constructs, and where the open transaction stands.
     pub(crate) tx: TxState,
     /// Handler functions and notifications of the running test method.
@@ -503,6 +505,7 @@ impl Session {
         let sequences = restored_sequences(&engine, &company);
         let mut session = Session {
             global_language: host.identity.global_language(),
+            get_load: false,
             host,
             waited_ms: 0,
             encrypted: Default::default(),

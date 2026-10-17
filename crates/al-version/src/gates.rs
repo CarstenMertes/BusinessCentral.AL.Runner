@@ -279,6 +279,14 @@ impl Gate {
                     file: "streams/StTCopyBlob.al",
                     lines: "451,456,462,484",
                 },
+                Evidence {
+                    file: "error-handling/lt-last-error-text-forms/FindEmptyTableExcludeFlag.al",
+                    lines: "76",
+                },
+                Evidence {
+                    file: "metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al",
+                    lines: "220",
+                },
             ],
             Gate::ProbedValuesDifferFrom29 => &[
                 Evidence {
@@ -312,6 +320,10 @@ impl Gate {
                 Evidence {
                     file: "recordref/lt-recordref-fieldref-members/P92Fields.al",
                     lines: "31",
+                },
+                Evidence {
+                    file: "report/lt-report-dataset-header/ReportDatasetHeaderRaw.al",
+                    lines: "192,197,202,207,212,217,222,227,232,237,242",
                 },
             ],
             Gate::Base64TextIsWindows1252From28 => &[Evidence {

@@ -710,6 +710,24 @@ mod tests {
     }
 
     #[test]
+    fn company_data_and_parity_flags_parse_and_check_each_other() {
+        assert!(!test_args("test A").company_package);
+        assert!(test_args("test A --company-data package").company_package);
+        assert!(!test_args("test A --company-data bak").company_package);
+        let a = test_args("test A --package p.rapidstart");
+        assert!(a.company_package && a.package_path == Some(PathBuf::from("p.rapidstart")));
+        assert!(p("test A --company-data tape").unwrap_err().contains("tape"));
+        assert!(p("test A --company-data package --no-test-data").is_err());
+        let a = test_args("test A --disabled-tests d --parity");
+        assert!(a.parity && a.disabled_tests_dir == Some(PathBuf::from("d")));
+        assert!(p("test A --parity").unwrap_err().contains("--disabled-tests"));
+        assert!(test_args("test A --company-data package").test_data_asked_for());
+        for needle in ["--company-data", "--package", "--disabled-tests", "--parity"] {
+            assert!(HELP.contains(needle), "{needle}");
+        }
+    }
+
+    #[test]
     fn the_help_documents_the_flush_and_the_rebuild_and_the_baseline_entry() {
         for needle in ["alrunner cache clear", "--rebuild-compile-cache", "install baseline"] {
             assert!(HELP.contains(needle), "{needle}");

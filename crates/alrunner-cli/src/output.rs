@@ -410,7 +410,7 @@ mod tests {
             "Tests: 2 total, 1 passed, 1 failed, 0 not run"
         );
         let refs: Vec<&TestResult> = rs.iter().collect();
-        let x = junit(&refs, None, 0.0);
+        let x = junit(&refs, None, 0.0, &|_, _| false);
         assert!(
             x.contains("name=\"T1\" time=\"0.000\"><properties><property name=\"assumptions\" value=\"guid-to-text,record-get-record-id\" /></properties></testcase>"),
             "{x}"
@@ -441,7 +441,7 @@ mod tests {
             r(2, "B", "T3", Outcome::NotRun("no & way".into())),
         ];
         let refs: Vec<&TestResult> = rs.iter().collect();
-        let x = junit(&refs, Some("27.5.1.2"), 1.5);
+        let x = junit(&refs, Some("27.5.1.2"), 1.5, &|_, _| false);
         assert!(
             x.contains("<testsuites tests=\"3\" failures=\"1\" errors=\"0\" skipped=\"1\" time=\"1.500\">"),
             "{x}"
@@ -465,7 +465,7 @@ mod tests {
         let mut c = r(1, "A", "T3", Outcome::NotRun("y".into()));
         c.time = std::time::Duration::ZERO;
         let refs = [&a, &b, &c];
-        let x = junit(&refs, None, 2.0);
+        let x = junit(&refs, None, 2.0, &|_, _| false);
         assert!(
             x.contains("<testcase classname=\"A\" name=\"T1\" time=\"1.250\" />"),
             "{x}"
@@ -486,7 +486,7 @@ mod tests {
             al_testrun::UNTRACKED_CALL_STACK
         );
         let refs = [&f];
-        let x = junit(&refs, None, 0.0);
+        let x = junit(&refs, None, 0.0, &|_, _| false);
         assert!(x.contains("<failure message=\"boom\">&quot;A&quot;(CodeUnit 1).Inner line 2&#10;(a frame whose format is not known)&#10;"), "{x}");
         assert!(x.contains("</failure>"), "{x}");
         assert!(!x.contains(al_testrun::UNTRACKED_CALL_STACK), "{x}");

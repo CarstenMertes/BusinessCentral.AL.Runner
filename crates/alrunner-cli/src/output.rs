@@ -397,7 +397,7 @@ mod tests {
     fn a_pass_that_ran_through_an_assumption_is_flagged_in_the_summary_and_junit_and_still_a_pass() {
         let mut flagged = r(1, "A", "T1", Outcome::Pass);
         flagged.assumptions = vec![
-            al_testrun::assumptions::Assumption::ClearAllKeepsTemporaryRows,
+            al_testrun::assumptions::Assumption::QueryClosedAfterLastRow,
             al_testrun::assumptions::Assumption::NextWholeDecimal,
         ];
         let rs = [
@@ -419,7 +419,7 @@ mod tests {
         let refs: Vec<&TestResult> = rs.iter().collect();
         let x = junit(&refs, None, 0.0, &|_, _| false, &[]);
         assert!(
-            x.contains("name=\"T1\" time=\"0.000\"><properties><property name=\"assumptions\" value=\"clear-all-keeps-temporary-rows,next-whole-decimal\" /></properties></testcase>"),
+            x.contains("name=\"T1\" time=\"0.000\"><properties><property name=\"assumptions\" value=\"query-closed-after-last-row,next-whole-decimal\" /></properties></testcase>"),
             "{x}"
         );
         assert!(x.contains("name=\"T2\" time=\"0.000\" />"), "{x}");

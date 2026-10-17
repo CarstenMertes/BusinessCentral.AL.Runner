@@ -219,7 +219,7 @@ report 60913 "STV Counting Report"
 }
 
 // A DataItemTableView that filters, next to a SetTableView (Whse.-Source - Create Document and its callers; about 800
-// Microsoft tests). Both apply (docs/probes-needed.md, registry entry data-item-view-and-table-view).
+// Microsoft tests). Both apply (report/lt-dataitem-view/DataItemTableView.al pins it).
 report 60914 "STW Filtered Report"
 {
     UsageCategory = ReportsAndAnalysis;
@@ -889,7 +889,7 @@ fn settableview_restricts_the_data_item_to_the_view() {
 }
 
 // The view of SetTableView and the report's own filtering DataItemTableView both apply: the rows are those that pass
-// both (assumed, registry entry data-item-view-and-table-view).
+// both (report/lt-dataitem-view/DataItemTableView.al pins it).
 #[test]
 fn settableview_and_a_filtering_dataitemtableview_both_apply() {
     assert_eq!(

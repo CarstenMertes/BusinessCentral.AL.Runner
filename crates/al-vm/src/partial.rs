@@ -147,16 +147,37 @@ impl Session {
         let engine = self.engine.clone();
         let schema = engine.program.objects[t.object as usize].table.as_ref();
         let stored = |p: usize| schema.is_some_and(|s| s.fields.get(p).is_some_and(|f| f.stored));
+        let flow_filter = |p: usize| schema.is_some_and(|s| s.fields.get(p).is_some_and(|f| f.flow_filter));
         match method {
             RecordOp::SetLoadFields | RecordOp::AddLoadFields => {
-                // A field that is not stored (a FlowField, as in Sales Line SetLoadFieldsForInvDiscoundCalculation)
-                // is accepted and adds nothing to the request: it is no column to load. Not pinned by the corpus.
+                // SetLoadFields takes a FlowField and adds nothing to the request for it; AddLoadFields refuses it with
+                // an error of code DB:Ok (record/lt-priority-assumptions/PriorityAssumptions.al:282-312 SetLoadFields,
+                // :303-338 AddLoadFields, real BC 29). The error is pinned for one FlowField as the only argument, after
+                // a SetLoadFields and without a request; a longer list is not pinned. A FlowFilter is not pinned.
                 let no_args = wanted.is_empty();
                 let mut wanted = wanted;
-                if wanted.iter().any(|&p| !stored(p)) {
-                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::LoadFieldsNonStored);
-                    wanted.retain(|&p| stored(p));
+                if let Some(&p) = wanted.iter().find(|&&p| flow_filter(p)) {
+                    return unsupported(format!(
+                        "SetLoadFields or AddLoadFields of field position {p}, a FlowFilter (only a FlowField is pinned)"
+                    ));
                 }
+                if method == RecordOp::AddLoadFields && wanted.iter().any(|&p| !stored(p)) {
+                    let p = wanted[0];
+                    if wanted.len() != 1 {
+                        return unsupported(
+                            "AddLoadFields with a FlowField among several fields (only a single argument is pinned)",
+                        );
+                    }
+                    let name = schema.and_then(|s| s.fields.get(p)).map_or("", |f| f.name.as_str());
+                    return al_builtins::native::raise(
+                        format!(
+                            "The field '{name}' in the '{}' table is not valid for auto loading and cannot be passed to calls to AddLoadFields, SetLoadFields, or LoadFields.",
+                            t.name
+                        ),
+                        "DB:Ok",
+                    );
+                }
+                wanted.retain(|&p| stored(p));
                 let mut r = rec.borrow_mut();
                 match (method, no_args) {
                     // No arguments: back to the default load set (record/TestRecordPartialLoad.al:61-99).
@@ -200,10 +221,21 @@ impl Session {
                 if wanted.is_empty() {
                     return unsupported("AreFieldsLoaded without fields");
                 }
-                if let Some(p) = wanted.iter().find(|&&p| !stored(p)) {
-                    return unsupported(format!(
-                        "AreFieldsLoaded of field position {p}, which is not a stored field"
-                    ));
+                if let Some(p) = wanted.iter().find(|&&p| !stored(p) && flow_filter(p)) {
+                    return unsupported(format!("AreFieldsLoaded of field position {p}, a FlowFilter"));
+                }
+                let flow = wanted.iter().any(|&p| !stored(p));
+                let wanted: Vec<usize> = wanted.into_iter().filter(|&p| stored(p)).collect();
+                // A FlowField reads as loaded on a record that fetched a partial request, whether or not it was requested
+                // (PriorityAssumptions.al:282-312 flow_only_cnt_loaded, mixed_cnt_loaded; :325-333 cnt_loaded). A record
+                // that fetched nothing or a whole row is not pinned for it.
+                if flow {
+                    let r = rec.borrow();
+                    if !r.load.buffer.as_ref().is_some_and(|b| !matches!(b.have, FieldSet::All)) {
+                        return unsupported(
+                            "AreFieldsLoaded of a FlowField on a record that holds no partial fetch (not pinned)",
+                        );
+                    }
                 }
                 let r = rec.borrow();
                 let Some(b) = &r.load.buffer else {

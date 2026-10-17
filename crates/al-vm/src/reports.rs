@@ -784,15 +784,8 @@ impl Session {
         // temporary, temporaryFiltered, markedOnly, markedNotOnly, keyQty, keyQtyDescending, descendingPrimary, keyQtyFiltered).
         // A view handed to SetTableView stays in force over a DataItemTableView that only sorts
         // (handlers/TestReportRuntimeContracts.al:393-410 "Probe Rep Order"). Over one that filters, both apply
-        // (the item's filters live in the report's own filter group): assumed, Whse.-Source - Create Document and its
-        // callers need it (registry entry data-item-view-and-table-view).
-        if item
-            .view
-            .as_ref()
-            .is_some_and(|v| v.to_ascii_lowercase().contains("where"))
-        {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DataItemViewAndTableView);
-        }
+        // (the item's filters live in the report's own filter group); GetFilters in OnPreDataItem shows only the SetTableView
+        // filter (report/lt-dataitem-view/DataItemTableView.al:117-205, real BC 29: F 1..2 view and F 2..3 given: count 1, row 2).
         let target = self.base_item_record(inst, item)?;
         let mut t = target.borrow_mut();
         let key = Rc::as_ptr(&target) as usize;

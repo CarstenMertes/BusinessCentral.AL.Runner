@@ -8,13 +8,13 @@ pass rate is measured against: every `<testcase>` in it passed on real BC.
 | Field | Value |
 |---|---|
 | Corpus repo | StefanMaron/BusinessCentral.AL.Language.Tests, branch `al-runtime-rs` |
-| Corpus pin | `381dcb7db2388db287e00945309a5330d44eff6b` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
+| Corpus pin | `e0472ba9f97f383945be4a8daf5f1fb89213f509` (the `corpus` submodule; must equal `corpus_commit` in `oracle.toml`) |
 
 | Major | Oracle leg | Corpus commit of the run | Workflow run | Artifact | Artifact id | Cases |
 |---|---|---|---|---|---|---|
-| 27 | 27.5 | `381dcb7` (the pin) | 39002622608 | `junit-test-results-27.5` | 12090368210 | 13404 |
-| 28 | 28.5 | `381dcb7` (the pin) | 39002622608 | `junit-test-results-28.5` | 12091570587 | 13423 (+26 `OnRun`) |
-| 29 | 29.0 | `381dcb7` (the pin) | 39002622608 | `junit-test-results-29.0` | 12090088995 | 13443 (+26 `OnRun`) |
+| 27 | 27.5 | `e0472ba` (the pin) | 39015678320 | `junit-test-results-27.5` | 12095282302 | 13661 |
+| 28 | 28.5 | `e0472ba` (the pin) | 39015678320 | `junit-test-results-28.5` | 12095092648 | 13687 (+26 `OnRun`) |
+| 29 | 29.0 | `e0472ba` (the pin) | 39015678320 | `junit-test-results-29.0` | 12095083802 | 13707 (+26 `OnRun`) |
 
 Every file has 0 failures. Each run published two artifacts with the same name; the
 oracle is the large one (the main suite, `junit-al-language.xml`). The small one is

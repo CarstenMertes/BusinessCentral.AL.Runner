@@ -37,10 +37,20 @@ fn is_must_not_compile(f: &Path) -> bool {
 /// Corpus files the parser does not handle yet. Each is a red corpus test waiting for a fix, not a
 /// pass: the runtime reports every case in such a file as not run (the file does not compile).
 /// An entry whose file now parses fails the test below, so the list only shrinks (ADR-007).
-const KNOWN_UNPARSED: &[(&str, &str)] = &[(
-    "events/lt-global-triggers-statements/P114WithStatement.al",
-    "the parser does not know the with statement (corpus bump 14)",
-)];
+const KNOWN_UNPARSED: &[(&str, &str)] = &[
+    (
+        "events/lt-global-triggers-statements/P114WithStatement.al",
+        "the parser does not know the with statement (corpus bump 14)",
+    ),
+    (
+        "events/lt-with-statement-scopes/WithStatementAmbiguous.al",
+        "the parser does not know the with statement (corpus bump 17)",
+    ),
+    (
+        "events/lt-with-statement-scopes/WithStatementNested.al",
+        "the parser does not know the with statement (corpus bump 17)",
+    ),
+];
 
 #[test]
 fn every_corpus_file_parses_without_errors_and_round_trips() {

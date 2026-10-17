@@ -672,6 +672,10 @@ impl Session {
                 match page_of(&engine, st).controls[idx].prop(name) {
                     // ShowMandatory is true when the page says nothing (handlers/TestProbePageHandlerContracts.al:
                     // TestPage_Members_ShowMandatoryHideValue_Defaults); HideValue is false.
+                    // A label shows no mandatory mark (misc/lt-probes-needed-7/PnGControlKinds.al:LabelValueAndCaption `label-mandatory = No`).
+                    None if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Caption) => {
+                        Ok(Value::Boolean(false))
+                    }
                     None => Ok(Value::Boolean(m == PageMethod::ShowMandatory)),
                     Some(ir::PropVal::Lit(l)) => Ok(Value::Boolean(unquote(l).eq_ignore_ascii_case("true"))),
                     Some(_) => unsupported(format!("TestField.{m} of a computed property")),

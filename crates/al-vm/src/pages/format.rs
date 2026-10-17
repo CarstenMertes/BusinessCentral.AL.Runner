@@ -504,6 +504,18 @@ impl Session {
             }
             cue = page_of(&engine, st).controls[p].parent;
         }
+        // ModifyAllowed = false makes the fields of a stored row read-only (pages/lt-page-autoformat-lookups/P113ModifyAllowed.al:
+        // P113_MA_CardEditable: the page is editable, its controls are not; a new row, which can be inserted, is).
+        if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Field(_))
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && engine.program.objects[st.borrow().object as usize]
+                .properties
+                .iter()
+                .any(|(k, v)| k.eq_ignore_ascii_case("ModifyAllowed") && v.trim().eq_ignore_ascii_case("false"))
+        {
+            return Ok(false);
+        }
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }
 

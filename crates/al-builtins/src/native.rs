@@ -980,9 +980,7 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
 #[inline(never)]
 fn abs_other(v: &Value) -> Result<Value, Signal> {
     match v {
-        Value::Duration(ms) => {
-            Ok(Value::BigInteger(ms.abs()))
-        }
+        Value::Duration(ms) => Ok(Value::BigInteger(ms.abs())),
         other => unsupported(&format!("Abs of {}", other.describe())),
     }
 }

@@ -123,21 +123,20 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Option(o, _), T::Integer) => Value::Integer(o),
         (Value::Integer(n), T::Duration) => Value::Duration(i64::from(n)),
         (Value::BigInteger(n), T::Duration) => Value::Duration(n),
-        // A Duration into an Integer, BigInteger or Decimal is its milliseconds (the reverse of a whole number into a
-        // Duration, pinned by record/TestCalcFormulaValidationTests.Codeunit.al:42). Calendar Management CalcTimeDelta
-        // does `Result := EndingTime - StartingTime` (Time - Time is a Duration) into an Integer. Not pinned.
-        (Value::Duration(ms), T::Integer) if i32::try_from(ms).is_ok() => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
-            Value::Integer(i32::try_from(ms).expect("checked"))
-        }
-        (Value::Duration(ms), T::BigInteger) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
-            Value::BigInteger(ms)
-        }
-        (Value::Duration(ms), T::Decimal) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationToNumber);
-            Value::Decimal(Decimal::from(ms))
-        }
+        // A Duration into an Integer, BigInteger or Decimal is its milliseconds; into an Integer a value beyond its range raises
+        // ConversionCast (types/lt-filter-enum-relation-duration-guid/D_Duration.al:DateTimeMinusDateTime_To_Integer,
+        // Duration_To_BigInteger_Decimal).
+        (Value::Duration(ms), T::Integer) => match i32::try_from(ms) {
+            Ok(i) => Value::Integer(i),
+            Err(_) => {
+                return raise(
+                    format!("Overflow under conversion of System.Int64 value {ms} to System.Int32."),
+                    "ConversionCast",
+                );
+            }
+        },
+        (Value::Duration(ms), T::BigInteger) => Value::BigInteger(ms),
+        (Value::Duration(ms), T::Decimal) => Value::Decimal(Decimal::from(ms)),
         (Value::Integer(i), T::Option(m)) => Value::Option(i, m.clone().into()),
         // A Duration is a count of milliseconds.
         (v, T::Duration) if as_decimal(&v).is_some() && !matches!(v, Value::Text(_) | Value::Code(_)) => {

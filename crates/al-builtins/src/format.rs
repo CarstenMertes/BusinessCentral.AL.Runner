@@ -346,31 +346,39 @@ pub(crate) fn pad(s: String, length: i32) -> String {
     }
 }
 
+/// The error of a Decimal outside +-999,999,999,999,999.99 (misc/lt-system-functions/RandomFormat.al:Format_Decimal `af191`, `af193`;
+/// a Duration converted into a Decimal: types/lt-filter-enum-relation-duration-guid/D_Duration.al:Duration_To_Integer_BeyondRange `af126`).
+pub(crate) fn decimal_range_error(d: &rust_decimal::Decimal) -> Option<FormatFail> {
+    if d.abs() <= rust_decimal::Decimal::new(99_999_999_999_999_999, 2) {
+        return None;
+    }
+    // The shown value keeps 18 significant digits (types/lt-scalars/ScT70058.al:Decimal_Digits `af83`).
+    let kept = d
+        .round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+        .unwrap_or(*d);
+    let whole = kept.round().to_string();
+    let (sign, digits) = whole.strip_prefix('-').map_or(("", whole.as_str()), |r| ("-", r));
+    let mut grouped = String::new();
+    for (i, c) in digits.chars().enumerate() {
+        if i > 0 && (digits.len() - i) % 3 == 0 {
+            grouped.push(',');
+        }
+        grouped.push(c);
+    }
+    Some(FormatFail::Error {
+        message: format!(
+            "The value of Decimal parameter  is outside of the permitted range. The current value is: {sign}{grouped}. The permitted range is: from -999,999,999,999,999.99 to 999,999,999,999,999.99."
+        ),
+        code: "OutsidePermittedRange".into(),
+    })
+}
+
 /// Format 0 groups thousands (`1,234,567.891`); formats 1, 2 and 9 do not
 /// (types/TestFormatEvaluateTextContracts.al:Format_Decimal_StandardFormats). Trailing zeros of the
 /// decimals are not printed. The other numbers are not pinned.
 fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, FormatFail> {
-    // A Decimal outside +-999,999,999,999,999.99 raises (misc/lt-system-functions/RandomFormat.al:Format_Decimal `af191`, `af193`).
-    if d.abs() > rust_decimal::Decimal::new(99_999_999_999_999_999, 2) {
-        // The shown value keeps 18 significant digits (types/lt-scalars/ScT70058.al:Decimal_Digits `af83`).
-        let kept = d
-            .round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
-            .unwrap_or(*d);
-        let whole = kept.round().to_string();
-        let (sign, digits) = whole.strip_prefix('-').map_or(("", whole.as_str()), |r| ("-", r));
-        let mut grouped = String::new();
-        for (i, c) in digits.chars().enumerate() {
-            if i > 0 && (digits.len() - i) % 3 == 0 {
-                grouped.push(',');
-            }
-            grouped.push(c);
-        }
-        return Err(FormatFail::Error {
-            message: format!(
-                "The value of Decimal parameter  is outside of the permitted range. The current value is: {sign}{grouped}. The permitted range is: from -999,999,999,999,999.99 to 999,999,999,999,999.99."
-            ),
-            code: "OutsidePermittedRange".into(),
-        });
+    if let Some(e) = decimal_range_error(d) {
+        return Err(e);
     }
     // A Decimal keeps 18 significant digits: 123456789012345.123456 shows as 123456789012345.123 (types/lt-scalars/ScT70050.al:
     // FormatNumbers_Large).
@@ -620,6 +628,13 @@ fn duration_format(ms: i64, codes: bool) -> String {
 }
 
 fn format_duration(ms: i64, standard: i32) -> Result<String, FormatFail> {
+    // A Duration beyond what a .NET TimeSpan holds (ticks of 100 ns in an Int64) raises (D_Duration.al:Duration_To_Integer_BeyondRange `af128`).
+    if ms.unsigned_abs() > (i64::MAX / 10_000) as u64 {
+        return Err(FormatFail::Error {
+            message: "Arithmetic operation resulted in an overflow.".into(),
+            code: "AL:Overflow".into(),
+        });
+    }
     match standard {
         0 | 1 => Ok(duration_format(ms, false)),
         2 => Ok(duration_format(ms, true)),

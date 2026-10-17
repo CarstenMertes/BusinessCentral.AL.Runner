@@ -264,7 +264,11 @@ fn both(pair: &mut Pair, script: &dyn Fn(&mut Run)) -> BTreeSet<String> {
     let (x, y) = (bare.seen.clone(), mine.seen.clone());
     pair.bare = Some(bare.session);
     pair.mine = Some(mine.session);
-    assert_eq!(x.len(), y.len(), "number of observations");
+    assert_eq!(
+        x.len(),
+        y.len(),
+        "number of observations\nsidecar: {x:?}\nin proc: {y:?}"
+    );
     for (k, (x, y)) in x.iter().zip(&y).enumerate() {
         assert_eq!(x, y, "observation {k}\nsidecar : {x}\nin proc : {y}");
     }
@@ -711,6 +715,9 @@ fn the_stand_ins_answer_what_the_sidecar_answers() {
         let _ = r.inst("System.Text.Encoding.GetBytes", &e, "GetBytes", vec![s("é")]);
     }));
 
+    // ---- TimeZoneInfo and DateTimeOffset (ADR-038 amendment 2026-10-17) ----
+    covered.extend(time_zone_checks(&mut pair));
+
     // ---- the list of members equals what was covered ----
     let listed: BTreeSet<String> = MEMBERS
         .lines()
@@ -742,4 +749,285 @@ fn base64(b: &[u8]) -> String {
         out.push(if c.len() > 2 { T[n as usize & 63] as char } else { '=' });
     }
     out
+}
+
+const MAX_TICKS: i64 = 3_155_378_975_999_999_999;
+const MINUTE: i64 = 600_000_000;
+const HOUR: i64 = 36_000_000_000;
+const DAY: i64 = 24 * HOUR;
+
+fn dt(t: i64) -> DotNetArg {
+    a(DotNetValue::DateTime(t))
+}
+
+fn ts(t: i64) -> DotNetArg {
+    a(DotNetValue::TimeSpan(t))
+}
+
+/// Ticks of a calendar hour (proleptic Gregorian; 0001-01-01 is 0).
+fn ticks_of(y: i64, m: i64, d: i64, h: i64) -> i64 {
+    let y = if m <= 2 { y - 1 } else { y };
+    let era = y.div_euclid(400);
+    let yoe = y - era * 400;
+    let doy = (153 * (if m > 2 { m - 3 } else { m + 9 }) + 2) / 5 + d - 1;
+    let doe = yoe * 365 + yoe / 4 - yoe / 100 + doy;
+    let days_since_1970 = era * 146_097 + doe - 719_468;
+    (days_since_1970 + 719_162) * DAY + h * HOUR
+}
+
+fn time_zone_checks(pair: &mut Pair) -> BTreeSet<String> {
+    let mut covered = BTreeSet::new();
+    let mut rng = Rng(0xD1B5_4A32_D192_ED03);
+
+    // Ticks: the ends, leap days, DST switch days of several zones, random ones.
+    let mut ticks: Vec<i64> = vec![
+        0,
+        1,
+        MINUTE,
+        DAY,
+        MAX_TICKS,
+        MAX_TICKS - 1,
+        MAX_TICKS - DAY,
+        MAX_TICKS - 14 * HOUR,
+        14 * HOUR,
+        14 * HOUR - 1,
+        14 * HOUR + 1,
+    ];
+    for (y, m, d) in [
+        (2000, 2, 29),
+        (2024, 2, 29),
+        (1900, 2, 28),
+        (2100, 3, 1),
+        (2024, 3, 10),
+        (2024, 11, 3),
+        (2024, 3, 31),
+        (2024, 10, 27),
+        (2024, 4, 7),
+        (2024, 10, 6),
+        (1970, 1, 1),
+        (1582, 10, 15),
+        (9999, 12, 31),
+    ] {
+        for h in [0, 1, 2, 3, 12, 23] {
+            ticks.push(ticks_of(y, m, d, h));
+        }
+    }
+    ticks.extend((0..30).map(|_| (rng.next() % (MAX_TICKS as u64)) as i64));
+
+    // DateTimeOffset(DateTime): every member on each tick.
+    for &t in &ticks {
+        covered.extend(both(pair, &|r| {
+            let Some(o) = r.construct("System.DateTimeOffset..ctor", "System.DateTimeOffset", vec![dt(t)]) else {
+                return;
+            };
+            let me = DotNetTarget::Instance(o.0);
+            r.get("System.DateTimeOffset.Offset", me.clone(), "Offset");
+            r.get("System.DateTimeOffset.LocalDateTime", me.clone(), "LocalDateTime");
+            r.get("System.DateTimeOffset.DateTime", me.clone(), "DateTime");
+            if let Some(l) = r.inst("System.DateTimeOffset.ToLocalTime", &o, "ToLocalTime", vec![]) {
+                r.get("System.DateTimeOffset.Offset", DotNetTarget::Instance(l.0), "Offset");
+                r.get(
+                    "System.DateTimeOffset.DateTime",
+                    DotNetTarget::Instance(l.0),
+                    "DateTime",
+                );
+            }
+        }));
+    }
+    // DateTimeOffset(Int64, TimeSpan): valid and invalid offsets, ticks near both ends.
+    let offsets = [
+        0,
+        HOUR,
+        -HOUR,
+        14 * HOUR,
+        -14 * HOUR,
+        14 * HOUR + MINUTE,
+        -14 * HOUR - MINUTE,
+        5 * HOUR + 30 * MINUTE,
+        -(9 * HOUR + 30 * MINUTE),
+        5 * HOUR + 45 * MINUTE,
+        12 * HOUR + 45 * MINUTE,
+        10_000_000,
+        MINUTE + 1,
+        MINUTE - 1,
+        i64::MAX,
+        i64::MIN,
+    ];
+    for &t in ticks.iter().take(40) {
+        for &o in &offsets {
+            covered.extend(both(pair, &|r| {
+                let Some(d) = r.construct(
+                    "System.DateTimeOffset..ctor",
+                    "System.DateTimeOffset",
+                    vec![a(DotNetValue::Int64(t)), ts(o)],
+                ) else {
+                    return;
+                };
+                let me = DotNetTarget::Instance(d.0);
+                r.get("System.DateTimeOffset.Offset", me.clone(), "Offset");
+                r.get("System.DateTimeOffset.LocalDateTime", me.clone(), "LocalDateTime");
+                r.get("System.DateTimeOffset.DateTime", me.clone(), "DateTime");
+                r.inst("System.DateTimeOffset.ToLocalTime", &d, "ToLocalTime", vec![]);
+            }));
+        }
+    }
+    // A value that is not a DateTime for the constructor goes to the sidecar and fails the same way.
+    covered.extend(both(pair, &|r| {
+        r.construct("System.DateTimeOffset..ctor", "System.DateTimeOffset", vec![i(5)]);
+        r.construct("System.DateTimeOffset..ctor", "System.DateTimeOffset", vec![]);
+    }));
+
+    // TimeZoneInfo: every Windows id of the table, UTC, and ids the stand-in must not take.
+    let mut ids: Vec<String> = al_host::windows_zones::WINDOWS_ZONES
+        .iter()
+        .map(|(w, _)| w.to_string())
+        .collect();
+    ids.extend(
+        [
+            "UTC",
+            "Etc/UTC",
+            "Europe/Berlin",
+            "utc",
+            "w. europe standard time",
+            "W. Europe Standard Time ",
+            "",
+            "Nowhere Standard Time",
+            "Greenwich Standard Time",
+            "Mexico Standard Time",
+            "Turkey Standard Time",
+            "Kaliningrad Standard Time",
+            "Russian Standard Time",
+            "Iran Standard Time",
+            "Nepal Standard Time",
+            "Chatham Islands Standard Time",
+            "Line Islands Standard Time",
+            "Samoa Standard Time",
+            "Morocco Standard Time",
+            "Sudan Standard Time",
+            "Eastern Standard Time",
+            "China Standard Time",
+        ]
+        .map(String::from),
+    );
+    for id in &ids {
+        covered.extend(both(pair, &|r| {
+            r.seen.push(format!("zone id {id:?}"));
+            let Some(z) = r.invoke(
+                "System.TimeZoneInfo.FindSystemTimeZoneById",
+                st("System.TimeZoneInfo"),
+                "FindSystemTimeZoneById",
+                vec![s(id)],
+            ) else {
+                return;
+            };
+            r.get(
+                "System.TimeZoneInfo.BaseUtcOffset",
+                DotNetTarget::Instance(z.0),
+                "BaseUtcOffset",
+            );
+        }));
+    }
+
+    // Mixing: objects made in process move to the sidecar when a member outside the set is called.
+    for id in [
+        "UTC",
+        "W. Europe Standard Time",
+        "India Standard Time",
+        "Pacific Standard Time",
+    ] {
+        for t in [
+            ticks_of(2024, 3, 31, 1),
+            ticks_of(2024, 11, 3, 8),
+            ticks_of(2024, 7, 1, 12),
+            0,
+            MAX_TICKS,
+        ] {
+            covered.extend(both(pair, &|r| {
+                let z = r.invoke(
+                    "System.TimeZoneInfo.FindSystemTimeZoneById",
+                    st("System.TimeZoneInfo"),
+                    "FindSystemTimeZoneById",
+                    vec![s(id)],
+                );
+                let z2 = r.invoke(
+                    "System.TimeZoneInfo.FindSystemTimeZoneById",
+                    st("System.TimeZoneInfo"),
+                    "FindSystemTimeZoneById",
+                    vec![s(id)],
+                );
+                let d = r.construct("System.DateTimeOffset..ctor", "System.DateTimeOffset", vec![dt(t)]);
+                let (Some(z), Some(z2), Some(d)) = (z, z2, d) else {
+                    return;
+                };
+                let zt = DotNetTarget::Instance(z.0);
+                // Members outside the set, on a moved object.
+                r.invoke(
+                    "(sidecar) TimeZoneInfo.GetUtcOffset",
+                    zt.clone(),
+                    "GetUtcOffset",
+                    vec![dt(t)],
+                );
+                r.invoke(
+                    "(sidecar) TimeZoneInfo.IsDaylightSavingTime",
+                    zt.clone(),
+                    "IsDaylightSavingTime",
+                    vec![dt(t)],
+                );
+                r.get(
+                    "(sidecar) TimeZoneInfo.SupportsDaylightSavingTime",
+                    zt.clone(),
+                    "SupportsDaylightSavingTime",
+                );
+                r.get("(sidecar) TimeZoneInfo.Id", zt.clone(), "Id");
+                // The second handle on the same id is the same object.
+                r.invoke(
+                    "(sidecar) Object.ReferenceEquals",
+                    st("System.Object"),
+                    "ReferenceEquals",
+                    vec![h(z.0, &z.1), h(z2.0, &z2.1)],
+                );
+                // Two moved objects in one sidecar call.
+                r.invoke(
+                    "(sidecar) TimeZoneInfo.ConvertTime",
+                    st("System.TimeZoneInfo"),
+                    "ConvertTime",
+                    vec![h(d.0, &d.1), h(z.0, &z.1)],
+                );
+                let dto = DotNetTarget::Instance(d.0);
+                r.invoke(
+                    "(sidecar) DateTimeOffset.ToString",
+                    dto.clone(),
+                    "ToString",
+                    vec![s("o")],
+                );
+                r.invoke(
+                    "(sidecar) DateTimeOffset.ToUnixTimeSeconds",
+                    dto.clone(),
+                    "ToUnixTimeSeconds",
+                    vec![],
+                );
+                r.get("(sidecar) DateTimeOffset.UtcDateTime", dto.clone(), "UtcDateTime");
+                // Still the same object afterwards.
+                r.get("System.DateTimeOffset.LocalDateTime", dto, "LocalDateTime");
+                r.get("System.TimeZoneInfo.BaseUtcOffset", zt, "BaseUtcOffset");
+            }));
+        }
+    }
+    // A sidecar-made DateTimeOffset stays in the sidecar and still answers the members of the set.
+    covered.extend(both(pair, &|r| {
+        let Some(p) = r.invoke(
+            "(sidecar) DateTimeOffset.Parse",
+            st("System.DateTimeOffset"),
+            "Parse",
+            vec![s("2024-03-31T01:30:00+05:30")],
+        ) else {
+            return;
+        };
+        let me = DotNetTarget::Instance(p.0);
+        r.get("System.DateTimeOffset.Offset", me.clone(), "Offset");
+        r.get("System.DateTimeOffset.LocalDateTime", me.clone(), "LocalDateTime");
+        r.get("System.DateTimeOffset.DateTime", me, "DateTime");
+        r.inst("System.DateTimeOffset.ToLocalTime", &p, "ToLocalTime", vec![]);
+    }));
+    covered
 }

@@ -183,10 +183,25 @@ fn a_run_reports_pass_fail_and_not_run_and_exits_1_on_a_failure() {
     let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--verbose"]);
     let t = text(&o);
     assert_eq!(code(&o), 1, "{t}");
-    assert!(t.contains("PASS    50100 Mixed Tests.Passes"), "{t}");
-    assert!(t.contains("PASS    50101 Other Tests.AlsoPasses"), "{t}");
-    assert!(t.contains("FAIL    50100 Mixed Tests.Fails: boom 5"), "{t}");
-    assert!(t.contains("NOT RUN 50100 Mixed Tests.Refused: "), "{t}");
+    // Each line: the label, the run time in ms with three decimals, then the test.
+    let line = |label: &str, rest: &str| {
+        t.lines().any(|l| {
+            l.strip_prefix(label).is_some_and(|r| {
+                let r = r.trim_start();
+                r.split_once(" ms ").is_some_and(|(n, tail)| {
+                    n.trim().parse::<f64>().is_ok()
+                        && n.trim().split('.').nth(1).is_some_and(|f| f.len() == 3)
+                        && tail.starts_with(rest)
+                })
+            })
+        })
+    };
+    assert!(line("PASS", "50100 Mixed Tests.Passes"), "{t}");
+    assert!(line("PASS", "50101 Other Tests.AlsoPasses"), "{t}");
+    assert!(line("FAIL", "50100 Mixed Tests.Fails: boom 5"), "{t}");
+    assert!(line("NOT RUN", "50100 Mixed Tests.Refused: "), "{t}");
+    assert!(!t.contains('\x1b'), "piped output is plain: {t}");
+    assert!(t.contains("  passed "), "the summary table: {t}");
     assert!(t.contains("Tests: 4 total, 2 passed, 1 failed, 1 not run"), "{t}");
     // The summary says failures are not to be trusted without test data.
     assert!(t.contains("no test data"), "{t}");
@@ -194,6 +209,44 @@ fn a_run_reports_pass_fail_and_not_run_and_exits_1_on_a_failure() {
     assert!(!t.contains("Top failures"), "failures are ranked only on request: {t}");
     assert!(t.contains("Result: FAILED (exit 1)"), "{t}");
     assert!(t.contains("threads: check 2 (AL_CHECK_THREADS)"), "{t}");
+    assert!(t.contains("Time: load "), "{t}");
+}
+
+#[test]
+fn the_default_output_leaves_setup_details_to_verbose() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download"]);
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    assert!(t.starts_with("alrunner "), "the version line comes first: {t}");
+    for kept in [
+        "FAIL    50100 Mixed Tests.Fails: boom 5",
+        "Top refusals",
+        "Tests: 4 total",
+        "Result: FAILED (exit 1)",
+    ] {
+        assert!(t.contains(kept), "{kept}: {t}");
+    }
+    for hidden in [
+        "target: BC",
+        "app: ",
+        "build chosen by:",
+        "dependencies: ",
+        "threads: ",
+        "isolation: ",
+        "server address:",
+        "Time: ",
+        "dependency note",
+        "baseline: ",
+    ] {
+        assert!(!t.contains(hidden), "{hidden} belongs to --verbose: {t}");
+    }
+    assert!(!t.contains("PASS    "), "one line per passing test is --verbose: {t}");
+    let o = alrunner(&["test", app.to_str().unwrap(), "--no-download", "--quiet"]);
+    let t = text(&o);
+    assert!(!t.contains("threads: ") && !t.contains("Time: "), "{t}");
+    assert!(t.contains("Tests: 4 total"), "{t}");
 }
 
 #[test]
@@ -396,6 +449,7 @@ fn a_source_archive_runs_with_its_dependency_given_by_dep() {
         "--dep",
         lib.to_str().unwrap(),
         "--no-download",
+        "--verbose",
     ]);
     let t = text(&o);
     assert_eq!(code(&o), 0, "{t}");
@@ -508,6 +562,7 @@ fn test_data_restores_a_company_from_a_backup_and_the_summary_says_what_was_load
         "test",
         dir.to_str().unwrap(),
         "--no-download",
+        "--verbose",
         "--test-data",
         bak.to_str().unwrap(),
         "--test-data-company",
@@ -1071,6 +1126,7 @@ fn server_url_is_checked_printed_and_taken_from_the_variable() {
         "test",
         a,
         "--no-download",
+        "--verbose",
         "--server-url",
         "https://bc.example:7048/BC1/",
     ]);
@@ -1079,7 +1135,7 @@ fn server_url_is_checked_printed_and_taken_from_the_variable() {
         "{}",
         text(&o)
     );
-    let o = alrunner(&["test", a, "--no-download"]);
+    let o = alrunner(&["test", a, "--no-download", "--verbose"]);
     assert!(
         text(&o).contains("server address: http://localhost:8080/BC/ (default)"),
         "{}",
@@ -1087,7 +1143,7 @@ fn server_url_is_checked_printed_and_taken_from_the_variable() {
     );
     let o = std::process::Command::new(env!("CARGO_BIN_EXE_alrunner"))
         .env("ALRUNNER_SERVER_URL", "http://env.example/BC/")
-        .args(["test", a, "--no-download"])
+        .args(["test", a, "--no-download", "--verbose"])
         .output()
         .unwrap();
     assert!(
@@ -1095,4 +1151,43 @@ fn server_url_is_checked_printed_and_taken_from_the_variable() {
         "{}",
         text(&o)
     );
+}
+
+#[test]
+fn color_always_paints_the_labels_and_never_or_no_color_keeps_them_plain() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let a = app.to_str().unwrap();
+    let t = text(&alrunner(&[
+        "test",
+        a,
+        "--no-download",
+        "--verbose",
+        "--color",
+        "always",
+    ]));
+    assert!(t.contains("\x1b[32mPASS"), "{t}");
+    assert!(t.contains("\x1b[31mFAIL"), "{t}");
+    assert!(t.contains("\x1b[33mNOT RUN"), "{t}");
+    assert!(t.contains("\x1b[1m"), "headings are bold: {t}");
+    let t = text(&alrunner(&["test", a, "--no-download", "--color", "never"]));
+    assert!(!t.contains('\x1b'), "{t}");
+    let o = std::process::Command::new(env!("CARGO_BIN_EXE_alrunner"))
+        .env("NO_COLOR", "1")
+        .args(["test", a, "--no-download"])
+        .output()
+        .unwrap();
+    assert!(!text(&o).contains('\x1b'));
+    // A JUnit file is plain even with --color always.
+    let xml = d.path().join("r.xml");
+    alrunner(&[
+        "test",
+        a,
+        "--no-download",
+        "--color",
+        "always",
+        "--junit",
+        xml.to_str().unwrap(),
+    ]);
+    assert!(!std::fs::read_to_string(&xml).unwrap().contains('\x1b'));
 }

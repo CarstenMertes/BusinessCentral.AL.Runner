@@ -19,6 +19,8 @@ pub mod dotnet;
 pub mod inproc;
 pub mod random;
 pub mod testdata;
+pub mod tz;
+pub mod windows_zones;
 
 /// The wall clock.
 pub trait Clock {

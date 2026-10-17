@@ -99,3 +99,65 @@ test `crates/al-vm/tests/store/relation_where_enum_filter.rs`).
 
 How the data rows above were proven: `bcdb tables BusinessCentral-W1.bak` lists the page count of every table of the
 company; the tables above have 0 pages, and a scratch test that counts the rows through the runtime agrees.
+
+## Package company against backup company (`--company-data package`, BC 27.5, branch package-failures-1)
+
+The package company is built from `NAV27.5.W1.ENU.EXTENDED.rapidstart` (the DemoTool's Legacy data, as Microsoft's Legacy
+lane uses it). Per test, against the backup company, on Tests-SMB, Tests-Misc and Tests-ERM.
+
+### Reader defects found and fixed (class b)
+
+Together these were most of the extra failures of the first package run (SMB 327 passed against 542 for the backup).
+
+1. **Hyphen in a field name.** The package writes `-` as `_` (`Unit_AmountRoundingPrecision`, `Bill_toName`,
+   `Asm_to_OrderShptBinCode`) and drops every other punctuation character. The reader dropped the hyphen too, so every
+   field with a hyphen in its name (all Sell-to, Bill-to, Ship-to, Pay-to, Buy-from, Unit-Amount, Over-Receipt, ... columns)
+   was left out of the company. Symptom: `The value of ROUND parameter 2 is outside of the permitted range` from
+   `Unit-Amount Rounding Precision` = 0, and `Validation error for Field: No.`. `al-rapidstart` `element_name`.
+2. **`<DimensionsasColumns>` is a table flag.** Three tables (Customer among them) carry it beside `TableID`. It was read
+   as a record with no fields, which became a row with a blank key (a Customer with `No.` = ''). Symptom: `The record in
+   table Customer already exists. ... No.=''` on every `Customer.Insert()` that takes its number from the series.
+3. **AutoIncrement fields the package does not hold.** `Dimension Value."Dimension Value ID"` is not in the package. The
+   database numbers rows it inserts, so the rows get 1, 2, 3 in package order (registry entry
+   `package-auto-increment-from-one`, flagged passes; no probe can measure it, it rests on the import tool).
+   Symptom: `Dimension Value ID must have a value in Dimension Set Entry` (Sales-Calc. Discount Test, ERM Sales Quotes).
+
+### Real differences of the package (class a)
+
+Microsoft disables most tests that need these on the Legacy lane (`src/DisabledTests`, shown as `(DIS)` in the comparison).
+
+- **Trial Balance Setup** is not in the package. Company-Initialize inserts an empty row; the backup's row names a row and a
+  column definition. O365 Trial Balance: `Row Definition must have a value in Trial Balance Setup` (4 tests, all disabled by Microsoft).
+- **No ledger entries or documents.** The package holds no G/L, customer, vendor or item ledger entries and no sales or
+  purchase documents. Tests that count them fail: Normal DemoData and RS Pack Content - Evaluation (CountSalesDocuments,
+  PostSalesInvoices, CountContacts, ...), Analysis View Table-UT, Test Suppress Commit in Post, ERM Source Currency. All
+  disabled by Microsoft except Normal DemoData.CountContacts, which passes in the backup company only.
+- **Country/Region** lacks codes the tests ask for (`The Country/Region does not exist`): 35 ERM Financial Reports III and PEPPOL tests, disabled by Microsoft.
+- **Currency Exchange Rate** rows for some currencies are missing or differ (ERM Exch. Rate Adjmt. Apply and others, disabled).
+- **G/L Account Category** is not in the package, but the package's G/L accounts name subcategory numbers. The install
+  code (`InitializeAccountCategories`) therefore resets all 287 to 0, and `GL Acct. Categories Page Tests.TestCannotDeleteUsedGLAccountCategory`
+  finds no account with a category. Not disabled by Microsoft; it fails in the package company.
+- **The first G/L account with Direct Posting and no subcategory** is a purchase-type account, so
+  `O365 Activites Tests.CalcAverageCollectionDays` posts a payment with `Bal. Gen. Posting Type` Purchase
+  (`Account Type Customer and Bal. Gen. Posting Type Purchase is not allowed`). Data difference of the account list.
+- **Item Journal Line** holds one row with a blank key in the package. A test that inserts a blank-key line meets a
+  duplicate key (`ItemTemplateChangeServiceTypeItemJnlLine`); the runtime refuses the deferred duplicate-key insert (class c, below).
+
+### Runtime gaps the backup hides (class c, not fixed: unpinned)
+
+- `TextBuilder.Append` of a Variant that holds a Date, Decimal or DateTime (Assert.RecordCount builds its error text with
+  `RecRef.FieldIndex(i).Value()`). Refused as `text argument 0 of type an undefined Date`. The assertion only fails when the
+  record count differs, so the backup company never reaches it. 20 tests of RS Pack Content - Standard/Evaluation are not run because of the refusal.
+- Duplicate-key Insert into a table with an insert trigger (Vendor, Item Journal Line) is refused ("whether it runs is not pinned").
+
+### Result (package company, BC 27.5)
+
+Passed / failed / not run. The backup company is the reference.
+
+| Bucket | Package before | Package after | Backup |
+|---|---|---|---|
+| Tests-SMB | 327 / 48 / 655 | 542 / 19 / 469 | 542 / 15 / 473 |
+| Tests-Misc | 1403 / 181 / 1661 | 1620 / 82 / 1543 | 1603 / 108 / 1534 |
+| Tests-ERM | 3259 / 543 / 5531 | 5922 / 121 / 3290 | 5846 / 85 / 3402 |
+
+(SMB before ran with a 3 s test time limit; the others with the default 20 s.)

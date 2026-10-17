@@ -24,6 +24,7 @@ const RUN_TESTS_FIELDS: &[&str] = &[
     "captureValues",
     "iterationTracking",
     "announceStart",
+    "serverUrl",
 ];
 /// The request fields of `execute`.
 const EXECUTE_FIELDS: &[&str] = &[
@@ -243,6 +244,13 @@ fn request_args(base: &TestArgs, fields: &Map<String, Value>) -> Result<(TestArg
         values: flag(fields, "captureValues")?,
         loops: flag(fields, "iterationTracking")?,
     };
+    if let Some(u) = fields
+        .get("serverUrl")
+        .and_then(Value::as_str)
+        .filter(|u| !u.is_empty())
+    {
+        a.server_url = Some(al_host::check_server_url(u).map_err(|e| format!("`serverUrl`: {e}"))?);
+    }
     a.quiet = true;
     Ok((a, warnings))
 }
@@ -587,6 +595,24 @@ mod tests {
         ] {
             assert!(!is_object_declaration(statements), "{statements}");
         }
+    }
+
+    #[test]
+    fn a_request_may_set_the_server_address_and_a_bad_one_is_an_error() {
+        let (a, _) = request_args(
+            &base(),
+            &fields(json!({"command": "runTests", "sourcePaths": ["/a"], "serverUrl": "https://bc.example/BC/"})),
+        )
+        .unwrap();
+        assert_eq!(a.server_url.as_deref(), Some("https://bc.example/BC/"));
+        let e = request_args(
+            &base(),
+            &fields(json!({"command": "runTests", "sourcePaths": ["/a"], "serverUrl": "nope"})),
+        )
+        .unwrap_err();
+        assert!(e.contains("serverUrl"), "{e}");
+        let (a, _) = request_args(&base(), &fields(json!({"command": "runTests", "sourcePaths": ["/a"]}))).unwrap();
+        assert!(a.server_url.is_none());
     }
 
     #[test]

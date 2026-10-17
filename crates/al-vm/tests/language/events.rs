@@ -1512,6 +1512,36 @@ fn a_temporary_record_raises_no_database_event() {
     assert!(real.contains("ONDATABASEINSERT:5"), "{log}");
 }
 
+// UNPROBED (docs/probes-needed.md, "Database trigger setup across a change of company"): Microsoft's setup subscribers
+// (Change Log Management, CRM Integration Management) answer differently when CompanyName() is empty, and Microsoft's
+// per-database install code runs on real BC, so the answer asked in one company is not reused in another.
+#[test]
+fn the_database_trigger_setup_is_asked_again_when_the_company_changes() {
+    let mut src = global_triggers_src(
+        0,
+        true,
+        r#"procedure Ins(No: Integer): Text var R: Record Watched; L: Codeunit Logger; begin L.Clear(); R."No." := No; R.Insert(true); exit(L.Get()); end;"#,
+    );
+    // The setup of Watched depends on the company, as Change Log Management's does.
+    src = src.replace("OnDatabaseInsert := true;", "OnDatabaseInsert := CompanyName() <> '';");
+    // A per-database table can be written with no company chosen, as an install root does.
+    src = src.replace(
+        "table 50301 Watched\n{",
+        "table 50301 Watched\n{\n    DataPerCompany = false;",
+    );
+    let mut b = al_testkit::Built::from_source(&src);
+    b.session.set_company("CRONUS");
+    let (oi, ri) = b.routine_in("C", "Ins");
+    let ins = |b: &mut al_testkit::Built, no: i32| {
+        let inst = b.session.instance(oi);
+        text(b.session.call(oi, ri, inst, vec![Value::Integer(no)]).map(|(v, _)| v))
+    };
+    assert!(ins(&mut b, 1).contains("ONDATABASEINSERT:1"));
+    b.session.set_company("");
+    let log = ins(&mut b, 2);
+    assert!(!log.contains("ONDATABASEINSERT"), "{log}");
+}
+
 // An IncludeSender event published by a reportextension (Base Application's "Serv. Get Source Documents" extension publishes
 // OnAfterServiceLineOnPreDataItem so; Tests-SCM-Service). What a subscriber's Sender is, is not pinned (the corpus pins a
 // report's sender and a tableextension's, not a reportextension's): the event runs for subscribers that take no sender and

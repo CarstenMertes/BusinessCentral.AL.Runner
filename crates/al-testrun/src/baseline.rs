@@ -81,6 +81,17 @@ fn trigger(o: &al_ir::Object, name: &str) -> Option<usize> {
         .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case(name))
 }
 
+const ASSUMPTION_NOTE: &str = "the baseline relied on the unprobed assumption ";
+
+/// The assumption ids named by the notes of a baseline run (they survive the baseline cache as text).
+pub fn assumption_ids(notes: &[String]) -> Vec<String> {
+    notes
+        .iter()
+        .filter_map(|n| n.strip_prefix(ASSUMPTION_NOTE))
+        .filter_map(|r| r.strip_prefix('`')?.split('`').next().map(String::from))
+        .collect()
+}
+
 /// Runs the baseline on a fresh session of `engine`. `None`: no dependency app has anything to run.
 pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
     let objs = &lowered.program.objects;
@@ -129,6 +140,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
     let mut notes = Vec::new();
     let mut touched = BTreeSet::new();
     let mut ran = 0;
+    al_builtins::assumptions::clear_hits();
     let company = session.set_company("");
     session.set_company(&company);
     for &(oi, ri, keep_prefix, no_company) in &roots {
@@ -176,6 +188,13 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
         }
     }
     session.trace_faults(false);
+    // The baseline is not a test, so no test carries its marks; the run says what the shared start relied on.
+    for a in al_builtins::assumptions::take_hits() {
+        notes.push(format!(
+            "{ASSUMPTION_NOTE}`{}` (--list-assumptions describes it)",
+            a.info().id
+        ));
+    }
     // The workspace app's own install codeunits run here, once, so that the data they write is part of what every
     // test codeunit starts from (publishing the app runs them once; they are not re-run for each codeunit).
     let workspace_installs = crate::runtime::run_install_codeunits(lowered, &mut session);
@@ -394,4 +413,17 @@ pub(crate) fn tables_written(lowered: &Lowered, object: usize, routine: usize) -
     // subscriber the tables could reach marks tables BC does not fill (measured: Dimension
     // Correction). A table only a subscriber fills stays unmarked (docs/probes-needed.md).
     out
+}
+
+#[cfg(test)]
+mod tests {
+    #[test]
+    fn assumption_ids_are_read_back_from_the_notes() {
+        let notes = vec![
+            "Plan Installer.OnInstallAppPerDatabase did not run to its end: x".to_string(),
+            "the baseline relied on the unprobed assumption `geturl-web-base-address` (--list-assumptions describes it)".into(),
+            "the baseline relied on the unprobed assumption `a-b` (--list-assumptions describes it)".into(),
+        ];
+        assert_eq!(super::assumption_ids(&notes), vec!["geturl-web-base-address", "a-b"]);
+    }
 }

@@ -76,12 +76,21 @@ impl Session {
                 row: Some(new_row),
                 cleared: false,
             },
-            Some(old) if old.cleared && old.row.as_deref() != Some(new_row.as_str()) => Buffer {
-                have: FieldSet::Of(have),
-                unsure: FieldSet::Of(unsure),
-                row: Some(new_row),
-                cleared: false,
-            },
+            // After a Clear only a whole fetched row stays in hand for a Get of the same row (session/
+            // TestProbeSessionMiscContracts.al:PartialRecords_AreFieldsLoaded). A partial buffer does not: after FindSet and
+            // Next under SetLoadFields(Qty), Clear, SetLoadFields(Name) and Get of the row Next fetched, Qty is not loaded
+            // (record/lt-are-fields-loaded-unfetched/AreFieldsLoadedUnfetched.al:119-162, get_qty).
+            Some(old)
+                if old.cleared
+                    && (old.row.as_deref() != Some(new_row.as_str()) || !matches!(old.have, FieldSet::All)) =>
+            {
+                Buffer {
+                    have: FieldSet::Of(have),
+                    unsure: FieldSet::Of(unsure),
+                    row: Some(new_row),
+                    cleared: false,
+                }
+            }
             Some(old) => {
                 let old_row = old.row.clone().unwrap_or_else(|| row_id(&t, &r.fields));
                 let mut next = old.clone();
@@ -242,10 +251,14 @@ impl Session {
                     // Nothing was fetched (record/TestRecordPartialLoad.al:102-141). A buffer that
                     // was filled by hand is not pinned.
                     let fresh = self.initial_fields(t.object as usize);
-                    if format!("{:?}", fresh) != format!("{:?}", r.fields) {
-                        return unsupported("AreFieldsLoaded on a record that was filled but never fetched");
-                    }
-                    return Ok(Value::Boolean(false));
+                    // A record filled by assignment, Validate or Insert and never fetched reports every field
+                    // loaded, whichever field was assigned; after Init it reports none
+                    // (record/lt-are-fields-loaded-unfetched/AreFieldsLoadedUnfetched.al:42-68 assigned,
+                    // :70-92 Init and Validate, :94-117 Insert and Modify, :174-221 temporary).
+                    // "Filled" is read from the buffer differing from a fresh one: a field assigned its own default
+                    // value is not told apart from an untouched one (docs/probes-needed.md).
+                    let filled = format!("{:?}", fresh) != format!("{:?}", r.fields);
+                    return Ok(Value::Boolean(filled));
                 };
                 let mut all = true;
                 for &p in &wanted {

@@ -685,6 +685,10 @@ pub(crate) const EXTENSION_PAGE_TRIGGERS: &[&str] = &[
     // (handlers/TestPageCloseTriggersSelectionCardPageContracts.al:
     // OnQueryClosePage_PageAndExtension_BothRun_AndBothMustAgreeToClose).
     "onqueryclosepage",
+    // The test client has no delete operation, and a page action's `Rec.Delete(true)` runs neither the page's nor the
+    // extension's trigger (pageext/lt-pageext-ondeleterecord/PageExtOnDeleteRecord.al:121-206, all four result
+    // combinations). A client delete is not available, so the trigger never runs here.
+    "ondeleterecord",
 ];
 
 /// The triggers a `modify` block can add to a control, which the client runs.

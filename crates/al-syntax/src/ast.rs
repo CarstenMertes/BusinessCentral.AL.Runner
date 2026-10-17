@@ -159,7 +159,7 @@ pub struct DotNetTypeDecl {
 
 /// `'text', Locked = true` / `, MaxLength = 40` / `, Comment = '..'`: a text property keeps its literal and drops the attributes that follow
 /// it (corpus pageext/lt-page-ext-properties/TableKeyProps.al:P123_TableCaptionsLocked, P123_MaxLengthCaptions).
-fn strip_text_attributes(text: String) -> String {
+pub(crate) fn strip_text_attributes(text: String) -> String {
     if !text.starts_with('\'') {
         return text;
     }

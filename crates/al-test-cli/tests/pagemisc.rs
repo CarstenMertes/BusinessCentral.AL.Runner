@@ -773,11 +773,11 @@ fn test_page_close_reports_ok_for_list_and_document_pages() {
 // OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: pinned by
 // errors/lt-ms-refusals-136/P136PageTyped.al (OnInit runs before the handler, nothing else does).
 #[test]
-fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_none_of_its_triggers() {
+fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_only_its_oninit() {
     passes(&format!(
         "{HELPERS}
         [Test] [HandlerFunctions('PageHandler')]
-        procedure WithPage() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.RunModal(); Check('', P.Trace()); end;
+        procedure WithPage() var W: Page \"PM Wizard\"; P: Codeunit \"PM Probe\"; begin P.Reset(); W.RunModal(); Check('I', P.Trace()); end;
         [ModalPageHandler] procedure PageHandler(var P: Page \"PM Wizard\"; var Response: Action) begin Response := Action::OK; end;"
     ));
 }

@@ -921,10 +921,19 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     compare(l, r)
 }
 
-/// The order of two Codes that are digits only: the shorter is the smaller, else the text order. `None` for anything else.
+/// The order of two Codes that are digits only: the shorter is the smaller, else the text order. Between a Code of digits only
+/// (the empty one included) and a Code with any other character the second is the greater, whatever the characters: `'-5' > '3'`,
+/// `'-1' > '9'`, `'+5' > '3'`, `'5' < '+5'`, `'-0' > '0'`, `'1A' > '2'`, `'1A' > '10'`, `'1A' > '1'`, `'-5' > ''`
+/// (types/lt-code-digits-compare-more/CodeDigitsCompare.al:P182b_CodeVars_Negative, _DigitThenLetter). `None` for two Codes that
+/// both have another character.
 fn digit_code_order(a: &str, b: &str) -> Option<Ordering> {
     let digits = |t: &str| t.bytes().all(|c| c.is_ascii_digit());
-    (digits(a) && digits(b)).then(|| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+    match (digits(a), digits(b)) {
+        (true, true) => Some(a.len().cmp(&b.len()).then_with(|| a.cmp(b))),
+        (true, false) => Some(Ordering::Less),
+        (false, true) => Some(Ordering::Greater),
+        (false, false) => None,
+    }
 }
 
 /// The order of two text key values: trailing blanks do not count, the letters compare without regard to their case first
@@ -982,7 +991,32 @@ pub fn text_key_order(a: &str, b: &str) -> Ordering {
         }
         return Ordering::Equal;
     }
+    // A leading hyphen does not count at the first level, and a text with it follows the one without: `0|10|1A|3|-5|9|A` and
+    // `0|00|01|1|-1|10|-10` (types/lt-code-digits-compare-more/CodeDigitsCompare.al:P182b_SecondaryKeyOrder_Mixed,
+    // _DigitsAndEmpty). Only a hyphen at the start of a text of letters, digits and that hyphen is pinned; anything else keeps
+    // the collation below.
+    let hyphen_shape = |t: &str| t.strip_prefix('-').unwrap_or(t).bytes().all(|c| c.is_ascii_alphanumeric());
+    if (a.starts_with('-') || b.starts_with('-')) && hyphen_shape(a) && hyphen_shape(b) {
+        let (sa, sb) = (a.strip_prefix('-').unwrap_or(a), b.strip_prefix('-').unwrap_or(b));
+        let first = text_key_order(sa, sb);
+        if first != Ordering::Equal {
+            return first;
+        }
+        return a.starts_with('-').cmp(&b.starts_with('-'));
+    }
     crate::collation::compare(a, b).unwrap_or_else(|_| a.cmp(b))
+}
+
+/// The order a filter applies to two texts when one starts with a hyphen and both are letters and digits besides it: the key order,
+/// in which the hyphen does not count first (`'-5'` is above `'3'` and below `'9'`; types/lt-code-digits-compare-more/
+/// CodeDigitsCompare.al:P182b_Filters_OverMixedValues, `range-m5-3` is empty). `None` for every other pair: a filter compares
+/// them by code point as before.
+pub fn hyphen_filter_order(a: &Value, b: &Value) -> Option<Ordering> {
+    let (Value::Text(x) | Value::Code(x), Value::Text(y) | Value::Code(y)) = (a, b) else {
+        return None;
+    };
+    let shape = |t: &str| t.strip_prefix('-').unwrap_or(t).bytes().all(|c| c.is_ascii_alphanumeric());
+    ((x.starts_with('-') || y.starts_with('-')) && shape(x) && shape(y)).then(|| text_key_order(x, y))
 }
 
 /// [`compare`] for the values of a key: text follows [`text_key_order`].

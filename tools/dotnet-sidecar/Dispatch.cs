@@ -104,6 +104,18 @@ public sealed class Server
                     if (fld != null)
                         return Done(fld.GetValue(fld.IsStatic ? null : target), null, null, null, fld.FieldType);
                 }
+                if (cands.Length == 0 && args.Length == 1)
+                {
+                    // AL lets a property be assigned as a call with the value as the one argument:
+                    // `XmlNode.InnerText(Text)` (System Application, XML DOM Management.XMLEscape).
+                    var sp = type.GetProperty(name, flags, null, null, Type.EmptyTypes, null);
+                    if (sp != null && sp.SetMethod != null && sp.SetMethod.IsPublic)
+                    {
+                        var cv = Coerce(args[0], sp.PropertyType) ?? throw new Refusal($"cannot assign {Describe(args[0])} to {type.FullName}.{name} ({sp.PropertyType.FullName})");
+                        sp.SetValue(sp.SetMethod.IsStatic ? null : target, cv.Value);
+                        return Done(null, null, null, null);
+                    }
+                }
                 if (cands.Length == 0)
                     throw new Refusal(target == null && type.GetMethods(BindingFlags.Public | BindingFlags.Instance).Any(m => m.Name == name)
                         ? $"'{type.FullName}.{name}' is an instance member and the variable holds no object"

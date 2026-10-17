@@ -227,6 +227,8 @@ pub struct TestResult {
 /// Wall time of the phases of a run (`--timings`).
 #[derive(Debug, Clone, Default)]
 pub struct Phases {
+    /// The ids of the assumptions the install baseline relied on (a JUnit suite-level property).
+    pub baseline_assumptions: Vec<String>,
     pub compile: std::time::Duration,
     pub baseline: std::time::Duration,
     pub tests: std::time::Duration,

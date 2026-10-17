@@ -131,6 +131,20 @@ impl Session {
                 Some(t) => self.caption_class_translate(&t).map(|s| Value::Text(s.into())),
                 None => unsupported("CaptionClassTranslate of something that is not text"),
             },
+            // ADR-042: the host's server base address, for the one form whose result is not a query. Which parts a
+            // company, an object or another client type add is not pinned (docs/probes-needed.md): those forms are refused.
+            ids::SYSTEM_GETURL_1 => match args.first() {
+                Some(Value::Option(o, members))
+                    if args.len() == 1 && members.get(*o as usize).is_some_and(|m| m == "Web") =>
+                {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::GetUrlWebBaseAddress);
+                    Ok(Value::Text(self.host.identity.server_base_url().into()))
+                }
+                other => unsupported(format!(
+                    "GetUrl({}): only ClientType::Web is built, from the host's server address (ADR-042); the rest is not pinned",
+                    other.describe()
+                )),
+            },
             ids::SESSION_CURRENTCLIENTTYPE_1 => Ok(client_type(self.host.identity.current_client_type())),
             ids::SESSION_DEFAULTCLIENTTYPE_1 => Ok(client_type(self.host.identity.default_client_type())),
             _ => return None,

@@ -579,10 +579,12 @@ impl CorpusRuntime {
             .map(|b| b.unseeded.iter().map(|&t| t as usize).collect())
             .unwrap_or_default();
         let baseline_engine = (workers > 1 && baseline_run.is_some()).then(|| engine.clone());
+        let mut baseline_ids: Vec<String> = Vec::new();
         if let Some(b) = &baseline_run {
             if from_cache {
                 eprintln!("baseline: read from the cache of an earlier run of this program");
             }
+            baseline_ids = crate::baseline::assumption_ids(&b.notes);
             for n in &b.notes {
                 eprintln!("baseline: {n}");
             }
@@ -916,6 +918,7 @@ impl CorpusRuntime {
             suites,
             panics,
             phases: Phases {
+                baseline_assumptions: baseline_ids,
                 compile: compile_time,
                 baseline: baseline_time,
                 tests: tests_time,
@@ -1077,6 +1080,8 @@ fn baseline_key(
         None => key.text("target", "none"),
     };
     key.text("environment", crate::host::environment_text());
+    // GetUrl answers with it, and Company-Initialize stores that answer (ADR-042).
+    key.text("server_url", &crate::host::server_url().0);
     // Read the wall clock without starting the run clock: a run that finds its baseline starts the clock at the
     // instant the baseline's run began (`SystemClock::begin_at`).
     let day = crate::host::SystemClock::wall().div_euclid(86_400_000);

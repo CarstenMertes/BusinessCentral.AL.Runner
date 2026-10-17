@@ -26,6 +26,7 @@ mod in_precedence;
 mod interfaces;
 mod last_error_origin;
 mod moved_fields;
+mod notification_by_value;
 mod pageworks_probes;
 mod private_use_chars;
 mod proc_assign;

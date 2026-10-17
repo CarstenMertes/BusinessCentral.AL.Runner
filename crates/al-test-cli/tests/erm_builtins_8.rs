@@ -9,7 +9,8 @@ fn xmlport_run_is_refused_with_its_reason() {
     let l = al_testkit::compile(src);
     let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
     // The static form raises its errors when it runs (branch ms-top-refusals-1); the instance form is refused here.
-    for routine in ["Inst"] {
+    {
+        let routine = "Inst";
         let ri = l.program.objects[oi]
             .routines
             .iter()

@@ -312,6 +312,47 @@ impl Session {
                 }
                 self.xp_run(&inst, dir, ret_used, true)
             }
+            // The static `Xmlport.Run(Number, RequestWindow, Import, Record)`. Pinned: an id no xmlport declares raises the missing-object
+            // error (platform/lt-xmlport-session-navapp-cookie/P94XpPathFlow.al:RunStatic_UnknownNumbers; misc/W5MissingObject.al:
+            // MissingReport_Page_XmlPort), and an import of an export-only xmlport raises its direction error (same file:
+            // RunStatic_ImportWithoutSource). What a run that passes those checks reads or writes is in no corpus test and is refused.
+            ids::XMLPORT_RUN_2 => {
+                let Some(Value::Integer(n)) = args.first() else {
+                    return unsupported(format!("{id} with an id that is not an integer"));
+                };
+                let Some(object) = self
+                    .engine
+                    .program
+                    .objects
+                    .iter()
+                    .position(|o| o.is_kind(al_ir::ObjKind::XmlPort) && o.id == u32::try_from(*n).ok())
+                else {
+                    if self
+                        .engine
+                        .program
+                        .objects
+                        .iter()
+                        .any(|o| o.is_shell_of(al_ir::ObjKind::XmlPort) && o.id == u32::try_from(*n).ok())
+                    {
+                        return unsupported(format!(
+                            "Xmlport.Run of xmlport {n}, which belongs to a dependency app and was not compiled (no code the workspace reaches uses it)"
+                        ));
+                    }
+                    return Err(self.missing_object("XmlPort", i64::from(*n)));
+                };
+                let import = matches!(args.get(2), Some(Value::Boolean(true)));
+                let inst = self.instance(object);
+                let schema = self.xp_schema(&inst)?;
+                if import && schema.xp().direction == ir::XmlDirection::Export {
+                    return Err(xerr(
+                        format!("The XMLPort '{}' is designed for export only.", schema.name()),
+                        "XmlPortExportDirection",
+                    ));
+                }
+                unsupported(
+                    "Xmlport.Run of an existing xmlport: where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned",
+                )
+            }
             other => unsupported(format!("builtin {other}")),
         }
     }

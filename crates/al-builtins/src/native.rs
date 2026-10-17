@@ -474,6 +474,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.Export#2", vm_only),
     ("Xmlport.Import#1", vm_only),
     ("Xmlport.Import#2", vm_only),
+    ("Xmlport.Run#2", vm_only),
     ("Xmlport.SetSource#1", vm_only),
     ("Xmlport.SetDestination#1", vm_only),
     ("Xmlport.SetTableView#1", vm_only),
@@ -663,7 +664,7 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "System.GetDotNetType#1" => {
             "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
         }
-        "Xmlport.Run#1" | "Xmlport.Run#2" => {
+        "Xmlport.Run#1" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
         _ => return None,

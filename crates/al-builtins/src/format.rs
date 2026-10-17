@@ -100,7 +100,11 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             0 | 1 | 2 | 9 => format_guid(g),
             3 => format_guid(g).replace(['{', '}', '-'], ""),
             4 => format_guid(g).replace(['{', '}'], ""),
-            n => return Err(FormatFail::Unsupported(format!("Format of a Guid with the standard format {n} (not pinned)"))),
+            n => {
+                return Err(FormatFail::Unsupported(format!(
+                    "Format of a Guid with the standard format {n} (not pinned)"
+                )));
+            }
         },
         // A Blob shows `*` when it holds data and one space when it does not (record/
         // TestFormatRecordContracts.al:132-136, the cleared record shows the blank form).
@@ -263,7 +267,11 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
     };
     // A Boolean pads on the right and cuts at the length (types/TestProbeScalarContracts.al:FormatBoolean_Numbers:
     // `Format(true, 10)` is `Yes       `, `Format(true, 2)` is `Ye`).
-    if matches!(v, Value::Boolean(_) | Value::Option(..) | Value::Enum(..) | Value::Guid(_)) && length > 0 {
+    if matches!(
+        v,
+        Value::Boolean(_) | Value::Option(..) | Value::Enum(..) | Value::Guid(_)
+    ) && length > 0
+    {
         let cut: String = s.chars().take(length as usize).collect();
         return Ok(format!(
             "{cut}{}",

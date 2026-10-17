@@ -773,7 +773,8 @@ impl Session {
                 None => {
                     let v = rec.borrow().fields[pos].clone();
                     if let (Value::Option(o, _), Ok(Some((false, members)))) = (&v, self.members_of_field(&t, pos)) {
-                        let captions: std::sync::Arc<[String]> = members.iter().map(|m| m.2.clone()).collect::<Vec<_>>().into();
+                        let captions: std::sync::Arc<[String]> =
+                            members.iter().map(|m| m.2.clone()).collect::<Vec<_>>().into();
                         return Ok(Value::Option(*o, captions));
                     }
                     Ok(v)

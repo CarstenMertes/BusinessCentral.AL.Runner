@@ -690,7 +690,11 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             let Ok(n) = i32::try_from(n) else {
                 return raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
             };
-            let sum = if op == Arith::Add { a.checked_add(n) } else { a.checked_sub(n) };
+            let sum = if op == Arith::Add {
+                a.checked_add(n)
+            } else {
+                a.checked_sub(n)
+            };
             let Some(sum) = sum else {
                 return raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
             };
@@ -1083,6 +1087,8 @@ mod tests {
             Arith::Mul => x * y,
             Arith::IntDiv | Arith::Mod if y == 0 => return Some(Err(ZERO)),
             Arith::IntDiv => x / y,
+            // The smallest Integer mod -1 overflows (types/lt-scalars/ScT70056.al:Integer_Overflow `min_mod_neg`).
+            Arith::Mod if a == i32::MIN && b == -1 => return Some(Err(OVERFLOW)),
             Arith::Mod => x % y,
             Arith::Div => return None,
         };

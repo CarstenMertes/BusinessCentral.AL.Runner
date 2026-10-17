@@ -83,7 +83,7 @@ fn typed_integer_operations_keep_the_overflow_and_division_errors() {
                     1 => a.checked_sub(b),
                     2 => a.checked_mul(b),
                     3 if b != 0 => a.checked_div(b),
-                    4 if b != 0 => Some(a.wrapping_rem(b)),
+                    4 if b != 0 => a.checked_rem(b),
                     5 => a.checked_add(1),
                     6 => a.checked_sub(1),
                     _ => None,

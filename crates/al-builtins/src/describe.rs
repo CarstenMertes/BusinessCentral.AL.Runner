@@ -321,7 +321,7 @@ mod tests {
 
     #[test]
     fn reference_values_do_not_dump_their_contents() {
-        let list = Value::List(Rc::new(RefCell::new(vec![Value::Integer(1), Value::Integer(2)])));
+        let list = Value::List(Rc::new(RefCell::new(vec![Value::Integer(1), Value::Integer(2)].into())));
         assert_eq!(list.describe(), "List of 2 elements");
         assert_eq!(Value::Dictionary(Rc::default()).describe(), "Dictionary of 0 entries");
         assert_eq!(record(7, false).describe(), "Record of table object 7");

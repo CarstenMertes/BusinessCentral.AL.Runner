@@ -608,9 +608,8 @@ impl Session {
         if flow_field_filters.is_empty() {
             self.each_row_of(Some(rec), &cx, &t, &filters, &mut add)?;
         } else {
-            // Assumed (calcsums-flowfield-filter): the sum is over the rows whose FlowField value passes the filter.
-            // Microsoft test: Bank Acc. Recon. Test.GetTotalOutstanding (filter on "Check Ledger Entries").
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::CalcSumsFlowFieldFilter);
+            // The sum is over the rows whose FlowField value passes the filter (record/lt-calcsums-flowfield-filter/CalcSumsFlowFieldFilter.al:
+            // CalcSums_FilterFlowFieldNotZero_Result, CalcSums_FlowFieldRangeAndStoredFilter_Result, CalcSums_SetRangeFlowFieldZero_Result).
             let mut rows = Vec::new();
             self.each_row_of(Some(rec), &cx, &t, &filters, |row| {
                 rows.push(row.to_vec());

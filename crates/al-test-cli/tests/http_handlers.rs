@@ -238,10 +238,10 @@ fn an_http_content_passed_by_reference_keeps_the_headers_handed_out_before() {
     );
 }
 
-// Header forms the corpus does not pin are refused (docs/probes-needed.md): a Cache-Control with directives beyond no-store and no-cache, and
-// a known header other than Accept written in lower case.
+// A Cache-Control with directives beyond no-store and no-cache is refused: the order is pinned by network/lt-http-header-names-cache-control/
+// CacheControl*.al but not implemented yet. A known header written in lower case is stored under its canonical name (HeaderNameCaseRequest.al).
 #[test]
-fn an_unpinned_cache_control_or_header_case_is_refused() {
+fn an_unimplemented_cache_control_order_is_refused_and_a_lower_case_known_name_is_canonical() {
     let why = not_run(
         "",
         r#"
@@ -253,15 +253,16 @@ fn an_unpinned_cache_control_or_header_case_is_refused() {
     end;"#,
     );
     assert!(why.contains("Cache-Control") && why.contains("not pinned"), "{why}");
-    let why = not_run(
+    all_pass(
         "",
         r#"
     [Test] procedure Case()
-    var Req: HttpRequestMessage; H: HttpHeaders;
+    var Req: HttpRequestMessage; H: HttpHeaders; Keys: List of [Text];
     begin
         Req.GetHeaders(H);
         H.Add('user-agent', 'A/1');
+        Keys := H.Keys();
+        if Keys.Get(1) <> 'User-Agent' then Error('key %1', Keys.Get(1));
     end;"#,
     );
-    assert!(why.contains("user-agent") && why.contains("not pinned"), "{why}");
 }

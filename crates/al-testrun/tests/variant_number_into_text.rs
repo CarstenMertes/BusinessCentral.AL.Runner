@@ -34,12 +34,12 @@ codeunit 50500 "T"
         if Dst.Txt <> '2645' then Error('text %1', Dst.Txt);
     end;
     [Test]
-    procedure AnEnumIntoAField()
+    procedure AnEnumVariantIntoAField()
     var V: Variant; Row: Record "VNT Row"; K: Enum "VNT Kind";
     begin
         K := K::Beta; V := K;
-        Row.Txt := V;
-        if Row.Txt <> 'Beta' then Error('text %1', Row.Txt);
+        asserterror Row.Txt := V;
+        if GetLastErrorCode() <> 'TypeConversion' then Error('code %1', GetLastErrorCode());
     end;
     [Test]
     procedure IntoAVariable()
@@ -53,7 +53,7 @@ codeunit 50500 "T"
 "#;
 
 #[test]
-fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {
+fn a_field_ref_number_becomes_text_in_a_field_and_a_variant_number_raises() {
     let rt = CorpusRuntime::run_suites_with(
         vec![AppSource {
             id: "main".into(),
@@ -69,7 +69,12 @@ fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {
         &[SuiteRun::everything()],
         &RunOptions::default(),
     );
-    for name in ["IntoAField", "FromAFieldRef", "AnEnumIntoAField", "IntoAVariable"] {
+    for name in [
+        "IntoAField",
+        "FromAFieldRef",
+        "AnEnumVariantIntoAField",
+        "IntoAVariable",
+    ] {
         let o = rt.first_outcome(&CaseId {
             codeunit: 50500,
             name: name.into(),

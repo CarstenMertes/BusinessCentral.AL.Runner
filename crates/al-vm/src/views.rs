@@ -400,7 +400,8 @@ impl Session {
         }
         drop(r);
         if let Some(wanted) = adhoc {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SetViewSortingWithoutKey);
+            // SORTING(...) that no key starts with orders by those fields, then by the primary key, as SetCurrentKey does
+            // (record/lt-setview-sorting-nonkey/SetViewSortingNonKey.al:SetView_SortingNonKeyField_Descending, SetView_SortingFieldLists).
             self.ret_used = false;
             let mut args: Vec<Value> = wanted.iter().map(|p| Value::Integer(*p as i32)).collect();
             self.record_op(al_builtins::record_op::RecordOp::SetCurrentKey, rec, &mut args)?;

@@ -1748,7 +1748,7 @@ fn integer_and_boolean_expressions_get_their_types() {
     assert!(all.iter().all(|t| *t != ExprTy::Unknown), "{all:?}");
 }
 
-/// `number-to-text-is-format` converts a Variant at run time (Base Application's `Value := FieldRef.Value()` into a Text[250] field).
+/// A `FieldRef.Value()` number converts at run time (VariantFieldRefBigIntToText.al) (Base Application's `Value := FieldRef.Value()` into a Text[250] field).
 /// A number variable assigned to a Text or Code is a compile error in AL (AL0122) and stays refused by the lowering; a Variant
 /// into a Text lowers.
 #[test]

@@ -132,7 +132,7 @@ Pageworks and Microsoft-bucket junit comparisons, and the request-count line of 
 ## Amendment 2026-10-17: TimeZoneInfo and DateTimeOffset
 
 - Status: Accepted (owner, 2026-10-17, in conversation). The library choice was made by the orchestrator; the owner may still object.
-- Reason: measured on six Microsoft buckets (`docs`-external inventory, 2026-10-16), these two types are 87.2 % of all
+- Reason: measured on six Microsoft buckets (request trace of 2026-10-16), these two types are 87.2 % of all
   sidecar member calls (210,751 of 241,697) and, with their handle releases, about 87 % of all requests. A request costs
   about 0.14 ms and a full Microsoft run sends about 500,000. The goal is run time, not replacing the sidecar.
 

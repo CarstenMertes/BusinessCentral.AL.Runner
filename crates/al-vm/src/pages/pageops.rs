@@ -477,6 +477,10 @@ impl Session {
                         return Ok(Value::Null);
                     }
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
+                    // The rows of a temporary record stay with it: a page variable given one by SetRecord shows the table's rows
+                    // (record/lt-loadfields-pagesource-validate/P81PageTempSource.al:PageVar_SetRecord_TempRecord: `D1`, `D2`).
+                    copy.borrow_mut().temporary = false;
+                    copy.borrow_mut().temp_id = None;
                     let mut s = st.borrow_mut();
                     s.set_record = Some(copy);
                     s.set_view = false;

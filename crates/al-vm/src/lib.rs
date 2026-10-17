@@ -101,6 +101,8 @@ pub struct Engine {
     pub(crate) facts: Vec<Vec<RoutineFacts>>,
     /// The register bytecode of the routines, compiled on first call (`exec/`).
     pub(crate) exec: exec::ExecProgram,
+    /// Per object, the ids of its source positions in ascending order, found when the Code Coverage table is first built.
+    pub(crate) positions_by_object: std::sync::OnceLock<Vec<Vec<u32>>>,
 }
 
 /// What a call of a routine asks of the routine's declaration, answered once when the engine is built instead of by
@@ -261,6 +263,7 @@ impl Engine {
             profile_seeds: Default::default(),
             facts,
             exec,
+            positions_by_object: Default::default(),
         })
     }
 }

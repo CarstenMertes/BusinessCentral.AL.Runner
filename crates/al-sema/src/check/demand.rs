@@ -686,8 +686,7 @@ impl Checker<'_> {
         if self.demand.borrow().is_none() {
             return;
         }
-        let text = self.ws.object_ast(i).syntax().text().to_string();
-        if !text.to_ascii_lowercase().contains("captionclass") {
+        if !ast::text_contains_ignore_case(self.ws.object_ast(i).syntax(), "captionclass") {
             return;
         }
         let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
@@ -713,8 +712,8 @@ impl Checker<'_> {
         if self.demand.borrow().is_none() || self.ws.objects[i].kind != ObjKind::Report {
             return;
         }
-        let text = self.ws.object_ast(i).syntax().text().to_string().to_ascii_lowercase();
-        if !text.contains("rendering") || !text.contains("custom") {
+        let syntax = self.ws.object_ast(i).syntax().clone();
+        if !ast::text_contains_ignore_case(&syntax, "rendering") || !ast::text_contains_ignore_case(&syntax, "custom") {
             return;
         }
         let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {

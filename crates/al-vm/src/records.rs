@@ -1802,9 +1802,7 @@ impl Session {
                                         .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                                     match exact {
                                         Some(row) if self.row_passes(rec, &t, &row)? => {
-                                            if key == 0 {
-                                                Some(row)
-                                            } else if Self::same_key_values(&t, key, &row, &pos) {
+                                            if key == 0 || Self::same_key_values(&t, key, &row, &pos) {
                                                 Some(row)
                                             } else {
                                                 None

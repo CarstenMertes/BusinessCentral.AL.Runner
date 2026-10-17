@@ -460,10 +460,19 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
         // A Variant holding a number or an Enum into a Text or Code field raises likewise, with NavCode for a Code target
         // (types/lt-variant-to-text-fields/VariantNumberToField.al: TextField_FromVariantInteger_Result, _BigInteger_, _Decimal_,
         // CodeField_FromVariantNumbers_Result; VariantEnumOptionToText.al:TextField_FromVariantEnum_Result).
-        (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Enum(..), RtType::Text(_) | RtType::Code(_)) => {
-            let nav = if matches!(t, RtType::Code(_)) { "NavCode" } else { "NavText" };
+        (
+            Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Enum(..),
+            RtType::Text(_) | RtType::Code(_),
+        ) => {
+            let nav = if matches!(t, RtType::Code(_)) {
+                "NavCode"
+            } else {
+                "NavText"
+            };
             raise(
-                format!("The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.{nav} value."),
+                format!(
+                    "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.{nav} value."
+                ),
                 "TypeConversion",
             )
         }

@@ -456,13 +456,10 @@ mod tests {
         clear_hits();
         assume(Assumption::ClearAllKeepsTemporaryRows);
         assume(Assumption::ClearAllKeepsTemporaryRows);
-        assume(Assumption::FindEqualOnAnotherKey);
+        assume(Assumption::NextWholeDecimal);
         assert_eq!(
             take_hits(),
-            vec![
-                Assumption::FindEqualOnAnotherKey,
-                Assumption::ClearAllKeepsTemporaryRows
-            ]
+            vec![Assumption::ClearAllKeepsTemporaryRows, Assumption::NextWholeDecimal]
         );
         assert!(take_hits().is_empty());
         assume(Assumption::ClearAllKeepsTemporaryRows);

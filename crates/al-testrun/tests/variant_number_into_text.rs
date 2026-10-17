@@ -69,7 +69,12 @@ fn a_field_ref_number_becomes_text_in_a_field_and_a_variant_number_raises() {
         &[SuiteRun::everything()],
         &RunOptions::default(),
     );
-    for name in ["IntoAField", "FromAFieldRef", "AnEnumVariantIntoAField", "IntoAVariable"] {
+    for name in [
+        "IntoAField",
+        "FromAFieldRef",
+        "AnEnumVariantIntoAField",
+        "IntoAVariable",
+    ] {
         let o = rt.first_outcome(&CaseId {
             codeunit: 50500,
             name: name.into(),

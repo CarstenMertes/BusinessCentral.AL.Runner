@@ -187,10 +187,7 @@ mod tests {
             text.contains("clear-all-keeps-temporary-rows  (3 flagged passes, 1 other tests)"),
             "{text}"
         );
-        assert!(
-            text.contains("next-whole-decimal  (not hit in the last run)"),
-            "{text}"
-        );
+        assert!(text.contains("next-whole-decimal  (not hit in the last run)"), "{text}");
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

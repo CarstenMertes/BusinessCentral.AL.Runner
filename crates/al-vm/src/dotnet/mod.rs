@@ -861,11 +861,18 @@ impl Session {
 pub(crate) fn dotnet_order(l: &Value, r: &Value) -> Result<std::cmp::Ordering, Signal> {
     match (l, r) {
         (Value::DotNet(a), Value::DotNet(b)) => match (&a.kind, &b.kind) {
-            (DotNetKind::Enum { clr_type: ta, ordinal: oa, .. }, DotNetKind::Enum { clr_type: tb, ordinal: ob, .. })
-                if ta == tb =>
-            {
-                Ok(oa.cmp(ob))
-            }
+            (
+                DotNetKind::Enum {
+                    clr_type: ta,
+                    ordinal: oa,
+                    ..
+                },
+                DotNetKind::Enum {
+                    clr_type: tb,
+                    ordinal: ob,
+                    ..
+                },
+            ) if ta == tb => Ok(oa.cmp(ob)),
             _ => unsupported("ordering two .NET values that are not members of one enum (not pinned)"),
         },
         (Value::DotNet(_), _) | (_, Value::DotNet(_)) => {
@@ -874,7 +881,8 @@ pub(crate) fn dotnet_order(l: &Value, r: &Value) -> Result<std::cmp::Ordering, S
         (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) => {
             let plain = |s: &str| s.bytes().all(|c| c.is_ascii_alphanumeric());
             let ordinal = a.as_str().cmp(b.as_str());
-            if plain(a.as_str()) && plain(b.as_str()) && ordinal == ops::compare(l, r)? {
+            if plain(a.as_str()) && plain(b.as_str()) && ordinal == a.to_ascii_lowercase().cmp(&b.to_ascii_lowercase())
+            {
                 Ok(ordinal)
             } else {
                 unsupported("ordering .NET strings whose order is not the same under every reading (not pinned)")

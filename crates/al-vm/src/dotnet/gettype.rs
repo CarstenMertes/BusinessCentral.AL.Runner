@@ -66,9 +66,7 @@ impl Session {
     fn type_of_dotnet(&mut self, v: Value, declared: &str) -> Result<Value, Signal> {
         match &v {
             Value::DotNet(o) => match &o.kind {
-                DotNetKind::Host { handle, clr_type } => {
-                    self.type_call(DotNetTarget::Instance(*handle), clr_type)
-                }
+                DotNetKind::Host { handle, clr_type } => self.type_call(DotNetTarget::Instance(*handle), clr_type),
                 DotNetKind::Enum {
                     clr_type,
                     name,
@@ -89,7 +87,10 @@ impl Session {
             // A primitive the variable holds (a `DotNet String` that got a Text).
             other => match boxed_clr_type(other) {
                 Some(name) => self.type_named(name),
-                None => unsupported(format!("GetDotNetType of a DotNet variable that holds {}", other.describe())),
+                None => unsupported(format!(
+                    "GetDotNetType of a DotNet variable that holds {}",
+                    other.describe()
+                )),
             },
         }
     }
@@ -104,10 +105,9 @@ impl Session {
                 };
                 let o = &self.engine.program.objects[object];
                 if o.kind != al_ir::ObjKind::Codeunit || o.uncompiled {
-                    return unsupported(format!(
-                        "GetDotNetType of an unassigned DotNet variable in a {:?} (the object kind's spelling in the error is not pinned)",
-                        o.kind
-                    ));
+                    return unsupported(
+                        "GetDotNetType of an unassigned DotNet variable outside a codeunit (the object kind's spelling in the error is not pinned)",
+                    );
                 }
                 let routine = o.routines.get(frame.routine).map_or("", |r| r.name.as_str());
                 let message = format!(

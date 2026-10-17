@@ -87,14 +87,21 @@ fn of_node(e: &ir::Expr, c: &[ExprTy], load: impl FnOnce() -> ExprTy) -> ExprTy 
         ir::Expr::Unary(ir::UnOp::Not, _) => ExprTy::Boolean,
         ir::Expr::Unary(ir::UnOp::Neg, _) if c[0] == ExprTy::Integer => ExprTy::Integer,
         ir::Expr::Binary(op, ..) => match op {
-            B::And | B::Or | B::Xor | B::Eq | B::Ne | B::Lt | B::Le | B::Gt | B::Ge | B::DotNetEq
+            B::And
+            | B::Or
+            | B::Xor
+            | B::Eq
+            | B::Ne
+            | B::Lt
+            | B::Le
+            | B::Gt
+            | B::Ge
+            | B::DotNetEq
             | B::DotNetNe
             | B::DotNetLt
             | B::DotNetLe
             | B::DotNetGt
-            | B::DotNetGe => {
-                ExprTy::Boolean
-            }
+            | B::DotNetGe => ExprTy::Boolean,
             B::Add | B::Sub | B::Mul | B::IntDiv | B::Mod if c[0] == ExprTy::Integer && c[1] == ExprTy::Integer => {
                 ExprTy::Integer
             }

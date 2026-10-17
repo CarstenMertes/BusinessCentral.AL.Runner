@@ -99,7 +99,8 @@ impl Lowerer<'_> {
                 false,
             ),
             Ty::Builtin(b) if b.eq_ignore_ascii_case("RecordRef") => (
-                "error:GetDotNetType() does not support the type Microsoft.Dynamics.Nav.Runtime.NavRecordRef.".to_string(),
+                "error:GetDotNetType() does not support the type Microsoft.Dynamics.Nav.Runtime.NavRecordRef."
+                    .to_string(),
                 false,
             ),
             Ty::Variant => ("variant".to_string(), true),
@@ -121,7 +122,10 @@ impl Lowerer<'_> {
         Ok(ir::Expr::Builtin {
             id: super::call::builtin_id("System.GetDotNetType#1")?,
             receiver: None,
-            args: vec![ir::Arg::Value(value), ir::Arg::Value(ir::Expr::Const(ir::Const::Text(spec)))],
+            args: vec![
+                ir::Arg::Value(value),
+                ir::Arg::Value(ir::Expr::Const(ir::Const::Text(spec))),
+            ],
             ret_used: true,
         })
     }

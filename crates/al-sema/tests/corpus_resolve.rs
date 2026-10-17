@@ -94,6 +94,14 @@ const KNOWN_GAP_FILES: &[(&str, &str)] = &[
         "the checker takes an assignment to a one-parameter procedure for a call without arguments (corpus bump 14)",
     ),
     (
+        "events/lt-with-statement-scopes/WithStatementAmbiguous.al",
+        "the front end does not read the with statement, so its names stay unresolved (corpus bump 17)",
+    ),
+    (
+        "events/lt-with-statement-scopes/WithStatementNested.al",
+        "the front end does not read the with statement, so its names stay unresolved (corpus bump 17)",
+    ),
+    (
         "report/lt-report-this-passed-on/P141ThisEvent.al",
         "the checker does not resolve `this` in a report (corpus bump 14)",
     ),

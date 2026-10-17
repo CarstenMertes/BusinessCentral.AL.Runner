@@ -394,7 +394,17 @@ impl Session {
         } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
             let before = (self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
                 .then(|| self.page_rec(st).borrow().fields.clone());
+            st.borrow_mut().save_record_called = false;
             let r = self.control_routine(st, idx, r);
+            // An error an action raises comes out of the test page's Invoke with the test framework's prefix on its code
+            // (pages/lt-page-runtime/P82CurrPage.al:ActionError_Surfaces: `P82 action error B`, `TestWrapped:Dialog`).
+            let r = match r {
+                Err(Signal::Error(mut e)) if !e.code.starts_with("TestWrapped") => {
+                    e.code = format!("TestWrapped:{}", e.code);
+                    Err(Signal::Error(e))
+                }
+                other => other,
+            };
             if r.is_err() {
                 st.borrow_mut().refresh = false;
             }
@@ -421,6 +431,7 @@ impl Session {
             // handlers/TestPageExtensionBaseMembersContracts.al:195-218: "ext AfterGetCurrRecord"
             // after the extension's action and after the base's). A page that serves its rows from
             // OnFindRecord is left as `CurrPage.Update` alone re-reads it (re-anchoring not pinned).
+            let refresh_asked = st.borrow().refresh;
             let find_page = self.declares(st, "onfindrecord") || self.declares(st, "onnextrecord");
             let find_pinned = find_page
                 && reads_rows
@@ -438,7 +449,11 @@ impl Session {
                 // reads its row twice, a list the rows of its window as it opens plus one (corpus
                 // pageext/PCCurrRecordReads.al:Card_ReadsAfterEachAction, List_ReadsAfterEachAction,
                 // pinned for a card and a list of 3 rows with the cursor on the first).
-                if reads_rows {
+                // An action that called CurrPage.SaveRecord (and no Update) is followed by one read of the row, not two
+                // (pages/lt-page-runtime/P82CurrPage.al:SaveRecord_StoresPendingEdit and SaveRecord_InViewMode:
+                // `...;saved;OnAfterGetRecord(A)`). With an Update in the same action it is not pinned and stays as it was.
+                let saved = std::mem::take(&mut st.borrow_mut().save_record_called) && !refresh_asked;
+                if reads_rows && !saved {
                     self.read_page_again(st)?;
                 }
                 st.borrow_mut().refresh = true;

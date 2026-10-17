@@ -502,7 +502,18 @@ impl Session {
                     return unsupported("Page.SetSelectionFilter into a record of another table (not pinned)");
                 }
                 if st.borrow().cursor != Cursor::Row {
-                    return unsupported("Page.SetSelectionFilter of a page on no row (not pinned)");
+                    // A page on no row because its table is empty selects nothing, and the record keeps no filter
+                    // (pages/lt-page-runtime/P82CurrPage.al:SetSelectionFilter_EmptyPage: `sel=0 filter=''`). A page on no row
+                    // over a table that has rows is not pinned.
+                    let table_empty = dst.borrow().filters.is_empty()
+                        && matches!(
+                            self.record_op(RecordOp::IsEmpty, dst, &mut []),
+                            Ok(Value::Boolean(true))
+                        );
+                    if table_empty {
+                        return self.record_op(RecordOp::SetRecFilter, dst, &mut []);
+                    }
+                    return unsupported("Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)");
                 }
                 if !dst.borrow().filters.is_empty() {
                     return unsupported("Page.SetSelectionFilter into a record that has filters (not pinned)");
@@ -626,6 +637,9 @@ impl Session {
             }
             PageMethod::Update | PageMethod::SaveRecord => {
                 self.require_open(st)?;
+                if method == PageOp::PageSaveRecord {
+                    st.borrow_mut().save_record_called = true;
+                }
                 // CurrPage.Update() without an argument saves (the parameter defaults to true).
                 let save = (method == PageOp::PageSaveRecord) || !matches!(args.first(), Some(Value::Boolean(false)));
                 if !(method == PageOp::PageSaveRecord) {

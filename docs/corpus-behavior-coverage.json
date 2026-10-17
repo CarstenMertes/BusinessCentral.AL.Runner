@@ -11725,7 +11725,7 @@
           "ms_uses": 3,
           "name": "OnAfterActionEvent",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "errors/lt-ms-refusals-128/P128CallstackPageEvents.al:138"
         },
         {
@@ -11734,7 +11734,7 @@
           "ms_uses": 2,
           "name": "OnBeforeActionEvent",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "errors/lt-ms-refusals-128/P128CallstackPageEvents.al:130"
         },
         {
@@ -13716,7 +13716,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 512,
+        "line": 549,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -13725,7 +13725,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 738,
+        "line": 779,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds."
@@ -13734,7 +13734,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 758,
+        "line": 799,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -13743,7 +13743,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 853,
+        "line": 894,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds"
@@ -13752,7 +13752,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 873,
+        "line": 914,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."

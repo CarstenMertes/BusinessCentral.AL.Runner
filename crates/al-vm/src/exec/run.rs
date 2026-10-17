@@ -821,5 +821,12 @@ impl Session {
             site.ret_used,
             f,
         )
+        .map_err(|e| match e {
+            // Name the builtin whose argument was not the text it takes.
+            Signal::Unsupported(m) if m.starts_with("text argument ") => {
+                Signal::Unsupported(format!("{}: {m}", site.id.name()))
+            }
+            other => other,
+        })
     }
 }

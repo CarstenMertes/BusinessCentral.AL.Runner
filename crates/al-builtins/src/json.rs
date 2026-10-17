@@ -1394,7 +1394,11 @@ fn array_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Re
 /// loop started (an element added inside is not visited; corpus types/PVLabelSplitForeach.al on the
 /// staging branch). `None` for any other value.
 pub fn array_items(v: &Value) -> Option<Vec<Value>> {
-    let Value::Library(_, h) = v else { return None };
+    let Value::Library(name, h) = v else { return None };
+    // A never-used or cleared JsonArray has no items (json/JsonArrayBasics.al:274-281, ForeachAndPath).
+    if matches!(&*h.borrow(), LibraryValue::Empty) && name.eq_ignore_ascii_case("jsonarray") {
+        return Some(Vec::new());
+    }
     if !matches!(&*h.borrow(), LibraryValue::Json(_)) {
         return None;
     }

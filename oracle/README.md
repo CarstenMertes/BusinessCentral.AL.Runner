@@ -64,3 +64,7 @@ To bump: move the submodule, download the matching run's
 each name), copy it unchanged to `oracle/<major>/junit.xml` (the large one) and
 `oracle/<major>/junit-onprem.xml` (the small one), and update `oracle.toml`. Never edit a
 JUnit or XUnit file.
+
+The OnPrem DotNet app (`corpus/tests/al-language-onprem-dotnet`) is the suite `onprem-dotnet`. Its oracle is
+`oracle/<major>/junit-dotnet.xml` (the smallest of the three `junit-test-results-<leg>` artifacts of a run) and its
+ratchet is `metrics/<major>/passing-dotnet.txt`.

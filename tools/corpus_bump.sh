@@ -136,7 +136,7 @@ for leg in $legs; do
   major="${leg%%.*}"
   fetch_xml "${oracle_id[$leg]}" "$root/oracle/$major/junit.xml"
   fetch_xml "${onprem_id[$leg]}" "$root/oracle/$major/junit-onprem.xml"
-  # The DotNet file is kept unchanged next to the others; no suite of oracle.toml reads it yet (a design decision for the owner).
+  # The DotNet file is the oracle of the onprem-dotnet suite of oracle.toml.
   if [ "${dotnet_id[$leg]}" != 0 ]; then fetch_xml "${dotnet_id[$leg]}" "$root/oracle/$major/junit-dotnet.xml"; fi
 done
 
@@ -157,7 +157,7 @@ for leg in $legs; do
   major="${leg%%.*}"
   args+=("$major" "${oracle_id[$leg]}" "${onprem_id[$leg]}" "$(cases "$root/oracle/$major/junit.xml")" "$(cases "$root/oracle/$major/junit-onprem.xml")")
 done
-python3 "$here/corpus_bump_edit.py" "$root" "$sha" "$run" "${args[@]}"
+DOTNET_IDS="27=${dotnet_id[27.5]} 28=${dotnet_id[28.5]} 29=${dotnet_id[29.0]}" python3 "$here/corpus_bump_edit.py" "$root" "$sha" "$run" "${args[@]}"
 
 # 6. Baselines (al-test-cli refuses while a baseline case regresses).
 cd "$root"

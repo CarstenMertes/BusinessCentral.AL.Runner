@@ -510,7 +510,7 @@ fn the_other_test_apps_are_reported_apart_from_the_main_one() {
 
 // BC 27 and 29 have no isolation oracle (the probe only ran in the BC 28.4 nightly).
 #[test]
-fn a_version_without_an_isolation_oracle_lists_only_the_onprem_app() {
+fn a_version_without_an_isolation_oracle_lists_only_the_onprem_apps() {
     let r = all_versions().json("27");
     let names: Vec<_> = r["suites"]
         .as_array()
@@ -518,7 +518,7 @@ fn a_version_without_an_isolation_oracle_lists_only_the_onprem_app() {
         .iter()
         .map(|s| s["name"].as_str().unwrap())
         .collect();
-    assert_eq!(names, vec!["onprem"]);
+    assert_eq!(names, vec!["onprem", "onprem-dotnet"]);
 }
 
 // `--baseline FILE` is the main app's ratchet alone. The extra apps keep their own files in

@@ -200,7 +200,7 @@ impl Session {
         // SourceTableView then adds to them: the record's filters stay in their groups, the view's land in group 2 beside the
         // record's own group 2, the view's SORTING replaces the record's key and the record's direction stays (types/lt-code-digits-page-run-view/
         // P145PageRunView.al:P145_A_RecFilterSameFieldAsView, _RecFilterOverlappingView, _RecFilterOtherField, _RecKeyDescending,
-        // _RecKeyPrimary, _RecFilterInGroup1, _RecFilterInGroup2). A view that names an ORDER stays refused: nothing pins it.
+        // _RecKeyPrimary, _RecFilterInGroup1, _RecFilterInGroup2). A view that names an ORDER is an assumption (page-run-record-view-order-applies).
         if let (Some(r), true) = (&record, has_source) {
             let rec = self.page_rec(st);
             let src = r.borrow();
@@ -217,14 +217,10 @@ impl Session {
             dst.ascending = src.ascending;
         }
         if let (Some(view), true) = (source_view, has_source) {
-            if record.is_some() {
-                let lower = view.to_ascii_lowercase();
-                if lower.contains("order(") {
-                    self.mark_closed(st);
-                    return unsupported(
-                        "Page.Run with a record on a page whose SourceTableView names an order (not pinned)",
-                    );
-                }
+            // A view that names an ORDER on a page run on a record: nothing pins it, so it is read as the view alone is
+            // (the view's direction wins), on an assumption.
+            if record.is_some() && view.to_ascii_lowercase().contains("order(") {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageRunRecordViewOrderApplies);
             }
             let rec = self.page_rec(st);
             let table = self.table(&rec)?;

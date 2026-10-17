@@ -131,7 +131,15 @@ impl Session {
 
     /// The page shown by part control `control` of `st`.
     pub(super) fn part_page(&mut self, st: &St, control: usize, runtime: bool) -> Result<St, Signal> {
-        self.require_open(st)?;
+        // A Page variable's procedure that reaches a part before the page ever ran (Check Credit Limit.PopulateDataOnNotification,
+        // which Cust-Check Cr. Limit calls on a Page variable to fill a notification) gets the part page created and not opened, as
+        // a hidden part is (assumption part-of-a-page-that-never-ran); after the page ran and closed it stays refused.
+        let never_ran = runtime && !st.borrow().open && !st.borrow().ran;
+        if never_ran {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartOfAPageThatNeverRan);
+        } else {
+            self.require_open(st)?;
+        }
         let found = st
             .borrow()
             .parts

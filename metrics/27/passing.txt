@@ -5038,6 +5038,10 @@
 68731 Modify_ActionCallsModifyItself
 68731 Modify_AfterActionChangedRec_NoModifyCall
 68731 Modify_AfterActionThenMoveToAnotherRow
+68735 Update_False_OnOpenedPage
+68735 Update_StoredRowChangedBehindThePage
+68735 Update_True_AfterRecChangedInMemory
+68735 Update_True_OnOpenedPage
 68751 PageType_ApiPage
 68760 DemandAll_ReturnsTheAssemblyLineTheExtensionsDataItemIterates
 68760 DemandAssemblyComponents_ReturnsOnlyTheAssemblyLine
@@ -8522,6 +8526,8 @@
 73034 Session_Relations
 73040 FieldRef_Captions
 73040 FieldRef_Resolved
+73040 Page_Log_B
+73040 Page_Resolve_B
 73040 Table_CaptionOnly_Sel
 73040 Table_Log_A
 73040 Table_Log_B

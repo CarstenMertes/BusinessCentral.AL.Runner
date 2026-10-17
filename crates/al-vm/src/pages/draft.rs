@@ -223,6 +223,15 @@ impl Session {
         self.pages.page_xrec = Some(self.page_xrec_fields(st));
         let modified = self.record_op(RecordOp::Modify, &rec, &mut [Value::Boolean(true)]);
         self.pages.page_xrec = None;
+        // The page keeps the row it read; when code behind it has changed that row since, whether the client has read it again
+        // first is not pinned (no corpus page test reaches DB:RecordChanged), so the page's own save refuses rather than fails.
+        if let Err(Signal::Error(e)) = &modified {
+            if e.code == "DB:RecordChanged" {
+                return unsupported(
+                    "a page saves a row that code changed after the page read it (whether the client reads the row again first is not pinned)",
+                );
+            }
+        }
         modified?;
         st.borrow_mut().dirty = false;
         self.set_xrec(st);

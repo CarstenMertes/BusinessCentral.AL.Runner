@@ -138,6 +138,7 @@ impl Session {
         {
             let mut s = st.borrow_mut();
             s.open = true;
+            s.ran = true;
             s.mode = mode;
             s.cursor = Cursor::None;
             s.draft = false;

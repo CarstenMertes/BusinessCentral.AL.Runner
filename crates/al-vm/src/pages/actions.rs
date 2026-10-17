@@ -367,10 +367,12 @@ impl Session {
         // pageext/PCCurrRecordReads.al:Card_ReadsAfterEachAction and List_ReadsAfterEachAction: one
         // OnAfterGetRecord before the action's own trigger, only when the row is not dirty, which has
         // its re-read above).
+        // A list that serves its rows from OnFindRecord and OnNextRecord does the same (misc/W2FindRecordUpdate.al: during_action
+        // `AGR(20);ActionBegin;ActionEnd;`).
+        let find_list = self.declares(st, "onfindrecord") && self.is_list(st);
         let reads_rows = (!was_dirty || dirty_reread_only)
             && self.declares(st, "onaftergetrecord")
-            && !self.declares(st, "onfindrecord")
-            && !self.declares(st, "onnextrecord")
+            && (find_list || !self.declares(st, "onnextrecord") && !self.declares(st, "onfindrecord"))
             && self.has_source(st)
             && st.borrow().open
             && st.borrow().cursor == Cursor::Row
@@ -487,10 +489,20 @@ impl Session {
                 // under Microsoft's tests; a page that holds edits or has only OnNextRecord stays refused.
                 // A list refills its window around the row (misc/W2FindRecordUpdate.al:Update_True_OnOpenedPage pins that
                 // trace); only a card, which has the one row, is served.
+                if self.is_list(st) && self.declares(st, "onfindrecord") {
+                    return self.refresh_list_with_find(st);
+                }
                 if !self.declares(st, "onfindrecord") || st.borrow().dirty || self.is_list(st) {
-                    return unsupported(
-                        "CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned)",
-                    );
+                    let why = if !self.declares(st, "onfindrecord") {
+                        "only OnNextRecord"
+                    } else if st.borrow().dirty {
+                        "unsaved edits"
+                    } else {
+                        "a list"
+                    };
+                    return unsupported(format!(
+                        "CurrPage.Update on a page with OnFindRecord and row triggers (re-anchoring not pinned; {why})"
+                    ));
                 }
                 al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::UpdateRefreshOnFindRecord);
                 if !self.nav_find(st, "=")? {
@@ -531,6 +543,74 @@ impl Session {
         // "host.Action;host.AGCR(2);part.AGCR(2);", and no part OnOpenPage).
         self.sync_parts(st)?;
         Ok(())
+    }
+
+    /// `CurrPage.Update` on a list that serves its rows from OnFindRecord, with or without OnNextRecord (corpus misc/W2FindRecordUpdate.al:
+    /// Update_False_OnOpenedPage, Update_True_OnOpenedPage, Update_StoredRowChangedBehindThePage, Update_True_AfterRecChangedInMemory,
+    /// all one trace for a table of 3 rows with the cursor on the middle one): the row is read again, `=>` finds the row to
+    /// start from, the client reads on to the end of the view, puts the first of those rows back, steps back to the start of
+    /// the view reading each row it moves to, puts the row back, asks `=` for it and reads it as after a move. Only that shape
+    /// is pinned, with both triggers; the same steps are taken for other shapes, among them a list with OnFindRecord alone, where
+    /// `Next` moves the record (assumption update-refresh-list-onfindrecord), and a view that fills
+    /// a window stays refused.
+    fn refresh_list_with_find(&mut self, st: &St) -> Result<(), Signal> {
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::UpdateRefreshListOnFindRecord);
+        let rec = self.page_rec(st);
+        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        if !self.nav_find(st, "=>")? {
+            return unsupported("OnFindRecord finds no row after CurrPage.Update on a list (not pinned)");
+        }
+        let mut forward = Vec::new();
+        loop {
+            if forward.len() + 1 >= Self::WINDOW {
+                return unsupported("CurrPage.Update on a list whose view fills a window (not pinned)");
+            }
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            self.populate_current(st)?;
+            forward.push(al_builtins::value::WindowRow {
+                key,
+                stored,
+                shown: rec.borrow().fields.clone(),
+            });
+            if !self.nav_next(st, 1)? {
+                break;
+            }
+        }
+        let first = forward[0].clone();
+        rec.borrow_mut().fields = first.stored.clone();
+        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        let mut before = Vec::new();
+        while self.nav_next(st, -1)? {
+            if before.len() + forward.len() + 1 >= Self::WINDOW {
+                return unsupported("CurrPage.Update on a list whose view fills a window (not pinned)");
+            }
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            self.populate_current(st)?;
+            before.push(al_builtins::value::WindowRow {
+                key,
+                stored,
+                shown: rec.borrow().fields.clone(),
+            });
+        }
+        before.reverse();
+        rec.borrow_mut().fields = first.stored.clone();
+        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        if !self.nav_find(st, "=")? {
+            return unsupported("OnFindRecord does not find the current row after CurrPage.Update (not pinned)");
+        }
+        let r = (|| {
+            self.populate_current(st)?;
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+            self.page_event(st, "onaftergetcurrrecordevent", None, None)
+        })();
+        self.torn_down_on_error(st, r)?;
+        before.extend(forward);
+        st.borrow_mut().window = before;
+        st.borrow_mut().window_from_start = true;
+        st.borrow_mut().refresh = false;
+        self.sync_parts(st)
     }
 
     /// What the page does once an action returns: a page that showed no row may show the one the

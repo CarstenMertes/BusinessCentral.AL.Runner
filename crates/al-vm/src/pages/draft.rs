@@ -292,14 +292,17 @@ impl Session {
             // The insert sees the row the line was started below as xRec (misc/W2BelowXRec.al:NewInTheMiddle_*).
             self.set_xrec_fields(st, anchor);
         }
-        // A line of a part is inserted while its host holds an edit of its own: the host saves first, so the table code of the line
-        // sees the typed values, and the host reads its row again afterwards, because that code may have changed it (pages/
-        // lt-changed-by-other/ChangedByOtherPlain.al:P182b_Plain_SaveRecordAction: `stored-after-line` is `descr=typed info=by line
-        // insert counter=1`, the card shows `by line insert` and `1`).
-        let host = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade());
-        if let Some(host) = &host {
-            self.save_row(host)?;
-        }
+        // A line of a part is inserted while a stored host row may hold an edit of its own. The line goes in first, so the header's
+        // OnModify sees it (testpart/ OkInvoke_HeaderOnModifySeesThePartRowSavedFirst); the host then reads its row again, because the
+        // line's table code may have changed it, puts its own edit on top and saves (pages/lt-changed-by-other/
+        // ChangedByOtherPlain.al:P182b_Plain_SaveRecordAction: `stored-after-line` is `descr=typed info=by line insert counter=1`, the
+        // card shows `by line insert` and `1`). Only a stored host row is pinned; a new host row or one without a source stays as before.
+        let host = st
+            .borrow()
+            .host
+            .as_ref()
+            .and_then(|(h, _)| h.upgrade())
+            .filter(|h| self.has_source(h) && !h.borrow().draft && h.borrow().cursor == Cursor::Row);
         let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(true)])?;
         if go == Some(false) {
             // A trigger that inserted the row itself and answered false leaves the page on a stored row: its next edit is
@@ -336,10 +339,22 @@ impl Session {
         }
         self.set_xrec(st);
         if let Some(host) = &host {
-            if host.borrow().cursor == Cursor::Row && !host.borrow().draft {
-                let hrec = self.page_rec(host);
-                if let Some(fields) = self.stored_row(&hrec)? {
-                    hrec.borrow_mut().fields = fields;
+            let hrec = self.page_rec(host);
+            if let Some(stored) = self.stored_row(&hrec)? {
+                let typed = hrec.borrow().fields.clone();
+                let before = self.page_xrec_fields(host);
+                let mut merged = stored;
+                let mut edited = false;
+                for (i, v) in typed.iter().enumerate() {
+                    if i < before.len() && !Self::same_values(std::slice::from_ref(v), std::slice::from_ref(&before[i])) {
+                        merged[i] = v.clone();
+                        edited = true;
+                    }
+                }
+                hrec.borrow_mut().fields = merged;
+                if edited && host.borrow().dirty {
+                    self.save_row(host)?;
+                } else {
                     self.set_xrec(host);
                 }
             }

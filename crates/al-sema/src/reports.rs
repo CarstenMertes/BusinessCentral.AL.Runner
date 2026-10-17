@@ -352,7 +352,7 @@ pub fn layout(obj: &ast::Object) -> Layout {
     }
     for t in obj.triggers() {
         let n = t.name().to_ascii_lowercase();
-        if !["oninitreport", "onprereport", "onpostreport"].contains(&n.as_str()) {
+        if !["oninitreport", "onprereport", "onpostreport", "onprerendering"].contains(&n.as_str()) {
             out.reasons.push(format!("report trigger {n} is not supported yet"));
         }
     }
@@ -407,7 +407,14 @@ const INERT_REQUEST_PAGE_PROPERTIES: &[&str] = &[
 
 /// Request page triggers the test client runs: it opens the page (`OnInit`, `OnOpenPage`) and
 /// closes it (`OnQueryClosePage`, `OnClosePage`).
-const REQUEST_PAGE_TRIGGERS: &[&str] = &["oninit", "onopenpage", "onqueryclosepage", "onclosepage"];
+const REQUEST_PAGE_TRIGGERS: &[&str] = &[
+    "oninit",
+    "onopenpage",
+    "onqueryclosepage",
+    "onclosepage",
+    "onaftergetcurrrecord",
+    "onaftergetrecord",
+];
 
 /// What a reportextension can add to a request page that the client runs: the void page triggers
 /// after the report's own, and the triggers of a `modify` block that a page extension has
@@ -1027,6 +1034,7 @@ pub fn build(cx: &Context, obj: &ast::Object, mut reasons: Vec<String>) -> ir::R
         on_init: object_trigger(&o, obj, "OnInitReport"),
         on_pre: object_trigger(&o, obj, "OnPreReport"),
         on_post: object_trigger(&o, obj, "OnPostReport"),
+        on_pre_rendering: object_trigger(&o, obj, "OnPreRendering"),
         extensions: cx.extensions.clone(),
         request_flag_slot: cx.request_flag_slot,
         output: layout.output.clone(),

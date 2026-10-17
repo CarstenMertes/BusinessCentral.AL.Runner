@@ -53,7 +53,7 @@ pub(crate) fn row_id(t: &TableDef, row: &[Value]) -> String {
 
 impl Session {
     /// A row is about to be read into a record whose request is partial.
-    pub(crate) fn note_partial_fetch(&mut self, rec: &Rec, row: &[Value]) -> Result<(), Signal> {
+    pub(crate) fn note_partial_fetch(&mut self, rec: &Rec, row: &[Value], via_get: bool) -> Result<(), Signal> {
         let t = self.table(rec)?;
         let r = rec.borrow();
         let mut have = r.load.request.clone().unwrap_or_default();
@@ -87,8 +87,15 @@ impl Session {
                 let mut next = old.clone();
                 next.row = Some(new_row.clone());
                 next.cleared = false;
-                if old_row == new_row {
-                    // The same row again: nothing is evicted (record/TestRecordPartialLoadNarrowAfterFetch.al:121-185).
+                if old_row == new_row && !via_get {
+                    // A Find on the row the buffer holds reads it again and keeps only what the request names: after a full
+                    // FindFirst, `SetLoadFields(Amt)` and another FindFirst, the Name is no longer loaded (recordref/
+                    // lt-recordref-fieldref-members/P92LoadFields.al:Record_LoadFields_ThenAreFieldsLoaded, `name_after_set` No). A `Get`
+                    // of that row keeps it (the case below).
+                    next.have = FieldSet::Of(have);
+                    next.unsure = FieldSet::Of(unsure);
+                } else if old_row == new_row {
+                    // The same row again by Get: nothing is evicted (record/TestRecordPartialLoadNarrowAfterFetch.al:121-185).
                     if let FieldSet::Of(h) = &mut next.have {
                         for p in have {
                             if !h.contains(&p) {

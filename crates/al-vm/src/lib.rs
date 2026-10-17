@@ -964,6 +964,23 @@ impl Session {
                     let st = rc.borrow().clone();
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
+                // A temporary record handed by value to a parameter that is NOT declared temporary gives a persistent
+                // copy of its current row: Base Application's To-do.InsertTask does `Task2.Get(..)` after
+                // inserting through another by-value copy, and the Tasks matrix then lists the new tasks (Tests-Marketing
+                // Marketing Matrix Management.TaskWithSalesperson and 9 more). The corpus pins only the parameter declared
+                // `temporary` (record/TestTempTableContracts.al:141-148). Assumption temp-record-by-value-to-persistent-parameter.
+                (Value::Record(rc), false)
+                    if rc.borrow().temporary
+                        && matches!(r.locals[i].ty, RtType::Record(t, false) if !self.engine.object_facts[t as usize].temporary()) =>
+                {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TempRecordByValueToPersistentParameter,
+                    );
+                    let mut st = rc.borrow().clone();
+                    st.temporary = false;
+                    st.temp_id = None;
+                    Value::Record(Rc::new(RefCell::new(st)))
+                }
                 (Value::Record(rc), false) => self.record_by_value(&rc),
                 // An array passed by value is a copy: the callee's writes and Clear do not reach the caller
                 // (misc/W5Clear.al:Clear_ArrayPassedByValue).

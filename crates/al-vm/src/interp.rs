@@ -758,7 +758,9 @@ impl Session {
         };
         // `:=` between records copies the fields into the target record (ADR-010).
         if let Value::Record(src) = &v {
-            if !matches!(p, ir::Place::Field(..)) {
+            // A Variant that holds a record takes the new value whole, whatever table it comes from: it is no record variable
+            // (Library - Variable Storage.Dequeue into one `RecVar` that held a Contact, then a Segment Header; Tests-Marketing).
+            if !matches!(p, ir::Place::Field(..)) && !matches!(self.place_type(p, f), RtType::Variant) {
                 if let Ok(Value::Record(dst)) = self.read(p, f) {
                     if !Rc::ptr_eq(src, &dst) {
                         // A copied record holds copies of its Blobs (value semantics). The corpus

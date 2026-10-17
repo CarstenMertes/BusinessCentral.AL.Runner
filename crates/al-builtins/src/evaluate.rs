@@ -691,8 +691,14 @@ fn into_record_id(c: &mut dyn Ctx, a: &mut [Value], text: &str, number: i64) -> 
             *cell.borrow_mut() = v;
             Ok(Value::Boolean(true))
         }
+        // Not pinned for a RecordId that is not blank: the failed text leaves it as it was
+        // (assumption evaluate-recordid-composite-key).
+        None if !blank && c.ret_used() => {
+            crate::assumptions::assume(crate::assumptions::Assumption::EvaluateRecordIdCompositeKey);
+            Ok(Value::Boolean(false))
+        }
         None if !blank => {
-            unsupported("a failed Evaluate into a RecordId that is not blank (what it keeps is not pinned)")
+            unsupported("a failed Evaluate into a RecordId that is not blank with the result unused (not pinned)")
         }
         None if c.ret_used() => Ok(Value::Boolean(false)),
         None => unsupported("Evaluate into a RecordId failing with the result unused (error text not pinned yet)"),

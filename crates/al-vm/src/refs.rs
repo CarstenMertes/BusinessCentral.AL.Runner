@@ -185,7 +185,7 @@ impl Session {
         }
     }
 
-    /// `Evaluate(RecordId, text)`: see `al_builtins::evaluate`. Only a table with a one-field primary key is read with a key.
+    /// `Evaluate(RecordId, text)`: see `al_builtins::evaluate`. A one-field key is pinned; a composite key is an assumption.
     pub(crate) fn evaluate_record_id_text(&mut self, text: &str, number: i64) -> Result<Option<LibraryValue>, Signal> {
         let (name, key_text) = match text.split_once(':') {
             Some((n, k)) => (n.trim(), Some(k)),
@@ -215,19 +215,25 @@ impl Session {
         let key = match key_text {
             None => Vec::new(),
             Some(k) => {
-                let [pos] = schema.keys[0].as_slice() else {
-                    return unsupported(
-                        "Evaluate into a RecordId of a table with a composite primary key (not pinned)",
-                    );
-                };
-                let ty = schema.fields[*pos].ty.clone();
                 let k = k.strip_prefix(' ').unwrap_or(k);
-                if k.is_empty() {
-                    return unsupported("Evaluate into a RecordId with an empty key text (not pinned)");
-                }
-                match al_builtins::evaluate::evaluate_typed(self, &ty, k, number)? {
-                    Some(v) => vec![v],
-                    None => return Ok(None),
+                if schema.keys[0].len() > 1 {
+                    // Composite key: the values as Format writes them (assumption evaluate-recordid-composite-key).
+                    let Some(t) = self.engine.tables.get(object).cloned().flatten() else {
+                        return unsupported("Evaluate into a RecordId of a table without a compiled schema");
+                    };
+                    match self.evaluate_composite_record_key(&t, k)? {
+                        Some(v) => v,
+                        None => return Ok(None),
+                    }
+                } else {
+                    let ty = schema.fields[schema.keys[0][0]].ty.clone();
+                    if k.is_empty() {
+                        return unsupported("Evaluate into a RecordId with an empty key text (not pinned)");
+                    }
+                    match al_builtins::evaluate::evaluate_typed(self, &ty, k, number)? {
+                        Some(v) => vec![v],
+                        None => return Ok(None),
+                    }
                 }
             }
         };

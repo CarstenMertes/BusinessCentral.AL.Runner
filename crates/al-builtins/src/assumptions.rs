@@ -145,6 +145,42 @@ registry! {
         tests: "Create Prod. Order Lines.Copy (ProdOrder.Modify after Refresh Production Order) followed by the test's Modify of the same Production Order; 4 Tests-SCM-Manufacturing tests (SCM Prod. Whse. Handling).",
         probe: "Two variables Get the same row; one Modifies with no change and Commit; the other changes a field and Modifies: accepted or DB:RecordChanged; the same after a Modify that changes a field.",
     },
+    EvaluateRecordIdCompositeKey => {
+        id: "evaluate-recordid-composite-key",
+        assumed: "Evaluate into a RecordId of a table whose primary key has several fields reads `Table: v1,v2,...` as Format writes it (a value that is empty or holds a comma is in double quotes): one value per key field, each read as Evaluate reads that field's type (a Code as written, an Integer or an Enum by its name or ordinal); a count of values other than the key's field count is rejected. A rejected text leaves a RecordId that is not blank as it was and answers false (any key).",
+        tests: "Library - Error Message.LoadErrorMessages (Evaluate(TempErrorMessage.\"Record ID\", ErrorMessages.Source.Value, 9)); 36 Tests-Misc tests (Check Dimensions On Posting: Default Dimension, Sales Header, Dimension Value keys).",
+        probe: "Evaluate(Rid, Format(Rid)) and Format(Rid, 0, 9) for a table with a Code+Code key, an Enum+Code key (Sales Header), an Integer+Code+Code key (Default Dimension), a Date key part and a Code value holding a comma; the result and Rid; and too few and too many values.",
+    },
+    TempRecordByValueToPersistentParameter => {
+        id: "temp-record-by-value-to-persistent-parameter",
+        assumed: "A temporary record passed by value to a parameter that is not declared temporary gives the callee a record of the stored table holding the current row (the copy is no longer temporary); a parameter declared temporary gets an independent empty buffer (pinned).",
+        tests: "To-do.InsertTask / InsertTaskAndRelatedData (Task2: Record \"To-do\" receives the temporary Rec of CreateTaskFromTask, Task2.Insert(true), then Task2.Get); Tests-Marketing Marketing Matrix Management TaskWith* (10 tests).",
+        probe: "A temporary record with a row, passed by value to a procedure with a parameter of the same table not declared temporary: the callee's IsTemporary, Insert then Count of the stored table, and whether the caller's temporary rows change.",
+    },
+    TestPageAssertEqualsIntegerOnTextControl => {
+        id: "testpage-assertequals-integer-on-text-control",
+        assumed: "TestPageField.AssertEquals(<Integer>) on a control over a Text or Code value compares the plain digits of the integer with the control's text, instead of raising TypeConversion; another number or an Enum there stays refused.",
+        tests: "Tests-Marketing Marketing Matrix Management.TasksMatrixHandlerWithValue (Field1.AssertEquals(1) on the Text[1024] cells of Tasks Matrix); the 10 TaskWith* tests.",
+        probe: "A page with a field over a Text[30] variable holding '1': TestPage Field.AssertEquals(1) and AssertEquals(2), also with a Decimal and a BigInteger expected value, and a Code[10] control.",
+    },
+    TestPageSetValueBlankOptionMember => {
+        id: "testpage-setvalue-blank-option-member",
+        assumed: "TestPageField.SetValue of the first (blank) option member on a control whose OptionCaption starts with a blank caption (' ,Not Started,...') is accepted and selects that member; the client reads the caption ' ' as blank.",
+        tests: "Tests-Marketing Marketing Matrix Management.TaskWithStatus* (Tasks.StatusFilter.SetValue(StatusFilter::\" \") resets the filter); 7 tests.",
+        probe: "A page with an Option variable control with OptionCaption ' ,A,B': TestPage SetValue(Var::\" \") after SetValue(A), then Value; and SetValue('') as text; the same for an option field of a table.",
+    },
+    TypedHandlerKeepsRecAfterSetTableView => {
+        id: "typed-handler-keeps-rec-after-settableview",
+        assumed: "A Page-typed modal handler of a page variable that was given only SetTableView (no SetRecord) sees the Rec the page's own code assigned before (`Rec := X` in a procedure the test called), not a blank record.",
+        tests: "Contact Profile Answers.SetRunFromForm (Rec := ProfileQuestionnaireLine) then RunModal, handler calls UpdateProfileAnswer: Tests-Marketing Marketing Profiling CreateContactProfileManually, ContactToSegmentUsingProfile.",
+        probe: "A page variable: SetTableView(T) then a page procedure that does Rec := T (a row), then RunModal with a Page-typed handler reading Rec.Id through another page procedure and GetRecord.",
+    },
+    TypedHandlerLookupOkHandsBackRec => {
+        id: "typed-handler-lookupok-hands-back-rec",
+        assumed: "When a Page-typed ModalPageHandler answers LookupOK, the record the code passed to Page.RunModal(Id, Rec) takes the page's record as the handler left it (SetRecord), as a TestPage handler's selected row does.",
+        tests: "Segment Header.ReuseCriteria (PAGE.RunModal(PAGE::\"Saved Segment Criteria List\", SavedSegCriteria) answered by ModalFrmHandleSavedSegCriteria); Tests-Marketing SegmentSaveCriteriaAndReuse, ReuseSegmentCriteria, ContactToSegmentUsingProfile.",
+        probe: "Page.RunModal(Page::P, Rec) with Rec on row 1 and a Page-typed handler that does Row.Get(3); P.SetRecord(Row); Response := LookupOK: Rec afterwards; the same with Cancel and with no SetRecord.",
+    },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
         assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",

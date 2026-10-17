@@ -151,6 +151,7 @@ impl Session {
             s.mode = mode;
             s.cursor = Cursor::None;
             s.draft = false;
+            s.never_stored = false;
             s.dirty = false;
             s.frozen_visible = Vec::new();
             s.window = Vec::new();
@@ -297,6 +298,12 @@ impl Session {
                 return Ok(());
             }
             self.load_first_row(st, mode, record.is_some())?;
+            // A card over a table with no row to show stands on a blank Rec that was never stored: an action cannot have deleted it.
+            if has_source && !self.is_list(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {
+                let rec = self.page_rec(st);
+                let never = self.stored_row(&rec)?.is_none();
+                st.borrow_mut().never_stored = never;
+            }
             self.sync_parts_at_open(st)
         })();
         if let Err(e) = result {

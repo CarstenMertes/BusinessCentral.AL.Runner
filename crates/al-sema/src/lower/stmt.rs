@@ -789,6 +789,41 @@ impl Lowerer<'_> {
             );
             return Ok(ir::Stmt::Assign(place, guarded));
         }
+        // A Variant variable holding an Integer, a BigInteger or a Decimal assigned to a Text or Code field raises the same
+        // TypeConversion as into a variable (types/lt-variant-to-text-fields/VariantNumberToField.al:TextField_FromVariantInteger_Result,
+        // _BigInteger_, _Decimal_, CodeField_FromVariantNumbers_Result, TextField_FromVariantNumber_TooLong); a call result such as
+        // `FieldRef.Value()` converts to its Format text (VariantFieldRefBigIntToText.al:TextField_FromFieldRefValue_Numbers).
+        // Other contents of the Variant keep the unconverted path.
+        if variant_into_text_field
+            && matches!(self.ty_ref(&kids[1]), Ty::Variant)
+            && matches!(&value, ir::Expr::Load(p) if matches!(p, ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_)))
+        {
+            let ir::Expr::Load(src_place) = value.clone() else {
+                unreachable!()
+            };
+            let is = |id: &str| -> L<ir::Expr> {
+                Ok(ir::Expr::Builtin {
+                    id: super::call::builtin_id(id)?,
+                    receiver: Some(Box::new(ir::Arg::Ref(src_place.clone()))),
+                    args: Vec::new(),
+                    ret_used: true,
+                })
+            };
+            let or = |a: ir::Expr, b: ir::Expr| ir::Expr::Binary(ir::BinOp::Or, Box::new(a), Box::new(b));
+            let cond = or(or(is("Variant.IsInteger#1")?, is("Variant.IsBigInteger#1")?), is("Variant.IsDecimal#1")?);
+            let kind = if matches!(target_ty, Ty::Code(_)) { "NavCode" } else { "NavText" };
+            let guarded = ir::Expr::Ternary(
+                Box::new(cond),
+                Box::new(ir::Expr::Fail {
+                    message: format!(
+                        "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.{kind} value."
+                    ),
+                    code: "TypeConversion".into(),
+                }),
+                Box::new(value),
+            );
+            return Ok(ir::Stmt::Assign(place, guarded));
+        }
         let value = match op_kind {
             _ if variant_into_text_field => value,
             Some(SyntaxKind::Assign) | None => self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?,

@@ -117,8 +117,21 @@ impl Key {
 
     /// The file name of the entry for this key.
     pub fn file_name(&self) -> String {
-        format!("deps-{}.alcc", &self.hex()[..32])
+        format!("{}-deps-{}.alcc", build_tag(&self.runtime_build), &self.hex()[..32])
     }
+}
+
+/// The first 16 hex digits of a runtime build id. Every entry file name starts with it, so a cleanup can tell
+/// which build wrote a file from the name alone (ADR-022, "Cleanup of old builds").
+pub fn build_tag(build: &[u8; 32]) -> String {
+    build[..8].iter().map(|b| format!("{b:02x}")).collect()
+}
+
+/// The build tag a cache file name starts with: `<16 hex>-<rest>`. `None` for a name made before the tag existed.
+pub fn tag_of_file_name(name: &str) -> Option<&str> {
+    let (tag, rest) = name.split_once('-')?;
+    (tag.len() == 16 && !rest.is_empty() && tag.bytes().all(|b| b.is_ascii_hexdigit() && !b.is_ascii_uppercase()))
+        .then_some(tag)
 }
 
 #[cfg(test)]
@@ -210,5 +223,23 @@ mod tests {
         b.apps[0].id = "a".into();
         b.apps[0].name = "bc".into();
         assert_ne!(a.digest(), b.digest());
+    }
+
+    #[test]
+    fn every_entry_file_name_starts_with_the_build_tag() {
+        let build = [0xab; 32];
+        let k = Key::new(build, "t".into(), vec![]);
+        let tag = build_tag(&build);
+        assert_eq!(tag, "abababababababab");
+        for name in [k.file_name(), crate::index_file_name(&k)] {
+            assert_eq!(tag_of_file_name(&name), Some(tag.as_str()), "{name}");
+        }
+        assert_eq!(tag_of_file_name("deps-0123.alcc"), None, "a name from before the tag");
+        assert_eq!(tag_of_file_name(&format!("{}.albr", "c".repeat(64))), None);
+        assert_ne!(
+            k.file_name(),
+            Key::new([0xcd; 32], "t".into(), vec![]).file_name(),
+            "another build, another name"
+        );
     }
 }

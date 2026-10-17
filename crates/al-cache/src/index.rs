@@ -18,7 +18,11 @@ const HEADER: usize = 8 + 4 + 32 + 8 + 32;
 
 /// The file name of the index for `key`.
 pub fn index_file_name(key: &Key) -> String {
-    format!("index-{}.alci", &key.hex()[..32])
+    format!(
+        "{}-index-{}.alci",
+        crate::build_tag(&key.runtime_build),
+        &key.hex()[..32]
+    )
 }
 
 fn digest(key: &Key) -> [u8; 32] {

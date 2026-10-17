@@ -143,7 +143,9 @@ fn op_name(code: u8) -> Option<&'static str> {
 }
 
 fn file(dir: &Path, key: &str) -> PathBuf {
-    dir.join(format!("{key}.{EXTENSION}"))
+    // The build tag first: a cleanup tells the builds apart by the name (ADR-022, "Cleanup of old builds").
+    let tag = al_cache::build_tag(&crate::compile_cache::runtime_build());
+    dir.join(format!("{tag}-{key}.{EXTENSION}"))
 }
 
 /// The run kept under `key` and the instant it began. A file that cannot be read is removed. A hit marks the file
@@ -266,7 +268,7 @@ mod tests {
         write(dir.path(), "old", &run(), 0);
         write(dir.path(), "new", &run(), 0);
         assert!(
-            dir.path().join("old.albr").exists(),
+            file(dir.path(), "old").exists(),
             "next to the layer files, not in a folder of its own"
         );
         // An entry nothing used for more than the cleanup limit goes when another is written; a used one stays.
@@ -274,24 +276,24 @@ mod tests {
             - std::time::Duration::from_secs((crate::compile_cache::KEEP_DAYS + 1) * 24 * 3600);
         std::fs::File::options()
             .write(true)
-            .open(dir.path().join("old.albr"))
+            .open(file(dir.path(), "old"))
             .unwrap()
             .set_modified(long_ago)
             .unwrap();
         write(dir.path(), "newer", &run(), 0);
-        assert!(!dir.path().join("old.albr").exists(), "unused for too long");
-        assert!(dir.path().join("new.albr").exists());
-        assert!(dir.path().join("newer.albr").exists());
+        assert!(!file(dir.path(), "old").exists(), "unused for too long");
+        assert!(file(dir.path(), "new").exists());
+        assert!(file(dir.path(), "newer").exists());
         // A read marks the file as used.
         std::fs::File::options()
             .write(true)
-            .open(dir.path().join("new.albr"))
+            .open(file(dir.path(), "new"))
             .unwrap()
             .set_modified(long_ago)
             .unwrap();
         assert!(read(dir.path(), "new").is_some());
         write(dir.path(), "newest", &run(), 0);
-        assert!(dir.path().join("new.albr").exists(), "a read renewed it");
+        assert!(file(dir.path(), "new").exists(), "a read renewed it");
     }
 
     #[test]

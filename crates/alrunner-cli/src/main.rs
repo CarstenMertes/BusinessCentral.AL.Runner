@@ -69,6 +69,74 @@ fn real_main() -> ExitCode {
             );
             ExitCode::SUCCESS
         }
+        Command::CachePrune {
+            dir,
+            dry_run,
+            all_other_builds,
+        } => {
+            let folder =
+                al_testrun::compile_cache::CompileCache::under(&al_deps::cache::cache_root_from_env(dir.as_deref()));
+            let mut o = al_testrun::cache_gc::Options::new(al_testrun::cache_gc::this_build());
+            o.dry_run = dry_run;
+            o.all_other_builds = all_other_builds;
+            let r = al_testrun::cache_gc::prune(&folder, &o);
+            use al_testrun::cache_gc::Why;
+            println!(
+                "compile cache {}: {} {} file(s), {:.1} MB",
+                folder.display(),
+                if dry_run { "would remove" } else { "removed" },
+                r.count(),
+                r.bytes() as f64 / 1e6
+            );
+            for (why, label) in [
+                (
+                    Why::OtherBuild,
+                    "another build, unused for 7 days (or any age with --all-other-builds)",
+                ),
+                (Why::Unused, "unused for 30 days"),
+                (Why::Temp, "leftover temporary file"),
+            ] {
+                let (n, b) = r.count_of(why);
+                if n > 0 {
+                    println!("  {n} file(s), {:.1} MB: {label}", b as f64 / 1e6);
+                }
+            }
+            ExitCode::SUCCESS
+        }
+        Command::CacheInfo(dir) => {
+            let folder =
+                al_testrun::compile_cache::CompileCache::under(&al_deps::cache::cache_root_from_env(dir.as_deref()));
+            let build = al_testrun::cache_gc::this_build();
+            let i = al_testrun::cache_gc::info(&folder, &build);
+            let mb = |b: u64| b as f64 / 1e6;
+            println!(
+                "compile cache {}: {} entries, {:.1} MB",
+                folder.display(),
+                i.entries,
+                mb(i.bytes)
+            );
+            println!(
+                "  this build ({build}): {} entries, {:.1} MB",
+                i.this_build.0,
+                mb(i.this_build.1)
+            );
+            let mut others: Vec<_> = i.other_builds.iter().collect();
+            others.sort_by_key(|(_, (_, b))| std::cmp::Reverse(*b));
+            let shown = 10;
+            for (tag, (n, b)) in others.iter().take(shown) {
+                println!("  build {tag}: {n} entries, {:.1} MB", mb(*b));
+            }
+            if others.len() > shown {
+                let (n, b) = others[shown..]
+                    .iter()
+                    .fold((0, 0), |(n, b), (_, (cn, cb))| (n + cn, b + cb));
+                println!("  {} more builds: {n} entries, {:.1} MB", others.len() - shown, mb(b));
+            }
+            if i.temp.0 > 0 {
+                println!("  temporary files: {}, {:.1} MB", i.temp.0, mb(i.temp.1));
+            }
+            ExitCode::SUCCESS
+        }
         Command::Warm(a) => match run::warm(&a) {
             Ok(()) => ExitCode::SUCCESS,
             Err(e) => {

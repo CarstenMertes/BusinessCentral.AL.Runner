@@ -125,6 +125,24 @@ pub fn summary_line(c: &Counts, test_data: bool) -> String {
     )
 }
 
+/// The compact time line of the default output, under the totals table: the total wall time, then
+/// compile and run (the two phases a user can act on) and the test rate, the parenthesis dimmed.
+/// The other phases and the peak memory are in the `Time:` line of `--verbose`.
+pub fn time_line(
+    total: std::time::Duration,
+    compile: std::time::Duration,
+    run: std::time::Duration,
+    rate: f64,
+) -> String {
+    let s = |d: std::time::Duration| format!("{:.2} s", d.as_secs_f64());
+    format!(
+        "  {:<8}{:>10}   {}",
+        "time",
+        s(total),
+        crate::style::dim(&format!("(compile {}, run {}, {rate:.0} tests/s)", s(compile), s(run)))
+    )
+}
+
 /// The totals as a small aligned table under the `Tests:` line: count and share per outcome, the flagged
 /// passes in cyan. The `Tests:` line itself stays the parseable form.
 pub fn summary_table(c: &Counts) -> Vec<String> {
@@ -307,6 +325,13 @@ pub fn junit(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_time_line_has_the_total_first_then_compile_run_and_rate() {
+        use std::time::Duration as D;
+        let line = time_line(D::from_millis(2280), D::from_millis(1240), D::from_millis(730), 440.0);
+        assert_eq!(line, "  time        2.28 s   (compile 1.24 s, run 0.73 s, 440 tests/s)");
+    }
 
     #[test]
     fn the_summary_table_aligns_counts_and_percentages() {

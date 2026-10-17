@@ -204,14 +204,15 @@ SELECTION (a test is selected when any option matches it)
 OUTPUT
     Default: the version line, one line per failing test with the AL call stack of its error
     below it (a frame whose format is not known reads as such), the top refusal reasons, the
-    Tests and Result lines. A warning that changes how to read the result is one short line, only
+    Tests line, the totals table, one time line (total, compile, run, tests/s) and the Result
+    line. A warning that changes how to read the result is one short line, only
     when it applies (for example: baseline incomplete, 16 of 17 install roots ran to their end).
     Errors go to stderr. --junit also holds the stack as the text of each <failure>.
     --verbose            Everything else: first the setup (dependency notes, target, apps, build
                          chosen by, dependencies, threads, isolation, server address, test data,
                          baseline details), then one line per test (PASS, FAIL, NOT RUN with its
-                         reason) with its run time in ms, the test data rows line and the Time
-                         line. There is one level.
+                         reason) with its run time in ms, the test data rows line and the full Time
+                         line (it replaces the short time line). There is one level.
     --quiet              Summary only.
     --color auto|always|never
                          Color the report: PASS green, FAIL red, NOT RUN yellow, flagged cyan,

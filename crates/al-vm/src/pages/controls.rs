@@ -129,7 +129,7 @@ impl Session {
                         return unsupported(format!(
                             "SetValue of {} on a text control (how BC writes it is not pinned)",
                             arg.describe()
-                        ))
+                        ));
                     }
                 }
             }

@@ -512,17 +512,17 @@ registry! {
         tests: "Microsoft and NP Retail code that sets SetBaseAddress and then Get('/orders').",
         probe: "SetBaseAddress('https://example.invalid/api/v1/') then Get('orders'), Get('/orders'), Get('../x'), Get('?q=1') with a handler printing Request.Path.",
     },
-    HttpContentTypeOfStream => {
-        id: "http-content-type-of-stream",
-        assumed: "HttpContent.WriteFrom(InStream) gives the content the Content-Type application/octet-stream, and a content nobody wrote to has text/plain; charset=utf-8. (WriteFrom(Text) gives text/plain; charset=utf-8: misc/W4XmlJsonHttp.al:WriteFromText_HeadersAndRoundTrip; a fresh content has a Content-Type: network/lt-http/HttpContent.al:ContentTypeHeaderAfterWrite.)",
-        tests: "Code that posts a stream and then reads the content headers.",
-        probe: "Content.WriteFrom(InS); Content.GetHeaders(H); H.GetValues('Content-Type', V) on a fresh content and after WriteFrom(InStream).",
+    HttpHeadersAddUsedResult => {
+        id: "http-headers-add-used-result",
+        assumed: "HttpHeaders.Add whose result is used answers false for a value it refuses with InvalidHeader:Format, where a statement raises it. (Pinned for adding a Content-Type that is there: HttpWriteFromStream.al:P100_PresetContentType_ThenWrite against lt-http-header-rules/P87Twice.al.)",
+        tests: "Code that tests the result of HttpHeaders.Add.",
+        probe: "Format(H.Add(N, V)) for a bad value of each typed header (Accept, Authorization, Date, Content-Type) and for a bad name.",
     },
-    HttpContentWriteResetsHeaders => {
-        id: "http-content-write-resets-headers",
-        assumed: "HttpContent.WriteFrom and Clear give the content a new header collection that holds only the Content-Type: headers added before are gone, and an HttpHeaders handed out before no longer shows the content's headers. (network/lt-http/HttpContent.al:ClearContent pins Clear; the re-fetch of the headers after WriteFrom in ContentTypeHeaderAfterWrite suggests the same.)",
-        tests: "Code that calls GetHeaders and adds headers before WriteFrom.",
-        probe: "Content.GetHeaders(H); H.Add('X-A','1'); Content.WriteFrom('x'); then H.Contains('X-A') and a new GetHeaders(H2).Contains('X-A').",
+    HttpContentLengthOnRewrite => {
+        id: "http-content-length-on-rewrite",
+        assumed: "A second WriteFrom adds a Content-Length of the new body to the content headers when it is a stream, or a text written after the Content-Type was removed; text over text with the type in place adds none. (Read from four pinned shapes: lt-http-header-rules/P87Content.al, HttpWriteFromStream.al.)",
+        tests: "Code that writes a content twice and reads its headers between.",
+        probe: "Text over text, stream over text, text over stream, each with the Content-Type in place and removed, 3 bytes over 5 and 9 over 5, and 0 bytes over 5; read Content-Length after each.",
     },
     HttpHeaderRules => {
         id: "http-header-rules",

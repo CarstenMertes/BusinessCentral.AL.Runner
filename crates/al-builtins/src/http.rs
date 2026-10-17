@@ -103,10 +103,16 @@ fn new_content() -> Value {
 }
 
 fn fresh_response() -> HttpResponseState {
+    // The content of a response nobody filled has no Content-Type yet (lt-http-header-rules/P87Content.al:ResponseContentHeaders,
+    // `freshKeys` is `0:`); the first WriteFrom gives it one.
+    let content = HttpContentState {
+        headers: new_header_list(HeaderKind::Content),
+        ..HttpContentState::default()
+    };
     HttpResponseState {
         status: 200,
         reason: "OK".into(),
-        content: new_content(),
+        content: lib("HttpContent", LibraryValue::HttpContent(content)),
         headers: new_header_list(HeaderKind::Response),
         blocked: false,
     }
@@ -580,7 +586,14 @@ fn add_header(bag: &mut HeaderBag, name: &str, value: &str, secret: bool) -> Res
         return Ok(());
     }
     check_typed(bag, name, value)?;
-    push_value(&mut bag.items, name, value.to_string());
+    // A media type is written back with "; " between its parameters (.NET's MediaTypeHeaderValue): 'text/plain;charset=utf-8' reads
+    // 'text/plain; charset=utf-8', upper case and quotes stay (lt-http-header-rules/P87ContentType.al:ContentTypeVariantsStayVerbatim).
+    let value = if name.eq_ignore_ascii_case("content-type") {
+        value.split(';').map(str::trim).collect::<Vec<_>>().join("; ")
+    } else {
+        value.to_string()
+    };
+    push_value(&mut bag.items, name, value);
     Ok(())
 }
 
@@ -599,11 +612,22 @@ fn with_bag<R>(r: Option<&Value>, f: impl FnOnce(&mut HeaderBag) -> R) -> Result
     }
 }
 
-fn headers_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+fn headers_add(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = text(a, 0)?;
     let (value, secret) = text_or_secret(a, 1)?;
-    with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))??;
-    Ok(Value::Boolean(true))
+    let ret_used = c.ret_used();
+    let added = with_bag(r.as_deref(), |b| add_header(b, &name, &value, secret))?;
+    match added {
+        Ok(()) => Ok(Value::Boolean(true)),
+        // A statement raises the invalid header; `Format(H.Add(...))` answers false instead, as a Boolean method does when its
+        // result is used (HttpWriteFromStream.al:P100_PresetContentType_ThenWrite, `add_type` No on a Content-Type that is there;
+        // lt-http-header-rules/P87Twice.al raises it for the statement). Assumption http-headers-add-used-result.
+        Err(Signal::Error(e)) if ret_used && e.code == "InvalidHeader:Format" => {
+            assume(crate::assumptions::Assumption::HttpHeadersAddUsedResult);
+            Ok(Value::Boolean(false))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 /// `Remove(Name)` drops every value of the name and answers true, whether or not it was there.
@@ -718,31 +742,63 @@ fn headers_try_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> O
 
 fn write_from(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let t = text(a, 0)?;
-    with_content(r, |s| s.replace(t.into_bytes(), "text/plain; charset=utf-8")).map(|()| Value::Null)
+    with_content(r, |s| s.write_body(t.into_bytes(), false)).map(|()| Value::Null)
 }
 
 /// `WriteFrom(InStream)` takes the bytes the stream has left.
 fn write_from_stream(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
     let bytes = crate::stream::drain_in(&mut a[0])?;
-    assume(crate::assumptions::Assumption::HttpContentTypeOfStream);
-    with_content(r, |s| s.replace(bytes, "application/octet-stream")).map(|()| Value::Null)
+    with_content(r, |s| s.write_body(bytes, true)).map(|()| Value::Null)
 }
 
 /// `ReadAs(var Text)` gives the body back, UTF-8 decoded; a content nobody wrote to reads as an empty text and
 /// answers true (misc/W4XmlJsonHttp.al:ReadAs_FreshContent); the content a request has when none was set answers
 /// false and leaves the text (network/lt-http/HttpRequest.al:FreshRequestContent).
 fn read_as(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
-    let (data, uninit) = with_content(r, |s| (s.data.clone(), s.uninitialized))?;
+    let (data, uninit, charset) = with_content(r, |s| {
+        let charset = s
+            .headers
+            .borrow()
+            .items
+            .iter()
+            .find(|(n, _)| n.eq_ignore_ascii_case("Content-Type"))
+            .and_then(|(_, v)| v.first().cloned())
+            .and_then(|t| {
+                t.split(';').skip(1).find_map(|p| {
+                    let (k, v) = p.split_once('=')?;
+                    k.trim()
+                        .eq_ignore_ascii_case("charset")
+                        .then(|| v.trim().trim_matches('"').to_ascii_lowercase())
+                })
+            });
+        (s.data.clone(), s.uninitialized, charset)
+    })?;
     if uninit {
         return Ok(Value::Boolean(false));
     }
-    match String::from_utf8(data) {
-        Ok(t) => {
-            a[0] = Value::Text(t.into());
-            Ok(Value::Boolean(true))
+    // The body is read with the charset of the Content-Type header (lt-http-header-rules/P87ContentType.al:ReadAsIgnoresCharsetHeader,
+    // whatever its name says: iso-8859-1 reads each byte as a character, utf-16 reads little-endian units, a lone last byte is U+FFFD;
+    // no charset, or another type, is UTF-8). A charset not measured stays refused.
+    let decoded = match charset.as_deref() {
+        None | Some("utf-8") => String::from_utf8_lossy(&data).into_owned(),
+        Some("iso-8859-1" | "latin1") => data.iter().map(|b| char::from(*b)).collect(),
+        Some("utf-16" | "utf-16le") => {
+            let mut units: Vec<u16> = data.chunks_exact(2).map(|c| u16::from_le_bytes([c[0], c[1]])).collect();
+            let mut text = String::from_utf16_lossy(&units);
+            if data.len() % 2 == 1 {
+                text.push('\u{FFFD}');
+            }
+            units.clear();
+            text
         }
-        Err(_) => unsupported("HttpContent.ReadAs(Text) of bytes that are not UTF-8: not measured"),
-    }
+        Some(other) => {
+            return unsupported(format!(
+                "HttpContent.ReadAs(Text) with the charset {other}: not measured"
+            ));
+        }
+    };
+    a[0] = Value::Text(decoded.into());
+    Ok(Value::Boolean(true))
 }
 
 /// `ReadAs(var InStream)` hands the body out once: a second read gets an empty stream
@@ -780,7 +836,7 @@ fn get_headers(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
 /// `Clear` empties the body and gives the content its own fresh headers, the Content-Type among them
 /// (network/lt-http/HttpContent.al:ClearContent).
 fn content_clear(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
-    with_content(r, |s| s.replace(Vec::new(), "text/plain; charset=utf-8")).map(|()| Value::Null)
+    with_content(r, |s| s.clear_body()).map(|()| Value::Null)
 }
 
 // ------------------------------------------------------------------------------------------------ client
@@ -1298,22 +1354,65 @@ impl HttpContentState {
             headers: copy,
             uninitialized: self.uninitialized,
             stream_taken: self.stream_taken,
+            written: self.written,
         }
     }
 
-    /// `WriteFrom` and `Clear`: the content gets the new bytes and a header collection of its own that holds the
-    /// Content-Type (network/lt-http/HttpContent.al:ContentTypeHeaderAfterWrite, ClearContent).
-    fn replace(&mut self, data: Vec<u8>, content_type: &str) {
-        assume(crate::assumptions::Assumption::HttpContentWriteResetsHeaders);
+    /// `Clear`: the content gets no body and a header collection of its own that holds the Content-Type; a header
+    /// collection handed out before keeps what it held (network/lt-http/HttpContent.al:ClearContent,
+    /// lt-http-header-rules/P87Content.al:ClearAfterAdd, ClearBeforeWrite, ClearFresh).
+    fn clear_body(&mut self) {
         let headers = new_header_list(HeaderKind::Content);
         headers
             .borrow_mut()
             .items
-            .push(("Content-Type".into(), vec![content_type.into()]));
-        self.data = data;
+            .push(("Content-Type".into(), vec!["text/plain; charset=utf-8".into()]));
+        self.data = Vec::new();
         self.headers = headers;
         self.uninitialized = false;
         self.stream_taken = false;
+        self.written = false;
+    }
+
+    /// `WriteFrom` of text or a stream: the body is replaced, the header collection stays the one every `HttpHeaders` handed out
+    /// shows, with its Content-Type set to `text/plain; charset=utf-8` (put first when it was removed) and the other headers kept
+    /// (lt-http-header-rules/P87Content.al:AddThenWrite_Text, WriteThenAdd_Text, RewriteKeepsHeader, P87ContentType.al:HeaderBeforeWrite,
+    /// P87ContentStream.al, HttpWriteFromStream.al:P100_*). A Content-Length of the new body appears after a second write in two pinned
+    /// shapes and in no other: a stream written over a body (P100_SecondWrite_ReplacesBody), and a text written when the Content-Type had
+    /// been removed (RewriteKeepsHeader, third write); text over text with the type in place adds none (WriteThenAdd_Text,
+    /// RewriteKeepsHeader second write), nor does a first write (P100_EmptyBlob). Assumption http-content-length-on-rewrite.
+    fn write_body(&mut self, data: Vec<u8>, from_stream: bool) {
+        let rewrite = self.written;
+        {
+            let mut bag = self.headers.borrow_mut();
+            let had_type = bag.items.iter().any(|(n, _)| n.eq_ignore_ascii_case("Content-Type"));
+            match bag
+                .items
+                .iter_mut()
+                .find(|(n, _)| n.eq_ignore_ascii_case("Content-Type"))
+            {
+                Some((_, v)) => *v = vec!["text/plain; charset=utf-8".into()],
+                None => bag
+                    .items
+                    .insert(0, ("Content-Type".into(), vec!["text/plain; charset=utf-8".into()])),
+            }
+            if rewrite && (from_stream || !had_type) {
+                assume(crate::assumptions::Assumption::HttpContentLengthOnRewrite);
+                let len = data.len().to_string();
+                match bag
+                    .items
+                    .iter_mut()
+                    .find(|(n, _)| n.eq_ignore_ascii_case("Content-Length"))
+                {
+                    Some((_, v)) => *v = vec![len],
+                    None => bag.items.push(("Content-Length".into(), vec![len])),
+                }
+            }
+        }
+        self.data = data;
+        self.uninitialized = false;
+        self.stream_taken = false;
+        self.written = true;
     }
 }
 

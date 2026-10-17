@@ -379,12 +379,6 @@ registry! {
         tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
         probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again.",
     },
-    FilterChangeLandsOnNewLine => {
-        id: "filter-change-lands-on-new-line",
-        assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",
-        tests: "Item Vendor Catalog (OpenNew, Filter.SetFilter(\"Item No.\"), then SetValue of the vendor): ERM Item Reference Purchase and about 12 more Tests-ERM tests.",
-        probe: "An editable list opened with OpenNew and with OpenEdit over an empty filtered result: SetValue of a non-key field and the stored row's key; Next() and the row triggers that run.",
-    },
     DeleteAllMarkedOnly => {
         id: "delete-all-marked-only",
         assumed: "Record.DeleteAll with MarkedOnly(true) deletes the marked rows that pass the filters and no other row, like Find, Next, Count and ModifyAll work on the marked set; with triggers and events as a DeleteAll with a filter.",
@@ -396,12 +390,6 @@ registry! {
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",
         tests: "Post Inventory Cost to G/L through Library - Costing and Library - Assembly PostInvtCostToGL (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch); Check.SaveAsPdf (ERM Cash Manager, Match Bank Rec. Scenarios).",
         probe: "A report on the list saved to a temp file and to a stream on a Windows tier: the answer, the order of the triggers, File.Exists and TempBlob.Length afterwards.",
-    },
-    HiddenPartUpdateIsNoop => {
-        id: "hidden-part-update-is-noop",
-        assumed: "CurrPage.Update (also with false) in the code of a part page that the host's code created without opening it (a literal Visible = false) does nothing and raises no error.",
-        tests: "Sales Invoice, Purchase Invoice and the other document pages call CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId) in OnAfterGetCurrRecord, which ends in CurrPage.Update(false): about 900 Tests-ERM, Tests-SCM and Tests-Misc tests.",
-        probe: "A host with part(P; ...) { Visible = false } whose OnAfterGetCurrRecord calls CurrPage.P.Page.Ping(), where Ping calls CurrPage.Update(false) and CurrPage.Update(true) and then reads Rec.",
     },
 }
 

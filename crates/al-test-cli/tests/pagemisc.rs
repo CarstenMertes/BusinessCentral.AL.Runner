@@ -903,8 +903,8 @@ fn page_run_modal_with_a_record_hands_back_the_selected_row_on_lookup_ok() {
 // Microsoft's "Item Vendor Catalog" tests open a list with OpenNew, set a filter on the first key field and type the other key
 // field: the list shows the blank line and the filter value is on it (2 Tests-ERM tests failed with "The row does not exist on the
 // TestPage"). The corpus pins the blank line of an editable list (handlers/TestPageNewRowLine_Tests.al) and that a new row takes
-// a single-valued filter (handlers/TestPageNewRowFilters_Tests.al); that a filter change brings the blank line back is assumed
-// (filter-change-lands-on-new-line, docs/probes-needed.md).
+// a single-valued filter (handlers/TestPageNewRowFilters_Tests.al); that a filter change brings the blank line back is pinned by
+// pages/lt-filter-change-new-line/FilterChangeNewLine.al.
 #[test]
 fn a_filter_that_leaves_an_editable_list_empty_lands_on_the_blank_line_carrying_the_filter_value() {
     passes(&format!(
@@ -934,7 +934,7 @@ fn a_page_procedure_named_like_a_platform_method_leaves_the_other_overload_to_th
 
 // Base Application's Sales Invoice calls `CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId)` in OnAfterGetCurrRecord
 // behind `Visible = false`; that procedure ends in `CurrPage.Update(false)` on the part page, which is created and not opened. 926 Tests-ERM
-// tests failed with "The TestPage is not open." CurrPage.Update on such a part does nothing (assumption hidden-part-update-is-noop).
+// tests failed with "The TestPage is not open." CurrPage.Update on such a part does nothing (pages/lt-hidden-part-currpage/HiddenPartCurrPageUpdateFalse.al:UpdateFalse_LiteralInvisible_OpenEdit).
 #[test]
 fn current_page_update_inside_a_procedure_of_a_hidden_part_does_nothing() {
     passes(&format!(

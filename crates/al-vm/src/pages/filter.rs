@@ -124,10 +124,10 @@ impl Session {
         // Card_OpenEdit_FilterMatchesNothing_NoOpAction_StaysOpen).
         if st.borrow().cursor == Cursor::None {
             // A list that offers the blank line stands on it (a page opened with OpenNew starts a new row), with the filter
-            // value on it (Microsoft's Item Vendor Catalog tests; assumption filter-change-lands-on-new-line).
+            // value on it (pages/lt-filter-change-new-line/FilterChangeNewLine.al: OpenNew_*, OpenEdit_EmptyTable_*,
+            // OpenEdit_FilterToEmptyResult_*, OpenEdit_FilterOnNonKeyField_*).
             let new_mode = st.borrow().mode == PageMode::New && self.has_source(st);
             if new_mode || (st.borrow().new_line && self.is_list(st)) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FilterChangeLandsOnNewLine);
                 if new_mode {
                     self.start_draft(st, false)?;
                     // The blank line of a list is read twice here too (pages/lt-filter-change-new-line/FilterChangeNewLine.al:

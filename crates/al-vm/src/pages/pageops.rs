@@ -618,10 +618,11 @@ impl Session {
                 }
             }
             // A part the page's own code created without opening it (a literal `Visible = false`) has no
-            // client to refresh: `CurrPage.Update` in its procedure does nothing. Base Application's Approval FactBox ends
-            // `UpdateApprovalEntriesFromSourceRecord` with it (assumption hidden-part-update-is-noop).
+            // client to refresh: `CurrPage.Update` in its procedure does nothing, with and without the argument
+            // (pages/lt-hidden-part-currpage/HiddenPartCurrPageUpdateFalse.al:UpdateFalse_LiteralInvisible_OpenEdit,
+            // HiddenPartCurrPageUpdateTrue.al:UpdateTrue_LiteralInvisible_OpenEdit). Base Application's Approval FactBox ends
+            // `UpdateApprovalEntriesFromSourceRecord` with it.
             PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::HiddenPartUpdateIsNoop);
                 Ok(Value::Null)
             }
             PageMethod::Update | PageMethod::SaveRecord => {

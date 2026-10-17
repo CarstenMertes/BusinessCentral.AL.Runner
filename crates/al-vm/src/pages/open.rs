@@ -164,10 +164,10 @@ impl Session {
             s.pending = None;
             s.result = None;
             s.editable_off = false;
-            // A caption assigned to the variable while the page was not open stays for every run that follows, a reassignment
-            // replaces it (pages/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign,
-            // P187_SecondRun_Reassigned). A caption the page assigned itself while open lasts for that run only.
-            if !first_run && !s.caption_before_run {
+            // A caption assigned to the variable before its first run stays.
+            // It stays for a second run too (types/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign,
+            // `OnOpenPage [Assigned One]` twice); a caption assigned while the page ran is dropped.
+            if !first_run && !s.caption_assigned_closed {
                 s.caption = None;
             }
             s.opening = true;

@@ -1031,7 +1031,17 @@ pub(crate) fn constant(c: &ir::Const) -> Value {
         ir::Const::Boolean(b) => Value::Boolean(*b),
         ir::Const::Integer(i) => Value::Integer(*i),
         ir::Const::BigInteger(i) => Value::BigInteger(*i),
-        ir::Const::Decimal(s) => Value::Decimal(s.parse().expect("decimal literal from the lowerer")),
+        ir::Const::Decimal(s) => {
+            // A literal keeps 18 significant digits (types/lt-expression-operators-literals/ExpressionLiteralsRisky.al:
+            // P195_Literal_DecimalTwentyDigits: `123456789012345.12345 * 2` is `246913578024690.246`).
+            let d: rust_decimal::Decimal = s.parse().expect("decimal literal from the lowerer");
+            Value::Decimal(if d.abs().mantissa() > 999_999_999_999_999_999 {
+                d.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+                    .unwrap_or(d)
+            } else {
+                d
+            })
+        }
         ir::Const::Text(s) => Value::Text(s.clone().into()),
         ir::Const::Date(d) => Value::Date(*d, false),
         ir::Const::Time(t) => Value::Time(*t),

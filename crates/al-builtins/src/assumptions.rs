@@ -115,6 +115,12 @@ registry! {
         tests: "Calendar Management CalcTimeDelta tests (Evaluate of '085606') and Evaluate(RandomTime, Format(RandInt(23))); 11 Tests-SCM-Manufacturing tests.",
         probe: "Evaluate(T, '085606'), '23', '5', '246000', '24', '0856', '8:56' into a Time: the result and the return value; with and without a format number.",
     },
+    CodeCoverageSnapshotWhileLogging => {
+        id: "code-coverage-snapshot-while-logging",
+        assumed: "While CodeCoverageLog(true) is on, the Code Coverage tables hold the snapshot that CodeCoverageRefresh wrote and do not grow with later hits (a read before any refresh is empty, pinned by platform/lt-code-coverage-refresh/CodeCoverageRefreshLogged.al).",
+        tests: "Tests that read the Code Coverage table after a refresh while logging is still on: none known in the buckets.",
+        probe: "CodeCoverageLog(true, false), run code, CodeCoverageRefresh(), count the rows, run more code, count again (still logging), then CodeCoverageRefresh() and count.",
+    },
     NextWholeDecimal => {
         id: "next-whole-decimal",
         assumed: "Record.Next(Decimal) with a whole number steps like the Integer; a fraction is refused.",

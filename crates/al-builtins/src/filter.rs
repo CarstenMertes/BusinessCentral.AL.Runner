@@ -28,7 +28,10 @@ impl FilterExpr {
         // `<> ' '` finds the others (filters/W4Filters.al:BlankOnlyFilterValues_MatchOnlyBlankRows, BC 27.5 and 29.0).
         // Other trailing spaces are not pinned.
         let v = &*blank_if_spaces(v);
-        let cmp = |x: &Value| compare(v, &blank_if_spaces(x)).ok();
+        let cmp = |x: &Value| {
+            let x = blank_if_spaces(x);
+            crate::ops::hyphen_filter_order(v, &x).or_else(|| compare(v, &x).ok())
+        };
         match self {
             FilterExpr::Range(lo, hi) => {
                 lo.as_ref()

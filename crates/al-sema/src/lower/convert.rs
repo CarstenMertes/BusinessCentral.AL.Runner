@@ -2,8 +2,36 @@
 use super::*;
 
 impl<'a> Lowerer<'a> {
+    /// What `n` resolved to; a name a `with` statement supplied is read as the member it names.
     pub(crate) fn res(&self, n: &SyntaxNode) -> Option<&Res> {
-        self.checked.resolutions.get(&key(self.file, n))
+        self.checked.resolutions.get(&key(self.file, n)).map(Res::inner)
+    }
+
+    /// The record `n` is a member of, when a `with` statement supplied the name; else the implicit `Rec`.
+    pub(crate) fn implicit_rec(&self, n: &SyntaxNode) -> L<ir::Place> {
+        match self
+            .checked
+            .resolutions
+            .get(&key(self.file, n))
+            .and_then(Res::with_stmt)
+        {
+            Some(w) => self
+                .with_places
+                .get(&w)
+                .cloned()
+                .ok_or_else(|| "a name of a with statement outside its statement".to_string()),
+            None => Ok(ir::Place::Global(
+                self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?,
+            )),
+        }
+    }
+
+    /// Whether a `with` statement supplied the name `n`.
+    pub(crate) fn supplied_by_with(&self, n: &SyntaxNode) -> bool {
+        self.checked
+            .resolutions
+            .get(&key(self.file, n))
+            .is_some_and(|r| r.with_stmt().is_some())
     }
 
     /// [`ty_of`](Self::ty_of) without the copy.

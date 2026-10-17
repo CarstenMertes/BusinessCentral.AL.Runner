@@ -20,6 +20,13 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
     use RtType as T;
     // The conversions between the plain numbers that cannot fail, without the Decimal detour.
     match (&v, t) {
+        // A Decimal keeps 18 significant digits when it is stored: `Dec := 123456789012345.12345` holds `123456789012345.123`, so
+        // `Dec * 2` is `246913578024690.246` (types/lt-expression-operators-literals/ExpressionLiteralsRisky.al:
+        // P195_Literal_DecimalTwentyDigits). Fewer digits leave the value, and its scale, as it is.
+        (Value::Decimal(d), T::Decimal) if d.abs().mantissa() > 999_999_999_999_999_999 => {
+            let kept = d.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero);
+            return Ok(Value::Decimal(kept.unwrap_or(*d)));
+        }
         (Value::Integer(_), T::Integer) | (Value::BigInteger(_), T::BigInteger) | (Value::Decimal(_), T::Decimal) => {
             return Ok(v);
         }
@@ -573,7 +580,8 @@ fn duration_divide(op: Arith, a: i64, r: &Value) -> Result<Value, Signal> {
                 a % b
             })))
         }
-        Arith::Div if a % b == 0 => Ok(Value::Duration(a / b)),
+        // The quotient is a number too (`slash-int` is `22500`, ExpressionBinaryDateTimeOperands.al:P195_Binary_DurationOperands).
+        Arith::Div if a % b == 0 => Ok(Value::Decimal(Decimal::from(a / b))),
         Arith::Div => {
             let q = Decimal::from(a)
                 .checked_div(Decimal::from(b))
@@ -643,9 +651,11 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
     match (l, r) {
         // A whole number of Durations (milliseconds); other Duration arithmetic is not pinned.
         (V::Duration(ms), n) | (n, V::Duration(ms)) if op == Arith::Mul && int_of(n).is_some() => {
+            // The product is a number of milliseconds, not a Duration: `Format(A * 2, 0, 9)` answers `180000` (types/lt-expression-operators-literals/
+            // ExpressionBinaryDateTimeOperands.al:P195_Binary_DurationOperands, `mul-int`); `D := D1 * 2` converts it back (D_Duration.al:344).
             return int_of(n)
                 .and_then(|n| n.checked_mul(*ms))
-                .map(V::Duration)
+                .map(V::BigInteger)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
         // Duration +/- Duration is a BigInteger of milliseconds: `Format(D1 + D2)` answers '4000', not a duration text, and `R := D1 + D2`
@@ -774,7 +784,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             if *b == 0 {
                 return unsupported("subtraction of an undefined Time from a Time (not pinned)".to_string());
             }
-            return Ok(V::Duration(a - b));
+            // Time - Time is a number of milliseconds (`Format(T1 - T2, 0, 9)` is `-9000000`; ExpressionBinaryDateTimeOperands.al:
+            // P195_Binary_TimeAndDateTimeOperands), which a Duration variable takes back (`Diff := T2 - T1`).
+            return Ok(V::BigInteger(a - b));
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         // An undefined date has no difference, and the whole range is too wide a difference (types/lt-datetime/
@@ -948,10 +960,31 @@ pub fn compare_order(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     compare(l, r)
 }
 
-/// The order of two Codes that are digits only: the shorter is the smaller, else the text order. `None` for anything else.
+/// The order a range end of `in [a .. z]` or `case` uses. A Code on either side follows the order of `<` (the culture order, so the Code `K`
+/// is inside `'a' .. 'z'`: types/lt-expression-operators-literals/ExpressionBinaryOperators.al:P195_Binary_InOperatorOverTypes,
+/// `code-in-range` is Yes); two Text values compare by code point (`'K' in ['a' .. 'z']` is No, `char-range-upper`). Other pairs as
+/// [`compare`].
+pub fn compare_range_end(l: &Value, r: &Value) -> Result<Ordering, Signal> {
+    if matches!(l, Value::Code(_)) || matches!(r, Value::Code(_)) {
+        compare_order(l, r)
+    } else {
+        compare(l, r)
+    }
+}
+
+/// The order of two Codes that are digits only: the shorter is the smaller, else the text order. Between a Code of digits only
+/// (the empty one included) and a Code with any other character the second is the greater, whatever the characters: `'-5' > '3'`,
+/// `'-1' > '9'`, `'+5' > '3'`, `'5' < '+5'`, `'-0' > '0'`, `'1A' > '2'`, `'1A' > '10'`, `'1A' > '1'`, `'-5' > ''`
+/// (types/lt-code-digits-compare-more/CodeDigitsCompare.al:P182b_CodeVars_Negative, _DigitThenLetter). `None` for two Codes that
+/// both have another character.
 fn digit_code_order(a: &str, b: &str) -> Option<Ordering> {
     let digits = |t: &str| t.bytes().all(|c| c.is_ascii_digit());
-    (digits(a) && digits(b)).then(|| a.len().cmp(&b.len()).then_with(|| a.cmp(b)))
+    match (digits(a), digits(b)) {
+        (true, true) => Some(a.len().cmp(&b.len()).then_with(|| a.cmp(b))),
+        (true, false) => Some(Ordering::Less),
+        (false, true) => Some(Ordering::Greater),
+        (false, false) => None,
+    }
 }
 
 /// The order of two text key values: trailing blanks do not count, the letters compare without regard to their case first
@@ -1012,11 +1045,51 @@ pub fn text_key_order(a: &str, b: &str) -> Ordering {
     crate::collation::compare(a, b).unwrap_or_else(|_| a.cmp(b))
 }
 
+/// The order a filter applies to two texts when one starts with a hyphen and both are letters and digits besides it: the key order,
+/// in which the hyphen does not count first (`'-5'` is above `'3'` and below `'9'`; types/lt-code-digits-compare-more/
+/// CodeDigitsCompare.al:P182b_Filters_OverMixedValues, `range-m5-3` is empty). `None` for every other pair: a filter compares
+/// them by code point as before.
+pub fn hyphen_filter_order(a: &Value, b: &Value) -> Option<Ordering> {
+    let (Value::Code(x), Value::Code(y)) = (a, b) else {
+        return None;
+    };
+    let shape = |t: &str| {
+        t.strip_prefix('-')
+            .unwrap_or(t)
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric())
+    };
+    ((x.starts_with('-') || y.starts_with('-')) && shape(x) && shape(y)).then(|| code_key_order(x, y))
+}
+
+/// The key order of two Code values: as [`text_key_order`], except that a leading hyphen does not count at the first level and a
+/// text with it follows the one without: `0|10|1A|3|-5|9|A` and `0|00|01|1|-1|10|-10` (types/lt-code-digits-compare-more/
+/// CodeDigitsCompare.al:P182b_SecondaryKeyOrder_Mixed, _DigitsAndEmpty; both are Code fields). Only a hyphen at the start of a text
+/// of letters, digits and that hyphen is pinned, and only for Code; a Text key keeps [`text_key_order`] (docs/probes-needed.md).
+pub fn code_key_order(a: &str, b: &str) -> Ordering {
+    let hyphen_shape = |t: &str| {
+        t.strip_prefix('-')
+            .unwrap_or(t)
+            .bytes()
+            .all(|c| c.is_ascii_alphanumeric())
+    };
+    if (a.starts_with('-') || b.starts_with('-')) && hyphen_shape(a) && hyphen_shape(b) {
+        let (sa, sb) = (a.strip_prefix('-').unwrap_or(a), b.strip_prefix('-').unwrap_or(b));
+        let first = text_key_order(sa, sb);
+        if first != Ordering::Equal {
+            return first;
+        }
+        return a.starts_with('-').cmp(&b.starts_with('-'));
+    }
+    text_key_order(a, b)
+}
+
 /// [`compare`] for the values of a key: text follows [`text_key_order`].
 #[inline]
 pub fn compare_key_value(l: &Value, r: &Value) -> Result<Ordering, Signal> {
     match (l, r) {
         (Value::Integer(a), Value::Integer(b)) => Ok(a.cmp(b)),
+        (Value::Code(a), Value::Code(b)) if !a.has_marker() && !b.has_marker() => Ok(code_key_order(a, b)),
         (Value::Text(a) | Value::Code(a), Value::Text(b) | Value::Code(b)) if !a.has_marker() && !b.has_marker() => {
             Ok(text_key_order(a, b))
         }
@@ -1370,7 +1443,7 @@ mod tests {
         ));
         assert!(matches!(
             arith(Arith::Sub, &Value::Time(46_800_001), &noon),
-            Ok(Value::Duration(3_600_000))
+            Ok(Value::BigInteger(3_600_000))
         ));
         for (op, l, r, text) in [
             (
@@ -1543,15 +1616,15 @@ mod tests {
     // corpus record/TestCalcFormulaValidationTests.Codeunit.al:60,129: `1 * OneHour()` and
     // `10 * OneHour()` with a Duration in milliseconds.
     #[test]
-    fn a_whole_number_times_a_duration_is_a_duration() {
+    fn a_whole_number_times_a_duration_is_a_number_of_milliseconds() {
         let hour = Value::Duration(3_600_000);
         assert!(matches!(
             arith(Arith::Mul, &Value::Integer(10), &hour),
-            Ok(Value::Duration(36_000_000))
+            Ok(Value::BigInteger(36_000_000))
         ));
         assert!(matches!(
             arith(Arith::Mul, &hour, &Value::Integer(2)),
-            Ok(Value::Duration(7_200_000))
+            Ok(Value::BigInteger(7_200_000))
         ));
         assert!(
             matches!(
@@ -1591,7 +1664,7 @@ mod tests {
         let d1 = Value::Duration(90_000);
         assert!(matches!(
             arith(Arith::Div, &d1, &Value::Integer(4)),
-            Ok(Value::Duration(22_500))
+            Ok(Value::Decimal(x)) if x == Decimal::from(22_500)
         ));
         assert!(matches!(
             arith(Arith::IntDiv, &d1, &Value::Integer(7)),

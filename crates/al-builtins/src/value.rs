@@ -339,6 +339,8 @@ pub struct PageState {
     pub refresh: bool,
     /// `CurrPage.SaveRecord` ran in the action being invoked.
     pub save_record_called: bool,
+    /// The caption was assigned while the page was not open: it stays for every later run of the variable.
+    pub caption_assigned_closed: bool,
     /// A row with the new record's starting key was already stored when the draft started.
     pub draft_stored: bool,
     /// The row a new line was started below (`New()` on a stored row of a list): after the new row
@@ -352,8 +354,6 @@ pub struct PageState {
     pub editable_preset: Option<bool>,
     /// `CurrPage.Caption := x` (handlers/TestPageCaption_Page.al:44); reset when the page opens.
     pub caption: Option<String>,
-    /// The caption was assigned while the page was not open: it stays for the runs that follow (CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign).
-    pub caption_before_run: bool,
     /// The pages shown by the part controls of this page: (control index, child page). Only parts
     /// that are in the control tree at open have one.
     pub parts: Vec<(usize, Rc<RefCell<PageState>>)>,
@@ -442,13 +442,13 @@ impl PageState {
             trapping: false,
             refresh: false,
             save_record_called: false,
+            caption_assigned_closed: false,
             draft_stored: false,
             after_new: None,
             opening: false,
             editable_off: false,
             editable_preset: None,
             caption: None,
-            caption_before_run: false,
             parts: Vec::new(),
             hidden_parts: Vec::new(),
             lower_key: None,

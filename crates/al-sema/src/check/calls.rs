@@ -52,7 +52,7 @@ impl<'a> Checker<'a> {
         }
         match best {
             Some((c, _)) => {
-                let (mut ret, target) = (c.ret.clone(), c.target.clone());
+                let (mut ret, target, with) = (c.ret.clone(), c.target.clone(), c.with_off);
                 // `Abs` of a Duration is a BigInteger, not the Decimal the catalog declares: Format(Abs(D)) reads `1500` and a Decimal
                 // variable assigned from it reads `1,500` (misc/lt-protected-var-abs-query-views/P146AbsDuration.al:P146_Abs_Duration_ResultFormats).
                 if name.eq_ignore_ascii_case("abs")
@@ -62,7 +62,7 @@ impl<'a> Checker<'a> {
                 {
                     ret = Ty::BigInteger;
                 }
-                self.record(sc, node, target);
+                self.record_with(sc, node, target, with);
                 ret
             }
             None => {
@@ -81,6 +81,14 @@ impl<'a> Checker<'a> {
     /// call `UserSecurityId()` means the function even in a table with a
     /// field of that name.
     pub(crate) fn lookup_callable(&mut self, sc: &mut Scope, n: &str) -> Option<Vec<Cand>> {
+        // The record of a `with` statement first (corpus events/lt-with-statement-scopes/WithStatementAmbiguous.al:
+        // P195_With_ProcedureSameNameAsTableProcedure, P195_With_BuiltInMethodSameNameAsCodeunitProcedure).
+        for (t, w) in sc.withs.clone().iter().rev() {
+            if let Some(E::Callable(mut cs)) = self.member(sc, t, n) {
+                cs.iter_mut().for_each(|c| c.with_off = Some(*w));
+                return Some(cs);
+            }
+        }
         let mut c: Vec<Cand> = self.members[sc.self_obj]
             .procedures_named(n)
             .iter()
@@ -236,6 +244,19 @@ impl<'a> Checker<'a> {
     /// Name lookup without reporting: None if the name does not resolve.
     pub(crate) fn lookup_name(&mut self, sc: &mut Scope, node: &SyntaxNode) -> Option<E> {
         // One copy of the name for the common case (a variable); the spelling as written only when it is not one.
+        if !sc.withs.is_empty() {
+            let n = name_of(node);
+            for (t, w) in sc.withs.clone().iter().rev() {
+                let Some(mut e) = self.member(sc, t, &n) else { continue };
+                if let Some(r) = self.field_res(sc, t, &n) {
+                    self.record_with(sc, node, r, Some(*w));
+                }
+                if let E::Callable(cs) = &mut e {
+                    cs.iter_mut().for_each(|c| c.with_off = Some(*w));
+                }
+                return Some(e);
+            }
+        }
         let mut key = name_of(node);
         if key.is_ascii() {
             key.make_ascii_lowercase();

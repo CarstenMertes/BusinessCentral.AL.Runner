@@ -909,6 +909,20 @@ pub(crate) fn write_serialised_text(stream: &mut Value, text: &str) -> Result<()
     Ok(())
 }
 
+/// Like [`write_raw_bytes`], for a write that does not move the stream: it starts at the beginning, and the stream is back there
+/// after it. Refused when something else was written to the stream first.
+pub fn write_raw_bytes_rewinding(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
+    let (b, _) = out_buf(Some(stream))?;
+    if b.borrow().write_pos != 0 {
+        return unsupported(
+            "WriteTo(OutStream) on a stream that was written to (the place it writes at is not pinned)",
+        );
+    }
+    write_bytes(&b, bytes);
+    b.borrow_mut().write_pos = 0;
+    Ok(())
+}
+
 /// Writes bytes to an `OutStream` argument whatever its encoding (the caller pins the bytes).
 pub fn write_raw_bytes(stream: &mut Value, bytes: &[u8]) -> Result<(), Signal> {
     let (b, _) = out_buf(Some(stream))?;

@@ -123,7 +123,8 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "FieldRef.OptionCaption#1",
     "FieldRef.OptionMembers#1",
     "FieldRef.OptionString#1",
-    // FieldRef.TestField: the untyped, `Any` and typed Value overloads (not the ErrorInfo ones).
+    // FieldRef.TestField: the untyped, `Any` and typed Value overloads and the ErrorInfo ones (the even numbers; the record's TestField
+    // takes the ErrorInfo as its last argument).
     "FieldRef.TestField#1",
     "FieldRef.TestField#3",
     "FieldRef.TestField#5",
@@ -142,6 +143,24 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "FieldRef.TestField#31",
     "FieldRef.TestField#33",
     "FieldRef.TestField#35",
+    "FieldRef.TestField#2",
+    "FieldRef.TestField#4",
+    "FieldRef.TestField#6",
+    "FieldRef.TestField#8",
+    "FieldRef.TestField#10",
+    "FieldRef.TestField#12",
+    "FieldRef.TestField#14",
+    "FieldRef.TestField#16",
+    "FieldRef.TestField#18",
+    "FieldRef.TestField#20",
+    "FieldRef.TestField#22",
+    "FieldRef.TestField#24",
+    "FieldRef.TestField#26",
+    "FieldRef.TestField#28",
+    "FieldRef.TestField#30",
+    "FieldRef.TestField#32",
+    "FieldRef.TestField#34",
+    "FieldRef.TestField#36",
     "FieldRef.FieldError#1",
     "FieldRef.FieldError#2",
     "FieldRef.FieldError#3",
@@ -280,12 +299,15 @@ mod tests {
         }
         // The ErrorInfo overloads registered are those of FieldError (handlers/PWRefusedBuiltins.al:113-168)
         // and Record.TestField's, whose check that holds raises nothing and whose failure is refused
-        // (issue 41, docs/probes-needed.md). FieldRef.TestField has none.
+        // (issue 41, docs/probes-needed.md). FieldRef.TestField's are those of the Record's, pinned by record/lt-testfield-typed-values/
+        // FieldRefTestFieldTypedNumeric.al:P189_FldRef_Byte_WithErrorInfo and its siblings.
         for (id, _) in REGISTRY.iter().chain(RECORD_REGISTRY) {
             let has = cat.by_id(id).unwrap().params.iter().any(|p| p.ty == "ErrorInfo");
             if has {
                 assert!(
-                    id.contains("FieldError#3") || id.starts_with("Record.TestField#"),
+                    id.contains("FieldError#3")
+                        || id.starts_with("Record.TestField#")
+                        || id.starts_with("FieldRef.TestField#"),
                     "{id}"
                 );
             }

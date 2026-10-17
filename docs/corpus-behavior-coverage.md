@@ -11,7 +11,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Triggers per object kind | 167 | 146 | 128 | 17 | 17 |
 | Object properties per object kind | 1120 | 455 | 1074 | 665 | 546 |
 | Platform and system events | 123 | 20 | 17 | 0 | 0 |
-| Statements and expressions | 59 | 54 | 53 | 0 | 0 |
+| Statements and expressions | 59 | 55 | 53 | 0 | 0 |
 | Runtime error sites (text pinned) | 55 | 52 | - | 3 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
@@ -407,7 +407,7 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `SubstituteReport` | 0 | no | 0 |
 | codeunit | `WordDocumentMergerAppMode` | 0 | no | 0 |
 
-## Statements and expressions: unpinned items (5)
+## Statements and expressions: unpinned items (4)
 
 | Group | Name | MS uses | Runtime reads | Corpus uses (not reached) |
 |---|---|---:|---|---:|
@@ -415,7 +415,6 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | expression | `BinExpr` | 0 | no | 0 |
 | expression | `PrefixExpr` | 0 | no | 0 |
 | statement | `EmptyStmt` | 0 | no | 0 |
-| statement | `WithStmt` | 0 | no | 0 |
 
 ## Runtime error sites without a corpus test (3 of 55; 0 have too little fixed text to match)
 

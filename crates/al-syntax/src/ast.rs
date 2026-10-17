@@ -519,13 +519,21 @@ impl Section {
 
     /// The source text from token `first` to token `last`, trimmed.
     fn text_between(&self, first: &SyntaxToken, last: &SyntaxToken) -> String {
-        let text = self.0.text().to_string();
-        let base = usize::from(self.0.text_range().start());
-        let (a, b) = (
-            usize::from(first.text_range().start()) - base,
-            usize::from(last.text_range().end()) - base,
-        );
-        text[a..b].trim().to_string()
+        // Only the tokens from `first` to `last` are read: the section's own text can be a whole page layout, and a
+        // slice of that text walks all of it.
+        let mut out = String::new();
+        let mut t = first.clone();
+        loop {
+            out.push_str(t.text());
+            if t == *last {
+                break;
+            }
+            match t.next_token() {
+                Some(n) => t = n,
+                None => break,
+            }
+        }
+        out.trim().to_string()
     }
     fn members(&self) -> impl Iterator<Item = SyntaxNode> {
         self.0
@@ -542,6 +550,22 @@ impl Section {
     pub fn triggers(&self) -> impl Iterator<Item = Routine> {
         self.members().filter_map(Routine::cast)
     }
+}
+
+/// Whether the source text of `node` holds `needle` (lower case ASCII), whatever the case, without building the text as one
+/// string. Every chunk is one token, and `needle` is a name, so it cannot span two of them.
+pub fn text_contains_ignore_case(node: &SyntaxNode, needle: &str) -> bool {
+    let n = needle.as_bytes();
+    let Some(&first) = n.first() else { return true };
+    node.text()
+        .try_for_each_chunk(|chunk| {
+            let b = chunk.as_bytes();
+            let found = b.len() >= n.len()
+                && (0..=b.len() - n.len())
+                    .any(|i| b[i].to_ascii_lowercase() == first && b[i..i + n.len()].eq_ignore_ascii_case(n));
+            if found { Err(()) } else { Ok(()) }
+        })
+        .is_err()
 }
 
 impl VarSection {
@@ -805,6 +829,26 @@ mod tests {
         // `Rec.F` also reads as two parts: the caller decides whether the section takes a name.
         assert_eq!(names(5), s(&["Rec", "F"]));
         assert_eq!(secs[2].arg_name_parts(5), None);
+    }
+
+    #[test]
+    fn a_section_argument_keeps_its_inner_spacing_and_drops_the_outer() {
+        let f = file("page 1 P { layout { area(Content) { field(  X ;   Rec.A  +  1 ; ) { } } } }");
+        let secs = sections_in(f.objects().next().unwrap().syntax());
+        let field = secs.iter().find(|s| s.name() == "field").unwrap();
+        assert_eq!(
+            field.args(),
+            vec!["X".to_string(), "Rec.A  +  1".to_string(), String::new()]
+        );
+    }
+
+    #[test]
+    fn text_is_searched_without_regard_to_case_across_tokens() {
+        let f = file("table 1 T { fields { field(1; A; Integer) { CaptionClass = 'x'; } } }");
+        let o = f.objects().next().unwrap();
+        assert!(text_contains_ignore_case(o.syntax(), "captionclass"));
+        assert!(text_contains_ignore_case(o.syntax(), "integer"));
+        assert!(!text_contains_ignore_case(o.syntax(), "rendering"));
     }
 
     fn file(src: &str) -> SourceFile {

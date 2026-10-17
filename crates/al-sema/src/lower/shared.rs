@@ -187,6 +187,7 @@ pub(crate) fn make_lowerer<'a>(sh: &'a Shared<'a>, tl: &'a Local<'a>, seq: &'a S
         locals: Default::default(),
         global_labels: HashMap::default(),
         local_labels: HashMap::default(),
+        with_places: HashMap::default(),
         reasons: Vec::new(),
         calls: Vec::new(),
         page_reasons: &sh.page_reasons,

@@ -466,6 +466,25 @@ impl Lowerer<'_> {
                 })()
             }
             CaseStmt => self.case(&kids),
+            // `with Rec do Stmt`: the names the checker took from the record read and write that record
+            // (corpus events/lt-global-triggers-statements/P114WithStatement.al,
+            // events/lt-with-statement-scopes/WithStatementNested.al). The record is read as a place each time.
+            WithStmt => {
+                let start = usize::from(n.text_range().start());
+                let place = match self.ty_ref(&kids[0]) {
+                    Ty::Record { .. } => self.place(&kids[0]),
+                    other => Err(format!("with on a value of type {other} is not lowered (only records)")),
+                };
+                match place {
+                    Ok(p) => {
+                        self.with_places.insert(start, p);
+                        let body = self.stmt_or_empty(kids.get(1));
+                        self.with_places.remove(&start);
+                        return body;
+                    }
+                    Err(e) => Err(e),
+                }
+            }
             ExitStmt => match kids.first() {
                 None => Ok(ir::Stmt::Exit(None)),
                 Some(e) => self.expr(e).and_then(|v| {
@@ -623,9 +642,10 @@ impl Lowerer<'_> {
             // Without a receiver the member is a global function (`WorkDate := d`) or a Record
             // member of the implicit Rec of table, page and dataitem code (`FilterGroup := 2`).
             let implicit = !member
-                && sig
-                    .as_ref()
-                    .is_some_and(|s| !s.instance || (s.receiver == "Record" && self.rec_slot.is_some()));
+                && sig.as_ref().is_some_and(|s| {
+                    !s.instance
+                        || (s.receiver == "Record" && (self.rec_slot.is_some() || self.supplied_by_with(&kids[0])))
+                });
             if let Some(sig) = sig.filter(|_| member || implicit) {
                 // A test page control's setter form is run by the test client, not a native builtin.
                 if al_builtins::native::lookup(&id).is_none() && !id.starts_with("TestField.") {
@@ -677,8 +697,7 @@ impl Lowerer<'_> {
                         }))
                     }
                 } else if sig.instance {
-                    let rec = self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?;
-                    Some(Box::new(ir::Arg::Ref(ir::Place::Global(rec))))
+                    Some(Box::new(ir::Arg::Ref(self.implicit_rec(&kids[0])?)))
                 } else {
                     None
                 };
@@ -789,6 +808,48 @@ impl Lowerer<'_> {
                     code: "TypeConversion".into(),
                 }),
                 Box::new(converted),
+            );
+            return Ok(ir::Stmt::Assign(place, guarded));
+        }
+        // A Variant variable holding an Integer, a BigInteger or a Decimal assigned to a Text or Code field raises the same
+        // TypeConversion as into a variable (types/lt-variant-to-text-fields/VariantNumberToField.al:TextField_FromVariantInteger_Result,
+        // _BigInteger_, _Decimal_, CodeField_FromVariantNumbers_Result, TextField_FromVariantNumber_TooLong); a call result such as
+        // `FieldRef.Value()` converts to its Format text (VariantFieldRefBigIntToText.al:TextField_FromFieldRefValue_Numbers).
+        // Other contents of the Variant keep the unconverted path.
+        if variant_into_text_field
+            && matches!(self.ty_ref(&kids[1]), Ty::Variant)
+            && matches!(&value, ir::Expr::Load(p) if matches!(p, ir::Place::Local(_) | ir::Place::Global(_) | ir::Place::BaseGlobal(_)))
+        {
+            let ir::Expr::Load(src_place) = value.clone() else {
+                unreachable!()
+            };
+            let is = |id: &str| -> L<ir::Expr> {
+                Ok(ir::Expr::Builtin {
+                    id: super::call::builtin_id(id)?,
+                    receiver: Some(Box::new(ir::Arg::Ref(src_place.clone()))),
+                    args: Vec::new(),
+                    ret_used: true,
+                })
+            };
+            let or = |a: ir::Expr, b: ir::Expr| ir::Expr::Binary(ir::BinOp::Or, Box::new(a), Box::new(b));
+            let cond = or(
+                or(is("Variant.IsInteger#1")?, is("Variant.IsBigInteger#1")?),
+                is("Variant.IsDecimal#1")?,
+            );
+            let kind = if matches!(target_ty, Ty::Code(_)) {
+                "NavCode"
+            } else {
+                "NavText"
+            };
+            let guarded = ir::Expr::Ternary(
+                Box::new(cond),
+                Box::new(ir::Expr::Fail {
+                    message: format!(
+                        "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.{kind} value."
+                    ),
+                    code: "TypeConversion".into(),
+                }),
+                Box::new(value),
             );
             return Ok(ir::Stmt::Assign(place, guarded));
         }
@@ -947,7 +1008,7 @@ impl Lowerer<'_> {
                     let field = self.field_ref(table, id);
                     let base = match n.kind() {
                         SyntaxKind::MemberExpr => self.place(&n.children().next().ok_or("member base")?)?,
-                        _ => ir::Place::Global(self.rec_slot.ok_or("implicit Rec is not lowered for this object yet")?),
+                        _ => self.implicit_rec(n)?,
                     };
                     Ok(ir::Place::Field(Box::new(base), field))
                 }

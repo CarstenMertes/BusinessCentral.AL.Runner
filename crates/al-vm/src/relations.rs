@@ -255,17 +255,11 @@ impl Session {
                 } else {
                     "DB:NothingInsideFilter".into()
                 }
-            } else if !wheres.is_empty()
-                && rel_pos_in_key(&related, arm.field)
-                && wheres.iter().all(|w| match w {
-                    ir::RelationWhere::Value { related: p, .. } | ir::RelationWhere::Field { related: p, .. } => {
-                        related.keys[0].contains(p)
-                    }
-                })
-            {
-                // Several conditions, all on fields of the related table's primary key, over a related field of that key: DB:RecordNotFound
-                // (record/lt-relation-where-validated/RelationWhereValidated.al: `missing|code`, `other-item|code`). A mix with a field
-                // outside the key is not pinned.
+            } else if wheres.len() > 1 && covers_primary_key(&related, rel_pos, wheres) {
+                // Conditions on primary key fields only, which with the related field name the whole key, answer RecordNotFound:
+                // `Item Variant.Code where("Item No." = field("Item No."), Code = field("Variant Code"))`
+                // (record/lt-relation-where-validated/RelationWhereValidated.al:Validate_OldBlank_ExistingAndMissing,
+                // Validate_OldNonBlank_NewMissing, Validate_OtherItemNo_SameValue). Any other set of several conditions is refused below.
                 "DB:RecordNotFound".into()
             } else if !wheres.is_empty() {
                 // Several conditions: which code BC answers is not pinned for the other mixes, so the error path is refused.
@@ -281,8 +275,12 @@ impl Session {
     }
 }
 
-/// Whether the related field of a relation (the first key field when none is named) is in the related table's primary key.
-fn rel_pos_in_key(related: &al_data::TableDef, field: Option<usize>) -> bool {
-    let pos = field.unwrap_or(related.keys[0][0]);
-    related.keys[0].contains(&pos)
+/// Whether every condition of a relation's `where()` is on a primary key field of the related table and, with the related field
+/// itself, they name the whole key.
+fn covers_primary_key(related: &TableDef, rel_pos: usize, wheres: &[ir::RelationWhere]) -> bool {
+    let pk = &related.keys[0];
+    let on = |w: &ir::RelationWhere| match w {
+        ir::RelationWhere::Value { related, .. } | ir::RelationWhere::Field { related, .. } => *related,
+    };
+    wheres.iter().all(|w| pk.contains(&on(w))) && pk.iter().all(|k| *k == rel_pos || wheres.iter().any(|w| on(w) == *k))
 }

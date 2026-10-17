@@ -329,15 +329,14 @@ impl Session {
             // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
             // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
             PageMethod::Caption if method.recv() == PageRecv::Page => {
-                // The caption read on a Page variable while the page is not open is the page's own, or the one assigned (Edit
-                // Dimension Set Entries.SetFormCaption reads `CurrPage.Caption` before Dimension Management runs the page;
-                // pages/lt-caption-before-run/CaptionReadBeforeRun.al, CaptionDirectMember.al), and an assignment then sets it for the
-                // runs that follow (pages/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al).
+                // The caption read on a Page variable before the page runs is the page's own (Edit Dimension Set Entries.SetFormCaption
+                // reads `CurrPage.Caption` before Dimension Management runs the page); an assignment still needs an open page
+                //.
+                // Also after a run: P187_SecondRun_Reassigned (CaptionAssignedBeforeRun.al) assigns between two runs.
                 if !args.is_empty() && !st.borrow().open {
                     if let Some(t) = args.first().and_then(al_builtins::native::text_of) {
-                        let mut s = st.borrow_mut();
-                        s.caption = Some(t.to_string());
-                        s.caption_before_run = true;
+                        st.borrow_mut().caption = Some(t.to_string());
+                        st.borrow_mut().caption_assigned_closed = true;
                         return Ok(Value::Null);
                     }
                 }
@@ -348,9 +347,8 @@ impl Session {
                 match args.first() {
                     Some(v) => match al_builtins::native::text_of(v) {
                         Some(t) => {
-                            let mut s = st.borrow_mut();
-                            s.caption = Some(t.to_string());
-                            s.caption_before_run = false;
+                            st.borrow_mut().caption = Some(t.to_string());
+                            st.borrow_mut().caption_assigned_closed = false;
                             Ok(Value::Null)
                         }
                         None => unsupported(format!("CurrPage.Caption with {}", v.describe())),
@@ -521,9 +519,18 @@ impl Session {
                         "Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)",
                     );
                 }
-                if !dst.borrow().filters.is_empty() {
-                    return unsupported("Page.SetSelectionFilter into a record that has filters (not pinned)");
+                // A record that already has filters ends with the filter of the selected row alone: a filter on another field and
+                // on the key field, a range on the key, and the page's own filters copied from Rec are gone; a mark and MarkedOnly stay
+                // (errors/lt-ms-refusals-128/P128SelectionFilter.al:P128_SetSelectionFilter_IntoRecordsWithFilters_SecondRow,
+                // _MarkCopyTemporary (without the mark), _CalledTwiceOnOneRecord, _PageWithOwnFilter_CopyOfRec).
+                // A record with marks is not pinned beyond what the same test shows (`Marked: Yes` in the filters and a count of 1 for a
+                // mark outside the selected row); it stays refused.
+                if !dst.borrow().marks.is_empty() || dst.borrow().marked_only {
+                    return unsupported(
+                        "Page.SetSelectionFilter into a record with marks (the marked result is not pinned)",
+                    );
                 }
+                dst.borrow_mut().filters.clear();
                 let fields = src.borrow().fields.clone();
                 dst.borrow_mut().fields = fields;
                 self.record_op(RecordOp::SetRecFilter, dst, &mut [])?;

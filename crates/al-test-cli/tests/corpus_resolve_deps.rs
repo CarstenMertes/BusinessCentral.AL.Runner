@@ -11,9 +11,6 @@
 const KNOWN_UNPARSED: &[&str] = &[
     "types/lt-variant/VaTTextConst.al",
     "types/lt-variant-is-text-streams/LTP89TextConst.al",
-    "events/lt-global-triggers-statements/P114WithStatement.al",
-    "events/lt-with-statement-scopes/WithStatementAmbiguous.al",
-    "events/lt-with-statement-scopes/WithStatementNested.al",
 ];
 
 use al_test_cli::{deps, runtime};

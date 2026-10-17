@@ -1167,7 +1167,7 @@ pub struct FileObject {
 
 /// Runs `f` with this thread's token cache (one per thread: a cache is 128 KB to set up, and
 /// there are tens of thousands of files). A parse that starts inside another gets a cache of its own.
-fn with_tree_cache<T>(f: impl FnOnce(&mut al_syntax::TreeCache) -> T) -> T {
+pub(crate) fn with_tree_cache<T>(f: impl FnOnce(&mut al_syntax::TreeCache) -> T) -> T {
     thread_local! {
         static CACHE: std::cell::RefCell<al_syntax::TreeCache> = Default::default();
     }

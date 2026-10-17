@@ -45,8 +45,20 @@ impl<'a> Checker<'a> {
         });
     }
 
+    /// [`record`](Self::record) for a name a `with` statement supplied.
+    pub(crate) fn record_with(&mut self, sc: &Scope, node: &SyntaxNode, r: Res, with: Option<usize>) {
+        let r = match with {
+            Some(with) => Res::With {
+                with,
+                inner: Box::new(r),
+            },
+            None => r,
+        };
+        self.record(sc, node, r);
+    }
+
     pub(crate) fn record(&mut self, sc: &Scope, node: &SyntaxNode, r: Res) {
-        if let Res::Proc { object, offset } = &r {
+        if let Res::Proc { object, offset } = r.inner() {
             self.calls.push((*object, *offset));
         }
         let range = node.text_range();
@@ -494,6 +506,7 @@ impl<'a> Checker<'a> {
                 self_obj,
                 base_obj: *base_obj,
                 base_vars: base_vars.clone(),
+                withs: Vec::new(),
             };
             let mut locals = super::posmap::FxMap::default();
             for p in r.params() {
@@ -549,6 +562,38 @@ impl<'a> Checker<'a> {
     pub(crate) fn walk(&mut self, sc: &mut Scope, node: &SyntaxNode) {
         if is_expr(node.kind()) {
             self.ty(sc, node);
+            return;
+        }
+        if node.kind() == SyntaxKind::WithStmt {
+            // `with Rec do Stmt`: the record's members come before every variable and procedure of the code around
+            // it (corpus events/lt-with-statement-scopes/WithStatementAmbiguous.al: a field wins over a global, a
+            // local, a procedure of the codeunit and a builtin method of the same name; WithStatementNested.al:
+            // the inner statement's record first, then the outer's). The record expression itself is read in the
+            // scope outside this statement.
+            let mut kids = node.children();
+            let record = kids.next();
+            let pushed = match &record {
+                Some(r) if is_expr(r.kind()) => {
+                    let t = self.ty(sc, r);
+                    // Names are only taken from a record whose table is known: an unresolved one would swallow every
+                    // name and hide the unresolved-name diagnostics.
+                    let known = match &t {
+                        Ty::Record { table, .. } => self.resolve(sc, ObjKind::Table, table).is_some(),
+                        Ty::Object(kind, name) => self.resolve(sc, *kind, name).is_some(),
+                        _ => false,
+                    };
+                    known.then(|| {
+                        sc.withs.push((t, usize::from(node.text_range().start())));
+                    })
+                }
+                _ => None,
+            };
+            for child in kids {
+                self.walk(sc, &child);
+            }
+            if pushed.is_some() {
+                sc.withs.pop();
+            }
             return;
         }
         if node.kind() == SyntaxKind::AssignStmt {

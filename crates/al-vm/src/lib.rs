@@ -101,6 +101,8 @@ pub struct Engine {
     pub(crate) facts: Vec<Vec<RoutineFacts>>,
     /// The register bytecode of the routines, compiled on first call (`exec/`).
     pub(crate) exec: exec::ExecProgram,
+    /// Per object, the ids of its source positions in ascending order, found when the Code Coverage table is first built.
+    pub(crate) positions_by_object: std::sync::OnceLock<Vec<Vec<u32>>>,
 }
 
 /// What a call of a routine asks of the routine's declaration, answered once when the engine is built instead of by
@@ -261,6 +263,7 @@ impl Engine {
             profile_seeds: Default::default(),
             facts,
             exec,
+            positions_by_object: Default::default(),
         })
     }
 }
@@ -972,6 +975,11 @@ impl Session {
                 }
                 // An HttpContent passed by reference is the caller's own object; only a by-value one is a copy (see `ops::convert`).
                 (a @ Value::Library(..), true) if matches!(&a, Value::Library(n, _) if n == "HttpContent") => a,
+                // A Variant holding an Integer handed to a `var` Text parameter is passed as it is: no conversion, the callee's
+                // assignment replaces it and the Variant then holds that text (types/lt-variant-to-text-fields/
+                // VariantNumberToVarParam.al:VarTextParam_VariantArgument, `integer ok = Yes`, `variant after = filled`). Another
+                // number is not pinned and keeps the conversion.
+                (a @ Value::Integer(_), true) if matches!(r.locals[i].ty, RtType::Text(_)) => a,
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             };
         }

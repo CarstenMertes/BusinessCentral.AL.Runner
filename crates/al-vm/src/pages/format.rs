@@ -411,18 +411,20 @@ impl Session {
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let o = &engine.program.objects[object];
-        let prop = |n: &str| {
-            o.properties
-                .iter()
-                .find(|(k, _)| k.eq_ignore_ascii_case(n))
-                .map(|(_, v)| v.as_str())
-        };
-        // `Caption`, else the ENU entry of `CaptionML`, else the name (pages/lt-caption-before-run/CaptionReadMl.al:
-        // P182b_Ml_BeforeRunAfterRunModal).
-        match crate::platform::objects::declared_caption(prop("Caption"), prop("CaptionML"), &o.name) {
-            Ok(c) => c,
-            Err(_) => prop("Caption").map(unquote).unwrap_or_else(|| o.name.clone()),
-        }
+        o.properties
+            .iter()
+            .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
+            .map(|(_, v)| unquote(v))
+            // A page with CaptionML only shows its ENU text (types/lt-caption-before-run/CaptionReadMl.al:P182b_Ml_BeforeRunAfterRunModal,
+            // `[LT ML Caption]` before, during and after the run). A CaptionML without an ENU entry keeps the page name.
+            .or_else(|| {
+                let (_, v) = o.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("CaptionML"))?;
+                let at = v.to_ascii_uppercase().find("ENU")?;
+                let rest = v[at + 3..].trim_start().strip_prefix('=')?.trim_start();
+                let rest = rest.strip_prefix('\'')?;
+                Some(rest[..rest.find('\'')?].to_string())
+            })
+            .unwrap_or_else(|| o.name.clone())
     }
 
     /// The caption a TestPage shows: the page caption, then ` - ` and the values of the data caption fields of the row, joined
@@ -579,6 +581,20 @@ impl Session {
     }
 
     pub(super) fn control_enabled(&mut self, st: &St, idx: usize) -> Result<bool, Signal> {
+        // A field in a group with `Enabled = false` reads No on a request page (misc/lt-object-properties-runtime-effect/
+        // ReportRequestPageGroupEditable.al:P194_ReportGroup_EditableEnabled, `disabled_enabled = No`); on another page it is not pinned.
+        if self.is_request_page(st) {
+            let engine = self.engine();
+            let mut at = page_of(&engine, st).controls[idx].parent;
+            while let Some(p) = at {
+                if page_of(&engine, st).controls[p].kind == ir::ControlKind::Group
+                    && !self.prop_bool_now(st, p, "enabled", true)?
+                {
+                    return Ok(false);
+                }
+                at = page_of(&engine, st).controls[p].parent;
+            }
+        }
         self.prop_bool_now(st, idx, "enabled", true)
     }
 

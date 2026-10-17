@@ -1,5 +1,5 @@
 {
-  "corpus_commit": "4ec77f4ad89264d2cbe14513451aa70e8a1aee87",
+  "corpus_commit": "81244cadebdbee8ef39a2f9a50d1563b4b585abe",
   "overloads": 1731,
   "pinned": 1426,
   "types": [
@@ -548,13 +548,13 @@
           "id": "DateTime.Date#1",
           "pinned": true,
           "signature": "DateTime.Date inst () -> Date",
-          "site": "types/lt-totext-bigtext-codeunit-run/P93DateTime.al:18"
+          "site": "types/lt-datetime-date-time-methods/DateTimeDateTimeMethods.al:20"
         },
         {
           "id": "DateTime.Time#1",
           "pinned": true,
           "signature": "DateTime.Time inst () -> Time",
-          "site": "types/lt-totext-bigtext-codeunit-run/P93DateTime.al:20"
+          "site": "types/lt-datetime-date-time-methods/DateTimeDateTimeMethods.al:22"
         },
         {
           "id": "DateTime.ToText#1",

@@ -1472,6 +1472,22 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             None => println!("{doc}"),
         }
     }
+    // Last, so that it never delays the tests: the automatic cleanup of the compile cache folder (at most once a
+    // day, 200 ms at most; ADR-022 "Cleanup of old builds").
+    if !a.no_compile_cache && std::env::var_os("ALRUNNER_NO_COMPILE_CACHE").is_none() {
+        let folder = al_testrun::compile_cache::CompileCache::under(&al_deps::cache::cache_root_from_env(
+            a.cache_dir.as_deref(),
+        ));
+        if let Some(r) = al_testrun::cache_gc::auto_prune(&folder, &al_testrun::cache_gc::this_build())
+            && r.count() > 0
+        {
+            say!(
+                "compile cache: removed {} old file(s), {:.1} MB",
+                r.count(),
+                r.bytes() as f64 / 1e6
+            );
+        }
+    }
     Ok(code)
 }
 

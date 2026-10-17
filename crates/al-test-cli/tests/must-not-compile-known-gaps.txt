@@ -262,3 +262,5 @@
 27 0450-integer-to-biginteger-to-enum-field
 28 0450-integer-to-biginteger-to-enum-field
 29 0450-integer-to-biginteger-to-enum-field
+27 0451-biginteger-to-enum-variable
+28 0451-biginteger-to-enum-variable

@@ -149,33 +149,35 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("Dictionary.Add#1", |c, r, a| {
         let ret_used = c.ret_used();
         with_dict(r, |d| {
-            if d.iter().any(|(k, _)| eq(k, &a[0])) {
+            if live(d).any(|(_, (k, _))| eq(k, &a[0])) {
                 return if ret_used {
                     Ok(Value::Boolean(false))
                 } else {
                     error_code("An item with the same key has already been added.", "Argument")
                 };
             }
-            d.push((a[0].clone(), a[1].clone()));
+            dict_insert(d, a[0].clone(), a[1].clone());
             Ok(Value::Boolean(true))
         })
     }),
     ("Dictionary.ContainsKey#1", |_, r, a| {
-        with_dict(r, |d| Ok(Value::Boolean(d.iter().any(|(k, _)| eq(k, &a[0])))))
+        with_dict(r, |d| Ok(Value::Boolean(live(d).any(|(_, (k, _))| eq(k, &a[0])))))
     }),
     ("Dictionary.Count#1", |_, r, _| {
-        with_dict(r, |d| Ok(Value::Integer(d.len() as i32)))
+        with_dict(r, |d| Ok(Value::Integer(live(d).count() as i32)))
     }),
     ("Dictionary.Get#1", |_, r, a| {
         with_dict(r, |d| {
-            d.iter()
-                .find(|(k, _)| eq(k, &a[0]))
-                .map(|(_, v)| v.clone())
+            live(d)
+                .find(|(_, (k, _))| eq(k, &a[0]))
+                .map(|(_, (_, v))| v.clone())
                 .map_or_else(key_not_found, Ok)
         })
     }),
     ("Dictionary.Get#2", |c, r, a| {
-        let got = with_dict(r, |d| Ok(d.iter().find(|(k, _)| eq(k, &a[0])).map(|(_, v)| v.clone())))?;
+        let got = with_dict(r, |d| {
+            Ok(live(d).find(|(_, (k, _))| eq(k, &a[0])).map(|(_, (_, v))| v.clone()))
+        })?;
         match got {
             Some(v) => {
                 a[1] = v;
@@ -188,22 +190,26 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     ("Dictionary.Keys#1", |_, r, _| {
         with_dict(r, |d| {
             Ok(Value::List(Rc::new(RefCell::new(
-                d.iter().map(|(k, _)| k.clone()).collect(),
+                live(d).map(|(_, (k, _))| k.clone()).collect(),
             ))))
         })
     }),
     ("Dictionary.Values#1", |_, r, _| {
         with_dict(r, |d| {
             Ok(Value::List(Rc::new(RefCell::new(
-                d.iter().map(|(_, v)| v.clone()).collect(),
+                live(d).map(|(_, (_, v))| v.clone()).collect(),
             ))))
         })
     }),
     ("Dictionary.Remove#1", |_, r, a| {
         with_dict(r, |d| {
-            Ok(Value::Boolean(match d.iter().position(|(k, _)| eq(k, &a[0])) {
+            let found = live(d).find(|(_, (k, _))| eq(k, &a[0])).map(|(i, _)| i);
+            Ok(Value::Boolean(match found {
                 Some(p) => {
-                    d.remove(p);
+                    // The slot is freed, not closed up: a key added next takes the slot freed last (.NET Dictionary; collections/
+                    // DictBasic.al:Dict_SetRemove, `keys after re-add` [a,b,c] after removing b and adding b again).
+                    let seq = d.iter().filter_map(tombstone).max().unwrap_or(0) + 1;
+                    d[p] = (Value::Null, Value::Integer(seq));
                     true
                 }
                 None => false,
@@ -212,14 +218,42 @@ pub const REGISTRY: &[(&str, NativeFn)] = &[
     }),
     ("Dictionary.Set#1", |_, r, a| {
         with_dict(r, |d| {
-            match d.iter_mut().find(|(k, _)| eq(k, &a[0])) {
+            match d.iter_mut().find(|(k, _)| !matches!(k, Value::Null) && eq(k, &a[0])) {
                 Some((_, v)) => *v = a[1].clone(),
-                None => d.push((a[0].clone(), a[1].clone())),
+                None => dict_insert(d, a[0].clone(), a[1].clone()),
             }
             Ok(Value::Null)
         })
     }),
 ];
+
+/// A freed slot of a dictionary: a null key and the sequence number of the removal (the free list of a .NET Dictionary is last in,
+/// first out).
+fn tombstone(e: &(Value, Value)) -> Option<i32> {
+    match e {
+        (Value::Null, Value::Integer(n)) => Some(*n),
+        _ => None,
+    }
+}
+
+/// The entries that are in the dictionary, with their slots.
+fn live(d: &[(Value, Value)]) -> impl Iterator<Item = (usize, &(Value, Value))> {
+    d.iter().enumerate().filter(|(_, e)| tombstone(e).is_none())
+}
+
+/// A new entry goes into the slot freed last, else after the last one.
+fn dict_insert(d: &mut Vec<(Value, Value)>, k: Value, v: Value) {
+    let free = d
+        .iter()
+        .enumerate()
+        .filter_map(|(i, e)| tombstone(e).map(|n| (n, i)))
+        .max()
+        .map(|(_, i)| i);
+    match free {
+        Some(i) => d[i] = (k, v),
+        None => d.push((k, v)),
+    }
+}
 
 fn eq(a: &Value, b: &Value) -> bool {
     compare(a, b).ok() == Some(Ordering::Equal)

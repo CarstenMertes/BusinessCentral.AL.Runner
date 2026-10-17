@@ -203,6 +203,9 @@ impl Session {
             return Err(Signal::Error(Box::new(e)));
         }
         self.commit_transaction();
+        // A Commit puts LockTimeout back on (misc/lt-probes-needed-2/PnBRecordMisc.al:LastUsedRowVersion_AndLockTimeout
+        // `lockTimeoutAfterCommit`). The timeout duration is not pinned.
+        self.tx.lock_timeout = true;
         // The next transaction has not started and its type is Update (see `tx_phase`).
         self.tx.tx_phase = TX_FRESH;
         self.tx.transaction_type = 1;

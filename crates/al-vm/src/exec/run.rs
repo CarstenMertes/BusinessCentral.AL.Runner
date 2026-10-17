@@ -777,7 +777,12 @@ impl Session {
             // `Clear` of a Variant empties it, whatever it holds (types/lt-variant/VaTIs*.al:Is_Empty_Variant `V := 5; Clear(V)`
             // has no type flag left); the native clears a value to the default of its own kind.
             if let Some(ir::Arg::Ref(p)) = site.args.first() {
-                if matches!(self.place_type(p, f), al_builtins::value::RtType::Variant) {
+                // An Interface variable too: it is unassigned afterwards and a call raises "Interface not initialized"
+                // (platform/lt-system-database-members/ClearInterface.al:ClearInterface; codeunit/lt-enums-interfaces/OjT71047.al:Uninitialized_AfterClear).
+                if matches!(
+                    self.place_type(p, f),
+                    al_builtins::value::RtType::Variant | al_builtins::value::RtType::Interface(_)
+                ) {
                     drop(values);
                     self.write(p, Value::Null, f)?;
                     return Ok(Value::Null);

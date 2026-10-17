@@ -166,6 +166,7 @@ impl Session {
                 // Open does not run the query; the first Read does.
                 qs.borrow_mut().run = Some(QueryRun {
                     started: false,
+                    filters_changed: false,
                     rows: Vec::new(),
                     next: 0,
                     current: None,
@@ -218,6 +219,9 @@ impl Session {
                     )
                 };
                 let mut q = qs.borrow_mut();
+                if let Some(run) = q.run.as_mut().filter(|r| !r.started) {
+                    run.filters_changed = true;
+                }
                 q.filters.retain(|(c, _)| *c != col);
                 if let Some(e) = expr {
                     q.filters.push((col, e));
@@ -594,6 +598,19 @@ impl Session {
             return Err(Signal::Error(Box::new(AlError {
                 message: "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function.".into(),
                 code: "QueryNoDataSet".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
+        }
+        if qs
+            .borrow()
+            .run
+            .as_ref()
+            .is_some_and(|r| !r.started && r.filters_changed)
+        {
+            return Err(Signal::Error(Box::new(AlError {
+                message: "The READ function is called on a query after query metadata has been changed by one of the following: SETFILTER, SETRANGE, SECURITYFILTERING, or TOPNUMBEROFROWS. After metadata changes, you must reopen the query by calling the OPEN function before calling the READ function.".into(),
+                code: "Query".into(),
                 call_stack: String::new(),
                 ..Default::default()
             })));
@@ -1116,16 +1133,25 @@ impl Session {
                                 // An Integer column averages to an Integer, truncated: 1.33 and 1.5
                                 // both give 1 (Query_Average_IntegerColumnTruncates_...).
                                 RtType::Decimal => {
-                                    // A Decimal column keeps 17 places (1.33333333333333333). Whether
-                                    // BC rounds or cuts the 18th is not pinned: refuse where they differ.
-                                    let cut = avg.round_dp_with_strategy(17, rust_decimal::RoundingStrategy::ToZero);
+                                    // A Decimal column keeps 18 places less the digits before the point:
+                                    // 1.33333333333333333 (17 places), and -0.333333333333333333 (18) for the
+                                    // average of -2, 0 and 1 (xmlport/lt-xmlport-query-datatransfer/XpTQueryAggregates.al:
+                                    // Group_NegativeAndZero). Whether BC rounds or cuts the last place is not pinned: refuse where they differ.
+                                    let int_digits = if avg.trunc().is_zero() {
+                                        0
+                                    } else {
+                                        avg.trunc().abs().to_string().len() as u32
+                                    };
+                                    let places = 18u32.saturating_sub(int_digits);
+                                    let cut =
+                                        avg.round_dp_with_strategy(places, rust_decimal::RoundingStrategy::ToZero);
                                     let rounded = avg.round_dp_with_strategy(
-                                        17,
+                                        places,
                                         rust_decimal::RoundingStrategy::MidpointAwayFromZero,
                                     );
                                     if cut != rounded {
                                         return unsupported(
-                                            "an Average of a Decimal column that needs rounding at the 17th place (not pinned)",
+                                            "an Average of a Decimal column that needs rounding at the last kept place (not pinned)",
                                         );
                                     }
                                     cut

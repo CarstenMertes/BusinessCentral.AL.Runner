@@ -979,10 +979,12 @@ impl Session {
         // missing and the result is not used (corpus testpart/TestTestPart.al:
         // TestPart_GoToKey_ErrorsWhenTheKeyFieldCountIsWrong, _ErrorsForAMissingKeyWhenTheReturnIsDiscarded).
         // Texts and codes: handlers/TestPageRuntimeContracts.al:300-312 (TestPart_GoToKey_Arity_AndMissingKey).
-        if st.borrow().host.is_some() {
+        // A page too raises for more values than the key has fields (pages/lt-page-runtime/P82TestPage.al:Navigation_GoToKey
+        // `too-many-key-values`); fewer is pinned for a part only.
+        {
             let rec = self.page_rec(st);
             let wanted = self.table(&rec)?.keys[0].len();
-            if key.len() != wanted {
+            if key.len() != wanted && (st.borrow().host.is_some() || key.len() > wanted) {
                 return Err(error_code(
                     "The number of arguments does not match the number of primary key fields.",
                     "TestInvalidNumberOfKeyFieldValues",
@@ -992,14 +994,38 @@ impl Session {
         self.save_row(st)?;
         let rec = self.page_rec(st);
         let table = self.table(&rec)?;
-        let want: Vec<Value> = table.keys[0]
+        // A lowercase text is no key of a Code field: the client compares as typed (pages/lt-page-runtime/P82TestPage.al:
+        // Navigation_GoToKey `lowercase` = No for 'n2' against N2). A row that is not found, as for any other missing key.
+        let lowercase_code = table.keys[0].iter().enumerate().any(|(n, &f)| {
+            matches!(&table.fields[f].ty, RtType::Code(_))
+                && matches!(key.get(n), Some(Value::Text(t)) if *t != t.to_uppercase())
+        });
+        if lowercase_code {
+            if !result_used {
+                return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+            }
+            return Ok(Value::Boolean(false));
+        }
+        let want: Result<Vec<Value>, Signal> = table.keys[0]
             .iter()
             .enumerate()
             .map(|(n, &f)| match key.get(n) {
                 Some(v) => ops::convert(v.clone(), &table.fields[f].ty),
                 None => Ok(self.default_value(&table.fields[f].ty)),
             })
-            .collect::<Result<_, _>>()?;
+            .collect();
+        // A value that is no value of the key's type is no key of any row (pages/lt-page-runtime/P82TestPage.al:Navigation_GoToKey
+        // `wrong-type`: GoToKey(1) over a Code key raises the row error).
+        let want = match want {
+            Ok(w) => w,
+            Err(Signal::Error(_)) => {
+                if !result_used {
+                    return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
+                }
+                return Ok(Value::Boolean(false));
+            }
+            Err(e) => return Err(e),
+        };
         // GoToKey onto the first row while standing on it reads nothing and runs no trigger (pages/lt-testpage-list-rows/
         // ListRowsGoToFirst.al:GoToKeyFirstWhileOnIt_Both5Rows_ReadsLogged and _OnlyCurr30Rows_ReadsLogged: `first-on-first-total = 0`,
         // also the second time).

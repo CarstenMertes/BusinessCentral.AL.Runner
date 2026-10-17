@@ -1,7 +1,7 @@
 {
-  "corpus_commit": "81244cadebdbee8ef39a2f9a50d1563b4b585abe",
+  "corpus_commit": "b17ad667b02461470583239c9576cf15206a78d2",
   "overloads": 1731,
-  "pinned": 1426,
+  "pinned": 1428,
   "types": [
     {
       "methods": [
@@ -1126,13 +1126,13 @@
           "id": "FieldRef.GetRangeMax#1",
           "pinned": true,
           "signature": "FieldRef.GetRangeMax inst () -> Any",
-          "site": "recordref/lt-refs/RfTFieldFilters.al:195"
+          "site": "fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:117"
         },
         {
           "id": "FieldRef.GetRangeMin#1",
           "pinned": true,
           "signature": "FieldRef.GetRangeMin inst () -> Any",
-          "site": "recordref/lt-refs/RfTFieldFilters.al:194"
+          "site": "fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:111"
         },
         {
           "id": "FieldRef.IsEnum#1",
@@ -5165,7 +5165,7 @@
           "id": "Record.GetRangeMax#1",
           "pinned": true,
           "signature": "Record.GetRangeMax inst (Field: Any) -> Any",
-          "site": "pages/lt-page-filtergroup-assumptions/P99RangeGroups.al:40"
+          "site": "fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:57"
         },
         {
           "id": "Record.GetRangeMin#1",
@@ -5911,7 +5911,7 @@
           "id": "RecordRef.KeyCount#1",
           "pinned": true,
           "signature": "RecordRef.KeyCount inst () -> Integer",
-          "site": "record/TestProbeRecordRefContracts.al:225"
+          "site": "metadata/lt-custom-report-layout-columns/CustomReportLayoutColumns.al:29"
         },
         {
           "id": "RecordRef.KeyIndex#1",
@@ -6019,7 +6019,7 @@
           "id": "RecordRef.Reset#1",
           "pinned": true,
           "signature": "RecordRef.Reset inst ()",
-          "site": "filterpage/W3FilterPageBuilder.al:146"
+          "site": "fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:131"
         },
         {
           "id": "RecordRef.SecurityFiltering#1",
@@ -6920,7 +6920,7 @@
           "id": "System.CopyArray#1",
           "pinned": true,
           "signature": "System.CopyArray static (NewArray: Array of [Any], Array: Array of [Any], Position: Integer, ?Length: Integer)",
-          "site": "misc/lt-system-functions/Arrays.al:25"
+          "site": "collections/lt-array-rows/ArrayRows.al:131"
         },
         {
           "id": "System.CopyStream#1",
@@ -6936,9 +6936,9 @@
         },
         {
           "id": "System.CreateEncryptionKey#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.CreateEncryptionKey static () -> Boolean?",
-          "site": null
+          "site": "session/lt-encryption-key-delete/EncryptionKeyDelete.al:45"
         },
         {
           "id": "System.CreateGuid#1",
@@ -7002,9 +7002,9 @@
         },
         {
           "id": "System.DeleteEncryptionKey#1",
-          "pinned": false,
+          "pinned": true,
           "signature": "System.DeleteEncryptionKey static ()",
-          "site": null
+          "site": "session/lt-encryption-key-delete/EncryptionKeyDelete.al:15"
         },
         {
           "id": "System.Encrypt#1",
@@ -7016,13 +7016,13 @@
           "id": "System.EncryptionEnabled#1",
           "pinned": true,
           "signature": "System.EncryptionEnabled static () -> Boolean",
-          "site": "types/TestVersionCreateEncryptionContracts.al:90"
+          "site": "session/lt-encryption-key-delete/EncryptionKeyDelete.al:29"
         },
         {
           "id": "System.EncryptionKeyExists#1",
           "pinned": true,
           "signature": "System.EncryptionKeyExists static () -> Boolean",
-          "site": "types/TestVersionCreateEncryptionContracts.al:91"
+          "site": "session/lt-encryption-key-delete/EncryptionKeyDelete.al:30"
         },
         {
           "id": "System.Evaluate#1",
@@ -7278,7 +7278,7 @@
         }
       ],
       "overloads": 79,
-      "pinned": 61,
+      "pinned": 63,
       "type": "System"
     },
     {
@@ -8734,7 +8734,7 @@
           "id": "Variant.IsInStream#1",
           "pinned": true,
           "signature": "Variant.IsInStream inst () -> Boolean",
-          "site": "types/lt-variant/VaTHelper.al:54"
+          "site": "types/lt-variant-unsupported-kinds/VariantUnsupportedKinds.al:85"
         },
         {
           "id": "Variant.IsInteger#1",
@@ -8794,7 +8794,7 @@
           "id": "Variant.IsOutStream#1",
           "pinned": true,
           "signature": "Variant.IsOutStream inst () -> Boolean",
-          "site": "types/lt-variant/VaTHelper.al:55"
+          "site": "types/lt-variant-unsupported-kinds/VariantUnsupportedKinds.al:87"
         },
         {
           "id": "Variant.IsPromptMode#1",

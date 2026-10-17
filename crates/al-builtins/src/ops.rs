@@ -451,6 +451,22 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
 fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
     match (&v, t) {
         (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
+        // A RecordRef a Variant holds, into a record of its own table: the record with the RecordRef's row and filters, a copy
+        // (Base Application's Approvals Mgmt.InformUserOnStatusChange passes its Variant to a `Record "Sales Header"` parameter;
+        // 73 Tests-Workflow tests; assumption recordref-into-record). Another table is not pinned.
+        (Value::Library(_, h), RtType::Record(table, _)) => {
+            let copy = match &*h.borrow() {
+                LibraryValue::RecordRef(rec) if rec.borrow().table == *table => Some(rec.borrow().clone()),
+                _ => None,
+            };
+            match copy {
+                Some(state) => {
+                    crate::assumptions::assume(crate::assumptions::Assumption::RecordRefIntoRecord);
+                    Ok(Value::Record(std::rc::Rc::new(std::cell::RefCell::new(state))))
+                }
+                None => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
+            }
+        }
         // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
         (Value::Integer(_), RtType::Text(_)) => raise(

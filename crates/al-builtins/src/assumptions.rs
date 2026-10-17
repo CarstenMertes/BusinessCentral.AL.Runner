@@ -133,6 +133,18 @@ registry! {
         tests: "Import / Export Workflow (\"Workflow Step Argument\".\"Response Option Group\", a Lookup FlowField); 76 Tests-Workflow tests.",
         probe: "An export-only XmlPort with a fieldelement over a Sum FlowField and over a Lookup FlowField of a row with children: the exported text with and without a CalcFields on the row before; an import of the same element.",
     },
+    RecordRefIntoRecord => {
+        id: "recordref-into-record",
+        assumed: "A RecordRef (held by a Variant) assigned or passed to a Record of the same table gives a copy of the record the RecordRef is on, filters included; another table is refused.",
+        tests: "Approvals Mgmt.InformUserOnStatusChange (ShowSalesApprovalStatus(Variant)); 73 Tests-Workflow tests.",
+        probe: "V := RecRef (a RecordRef on a filtered row); Rec := V and a Record parameter p(V): the fields, GetFilters, position and a later Modify; the same with a RecordRef of another table.",
+    },
+    FieldRefCalcFieldOfABlob => {
+        id: "fieldref-calcfield-of-a-blob",
+        assumed: "FieldRef.CalcField on a Blob field is accepted and loads the blob, as Record.CalcFields does (record/TestCalcFieldsFieldClass.Codeunit.al); on another stored field it stays refused.",
+        tests: "Temp Blob Impl.FromFieldRef (FieldRef.CalcField on each Blob it reads); 14 Tests-SCM-Manufacturing tests (Demand Forecast Card).",
+        probe: "A FieldRef on a Blob field of a stored row read without CalcFields: CalcField() then Value and HasValue; the same on a Code field (the error text) and on a FlowField.",
+    },
     DateAddWholeDecimal => {
         id: "date-add-whole-decimal",
         assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",

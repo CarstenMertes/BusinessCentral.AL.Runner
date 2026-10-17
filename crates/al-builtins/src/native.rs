@@ -861,7 +861,7 @@ fn text_arg(args: &[Value], i: usize) -> Result<crate::text::Txt, Signal> {
 /// (types/lt-scalars/ScT70050.al:FormatNumbers_*), though a Decimal variable has 3 and 4.
 fn format_variant(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
     let std = int_arg(args, 2).unwrap_or(0) as i32;
-    if (3..=8).contains(&std) && !matches!(&args[0], Value::Null) {
+    if !matches!(std, 0..=2 | 9) && !matches!(&args[0], Value::Null) {
         return Err(Signal::Error(Box::new(AlError {
             message: format!("Standard format number {std} does not exist for the type 'Variant'."),
             code: "InvalidStandardFormat".into(),

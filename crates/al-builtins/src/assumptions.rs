@@ -271,12 +271,6 @@ registry! {
         tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
         probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
     },
-    FilterTextReadAsEvaluate => {
-        id: "filter-text-read-as-evaluate",
-        assumed: "A text value of a filter on a Date field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, closing date `C01/17/27`). A formula such as 1M, a Time or DateTime text and an empty text stay refused. (A Guid filter text is pinned by types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al.)",
-        tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
-        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; then GetFilter and Count.",
-    },
     BooleanToTextAsFormat => {
         id: "boolean-to-text-as-format",
         assumed: "A Boolean given where a Text or Code is expected (Record.Get(Boolean) on a Code key) converts as Format writes it: Yes or No, upper case for a Code.",

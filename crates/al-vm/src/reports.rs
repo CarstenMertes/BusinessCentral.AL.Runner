@@ -1168,10 +1168,12 @@ impl Session {
                 .iter()
                 .any(|f| item.link.iter().any(|&(own, _)| f.field == own))
             {
-                return unsupported(format!(
-                    "data item {} filters a field its DataItemLink joins (how they combine is not pinned)",
-                    item.name
-                ));
+                // The corpus pins filters a trigger sets on a link field (misc/lt-probes-needed-8/PnH3Link.al:
+                // Link_ChildSetsOwnFilters_InPreDataItem: both apply). One the view or the caller sets before the run is in
+                // the report's filter group, where the link replaces the filter on its field: an assumption.
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::ReportItemFilterOnLinkFieldReplaced,
+                );
             }
         }
         // A filter an item gets in OnPreReport is discarded: OnPreDataItem sees the view the item
@@ -1328,6 +1330,17 @@ impl Session {
         let mut iterations = 0u32;
         'rows: while more {
             iterations += 1;
+            // The CalcFields property: the listed FlowFields of the row, before its triggers. Pinned for one field of a
+            // top-level item (misc/lt-probes-needed-8/PnH3Link.al:CalcFields_Property_CalculatesTheFlowField); a nested
+            // item or a list of several fields is the same on an assumption.
+            if !item.calc_fields.is_empty() {
+                if item.parent.is_some() || item.calc_fields.len() > 1 {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::ReportItemCalcFieldsNestedOrList,
+                    );
+                }
+                self.calc_fields(&rec, &item.calc_fields)?;
+            }
             if run.dataset {
                 self.dataset_autocalc(run, r, &rec)?;
             }

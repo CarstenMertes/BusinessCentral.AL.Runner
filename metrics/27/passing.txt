@@ -4211,6 +4211,7 @@
 67719 Run_ChildViewFiltersAnotherField
 67719 Run_LinkFilter_GroupAndLifetime
 67719 Run_SetTableViewFiltersAnotherField
+67719 Run_SetTableViewFiltersTheLinkField
 67722 Break_InOnPostDataItem
 67722 Break_InOnPostReport
 67722 Break_InOnPreDataItem
@@ -6229,6 +6230,7 @@
 70001 P146_Abs_Duration_Variable
 70002 P146_Abs_Duration_ToBigInteger
 70003 P146_Abs_Duration_ToInteger
+70004 P146_CalcDate_FormatBuilt_Formula
 70004 P146_Format_TextWithPlaceholder
 70010 PadLeft_SpaceAndNumbers
 70010 Replace_Basic
@@ -6518,6 +6520,7 @@
 70182 PartPendingNewRowSavedBeforeAction
 70183 AscendingReversesTheWalk
 70183 CurrentKeyText
+70183 FilterChangeMovesToFirstMatch
 70183 FilterChangeSavesThePendingRow
 70183 FilterMatchingNothingInViewMode
 70183 FilterMatchingNothingShowsBlankRowSingleValue
@@ -6781,6 +6784,7 @@
 70411 P99_List_BothGroups
 70411 P99_List_NoFilter
 70411 P99_List_OpenNewAndFirstRow
+70412 P99_ActionDeleteAll
 70412 P99_ActionDeleteFalse
 70412 P99_ActionDeletePlain
 70412 P99_ActionDeleteTrue
@@ -6836,6 +6840,7 @@
 70513 CodeTrimUpper
 70513 TextNAssign
 70513 TextNtoCodeAndBack
+70514 EvaluateTextN
 70515 Concatenation
 70515 ConcatenationOverflow
 70515 TextEquality
@@ -6954,6 +6959,7 @@
 70583 NoRP_UseTrue_ThenFalse_Run
 70583 WithRP_NoHandler_Run_Default
 70583 WithRP_UseFalse_RunRequestPage
+70598 CalcFields_Property_CalculatesTheFlowField
 70598 Link_ChildSetsOwnFilters_InPreDataItem
 70598 Link_TwoFields_FiltersPerParentRow
 70598 Link_TwoFields_ParentFiltered
@@ -8580,6 +8586,9 @@
 71876 P192_ArrayAdd_Integer_Get0
 71878 P192_Insert_Set_Replace_DateTime
 71879 P192_Object_Char_Add_Replace
+71926 Ascending_EqualSums
+71926 Descending_EqualSums
+71926 Descending_EqualSums_InsertedInOtherOrder
 71930 ID_AnswersAGuid
 71930 ID_AsText_FormatForms
 71930 UrlName_IsTheCompanyNameWithEncodedSpaces
@@ -8593,6 +8602,9 @@
 71955 P184_TextKey_Get_And_Filter_OtherCase_Blanks
 71959 P184_RunModal_NameSortedView_NoRecord_And_Positioned
 71959 P184_RunModal_NameSortedView_RecordOnRow
+71959 P184_RunModal_RecordOnRowInsideView
+71959 P184_RunModal_RecordOnRowOutsideWhere
+71959 P184_RunModal_RecordWithConflictingGroupFilter
 71965 P193_Contains_Starts_Ends
 71965 P193_IndexOf_LastIndexOf
 71966 P193_Case_Trim
@@ -8991,7 +9003,9 @@
 72224 FieldRef_TestField_ErrorInfo
 72224 Record_FieldError_ErrorInfo
 72224 Record_TestField_ErrorInfo_Variants
+72235 P105_GetValidationError_Initial
 72235 P105_ValidationErrorCount_Initial
+72235 P105_ValidationError_AfterFailedSetValue
 72238 P105_RunInstance_UseRequestPageFalse
 72238 P105_RunInstance_UseRequestPageTrue
 72238 P105_RunModalInstance_Cancel
@@ -9822,7 +9836,10 @@
 73166 P128_SetSelectionFilter_CalledTwiceOnOneRecord
 73166 P128_SetSelectionFilter_IntoRecordsWithFilters_SecondRow
 73166 P128_SetSelectionFilter_PageWithOwnFilter_CopyOfRec
+73168 P128_Evaluate_IntoCode
 73168 P128_Evaluate_IntoOption_LocalVariable
+73168 P128_Evaluate_IntoShortText_ResultUnused
+73168 P128_Evaluate_IntoText
 73186 P128_TestField_RecordIdField_WithValue
 73193 P163_CodeunitMetadata_ALNamespace
 73209 P163_PageMetadata_FilterOnPageType
@@ -10353,6 +10370,8 @@
 73552 P130_EvaluateDate_Format9_Forms
 73552 P130_EvaluateDate_Raises_OnFormat9WithSlashForm
 73577 P130_Query_FlowFieldOfInnerJoinedItem_Control
+73624 P131_EvaluateCode_BlankTexts
+73624 P131_EvaluateCode_IntoTableField
 73627 P131_EvaluateOption_VariableLastOrdinal
 73631 P131_Get_Closed_RecordRef
 73631 P131_Get_Unopened_ExistingRow
@@ -10360,11 +10379,14 @@
 73631 P131_Get_Unopened_ThenOpenOfTheRecordIdTable
 73657 P131_Query_ColumnFilterOnDefaultJoinChild
 73657 P131_Query_ColumnFilterOnExplicitLeftOuterChild
+73657 P131_Query_CountColumnFilterOnLeftOuterChild
 73658 P131_Query_SetRangeBetweenOpenAndRead_Control
 73664 P131_TwoModalHandlers_OpenedInTheOtherOrder_AndByStaticRun
 73664 P131_TwoModalHandlers_PageParameters
 73665 P131_ModalPageHandler_PageParam_ResponseValues
 73666 P131_ModalHandlers_TestPageAndPageParameter
+73705 P132_EvaluateCodeField
+73705 P132_EvaluateCodeVariable
 73705 P132_EvaluateOptionVariable_Ordinals
 73711 P132_Dataset_Duration_Milliseconds
 73711 P132_SaveAs_ErrorInOnAfterGetRecord

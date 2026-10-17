@@ -578,7 +578,9 @@ fn visit(
             let pn = p.name().to_ascii_lowercase();
             let temporary_ok =
                 pn == "usetemporary" && matches!(p.value_text().trim().to_ascii_lowercase().as_str(), "true" | "false");
-            if pn == "dataitemlinkreference" {
+            if pn == "calcfields" {
+                // Read by `item_ir` (corpus misc/lt-probes-needed-8/PnH3Link.al:CalcFields_Property_CalculatesTheFlowField).
+            } else if pn == "dataitemlinkreference" {
                 // Read by `item_ir` (corpus handlers/TestReportDataItemLinkReferenceContracts.al).
             } else if pn == "maxiteration" {
                 // Read by `item_ir`; pinned for an Integer item only (misc/lt-probes-needed-8/PnH3Link.al:MaxIteration_*).
@@ -976,7 +978,29 @@ fn item_ir(
             }
         }
     }
+    // `CalcFields = A, "B C"`: the FlowFields to calculate for each row (misc/lt-probes-needed-8/PnH3Link.al:
+    // CalcFields_Property_CalculatesTheFlowField pins one field of a top-level item).
+    let mut calc_fields = Vec::new();
+    if let Some(text) = prop("CalcFields") {
+        for name in crate::scan::split_double(&text, ',') {
+            let name = crate::scan::unquote_double(name.trim());
+            let pos = table.and_then(|t| {
+                o.members[t]
+                    .fields
+                    .iter()
+                    .position(|x| x.name.eq_ignore_ascii_case(&name))
+            });
+            match pos {
+                Some(p) => calc_fields.push(p),
+                None => reasons.push(format!(
+                    "dataitem {}: CalcFields names `{name}`, which is not a field of the item's table",
+                    raw.name
+                )),
+            }
+        }
+    }
     ir::ReportItem {
+        calc_fields,
         name: raw.name.clone(),
         parent,
         slot,
@@ -1308,10 +1332,10 @@ mod tests {
     #[test]
     fn what_the_corpus_does_not_pin_becomes_a_reason() {
         let l = layout_of(
-            "report 1 R { ProcessingOnly = true; DefaultLayout = Word; dataset { dataitem(A; Cust) { CalcFields = Amount; trigger OnFoo() begin end; } } rendering { } }",
+            "report 1 R { ProcessingOnly = true; DefaultLayout = Word; dataset { dataitem(A; Cust) { Foo = Amount; trigger OnFoo() begin end; } } rendering { } }",
         );
         let all = l.reasons.join("; ");
-        assert!(all.contains("property calcfields"), "{all}");
+        assert!(all.contains("property foo"), "{all}");
         assert!(all.contains("trigger onfoo"), "{all}");
         // A layout means the run renders: it is refused when it gets that far, not at declaration.
         let output = l.output.join("; ");

@@ -261,6 +261,11 @@ impl Session {
                 // (record/lt-relation-where-validated/RelationWhereValidated.al:Validate_OldBlank_ExistingAndMissing,
                 // Validate_OldNonBlank_NewMissing, Validate_OtherItemNo_SameValue). Any other set of several conditions is refused below.
                 "DB:RecordNotFound".into()
+            } else if wheres.len() > 1 && !wheres.iter().any(|w| related.keys[0].contains(&where_field(w))) {
+                // Several conditions, none on a primary key field: the code of the one-condition form on a non-key field
+                // (record/lt-relation-where-empty-term/RelationWhereEmptyTerm.al:173-177), on an assumption.
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TableRelationSeveralWhereNonKey);
+                "DB:NothingInsideFilter".into()
             } else if !wheres.is_empty() {
                 // Several conditions: which code BC answers is not pinned for the other mixes, so the error path is refused.
                 return Err(Signal::Unsupported(
@@ -277,6 +282,12 @@ impl Session {
 
 /// Whether every condition of a relation's `where()` is on a primary key field of the related table and, with the related field
 /// itself, they name the whole key.
+fn where_field(w: &ir::RelationWhere) -> usize {
+    match w {
+        ir::RelationWhere::Value { related, .. } | ir::RelationWhere::Field { related, .. } => *related,
+    }
+}
+
 fn covers_primary_key(related: &TableDef, rel_pos: usize, wheres: &[ir::RelationWhere]) -> bool {
     let pk = &related.keys[0];
     let on = |w: &ir::RelationWhere| match w {

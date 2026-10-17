@@ -1785,6 +1785,13 @@ fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value
     // An Option argument converts to its ordinal, as any Integer parameter takes it.
     let n = match args.first() {
         Some(Value::Option(o, _)) => Some(*o),
+        // A Variant that holds an Enum (Library - Variable Storage hands back the enum value that was enqueued): the
+        // ordinal, as an assignment to an Integer reads it (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:
+        // EnumVariant_To_Integer). Passing it to FromInteger is an assumption.
+        Some(Value::Enum(_, o)) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::EnumFromIntegerVariantEnum);
+            Some(*o)
+        }
         _ => int_arg(args, 0).and_then(|n| i32::try_from(n).ok()),
     };
     match n {

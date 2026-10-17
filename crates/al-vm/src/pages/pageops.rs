@@ -644,7 +644,18 @@ impl Session {
                 self.require_open(st)?;
                 let i = match args.first() {
                     Some(Value::Integer(i)) => *i,
-                    _ => return unsupported("GetValidationError without an index"),
+                    // No index: the first error of the page, or an empty text while there is none. Microsoft's tests
+                    // call it that way (Job Journal and Purchase Order pages); no corpus test does.
+                    None => {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::PageGetValidationErrorNoIndex,
+                        );
+                        let s = st.borrow();
+                        return Ok(Value::Text(
+                            s.errors.first().map(|(_, t)| t.clone()).unwrap_or_default().into(),
+                        ));
+                    }
+                    _ => return unsupported("GetValidationError with a non-integer index"),
                 };
                 let s = st.borrow();
                 match usize::try_from(i - 1).ok().and_then(|n| s.errors.get(n)) {

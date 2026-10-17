@@ -862,9 +862,10 @@ impl Session {
             // No stored row is left: the list shows its blank line, which raises
             // OnAfterGetCurrRecord three times after an action that called CurrPage.Update (corpus
             // pageupdate/TestPageUpdateGoneRow.al:List_DeletedByAction_OnlyRow_ShowsNoStoredRow);
-            // what an action that did not call it raises is not pinned.
+            // what an action that did not call it raises is not pinned: the same three, on an assumption
+            // (list-gone-only-row-without-update).
             if !st.borrow().refresh {
-                return unsupported("a list whose only row an action deleted, without CurrPage.Update");
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListGoneOnlyRowWithoutUpdate);
             }
             st.borrow_mut().refresh = false;
             let table = rec.borrow().table as usize;

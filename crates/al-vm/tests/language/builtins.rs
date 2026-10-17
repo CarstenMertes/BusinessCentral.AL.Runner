@@ -80,6 +80,44 @@ fn enum_as_integer_returns_the_ordinal() {
     assert_eq!(int_of(v, "exit(S.AsInteger());").unwrap(), 0);
 }
 
+// types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer pins an Enum in a Variant read as an
+// Integer by assignment; FromInteger taking such a Variant is the same conversion, on an assumption (enum-from-integer-variant-enum).
+#[test]
+fn enum_from_integer_takes_a_variant_that_holds_an_enum() {
+    let v = "S: Enum \"ALT Status\"; T: Enum \"ALT Status\"; V: Variant;";
+    assert_eq!(
+        int_of(
+            v,
+            "T := \"ALT Status\"::Closed; V := T; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());"
+        )
+        .unwrap(),
+        5
+    );
+}
+
+// foreach over Ordinals into an Enum variable (foreach-integer-into-enum, an assumption): the variable holds the enum value.
+#[test]
+fn foreach_over_ordinals_into_an_enum_variable_gives_enum_values() {
+    // Draft (1) and Closed (5) are the ordinals after the blank one: the loop sees the enum value of each.
+    let r = int_of(
+        "S: Enum \"ALT Status\"; N: Integer;",
+        "foreach S in S.Ordinals() do if S = \"ALT Status\"::Closed then N += 10 else if S = \"ALT Status\"::Draft then N += 1; exit(N);",
+    );
+    assert_eq!(r.unwrap(), 11);
+}
+
+// errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, _IntoCode, _IntoShortText_ResultUnused: a Text keeps the text as written,
+// a Code is trimmed and upper case, and a text longer than the variable fails (No with the result used).
+#[test]
+fn evaluate_into_text_and_code() {
+    let r = text_of(
+        "T: Text; C: Code[5]; S: Text[5]; B1: Boolean; B2: Boolean; B3: Boolean;",
+        "T := 'KEEP'; B1 := Evaluate(T, ' hello '); C := 'KEEP'; B2 := Evaluate(C, ' ab '); S := 'KEEP'; B3 := Evaluate(S, 'abcdef'); \
+         exit('[' + T + ']' + Format(B1) + '[' + C + ']' + Format(B2) + '[' + S + ']' + Format(B3));",
+    );
+    assert_eq!(r.unwrap(), "[ hello ]Yes[AB]Yes[KEEP]No");
+}
+
 #[test]
 fn enum_from_integer_carries_any_ordinal() {
     // types/TestEnum.al:15-22 (a declared ordinal), :83-91 and types/TestEnumDefaultImplTests.Codeunit.al:70
@@ -1243,6 +1281,32 @@ fn a_cleared_date_formula_is_the_empty_formula() {
          exit(Format(F) + '|' + Format(CalcDate(F, D), 0, 9) + '|' + Format(Evaluate(F, '')) + '|' + Format(CalcDate('', D), 0, 9));",
     );
     assert_eq!(r.unwrap(), "|2024-03-05|Yes|2024-03-05");
+}
+
+// misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al:P146_CalcDate_FormatBuilt_Formula: a plus sign, a percent sign
+// and a number before the unit read as the number (`<+%1D>` and `<+%1D` add one day). Only the plus sign is pinned.
+#[test]
+fn calcdate_reads_a_percent_sign_after_a_plus_as_the_number_that_follows() {
+    let r = text_of(
+        "D: Date;",
+        "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<+%1D>', D), 0, 9) + '|' + Format(CalcDate(Format('<+%1D>', 5), D), 0, 9));",
+    );
+    assert_eq!(r.unwrap(), "2024-01-16|2024-01-16");
+    // A minus or no sign in front of the percent sign is not pinned.
+    assert!(
+        text_of(
+            "D: Date;",
+            "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<-%1D>', D), 0, 9));"
+        )
+        .is_err()
+    );
+    assert!(
+        text_of(
+            "D: Date;",
+            "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<%1D>', D), 0, 9));"
+        )
+        .is_err()
+    );
 }
 
 // session/TestEnvironmentUserTenantContracts.al:195-201 and session/TestNavAppExtended.al:116-117:

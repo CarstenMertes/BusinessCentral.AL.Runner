@@ -1532,7 +1532,7 @@ fn the_database_trigger_setup_is_asked_again_when_the_company_changes() {
     let mut b = al_testkit::Built::from_source(&src);
     b.session.set_company("CRONUS");
     let (oi, ri) = b.routine_in("C", "Ins");
-    let mut ins = |b: &mut al_testkit::Built, no: i32| {
+    let ins = |b: &mut al_testkit::Built, no: i32| {
         let inst = b.session.instance(oi);
         text(b.session.call(oi, ri, inst, vec![Value::Integer(no)]).map(|(v, _)| v))
     };

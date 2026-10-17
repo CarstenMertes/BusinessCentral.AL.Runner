@@ -794,8 +794,13 @@ impl Lowerer<'_> {
             };
             let cond = ir::Expr::Binary(
                 ir::BinOp::Or,
-                Box::new(is("Variant.IsInteger#1")?),
-                Box::new(is("Variant.IsDate#1")?),
+                Box::new(ir::Expr::Binary(
+                    ir::BinOp::Or,
+                    Box::new(is("Variant.IsInteger#1")?),
+                    Box::new(is("Variant.IsDate#1")?),
+                )),
+                // An Enum or Option in a Variant raises too (VariantEnumOptionToText.al: `text variable`).
+                Box::new(is("Variant.IsOption#1")?),
             );
             let converted = self.convert_to(&target_ty, self.ty_ref(&kids[1]), value)?;
             let guarded = ir::Expr::Ternary(
@@ -830,8 +835,12 @@ impl Lowerer<'_> {
             };
             let or = |a: ir::Expr, b: ir::Expr| ir::Expr::Binary(ir::BinOp::Or, Box::new(a), Box::new(b));
             let cond = or(
-                or(is("Variant.IsInteger#1")?, is("Variant.IsBigInteger#1")?),
-                is("Variant.IsDecimal#1")?,
+                or(
+                    or(is("Variant.IsInteger#1")?, is("Variant.IsBigInteger#1")?),
+                    is("Variant.IsDecimal#1")?,
+                ),
+                // An Enum or Option in a Variant raises too (types/lt-variant-to-text-fields/VariantEnumOptionToText.al: `text field`, `code field`).
+                is("Variant.IsOption#1")?,
             );
             let kind = if matches!(target_ty, Ty::Code(_)) {
                 "NavCode"

@@ -214,6 +214,15 @@ impl Lowerer<'_> {
                     && args.first().is_some_and(|a| matches!(self.ty_of(a), Ty::Variant))
                 {
                     "System.FormatVariant#1".to_string()
+                } else if id == "TextBuilder.Append#1"
+                    && args.first().is_some_and(|a| {
+                        matches!(self.ty_of(a), Ty::Variant)
+                            && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
+                    })
+                {
+                    // A Variant variable holding a number raises (types/lt-number-to-text/NumberToTextIsFormat.al:193-216);
+                    // a `FieldRef.Value()` argument is not that case and stays on `TextBuilder.Append#1`.
+                    "TextBuilder.AppendVariant#1".to_string()
                 } else if id == "System.Format#1" && decimal_field_places.is_some() {
                     "System.FormatDecimalField#1".to_string()
                 } else {

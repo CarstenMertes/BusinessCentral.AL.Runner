@@ -713,6 +713,16 @@ fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(true))
 }
 
+/// `Append` of a Variant variable (lowering picks this for an argument that is a Variant variable or parameter): a number in it
+/// raises the Variant-to-Text conversion error and appends nothing (types/lt-number-to-text/NumberToTextIsFormat.al:193-216,
+/// TextBuilderAppend_VariantNumber_Result). A `FieldRef.Value()` argument keeps `tb_append`, which refuses a number.
+pub fn tb_append_variant(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    if let Some(n @ (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_))) = a.first() {
+        crate::ops::convert(n.clone(), &crate::value::RtType::Text(None))?;
+    }
+    tb_append(c, r, a)
+}
+
 /// The line terminator is a carriage return and a line feed (types/TestFormatEvaluateTextContracts.al:
 /// TextBuilder_AppendLine_EndsWithNewLineOnly, text/TestTextBuilder.al:TextBuilder_AppendLine_AddsNewline).
 fn tb_append_line(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {

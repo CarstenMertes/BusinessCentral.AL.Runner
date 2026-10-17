@@ -342,6 +342,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Format#1", format_1),
     ("System.Format#2", format_2),
     ("System.FormatVariant#1", format_variant),
+    ("TextBuilder.AppendVariant#1", crate::textfns::tb_append_variant),
     ("System.FormatDecimalField#1", format_decimal_field),
     ("System.Evaluate#1", crate::evaluate::evaluate),
     (
@@ -2079,6 +2080,7 @@ pub(crate) mod tests {
             "System.EvaluateBounded#1",
             "System.EvaluateOptionField#1",
             "System.FormatVariant#1",
+            "TextBuilder.AppendVariant#1",
             "System.FormatDecimalField#1",
             "Dialog.ErrorNotLiteral#1",
         ];

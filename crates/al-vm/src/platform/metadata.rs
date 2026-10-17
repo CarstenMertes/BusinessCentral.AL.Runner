@@ -163,9 +163,14 @@ pub(super) fn event_subscription_rows(p: &Providers, t: &TableDef) -> Vec<Entry>
             let mut key = blank(t);
             key[pos(t, 1)] = Value::Integer(id as i32);
             key[pos(t, 2)] = Value::Text(truncate(&r.name, 250).into());
-            match subscription_row(&c, o, &r.name, a, t, key.clone()) {
-                Ok(row) => out.push(Entry::ok(row)),
-                Err(why) => out.push(Entry::poisoned(key, why)),
+            let mut row = key.clone();
+            match subscription_row(&c, o, &r.name, a, t, &mut row) {
+                Ok(()) => out.push(Entry::ok(row)),
+                // The columns worked out before the refusal are real: a filter on the publisher's
+                // object type rules the row out without reading the part that is not pinned.
+                Err((why, cols)) => {
+                    out.push(Entry::poisoned(row, why).with_known_cols(cols.iter().map(|c| pos(t, *c)).collect()))
+                }
             }
         }
     }
@@ -178,27 +183,35 @@ fn subscription_row(
     routine: &str,
     a: &al_ir::Attribute,
     t: &TableDef,
-    mut r: al_data::Row,
-) -> Result<al_data::Row, String> {
+    r: &mut al_data::Row,
+) -> Result<(), (String, Vec<u32>)> {
     let what = || format!("subscriber '{}' of codeunit '{}'", routine, o.name);
     let manual = al_ir::ObjectFacts::of(o).manual_subscriber;
     // "Subscriber Instance" reads Static-Automatic or Manual, "Error Information" is blank (record/
     // TestEventSubscriptionColumnsReportLayoutListContracts.al:98-107). "Number of Calls" and
     // "Active Manual Instances" are the session's, added when a row is read.
     r[pos(t, 12)] = Value::Text(if manual { "Manual" } else { "Static-Automatic" }.into());
+    let mut known = vec![12u32];
     let args = crate::events::split_args(&a.text);
     if args.len() < 3 {
-        return Err(format!("{}: the attribute has fewer than three arguments", what()));
+        return Err((
+            format!("{}: the attribute has fewer than three arguments", what()),
+            known,
+        ));
     }
     let kind_text = crate::events::unquote(args[0].rsplit("::").next().unwrap_or("")).to_ascii_lowercase();
     let kind: al_ir::ObjKind = kind_text.parse().unwrap_or_default();
     let Some(object_type) = super::objects::object_type(kind) else {
-        return Err(format!("{}: publisher kind `{kind_text}` is not listed", what()));
+        return Err((format!("{}: publisher kind `{kind_text}` is not listed", what()), known));
     };
+    r[pos(t, 4)] = option(t, 4, object_type);
+    known.push(4);
     let (target, _) = crate::events::publisher_name(args[1].rsplit("::").next().unwrap_or(""));
     let publisher_id = c
         .id_of(kind, &target)
-        .map_err(|e| format!("{}: publisher {e}", what()))?;
+        .map_err(|e| (format!("{}: publisher {e}", what()), known.clone()))?;
+    r[pos(t, 5)] = Value::Integer(publisher_id as i32);
+    known.push(5);
     let event = crate::events::unquote(&args[2]);
     // The publisher's own routine says which kind of event it is; a table's database triggers are
     // the platform's (event names `On{Before,After}{Insert,Modify,Delete,Rename,Validate}Event`).
@@ -232,12 +245,15 @@ fn subscription_row(
             (format!("{event} - {element}"), 0)
         }
         None if kind == al_ir::ObjKind::Table && is_trigger_event(&event) => {
-            return Err(format!(
-                "{}: the Published Function of `{event}` with the element `{element}` is not pinned",
-                what()
+            return Err((
+                format!(
+                    "{}: the Published Function of `{event}` with the element `{element}` is not pinned",
+                    what()
+                ),
+                known,
             ));
         }
-        None => return Err(format!("{}: the kind of event `{event}` is not known", what())),
+        None => return Err((format!("{}: the kind of event `{event}` is not known", what()), known)),
     };
     r[pos(t, 3)] = option(t, 3, event_type);
     r[pos(t, 4)] = option(t, 4, object_type);
@@ -245,7 +261,7 @@ fn subscription_row(
     r[pos(t, 6)] = Value::Text(truncate(&published, 250).into());
     // A statically bound subscriber that resolved is active (TestEventSubscriptionVirtualTable.al:`_Row_DescribesTheSubscription`).
     r[pos(t, 7)] = Value::Boolean(true);
-    Ok(r)
+    Ok(())
 }
 
 fn is_trigger_event(event: &str) -> bool {

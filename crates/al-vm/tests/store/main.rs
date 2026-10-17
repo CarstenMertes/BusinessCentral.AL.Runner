@@ -9,6 +9,7 @@ mod flowfields;
 mod general_journal;
 mod hostvalues;
 mod loadfields;
+mod np_blockers;
 mod record_builtins;
 mod recordref;
 mod records;

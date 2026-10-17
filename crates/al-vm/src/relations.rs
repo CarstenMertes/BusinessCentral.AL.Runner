@@ -207,13 +207,9 @@ impl Session {
                         // A condition that names the validated field itself (`Item Variant.Code where("Item No." =
                         // field("Item No."), Code = field("Variant Code"))` on Prod. Order Line, Assembly Header and
                         // Assembly Line "Variant Code") reads the value being validated, not the old one; the old
-                        // blank value would make the filter contradict the key. Not pinned by the corpus; required
-                        // by Tests-SCM SCM Order Tracking OrderTrackingOnSalesWithVariant (assumption
-                        // relation-where-reads-the-validated-value).
+                        // blank value would make the filter contradict the key. Pinned by record/lt-relation-where-validated/
+                        // RelationWhereValidated.al (Validate_OldBlank_ExistingAndMissing, Validate_OldNonBlank_NewExisting).
                         let own_value = if *own == pos {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::RelationWhereReadsValidatedValue,
-                            );
                             value.clone()
                         } else {
                             rec.borrow().fields[*own].clone()
@@ -259,8 +255,20 @@ impl Session {
                 } else {
                     "DB:NothingInsideFilter".into()
                 }
+            } else if !wheres.is_empty()
+                && rel_pos_in_key(&related, arm.field)
+                && wheres.iter().all(|w| match w {
+                    ir::RelationWhere::Value { related: p, .. } | ir::RelationWhere::Field { related: p, .. } => {
+                        related.keys[0].contains(p)
+                    }
+                })
+            {
+                // Several conditions, all on fields of the related table's primary key, over a related field of that key: DB:RecordNotFound
+                // (record/lt-relation-where-validated/RelationWhereValidated.al: `missing|code`, `other-item|code`). A mix with a field
+                // outside the key is not pinned.
+                "DB:RecordNotFound".into()
             } else if !wheres.is_empty() {
-                // Several conditions: which code BC answers is not pinned (probe wanted), so the error path is refused.
+                // Several conditions: which code BC answers is not pinned for the other mixes, so the error path is refused.
                 return Err(Signal::Unsupported(
                     "the error code of a TableRelation check with several where() conditions (not pinned)".into(),
                 ));
@@ -271,4 +279,10 @@ impl Session {
             ..Default::default()
         })))
     }
+}
+
+/// Whether the related field of a relation (the first key field when none is named) is in the related table's primary key.
+fn rel_pos_in_key(related: &al_data::TableDef, field: Option<usize>) -> bool {
+    let pos = field.unwrap_or(related.keys[0][0]);
+    related.keys[0].contains(&pos)
 }

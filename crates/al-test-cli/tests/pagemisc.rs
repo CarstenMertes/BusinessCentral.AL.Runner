@@ -1042,7 +1042,7 @@ fn a_page_variable_reads_its_caption_before_it_runs() {
 }
 
 // Check Credit Limit.PopulateDataOnNotification reaches `CurrPage.CreditLimitDetails.PAGE` on a Page variable that never ran
-// (assumption part-of-a-page-that-never-ran); after the page ran and closed, the same reach stays refused.
+// (pages/lt-part-never-ran/NeverRanReadRec.al); after the page ran and closed, the same reach stays refused.
 #[test]
 fn a_page_variable_reaches_the_part_of_a_page_that_never_ran() {
     passes(&format!(

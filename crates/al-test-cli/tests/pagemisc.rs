@@ -183,6 +183,7 @@ page 62308 "PM Selection Own"
 }
 page 62320 "PM Hidden Part" { PageType = ListPart; SourceTable = "PM Row";
   layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } } } }
+  procedure Mark() begin end;
   procedure Ping(Key: Code[20]) begin Rec.FilterGroup(2); Rec.SetRange("No.", Key); Rec.FilterGroup(0); if Rec.FindLast() then; CurrPage.Update(false); end; }
 page 62321 "PM Hidden Host" { PageType = Card; SourceTable = "PM Row";
   layout { area(Content) { field("No."; Rec."No.") { } part(Hid; "PM Hidden Part") { Visible = false; } } }
@@ -194,6 +195,8 @@ page 62323 "PM Find List" { PageType = List; SourceTable = "PM Row";
   trigger OnAfterGetRecord() var P: Codeunit "PM Probe"; begin P.Note('R' + Rec."No." + ';'); end; }
 page 62324 "PM Caption Before" { PageType = Card; SourceTable = "PM Row"; Caption = 'Static Caption'; layout { area(Content) { field("No."; Rec."No.") { } } }
   procedure Read(): Text begin exit(CurrPage.Caption); end; }
+page 62326 "PM Never Ran Host" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } part(Sub; "PM Hidden Part") { } } }
+  procedure Reach(): Text begin CurrPage.Sub.PAGE.Mark(); exit('reached'); end; }
 page 62325 "PM Empty Class" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { CaptionClass = '3,'; } } } }
 page 62322 "PM Selection Own Update" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
   procedure UseAfterClose() begin CurrPage.Update(false); end; }
@@ -970,5 +973,16 @@ fn a_page_variable_reads_its_caption_before_it_runs() {
         "{HELPERS}
         [Test]
         procedure Reads() var W: Page \"PM Caption Before\"; begin Check('Static Caption', W.Read()); end;"
+    ));
+}
+
+// Check Credit Limit.PopulateDataOnNotification reaches `CurrPage.CreditLimitDetails.PAGE` on a Page variable that never ran
+// (assumption part-of-a-page-that-never-ran); after the page ran and closed, the same reach stays refused.
+#[test]
+fn a_page_variable_reaches_the_part_of_a_page_that_never_ran() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Reaches() var W: Page \"PM Never Ran Host\"; begin Check('reached', W.Reach()); end;"
     ));
 }

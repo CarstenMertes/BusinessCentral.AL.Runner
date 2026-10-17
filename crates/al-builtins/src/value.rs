@@ -285,6 +285,8 @@ pub struct PageState {
     pub object: u32,
     /// Open pages answer; closed ones, and ones torn down by an error in a row load,
     /// raise "The TestPage is not open." (corpus testpageteardown/TestPageTeardown.al:3-24).
+    /// The page has been opened at least once (a Page variable that never ran has not).
+    pub ran: bool,
     pub open: bool,
     pub mode: PageMode,
     /// The running page: its globals hold `Rec`, `xRec` and `CurrPage`.
@@ -403,6 +405,7 @@ impl PageState {
         PageState {
             object,
             open: false,
+            ran: false,
             mode: PageMode::View,
             instance: None,
             cursor: Cursor::None,

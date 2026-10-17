@@ -271,6 +271,12 @@ registry! {
         tests: "Alloc. Account Sales E2E Tests (TestOverrideGLAllocation) and 20 more Tests-ERM tests that open Edit Dimension Set Entries through Dimension Management.",
         probe: "A page with Caption = 'X' and a procedure returning CurrPage.Caption, called on a Page variable before RunModal and after it closed; also with a Caption assigned in OnOpenPage.",
     },
+    PartOfAPageThatNeverRan => {
+        id: "part-of-a-page-that-never-ran",
+        assumed: "CurrPage.<Part>.Page in a procedure called on a Page variable that was never run reaches a part page that exists, is initialised and is not open (as a hidden part does).",
+        tests: "O365 Simplify UI Sales Invoice (CreateInvoiceForCustomerWithCreditLimit) and the other Tests-SMB and Tests-ERM tests that send the credit limit notification.",
+        probe: "A page with a part and a procedure that calls a procedure of the part page and returns what it set; call it on a Page variable before Run and read the result.",
+    },
     SetTableViewKeepsSetRecordPosition => {
         id: "set-table-view-keeps-set-record-position",
         assumed: "On a Page variable, SetTableView(Rec) after SetRecord(Rec) takes the filters of the view and keeps the record SetRecord handed over as the position the page opens on, so OnOpenPage reads it as Rec.",

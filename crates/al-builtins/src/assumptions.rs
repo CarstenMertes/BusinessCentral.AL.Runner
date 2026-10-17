@@ -429,8 +429,8 @@ registry! {
     },
     FormatCodeSpelling => {
         id: "format-code-spelling",
-        assumed: "The codes of a Format string are read in any case (`<sign><integer>`) and with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`).",
-        tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets) and Base Application's percent texts.",
+        assumed: "The codes of a Format string are read in any case (`<sign><integer>`), with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`), and `Filler Char` stands for `Filler Character`.",
+        tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets), Base Application's percent texts, and the Data Exchange tests' GetNodeID (`<Integer,4><Filler Char,0>`, about 30 tests).",
         probe: "Format of an Integer, a Decimal and a Date with the same codes in capitals, small letters and with a blank after the comma; compare with the canonical spelling.",
     },
     TableExtensionBaseVars => {

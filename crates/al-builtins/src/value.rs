@@ -306,6 +306,8 @@ pub struct PageState {
     pub window_from_start: bool,
     /// A read has run to the end of the view and read the last two rows once more.
     pub window_eof: bool,
+    /// The window holds every row of the view, read by `Last` past a full window (see `last_past_the_window`).
+    pub window_whole: bool,
     /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
     pub landing_first: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
@@ -413,6 +415,7 @@ impl PageState {
             window: Vec::new(),
             window_from_start: false,
             window_eof: false,
+            window_whole: false,
             landing_first: false,
             focus: None,
             focus_in_row: false,

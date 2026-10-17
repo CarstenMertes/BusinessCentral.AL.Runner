@@ -199,6 +199,7 @@ impl Session {
     pub(super) fn populate_window(&mut self, st: &St) -> Result<(), Signal> {
         st.borrow_mut().window_from_start = false;
         st.borrow_mut().window_eof = false;
+        st.borrow_mut().window_whole = false;
         let rec = self.page_rec(st);
         let start = self.row_key(&rec)?;
         let mut keys = Vec::new();
@@ -229,7 +230,9 @@ impl Session {
         // FindList_OnFindRecordAndOnNextRecord, `open` of a list of 3 rows: five reads). Only the
         // count is pinned, for a table of 3 rows.
         let find_page = self.declares(st, "onnextrecord") || self.declares(st, "onfindrecord");
-        let end_reached = end_reached && opening;
+        // The same tail for a full window (misc/lt-probes-needed-6/PnF06FindListMoves.al:FindList_Ascending_25Rows
+        // `...;R20;R1;N(-1);F(=);R1;C`), for an ascending view.
+        let end_reached = (end_reached || (find_page && keys.len() == Self::WINDOW)) && opening;
         if end_reached && find_page && self.declares(st, "onaftergetrecord") {
             if let Some(first) = keys.first() {
                 rec.borrow_mut().fields = first.stored.clone();
@@ -519,9 +522,12 @@ impl Session {
             || st.borrow().stale
             || !st.borrow().window_from_start
             || st.borrow().window.is_empty()
-            || st.borrow().window.len() >= Self::WINDOW
+            || (st.borrow().window.len() > Self::WINDOW && !st.borrow().window_whole)
         {
             return Ok(None);
+        }
+        if how == PageMethod::Last && st.borrow().window.len() == Self::WINDOW {
+            return self.last_past_the_window(st, find_page);
         }
         let rec = self.page_rec(st);
         let key = self.row_key(&rec)?;
@@ -536,11 +542,59 @@ impl Session {
             PageMethod::Previous if at > 0 => at - 1,
             _ => return Ok(None),
         };
-        if how == PageMethod::Last && !find_page {
-            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
-            self.page_event(st, "onaftergetcurrrecordevent", None, None)?;
+        // Only a list that offers the blank line: a view-mode list goes straight to the last row (misc/lt-probes-needed-6/
+        // PnF06FindListMoves.al:FindList_PlainDescending `plain3_last` = `R1;R1;C`).
+        if how == PageMethod::Last && !find_page && st.borrow().new_line && st.borrow().host.is_none() {
+            self.land_on_new_line(st)?;
+            let mut s = st.borrow_mut();
+            s.draft = false;
+            s.cursor = Cursor::Row;
         }
         self.read_client_row(st, target)?;
+        Ok(Some(true))
+    }
+
+    /// `Last` on a list whose window of 20 rows is full: the client reads the last row it holds again, then the rows after it in
+    /// one block, and settles on the last of them (a page with OnFindRecord asks `=` for it). Pinned for 25 rows by
+    /// misc/lt-probes-needed-6/PnF06FindListMoves.al:FindList_Ascending_25Rows `asc25_last`
+    /// (`R20;N(1);R21;...;N(1);R25;N(1);F(=);R25;C`) and FindList_PlainDescending `plain25_last` (`R6;R5;R4;R3;R2;R1;R1;C`). A
+    /// block of 20 new rows, a descending view of a page with OnFindRecord, and a list with the blank line are not pinned.
+    fn last_past_the_window(&mut self, st: &St, find_page: bool) -> Result<Option<bool>, Signal> {
+        let rec = self.page_rec(st);
+        if st.borrow().new_line || st.borrow().window_eof || (find_page && !rec.borrow().ascending) {
+            return Ok(None);
+        }
+        let before = self.xrec_before_move(st);
+        let last = st.borrow().window[Self::WINDOW - 1].stored.clone();
+        rec.borrow_mut().fields = last;
+        self.populate_current(st)?;
+        let mut new_rows = 0;
+        loop {
+            if !self.nav_next(st, 1)? {
+                break;
+            }
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            self.populate_current(st)?;
+            let shown = rec.borrow().fields.clone();
+            st.borrow_mut()
+                .window
+                .push(al_builtins::value::WindowRow { key, stored, shown });
+            new_rows += 1;
+            if new_rows == Self::WINDOW {
+                return unsupported("Last on a list with a second full block of rows (the reads are not pinned)");
+            }
+        }
+        st.borrow_mut().window_eof = true;
+        st.borrow_mut().window_whole = true;
+        if new_rows == 0 {
+            return unsupported("Last on a list of exactly one window (the reads are not pinned)");
+        }
+        if find_page {
+            self.nav_find(st, "=")?;
+        }
+        self.populate_current(st)?;
+        self.current_record_trigger(st, before)?;
         Ok(Some(true))
     }
 

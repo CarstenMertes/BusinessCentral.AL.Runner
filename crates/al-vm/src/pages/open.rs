@@ -146,6 +146,7 @@ impl Session {
             s.window = Vec::new();
             s.window_from_start = false;
             s.window_eof = false;
+            s.window_whole = false;
             s.focus = None;
             s.focus_in_row = false;
             s.errors = Vec::new();

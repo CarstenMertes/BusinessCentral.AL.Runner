@@ -572,6 +572,12 @@ registry! {
         tests: "Post Inventory Cost to G/L (PostValueEntryToGL.MarkedOnly(true); DeleteAll() in OnPostDataItem, then CapValueEntryLoop Gets the capacity entries left): SCM Kitting D3 Part 2 and SCM Costing Batch, and every test that posts inventory cost with the report.",
         probe: "Mark two of three rows, MarkedOnly(true), DeleteAll: which rows remain; the same with a filter that excludes a marked row, and DeleteAll(true) with an OnDelete trigger.",
     },
+    CodeDigitsCompareAsNumbers => {
+        id: "code-digits-compare-as-numbers",
+        assumed: "In <, <=, > and >= two Code values that are digits only and have no leading zero are ordered as numbers (the shorter is the smaller); anything else keeps the text order. Equality and the order of keys and filters are unchanged.",
+        tests: "No. Series NoIsWithinValidRange (CurrentNo > EndingNo with the Cronus series P-CR+, 109001 to 1010999): Purch. Correct Cr. Memo, O365 Cancel Purch Cr Memo Dim., ERM Sales/Purch. Correct. Docs and every test that posts or corrects through that series. Pinned for one pair: '10' < '9' is No.",
+        probe: "Code values '9' and '10', '09' and '9', '9A' and '10A', '100' and '99', '0' and '00', digits with a sign: the four operators and equality; and a SetRange over a Code field holding '9' and '10'.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

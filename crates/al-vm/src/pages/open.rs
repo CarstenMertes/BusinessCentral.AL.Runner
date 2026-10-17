@@ -409,7 +409,8 @@ impl Session {
                 .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)));
         for (slot, v) in saved {
             if caller_set && !matches!(v, Value::Record(_)) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SaveValuesCallerValueWins);
+                // The caller's value stays over the stored one (report/lt-requestpage-savevalues-date-text-setvalue/P147SaveValuesText.al:
+                // P147_Text_StoredVsCaller_Ok, P147_Boolean_CallerFalseOverStoredTrue, P147_Option_CallerSelectedOverStoredAll).
                 continue;
             }
             inst.borrow_mut().globals[slot] = v;

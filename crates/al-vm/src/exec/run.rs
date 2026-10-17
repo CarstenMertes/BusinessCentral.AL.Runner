@@ -690,9 +690,6 @@ impl Session {
         }
         let slot_ty = self.place_type(&site.var, f);
         let kind = crate::interp::ForKind::of(&slot_ty);
-        if kind.option_like {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
-        }
         let counter = Self::for_counter(kind, i, &slot_ty)?;
         self.write(&site.var, counter, f)
     }

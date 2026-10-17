@@ -382,12 +382,6 @@ impl Session {
     /// types/ for_to_option).
     #[inline(always)]
     pub(crate) fn for_limits(from: Value, to: Value) -> Result<(i64, i64), Signal> {
-        if matches!(from, Value::Boolean(_)) || matches!(to, Value::Boolean(_)) {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
-        }
-        if matches!(from, Value::Enum(..)) || matches!(to, Value::Enum(..)) {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
-        }
         let (from, to) = (Self::for_bound(from), Self::for_bound(to));
         Ok((int(&from)?, int(&to)?))
     }
@@ -396,7 +390,6 @@ impl Session {
     #[inline(always)]
     pub(crate) fn for_counter(kind: ForKind, i: i64, slot_ty: &RtType) -> Result<Value, Signal> {
         if kind.is_boolean {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
             Ok(Value::Boolean(i != 0))
         } else if kind.is_integer
             && let Ok(n) = i32::try_from(i)
@@ -1041,7 +1034,6 @@ pub(crate) fn constant(c: &ir::Const) -> Value {
 /// What the type of a `for` counter variable decides, found once per loop.
 #[derive(Clone, Copy)]
 pub(crate) struct ForKind {
-    pub(crate) option_like: bool,
     pub(crate) is_boolean: bool,
     pub(crate) is_integer: bool,
 }
@@ -1050,7 +1042,6 @@ impl ForKind {
     #[inline(always)]
     pub(crate) fn of(ty: &RtType) -> ForKind {
         ForKind {
-            option_like: matches!(ty, RtType::Option(_) | RtType::Enum(_)),
             is_boolean: matches!(ty, RtType::Boolean),
             is_integer: matches!(ty, RtType::Integer),
         }

@@ -340,7 +340,6 @@ impl Lowerer<'_> {
                     && self.ws.objects[self.oi].kind == ObjKind::Report
                     && !self.globals.contains_key("this") =>
             {
-                self.assume(al_builtins::assumptions::Assumption::ReportThisPassedOn);
                 Ok(ir::Expr::ThisInstance)
             }
             ParenExpr => self.expr(&kids[0]),

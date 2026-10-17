@@ -986,15 +986,12 @@ impl Session {
     }
 
     /// `Page.RunModal(Id, Rec)` leaves the row the lookup was closed on in `Rec` (Gen. Journal Management's template
-    /// selection reads it). Assumed, see Assumption::PageRunModalRecordTakesSelection.
+    /// selection reads it). Pinned by pages/lt-page-runmodal-rec/PageRunModalRecAfterClose.al:P174_NonTemp_StartA_HandlerGoToKeyCThenOk and siblings.
     fn hand_back_selection(&mut self, st: &St, handed: &Option<Rec>, answer: &Value) {
         let lookup_ok = matches!(answer, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK"));
         let picked = st.borrow_mut().selection.take();
         if let (true, Some(r), Some(fields)) = (lookup_ok, handed, picked) {
             if r.borrow().fields.len() == fields.len() {
-                al_builtins::assumptions::assume(
-                    al_builtins::assumptions::Assumption::PageRunModalRecordTakesSelection,
-                );
                 r.borrow_mut().fields = fields;
             }
         }

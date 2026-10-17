@@ -187,7 +187,7 @@ impl Session {
                 ir::RelationWhere::Value { related, .. } | ir::RelationWhere::Field { related, .. } => *related,
             };
             if self.is_flow_filter(related.object, related_pos) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RelationWhereOnTargetFlowFilter);
+                // record/lt-relation-where-flowfilter/RelationWhereFlowFilter.al:ValidateFlowFilterConstRelation, ValidateFlowFilterFieldRelation_ExistingValue.
                 continue;
             }
             filters.push(match w {

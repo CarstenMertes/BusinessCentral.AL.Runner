@@ -1600,9 +1600,7 @@ impl Session {
                             .map_err(|e| Signal::Unsupported(format!("{e}")))?
                             .is_some();
                         if !still_there {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::DeleteAllSkipsRowsDeletedMeanwhile,
-                            );
+                            // record/lt-delete-all-deleted-meanwhile/DeleteAllSkipsDeleted.al:DeleteAllTrue_FirstDeletesAnEarlierSibling_NoneEarlier.
                             continue;
                         }
                         let mut st = rec.borrow().clone();

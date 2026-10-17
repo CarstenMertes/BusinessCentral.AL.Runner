@@ -717,7 +717,7 @@ impl Session {
                                 rc.borrow_mut().temp_id = Some(id.clone());
                             }
                         }
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TempRecordArrayShares);
+                        // record/lt-temporary-array-elements/RecordTempArrayElements.al:P174_NonTempArray_SharesDatabaseTable, P174_Array_ThirdElement_SharesToo.
                     }
                 }
                 Value::Array(Rc::new(RefCell::new(cells)))

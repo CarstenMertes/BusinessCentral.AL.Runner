@@ -101,20 +101,20 @@ impl Lowerer<'_> {
             None => Vec::new(),
         };
         if qcp {
-            let assume = ir::Stmt::Assume(al_builtins::assumptions::Assumption::QueryClosePageFallsThroughAsTrue);
+            // A Boolean OnQueryClosePage that reaches its end without a value lets the page close
+            // (pages/lt-query-close-page-result/QcrNamedBranches.al:OnQueryClosePage_NamedTrueIfFlagFlagFalseHandlerOk_Observed and its siblings).
             let yes = ir::Expr::Const(ir::Const::Boolean(true));
             match self.qcp_ret.take() {
                 Some((l, flag)) => {
                     let guard = vec![ir::Stmt::If(
                         ir::Expr::Unary(ir::UnOp::Not, Box::new(ir::Expr::Load(ir::Place::Local(flag)))),
-                        vec![assume.clone(), ir::Stmt::Assign(ir::Place::Local(l), yes.clone())],
+                        vec![ir::Stmt::Assign(ir::Place::Local(l), yes.clone())],
                         Vec::new(),
                     )];
                     body = guard_exits(body, &guard);
                     body.extend(guard);
                 }
                 None => {
-                    body.push(assume);
                     body.push(ir::Stmt::Exit(Some(yes)));
                 }
             }

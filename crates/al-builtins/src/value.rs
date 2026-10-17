@@ -378,6 +378,8 @@ pub struct PageState {
     /// A `Page`-typed modal handler is running on this page: the page never opened, `GetRecord` and `SetRecord`
     /// read and write its Rec (handlers/PSModalPageHandlerTyped.al).
     pub typed_handler: bool,
+    /// The page opened on a source table with no row to show (a card over an empty table): its Rec was never a stored row.
+    pub never_stored: bool,
     /// For a part: the page that hosts it and the index of the part control on that page.
     pub host: Option<(std::rc::Weak<RefCell<PageState>>, usize)>,
     /// The instances of the page's extensions (extension object, instance): they share the page's
@@ -462,6 +464,7 @@ impl PageState {
             set_view: false,
             new_by_call: false,
             typed_handler: false,
+            never_stored: false,
             host: None,
             ext_instances: Vec::new(),
             parameters_wanted: false,

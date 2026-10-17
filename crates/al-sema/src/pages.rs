@@ -227,9 +227,9 @@ fn needed(
 
 /// Every control section of a page object, in source order.
 pub fn control_sections(obj: &ast::Object) -> Vec<ast::Section> {
-    obj.syntax()
-        .descendants()
-        .filter_map(ast::Section::cast)
+    // Sections are object structure: a routine body never holds one, so the walk skips the routines.
+    ast::sections_in(obj.syntax())
+        .into_iter()
         .filter(|s| CONTROL_SECTIONS.iter().any(|c| s.name().eq_ignore_ascii_case(c)))
         .collect()
 }
@@ -243,7 +243,7 @@ pub fn expand(src: &str, symbols: &BTreeSet<String>) -> Option<String> {
 /// `expand`, with the byte ranges of the added text in the returned text (source positions
 /// subtract them to give the author's lines).
 pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, Vec<(usize, usize)>)> {
-    let parse = al_syntax::parse(src, symbols);
+    let parse = crate::workspace::with_tree_cache(|cache| al_syntax::parse_with_cache(src, symbols, cache));
     let root = ast::SourceFile::cast(parse.syntax())?;
     let mut inserts: Vec<(usize, String)> = Vec::new();
     for obj in root.objects() {
@@ -767,19 +767,12 @@ impl Tree {
         let Tree { nodes, areas, reasons } = self;
         let mut slots: Vec<Option<Node>> = nodes.into_iter().map(Some).collect();
         let mut controls = Vec::new();
-        fn emit(
-            slots: &mut [Option<Node>],
-            idx: usize,
-            parent: Option<usize>,
-            out: &mut Vec<RawControl>,
-            anchored: &mut bool,
-        ) {
+        fn emit(slots: &mut [Option<Node>], idx: usize, parent: Option<usize>, out: &mut Vec<RawControl>) {
             let Some(n) = slots[idx].take() else { return };
             // An anchor is no control; what was added into it is (`addlast(Category_Category4)`).
             if n.anchor_only {
-                *anchored |= !n.children.is_empty();
                 for c in n.children {
-                    emit(slots, c, parent, out, anchored);
+                    emit(slots, c, parent, out);
                 }
                 return;
             }
@@ -793,16 +786,15 @@ impl Tree {
                 modifies: n.modifies,
             });
             for c in n.children {
-                emit(slots, c, Some(here), out, anchored);
+                emit(slots, c, Some(here), out);
             }
         }
-        let mut anchored = false;
         let mut action_areas = Vec::new();
         for a in areas {
             let mut roots = Vec::new();
             for c in a.children {
                 let first = controls.len();
-                emit(&mut slots, c, None, &mut controls, &mut anchored);
+                emit(&mut slots, c, None, &mut controls);
                 // An anchor emits nothing, so it is no root.
                 if controls.len() > first {
                     roots.push(first);
@@ -816,11 +808,8 @@ impl Tree {
             controls,
             reasons,
             action_areas,
-            assumes: if anchored {
-                vec![al_builtins::assumptions::Assumption::ImplicitCategoryGroup]
-            } else {
-                Vec::new()
-            },
+            // addlast/addfirst on the implicit group of a legacy promoted category: pages/lt-page-ext-promoted/PageExtPromotedCategoryRisky.al.
+            assumes: Vec::new(),
         }
     }
 }

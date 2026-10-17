@@ -186,6 +186,14 @@ fn merged_members(ws: &Workspace, i: usize) -> Members {
                     continue;
                 };
                 for (k, v) in props {
+                    // A modify block that sets TableRelation gives the field a relation (record/ table extension: misc/
+                    // lt-object-properties-runtime-effect/TableExtModifyTableRelation.al: Validate of the field finds the related table, and
+                    // `FieldRef.Relation()` names it).
+                    if k.eq_ignore_ascii_case("TableRelation") {
+                        field.table_relation = true;
+                        field.relation_table = Some(relation_target(&v));
+                        field.relation_tables = relation_targets(&v);
+                    }
                     match field.properties.iter_mut().find(|(pk, _)| pk.eq_ignore_ascii_case(&k)) {
                         Some(slot) => slot.1 = v,
                         None => field.properties.push((k, v)),

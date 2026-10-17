@@ -52,7 +52,16 @@ impl<'a> Checker<'a> {
         }
         match best {
             Some((c, _)) => {
-                let (ret, target, with) = (c.ret.clone(), c.target.clone(), c.with_off);
+                let (mut ret, target, with) = (c.ret.clone(), c.target.clone(), c.with_off);
+                // `Abs` of a Duration is a BigInteger, not the Decimal the catalog declares: Format(Abs(D)) reads `1500` and a Decimal
+                // variable assigned from it reads `1,500` (misc/lt-protected-var-abs-query-views/P146AbsDuration.al:P146_Abs_Duration_ResultFormats).
+                if name.eq_ignore_ascii_case("abs")
+                    && !matches!(target, Res::Proc { .. })
+                    && args.len() == 1
+                    && matches!(args[0], Ty::Duration)
+                {
+                    ret = Ty::BigInteger;
+                }
                 self.record_with(sc, node, target, with);
                 ret
             }

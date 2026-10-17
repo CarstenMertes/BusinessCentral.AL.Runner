@@ -82,9 +82,12 @@ pub enum ModuleLookup {
 pub struct HttpOutgoing {
     /// `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD` or the request's own method, upper case.
     pub method: String,
-    /// The absolute uri in its normal form.
+    /// The absolute uri in its normal form; for a relative path with no base address (or a request with no uri) the path as
+    /// written, which only a request that no handler sees can carry (network/lt-http-relative-request/HttpRelativeRequestPath.al).
     pub url: String,
     pub has_secret_uri: bool,
+    /// The uri came from joining a path to the client's base address (registry entry http-relative-request-path).
+    pub joined_with_base: bool,
 }
 
 pub trait Ctx: FormatCtx {
@@ -133,6 +136,14 @@ pub trait Ctx: FormatCtx {
     }
     /// Today's day number (1 = 0001-01-01) on the host's clock; `None` where there is no host.
     fn today_day(&self) -> Option<i32> {
+        None
+    }
+    /// `CodeCoverageRefresh()`: writes what was recorded into the Code Coverage tables.
+    fn code_coverage_refresh(&mut self) -> Result<(), Signal> {
+        Ok(())
+    }
+    /// The session's work date as a day number; `None` where there is no host.
+    fn work_date_day(&self) -> Option<i32> {
         None
     }
     /// The host clock in milliseconds since the Unix epoch; `None` where there is no host.
@@ -994,22 +1005,19 @@ fn abs(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<Val
             Some(n) => Value::BigInteger(n),
             None => return unsupported("Abs of the smallest BigInteger (the overflow error is not pinned)"),
         },
-        // A Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned by a corpus test; Microsoft's
-        // manufacturing code does `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests).
+        // A Duration takes the BigInteger overload: its milliseconds (misc/lt-protected-var-abs-query-views/P146AbsDuration.al,
+        // P146AbsDurationBigInt.al).
         other => return abs_other(other),
     })
 }
 
-/// `Abs` of a Duration takes the Decimal overload: its milliseconds, as a Decimal. Not pinned; Microsoft's manufacturing code does
-/// `Abs(StartDateTime - EndDateTime)` (Tests-SCM-Manufacturing, about 220 tests; assumption abs-of-duration-is-decimal).
+/// `Abs` of a Duration is the BigInteger of its milliseconds: `Format(Abs(D))` is `1500`, assigned to a Decimal it is `1,500`
+/// (misc/lt-protected-var-abs-query-views/P146AbsDuration.al:P146_Abs_Duration_ResultFormats, P146AbsDurationBigInt.al).
 #[cold]
 #[inline(never)]
 fn abs_other(v: &Value) -> Result<Value, Signal> {
     match v {
-        Value::Duration(ms) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::AbsOfDuration);
-            Ok(Value::Decimal(rust_decimal::Decimal::from(*ms).abs()))
-        }
+        Value::Duration(ms) => Ok(Value::BigInteger(ms.abs())),
         other => unsupported(&format!("Abs of {}", other.describe())),
     }
 }
@@ -1080,11 +1088,11 @@ fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [
     Ok(Value::Text(out.into()))
 }
 
-/// `CodeCoverageRefresh()`: loads the recorded coverage into the Code Coverage table. The runtime serves the table from the live
-/// recording, so there is nothing to load (corpus codeunit/TestCodeCoverageTable.al reads the table right after
-/// `CodeCoverageLog(false, false)`). Not pinned on its own: assumption code-coverage-refresh-is-a-no-op.
-fn code_coverage_refresh(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    crate::assumptions::assume(crate::assumptions::Assumption::CodeCoverageRefreshIsANoOp);
+/// `CodeCoverageRefresh()`: loads what was recorded into the Code Coverage tables. While logging is on a read of the table holds
+/// nothing until this call or until logging stops; after logging stopped the call changes nothing (platform/lt-code-coverage-refresh/
+/// CodeCoverageRefreshLogged.al: CodeCoverageRefresh_WhileLogging_Result, _AfterLoggingStopped_Result, _NeverLogging_Result).
+fn code_coverage_refresh(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    ctx.code_coverage_refresh()?;
     Ok(Value::Null)
 }
 
@@ -1572,10 +1580,14 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             ));
         }
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
-        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload") => Value::Library(
-            name.clone(),
-            std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
-        ),
+        // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
+        // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
+        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload" | "HttpClient") => {
+            Value::Library(
+                name.clone(),
+                std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
+            )
+        }
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
     Ok(Value::Null)

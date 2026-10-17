@@ -268,7 +268,7 @@ impl<'a> Lowerer<'a> {
     fn convert_raw(&self, target: &Ty, src: &Ty, value: ir::Expr) -> L<ir::Expr> {
         let slot = self.rt(target)?;
         // A number variable into a Text or Code is AL0122 (must-not-compile 0069 for an Integer; the other numbers are not judged by
-        // the checker). Only a Variant (FieldRef.Value) converts at run time (assumption number-to-text-is-format), so the direct
+        // the checker). Only a Variant (FieldRef.Value) converts at run time (types/lt-variant-to-text-fields/VariantFieldRefBigIntToText.al), so the direct
         // assignment stays refused.
         if matches!(slot, RtType::Text(_) | RtType::Code(_))
             && matches!(src, Ty::Integer | Ty::BigInteger | Ty::Decimal)

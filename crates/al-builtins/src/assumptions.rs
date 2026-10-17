@@ -79,12 +79,6 @@ registry! {
         tests: "Company-Initialize (Doc. Exch. Service Setup.SetURLsToDefault -> OAuth2Impl.GetDefaultRedirectUrl), so the install baseline of a company built from the RapidStart package; every Microsoft test that reads Application Area Setup or Workflow after it.",
         probe: "GetUrl(ClientType::Web) asserted for scheme, path and query, with and without a company, and inside a per-database install trigger (docs/probes-needed.md).",
     },
-    FindEqualOnAnotherKey => {
-        id: "find-equal-on-another-key",
-        assumed: "Find with `=` among several directions (`=><`) on a record whose current key is not the primary key finds the row itself when the record's primary key names a row that passes the filters and the fields of the current key still hold the row's values; only then is the neighbour searched.",
-        tests: "Req. Wksh.-Make Order (Code: ReqLine.Find('=><') on the Requisition Line the Carry Out Action Msg. report read by its own sorting); Tests-SCM UnitCostOnPurchLineWithCarryOutActionMsg and the tests that carry out action messages.",
-        probe: "SetCurrentKey(SecondaryKey), set the key fields and the primary key to an existing row, Find('=>'), Find('=<') and Find('=><'); then change one key field and repeat.",
-    },
     ClearAllKeepsTemporaryRows => {
         id: "clear-all-keeps-temporary-rows",
         assumed: "ClearAll() resets the fields and filters of a global temporary record but keeps its rows, as Clear(Rec) does.",
@@ -96,18 +90,6 @@ registry! {
         assumed: "When a page's OnInsertRecord inserts the row itself and answers false, the page goes on with that row as a stored one: the next edit of the row runs OnModifyRecord instead of OnInsertRecord again.",
         tests: "Item Tracking Lines (InsertRecord inserts into the page's temporary source, ValidateAndInsert answers false); Tests-Manufacturing PostProductionJournalUsingLotItemTracking and the item tracking tests that set a lot and a quantity.",
         probe: "A page with OnInsertRecord { Rec.Insert(); exit(false) } and OnModifyRecord { Rec.Modify(); exit(false) }: OpenNew, set the key, set a second field, OK; read the row and count the trigger calls.",
-    },
-    CodeCoverageRefreshIsANoOp => {
-        id: "code-coverage-refresh-is-a-no-op",
-        assumed: "CodeCoverageRefresh() changes nothing: the Code Coverage table is served from the live recording, so a read after CodeCoverageLog(false, ...) already holds the hits.",
-        tests: "System Application's Code Coverage Mgt.Refresh, called by Microsoft's code coverage helpers; 9 Tests-SCM-Costing tests.",
-        probe: "CodeCoverageLog(true, false), run code, CodeCoverageLog(false, false); count the Code Coverage rows before and after CodeCoverageRefresh().",
-    },
-    NumberToTextIsFormat => {
-        id: "number-to-text-is-format",
-        assumed: "An Integer, BigInteger, Decimal or Enum value (a Variant from FieldRef.Value) assigned to a record's Text or Code field is its default Format text (an enum value its member name), as Format gives it.",
-        tests: "Workflow Table Relation Value.CreateNew (Value := FieldRef.Value()); 114 Tests-Workflow tests.",
-        probe: "A Variant holding an Integer, a BigInteger (2645 and 1234567), a Decimal and an enum value assigned to a Text[50] and a Code[50] field and variable and a Text parameter; compare with Format.",
     },
     QueryClosedAfterLastRow => {
         id: "query-closed-after-last-row",
@@ -144,6 +126,12 @@ registry! {
         assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",
         tests: "Calendar Management CalcTimeDelta tests (Evaluate of '085606') and Evaluate(RandomTime, Format(RandInt(23))); 11 Tests-SCM-Manufacturing tests.",
         probe: "Evaluate(T, '085606'), '23', '5', '246000', '24', '0856', '8:56' into a Time: the result and the return value; with and without a format number.",
+    },
+    CodeCoverageSnapshotWhileLogging => {
+        id: "code-coverage-snapshot-while-logging",
+        assumed: "While CodeCoverageLog(true) is on, the Code Coverage tables hold the snapshot that CodeCoverageRefresh wrote and do not grow with later hits (a read before any refresh is empty, pinned by platform/lt-code-coverage-refresh/CodeCoverageRefreshLogged.al).",
+        tests: "Tests that read the Code Coverage table after a refresh while logging is still on: none known in the buckets.",
+        probe: "CodeCoverageLog(true, false), run code, CodeCoverageRefresh(), count the rows, run more code, count again (still logging), then CodeCoverageRefresh() and count.",
     },
     NextWholeDecimal => {
         id: "next-whole-decimal",
@@ -235,12 +223,6 @@ registry! {
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
     },
-    PageRecProcedureSeesPageXrec => {
-        id: "page-rec-procedure-sees-page-xrec",
-        assumed: "A table procedure the page's code calls on Rec (Rec.InitType()) sees the page's xRec as its xRec, not a blank record.",
-        tests: "Test Item Lookup (TestSalesInvoiceItemLookupInDescription and four siblings): Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type.",
-        probe: "A table with a procedure returning xRec.\"No.\"; a page whose OnAfterGetCurrRecord returns it through Rec.Proc() after moving between two rows; the same in OnNewRecord.",
-    },
     UpdateRefreshListOnFindRecord => {
         id: "update-refresh-list-onfindrecord",
         assumed: "CurrPage.Update on a list with OnFindRecord (with or without OnNextRecord) reads the rows as the pinned table of 3 rows with the cursor on the middle one does (misc/W2FindRecordUpdate.al), for any number of rows and any cursor position below a window.",
@@ -252,12 +234,6 @@ registry! {
         assumed: "TestPage SetValue of an Integer, BigInteger or whole Decimal (below 1000 in size) on a Text or Code control enters the number's digits.",
         tests: "SCM RTAM Item Tracking-II (RegisterWhseJournalLineWithSNWarehouseTracking): WhseItemTrackingPageHandler sets Serial No. to a Decimal.",
         probe: "SetValue(14), SetValue(14.0), SetValue(1234) and SetValue(-3) on a Text[30] and a Code[30] control bound to a field and to a variable.",
-    },
-    PartOfAPageThatNeverRan => {
-        id: "part-of-a-page-that-never-ran",
-        assumed: "CurrPage.<Part>.Page in a procedure called on a Page variable that was never run reaches a part page that exists, is initialised and is not open (as a hidden part does).",
-        tests: "O365 Simplify UI Sales Invoice (CreateInvoiceForCustomerWithCreditLimit) and the other Tests-SMB and Tests-ERM tests that send the credit limit notification.",
-        probe: "A page with a part and a procedure that calls a procedure of the part page and returns what it set; call it on a Page variable before Run and read the result.",
     },
     SetTableViewKeepsSetRecordPosition => {
         id: "set-table-view-keeps-set-record-position",
@@ -283,35 +259,11 @@ registry! {
         tests: "Library - Document Approvals.GetUser; 214 Tests-Dimension tests.",
         probe: "Nothing in AL can compare the numbers with BC's; the shape is pinned (PXDatabaseSid.al).",
     },
-    MixedDataItemLink => {
-        id: "mixed-dataitem-link",
-        assumed: "A query DataItemLink whose parts name different enclosing data items joins each part to its item.",
-        tests: "Item Analysis View Source / Analysis View Source queries; hundreds of Tests-SCM tests.",
-        probe: "A three-level query where the leaf links to the grandparent and the parent in one DataItemLink.",
-    },
     SaveValuesWithExtensions => {
         id: "savevalues-with-extensions",
         assumed: "A page extension that adds only controls bound to Rec fields, labels, parts or actions changes nothing about what a SaveValues page stores.",
         tests: "Pages with SaveValues and page extensions in the buckets.",
         probe: "A SaveValues page extended by a control bound to a variable and by one bound to a field.",
-    },
-    SaveValuesCallerValueWins => {
-        id: "savevalues-caller-value-wins",
-        assumed: "On a report's request page with SaveValues, every variable keeps its value, over the one an earlier confirmed run stored, when the caller ran a procedure of the report variable (SetParameters) before the run.",
-        tests: "Microsoft's Get Demand To Reserve with its Assembly extension, run by Reservation Worksheet tests.",
-        probe: "A report with SaveValues whose first run confirms the default and whose second run sets the variable before RunModal; read the variable in OnPreReport.",
-    },
-    TempRecordArrayShares => {
-        id: "temporary-record-array-shares-table",
-        assumed: "The elements of an array of temporary records of one table share one temporary table (each element has its own filters and position).",
-        tests: "Microsoft's Tests-SCM-Planning (Inventory Profile Offsetting keeps demand and supply in InventoryProfile: array[2] of Record \"Inventory Profile\" temporary).",
-        probe: "An array[2] of a temporary record: insert through element 1, count and read through element 2.",
-    },
-    AbsOfDuration => {
-        id: "abs-of-duration-is-decimal",
-        assumed: "Abs of a Duration takes the Decimal overload: the Duration counts as its milliseconds and the answer is a Decimal.",
-        tests: "Microsoft's production order and routing code (Abs of a DateTime difference): Tests-SCM-Manufacturing and Tests-SCM-Costing, about 230 tests.",
-        probe: "D: Duration := -5000; X := Abs(D) into a Decimal and into a Duration; Format both; Abs(D) > 4999.",
     },
     SubPageLinkEmptyTerm => {
         id: "subpagelink-empty-term-selects-blank",
@@ -331,71 +283,11 @@ registry! {
         tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
         probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
     },
-    SetViewSortingWithoutKey => {
-        id: "set-view-sorting-without-a-key",
-        assumed: "SetView of a SORTING(...) that no key starts with orders the rows by those fields, then by the primary key, as SetCurrentKey of such fields does.",
-        tests: "Microsoft's tests that set a view written by GetView after an ad hoc SetCurrentKey (Posting Preview and Item Journal tests): Tests-SCM and Tests-SCM-Manufacturing, about 110 tests.",
-        probe: "SetCurrentKey on fields no key starts with, GetView, a second record SetView(that view): compare the order and CurrentKey().",
-    },
-    DeleteAllSkipsRowsDeletedMeanwhile => {
-        id: "delete-all-skips-rows-deleted-meanwhile",
-        assumed: "DeleteAll(true) with triggers goes row by row and does not visit a row that an earlier row's OnDelete (or an event) deleted.",
-        tests: "Requisition Line OnDelete (deletes the lines of a higher level that follow) under Order Planning Mgt. PrepareRequisitionRecord: Tests-SCM-Manufacturing B42538_UserIDOnReqLine and Order Planning tests.",
-        probe: "A table whose OnDelete deletes the next row; DeleteAll(true) over three rows; count the rows and the OnDelete calls.",
-    },
-    RelationWhereOnTargetFlowFilter => {
-        id: "relation-where-on-a-flowfilter-of-the-target",
-        assumed: "A where() condition of a TableRelation on a FlowFilter field of the related table does not select rows when the relation is validated.",
-        tests: "Item Journal Line \"Bin Code\" (Bin.Code where(\"Item Filter\" = field(\"Item No.\"), \"Variant Filter\" = ...)): Tests-SCM and Tests-SCM-Manufacturing, about 10 tests.",
-        probe: "A table relation whose where() names a FlowFilter of the target; Validate a value that exists; Validate one that does not.",
-    },
-    RelationWhereReadsValidatedValue => {
-        id: "relation-where-reads-the-validated-value",
-        assumed: "A where() condition of a TableRelation that names the validated field itself (Code = field(\"Variant Code\")) reads the value being validated, not the value the field holds before the assignment.",
-        tests: "Prod. Order Line, Assembly Header and Assembly Line \"Variant Code\" (Item Variant.Code where(\"Item No.\" = field(\"Item No.\"), Code = field(\"Variant Code\"), ...)): Tests-SCM and Tests-SCM-Assembly, about 60 tests, among them SCM Order Tracking OrderTrackingOnSalesWithVariant.",
-        probe: "A table relation whose where() has Code = field(<the field itself>); Validate a value that exists; read the field and the error.",
-    },
-    QueryClosePageFallsThroughAsTrue => {
-        id: "query-close-page-falls-through-as-true",
-        assumed: "An OnQueryClosePage trigger with a Boolean return that reaches its end without giving a value lets the page close (its named return value starts as Yes).",
-        tests: "Item Tracking Lines OnQueryClosePage (its Result stays untouched when the availability check has no warning): about 1,100 tests of Tests-SCM, Tests-SCM-Manufacturing and Tests-SCM-Costing that close the page from a handler.",
-        probe: "A page with trigger OnQueryClosePage(CloseAction: Action) Result: Boolean that does not assign Result on one path; close it with OK from a handler; read the answer of RunModal.",
-    },
-    ImplicitCategoryGroup => {
-        id: "implicit-category-group",
-        assumed: "addlast/addfirst on the implicit group of a legacy promoted category (Category_Category4) adds into the promoted area of the page.",
-        tests: "Email Address Lookup extension; 54 Tests-Misc tests.",
-        probe: "An extension adding to Category_Category4 of a page whose action says Promoted = true; PromotedCategory = Category4.",
-    },
-    ChainedArrayIndex => {
-        id: "chained-array-index",
-        assumed: "A[x][y] on a multi-dimensional array is A[x, y].",
-        tests: "Backup Storage test library (array[20, 1000] of RecordRef); 43 Tests-Misc tests.",
-        probe: "The chained form on a two-dimensional array, read and write.",
-    },
-    InBindsTighterThanAnd => {
-        id: "in-binds-tighter-than-and",
-        assumed: "`a and b in [..]` (also `or`, `xor`) without parentheses is `a and (b in [..])`, not `(a and b) in [..]`.",
-        tests: "Base Application's Purchase Header, field Buy-from Vendor No. (Self-Billing Invoice); every Tests-SCM and Tests-ERM test that validates it.",
-        probe: "A Boolean variable and an enum value joined with and, then in a set, with and without parentheses; a Boolean result for each.",
-    },
     FilterTextReadAsEvaluate => {
         id: "filter-text-read-as-evaluate",
-        assumed: "A text value of a filter on a Date or Guid field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, a Guid with braces). A formula such as 1M, a Time or DateTime text and an empty text stay refused.",
+        assumed: "A text value of a filter on a Date field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, closing date `C01/17/27`). A formula such as 1M, a Time or DateTime text and an empty text stay refused. (A Guid filter text is pinned by types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al.)",
         tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
-        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; the same on a Guid field with Format(G); then GetFilter and Count.",
-    },
-    ReportThisPassedOn => {
-        id: "report-this-passed-on",
-        assumed: "`this` in a report can be passed on (to a var parameter of the report's type, in an event for example) and is the running report: its procedures, and those of the report extensions, work on it.",
-        tests: "Whse.-Source - Create Document raises OnAfterPostReport(..., this); about 960 tests of the Tests-SCM buckets.",
-        probe: "A report that passes this to an event in OnPostReport; a subscriber calls a procedure of the report and one of a reportextension on the parameter.",
-    },
-    PageRunRecordAndSourceTableView => {
-        id: "page-run-record-and-source-table-view",
-        assumed: "Page.Run(Page, Rec) on a page that declares SourceTableView: the page shows the rows of the record that the view also admits (the record's filters, then the view in filter group 2).",
-        tests: "Assemble-to-Order Link ShowAsmOrders runs the Assembly Orders page on a temporary record; about 30 tests of the Tests-SCM-Assembly bucket.",
-        probe: "A page with SourceTableView = where(Kind = const(B)) run on a temporary record holding A and B rows: the rows a handler sees; and on a record with a filter of its own.",
+        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; then GetFilter and Count.",
     },
     BooleanToTextAsFormat => {
         id: "boolean-to-text-as-format",
@@ -405,40 +297,15 @@ registry! {
     },
     FormatCodeSpelling => {
         id: "format-code-spelling",
-        assumed: "The codes of a Format string are read in any case (`<sign><integer>`), with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`), and `Filler Char` stands for `Filler Character`.",
-        tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets), Base Application's percent texts, and the Data Exchange tests' GetNodeID (`<Integer,4><Filler Char,0>`, about 30 tests).",
-        probe: "Format of an Integer, a Decimal and a Date with the same codes in capitals, small letters and with a blank after the comma; compare with the canonical spelling.",
-    },
-    TableExtensionBaseVars => {
-        id: "table-extension-base-vars",
-        assumed: "A table extension reads and writes the `protected var` variables of its base table, on the same per-record globals the base table's own code uses (a procedure of the extension sees what a trigger of the base set).",
-        tests: "tableextension 906 \"Asm. Requisition Line\" (Assembly) uses Requisition Line's Item, TempPlanningErrorLog, PlanningResiliency and MissingFieldValueErr; about 600 tests of the Tests-SCM-Planning bucket.",
-        probe: "A table with a protected var, a table extension procedure that reads and writes it, and a base trigger that reads it back; on one record variable and on a second one; with a Record and a Codeunit protected var.",
-    },
-    DataItemsEmptyElement => {
-        id: "dataitems-empty-element",
-        assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",
-        tests: "Report SaveAs datasets of reports with no rows in Tests-ERM.",
-        probe: "Confirmed by a corpus bump 9 probe (empty DataItems); delete when the bump is merged.",
-        note: "Probably pinned by corpus bump 9 (\"Empty DataItems <DataItems /> confirmed\"): check and delete.",
+        assumed: "In a Format string `Filler Char` stands for `Filler Character`. (Any case of the other code names, and blanks after the comma, are pinned by types/lt-format-codes-textbuilder-pagerun-labels/P144FormatCodes.al.)",
+        tests: "The Data Exchange tests' GetNodeID (`<Integer,4><Filler Char,0>`, about 30 tests).",
+        probe: "Format(5, 0, '<Integer,4><Filler Char,0>') next to '<Integer,4><Filler Character,0>', for an Integer, a Decimal and a Text.",
     },
     EnumOptionIntegerOrdinal => {
         id: "enum-option-integer-ordinal",
-        assumed: "An Enum value converts into an Option or an Integer, and a BigInteger into an Option or an Enum, by ordinal; an ordinal beyond the members is kept. (Integer into Option, Option into Integer and Option into Enum are pinned by types/PROptionInteger.al and types/PEOptionEnumBigText.al.)",
-        tests: "Sales Line UpdatePlanned (the FlowField filter of Reserved Quantity: Option column against an Enum field) in about 7,000 Tests-ERM and Tests-SCM tests; Library - Variable Storage DequeueInteger of an enqueued enum (ERM TestMultipleGenJnlLines).",
-        probe: "Opt := Variant(EnumValue), Int := Variant(EnumValue), a FlowField filter and a SetRange that compare an Option column with an Enum field, with an ordinal the Option lacks. Corpus-topic issue 67.",
-    },
-    ForOptionVariable => {
-        id: "for-option-variable",
-        assumed: "A for loop whose variable is an Option or Enum field or variable runs once per ordinal, holds the member in each round and is read back before it counts up; Enum bounds count as their ordinal. (An Integer loop with an Option bound is pinned by types/PROptionInteger.al.)",
-        tests: "Sales Price Calc. Mgt. FindSalesLineDisc (for \"Sales Type\" := Customer to Campaign), reached by Job Consumption Basic and ERM Dimension Sales tests.",
-        probe: "for R.Opt := R.Opt::A to R.Opt::C over an Option field and an Option variable; the value after the loop; a body that changes the variable.",
-    },
-    RecordIdInMessage => {
-        id: "record-id-in-message",
-        assumed: "A RecordId as a %1 of an error, or in TestField and FieldError text, reads as Format(RecordId) does (Table: key1,key2). (Format(RecordId) is pinned by record/TestProbeRecordRefContracts.al:472-502.)",
-        tests: "Gen. Jnl.-Post Line PostVend (ERM Gen. Lines for Vendor, over 1,000 Tests-ERM and Tests-General Journal tests).",
-        probe: "Error('%1', Rec.RecordId), StrSubstNo and TestField on a RecordId field, with a text key that needs quotes.",
+        assumed: "A BigInteger converts into an Option or an Enum by ordinal; an ordinal beyond the members is kept. (An Enum value into an Option, an Integer or a Decimal, and an Integer into an Enum, are pinned: types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al, types/PROptionInteger.al, types/PEOptionEnumBigText.al.)",
+        tests: "Code that assigns a BigInteger to an Option or an Enum variable.",
+        probe: "Opt := BigIntegerValue and E := BigIntegerValue for an ordinal the Option or Enum lacks and for one beyond Integer.",
     },
     DateTimeDateTimeMethods => {
         id: "datetime-date-time-methods",
@@ -452,17 +319,11 @@ registry! {
         tests: "Sales Line SetLoadFieldsForInvDiscoundCalculation (\"Reserved Quantity\"): about 2,350 Tests-ERM and Tests-SCM tests.",
         probe: "SetLoadFields(FlowField) and SetLoadFields(Normal, FlowField) then FindFirst and AreFieldsLoaded of the normal field; AddLoadFields the same; the result of SetLoadFields used as a value.",
     },
-    SetTableTemporaryIntoPermanent => {
-        id: "settable-temporary-into-permanent",
-        assumed: "RecordRef.SetTable of a RecordRef on a temporary record into a record variable that is not declared temporary makes that variable temporary and share the temporary rows. (Permanent into permanent and temporary into temporary are pinned by recordref/TestRecordRefGetSetTableContracts.al.)",
-        tests: "Mfg. Dimension Management OnCheckDimValuePostingOnAfterCreateDimTableIDs: SetTable(PurchaseLine) of the temporary Purchase Line of a posting check; about 1,450 Tests-ERM and Tests-SCM tests.",
-        probe: "Tmp.Insert; RR.GetTable(Tmp); RR.SetTable(Perm); Perm.IsTemporary, Perm.Get, Perm.Insert and Perm.Count afterwards; the same for a permanent RecordRef into a temporary variable.",
-    },
     HttpRelativeRequestPath => {
         id: "http-relative-request-path",
-        assumed: "HttpClient.Get/Post/Put/Delete/Patch with a path that is not an absolute uri joins it to the client's base address like new Uri(base, path): a rooted path replaces the base path, any other joins the base path's directory.",
+        assumed: "HttpClient.Get/Post/Put/Delete/Patch with a path that is not an absolute uri joins it to the client's base address like new Uri(base, path), as a [HttpClientHandler] sees it: a rooted path replaces the base path, any other joins the base path's directory. (That a plain word and a rooted path with no base address, and the forms of P168 with a base address, are blocked without a handler is pinned by network/lt-http-relative-request/HttpRelativeRequestPath.al.)",
         tests: "Microsoft and NP Retail code that sets SetBaseAddress and then Get('/orders').",
-        probe: "SetBaseAddress('https://example.invalid/api/v1/') then Get('orders'), Get('/orders'), Get('../x'), Get('?q=1') with a handler printing Request.Path.",
+        probe: "SetBaseAddress('https://example.invalid/api/v1/') then Get('orders'), Get('/orders'), Get('../x'), Get('?q=1') with a handler printing Request.Path. Also wanted: Get with no base address for 'a/b', 'a.b' and '?q=1' (only a plain word and a rooted word are pinned; the others stay refused).",
     },
     HttpHeadersAddUsedResult => {
         id: "http-headers-add-used-result",
@@ -480,7 +341,7 @@ registry! {
         id: "http-header-rules",
         assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and Accept, Authorization, Date and Content-Type values are checked; every other header .NET types (Cache-Control, Range, Via, ...) is accepted as written, and the content headers other than Content-Type and Content-Length follow the same rule as those two.",
         tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
-        probe: "network/lt-http/HttpHeaders.al covers the measured part; wanted: Cache-Control, Range, If-Match, Content-Disposition, Content-Encoding and Expires on request and content headers.",
+        probe: "network/lt-http/HttpHeaders.al covers the measured part; the case and the content-or-not of all 39 known names are pinned by network/lt-http-header-names-cache-control/HeaderNameCase*.al. Wanted: the value rules of Range, If-Match, Content-Disposition, Content-Encoding and Expires on request and content headers. The Cache-Control directive order is pinned by CacheControl*.al but not implemented yet (it stays refused).",
     },
     HttpHandlerEveryVersion => {
         id: "http-handler-every-version",
@@ -494,41 +355,11 @@ registry! {
         tests: "NP Retail and Microsoft tests whose handler falls through with true and then expects a failed call or a real answer.",
         probe: "A handler answering true for a resolvable host on an environment without a network: the Boolean, the status and GetLastErrorText.",
     },
-    FilterPlaceholderInQuotes => {
-        id: "filter-placeholder-in-quotes",
-        assumed: "In SetFilter, a %n inside a quoted part of the filter text is replaced by the argument like any other placeholder (the text '''%1''|''%2''' with two blank texts is the filter ''|'').",
-        tests: "Gen. Jnl.-Show CT Entries (Credit Transfer Register UT.TestShowCTEntriesForGenJnlLine and the Payment Export tests); Base Application filters written '''%1'''.",
-        probe: "SetFilter(TextField, '''%1''|''%2''', '', 'A') on rows with blank and A, then GetFilter and Count; with an Integer and a Code argument.",
-    },
-    PageEventSender => {
-        id: "page-event-sender",
-        assumed: "The sender of an event a page publishes with IncludeSender is the page itself (a Page variable on the running instance), not the page's Rec.",
-        tests: "Item Tracking Lines OnSetSourceSpecOnCollectTrackingData with the subscriber in Asm. Item Tracking Mgt. (var sender: Page \"Item Tracking Lines\"); about 800 Tests-ERM and Tests-SCM tests that open item tracking.",
-        probe: "A page that publishes [IntegrationEvent(true, false)], a subscriber with (var sender: Page X) that calls a procedure of the page and reads its Caption, from TestPage.OpenView and from a Page variable.",
-    },
-    DurationToNumber => {
-        id: "duration-to-number",
-        assumed: "A Duration converts into an Integer, a BigInteger or a Decimal as its number of milliseconds; a value beyond Integer is refused. (A whole number into a Duration is pinned by record/TestCalcFormulaValidationTests.Codeunit.al:42.)",
-        tests: "Calendar Management CalcTimeDelta (Result := EndingTime - StartingTime into an Integer): about 750 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
-        probe: "I := D; B := D; Dec := D for a Duration D, also negative and beyond Integer, and I := EndTime - StartTime.",
-    },
     DataItemViewAndTableView => {
         id: "data-item-view-and-table-view",
         assumed: "A report data item whose DataItemTableView filters, run with a SetTableView (or a record given to the static Run), shows the rows that pass both: the filters of the view are added to the item's own, which live in the report's filter group. (A DataItemTableView that only sorts keeps the SetTableView filters: handlers/TestReportRuntimeContracts.al:393-410.)",
         tests: "Whse.-Source - Create Document and Production Order callers (Warehouse Request, Item data items): about 800 Tests-SCM and Tests-ERM tests.",
         probe: "A data item with DataItemTableView = where(F = filter(1..2)) run after SetTableView with F in 2..3, with a filter on another field, and the item's GetFilters in OnPreDataItem.",
-    },
-    ForBoolean => {
-        id: "for-boolean",
-        assumed: "A for loop over a Boolean variable (for B := false to true do) runs for false and then for true, and downto from true to false; the variable holds the Boolean in each round; its value after the loop is not read.",
-        tests: "Library codeunits with `for Stepwise := false to true do` (about 410 Tests-ERM and Tests-SCM tests).",
-        probe: "for B := false to true do counting the passes, the value of B inside and after the loop, and for B := true downto false.",
-    },
-    TimeAddWholeDecimal => {
-        id: "time-add-whole-decimal",
-        assumed: "A Time plus or minus a whole-number Decimal moves like an Integer. (A Time with an Integer, a Duration and a fractional Decimal is pinned by types/PUTimeArithmetic.al.)",
-        tests: "Service Item Line CalculateResponseDateTime through Calendar Management: about 820 Tests-ERM, Tests-SCM-Service and Tests-Job tests.",
-        probe: "T + 1000.0 and T - 1000.0 for a Decimal variable holding a whole number, and 0.",
     },
     PartLinkNotValidatedForUnsavedHost => {
         id: "part-link-not-validated-for-unsaved-host",
@@ -542,18 +373,6 @@ registry! {
         tests: "Library - Service.CreateServiceOrderHeaderUsingPage (TestPage Service Order OpenNew, Customer No. Activate, OK): the part Service Order Subform links on \"Document No.\" (field 1), its table relation of Document No. filters on \"Document Type\" (field 43); about 9 Tests-SCM-Service tests.",
         probe: "A part page with SourceTableView where(Type = const(B)) and SubPageLink on a field declared before Type whose table relation filters on Type, and an OnValidate on the first field that reads Type: open the host, read the draft line and what the OnValidate saw.",
     },
-    FilterChangeLandsOnNewLine => {
-        id: "filter-change-lands-on-new-line",
-        assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",
-        tests: "Item Vendor Catalog (OpenNew, Filter.SetFilter(\"Item No.\"), then SetValue of the vendor): ERM Item Reference Purchase and about 12 more Tests-ERM tests.",
-        probe: "An editable list opened with OpenNew and with OpenEdit over an empty filtered result: SetValue of a non-key field and the stored row's key; Next() and the row triggers that run.",
-    },
-    CalcSumsFlowFieldFilter => {
-        id: "calcsums-flowfield-filter",
-        assumed: "CalcSums on a record with a filter on a FlowField sums the stored field over the rows whose calculated FlowField value passes the filter. (CalcSums over stored-field filters is pinned by record/TestRecordFlowField.al:109-160.)",
-        tests: "Bank Acc. Recon. Test.GetTotalOutstanding (SetRange/SetFilter on the Check Ledger Entries FlowField of the Bank Account Ledger Entry), reached by posting a bank reconciliation: about 200 Tests-Bank tests.",
-        probe: "SetFilter(FlowField, '<>0') then CalcSums(StoredField), with rows whose FlowField is zero and non-zero, and a SetRange(FlowField, 0).",
-    },
     DeleteAllMarkedOnly => {
         id: "delete-all-marked-only",
         assumed: "Record.DeleteAll with MarkedOnly(true) deletes the marked rows that pass the filters and no other row, like Find, Next, Count and ModifyAll work on the marked set; with triggers and events as a DeleteAll with a filter.",
@@ -565,12 +384,6 @@ registry! {
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",
         tests: "Post Inventory Cost to G/L through Library - Costing and Library - Assembly PostInvtCostToGL (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch); Check.SaveAsPdf (ERM Cash Manager, Match Bank Rec. Scenarios).",
         probe: "A report on the list saved to a temp file and to a stream on a Windows tier: the answer, the order of the triggers, File.Exists and TempBlob.Length afterwards.",
-    },
-    HiddenPartUpdateIsNoop => {
-        id: "hidden-part-update-is-noop",
-        assumed: "CurrPage.Update (also with false) in the code of a part page that the host's code created without opening it (a literal Visible = false) does nothing and raises no error.",
-        tests: "Sales Invoice, Purchase Invoice and the other document pages call CurrPage.ApprovalFactBox.PAGE.UpdateApprovalEntriesFromSourceRecord(Rec.RecordId) in OnAfterGetCurrRecord, which ends in CurrPage.Update(false): about 900 Tests-ERM, Tests-SCM and Tests-Misc tests.",
-        probe: "A host with part(P; ...) { Visible = false } whose OnAfterGetCurrRecord calls CurrPage.P.Page.Ping(), where Ping calls CurrPage.Update(false) and CurrPage.Update(true) and then reads Rec.",
     },
 }
 
@@ -661,13 +474,10 @@ mod tests {
         clear_hits();
         assume(Assumption::ClearAllKeepsTemporaryRows);
         assume(Assumption::ClearAllKeepsTemporaryRows);
-        assume(Assumption::FindEqualOnAnotherKey);
+        assume(Assumption::NextWholeDecimal);
         assert_eq!(
             take_hits(),
-            vec![
-                Assumption::FindEqualOnAnotherKey,
-                Assumption::ClearAllKeepsTemporaryRows
-            ]
+            vec![Assumption::ClearAllKeepsTemporaryRows, Assumption::NextWholeDecimal]
         );
         assert!(take_hits().is_empty());
         assume(Assumption::ClearAllKeepsTemporaryRows);

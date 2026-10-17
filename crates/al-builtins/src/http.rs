@@ -202,12 +202,11 @@ pub fn normalize_uri(input: &str) -> Result<String, bool> {
     if input.starts_with('/') && !input.starts_with("//") {
         return Err(false);
     }
+    // A text with no colon has no scheme and is no absolute uri: 'orders' (misc/lt-probes-needed-4/PnD06_SetRequestUri.al is the wide pin:
+    // `/api/v1/items`, `api/v1/items`, `./items`, `../items`, `?a=1`, `#top`, `/`; network/lt-http-relative-request/HttpRelativeRequestPath.al:
+    // P168_Send_RelativeRequestUri `af109` for `orders`) is invalid.
     let Some(colon) = input.find(':') else {
-        return if input.chars().any(char::is_whitespace) {
-            Err(false)
-        } else {
-            Err(true)
-        };
+        return Err(false);
     };
     let scheme = &input[..colon];
     let scheme_ok = !scheme.is_empty()
@@ -329,18 +328,21 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Resolves `path` against the client's base address the way `new Uri(base, path)` does for the forms in use.
-fn resolve_request_path(base: &str, path: &str) -> Result<String, Signal> {
+/// Resolves `path` against the client's base address the way `new Uri(base, path)` does for the forms in use. The second
+/// value says the uri was joined to the base address. A relative path with no base address stays as written: such a
+/// request raises the blocked-request error with no handler bound, and a handler refuses it (`http_send_impl`); the
+/// corpus pins that `orders`, `/orders` and `https://...` all reach the policy check (HttpRelativeRequestPath.al:P168_Get_NoBaseAddress).
+fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal> {
     if path.contains("://") || base.is_empty() {
         return match normalize_uri(path) {
-            Ok(u) => Ok(u),
-            Err(false) => invalid_url(),
+            Ok(u) => Ok((u, false)),
+            Err(_) if is_pinned_relative(path) => Ok((path.to_string(), false)),
             Err(true) => unsupported(format!(
                 "HttpClient with the request path `{path}` and no base address: whether it is valid is not measured"
             )),
+            Err(false) => invalid_url(),
         };
     }
-    assume(crate::assumptions::Assumption::HttpRelativeRequestPath);
     let Some(after) = base.find("://").map(|i| i + 3) else {
         return unsupported("HttpClient with a base address that has no authority");
     };
@@ -352,7 +354,14 @@ fn resolve_request_path(base: &str, path: &str) -> Result<String, Signal> {
         let dir = &base_path[..base_path.rfind('/').map_or(0, |i| i + 1)];
         format!("{origin}{dir}{path}")
     };
-    normalize_uri(&joined).or_else(|_| invalid_url())
+    normalize_uri(&joined).map(|u| (u, true)).or_else(|_| invalid_url())
+}
+
+/// The relative paths the corpus pins as reaching the request policy with no base address: a plain word and a rooted path
+/// (HttpRelativeRequestPath.al:P168_Get_NoBaseAddress `orders`, `/orders`).
+fn is_pinned_relative(path: &str) -> bool {
+    let word = path.strip_prefix('/').unwrap_or(path);
+    !word.is_empty() && word.chars().all(|c| c.is_ascii_alphanumeric())
 }
 
 fn invalid_url<T>() -> Result<T, Signal> {
@@ -452,26 +461,13 @@ fn is_token_char(c: char) -> bool {
 }
 
 /// A name the collection of `kind` refuses: the content headers on request, response or client headers, and on the headers of a content
-/// the request headers the matrix measured (lt-http-header-rules/P87Matrix.al, the Standalone, Request and Response content parts).
+/// every known name that is no content header (network/lt-http-header-names-cache-control/HeaderNameCaseContent.al: all 39 known names;
+/// lt-http-header-rules/P87Matrix.al for the first eleven).
 fn not_here(kind: HeaderKind, name: &str) -> bool {
     if kind != HeaderKind::Content {
         return is_content_header(name);
     }
-    [
-        "cache-control",
-        "range",
-        "if-match",
-        "if-none-match",
-        "authorization",
-        "user-agent",
-        "accept",
-        "accept-encoding",
-        "host",
-        "connection",
-        "transfer-encoding",
-    ]
-    .iter()
-    .any(|h| name.eq_ignore_ascii_case(h))
+    canonical_name(name).is_some() && !is_content_header(name)
 }
 
 /// The headers `HttpContentHeaders` owns: a request, response or client header collection refuses them.
@@ -581,20 +577,14 @@ fn canonical_name(name: &str) -> Option<&'static str> {
     KNOWN_NAMES.iter().copied().find(|k| k.eq_ignore_ascii_case(name))
 }
 
-/// The name a header is stored under. A known header written in another case than .NET's canonical form is stored canonically, which
-/// only `Accept` is pinned for (lt-http-header-rules/P87Twice.al:NameCaseAndKeys); for any other name the canonical form is not
-/// pinned, so it is refused (docs/probes-needed.md).
+/// The name a header is stored under. A known header written in another case than .NET's canonical form is stored canonically, in
+/// all 39 known names and on request, content and response headers (network/lt-http-header-names-cache-control/HeaderNameCaseRequest.al,
+/// HeaderNameCaseContent.al, HeaderNameCaseResponse.al: `keys=1:Accept-Charset`); a custom name keeps its first case (CustomNameCase.al).
 fn stored_name(items: &[(String, Vec<String>)], name: &str) -> Result<String, Signal> {
     if let Some((n, _)) = find(items, name) {
         return Ok(n.clone());
     }
-    match canonical_name(name) {
-        Some(c) if c != name && c != "Accept" => unsupported(format!(
-            "the header {name} written in another case than {c}: the case it is stored in is not pinned (docs/probes-needed.md)"
-        )),
-        Some(c) => Ok(c.to_string()),
-        None => Ok(name.to_string()),
-    }
+    Ok(canonical_name(name).map_or_else(|| name.to_string(), str::to_string))
 }
 
 /// `a; b=c` with one "; " between the parts (.NET writes a parameter list that way).
@@ -1265,11 +1255,12 @@ fn client_use_cookies(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -
 }
 
 /// Hands `(method, url)` to the session and writes the response it returns into the `var Response` argument.
-fn send(c: &mut dyn Ctx, method: &str, url: String, response: Option<&Value>) -> Out {
+fn send(c: &mut dyn Ctx, method: &str, url: (String, bool), response: Option<&Value>) -> Out {
     let state = c.http_send(HttpOutgoing {
         method: method.to_ascii_uppercase(),
-        url,
+        url: url.0,
         has_secret_uri: false,
+        joined_with_base: url.1,
     })?;
     let Some(Value::Library(_, cell)) = response else {
         return unsupported("HttpClient call without a response variable");
@@ -1315,10 +1306,12 @@ fn client_send(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         LibraryValue::Empty => ("GET".into(), None),
         other => return unsupported(format!("HttpClient.Send of {}", other.describe())),
     };
-    let Some(uri) = uri else {
-        return unsupported("HttpClient.Send of a request with no uri: not measured");
+    // A request whose SetRequestUri failed has no uri; Send still reaches the policy check
+    // (HttpRelativeRequestPath.al:P168_Send_RelativeRequestUri `send-relative`), so it carries an empty url.
+    let url = match uri {
+        Some(uri) => resolve_request_path(&base, &uri)?,
+        None => (String::new(), false),
     };
-    let url = resolve_request_path(&base, &uri)?;
     send(c, &method, url, a.get(1))
 }
 
@@ -1802,6 +1795,7 @@ mod tests {
         for bad in [
             "",
             "/relative/path",
+            "orders",
             "http://",
             "ht!tp://x",
             "https://exa mple.invalid/",

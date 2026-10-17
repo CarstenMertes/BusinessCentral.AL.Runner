@@ -315,6 +315,9 @@ impl Session {
             return match args.first() {
                 None => Ok(Value::Boolean(self.coverage.code_coverage)),
                 Some(Value::Boolean(on)) => {
+                    if *on && !self.coverage.code_coverage {
+                        self.coverage.recorder.reset_refreshed();
+                    }
                     self.coverage.code_coverage = *on;
                     Ok(Value::Boolean(*on))
                 }

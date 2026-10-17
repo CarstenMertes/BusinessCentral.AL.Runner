@@ -1710,38 +1710,9 @@ fn a_test_that_runs_an_assumed_path_is_marked_and_the_marks_do_not_leak_to_the_n
     assert_eq!(of("RunsNoneAfterTheOneThatDid"), None, "{hits:?}");
 }
 
-#[test]
-fn a_statement_marked_at_compile_time_marks_the_test_only_when_it_runs() {
-    let src = "codeunit 60151 T
-{
-    Subtype = Test;
-
-    [Test]
-    procedure RunsTheMarkedStatement()
-    var
-        A: array[2, 2] of Integer;
-    begin
-        A[1][2] := 3;
-    end;
-
-    [Test]
-    procedure SkipsTheMarkedStatement()
-    var
-        A: array[2, 2] of Integer;
-    begin
-        if false then
-            A[1][2] := 3;
-    end;
-}";
-    let hits = assumptions_of(src);
-    let of = |n: &str| hits.iter().find(|(t, _)| t == n).map(|(_, h)| h.clone());
-    assert_eq!(
-        of("RunsTheMarkedStatement"),
-        Some(vec!["chained-array-index"]),
-        "{hits:?}"
-    );
-    assert_eq!(of("SkipsTheMarkedStatement"), None, "{hits:?}");
-}
+// The lowering can mark a statement as resting on an assumption (`Lowerer::assume`, `Stmt::Assume`): the test is flagged only when the
+// statement runs. The last user of that path, `chained-array-index`, is retired (misc/lt-chained-array-index/ChainedArrayIndex.al pins it), so no registered assumption
+// is marked at compile time and the test that drove it with that id is gone. The next lowering-level assumption adds one back.
 
 const TODAY: &str = "codeunit 60160 T
 {

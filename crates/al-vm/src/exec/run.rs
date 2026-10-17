@@ -377,13 +377,17 @@ impl Session {
                         pc = t as usize;
                     }
                 }
+                // The ends of a range of `in [a .. z]` and of a `case`: see `ops::compare_range_end`.
                 Op::JumpLt { a, b, t } => {
-                    if ops::compare(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Less {
+                    if ops::compare_range_end(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Less
+                    {
                         pc = t as usize;
                     }
                 }
                 Op::JumpGt { a, b, t } => {
-                    if ops::compare(&f.locals[a as usize], &f.locals[b as usize])? == std::cmp::Ordering::Greater {
+                    if ops::compare_range_end(&f.locals[a as usize], &f.locals[b as usize])?
+                        == std::cmp::Ordering::Greater
+                    {
                         pc = t as usize;
                     }
                 }
@@ -689,9 +693,6 @@ impl Session {
         }
         let slot_ty = self.place_type(&site.var, f);
         let kind = crate::interp::ForKind::of(&slot_ty);
-        if kind.option_like {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
-        }
         let counter = Self::for_counter(kind, i, &slot_ty)?;
         self.write(&site.var, counter, f)
     }

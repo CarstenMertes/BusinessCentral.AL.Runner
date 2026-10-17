@@ -91,12 +91,9 @@ impl Session {
                 (al_ir::ObjKind::Codeunit, _) => Some(Value::Codeunit(instance)),
                 // The sender of a page's event is the page (a `Page` variable), not its Rec: Item Tracking Lines
                 // publishes with IncludeSender and Asm. Item Tracking Mgt. takes `var sender: Page "Item Tracking
-                // Lines"`. Not pinned by the corpus (assumption page-event-sender).
+                // Lines"`. Pinned by pages/lt-page-event-sender/PageEventSender.al:PageEvent_FromOpenPage_SenderIsTheOpenedPage, PageEvent_FromPageVariable_SenderIsTheVariable.
                 (al_ir::ObjKind::Page, _) => match o.globals.iter().position(|g| g.name == "CurrPage") {
-                    Some(slot) => {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PageEventSender);
-                        Some(instance.borrow().globals[slot].clone())
-                    }
+                    Some(slot) => Some(instance.borrow().globals[slot].clone()),
                     None => return unsupported(format!("{}: IncludeSender on a page without CurrPage", r.name)),
                 },
                 // The sender of a report's event is the running report, as a Report variable: the subscriber calls the

@@ -13302,7 +13302,7 @@
         "code": "AL:Format",
         "file": "crates/al-builtins/src/http.rs",
         "generic": false,
-        "line": 388,
+        "line": 397,
         "pinned": true,
         "site": "network/lt-http/HttpRequest.al:73",
         "template": "The format of the HTTP method is invalid."
@@ -13365,7 +13365,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 547,
+        "line": 561,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13374,7 +13374,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 720,
+        "line": 737,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -13383,7 +13383,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 763,
+        "line": 782,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
@@ -13392,7 +13392,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 788,
+        "line": 809,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13401,7 +13401,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 796,
+        "line": 817,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13410,7 +13410,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 821,
+        "line": 842,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13419,7 +13419,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 846,
+        "line": 867,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13428,7 +13428,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 875,
+        "line": 896,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13437,7 +13437,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 880,
+        "line": 901,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13446,7 +13446,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 908,
+        "line": 929,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -13536,7 +13536,7 @@
         "code": "AssertError",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 422,
+        "line": 426,
         "pinned": true,
         "site": "types/TestFormatEvaluateTextContracts.al:228",
         "template": "An error was expected inside an ASSERTERROR statement."
@@ -13545,7 +13545,7 @@
         "code": "AL:InvalidOperation",
         "file": "crates/al-vm/src/exec/run.rs",
         "generic": false,
-        "line": 563,
+        "line": 567,
         "pinned": true,
         "site": "collections/RefSemantics.al:343",
         "template": "Collection was modified; enumeration operation may not execute."
@@ -13590,7 +13590,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 898,
+        "line": 901,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -13617,7 +13617,7 @@
         "code": "DB:NoFilter",
         "file": "crates/al-vm/src/recmeta.rs",
         "generic": false,
-        "line": 326,
+        "line": 325,
         "pinned": true,
         "site": "pages/lt-page-filtergroup-assumptions/P99RangeGroups.al:115",
         "template": "Specify a filter for the % field in the % table."
@@ -13635,7 +13635,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2165,
+        "line": 2172,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -13689,7 +13689,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 735,
+        "line": 718,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:179",
         "template": "Index out of bounds"
@@ -13698,7 +13698,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 755,
+        "line": 738,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -13743,7 +13743,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 417,
+        "line": 418,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"

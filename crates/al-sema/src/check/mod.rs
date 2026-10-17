@@ -707,13 +707,19 @@ fn binary_ty(op: &str, l: &Ty, r: &Ty) -> Ty {
             (Ty::Date, _) => Ty::Date,
             (Ty::DateTime, Ty::DateTime) if op == "-" => Ty::Duration,
             (Ty::DateTime, _) => Ty::DateTime,
-            (Ty::Time, Ty::Time) if op == "-" => Ty::Duration,
+            // Time - Time is a number of milliseconds, not a Duration (types/lt-expression-operators-literals/
+            // ExpressionBinaryDateTimeOperands.al:P195_Binary_TimeAndDateTimeOperands: `Format(T1 - T2, 0, 9)` is `-9000000`).
+            (Ty::Time, Ty::Time) if op == "-" => Ty::BigInteger,
             (Ty::Time, _) => Ty::Time,
             // Duration +/- Duration is a BigInteger of milliseconds (corpus types/lt-duration-arithmetic/DurationAddDuration.al).
             (Ty::Duration, Ty::Duration) if op == "+" || op == "-" => Ty::BigInteger,
             // So is Duration +/- a whole number and a whole number +/- Duration (corpus types/lt-duration-arithmetic/
             // DurationPlusInteger.al:DurationPlusInteger_ResultType_Result, IntegerPlusDuration.al, IntegerMinusDuration.al).
             (Ty::Duration, n) | (n, Ty::Duration) if (op == "+" || op == "-") && is_numeric(n) => Ty::BigInteger,
+            // Duration * a whole number is a BigInteger and Duration / a number a Decimal (P195_Binary_DurationOperands: `A * 2` formats
+            // `180000`, `A / 4` `22500`); a Duration variable takes either back.
+            (Ty::Duration, n) | (n, Ty::Duration) if op == "*" && is_numeric(n) => Ty::BigInteger,
+            (Ty::Duration, n) if op == "/" && (is_numeric(n) || matches!(n, Ty::Duration)) => Ty::Decimal,
             (Ty::Duration, _) => Ty::Duration,
             _ => Ty::Unknown,
         },

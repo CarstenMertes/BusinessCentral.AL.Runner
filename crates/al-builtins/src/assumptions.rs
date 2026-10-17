@@ -445,6 +445,12 @@ registry! {
         tests: "Pages with SourceTableView = sorting(...) order(descending), such as Item Ledger Entries, opened with a record: SCM Item Journal and SCM Warehouse tests; about 11 Tests-SCM tests.",
         probe: "Page.Run(Page, Rec) with Rec ascending and the page's view order(descending), and the reverse: the first row the page shows.",
     },
+    ListGoneOnlyRowWithoutUpdate => {
+        id: "list-gone-only-row-without-update",
+        assumed: "A list whose only row an action deleted, when the action did not call CurrPage.Update, shows its blank line and raises OnAfterGetCurrRecord three times, as it does after an action that called CurrPage.Update (pageupdate/TestPageUpdateGoneRow.al pins that case).",
+        tests: "Planning worksheet and requisition tests whose action deletes the only line (SCM Plan-Req. Wksht CalcPlan... from a blanket order): about 11 Tests-SCM tests.",
+        probe: "The Gone List fixture of TestPageUpdateGoneRow.al with an action that deletes the only row and does not call CurrPage.Update: the trace of OnAfterGetCurrRecord calls.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

@@ -168,6 +168,11 @@ impl Session {
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let page = page_of(&engine, st);
+        // The request page of a report never runs OnAfterGetRecord, whatever the report's data items do
+        // (report/lt-request-page-record-triggers/RequestPageOnAfterGetRecord.al: no `rp OnAfterGetRecord` in any of the three runs).
+        if name == "onaftergetrecord" && engine.program.objects[object].is_kind(al_ir::ObjKind::Report) {
+            return Ok(None);
+        }
         let mut answer = None;
         let mut result = Ok(());
         if let Some(r) = page.triggers.iter().find(|(n, _)| n == name).map(|(_, r)| *r) {

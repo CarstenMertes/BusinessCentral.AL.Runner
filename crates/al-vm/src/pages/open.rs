@@ -541,6 +541,14 @@ impl Session {
                 return unsupported("a part's OnQueryClosePage that refuses the close (not pinned)");
             }
         }
+        // Cancelling a report's request page runs OnAfterGetCurrRecord once more before OnQueryClosePage; OK does not
+        // (report/lt-request-page-record-triggers/RequestPageOnAfterGetCurrRecord.al:P195_RequestPage_Cancel_Order `e4`, _OpenThenOk_Order).
+        if via_action
+            && action == "Cancel"
+            && self.engine.program.objects[st.borrow().object as usize].is_kind(al_ir::ObjKind::Report)
+        {
+            self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+        }
         // An AL error raised in OnQueryClosePage is shown as a message and refuses the close
         // (corpus handlers/TestPageQueryCloseError_Tests.al:1-25).
         let veto = match self.query_close_answer(st, vec![Value::Option(ordinal, members)]) {

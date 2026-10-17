@@ -790,7 +790,13 @@ impl Session {
         if let Value::Record(src) = &v {
             // A Variant that holds a record takes the new value whole, whatever table it comes from: it is no record variable
             // (Library - Variable Storage.Dequeue into one `RecVar` that held a Contact, then a Segment Header; Tests-Marketing).
-            if !matches!(p, ir::Place::Field(..)) && !matches!(self.place_type(p, f), RtType::Variant) {
+            // A Variant holding a record of ANOTHER table is replaced (by the by-value copy below). A Variant holding one of the
+            // same table still takes the fields, which keeps the table a Variant parameter was bound to (a temporary record's
+            // rows): replacing it gave the callee an empty table (Find Record Management.GetLastEntryIntFieldValue, called from
+            // "Price Asset".OnInsert; Tests-ERM Price Calculation - V16).
+            let replaces_variant = matches!(self.place_type(p, f), RtType::Variant)
+                && matches!(self.read(p, f), Ok(Value::Record(d)) if d.borrow().table != src.borrow().table);
+            if !matches!(p, ir::Place::Field(..)) && !replaces_variant {
                 if let Ok(Value::Record(dst)) = self.read(p, f) {
                     if !Rc::ptr_eq(src, &dst) {
                         // A copied record holds copies of its Blobs (value semantics). The corpus

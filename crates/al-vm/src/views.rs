@@ -208,6 +208,11 @@ impl Session {
     /// `GetFilters`: `Caption: filter` pairs joined by `, ` (docs/probes-needed.md).
     pub(crate) fn get_filters(&self, rec: &Rec, t: &TableDef) -> Result<String, Signal> {
         let mut parts = Vec::new();
+        // A record on MarkedOnly names it first (errors/lt-ms-refusals-128/P128SelectionFilter.al `marked A only`,
+        // lt-ms-refusals-135/P135SelectionFilter.al:357 `filters=[Marked: Yes]` with no other filter).
+        if rec.borrow().marked_only {
+            parts.push("Marked: Yes".to_string());
+        }
         for f in Self::filters_in_field_order(rec) {
             parts.push(format!(
                 "{}: {}",
@@ -248,15 +253,34 @@ impl Session {
                 format!("Field{}", t.fields[pos].id)
             }
         };
-        let (key, ascending) = {
+        let (key, ascending, mask) = {
             let r = rec.borrow();
-            (r.key, r.ascending && !r.field_descending)
+            (r.key, r.ascending && r.field_descending == 0, r.field_descending)
         };
         let mut out = format!(
             "SORTING({})",
             t.keys[key].iter().map(|&p| name(p)).collect::<Vec<_>>().join(",")
         );
-        if !ascending {
+        let fields = t.keys[key].len();
+        if mask != 0 && !(fields == 1 && mask == 1) {
+            // One direction per field of the key: `ORDER(Descending,Ascending)` (records/W4SortKeys.al:
+            // SetAscending_TwoFieldKey_OneFieldAtATime). Every field descending, a field of the primary key's part, or the
+            // numeric form is not pinned.
+            let key_bits = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
+            if mask & !key_bits != 0 || mask == key_bits || !(use_names || !record_form) {
+                return unsupported("GetView of a record with SetAscending on these fields of a sorting (not pinned)");
+            }
+            let dirs: Vec<&str> = (0..fields)
+                .map(|i| {
+                    if mask & (1 << i) != 0 {
+                        "Descending"
+                    } else {
+                        "Ascending"
+                    }
+                })
+                .collect();
+            out.push_str(&format!(" ORDER({})", dirs.join(",")));
+        } else if !ascending {
             out.push_str(if use_names || !record_form {
                 " ORDER(Descending)"
             } else {

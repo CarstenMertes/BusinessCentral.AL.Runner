@@ -273,6 +273,37 @@ page 50031 "PG Dynamic Caption"
     layout { area(Content) { field(NoCtl; Rec."No.") { } } }
     trigger OnOpenPage() begin CurrPage.Caption := 'Dynamic Caption'; end;
 }
+
+table 50040 "PG RO Row"
+{
+    fields
+    {
+        field(1; "No."; Code[20]) { }
+        field(2; Locked; Boolean) { Editable = false; }
+        field(3; Free; Boolean) { }
+    }
+    keys { key(PK; "No.") { } }
+}
+
+page 50042 "PG ListPlus"
+{
+    PageType = ListPlus;
+    SourceTable = "PG Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+    var
+        Trace: Codeunit "PG Trace";
+        Flag: Boolean;
+    trigger OnOpenPage() begin Trace.Add('open;'); end;
+    trigger OnNewRecord(BelowxRec: Boolean) begin Trace.Add('new;'); end;
+    trigger OnAfterGetCurrRecord() begin Flag := true; Trace.Add('agcr;'); end;
+}
+
+page 50041 "PG RO Card"
+{
+    PageType = Card;
+    SourceTable = "PG RO Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } field(LockedCtl; Rec.Locked) { } field(FreeCtl; Rec.Free) { } } }
+}
 "#;
 
 fn run(body: &str, routine: &str) -> Result<Value, Signal> {
@@ -1058,4 +1089,36 @@ fn find_first_field_takes_a_bare_control_name() {
         "F",
     );
     assert_eq!(text(r), "B");
+}
+
+// Microsoft's Payment Export Mgt Unit Test.FilterByHasPaymentExportError needs a page field over a source field
+// that says `Editable = false` to read No (the field is also a FlowField). Unprobed: assumption
+// page-field-follows-source-field-editable-false.
+#[test]
+fn a_page_field_over_a_source_field_with_editable_false_is_not_editable() {
+    let r = run(
+        "procedure F(): Text var R: Record \"PG RO Row\"; TP: TestPage \"PG RO Card\"; begin
+            R.\"No.\" := 'A'; R.Insert();
+            TP.OpenEdit();
+            exit(Format(TP.NoCtl.Editable()) + Format(TP.LockedCtl.Editable()) + Format(TP.FreeCtl.Editable()));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "YesNoYes");
+}
+
+// Microsoft's Suggest Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted opens the
+// Purchase Price List (a ListPlus page without a repeater) over an empty table and needs its OnAfterGetCurrRecord
+// to have run (PriceListIsEditable). Unprobed: assumption listplus-blank-record-on-empty-view. A Card or a
+// Document over an empty view stays as it was (only OnOpenPage runs).
+#[test]
+fn a_list_plus_page_over_an_empty_view_runs_new_record_and_get_curr_record() {
+    let r = run(
+        "procedure F(): Text var TP: TestPage \"PG ListPlus\"; T: Codeunit \"PG Trace\"; X: Text; begin
+            TP.OpenEdit();
+            exit(T.Take());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "open;new;agcr;");
 }

@@ -90,6 +90,14 @@ pub struct HttpOutgoing {
     pub joined_with_base: bool,
 }
 
+/// The field an `Evaluate` into a `FieldRef` writes (see [`Ctx::evaluate_field_target`]).
+pub struct FieldTarget {
+    pub rec: std::rc::Rc<std::cell::RefCell<crate::value::RecordState>>,
+    pub pos: usize,
+    pub ty: crate::value::RtType,
+    pub option_caption: bool,
+}
+
 pub trait Ctx: FormatCtx {
     /// Gives `request` to the running test's `[HttpClientHandler]` and answers the response it filled; raises the
     /// policy error without one. No request ever reaches a network.
@@ -165,6 +173,20 @@ pub trait Ctx: FormatCtx {
     fn copy_stream_dotnet(&mut self, _out: &Value, _src: &Value, _count: Option<i64>) -> Option<Result<(), Signal>> {
         None
     }
+    /// `Evaluate(RecordId, Text)`: the RecordId the text names (a table name, then `:` and the key), `Ok(None)` where no table
+    /// is named or the key is not a value of its type. `None` where the context has no program.
+    fn evaluate_record_id(
+        &mut self,
+        _text: &str,
+        _number: i64,
+    ) -> Option<Result<Option<crate::value::LibraryValue>, Signal>> {
+        None
+    }
+    /// The field a `FieldRef` stands on, for `Evaluate` into it: its record buffer, position, declared type and whether the field
+    /// declares an OptionCaption. `None` where the context has no program or `v` is no assigned `FieldRef`.
+    fn evaluate_field_target(&mut self, _v: &Value) -> Option<Result<FieldTarget, Signal>> {
+        None
+    }
     /// The declared values of enum object `id` as (ordinal, name), in declaration order with
     /// extension values after them. `None` when the context has no program.
     fn enum_members(&self, _id: u32) -> Option<Vec<(i32, String)>> {
@@ -173,11 +195,6 @@ pub trait Ctx: FormatCtx {
     /// The captions the values of enum object `id` declare, as (ordinal, caption).
     fn enum_captions(&self, _id: u32) -> Vec<(i32, String)> {
         Vec::new()
-    }
-    /// `Evaluate` into a RecordId: the value `text` (`Table name: key`) names, `None` when the text is not
-    /// one (the call answers false).
-    fn evaluate_record_id(&mut self, _text: &str) -> Result<Option<Value>, Signal> {
-        Err(Signal::Unsupported("Evaluate into RecordId needs a program".into()))
     }
     /// Builtins that read or change session state (number sequences, the transaction state): the
     /// VM implements them. `id` is the catalog overload id (`NumberSequence.Next#1`); `args` holds
@@ -331,6 +348,8 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         "System.EvaluateVariableOption#1",
         crate::evaluate::evaluate_variable_option,
     ),
+    ("System.EvaluateBounded#1", crate::evaluate::evaluate_bounded),
+    ("System.EvaluateOptionField#1", crate::evaluate::evaluate_option_field),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
     (
@@ -476,6 +495,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.Export#2", vm_only),
     ("Xmlport.Import#1", vm_only),
     ("Xmlport.Import#2", vm_only),
+    ("Xmlport.Run#2", vm_only),
     ("Xmlport.SetSource#1", vm_only),
     ("Xmlport.SetDestination#1", vm_only),
     ("Xmlport.SetTableView#1", vm_only),
@@ -665,7 +685,7 @@ pub fn refusal(id: &str) -> Option<&'static str> {
         "System.GetDotNetType#1" => {
             "GetDotNetType is in no corpus test, so the .NET type value it returns, and what a cast or a comparison with it does, are not pinned"
         }
-        "Xmlport.Run#1" | "Xmlport.Run#2" => {
+        "Xmlport.Run#1" => {
             "Xmlport.Run is in no corpus test, so where a run without a stream writes or reads (a file on the service tier a test cannot read) and what the request window does are not pinned"
         }
         _ => return None,
@@ -2057,6 +2077,8 @@ pub(crate) mod tests {
         // Ids lowering picks for a call of a catalog overload that needs another implementation (`Evaluate` into an Option variable).
         let derived = [
             "System.EvaluateVariableOption#1",
+            "System.EvaluateBounded#1",
+            "System.EvaluateOptionField#1",
             "System.FormatVariant#1",
             "System.FormatDecimalField#1",
             "Dialog.ErrorNotLiteral#1",

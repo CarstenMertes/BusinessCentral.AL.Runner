@@ -184,12 +184,26 @@ impl Lowerer<'_> {
                 } else {
                     None
                 };
-                let emit_id = if id == "System.Evaluate#1"
+                let option_captions = if id == "System.Evaluate#1" {
+                    args.first().and_then(|a| self.option_field_captions(a))
+                } else {
+                    None
+                };
+                let emit_id = if option_captions.is_some() {
+                    "System.EvaluateOptionField#1".to_string()
+                } else if id == "System.Evaluate#1"
                     && args.first().is_some_and(|a| {
                         matches!(self.ty_of(a), Ty::Option(_))
                             && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
-                    }) {
+                    })
+                {
                     "System.EvaluateVariableOption#1".to_string()
+                } else if id == "System.Evaluate#1"
+                    && args
+                        .first()
+                        .is_some_and(|a| matches!(self.ty_of(a), Ty::Text(Some(_)) | Ty::Code(Some(_))))
+                {
+                    "System.EvaluateBounded#1".to_string()
                 } else if id == "Dialog.Error#2" && args.first().is_some_and(|a| a.kind() != SyntaxKind::Literal) {
                     // `Error(Label, ...)` and `Error(Variable, ...)`: only a string literal has its text for
                     // `GetLastErrorText(true)` pinned (corpus P86LastError.al:PlainError_Exclude).
@@ -417,6 +431,22 @@ impl Lowerer<'_> {
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });
+                }
+                // The OptionCaption of an Option field goes along as a fourth argument.
+                if let (true, Some(captions)) = (emit_id == "System.EvaluateOptionField#1", option_captions) {
+                    while out.len() < 3 {
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))));
+                    }
+                    out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Text(captions))));
+                }
+                // The declared length of a Text or Code variable goes along as a fourth argument.
+                if emit_id == "System.EvaluateBounded#1" {
+                    if let Some(Ty::Text(Some(n)) | Ty::Code(Some(n))) = args.first().map(|a| self.ty_of(a)) {
+                        while out.len() < 3 {
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))));
+                        }
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(n as i32))));
+                    }
                 }
                 if let (true, Some(places)) = (emit_id == "System.FormatDecimalField#1", decimal_field_places) {
                     while out.len() < 3 {

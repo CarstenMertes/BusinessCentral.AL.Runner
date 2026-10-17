@@ -523,11 +523,27 @@ impl Session {
                 // on the key field, a range on the key, and the page's own filters copied from Rec are gone; a mark and MarkedOnly stay
                 // (errors/lt-ms-refusals-128/P128SelectionFilter.al:P128_SetSelectionFilter_IntoRecordsWithFilters_SecondRow,
                 // _MarkCopyTemporary (without the mark), _CalledTwiceOnOneRecord, _PageWithOwnFilter_CopyOfRec).
-                // A record with marks is not pinned beyond what the same test shows (`Marked: Yes` in the filters and a count of 1 for a
-                // mark outside the selected row); it stays refused.
-                if !dst.borrow().marks.is_empty() || dst.borrow().marked_only {
+                // A record that has marks and MarkedOnly on, with a mark outside the selected row, ends with the selected row marked
+                // as well: `Marked: Yes, Code: C` in the filters, MarkedOnly still on and a count of 1
+                // (P128_SetSelectionFilter_IntoRecordsWithFilters_MarkCopyTemporary, `marked A only`). Marks without MarkedOnly,
+                // MarkedOnly without marks and a mark on the selected row are not pinned.
+                let selected_key = {
+                    let t = self.table(dst)?;
+                    t.primary_key(&src.borrow().fields)
+                };
+                let marked = !dst.borrow().marks.is_empty();
+                let marked_only = dst.borrow().marked_only;
+                if marked != marked_only
+                    || (marked
+                        && dst.borrow().marks.iter().any(|m| {
+                            m.len() == selected_key.len()
+                                && m.iter().zip(&selected_key).all(|(a, b)| {
+                                    al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal)
+                                })
+                        }))
+                {
                     return unsupported(
-                        "Page.SetSelectionFilter into a record with marks (the marked result is not pinned)",
+                        "Page.SetSelectionFilter into a record with marks (only MarkedOnly with a mark outside the selected row is pinned)",
                     );
                 }
                 dst.borrow_mut().filters.clear();
@@ -546,6 +562,10 @@ impl Session {
                         expr: al_builtins::filter::FilterExpr::Range(Some(v.clone()), Some(v)),
                         group,
                     });
+                }
+                drop(d);
+                if marked {
+                    dst.borrow_mut().marks.push(selected_key);
                 }
                 Ok(Value::Null)
             }

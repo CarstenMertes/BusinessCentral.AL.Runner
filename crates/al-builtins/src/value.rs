@@ -561,9 +561,10 @@ pub struct RecordState {
     /// keys while `key` is that index, so a scan orders by these fields, then by the primary key.
     pub adhoc: Option<(usize, Vec<usize>)>,
     pub ascending: bool,
-    /// `SetAscending(Field, false)` on the single field of the current key. Unlike `ascending` it
-    /// does not survive a page's view round trip (handlers/TestPageViewRoundTripRoutes.al).
-    pub field_descending: bool,
+    /// `SetAscending(Field, false)`: bit i is set when the i-th field of the current key's position (the key's fields,
+    /// then the primary key's) runs descending. Unlike `ascending` it does not survive a page's view round trip
+    /// (handlers/TestPageViewRoundTripRoutes.al).
+    pub field_descending: u32,
     /// The primary key of the row the record last read: `Find` still finds that row after the
     /// record moved it out of its own filter.
     pub position: Option<Vec<Value>>,

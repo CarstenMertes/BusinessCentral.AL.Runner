@@ -479,34 +479,49 @@ impl Session {
                 match args.first() {
                     None => Ok(Value::Boolean({
                         let r = rec.borrow();
-                        r.ascending && !r.field_descending
+                        r.ascending && r.field_descending == 0
                     })),
                     Some(v) => {
                         let mut r = rec.borrow_mut();
                         r.ascending = ops::truthy(v)?;
-                        r.field_descending = false;
+                        r.field_descending = 0;
                         Ok(Value::Null)
                     }
                 }
             }
-            // The direction of one key field. A record keeps one direction for its whole key, so
-            // only a key of that single field is covered: record/TestRecordSort.al:184-203
-            // (SetAscending(Amount, false) makes FindFirst return the largest), :158-181
-            // (GetAscending). A field of a longer key, or outside the key, has a direction of its
-            // own that is not pinned.
+            // The direction of one field of the current sorting: the key's fields, then the primary key's. A field outside
+            // it raises `Cannot call <method> on field <field> because it is not part of the current sorting.` (code DB:Ok;
+            // record/lt-filters-keys-finds/P68D_Ascending.al:Field_Not_In_Key, Composite_Key_Default). Each field of a
+            // composite key has a direction of its own, the rest of the sorting stays ascending (P68D_Ascending.al:
+            // Composite_Key_First_Descending, _Second_Descending, _Both_Descending; records/W4SortKeys.al:
+            // SetAscending_TwoFieldKey_OneFieldAtATime). Single field: record/TestRecordSort.al:184-203 (SetAscending(Amount, false)
+            // makes FindFirst return the largest), :158-181 (GetAscending).
             // The companies are the session company and the rows of the Company table; a record in
             // another company reads and writes that company's rows (record/TestRecordChangeCompanyRows.al).
             RecordOp::ChangeCompany => self.change_company(rec, args),
             RecordOp::SetAscending | RecordOp::GetAscending => {
                 let pos = arg_pos(args, 0)?;
-                if t.keys[rec.borrow().key] != [pos] {
-                    return unsupported(format!(
-                        "{method} on a field that is not the only field of the current key (per-field direction not pinned)"
+                let key = rec.borrow().key;
+                let Some(bit) = t.keys[key].iter().chain(&t.keys[0]).position(|&p| p == pos) else {
+                    let name = if method == RecordOp::GetAscending {
+                        "GetAscending"
+                    } else {
+                        "SetAscending"
+                    };
+                    return Err(crate::transactions::al_error_code(
+                        &format!(
+                            "Cannot call {name} on field {} because it is not part of the current sorting.",
+                            self.field_caption(t, pos)
+                        ),
+                        "DB:Ok",
                     ));
+                };
+                if bit >= 32 {
+                    return unsupported(format!("{method} on the {bit}th field of a sorting"));
                 }
                 if method == RecordOp::GetAscending {
                     let r = rec.borrow();
-                    return Ok(Value::Boolean(r.ascending && !r.field_descending));
+                    return Ok(Value::Boolean(r.ascending && r.field_descending & (1 << bit) == 0));
                 }
                 let ascending = match args.get(1) {
                     Some(v) => ops::truthy(v)?,
@@ -519,7 +534,11 @@ impl Session {
                 if !r.ascending {
                     return unsupported("SetAscending on a record that also has Ascending(false) (not pinned)");
                 }
-                r.field_descending = !ascending;
+                if ascending {
+                    r.field_descending &= !(1 << bit);
+                } else {
+                    r.field_descending |= 1 << bit;
+                }
                 Ok(Value::Null)
             }
             // The key's field names (corpus record/TestCopyOntoTemporaryRecord.al:93 `'No.'`,
@@ -1266,121 +1285,64 @@ impl Session {
         )
     }
 
-    /// `Evaluate` into a RecordId (errors/lt-ms-refusals-128/P128EvalRecordId.al, `Eval*` procedures): the text is
-    /// `Table name: key` (name in any case, blanks around the key allowed or not), a table name alone, or empty.
-    /// Pinned for tables with a single Code or Integer key field. Anything past that is refused, not guessed.
-    pub(crate) fn evaluate_record_id(&mut self, text: &str) -> Result<Option<Value>, Signal> {
-        if text.is_empty() {
-            return Ok(Some(Value::Library(
-                "RecordId".into(),
-                Rc::new(RefCell::new(al_builtins::value::LibraryValue::Empty)),
-            )));
-        }
-        let (name, key_text) = match text.split_once(':') {
-            Some((n, k)) => (n, Some(k)),
-            None => (text, None),
-        };
-        let objects = &self.engine.program.objects;
-        let Some(index) = objects
-            .iter()
-            .position(|o| o.is_kind(al_ir::ObjKind::Table) && o.table.is_some() && o.name.eq_ignore_ascii_case(name))
-        else {
-            return Ok(None);
-        };
-        let Some(t) = self.engine.tables.get(index).cloned().flatten() else {
-            return unsupported(format!(
-                "Evaluate into a RecordId of table `{name}`, which has no compiled schema"
-            ));
-        };
-        let key = match key_text {
-            None => Vec::new(),
-            Some(k) => {
-                let k = k.strip_prefix(' ').unwrap_or(k);
-                let fields = &t.keys[0];
-                if fields.len() == 1 {
-                    // Pinned: one Code or Integer key field.
-                    let ty = &t.fields[fields[0]].ty;
-                    match ty {
-                        RtType::Code(_) => vec![ops::convert(Value::Text(k.into()), ty)?],
-                        RtType::Integer => match self.parse_filter_text(k, ty) {
-                            Ok(al_builtins::filter::FilterExpr::Eq(v)) if !k.is_empty() => vec![v],
-                            _ => return Ok(None),
-                        },
-                        _ => {
-                            return unsupported(format!(
-                                "Evaluate into a RecordId of table `{}` whose key field is not a Code or Integer (not pinned)",
-                                t.name
-                            ));
-                        }
+    /// The primary key values of a composite key read from the text after the colon of `Evaluate` into a RecordId: the
+    /// values as Format writes them, split at the commas outside double quotes. Not pinned (assumption
+    /// evaluate-recordid-composite-key). `Ok(None)` where the text is no key of the table.
+    pub(crate) fn evaluate_composite_record_key(
+        &mut self,
+        t: &TableDef,
+        k: &str,
+    ) -> Result<Option<Vec<Value>>, Signal> {
+        let fields = &t.keys[0];
+        let mut parts: Vec<String> = Vec::new();
+        let mut rest = k;
+        loop {
+            if let Some(q) = rest.strip_prefix('"') {
+                let Some((v, tail)) = q.split_once('"') else {
+                    return Ok(None);
+                };
+                parts.push(v.to_string());
+                match tail.strip_prefix(',') {
+                    Some(more) => rest = more,
+                    None if tail.is_empty() => break,
+                    None => return Ok(None),
+                }
+            } else {
+                match rest.split_once(',') {
+                    Some((v, more)) => {
+                        parts.push(v.to_string());
+                        rest = more;
                     }
-                } else {
-                    // Not pinned: the values as Format writes them, split at the commas outside double quotes
-                    // (assumption evaluate-recordid-composite-key).
-                    let mut parts: Vec<String> = Vec::new();
-                    let mut rest = k;
-                    loop {
-                        if let Some(q) = rest.strip_prefix('"') {
-                            let Some((v, tail)) = q.split_once('"') else {
-                                return Ok(None);
-                            };
-                            parts.push(v.to_string());
-                            match tail.strip_prefix(',') {
-                                Some(more) => rest = more,
-                                None if tail.is_empty() => break,
-                                None => return Ok(None),
-                            }
-                        } else {
-                            match rest.split_once(',') {
-                                Some((v, more)) => {
-                                    parts.push(v.to_string());
-                                    rest = more;
-                                }
-                                None => {
-                                    parts.push(rest.to_string());
-                                    break;
-                                }
-                            }
-                        }
+                    None => {
+                        parts.push(rest.to_string());
+                        break;
                     }
-                    if parts.len() != fields.len() {
-                        return Ok(None);
-                    }
-                    let mut key = Vec::new();
-                    for (v, &p) in parts.iter().zip(fields) {
-                        let ty = &t.fields[p].ty;
-                        match ty {
-                            RtType::Code(_) | RtType::Text(_) => {
-                                key.push(ops::convert(Value::Text(v.as_str().into()), ty)?)
-                            }
-                            RtType::Integer | RtType::Enum(..) => match self.parse_filter_text(v, ty) {
-                                Ok(al_builtins::filter::FilterExpr::Eq(x)) if !v.is_empty() => key.push(x),
-                                _ => return Ok(None),
-                            },
-                            _ => {
-                                return unsupported(format!(
-                                    "Evaluate into a RecordId of table `{}` with a key field of type {} (not pinned)",
-                                    t.name,
-                                    ty.describe()
-                                ));
-                            }
-                        }
-                    }
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::EvaluateRecordIdCompositeKey,
-                    );
-                    key
                 }
             }
-        };
-        Ok(Some(Value::Library(
-            "RecordId".into(),
-            Rc::new(RefCell::new(al_builtins::value::LibraryValue::RecordId {
-                table: index as u32,
-                table_no: objects[index].id.unwrap_or(0),
-                name: t.name.clone(),
-                key,
-            })),
-        )))
+        }
+        if parts.len() != fields.len() {
+            return Ok(None);
+        }
+        let mut key = Vec::new();
+        for (v, &p) in parts.iter().zip(fields) {
+            let ty = &t.fields[p].ty;
+            match ty {
+                RtType::Code(_) | RtType::Text(_) => key.push(ops::convert(Value::Text(v.as_str().into()), ty)?),
+                RtType::Integer | RtType::Enum(..) => match self.parse_filter_text(v, ty) {
+                    Ok(al_builtins::filter::FilterExpr::Eq(x)) if !v.is_empty() => key.push(x),
+                    _ => return Ok(None),
+                },
+                _ => {
+                    return unsupported(format!(
+                        "Evaluate into a RecordId of table `{}` with a key field of type {} (not pinned)",
+                        t.name,
+                        ty.describe()
+                    ));
+                }
+            }
+        }
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::EvaluateRecordIdCompositeKey);
+        Ok(Some(key))
     }
 
     /// `FieldError(Field [, Text])`. With a text: `<caption> <text> in <table> <key>.`; without:

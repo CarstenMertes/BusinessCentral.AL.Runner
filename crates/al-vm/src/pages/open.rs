@@ -766,9 +766,28 @@ impl Session {
                 self.land_on_new_line(st)?;
             }
             self.populate_expressions(st)
+        } else if self.is_blank_list_plus(st) {
+            // A ListPlus page without a repeater, opened for edit over an empty view, stands on a blank record
+            // that has run OnNewRecord and OnAfterGetCurrRecord. Not pinned by the corpus: Microsoft's Suggest
+            // Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted needs it (the
+            // Purchase Price List sets PriceListIsEditable in OnAfterGetCurrRecord). Assumption
+            // listplus-blank-record-on-empty-view; a Card or a Document keeps opening without a row.
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ListPlusBlankRecordOnEmptyView);
+            self.land_on_new_line(st)?;
+            self.populate_expressions(st)
         } else {
             self.populate_expressions(st)
         }
+    }
+
+    /// A top-level ListPlus page with a source table, no repeater, opened for edit.
+    fn is_blank_list_plus(&self, st: &St) -> bool {
+        let object = st.borrow().object as usize;
+        self.engine.object_facts[object].page_type == Some(al_ir::PageType::ListPlus)
+            && st.borrow().mode == PageMode::Edit
+            && st.borrow().host.is_none()
+            && self.has_source(st)
+            && !self.is_list(st)
     }
 
     pub(super) fn land_on_new_line(&mut self, st: &St) -> Result<(), Signal> {

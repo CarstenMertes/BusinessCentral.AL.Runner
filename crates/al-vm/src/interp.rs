@@ -1,5 +1,8 @@
 use super::*;
 
+/// The start of the refusal of an index with fewer positions than the array has dimensions.
+const ROW_REFUSAL: &str = "a row of a ";
+
 impl Session {
     /// An index of a place: the compiler evaluated the expression into a register (or it is a constant).
     fn index_value(e: &ir::Expr, f: &Frame) -> Result<Value, Signal> {
@@ -677,7 +680,19 @@ impl Session {
                 v.ok_or_else(|| base_slot_missing(*i))
             }
             ir::Place::Index(base, idx) => {
-                let (arr, flat) = self.element(base, idx, f)?;
+                let (arr, flat) = match self.element(base, idx, f) {
+                    Ok(e) => e,
+                    // A row of a two-dimensional array, as an argument.
+                    Err(Signal::Unsupported(m)) if m.starts_with(ROW_REFUSAL) => {
+                        return match self.row_range(base, idx, f)? {
+                            Some((arr, start, len)) => Ok(Value::Array(Rc::new(RefCell::new(
+                                arr.borrow()[start..start + len].to_vec(),
+                            )))),
+                            None => Err(Signal::Unsupported(m)),
+                        };
+                    }
+                    Err(e) => return Err(e),
+                };
                 let v = arr.borrow()[flat].clone();
                 Ok(v)
             }
@@ -772,6 +787,7 @@ impl Session {
                                             fetched: b.fetched,
                                             refetch: true,
                                             persisted: false,
+                                            temp_row: b.temp_row,
                                             written: false,
                                             render_pending: b.render_pending.clone(),
                                         },
@@ -842,7 +858,23 @@ impl Session {
             }
             ir::Place::Index(base, idx) => {
                 let el_ty = self.place_type(p, f);
-                let (arr, flat) = self.element(base, idx, f)?;
+                let (arr, flat) = match self.element(base, idx, f) {
+                    Ok(e) => e,
+                    // The row a callee wrote through a `var` array parameter goes back into the row.
+                    Err(Signal::Unsupported(m)) if m.starts_with(ROW_REFUSAL) => {
+                        let (Some((arr, start, len)), Value::Array(row)) = (self.row_range(base, idx, f)?, &v) else {
+                            return Err(Signal::Unsupported(m));
+                        };
+                        if row.borrow().len() != len {
+                            return Err(Signal::Unsupported(
+                                "a row of an array written from an array of another length (not pinned)".into(),
+                            ));
+                        }
+                        arr.borrow_mut()[start..start + len].clone_from_slice(&row.borrow());
+                        return Ok(());
+                    }
+                    Err(e) => return Err(e),
+                };
                 arr.borrow_mut()[flat] = ops::convert(v, &el_ty)?;
             }
             ir::Place::Field(..) => unreachable!("handled above"),
@@ -935,6 +967,42 @@ impl Session {
             return self.write(base, Value::Code(ops::upper_code(&text).into()), f);
         }
         self.write(base, Value::Text(text.into()), f)
+    }
+
+    /// The cells of row `idx` of the two-dimensional array behind `base`, as (cells, first position, length): `None` for an
+    /// array of another number of dimensions or an index that is not one position. A row passed as an argument is a copy for a
+    /// value parameter, and for a `var` parameter it is written back into the row when the call returns (corpus
+    /// errors/lt-ms-refusals-128/P128ArrayRow.al:P128_ArrayRow_ByValue, P128_ArrayRow_ByVar, P128_ArrayRow_TextRowByVar). What
+    /// BC does with a row assigned or cleared is not pinned here.
+    fn row_range(
+        &mut self,
+        base: &ir::Place,
+        idx: &[ir::Expr],
+        f: &mut Frame,
+    ) -> Result<Option<(Cells, usize, usize)>, Signal> {
+        let RtType::Array(dims, _) = self.place_type(base, f) else {
+            return Ok(None);
+        };
+        let ([rows, cols], [e]) = (dims.as_slice(), idx) else {
+            return Ok(None);
+        };
+        let i = int(&Self::index_value(e, f)?)?;
+        if i < 1 || i > i64::from(*rows) {
+            return Err(Signal::Unsupported(
+                "array index out of bounds (error text not pinned yet)".into(),
+            ));
+        }
+        let arr = match self.read(base, f)? {
+            Value::Array(a) => a,
+            other => return Err(Signal::Unsupported(format!("indexing {}", other.describe()))),
+        };
+        let (start, len) = ((i as usize - 1) * *cols as usize, *cols as usize);
+        if start + len > arr.borrow().len() {
+            return Err(Signal::Unsupported(
+                "a row of an array that has fewer cells than it declares (not pinned)".into(),
+            ));
+        }
+        Ok(Some((arr, start, len)))
     }
 
     /// The array behind `base` and the flat position of `idx` (1-based, row-major).

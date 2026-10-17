@@ -22,15 +22,6 @@ fn unsupported<T>(what: impl Into<String>) -> Result<T, Signal> {
     Err(Signal::Unsupported(what.into()))
 }
 
-fn error<T>(message: String) -> Result<T, Signal> {
-    Err(Signal::Error(Box::new(AlError {
-        message,
-        code: String::new(),
-        call_stack: String::new(),
-        ..Default::default()
-    })))
-}
-
 /// An error with a pinned code.
 fn error_code<T>(message: String, code: &str) -> Result<T, Signal> {
     Err(Signal::Error(Box::new(AlError {
@@ -67,19 +58,26 @@ impl Session {
             None => None,
         };
         match (method, kind.1.as_str()) {
-            // A Cloud extension may not register an external SQL connection
-            // (session/TestMiscComplete.al:185-194: the error mentions a permission). The wording
-            // is a documentation-only assumption (docs/probes-needed.md).
-            ("Register", "ExternalSQL") => {
-                return error(
-                    "You do not have permission to register a table connection of type ExternalSQL.".to_string(),
+            // A Cloud extension may not register an external SQL, Exchange or Microsoft Graph connection: the error and its code
+            // (session/lt-tableconnection-type-register/TableConnectionTypeRegister.al:Register_ExternalSql_Result,
+            // Register_Exchange_Result, Register_MicrosoftGraph_Result; session/TestMiscComplete.al:185-194). Query is not pinned.
+            ("Register", k @ ("ExternalSQL" | "Exchange" | "MicrosoftGraph")) => {
+                return error_code(
+                    format!(
+                        "You do not have permission to register a table connection of type {k}. Please contact your administrator."
+                    ),
+                    "NotAllowedForCompilationTarget",
                 );
             }
             // Never registered, so none is found and none is the default. The corpus only calls
             // them for ExternalSQL and expects them not to throw
             // (session/TestDatabaseExtended.al:75-92, TestSystemExtended.al:664-672).
-            ("Has", "ExternalSQL") => return Ok(Value::Boolean(false)),
+            ("Has", "ExternalSQL" | "Exchange" | "MicrosoftGraph") => return Ok(Value::Boolean(false)),
             ("GetDefault", "ExternalSQL") => return Ok(Value::Text(String::new().into())),
+            // Unregistering a name that was never registered is no error, for every connection type
+            // (errors/lt-ms-refusals-137/P137TableConnRisky.al:P137_Unregister_NeverRegistered_OtherTypes
+            // for ExternalSQL, Exchange and MicrosoftGraph; P137TableConn.al:P137_Unregister_NeverRegistered for CRM).
+            ("Unregister", "ExternalSQL" | "Exchange" | "MicrosoftGraph") => return Ok(Value::Null),
             (_, "CRM") => {}
             (m, k) => return unsupported(format!("{m}TableConnection of type {k} (not pinned)")),
         }
@@ -121,10 +119,10 @@ impl Session {
                         Ok(Value::Null)
                     }
                     "Unregister" => {
+                        // Not registered: no error and nothing changes (P137TableConn.al:P137_Unregister_NeverRegistered,
+                        // _Twice `unregister_second`, _OtherNameAndOtherCase `unregister_b` and `unregister_a_again`).
                         if !self.table_connections.remove(&key) {
-                            return unsupported(
-                                "UnregisterTableConnection of a connection that is not registered (not pinned)",
-                            );
+                            return Ok(Value::Null);
                         }
                         // Unregistering the default clears the default too
                         // (:Database_UnregisterTableConnection_CrmTest_ClearsDefaultAndHas).

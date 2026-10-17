@@ -13,6 +13,63 @@ pub trait FormatCtx {
     fn language(&self) -> i32 {
         1033
     }
+    /// The format region a report set with `CurrReport.FormatRegion` while it runs (None: the session's own).
+    fn region(&self) -> Option<String> {
+        None
+    }
+}
+
+/// A context without the format region, for the plain en-US text a region then rewrites.
+struct WithoutRegion<'a>(&'a dyn FormatCtx);
+
+impl FormatCtx for WithoutRegion<'_> {
+    fn enum_name(&self, id: u32, ordinal: i32) -> String {
+        self.0.enum_name(id, ordinal)
+    }
+    fn language(&self) -> i32 {
+        self.0.language()
+    }
+}
+
+/// `Format` while a report's `FormatRegion` is set. Only `de-DE` is measured, and only a Date (`05.03.24`) and a Decimal
+/// (`1.234,5`) in the default format (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_SetAndRead). Texts are not culture
+/// sensitive; every other value is refused.
+fn format_in_region(v: &Value, length: i32, standard: i32, region: &str, ctx: &dyn FormatCtx) -> Result<String, FormatFail> {
+    let plain = WithoutRegion(ctx);
+    let refuse = || {
+        FormatFail::Unsupported(format!(
+            "Format of {} (standard format {standard}) while CurrReport.FormatRegion is '{region}' is not pinned (docs/probes-needed.md)",
+            type_phrase(v)
+        ))
+    };
+    match v {
+        Value::Null | Value::Text(_) | Value::Code(_) => format_value(v, length, standard, &plain),
+        // An Integer has no thousands separator in any culture, as in en-US: `lang2:1033` under de-DE (PnC06ReportLanguage.al:Language_SetAndRead).
+        Value::Integer(_) | Value::BigInteger(_) if standard == 0 => format_value(v, length, standard, &plain),
+        _ if region != "de-DE" => Err(refuse()),
+        Value::Date(..) if matches!(standard, 0 | 1) => {
+            let en = format_value(v, 0, standard, &plain)?;
+            let parts: Vec<&str> = en.split('/').collect();
+            match parts[..] {
+                [m, d, y] if en.chars().all(|c| c.is_ascii_digit() || c == '/') => Ok(pad(format!("{d}.{m}.{y}"), length)),
+                _ => Err(refuse()),
+            }
+        }
+        Value::Decimal(_) if standard == 0 => {
+            let en = format_value(v, 0, standard, &plain)?;
+            Ok(pad(
+                en.chars()
+                    .map(|c| match c {
+                        ',' => '.',
+                        '.' => ',',
+                        c => c,
+                    })
+                    .collect(),
+                length,
+            ))
+        }
+        _ => Err(refuse()),
+    }
 }
 
 /// Why a format did not produce a text.
@@ -47,6 +104,9 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
 
 /// `Format(Value, Length, Standard)` with BC's own errors kept apart from refusals.
 pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, FormatFail> {
+    if let Some(region) = ctx.region().filter(|r| !r.is_empty()) {
+        return format_in_region(v, length, standard, &region, ctx);
+    }
     let s = match v {
         Value::Null => String::new(),
         // The standard formats 3 to 8 do not exist for a Boolean, which the platform names 'Char' (types/lt-boolean-format/
@@ -895,6 +955,26 @@ mod tests {
         assert!(matches!(format_value(&Value::Duration(86_400_000), 0, 0, &L(1031)), Err(FormatFail::Unsupported(_))));
         assert_eq!(format_value(&Value::Boolean(false), 0, 0, &L(1036)).unwrap(), "Non");
         assert_eq!(format_value(&Value::Boolean(true), 0, 9, &L(1036)).unwrap(), "true");
+    }
+
+    #[test]
+    fn a_format_region_rewrites_date_and_decimal_and_refuses_the_rest() {
+        // misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_SetAndRead
+        struct R;
+        impl FormatCtx for R {
+            fn enum_name(&self, _: u32, o: i32) -> String {
+                o.to_string()
+            }
+            fn region(&self) -> Option<String> {
+                Some("de-DE".into())
+            }
+        }
+        let d = Value::Date(day_from_civil(2024, 3, 5), false);
+        assert_eq!(format_value(&d, 0, 0, &R).unwrap(), "05.03.24");
+        assert_eq!(format_value(&dec("1234.5"), 0, 0, &R).unwrap(), "1.234,5");
+        assert_eq!(format_value(&Value::Integer(1033), 0, 0, &R).unwrap(), "1033");
+        assert!(matches!(format_value(&Value::Time(5), 0, 0, &R), Err(FormatFail::Unsupported(_))));
+        assert!(matches!(format_value(&d, 0, 4, &R), Err(FormatFail::Unsupported(_))));
     }
 
     #[test]

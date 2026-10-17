@@ -116,16 +116,31 @@ impl Session {
             // is fixed (en-US): the language is kept and changes no formatting (dates and decimals read
             // the same after 1031, ibid.).
             ids::REPORT_LANGUAGE_1 => match args.first() {
-                Some(Value::Integer(n)) if *n > 0 => {
-                    self.report.curr_report_language = Some(*n);
-                    Ok(Value::Null)
-                }
                 Some(Value::Integer(0)) => Err(crate::transactions::al_error_code(
                     "Invalid language ID supplied: 0.",
                     "Argument",
                 )),
+                Some(Value::Integer(n)) if *n > 0 && *n <= 0xFFFF => {
+                    self.report.curr_report_language = Some(*n);
+                    Ok(Value::Null)
+                }
+                // A language past the 16-bit range raises the platform's culture error
+                // (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_Invalid, `99999`); the limit itself is a guess for
+                // other numbers (docs/probes-needed.md).
+                Some(Value::Integer(n)) if *n > 0xFFFF => Err(crate::transactions::al_error_code(
+                    &format!(
+                        "An unsupported language was selected ('{n}' - 'Requested culture is not supported by the current platform')."
+                    ),
+                    "ReportLanguageNotFound",
+                )),
+                // A negative language raises nothing and changes nothing (PnC06ReportLanguage.al:Language_Invalid, `-1`: no
+                // error, `post:1033`). That is measured for a report that had not set a language; after one it is not pinned.
+                Some(Value::Integer(n)) if self.report.curr_report_language.is_none() => {
+                    let _ = n;
+                    Ok(Value::Null)
+                }
                 Some(Value::Integer(n)) => unsupported(format!(
-                    "CurrReport.Language set to {n}: only 0 is pinned as invalid (docs/probes-needed.md)"
+                    "CurrReport.Language set to {n} after a language was set: whether a negative language keeps it is not pinned (docs/probes-needed.md)"
                 )),
                 None => Ok(Value::Integer(
                     self.report.curr_report_language.unwrap_or(self.global_language),
@@ -134,9 +149,22 @@ impl Session {
             },
             // `FormatRegion` only takes effect when a Word or Excel layout renders; a run that writes the
             // dataset (an Xml export) never does, and the property reads back empty
-            // (handlers/TestReportCurrReportLanguage.al:12-18, :76-83).
+            // (handlers/TestReportCurrReportLanguage.al:12-18, :76-83). In a report started by `Run` the region is kept,
+            // reads back, and `Format` of a date and a decimal follows it (misc/lt-probes-needed-3/PnC06ReportLanguage.al:
+            // Language_SetAndRead, `region0:|region1:de-DE|date2:05.03.24|num2:1.234,5`).
             ids::REPORT_FORMATREGION_1 => match args.first() {
+                Some(Value::Text(t)) if self.report.report_preview_pinned.last() == Some(&true) => {
+                    self.report.format_region = Some(t.to_string());
+                    Ok(Value::Null)
+                }
+                Some(Value::Code(t)) if self.report.report_preview_pinned.last() == Some(&true) => {
+                    self.report.format_region = Some(t.to_string());
+                    Ok(Value::Null)
+                }
                 Some(Value::Text(_) | Value::Code(_)) => Ok(Value::Null),
+                None if self.report.report_preview_pinned.last() == Some(&true) => Ok(Value::Text(
+                    self.report.format_region.clone().unwrap_or_default().into(),
+                )),
                 None => Ok(Value::Text(String::new().into())),
                 Some(other) => unsupported(format!("CurrReport.FormatRegion with {}", other.describe())),
             },
@@ -844,7 +872,13 @@ impl Session {
         let shows_page = entry == Entry::Run && window;
         let enters = self.report_enter_world(schema, shows_page)?;
         self.report.report_preview_pinned.push(entry == Entry::Run);
+        // The language and region a trigger sets belong to this run (PnC06ReportLanguage.al:Language_Invalid starts three
+        // runs with no language set after Language_SetAndRead set one).
+        let outer_region = self.report.format_region.take();
+        let outer_language = self.report.curr_report_language.take();
         let ran = self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None));
+        self.report.format_region = outer_region;
+        self.report.curr_report_language = outer_language;
         self.report.report_preview_pinned.pop();
         ran.map(|_| ())
     }

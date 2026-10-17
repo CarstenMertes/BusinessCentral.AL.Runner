@@ -355,18 +355,6 @@ registry! {
         tests: "Service Credit Memo, Service Invoice and Service Order pages (OnFindRecord: Rec.Find(Which), else SetRange(\"No.\") and Find again): ServiceCreditMemoByPage, ServiceInvoiceByPage and about 30 more Tests-SCM-Service tests, and the 24 that follow them in their codeunits.",
         probe: "A list or card with OnFindRecord(Which) that notes Which in a trace, a source table with and without rows: OpenNew, then the trace, xRec of OnNewRecord and the first Rec.",
     },
-    EnumFilterMatchesCaption => {
-        id: "enum-filter-matches-caption",
-        assumed: "A filter on an Enum field names a member by its caption as well as by its name (a name wins): GetFilter writes the caption, and SetFilter with that text finds the rows again. (A filter by a caption that no row has gives 0 rows and no error: codeunit/lt-enums-interfaces/OjT71044.al:122-142.)",
-        tests: "Report Selections.GetCustomReportSelectionByUsageFilter (SetFilter(Usage, Rec.GetFilter(Usage)) with the caption `Sales Quote`): SalesQuoteSendByEmailWhenArchivingIsOn and about 45 more Tests-Misc tests.",
-        probe: "An enum whose member has a caption other than its name: SetFilter(Col, Format(Value)) and SetFilter(Col, Rec.GetFilter(Col)) on rows holding the member: the count, and the same with a range of two captions.",
-    },
-    FlowFieldLookupBetweenEnums => {
-        id: "flowfield-lookup-between-enums",
-        assumed: "A FlowField of an Enum type whose CalcFormula is lookup() of a field of another Enum type holds the source value's ordinal as a member of its own enum.",
-        tests: "VAT Return Period.\"VAT Return Status\" (lookup of \"VAT Report Header\".Status), read by the VAT Return Period List page: UI_CreateOrOpenReturnActions_ClosedPeriodWithLinkedReturn and about 38 more Tests-Misc tests.",
-        probe: "Two enums with the same ordinals and different names, a FlowField of the first with lookup() of a field of the second: CalcFields, then Format and AsInteger of the FlowField; and an ordinal the first enum lacks.",
-    },
     TextToDecimalFromVariant => {
         id: "text-to-decimal-from-variant",
         assumed: "A Text of an optional sign, digits and at most one decimal point converts into a Decimal where a Variant meets a number, such as the return of DequeueDecimal; a text with anything else (thousands separators, other symbols, an empty text) stays refused.",

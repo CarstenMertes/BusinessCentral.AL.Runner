@@ -593,6 +593,13 @@ fn field_by_name(t: &TableDef, name: &str) -> Result<usize, Signal> {
         .map_or_else(|| unsupported(format!("view field `{name}`")), Ok)
 }
 
+/// The members of an enum for a text filter: the captions first, then the names (see `filter::parse_filter_with`).
+pub(crate) fn enum_filter_members(o: &al_ir::Object) -> Vec<(i32, String)> {
+    let mut out: Vec<(i32, String)> = o.enum_captions.iter().filter(|(_, c)| !c.is_empty()).cloned().collect();
+    out.extend(o.enum_values.iter().cloned());
+    out
+}
+
 #[cfg(test)]
 mod tests {
     use super::property_view;
@@ -615,16 +622,4 @@ mod tests {
             "sorting(\"No.\") order(descending)"
         );
     }
-}
-
-/// The members of an enum for a text filter: the names, then the captions (marked, see `filter::CAPTION_MARK`).
-pub(crate) fn enum_filter_members(o: &al_ir::Object) -> Vec<(i32, String)> {
-    let mut out = o.enum_values.clone();
-    out.extend(
-        o.enum_captions
-            .iter()
-            .filter(|(_, c)| !c.is_empty())
-            .map(|(v, c)| (*v, format!("{}{c}", al_builtins::filter::CAPTION_MARK))),
-    );
-    out
 }

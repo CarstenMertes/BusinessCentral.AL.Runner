@@ -104,9 +104,6 @@ pub const INVALID_BOOLEAN: &str = "invalid Boolean filter value: ";
 /// The prefix of the error for a text no Guid filter reads (types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al:P143_GuidInvalid).
 pub const INVALID_GUID: &str = "invalid Guid filter value: ";
 
-/// Marks, in the member list a caller hands to [`parse_filter_with`], an entry that is a caption and not a name.
-pub const CAPTION_MARK: char = '\u{1}';
-
 pub fn parse_filter_with(
     text: &str,
     args: &[crate::value::Value],
@@ -358,24 +355,12 @@ impl Parser<'_> {
                 ),
             },
             T::Enum(id) => {
-                // The list holds the member names, then their captions behind CAPTION_MARK: a name wins; a caption is what
-                // `GetFilter` writes, and Microsoft's Report Selections code filters with it again (assumption
-                // `enum-filter-matches-caption`).
+                // The list holds the captions first, then the names, so a caption wins over a name that spells the same
+                // (corpus record/lt-enum-filter-caption/EnumFilterByCaption.al: SetFilter_CaptionEqualsOtherName_Result).
                 let named = (self.enums)(*id)
                     .into_iter()
-                    .find_map(|(v, n)| {
-                        let (caption, n) = match n.strip_prefix(CAPTION_MARK) {
-                            Some(c) => (true, c.to_string()),
-                            None => (false, n),
-                        };
-                        (!n.is_empty() && n.trim().eq_ignore_ascii_case(text.trim())).then_some((v, caption))
-                    })
-                    .map(|(v, caption)| {
-                        if caption {
-                            crate::assumptions::assume(crate::assumptions::Assumption::EnumFilterMatchesCaption);
-                        }
-                        v
-                    });
+                    .find(|(_, n)| !n.is_empty() && n.trim().eq_ignore_ascii_case(text.trim()))
+                    .map(|(v, _)| v);
                 match named.or_else(|| text.trim().parse().ok()) {
                     Some(v) => Value::Enum(*id, v),
                     None => return Err(format!("`{text}` is not a member of the enum")),

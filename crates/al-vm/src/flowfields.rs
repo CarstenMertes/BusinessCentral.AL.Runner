@@ -235,9 +235,8 @@ impl Session {
                         type_name(&f.ty)
                     ));
                 }
-                // A lookup into an enum field from the field of another enum takes the value's ordinal (Microsoft's VAT
-                // Return Period: "VAT Return Status" looks up "VAT Report Header".Status). Assumed, see
-                // Assumption::FlowFieldLookupBetweenEnums.
+                // A lookup into an Enum field from the field of another enum is allowed (record/lt-flowfield-lookup-enum/
+                // FlowFieldLookupOtherEnum.al; Microsoft's VAT Return Period).
                 let enum_pair = matches!((&f.ty, &s.ty), (RtType::Enum(_), RtType::Enum(_)));
                 if !same_kind(&f.ty, &s.ty) && !(enum_pair && calc.method == ir::CalcMethod::Lookup) {
                     return unsupported("min, max or lookup into a field of another type");
@@ -439,16 +438,18 @@ impl Session {
                 }
                 // Nothing matched: the type default (corpus
                 // record/TestCalcFormulaMinMaxAvgTests.Codeunit.al:250).
-                match (best, &f.ty) {
-                    (Some(Value::Enum(from, v)), RtType::Enum(to)) if from != *to => {
-                        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::FlowFieldLookupBetweenEnums);
-                        Value::Enum(*to, v)
-                    }
-                    (Some(v), _) => v,
-                    (None, _) => self.default_value(&f.ty),
+                match best {
+                    Some(v) => v,
+                    None => self.default_value(&f.ty),
                 }
             }
         };
+        // A lookup into an Enum field of another enum keeps the looked-up member as it is: `Zero` stays `Zero` and `Five`
+        // (an ordinal the FlowField's enum lacks) stays `Five` (corpus record/lt-flowfield-lookup-enum/
+        // FlowFieldLookupOtherEnum.al: Lookup_MembersPresentInBoth_Result, Lookup_MemberOnlyInSource_Result).
+        if matches!((&value, &f.ty), (Value::Enum(from, _), RtType::Enum(to)) if from != to) {
+            return Ok(value);
+        }
         ops::convert(value, &f.ty)
     }
 

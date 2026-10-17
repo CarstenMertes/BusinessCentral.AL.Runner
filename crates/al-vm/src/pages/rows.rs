@@ -620,7 +620,9 @@ impl Session {
                 .push(al_builtins::value::WindowRow { key, stored, shown });
             new_rows += 1;
             if new_rows == Self::WINDOW {
-                return unsupported("a list with a second full block of rows past the window (the reads are not pinned)");
+                return unsupported(
+                    "a list with a second full block of rows past the window (the reads are not pinned)",
+                );
             }
         }
         st.borrow_mut().window_eof = true;
@@ -639,7 +641,10 @@ impl Session {
         rec.borrow_mut().fields = stored;
         // A list with OnAfterGetRecord alone reads nothing when the cursor moves onto a row the client holds (pages/lt-testpage-list-rows/
         // ListRowsOpenAG.al:OpenView_OnlyRec5Rows_ReadsAtOpen `after-next-total = 0`).
-        if !self.declares(st, "onaftergetcurrrecord") && !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+        if !self.declares(st, "onaftergetcurrrecord")
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord")
+        {
             let shown = st.borrow().window[target].shown.clone();
             rec.borrow_mut().fields = shown;
             self.set_xrec(st);
@@ -702,9 +707,11 @@ impl Session {
         while self.nav_next(st, 1)? {
             let key = self.row_key(&rec)?;
             let stored = rec.borrow().fields.clone();
-            st.borrow_mut()
-                .window
-                .push(al_builtins::value::WindowRow { key, stored: stored.clone(), shown: stored });
+            st.borrow_mut().window.push(al_builtins::value::WindowRow {
+                key,
+                stored: stored.clone(),
+                shown: stored,
+            });
             new_rows += 1;
             if new_rows == Self::WINDOW {
                 return unsupported("GoToKey past a second block of 20 rows (the reads are not pinned)");
@@ -853,7 +860,9 @@ impl Session {
         }
         if !found {
             rec.borrow_mut().fields = origin_fields;
-            return unsupported("GoToKey for a key the list does not hold, on a list with OnAfterGetCurrRecord only (the reads are not pinned)");
+            return unsupported(
+                "GoToKey for a key the list does not hold, on a list with OnAfterGetCurrRecord only (the reads are not pinned)",
+            );
         }
         Ok(Some(true))
     }

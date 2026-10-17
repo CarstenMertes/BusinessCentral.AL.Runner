@@ -1443,8 +1443,9 @@ mod tests {
         );
         assert!(matches!(
             convert(Value::Duration(i64::MAX), &RtType::Integer),
-            Err(Signal::Unsupported(_))
+            Err(Signal::Error(_))
         ));
+        // Beyond Integer raises ConversionCast (types/lt-filter-enum-relation-duration-guid/D_Duration.al:DateTimeMinusDateTime_To_Integer).
     }
 
     // Calendar Management: `Time + Decimal` with a whole Decimal (about 820 Microsoft tests through the service set-up).

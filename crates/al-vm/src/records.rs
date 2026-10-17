@@ -1982,8 +1982,31 @@ impl Session {
                 }
                 let engine = self.engine.clone();
                 let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
-                let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
+                let date_ctx = al_builtins::filter::DateFilterContext {
+                    today: self.today_day_number(),
+                    work_date: self.work_date_day().unwrap_or_else(|| self.today_day_number()),
+                    language: self.global_language,
+                };
+                let parsed = al_builtins::filter::with_date_context(date_ctx, || {
+                    al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
+                });
+                let expr = match parsed {
                     Ok(e) => e,
+                    // The German error of a date no Date filter reads (P143Date_DePlain.al, _DeRanges.al, _DeFormulas.al).
+                    Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE) => {
+                        let bad = &e[al_builtins::filter::INVALID_DATE.len()..];
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "Der Filter '{}' ist für das Feld '{}' der Tabelle '{}' nicht gültig. Das Format Date „{bad}“ stimmt nicht mit den Datumseinstellungen Ihres Geräts überein.\\\\Stellen Sie sicher, dass Tag, Monat und Jahr die richtige Reihenfolge aufweisen und das richtige Trennzeichen verwendet wird (z. b. - oder /). Alternativ können Sie das Format „jjjj-mm-tt“ verwenden.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
                         let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];

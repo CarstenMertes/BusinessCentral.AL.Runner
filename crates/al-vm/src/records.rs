@@ -1781,7 +1781,14 @@ impl Session {
                                         Some(row) if self.row_passes(rec, &t, &row)? => {
                                             if key == 0 {
                                                 Some(row)
-                                            } else if format!("{:?}", position(&t, key, &row)) == format!("{pos:?}") {
+                                            } else if {
+                                                let theirs = position(&t, key, &row);
+                                                theirs.len() == pos.len()
+                                                    && theirs.iter().zip(pos.iter()).all(|(a, b)| {
+                                                        al_builtins::ops::compare(a, b)
+                                                            .is_some_and(|o| o == std::cmp::Ordering::Equal)
+                                                    })
+                                            } {
                                                 al_builtins::assumptions::assume(
                                                     al_builtins::assumptions::Assumption::FindEqualOnAnotherKey,
                                                 );

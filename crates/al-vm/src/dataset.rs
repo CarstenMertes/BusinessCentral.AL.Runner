@@ -502,10 +502,8 @@ impl Dataset {
         if self.root {
             out.push_str("  </DataItems>\r\n");
         } else if self.body.is_empty() {
-            // A report with no row at all still writes the element (handlers/PWReportSaveAsColumns.al:
-            // Labels_NoRowAtAll keeps every line that starts with `<DataItems` and sees one). Only that
-            // prefix is pinned; the XmlWriter's short form is assumed (docs/probes-needed.md).
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::DataItemsEmptyElement);
+            // A report with no row at all still writes the element, in the XmlWriter's short form `  <DataItems />`
+            // (report/PTSaveAsEmpty.al:no_rows; handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll).
             out.push_str("  <DataItems />\r\n");
         }
         out.push_str("</ReportDataSet>");

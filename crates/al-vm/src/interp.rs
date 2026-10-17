@@ -388,12 +388,6 @@ impl Session {
     /// types/ for_to_option).
     #[inline(always)]
     pub(crate) fn for_limits(from: Value, to: Value) -> Result<(i64, i64), Signal> {
-        if matches!(from, Value::Boolean(_)) || matches!(to, Value::Boolean(_)) {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
-        }
-        if matches!(from, Value::Enum(..)) || matches!(to, Value::Enum(..)) {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForOptionVariable);
-        }
         let (from, to) = (Self::for_bound(from), Self::for_bound(to));
         Ok((int(&from)?, int(&to)?))
     }
@@ -402,7 +396,6 @@ impl Session {
     #[inline(always)]
     pub(crate) fn for_counter(kind: ForKind, i: i64, slot_ty: &RtType) -> Result<Value, Signal> {
         if kind.is_boolean {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ForBoolean);
             Ok(Value::Boolean(i != 0))
         } else if kind.is_integer
             && let Ok(n) = i32::try_from(i)
@@ -446,8 +439,8 @@ impl Session {
                 // variable's own globals (ADR-021).
                 Value::Record(rc) => {
                     // `Rec.InitType()` in a page's code: the table procedure's xRec is the page's own xRec, as the page's triggers see it
-                    // (Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type; assumption
-                    // page-rec-procedure-sees-page-xrec).
+                    // (Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type; pages/lt-xrec-table-procedure/
+                    // XRecTableProcedure.al `proc xRec=2/22/two`).
                     let page_xrec = {
                         let fi = f.instance.borrow();
                         let o = &self.engine.program.objects[fi.object as usize];
@@ -459,11 +452,6 @@ impl Session {
                             _ => None,
                         }
                     };
-                    if page_xrec.is_some() {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::PageRecProcedureSeesPageXrec,
-                        );
-                    }
                     let (inst, saved) = self.enter_record(object, rc, page_xrec.as_ref())?;
                     let r = self.finish_call(object, routine, inst.clone(), args, values, try_call, f);
                     Self::leave_record(&inst, saved);
@@ -1049,7 +1037,17 @@ pub(crate) fn constant(c: &ir::Const) -> Value {
         ir::Const::Boolean(b) => Value::Boolean(*b),
         ir::Const::Integer(i) => Value::Integer(*i),
         ir::Const::BigInteger(i) => Value::BigInteger(*i),
-        ir::Const::Decimal(s) => Value::Decimal(s.parse().expect("decimal literal from the lowerer")),
+        ir::Const::Decimal(s) => {
+            // A literal keeps 18 significant digits (types/lt-expression-operators-literals/ExpressionLiteralsRisky.al:
+            // P195_Literal_DecimalTwentyDigits: `123456789012345.12345 * 2` is `246913578024690.246`).
+            let d: rust_decimal::Decimal = s.parse().expect("decimal literal from the lowerer");
+            Value::Decimal(if d.abs().mantissa() > 999_999_999_999_999_999 {
+                d.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+                    .unwrap_or(d)
+            } else {
+                d
+            })
+        }
         ir::Const::Text(s) => Value::Text(s.clone().into()),
         ir::Const::Date(d) => Value::Date(*d, false),
         ir::Const::Time(t) => Value::Time(*t),
@@ -1065,7 +1063,6 @@ pub(crate) fn constant(c: &ir::Const) -> Value {
 /// What the type of a `for` counter variable decides, found once per loop.
 #[derive(Clone, Copy)]
 pub(crate) struct ForKind {
-    pub(crate) option_like: bool,
     pub(crate) is_boolean: bool,
     pub(crate) is_integer: bool,
 }
@@ -1074,7 +1071,6 @@ impl ForKind {
     #[inline(always)]
     pub(crate) fn of(ty: &RtType) -> ForKind {
         ForKind {
-            option_like: matches!(ty, RtType::Option(_) | RtType::Enum(_)),
             is_boolean: matches!(ty, RtType::Boolean),
             is_integer: matches!(ty, RtType::Integer),
         }

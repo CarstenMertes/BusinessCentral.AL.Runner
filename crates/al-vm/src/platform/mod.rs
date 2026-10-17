@@ -20,7 +20,7 @@ mod integer;
 mod links;
 mod mat;
 mod metadata;
-mod objects;
+pub(crate) mod objects;
 mod pages;
 mod permissions;
 pub(crate) mod profiles;

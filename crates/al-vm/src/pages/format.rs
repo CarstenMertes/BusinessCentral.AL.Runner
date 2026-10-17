@@ -336,6 +336,11 @@ impl Session {
             Value::Text(t) | Value::Code(t) => t.clone(),
             other => {
                 let converted = match self.control_type(st, idx, &actual) {
+                    Some(RtType::Text(_) | RtType::Code(_)) if matches!(other, Value::Enum(..)) => {
+                        return unsupported(
+                            "AssertEquals of an Enum on a text control (how BC writes it is not pinned)",
+                        );
+                    }
                     Some(rt) => ops::convert(other.clone(), &rt)?,
                     None => other.clone(),
                 };
@@ -576,6 +581,20 @@ impl Session {
     }
 
     pub(super) fn control_enabled(&mut self, st: &St, idx: usize) -> Result<bool, Signal> {
+        // A field in a group with `Enabled = false` reads No on a request page (misc/lt-object-properties-runtime-effect/
+        // ReportRequestPageGroupEditable.al:P194_ReportGroup_EditableEnabled, `disabled_enabled = No`); on another page it is not pinned.
+        if self.is_request_page(st) {
+            let engine = self.engine();
+            let mut at = page_of(&engine, st).controls[idx].parent;
+            while let Some(p) = at {
+                if page_of(&engine, st).controls[p].kind == ir::ControlKind::Group
+                    && !self.prop_bool_now(st, p, "enabled", true)?
+                {
+                    return Ok(false);
+                }
+                at = page_of(&engine, st).controls[p].parent;
+            }
+        }
         self.prop_bool_now(st, idx, "enabled", true)
     }
 

@@ -101,6 +101,8 @@ pub fn parse_filter(text: &str, args: &[crate::value::Value], ty: &crate::value:
 /// so that filters on enum fields can name members.
 /// Prefix of the parse error for a word a Boolean filter does not accept; the rest is the word.
 pub const INVALID_BOOLEAN: &str = "invalid Boolean filter value: ";
+/// The prefix of the error for a text no Guid filter reads (types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al:P143_GuidInvalid).
+pub const INVALID_GUID: &str = "invalid Guid filter value: ";
 
 /// Marks, in the member list a caller hands to [`parse_filter_with`], an entry that is a caption and not a name.
 pub const CAPTION_MARK: char = '\u{1}';
@@ -180,6 +182,10 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
             flush(&mut raw, &mut out);
             let mut lit = String::new();
             i += 1;
+            // A placeholder is replaced inside quotes only when it is the whole quoted text: `'%1'` takes the argument, `'x%1y'` and
+            // `'%1%2'` stay as written (record/lt-filter-placeholder-in/FilterPlaceholderInQuotes.al:P169_QuotedPlaceholder_InsideLongerQuotedText;
+            // the filter text of Gen. Jnl.-Show CT Entries filters a blank currency as a quoted blank). A text or an Integer argument is put
+            // in as it reads; any other type is not pinned.
             loop {
                 match c.get(i) {
                     None => return Err("unterminated quote in filter".into()),
@@ -191,30 +197,25 @@ fn tokenize(text: &str, args: &[Value]) -> Result<Vec<Tok>, String> {
                         i += 1;
                         break;
                     }
-                    // A placeholder inside the quotes is replaced like any other (the filter text '''%1''|''%2''' in
-                    // Gen. Jnl.-Show CT Entries filters a blank currency as ''|''). A text or an Integer is put in as it
-                    // reads; any other type is not pinned (registry entry filter-placeholder-in-quotes).
-                    Some('%') if c.get(i + 1).is_some_and(|d| d.is_ascii_digit()) => {
-                        let n = c[i + 1].to_digit(10).expect("digit") as usize;
-                        let arg = args
-                            .get(n.wrapping_sub(1))
-                            .ok_or("filter placeholder without an argument")?;
-                        match arg {
-                            Value::Text(t) | Value::Code(t) => lit.push_str(t),
-                            Value::Integer(v) => lit.push_str(&v.to_string()),
-                            other => {
-                                return Err(format!(
-                                    "placeholder %{n} inside quotes holds {}: only a text or an Integer is put in (not pinned)",
-                                    other.describe()
-                                ));
-                            }
-                        }
-                        crate::assumptions::assume(crate::assumptions::Assumption::FilterPlaceholderInQuotes);
-                        i += 2;
-                    }
                     Some(ch) => {
                         lit.push(*ch);
                         i += 1;
+                    }
+                }
+            }
+            if lit.len() == 2 && lit.starts_with('%') && lit.as_bytes()[1].is_ascii_digit() {
+                let n = (lit.as_bytes()[1] - b'0') as usize;
+                let arg = args
+                    .get(n.wrapping_sub(1))
+                    .ok_or("filter placeholder without an argument")?;
+                match arg {
+                    Value::Text(t) | Value::Code(t) => lit = t.to_string(),
+                    Value::Integer(v) => lit = v.to_string(),
+                    other => {
+                        return Err(format!(
+                            "placeholder %{n} inside quotes holds {}: only a text or an Integer is put in (not pinned)",
+                            other.describe()
+                        ));
                     }
                 }
             }
@@ -321,6 +322,10 @@ impl Parser<'_> {
     fn typed(&self, t: Tok) -> Result<Value, String> {
         use crate::value::RtType as T;
         let text = match t {
+            // An Enum value given for an Option column through SetFilter's %1 filters by its ordinal and shows under the Enum's own name
+            // (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:Filter_OptionColumn_SetRange_EnumValue, `filter_green_filter`
+            // is `Green`; SetRange shows the Option's member, `range_green_filter` is `One`).
+            Tok::Typed(v @ Value::Enum(..)) if matches!(self.ty, T::Option(_)) => return Ok(v),
             Tok::Typed(v) => return crate::ops::convert(v, self.ty).map_err(|e| e.describe()),
             // A quoted empty text is the blank date (corpus record/lt-loadfields-pagesource-validate/P81DateFilters.al:193-194,
             // :308). The unquoted empty text stays refused.
@@ -376,9 +381,16 @@ impl Parser<'_> {
                     None => return Err(format!("`{text}` is not a member of the enum")),
                 }
             }
-            // Text built with `Format` reads as `Evaluate` reads it (Microsoft's tests filter dates and Guids this way;
+            // A Guid filter value is braced or plain, with dashes, or the 32 digits alone, in any case; it shows as the braced upper
+            // case form. A braced text without dashes, a missing brace, a wrong length, a non-hex digit, a number and a wildcard raise
+            // the Guid format error (P143Guid_Filters.al:P143_GuidBraced, P143_GuidInvalid, P143_GuidEmpty).
+            T::Guid if !text.trim().is_empty() => match crate::evaluate::read_text(self.ty, text.trim()) {
+                Some(v) if !text.trim().starts_with('(') => v,
+                _ => return Err(format!("{INVALID_GUID}{text}")),
+            },
+            // Date text built with `Format` reads as `Evaluate` reads it (Microsoft's tests filter dates this way;
             // assumption `filter-text-read-as-evaluate`). A formula, an empty text or anything else stays refused.
-            T::Date | T::Guid if !text.trim().is_empty() && !text.contains(['<', '>']) => {
+            T::Date if !text.trim().is_empty() && !text.contains(['<', '>']) => {
                 match crate::evaluate::read_text(self.ty, text.trim()).ok_or(()) {
                     Ok(v) => {
                         crate::assumptions::assume(crate::assumptions::Assumption::FilterTextReadAsEvaluate);

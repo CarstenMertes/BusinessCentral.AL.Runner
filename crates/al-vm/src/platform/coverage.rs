@@ -60,10 +60,18 @@ pub(crate) struct Recorder {
     current_test: Option<i32>,
     /// Something was recorded since the rows were last written.
     dirty: bool,
+    /// CodeCoverageRefresh ran while logging is on (cleared when logging starts): a later read shows that snapshot.
+    refreshed_while_logging: bool,
 }
 
 /// What a routine entry noted: the test that was running before it started one.
 pub(crate) struct TestScope(Option<i32>);
+
+impl Recorder {
+    pub(crate) fn reset_refreshed(&mut self) {
+        self.refreshed_while_logging = false;
+    }
+}
 
 impl Session {
     /// Counts one run of the statement at position `id`.
@@ -122,6 +130,26 @@ impl Session {
     pub(crate) fn coverage_read(&mut self, t: &TableDef, temporary: bool) -> Result<(), Signal> {
         if temporary || self.coverage_table(t).is_none() {
             return Ok(());
+        }
+        // While logging is on the tables hold nothing new: what was recorded lands in them when logging stops or at
+        // CodeCoverageRefresh (platform/lt-code-coverage-refresh/CodeCoverageRefreshLogged.al: `rows before nonzero` No).
+        if self.coverage.code_coverage {
+            // After a refresh the table stays the snapshot the refresh wrote; whether BC shows later hits live is not pinned
+            // (the test cannot tell the two apart): assumption code-coverage-snapshot-while-logging.
+            if self.coverage.recorder.refreshed_while_logging {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::CodeCoverageSnapshotWhileLogging,
+                );
+            }
+            return Ok(());
+        }
+        self.coverage_flush()
+    }
+
+    /// `CodeCoverageRefresh()`.
+    pub(crate) fn coverage_refresh(&mut self) -> Result<(), Signal> {
+        if self.coverage.code_coverage {
+            self.coverage.recorder.refreshed_while_logging = true;
         }
         self.coverage_flush()
     }

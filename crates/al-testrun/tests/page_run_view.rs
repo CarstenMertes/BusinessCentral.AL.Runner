@@ -1,8 +1,8 @@
 //! `Page.Run(Page, Rec)` for a page that declares `SourceTableView`: Microsoft's "Assembly Orders"
 //! (`SourceTableView = where("Document Type" = filter(Order))`) is run on a temporary record by
-//! `Assemble-to-Order Link.ShowAsmOrders`; 31 tests of one bucket were refused. How the record and the view combine is
-//! not pinned by a corpus test (the page alone: handlers/TestPageSourceTableView.al; docs/probes-needed.md, assumption
-//! `page-run-record-and-source-table-view`): the page shows the rows of the record that the view admits.
+//! `Assemble-to-Order Link.ShowAsmOrders`; 31 tests of one bucket were refused. How the record and the view combine
+//! is pinned by types/lt-code-digits-page-run-view/P145PageRunView.al (the page alone: handlers/TestPageSourceTableView.al):
+//! the page shows the rows of the record that the view admits.
 
 use al_sema::workspace::AppSource;
 use al_testrun::runtime::{CorpusRuntime, RunOptions, SuiteRun};

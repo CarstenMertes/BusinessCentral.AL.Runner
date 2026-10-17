@@ -184,7 +184,7 @@ impl Session {
                 ir::RelationWhere::Value { related, .. } | ir::RelationWhere::Field { related, .. } => *related,
             };
             if self.is_flow_filter(related.object, related_pos) {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RelationWhereOnTargetFlowFilter);
+                // record/lt-relation-where-flowfilter/RelationWhereFlowFilter.al:ValidateFlowFilterConstRelation, ValidateFlowFilterFieldRelation_ExistingValue.
                 continue;
             }
             filters.push(match w {
@@ -207,13 +207,9 @@ impl Session {
                         // A condition that names the validated field itself (`Item Variant.Code where("Item No." =
                         // field("Item No."), Code = field("Variant Code"))` on Prod. Order Line, Assembly Header and
                         // Assembly Line "Variant Code") reads the value being validated, not the old one; the old
-                        // blank value would make the filter contradict the key. Not pinned by the corpus; required
-                        // by Tests-SCM SCM Order Tracking OrderTrackingOnSalesWithVariant (assumption
-                        // relation-where-reads-the-validated-value).
+                        // blank value would make the filter contradict the key. Pinned by record/lt-relation-where-validated/
+                        // RelationWhereValidated.al (Validate_OldBlank_ExistingAndMissing, Validate_OldNonBlank_NewExisting).
                         let own_value = if *own == pos {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::RelationWhereReadsValidatedValue,
-                            );
                             value.clone()
                         } else {
                             rec.borrow().fields[*own].clone()
@@ -266,7 +262,7 @@ impl Session {
                 // Validate_OldNonBlank_NewMissing, Validate_OtherItemNo_SameValue). Any other set of several conditions is refused below.
                 "DB:RecordNotFound".into()
             } else if !wheres.is_empty() {
-                // Several conditions: which code BC answers is not pinned (probe wanted), so the error path is refused.
+                // Several conditions: which code BC answers is not pinned for the other mixes, so the error path is refused.
                 return Err(Signal::Unsupported(
                     "the error code of a TableRelation check with several where() conditions (not pinned)".into(),
                 ));

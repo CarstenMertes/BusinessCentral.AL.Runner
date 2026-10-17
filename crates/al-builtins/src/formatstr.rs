@@ -91,10 +91,11 @@ const CODE_NAMES: [&str; 21] = [
     "AM/PM",
 ];
 
-/// The codes of `template` spelled as this module knows them: a code name in any case, and blanks around the name and
-/// after the comma (`<precision, 2:2><standard format,0>` of Base Application's percent texts, `<sign><integer>` of
-/// Microsoft's test libraries). That BC reads codes this way is not pinned by a corpus test (assumption
-/// `format-code-spelling`); `None` when the template needs no change.
+/// The codes of `template` spelled as this module knows them: a code name in any case, and blanks after the comma and before the
+/// closing bracket of its argument (`<precision, 2:2><standard format,0>`, `<Precision,2:2 >`). A blank around the name itself makes
+/// the code invalid (`< Sign >`, `<Sign ><Integer >`, `<Sign , 1>`), which is left for the code to reject
+/// (types/lt-format-codes-textbuilder-pagerun-labels/P144FormatCodes.al:P144_Int_SignInteger, P144_Int_Precision, P144_Dec_*).
+/// `Filler Char` for `Filler Character` is not pinned (assumption `format-code-spelling`); `None` when the template needs no change.
 fn canonical_template(template: &str) -> Option<String> {
     let mut out = String::with_capacity(template.len());
     let mut rest = template;
@@ -113,9 +114,11 @@ fn canonical_template(template: &str) -> Option<String> {
         };
         // `Filler Char` is the short spelling Microsoft's Data Exchange tests use (assumption `format-code-spelling`).
         let known = CODE_NAMES.iter().find(|c| {
-            c.eq_ignore_ascii_case(name.trim())
-                || (**c == "Filler Character" && name.trim().eq_ignore_ascii_case("Filler Char"))
+            c.eq_ignore_ascii_case(name) || (**c == "Filler Character" && name.eq_ignore_ascii_case("Filler Char"))
         });
+        if known.is_some_and(|c| *c == "Filler Character") && name.eq_ignore_ascii_case("Filler Char") {
+            crate::assumptions::assume(crate::assumptions::Assumption::FormatCodeSpelling);
+        }
         let canon = match known {
             Some(c) => {
                 let arg = arg.map(|a| {
@@ -152,9 +155,6 @@ pub fn format_with_string(v: &Value, length: i32, template: &str, ctx: &dyn Form
         ));
     }
     let canon = canonical_template(template);
-    if canon.is_some() {
-        crate::assumptions::assume(crate::assumptions::Assumption::FormatCodeSpelling);
-    }
     let template = canon.as_deref().unwrap_or(template);
     let mut pieces: Vec<(bool, &str)> = Vec::new();
     let mut rest = template;

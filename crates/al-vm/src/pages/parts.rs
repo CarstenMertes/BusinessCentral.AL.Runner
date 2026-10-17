@@ -34,7 +34,7 @@ impl Session {
             let Some(part_page) = c.part_page else {
                 return unsupported(format!("part {} shows no page", c.name));
             };
-            // A part page the host's code reached before the host ran (see `part_page`, assumption part-of-a-page-that-never-ran) is the
+            // A part page the host's code reached before the host ran (see `part_page`, pinned by pages/lt-part-never-ran) is the
             // one the page opens with: what that call set on it stays (Warehouse Pick Summary.SetRecords hands the summary
             // rows to its part before the page runs).
             let early = {
@@ -148,10 +148,9 @@ impl Session {
     pub(super) fn part_page(&mut self, st: &St, control: usize, runtime: bool) -> Result<St, Signal> {
         // A Page variable's procedure that reaches a part before the page ever ran (Check Credit Limit.PopulateDataOnNotification,
         // which Cust-Check Cr. Limit calls on a Page variable to fill a notification) gets the part page created and not opened, as
-        // a hidden part is (assumption part-of-a-page-that-never-ran); after the page ran and closed it stays refused.
+        // a hidden part is (pages/lt-part-never-ran/NeverRanReadRec.al, NeverRanUpdate.al, NeverRanGetRecord.al, NeverRanSetRecord.al); after the page ran and closed it stays refused.
         let never_ran = runtime && !st.borrow().open && !st.borrow().ran;
         if never_ran {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartOfAPageThatNeverRan);
         } else {
             match self.require_open(st) {
                 // The page's own code reaching a part after the page ran and closed is not a TestPage the test closed (Posted Purchase

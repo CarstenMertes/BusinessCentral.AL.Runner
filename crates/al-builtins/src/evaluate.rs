@@ -203,7 +203,7 @@ fn guid(text: &str) -> Result<Parsed, Signal> {
 /// `yyyy-mm-dd`, `m/d/yyyy`, `m/d/yy` and `T`; it rejects `15.01.2024`, `150124`, `15012024`, `20240115`,
 /// `2024-01-15T00:00:00Z`, `0D` and `15-01-2024`. Number 9 reads `yyyy-mm-dd` with spaces around it and the empty text
 /// (which leaves the date empty) and rejects everything else, `T` and the slash forms included.
-fn date(text: &str, number: i64, today: Option<i32>) -> Result<Parsed, Signal> {
+fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>) -> Result<Parsed, Signal> {
     if number == 9 {
         let t = text.trim_matches(' ');
         if t.is_empty() {
@@ -234,6 +234,30 @@ fn date(text: &str, number: i64, today: Option<i32>) -> Result<Parsed, Signal> {
             Some(d) => Ok(Parsed::Value(Value::Date(d, false))),
             None => unsupported("Evaluate of `T` into a Date without a clock"),
         };
+    }
+    // `W` is the work date and `CD` the closing date of today; `C` and a date is that day's closing date
+    // (types/lt-in-precedence-date-guid-filters/P143Date_FieldRef.al:P143_EvaluateRelations `eval_w_equals_workdate`,
+    // `eval_cd_equals_today` No, `eval_closing_count_on`).
+    if text.eq_ignore_ascii_case("w") {
+        return match work {
+            Some(d) => Ok(Parsed::Value(Value::Date(d, false))),
+            None => unsupported("Evaluate of `W` into a Date without a session"),
+        };
+    }
+    if text.eq_ignore_ascii_case("cd") {
+        return match today {
+            Some(d) => Ok(Parsed::Value(Value::Date(d, true))),
+            None => unsupported("Evaluate of `CD` into a Date without a clock"),
+        };
+    }
+    if let Some(rest) = text
+        .strip_prefix(['C', 'c'])
+        .filter(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+    {
+        return Ok(match date(rest, 0, today, work)? {
+            Parsed::Value(Value::Date(d, false)) => Parsed::Value(Value::Date(d, true)),
+            _ => Parsed::Rejected,
+        });
     }
     // The ISO form is read in format 0 too (types/TestFormatEvaluateTextContracts.al:Evaluate_Date_TwoDigitYear_PivotsAt50).
     if text.len() == 10 && text.as_bytes()[4] == b'-' {
@@ -477,7 +501,7 @@ fn datetime(text: &str, number: i64) -> Result<Parsed, Signal> {
     }
     if let Some((d, clock)) = t.split_once(' ') {
         if d.contains('/') {
-            return Ok(match (date(d, 0, None)?, time(clock, 0)?) {
+            return Ok(match (date(d, 0, None, None)?, time(clock, 0)?) {
                 (Parsed::Value(Value::Date(day, _)), Parsed::Value(Value::Time(ms))) => {
                     Parsed::Value(Value::DateTime((i64::from(day) - 1) * 86_400_000 + ms))
                 }
@@ -497,13 +521,13 @@ pub fn read_text(ty: &crate::value::RtType, text: &str) -> Option<Value> {
     // `Format(ClosingDate(D))` is `C` and the date (corpus types/lt-datetime/DateFuncs.al:47 `C12/31/23`,
     // misc/lt-system-functions/RandomFormat.al:432): the closing date of that day.
     if let (T::Date, Some(rest)) = (ty, text.strip_prefix('C')) {
-        return match date(rest, 0, None).ok()? {
+        return match date(rest, 0, None, None).ok()? {
             Parsed::Value(Value::Date(d, false)) => Some(Value::Date(d, true)),
             _ => None,
         };
     }
     let parsed = match ty {
-        T::Date => date(text, 0, None).ok()?,
+        T::Date => date(text, 0, None, None).ok()?,
         T::Guid => guid(text).ok()?,
         _ => return None,
     };
@@ -543,7 +567,7 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
         Value::Decimal(_) => decimal(&text)?,
         Value::Boolean(_) => boolean(&text)?,
         Value::Guid(_) => guid(&text)?,
-        Value::Date(..) => date(&text, number, c.today_day())?,
+        Value::Date(..) => date(&text, number, c.today_day(), c.work_date_day())?,
         Value::Time(_) => time(&text, number)?,
         Value::DateTime(_) => datetime(&text, number)?,
         // The text is kept as written once it is a form the runtime can calculate with
@@ -817,13 +841,13 @@ mod tests {
     // types/lt-datetime/Evaluate.al:Date_Default_Evaluate: the empty text reads as the empty date in format 0 too.
     #[test]
     fn the_empty_text_reads_as_the_empty_date_in_format_0() {
-        assert!(matches!(value(date("", 0, Some(5))), Some(Value::Date(0, _))));
+        assert!(matches!(value(date("", 0, Some(5), None)), Some(Value::Date(0, _))));
     }
 
     // codeunit "LT P86 Eval Date"
     #[test]
     fn dates_read_slash_forms_in_format_0_and_only_iso_in_format_9() {
-        let day = |s: &str, n: i64| match value(date(s, n, Some(5))) {
+        let day = |s: &str, n: i64| match value(date(s, n, Some(5), Some(7))) {
             Some(Value::Date(d, _)) => Some(d),
             _ => None,
         };

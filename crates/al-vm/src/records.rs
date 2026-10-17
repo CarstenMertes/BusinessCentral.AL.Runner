@@ -1625,9 +1625,7 @@ impl Session {
                             .map_err(|e| Signal::Unsupported(format!("{e}")))?
                             .is_some();
                         if !still_there {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::DeleteAllSkipsRowsDeletedMeanwhile,
-                            );
+                            // record/lt-delete-all-deleted-meanwhile/DeleteAllSkipsDeleted.al:DeleteAllTrue_FirstDeletesAnEarlierSibling_NoneEarlier.
                             continue;
                         }
                         let mut st = rec.borrow().clone();
@@ -1792,10 +1790,10 @@ impl Session {
                                 // Another current key looks for the neighbour by that key's fields
                                 // (events/TestProbeEventContracts.al:Find_NeighbourSearch_WithFilterAndOtherKey, key Name).
                                 // The row itself is the one with the record's primary key whose fields of that key still
-                                // hold the record's values and that passes the filters. Not pinned for a row that exists
-                                // (the corpus names only keys whose values no row holds); Base Application's Req. Wksh.-Make
-                                // Order `Code` needs it for the Requisition Line the Carry Out Action Msg. report read by its
-                                // own sorting (docs/probes-needed.md, find-equal-on-another-key).
+                                // hold the record's values and that passes the filters (pages/lt-modal-list-new-row-more/
+                                // NewRowListSecondaryKey.al:P197_SecKey_PositionedAfterFindFirst, _PositionedAfterFindLast,
+                                // NewRowListTemporary.al:P197_Temp_SecondaryKeyAfterFindFirst: a list over a secondary key opens on
+                                // the positioned record). Base Application's Req. Wksh.-Make Order `Code` needs it as well.
                                 '=' => {
                                     let pk = t.primary_key(&rec.borrow().fields);
                                     let exact = self
@@ -1804,12 +1802,7 @@ impl Session {
                                         .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                                     match exact {
                                         Some(row) if self.row_passes(rec, &t, &row)? => {
-                                            if key == 0 {
-                                                Some(row)
-                                            } else if Self::same_key_values(&t, key, &row, &pos) {
-                                                al_builtins::assumptions::assume(
-                                                    al_builtins::assumptions::Assumption::FindEqualOnAnotherKey,
-                                                );
+                                            if key == 0 || Self::same_key_values(&t, key, &row, &pos) {
                                                 Some(row)
                                             } else {
                                                 None
@@ -1975,6 +1968,20 @@ impl Session {
                         return Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "The filter \"{}\" is not valid for the {} field on the {} table. The value \"{word}\" can't be evaluated into type Boolean.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
+                    // types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al:P143_GuidInvalid, P143Date_FieldRef.al:P143_FieldRefGuid.
+                    Err(e) if e.starts_with(al_builtins::filter::INVALID_GUID) => {
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
                                 text.trim(),
                                 self.field_caption(&t, pos),
                                 self.caption(&t)

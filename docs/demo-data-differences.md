@@ -85,7 +85,7 @@ the merges that followed the full run of main 0b414672 (3273 failures then, 924 
 remaining part is a runtime defect fixed on branch ms-fails-2: a `where()` condition of a TableRelation that names the
 validated field itself (`Item Variant.Code where("Item No." = field("Item No."), Code = field("Variant Code"), ...)` of Prod.
 Order Line, Assembly Header and Assembly Line) read the old, blank value of the field, so it contradicted the key and the
-variant "cannot be found". It reads the value being validated now (assumption `relation-where-reads-the-validated-value`,
+variant "cannot be found". It reads the value being validated now (pinned by record/lt-relation-where-validated/RelationWhereValidated.al,
 test `crates/al-vm/tests/store/relation_where_enum_filter.rs`).
 
 How the data rows above were proven: `bcdb tables BusinessCentral-W1.bak` lists the page count of every table of the

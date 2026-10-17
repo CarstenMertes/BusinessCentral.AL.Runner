@@ -82,6 +82,12 @@ pub(crate) fn is_blank(v: &Value) -> Result<bool, Signal> {
         Value::Guid(g) => *g == [0; 16],
         Value::Option(o, _) => *o == 0,
         Value::Enum(_, o) => *o == 0,
+        // A RecordId field is blank while nothing was assigned; the id of an initialized record that holds no key
+        // is a value (errors/lt-ms-refusals-135/P135RecordIdTestField.al:P135_TestField_BlankRecordId,
+        // P135_TestField_AssignedRecordId; errors/lt-ms-refusals-128/P128TestFieldRecordId.al:P128_TestField_RecordIdField_Blank).
+        Value::Library(al_builtins::library_kind::LibraryKind::RecordId, cell) => {
+            matches!(*cell.borrow(), al_builtins::value::LibraryValue::Empty)
+        }
         Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_) | Value::Char(_) => false,
         other => {
             return unsupported(format!(

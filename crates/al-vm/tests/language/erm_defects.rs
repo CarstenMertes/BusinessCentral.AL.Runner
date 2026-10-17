@@ -131,3 +131,30 @@ fn evaluate_into_a_short_text_that_is_too_long_with_the_result_used_is_refused()
     let r = run("procedure F(): Boolean var T: Text[5]; begin exit(Evaluate(T, 'abcdef')); end;");
     assert!(matches!(&r, Err(Signal::Unsupported(m)) if m.contains("not pinned")), "{r:?}");
 }
+
+/// errors/lt-ms-refusals-135/P135RecordIdTestField.al: TestField on a RecordId field fails while nothing was assigned
+/// (Tests-ERM, 41 tests behind `Job Queue Entry.TestField("Record ID to Process")`-like checks) and passes for an assigned id,
+/// the id of an initialized record included.
+#[test]
+fn test_field_of_a_record_id_field() {
+    let src = r#"
+table 50960 "TRI Row" { fields { field(1; Id; Integer) { } field(2; Ref; RecordId) { } } keys { key(PK; Id) { } } }
+codeunit 50961 C
+{
+    procedure F(): Text
+    var R: Record "TRI Row"; T: Text;
+    begin
+        R.Id := 1;
+        asserterror R.TestField(Ref);
+        T := GetLastErrorText();
+        R.Ref := R.RecordId;
+        R.TestField(Ref);
+        exit(T);
+    end;
+}
+"#;
+    assert_eq!(
+        text(al_testkit::run_in(src, "C", "F")),
+        "Ref must have a value in TRI Row: Id=1. It cannot be zero or empty."
+    );
+}

@@ -436,6 +436,25 @@ impl Session {
         }
         // RunObject wins over OnAction when an action declares both (handlers/TestPageRunObjectContracts.al:371-390).
         if page_of(&engine, st).controls[idx].run_object.is_some() {
+            // The events around a RunObject action are not pinned: a subscriber to them makes the action refused.
+            for ev in ["onbeforeactionevent", "onafteractionevent"] {
+                let element = page_of(&engine, st).controls[idx].name.clone();
+                let object = st.borrow().object as usize;
+                let listens = engine.events.is_subscribed(object, ev)
+                    && engine
+                        .events
+                        .subscribers
+                        .get(&(object, ev.to_string()))
+                        .is_some_and(|v| {
+                            v.iter()
+                                .any(|s| s.element.is_empty() || s.element.eq_ignore_ascii_case(&element))
+                        });
+                if listens || engine.events.missing_for(object, ev, Some(&element)).is_some() {
+                    return unsupported(format!(
+                        "page event {ev} of the RunObject action {element}: the order around RunObject is not pinned"
+                    ));
+                }
+            }
             return self.run_object_action(st, idx);
         } else if let Some(r) = page_of(&engine, st).controls[idx].trigger("onaction") {
             let before = (self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft)
@@ -444,7 +463,16 @@ impl Session {
             // Management") has no row for the action to delete, so it stays open.
             let stored_before = !st.borrow().never_stored;
             st.borrow_mut().save_record_called = false;
+            // Subscribers to the action's events: before the trigger (what they write to Rec the trigger reads and the
+            // page saves, because `before` was taken first), after it when it did not fail
+            // (events/lt-global-triggers-statements/P114PageActionEvents.al).
+            let element = page_of(&engine, st).controls[idx].name.clone();
+            self.page_action_event(st, "onbeforeactionevent", &element)?;
             let r = self.control_routine(st, idx, r);
+            let r = match r {
+                Ok(v) => self.page_action_event(st, "onafteractionevent", &element).map(|()| v),
+                err => err,
+            };
             // An error an action raises comes out of the test page's Invoke with the test framework's prefix on its code
             // (pages/lt-page-runtime/P82CurrPage.al:431 ActionError_Surfaces: `P82 action error B`, `TestWrapped:Dialog`). Only the codes Dialog (Error()) and MissingUIHandler (errors/lt-ms-refusals-133/P133MessageInHandlers.al:241) are pinned; other codes keep the
             // code they had before (docs/probes-needed.md).

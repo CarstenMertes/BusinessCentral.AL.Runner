@@ -13,7 +13,7 @@ use al_builtins::native::{AlError, Signal};
 use al_builtins::ops;
 use al_builtins::record_op::RecordOp;
 use al_builtins::value::{LibraryValue, RecordState, RtType, Value};
-use al_data::TableDef;
+use al_data::{Store, TableDef};
 use std::cell::RefCell;
 use std::rc::Rc;
 use std::sync::OnceLock;
@@ -462,6 +462,43 @@ impl Session {
         }
     }
 
+    /// Whether the buffer differs from the row stored under its primary key; with no stored row, from a fresh buffer.
+    /// Stored fields only (a FlowField is not part of the row). A partial load, or a value that cannot be compared
+    /// (a Blob), is refused: nothing pins them.
+    fn rr_is_dirty(&mut self, rec: &Rec, t: &TableDef) -> Result<Value, Signal> {
+        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefIsDirtyAgainstStoredRow);
+        if rec.borrow().load.partial || rec.borrow().load.request.is_some() {
+            return unsupported("RecordRef.IsDirty on a partially loaded record (what BC compares is not pinned)");
+        }
+        let cx = self.cx_for(rec, t)?;
+        let fields = rec.borrow().fields.clone();
+        let pk = t.primary_key(&fields);
+        let stored = self
+            .store_for(rec)
+            .get(&cx, t, &pk)
+            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+        let base = match stored {
+            Some(row) => row,
+            None => self.initial_fields(t.object as usize),
+        };
+        for (i, f) in t.fields.iter().enumerate() {
+            if !f.stored {
+                continue;
+            }
+            match ops::compare(&fields[i], &base[i]) {
+                Ok(std::cmp::Ordering::Equal) => {}
+                Ok(_) => return Ok(Value::Boolean(true)),
+                Err(_) => {
+                    return unsupported(format!(
+                        "RecordRef.IsDirty on field {} of a type that cannot be compared (not pinned)",
+                        f.name
+                    ));
+                }
+            }
+        }
+        Ok(Value::Boolean(false))
+    }
+
     fn recordref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
         match method {
             "Open" => return self.rr_open(lib, args),
@@ -588,6 +625,10 @@ impl Session {
             "ChangeCompany" => self.change_company(&rec, args),
             "IsTemporary" => Ok(Value::Boolean(rec.borrow().temporary)),
             "HasFilter" => Ok(Value::Boolean(Self::has_filter(&rec))),
+            // Pinned: corpus misc/lt-open-overloads-collections-isolated/P107RecRefNames.al:101-135 and
+            // recordref/lt-recordref-fieldref-members/P92DirtyRef.al:21-95 (a fresh ref, a found row, a written
+            // field with the same and with another value, after Modify, after Find, after Init, after Validate).
+            "IsDirty" => self.rr_is_dirty(&rec, &t),
             "FilterGroup" => {
                 // The getter and the setter for any group are pinned (filters/W4Filters.al:RecordRef_FilterGroup_*,
                 // record/PWFilterGroupOr.al:OrGroup_RecordRef).

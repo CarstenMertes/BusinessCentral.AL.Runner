@@ -385,6 +385,43 @@ impl Session {
         self.raise(&call, &mut args)
     }
 
+    /// `OnBeforeActionEvent` / `OnAfterActionEvent` of the action `element` of the page: raised by `TestAction.Invoke` before
+    /// the action's OnAction trigger and after it when it did not fail (corpus
+    /// events/lt-global-triggers-statements/P114PageActionEvents.al: P114_ActionOrder, P114_ActionRaisesError,
+    /// P114_BeforeEventChangesRecord). The subscribers take `Rec` or nothing. A page without a source table,
+    /// a subscriber that is declared and not compiled, and an error a subscriber raises are refused: none is pinned.
+    pub(crate) fn page_action_event(&mut self, st: &St, event: &str, element: &str) -> Result<(), Signal> {
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        if engine.events.missing_for(object, event, Some(element)).is_some() {
+            return unsupported(format!(
+                "page event {event} of action {element}: a subscriber listens, and its app is not compiled"
+            ));
+        }
+        if !engine.events.is_subscribed(object, event) {
+            return Ok(());
+        }
+        if engine.program.objects[object].rec_slot.is_none() {
+            return unsupported(format!("page event {event} on a page without a source table"));
+        }
+        let names = vec!["Rec".to_string()];
+        let mut args = vec![Value::Record(self.page_rec(st))];
+        let call = crate::dispatch::EventCall {
+            object,
+            event,
+            element: Some(element),
+            isolated: false,
+            names: &names,
+            sender: None,
+        };
+        match self.raise(&call, &mut args) {
+            Err(Signal::Error(_)) => unsupported(format!(
+                "an error raised by a subscriber of page event {event} (what the test client reports is not pinned)"
+            )),
+            other => other,
+        }
+    }
+
     /// Refuses a page some subscriber listens to for an event the client does not raise yet.
     fn check_page_events(&self, st: &St) -> Result<(), Signal> {
         let engine = self.engine();
@@ -399,6 +436,37 @@ impl Session {
             .map(|((o, ev), _)| (o, ev))
             .chain(engine.events.missing.keys().map(|(o, ev)| (o, ev)));
         for (o, ev) in declared {
+            // The client raises the action events when it invokes an action that has behavior (an OnAction trigger or a
+            // RunObject: the others are not on the runtime page). A subscriber for every action, or for one that is not
+            // on the page, would run in BC and is not reached.
+            if *o == object && matches!(ev.as_str(), "onbeforeactionevent" | "onafteractionevent") {
+                let on_page =
+                    |element: &str| {
+                        !element.is_empty()
+                            && page_of(&engine, st).controls.iter().enumerate().any(|(i, c)| {
+                                c.name.eq_ignore_ascii_case(element) && !self.action_without_behaviour(st, i)
+                            })
+                    };
+                let compiled = engine
+                    .events
+                    .subscribers
+                    .get(&(object, ev.clone()))
+                    .into_iter()
+                    .flatten()
+                    .map(|s| s.element.as_str());
+                let missing = engine
+                    .events
+                    .missing
+                    .get(&(object, ev.clone()))
+                    .into_iter()
+                    .flatten()
+                    .map(|m| m.element.as_str());
+                if let Some(e) = compiled.chain(missing).find(|e| !on_page(e)) {
+                    return unsupported(format!(
+                        "page event {ev} of action `{e}`: the action has no behavior of ours on the page, and the test client does not raise it"
+                    ));
+                }
+            }
             if *o == object
                 && ev.starts_with("on")
                 && ev.ends_with("event")

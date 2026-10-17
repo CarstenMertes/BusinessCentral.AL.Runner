@@ -571,6 +571,12 @@ mod tests {
     }
 
     #[test]
+    fn a_dot_or_a_slash_in_a_name_is_refused() {
+        assert!(dataset_name("Cust. Ledger Entry").is_err());
+        assert!(dataset_name("G/L Account").is_err());
+    }
+
+    #[test]
     fn a_name_the_example_does_not_cover_is_refused() {
         assert!(dataset_name("A(B)").is_err());
         assert!(dataset_name("No.").is_err());

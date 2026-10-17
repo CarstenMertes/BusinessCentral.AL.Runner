@@ -1824,3 +1824,46 @@ fn the_marks_of_a_test_do_not_depend_on_what_ran_before_it_or_on_the_run() {
         );
     }
 }
+
+/// A test refused before it starts also leaves out what BC would have committed (a cleanup, a setup the later tests
+/// rely on): under TestIsolation = Codeunit a failure after it is not trusted. Under Function isolation every test
+/// starts from the same state, so the failure stays a failure (Tests-ERM "Discount Setup Notifications": a refused
+/// test that would have reset the posting setups, then a test that failed on the rows the test before it left).
+#[test]
+fn a_failure_after_a_test_refused_before_it_started_that_touches_the_same_tables_is_not_trusted_under_codeunit_isolation()
+ {
+    let src = "xmlport 61410 X { schema { textelement(Root) { } } }
+        table 61412 Row { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
+        codeunit 61411 Shared { Subtype = Test;
+            [Test] procedure Refused() var P: XmlPort X; R: Record Row; begin R.DeleteAll(); P.Run(); end;
+            [Test] procedure Fails() var R: Record Row; begin R.Id := 1; R.Insert(); Error('x'); end;
+            [Test] procedure FailsOther() begin Error('y'); end; }";
+    let (ws, l) = al_sema::lower::compile(
+        vec![AppSource {
+            id: "a".into(),
+            name: "a".into(),
+            dependencies: vec![],
+            files: vec![("f.al".into(), src.into())],
+        }],
+        &Default::default(),
+    );
+    assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let oi = l.program.objects.iter().position(|o| o.name == "Shared").unwrap();
+    for (isolation, trusted) in [(TestIsolation::Codeunit, false), (TestIsolation::Function, true)] {
+        let out = run_codeunit_limited(&engine, &l, oi, None, isolation, None);
+        let get = |n: &str| out.iter().find(|(name, _)| name == n).unwrap().1.clone();
+        assert!(matches!(get("Refused"), Outcome::NotRun(_)), "{:?}", get("Refused"));
+        assert!(matches!(get("FailsOther"), Outcome::Fail(_)), "{:?}", get("FailsOther"));
+        match get("Fails") {
+            Outcome::Fail(_) => assert!(trusted, "{isolation:?}"),
+            Outcome::NotRun(r) => assert!(!trusted && r.contains("not trusted"), "{isolation:?}: {r}"),
+            o => panic!("{o:?}"),
+        }
+    }
+}

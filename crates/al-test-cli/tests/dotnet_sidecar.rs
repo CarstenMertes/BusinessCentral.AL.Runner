@@ -1004,3 +1004,39 @@ fn a_settable_property_called_with_one_argument_is_assigned() {
     assert!(why.contains("not found"), "{why}");
     sess.close();
 }
+
+/// AL spells a .NET indexer by the name the framework gives it (`IndexerName`), for the attribute
+/// collection `ItemOf`; the Microsoft test apps call `Attributes.ItemOf('name')` and `ItemOf(0)`.
+#[test]
+fn an_indexer_is_called_by_its_indexer_name_with_its_arguments() {
+    let Some(h) = host() else { return };
+    let mut sess = h.open_session(&DotNetSessionConfig::default());
+    let doc = handle_of(&sess.construct(&ty("System.Xml.XmlDocument"), vec![]).unwrap());
+    sess.invoke(DotNetTarget::Instance(doc), "LoadXml", vec![s("<r a=\"1\" b=\"2\"/>")])
+        .unwrap();
+    let root = handle_of(
+        &sess
+            .get_property(DotNetTarget::Instance(doc), "DocumentElement")
+            .unwrap(),
+    );
+    let attrs = handle_of(&sess.get_property(DotNetTarget::Instance(root), "Attributes").unwrap());
+    let by_name = handle_of(
+        &sess
+            .invoke(DotNetTarget::Instance(attrs), "ItemOf", vec![s("b")])
+            .unwrap(),
+    );
+    let v = sess.get_property(DotNetTarget::Instance(by_name), "Value").unwrap();
+    assert_eq!(text_of(&v), "2");
+    let by_pos = handle_of(
+        &sess
+            .invoke(
+                DotNetTarget::Instance(attrs),
+                "ItemOf",
+                vec![arg(DotNetValue::Int32(0))],
+            )
+            .unwrap(),
+    );
+    let v = sess.get_property(DotNetTarget::Instance(by_pos), "Value").unwrap();
+    assert_eq!(text_of(&v), "1");
+    sess.close();
+}

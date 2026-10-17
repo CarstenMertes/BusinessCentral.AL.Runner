@@ -68,7 +68,7 @@ pub enum PlatformPublisher {
 
 /// The events of a page the test client raises (`al-vm/src/pages.rs`). A subscriber to any other
 /// event of a page is refused when the page opens.
-pub const RAISED_PAGE_EVENTS: [&str; 7] = [
+pub const RAISED_PAGE_EVENTS: [&str; 9] = [
     "onopenpageevent",
     "onqueryclosepageevent",
     "onclosepageevent",
@@ -76,6 +76,9 @@ pub const RAISED_PAGE_EVENTS: [&str; 7] = [
     "onnewrecordevent",
     "oninsertrecordevent",
     "onmodifyrecordevent",
+    // Around the OnAction trigger of an action a TestPage invokes (corpus events/lt-global-triggers-statements/P114PageActionEvents.al).
+    "onbeforeactionevent",
+    "onafteractionevent",
 ];
 
 /// A source file of the program: the app it belongs to and its path inside the app.

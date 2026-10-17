@@ -268,6 +268,8 @@ pub(crate) fn run_codeunit_core(
     // Set by the first test of the codeunit that did not pass: it drew other numbers from `Random` than BC did, and the
     // sequence is the session's.
     let mut earlier_not_run: Option<String> = None;
+    // The previous test when it was refused before it started: its name and reason, and the tables it touches.
+    let mut refused_before_start: Option<(String, std::collections::BTreeSet<u32>)> = None;
     let mut panicked = false;
     for r in tests.iter().copied() {
         // A cancelled run starts no further test (the one running finishes).
@@ -284,6 +286,7 @@ pub(crate) fn run_codeunit_core(
         let mut refused_in = None;
         session.clear_fault_site();
         al_builtins::assumptions::clear_hits();
+        let mut began = false;
         let outcome = if let Err(reason) = &handlers {
             Outcome::NotRun(reason.clone())
         } else if let Some(b) = blocked_site(lowered, object, r) {
@@ -306,6 +309,7 @@ pub(crate) fn run_codeunit_core(
             match bound_ok {
                 Err(reason) => Outcome::NotRun(reason),
                 Ok(()) => {
+                    began = true;
                     session.last_error = Default::default();
                     al_builtins::assumptions::clear_hits();
                     // The AL test runner enables every application area before each test method
@@ -412,6 +416,28 @@ pub(crate) fn run_codeunit_core(
                     }
                 }
             }
+        };
+        // A test refused before it started did not leave what BC would have left in the database: under TestIsolation =
+        // Codeunit the next test sees that. A failure of the test right after it, when both touch a table in common, is
+        // not trusted (Tests-ERM "Discount Setup Notifications": the refused test would have reset the posting setups
+        // the test before it left blank). Only the next test is covered: the older refused tests of the codeunit
+        // touch too many tables to say (probe wanted, see the report of branch ms-top-refusals-3).
+        let tables_of_this = (checkpoint.is_none() && (matches!(outcome, Outcome::Fail(_)) || !began))
+            .then(|| tables_touched(lowered, object, r));
+        let outcome = match (outcome, &refused_before_start, &tables_of_this) {
+            (Outcome::Fail(m), Some((first, tables)), Some(mine)) if !tables.is_disjoint(mine) => {
+                Outcome::NotRun(format!(
+                    "the test right before this one in the codeunit was refused before it started ({first}) and touches the same tables, so the data it would have left is not BC's; this failure is not trusted: {m}"
+                ))
+            }
+            (o, _, _) => o,
+        };
+        refused_before_start = match (&outcome, began, tables_of_this) {
+            (Outcome::NotRun(why), false, Some(tables)) => Some((
+                format!("{}: not run ({why})", routine.name).chars().take(120).collect(),
+                tables,
+            )),
+            _ => None,
         };
         let drew = session.random_draws() > draws_before;
         let fresh_not_run = match &outcome {

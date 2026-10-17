@@ -116,6 +116,20 @@ public sealed class Server
                         return Done(null, null, null, null);
                     }
                 }
+                if (cands.Length == 0 && args.Length > 0)
+                {
+                    // AL calls an indexer by the name the framework gives it (IndexerName):
+                    // `XmlAttributeCollection.ItemOf('name')`. The getter takes the index arguments.
+                    var getters = type.GetProperties(flags)
+                        .Where(p => p.Name == name && p.GetIndexParameters().Length > 0 && p.GetMethod != null && p.GetMethod.IsPublic)
+                        .Select(p => (MethodBase)p.GetMethod!).ToArray();
+                    if (getters.Length > 0)
+                    {
+                        var (ib, ic, _) = Pick(getters, args, $"{type.FullName}.{name}");
+                        var gm = (MethodInfo)ib;
+                        return Done(gm.Invoke(gm.IsStatic ? null : target, ic), ib, ic, args, gm.ReturnType);
+                    }
+                }
                 if (cands.Length == 0)
                     throw new Refusal(target == null && type.GetMethods(BindingFlags.Public | BindingFlags.Instance).Any(m => m.Name == name)
                         ? $"'{type.FullName}.{name}' is an instance member and the variable holds no object"

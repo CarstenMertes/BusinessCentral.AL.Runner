@@ -481,12 +481,23 @@ fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
         vec![' ']
     };
     let strip = |c: char| which.contains(&c);
-    Ok(Value::Text(match wh.as_str() {
-        "=" => s.chars().filter(|c| !strip(*c)).collect(),
-        "<" => s.trim_start_matches(strip).to_string().into(),
-        ">" => s.trim_end_matches(strip).to_string().into(),
-        "<>" | "><" => s.trim_matches(strip).to_string().into(),
-        other => return unsupported(format!("DelChr with Where `{other}` (not pinned)")),
+    // Where is up to three of `=`, `<`, `>` in any order: an `=` deletes everywhere, else `<` and `>` trim that end
+    // (errors/lt-ms-refusals-136/P136Text.al:P136_DelChr_ThreeCharWhere and P136_DelChr_DoubledAndOddWhere: `=<>`, `<=>`,
+    // `=>`, `<<`, `>>`, `==`, `<>>`, `<<>`, `><`). An empty Where changes nothing; any other character is an error.
+    // Longer texts of the three characters are not pinned.
+    if wh.chars().any(|c| !matches!(c, '=' | '<' | '>')) {
+        return raise("Incorrect use of the where parameter.", "ALSystemString");
+    }
+    if wh.chars().count() > 3 {
+        return unsupported(format!("DelChr with Where `{wh}` (more than three characters is not pinned)"));
+    }
+    let (all, lead, trail) = (wh.contains('='), wh.contains('<'), wh.contains('>'));
+    Ok(Value::Text(match (all, lead, trail) {
+        (true, ..) => s.chars().filter(|c| !strip(*c)).collect(),
+        (false, true, true) => s.trim_matches(strip).to_string().into(),
+        (false, true, false) => s.trim_start_matches(strip).to_string().into(),
+        (false, false, true) => s.trim_end_matches(strip).to_string().into(),
+        (false, false, false) => s,
     }))
 }
 

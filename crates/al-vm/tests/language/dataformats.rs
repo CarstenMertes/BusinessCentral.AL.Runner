@@ -774,6 +774,14 @@ fn text_functions() {
         "exit(DelChr('hello', '=', 'e') + '|' + DelChr('  hello  ', '<>') + '|' + DelChr('h e l l o', '=', ' ') + '|' + DelChr('  hello  ', '<>', ' ') + '|' + DelChr('   ', '<>', ' ') + '|');",
     );
     assert_eq!(t, "hllo|hello|hello|hello||");
+    // errors/lt-ms-refusals-136/P136Text.al:P136_DelChr_ThreeCharWhere, P136_DelChr_DoubledAndOddWhere.
+    let t = text_of(
+        "",
+        "exit(DelChr('xxaxbxx', '=<>', 'x') + '|' + DelChr('xxaxbxx', '<=>', 'x') + '|' + DelChr('xxaxbxx', '=>', 'x') + '|' + DelChr('xxaxbxx', '<<', 'x') + '|' + DelChr('xxaxbxx', '>>', 'x') + '|' + DelChr('xxaxbxx', '<>>', 'x') + '|' + DelChr('xxaxbxx', '><', 'x') + '|' + DelChr('xxaxbxx', '', 'x') + '|');",
+    );
+    assert_eq!(t, "ab|ab|ab|axbxx|xxaxb|axb|axb|xxaxbxx|");
+    let (m, c) = raised("", "exit(DelChr('xxaxbxx', '< ', 'x'));");
+    assert_eq!((m.as_str(), c.as_str()), ("Incorrect use of the where parameter.", "ALSystemString"));
     let t = text_of(
         "",
         "exit(IncStr('ABC1') + '|' + IncStr('ABC9') + '|' + IncStr('Item 001') + '|' + IncStr('Item 009') + '|' + IncStr('ABC') + '|');",

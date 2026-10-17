@@ -1330,6 +1330,14 @@ impl Session {
                 // Only Insert(_, true) takes a SystemId the code put in the buffer; a trigger
                 // that sets one on any other insert changes nothing about the stored id.
                 if let (false, Some(i), Some(id)) = (keep_id, id_slot, assigned) {
+                    // A SystemId the code changed after the platform gave one (OnInsert: `SystemId := CreateGuid()`): whether BC
+                    // keeps it is not pinned (the corpus pins only a value set before Insert, events/TestProbeEventContracts.al:
+                    // SystemId_BeforeOnInsert_AndPresetBuffer). Refused, not guessed.
+                    if !matches!((&rec.borrow().fields[i], &id), (Value::Guid(a), Value::Guid(b)) if a == b) {
+                        return unsupported(
+                            "a SystemId set by an Insert event or OnInsert without InsertWithSystemId: whether BC keeps it is not pinned (probe wanted, corpus issue 216 item 4)",
+                        );
+                    }
                     rec.borrow_mut().fields[i] = id;
                 }
                 if keep_id {

@@ -14,6 +14,8 @@ pub(crate) struct Entry {
     /// How many leading primary key columns of a poisoned row are known; the rest are placeholders
     /// that no filter may rule the row out by.
     pub known: usize,
+    /// Row positions (beyond the key) whose value in a poisoned row is real: a filter on them can rule the row out.
+    pub known_cols: Vec<usize>,
 }
 
 impl Entry {
@@ -22,6 +24,7 @@ impl Entry {
             row,
             poison: None,
             known: usize::MAX,
+            known_cols: Vec::new(),
         }
     }
     pub(crate) fn poisoned(key_only: Row, why: String) -> Entry {
@@ -29,6 +32,7 @@ impl Entry {
             row: key_only,
             poison: Some(why),
             known: usize::MAX,
+            known_cols: Vec::new(),
         }
     }
     /// A poisoned row of which only the first `known` primary key columns are real: it stands for
@@ -38,7 +42,13 @@ impl Entry {
             row: key_only,
             poison: Some(why),
             known,
+            known_cols: Vec::new(),
         }
+    }
+    /// The positions of the columns of a poisoned row that hold real values.
+    pub(crate) fn with_known_cols(mut self, cols: Vec<usize>) -> Entry {
+        self.known_cols = cols;
+        self
     }
 }
 
@@ -47,6 +57,7 @@ pub(crate) struct Mat {
     rows: Vec<Row>,
     poison: Vec<Option<String>>,
     known: Vec<usize>,
+    known_cols: Vec<Vec<usize>>,
     /// No row is poisoned. Only then are the values of the key columns all real, so the rows are in the order of
     /// the key and the filters on its leading columns bound a scan (`band`).
     clean: bool,
@@ -114,11 +125,13 @@ fn passes(row: &Row, filters: &[FieldFilter]) -> bool {
 
 /// Whether a row known only by its key can pass: the filters on key columns are decided, the
 /// others could go either way.
-fn may_pass(t: &TableDef, row: &Row, known: usize, filters: &[FieldFilter]) -> bool {
+fn may_pass(t: &TableDef, row: &Row, known: usize, known_cols: &[usize], filters: &[FieldFilter]) -> bool {
     filters
         .iter()
         .filter(|f| f.group != al_builtins::filter::OR_GROUP)
-        .filter(|f| t.keys[0].iter().position(|k| *k == f.field).is_some_and(|i| i < known))
+        .filter(|f| {
+            known_cols.contains(&f.field) || t.keys[0].iter().position(|k| *k == f.field).is_some_and(|i| i < known)
+        })
         .all(|f| f.expr.matches(&row[f.field]))
 }
 
@@ -136,16 +149,19 @@ impl Mat {
         let mut rows = Vec::new();
         let mut poison = Vec::new();
         let mut known = Vec::new();
+        let mut known_cols = Vec::new();
         for (_, e) in keyed {
             rows.push(e.row);
             poison.push(e.poison);
             known.push(e.known);
+            known_cols.push(e.known_cols);
         }
         let clean = poison.iter().all(Option::is_none);
         Mat {
             rows,
             poison,
             known,
+            known_cols,
             clean,
             memo: Default::default(),
         }
@@ -157,6 +173,7 @@ impl Mat {
             rows: self.rows.iter().map(f).collect(),
             poison: self.poison.clone(),
             known: self.known.clone(),
+            known_cols: self.known_cols.clone(),
             clean: self.clean,
             memo: Default::default(),
         }
@@ -249,7 +266,7 @@ impl Mat {
         let at = |i: usize| -> Result<Option<Row>, StoreError> {
             let r = &self.rows[i];
             match &self.poison[i] {
-                Some(why) if may_pass(t, r, self.known[i], filters) => Err(refusal(t, why)),
+                Some(why) if may_pass(t, r, self.known[i], &self.known_cols[i], filters) => Err(refusal(t, why)),
                 Some(_) => Ok(None),
                 None => Ok(passes(r, filters).then(|| r.clone())),
             }
@@ -310,7 +327,7 @@ impl Mat {
         let mut best: Option<(Vec<Value>, &Row)> = None;
         for (i, r) in self.rows.iter().enumerate().filter(|(_, r)| later(r)) {
             if let Some(why) = &self.poison[i] {
-                if may_pass(t, r, self.known[i], scan.filters) {
+                if may_pass(t, r, self.known[i], &self.known_cols[i], scan.filters) {
                     return Err(refusal(t, why));
                 }
                 continue;
@@ -339,7 +356,9 @@ impl Mat {
         let band = self.band(t, filters);
         for (i, r) in self.rows.iter().enumerate().skip(band.start).take(band.len()) {
             match &self.poison[i] {
-                Some(why) if may_pass(t, r, self.known[i], filters) => return Err(refusal(t, why)),
+                Some(why) if may_pass(t, r, self.known[i], &self.known_cols[i], filters) => {
+                    return Err(refusal(t, why));
+                }
                 Some(_) => {}
                 None => n += usize::from(passes(r, filters)),
             }
@@ -458,6 +477,27 @@ mod tests {
         // An ID filter that excludes 2 is decided by the known column.
         assert!(matches!(m.count(&t, &[id_filter(1, 1)]), Ok(1)));
         assert!(m.get(&t, &[Value::Integer(2), Value::Text("".into())]).is_err());
+    }
+
+    #[test]
+    fn a_poisoned_row_with_a_known_column_is_ruled_out_by_a_filter_on_that_column() {
+        // Event Subscription: a subscriber to a page event is refused for its Published Function, but its publisher type is real.
+        let t = table();
+        let m = Mat::new(
+            &t,
+            vec![
+                Entry::ok(row(1, "a")),
+                Entry::poisoned(row(2, "page"), "not pinned".into()).with_known_cols(vec![1]),
+            ],
+        );
+        let name = |n: &str| FieldFilter {
+            field: 1,
+            expr: FilterExpr::Eq(Value::Text(n.into())),
+            group: 0,
+        };
+        assert!(matches!(m.count(&t, &[name("a")]), Ok(1)));
+        assert!(m.count(&t, &[name("page")]).is_err());
+        assert!(m.count(&t, &[]).is_err());
     }
 
     // ---- the band of the primary key (the walk of a listing starts and ends where the key filters say) ----

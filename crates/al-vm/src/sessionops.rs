@@ -527,8 +527,14 @@ impl Session {
     /// `IsolatedStorage.<rest>` (`Get#4`, `SetEncrypted#2`, ...): a text store per scope, outside
     /// the transaction (not pinned either way). Corpus: session/TestIsolatedStorage.al:30-125.
     fn isolated_storage_op(&mut self, method: &str, n: u32, args: &mut [Value]) -> Result<Value, Signal> {
-        let Some(key) = args.first().and_then(al_builtins::native::text_of).map(String::from) else {
-            return unsupported("an IsolatedStorage key that is not text");
+        // A Guid key is its text form `{XXXXXXXX-...}`, for Set, Contains, Get and Delete in every scope
+        // (session/lt-isolated-storage-guid/IsoStorageGuidKey.al). Other key types are not pinned (probe wanted).
+        let key = match args.first() {
+            Some(Value::Guid(g)) => Some(al_builtins::format::format_guid(g)),
+            other => other.and_then(al_builtins::native::text_of).map(String::from),
+        };
+        let Some(key) = key else {
+            return unsupported("an IsolatedStorage key that is neither text nor a Guid");
         };
         // Where the optional DataScope sits, and where the value goes, per overload.
         let scope_at = match (method, n) {

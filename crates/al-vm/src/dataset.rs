@@ -398,11 +398,6 @@ impl Dataset {
         self.rows += 1;
     }
 
-    /// Closes the row opened last.
-    pub(crate) fn end(&mut self) {
-        self.end_row(false);
-    }
-
     /// Closes the row opened last; with `only_if_detail` (the item's `PrintOnlyIfDetail`) a row whose nested items wrote no row is
     /// taken back (corpus report/lt-report-requestpage/RptFilters.al:PrintOnlyIfDetail_Dataset, `1,3,`).
     pub(crate) fn end_row(&mut self, only_if_detail: bool) {

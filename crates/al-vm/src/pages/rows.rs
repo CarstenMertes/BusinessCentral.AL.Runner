@@ -1119,6 +1119,9 @@ impl Session {
             _ => (PageMethod::Previous, PageMethod::Previous),
         };
         let mut at = self.page_move(st, first_step)?;
+        // A search that had no row to look at (FindPreviousField on the first row) raises nothing (misc/lt-probes-needed-3/
+        // PnC07TestPage.al:FindField_MissWithUnusedResult `previous`).
+        let searched = matches!(at, Value::Boolean(true));
         while matches!(at, Value::Boolean(true)) {
             let here = self.control_value(st, idx)?;
             if Self::variant_matches(&here, &wanted) {
@@ -1131,7 +1134,7 @@ impl Session {
         // A Find...Field whose result is not used raises when no row carries the value
         // (handlers/TestPagePlatformPageSourceTable_Tests.al:125-131, the whole message; controls/W2FindFieldAssign.al:
         // FindNextField_MissWithResultUnused and FindPreviousField_MissWithResultUnused, BC 27.5 and 29.0).
-        if !result_used {
+        if !result_used && searched {
             return Err(error_code("The row does not exist on the TestPage.", "TestRowNotFound"));
         }
         Ok(Value::Boolean(false))
@@ -1210,7 +1213,7 @@ impl Session {
             ("Cancel", true, true) => "LookupCancel".into(),
             ("Close", true, true) => "LookupCancel".into(),
             ("Close", true, false) => "OK".into(),
-            ("Close", false, _) => "Cancel".into(),
+            ("Close", false, _) => "OK".into(),
             (other, _, _) => other.into(),
         }
     }

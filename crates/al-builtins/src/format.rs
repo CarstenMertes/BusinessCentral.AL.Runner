@@ -49,6 +49,9 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
 pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, FormatFail> {
     let s = match v {
         Value::Null => String::new(),
+        // The standard formats 3 to 8 do not exist for a Boolean, which the platform names 'Char' (types/lt-boolean-format/
+        // Boolean_FormatNumbers: `Standard format number 3 does not exist for the type 'Char'.`).
+        Value::Boolean(_) if (3..=8).contains(&standard) => return Err(no_such_format(standard, "Char")),
         Value::Boolean(b) => match (standard, b) {
             (2, true) => "1".into(),
             (2, false) => "0".into(),
@@ -94,6 +97,8 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                 None => o.to_string(),
             },
         },
+        // Nor for an enum, named 'Option' (the enum test Enum_FormatNumbers `blue3`).
+        Value::Enum(..) if (3..=8).contains(&standard) => return Err(no_such_format(standard, "Option")),
         Value::Enum(id, o) => match standard {
             2 | 9 => o.to_string(),
             _ => ctx.enum_name(*id, *o),

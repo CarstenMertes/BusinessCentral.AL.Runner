@@ -49,6 +49,10 @@ pub enum Gate {
     /// A query aggregate (Sum, Average, Min, Max) over a BigInteger column is accepted from BC 29
     /// (query/W7QueryAggregates.al, corpus bump 9). Not consumed yet.
     QueryAggregateOverBigInteger,
+    /// A BigInteger can be assigned to an Enum variable from BC 29 (an Option variable accepts it in every version).
+    /// Before, it is refused with AL0122 (types/lt-bigint-enum-option/BigIntToEnumOption.al, corpus bump 20; must-not-compile
+    /// case 0451). Not consumed yet.
+    BigIntegerToEnumVariableFrom29,
     /// `Base64Convert.FromBase64` of text that is not Base64 raises from BC 28 (types/PVBase64.al, corpus bump 9).
     /// Not consumed yet.
     FromBase64InvalidTextRaises,
@@ -98,6 +102,7 @@ impl Gate {
         Gate::FeatureKeyListChangedFrom28,
         Gate::PermissionObjectNameLongerFrom29,
         Gate::QueryAggregateOverBigInteger,
+        Gate::BigIntegerToEnumVariableFrom29,
         Gate::FromBase64InvalidTextRaises,
         Gate::MediaExportKeepsTheImportedBytes,
         Gate::PlatformMetadataColumnsFrom29,
@@ -120,6 +125,7 @@ impl Gate {
             | Gate::ReportSaveAsXmlHeaderHasCompanyBlock
             | Gate::PermissionObjectNameLongerFrom29
             | Gate::QueryAggregateOverBigInteger
+            | Gate::BigIntegerToEnumVariableFrom29
             | Gate::MediaExportKeepsTheImportedBytes
             | Gate::PlatformMetadataColumnsFrom29
             | Gate::InterfaceListCodeunitFrom29
@@ -183,6 +189,10 @@ impl Gate {
             Gate::PermissionObjectNameLongerFrom29 => &[Evidence {
                 file: "permissions/W6PermissionColumns.al",
                 lines: "122",
+            }],
+            Gate::BigIntegerToEnumVariableFrom29 => &[Evidence {
+                file: "types/lt-bigint-enum-option/BigIntToEnumOption.al",
+                lines: "8,28,39,145",
             }],
             Gate::QueryAggregateOverBigInteger => &[Evidence {
                 file: "query/W7QueryAggregates.al",

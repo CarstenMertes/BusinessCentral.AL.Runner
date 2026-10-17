@@ -1085,10 +1085,10 @@ impl Session {
                 .iter()
                 .any(|f| item.link.iter().any(|&(own, _)| f.field == own))
             {
-                return unsupported(format!(
-                    "data item {} filters a field its DataItemLink joins (how they combine is not pinned)",
-                    item.name
-                ));
+                // The corpus pins filters a trigger sets on a link field (misc/lt-probes-needed-8/PnH3Link.al:
+                // Link_ChildSetsOwnFilters_InPreDataItem: both apply). One the view or the caller sets before the run is in
+                // the report's filter group, where the link replaces the filter on its field: an assumption.
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportItemFilterOnLinkFieldReplaced);
             }
         }
         // A filter an item gets in OnPreReport is discarded: OnPreDataItem sees the view the item

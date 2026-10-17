@@ -409,6 +409,12 @@ registry! {
         tests: "Get Inbound Source Documents (CalcFields = \"Put-away Qty.\", \"Put-away Qty. (Base)\" on Posted Whse. Receipt Line): about 32 Tests-SCM tests.",
         probe: "A report with a nested item that has CalcFields = A, B (two FlowFields), and a reportextension-added item with CalcFields: the values in OnAfterGetRecord; one name that is not a FlowField.",
     },
+    ReportItemFilterOnLinkFieldReplaced => {
+        id: "report-item-filter-on-link-field-replaced",
+        assumed: "A filter that is on a field of a report data item's DataItemLink before the run starts (the item's DataItemTableView, or a SetTableView of the caller) is in the report's filter group, where the link's range on that field takes its place for each parent row.",
+        tests: "Get Source Documents and Whse.-Source - Create Document (the Assembly Header item: DataItemTableView where(\"Document Type\" = const(Order)) and a link on \"Document Type\"), and the Value Entry, Item Journal Line and Item Ledger Entry items of the cost reports; about 37 Tests-SCM tests.",
+        probe: "A nested item with DataItemTableView = where(G = filter(1|2)) and DataItemLink = G = field(G) over parents with G 1 to 3: which children each parent shows; the same with the filter set by SetTableView.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

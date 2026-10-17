@@ -58,6 +58,9 @@ pub fn red(t: &str) -> String {
 pub fn yellow(t: &str) -> String {
     paint("33", t)
 }
+pub fn dim(t: &str) -> String {
+    paint("2", t)
+}
 pub fn cyan(t: &str) -> String {
     paint("36", t)
 }

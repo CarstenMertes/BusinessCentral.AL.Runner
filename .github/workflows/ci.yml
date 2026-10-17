@@ -57,6 +57,16 @@ jobs:
       # Without the cli-e2e feature: `corpus_harness` and `dev_tooling` run in the release-tests job.
       - run: cargo test --workspace --no-default-features
 
+  # Fails when a dependency has a license that is not on the allow-list in deny.toml.
+  licenses:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2.0.20
+        with:
+          command: check
+          command-arguments: licenses
+
   # The release builds macOS and Windows binaries. A compile error that only those targets show
   # (a Unix-only call, a missing OS function) must fail the push, not the release. Check only: no
   # link, no tests. Test code of the workspace is not checked on Windows.

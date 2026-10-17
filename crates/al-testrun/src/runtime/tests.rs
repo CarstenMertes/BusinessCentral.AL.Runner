@@ -1677,11 +1677,10 @@ const FLAGGED: &str = "codeunit 60150 T
     [Test]
     procedure RunsAnAssumption()
     var
-        G: Guid;
+        C: HttpCookie;
         T: Text[50];
     begin
-        T := Format(G);
-        T := G;
+        T := C.Name('n');
     end;
 
     [Test]
@@ -1705,7 +1704,7 @@ const FLAGGED: &str = "codeunit 60150 T
 fn a_test_that_runs_an_assumed_path_is_marked_and_the_marks_do_not_leak_to_the_next_test() {
     let hits = assumptions_of(FLAGGED);
     let of = |n: &str| hits.iter().find(|(t, _)| t == n).map(|(_, h)| h.clone());
-    assert_eq!(of("RunsAnAssumption"), Some(vec!["guid-to-text"]), "{hits:?}");
+    assert_eq!(of("RunsAnAssumption"), Some(vec!["cookie-setter-result"]), "{hits:?}");
     assert_eq!(of("RunsNone"), None, "{hits:?}");
     assert_eq!(of("RunsNoneAfterTheOneThatDid"), None, "{hits:?}");
 }
@@ -1801,10 +1800,10 @@ const HIT_IN_ONRUN: &str = "codeunit 60152 T
 
     trigger OnRun()
     var
-        G: Guid;
+        C: HttpCookie;
         T: Text[50];
     begin
-        T := G;
+        T := C.Name('n');
     end;
 
     [Test]
@@ -1818,10 +1817,10 @@ const HIT_IN_ONRUN: &str = "codeunit 60152 T
     [Test]
     procedure SecondTestRunsAnAssumption()
     var
-        G: Guid;
+        C: HttpCookie;
         T: Text[50];
     begin
-        T := G;
+        T := C.Name('n');
     end;
 }";
 
@@ -1840,7 +1839,7 @@ fn the_marks_of_a_test_do_not_depend_on_what_ran_before_it_or_on_the_run() {
     );
     assert_eq!(
         of(&first, "SecondTestRunsAnAssumption"),
-        Some(vec!["guid-to-text"]),
+        Some(vec!["cookie-setter-result"]),
         "{first:?}"
     );
     for _ in 0..5 {

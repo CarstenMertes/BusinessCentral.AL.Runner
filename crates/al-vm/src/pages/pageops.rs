@@ -604,7 +604,7 @@ impl Session {
                     None => Err(error_code("Index out of bounds.", "IndexOutOfBounds")),
                 }
             }
-            // A part the page's own code created without opening it (a literal `Visible = false`, `InvisiblePartForPageCode`) has no
+            // A part the page's own code created without opening it (a literal `Visible = false`) has no
             // client to refresh: `CurrPage.Update` in its procedure does nothing. Base Application's Approval FactBox ends
             // `UpdateApprovalEntriesFromSourceRecord` with it (assumption hidden-part-update-is-noop).
             PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => {

@@ -187,14 +187,11 @@ impl Session {
                 .find(|(i, _)| *i == control)
                 .map(|(_, c)| c.clone())
                 .filter(|_| runtime || !self.control_eliminated(st, control));
-            if hidden.is_some() && runtime {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::InvisiblePartForPageCode);
-            }
             hidden
         });
         // A part the control tree dropped (Visible = false, or an ApplicationArea the session does not enable) is
         // still there for the page's own code: Base Application's Sales Credit Memo calls
-        // `CurrPage.IncomingDocAttachFactBox.Page.LoadDataFromRecord(Rec)` in OnAfterGetCurrRecord. It is created on the first such reach, not opened, and kept out of the tree. Unprobed (InvisiblePartForPageCode).
+        // `CurrPage.IncomingDocAttachFactBox.Page.LoadDataFromRecord(Rec)` in OnAfterGetCurrRecord. It is created on the first such reach, not opened, and kept out of the tree (corpus pages/lt-hidden-part-currpage/HiddenPartCurrPageEditable.al: Editable_LiteralInvisible_OpenEdit, Editable_ExprInvisible_OpenEdit).
         let found = match found {
             None if runtime => {
                 let engine = self.engine();
@@ -209,9 +206,6 @@ impl Session {
                         // It is not opened: its OnOpenPage and OnAfterGetRecord do not run, only the call that reached it
                         // (pages/lt-page-filtergroup-assumptions/P99InvisiblePart.al:P99_StaticInvisible, the log is
                         // `host-OnAfterGetCurrRecord | part-Ping | host-after-Ping`).
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::InvisiblePartForPageCode,
-                        );
                         Some(child)
                     }
                     None => None,

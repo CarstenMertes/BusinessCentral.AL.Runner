@@ -292,6 +292,14 @@ impl Session {
             // The insert sees the row the line was started below as xRec (misc/W2BelowXRec.al:NewInTheMiddle_*).
             self.set_xrec_fields(st, anchor);
         }
+        // A line of a part is inserted while its host holds an edit of its own: the host saves first, so the table code of the line
+        // sees the typed values, and the host reads its row again afterwards, because that code may have changed it (pages/
+        // lt-changed-by-other/ChangedByOtherPlain.al:P182b_Plain_SaveRecordAction: `stored-after-line` is `descr=typed info=by line
+        // insert counter=1`, the card shows `by line insert` and `1`).
+        let host = st.borrow().host.as_ref().and_then(|(h, _)| h.upgrade());
+        if let Some(host) = &host {
+            self.save_row(host)?;
+        }
         let go = self.page_trigger_answer(st, "oninsertrecord", vec![Value::Boolean(true)])?;
         if go == Some(false) {
             // A trigger that inserted the row itself and answered false leaves the page on a stored row: its next edit is
@@ -327,6 +335,15 @@ impl Session {
             s.cursor = Cursor::Row;
         }
         self.set_xrec(st);
+        if let Some(host) = &host {
+            if host.borrow().cursor == Cursor::Row && !host.borrow().draft {
+                let hrec = self.page_rec(host);
+                if let Some(fields) = self.stored_row(&hrec)? {
+                    hrec.borrow_mut().fields = fields;
+                    self.set_xrec(host);
+                }
+            }
+        }
         // The parts of a new host row link to it once it is stored, with the number its OnInsert
         // gave it (corpus handlers/TestPageOpenNewPartLink.al).
         if !st.borrow().parts.is_empty() {

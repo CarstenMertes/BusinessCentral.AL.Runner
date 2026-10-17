@@ -223,18 +223,6 @@ registry! {
         tests: "ERM Sales Subform (InvoiceAddingLinesUpdatesTotals) and about 120 more Tests-ERM tests whose sales and purchase subforms refresh.",
         probe: "The same list with 1, 2, 5 and 25 rows and the cursor on the first, last and a middle row; a list with OnFindRecord only; a list part of a card.",
     },
-    CaptionReadBeforeThePageRuns => {
-        id: "caption-read-before-the-page-runs",
-        assumed: "CurrPage.Caption read in a procedure the caller invokes on a Page variable before Run or RunModal answers the page's Caption property, and raises nothing.",
-        tests: "Alloc. Account Sales E2E Tests (TestOverrideGLAllocation) and 20 more Tests-ERM tests that open Edit Dimension Set Entries through Dimension Management.",
-        probe: "A page with Caption = 'X' and a procedure returning CurrPage.Caption, called on a Page variable before RunModal and after it closed; also with a Caption assigned in OnOpenPage.",
-    },
-    CaptionAssignedBeforeThePageRuns => {
-        id: "caption-assigned-before-the-page-runs",
-        assumed: "`PageVariable.Caption := x` before the variable's first Run or RunModal raises nothing, and the page shows x when it opens (its own OnOpenPage may assign another).",
-        tests: "SCM Transfers (UndoTransShpt_SNTracking and about 20 more Tests-SCM tests): Item Tracking Data Collection.SelectMultipleTrackingNo sets the caption of Item Tracking Summary before it runs.",
-        probe: "A page variable with Caption := 'X' before RunModal; read TestPage.Caption in the handler; the same with OnOpenPage assigning CurrPage.Caption.",
-    },
     SetValueWholeNumberIntoTextControl => {
         id: "setvalue-whole-number-into-text-control",
         assumed: "TestPage SetValue of an Integer, BigInteger or whole Decimal (below 1000 in size) on a Text or Code control enters the number's digits.",

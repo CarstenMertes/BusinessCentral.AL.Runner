@@ -331,22 +331,16 @@ impl Session {
             PageMethod::Caption if method.recv() == PageRecv::Page => {
                 // The caption read on a Page variable before the page runs is the page's own (Edit Dimension Set Entries.SetFormCaption
                 // reads `CurrPage.Caption` before Dimension Management runs the page); an assignment still needs an open page
-                // (assumption caption-read-before-the-page-runs).
+                //.
                 // Also after a run: P187_SecondRun_Reassigned (CaptionAssignedBeforeRun.al) assigns between two runs.
                 if !args.is_empty() && !st.borrow().open {
                     if let Some(t) = args.first().and_then(al_builtins::native::text_of) {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::CaptionAssignedBeforeThePageRuns,
-                        );
                         st.borrow_mut().caption = Some(t.to_string());
                         st.borrow_mut().caption_assigned_closed = true;
                         return Ok(Value::Null);
                     }
                 }
                 if args.is_empty() && !st.borrow().open {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::CaptionReadBeforeThePageRuns,
-                    );
                     return Ok(Value::Text(self.page_caption(st).into()));
                 }
                 self.require_open(st)?;

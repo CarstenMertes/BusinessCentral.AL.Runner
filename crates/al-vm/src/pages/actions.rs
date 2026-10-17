@@ -397,9 +397,10 @@ impl Session {
             st.borrow_mut().save_record_called = false;
             let r = self.control_routine(st, idx, r);
             // An error an action raises comes out of the test page's Invoke with the test framework's prefix on its code
-            // (pages/lt-page-runtime/P82CurrPage.al:ActionError_Surfaces: `P82 action error B`, `TestWrapped:Dialog`).
+            // (pages/lt-page-runtime/P82CurrPage.al:431 ActionError_Surfaces: `P82 action error B`, `TestWrapped:Dialog`). Only the codes Dialog (Error()) and MissingUIHandler (errors/lt-ms-refusals-133/P133MessageInHandlers.al:241) are pinned; other codes keep the
+            // code they had before (docs/probes-needed.md).
             let r = match r {
-                Err(Signal::Error(mut e)) if !e.code.starts_with("TestWrapped") => {
+                Err(Signal::Error(mut e)) if matches!(e.code.as_str(), "Dialog" | "MissingUIHandler") => {
                     e.code = format!("TestWrapped:{}", e.code);
                     Err(Signal::Error(e))
                 }

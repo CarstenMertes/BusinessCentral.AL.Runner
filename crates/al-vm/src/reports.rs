@@ -124,10 +124,9 @@ impl Session {
                     self.report.curr_report_language = Some(*n);
                     Ok(Value::Null)
                 }
-                // A language past the 16-bit range raises the platform's culture error
-                // (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_Invalid, `99999`); the limit itself is a guess for
-                // other numbers (docs/probes-needed.md).
-                Some(Value::Integer(n)) if *n > 0xFFFF => Err(crate::transactions::al_error_code(
+                // Only 99999 is pinned as an unsupported language (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_Invalid);
+                // the rest of the range above 65535 is refused (docs/probes-needed.md).
+                Some(Value::Integer(n @ 99999)) => Err(crate::transactions::al_error_code(
                     &format!(
                         "An unsupported language was selected ('{n}' - 'Requested culture is not supported by the current platform')."
                     ),
@@ -135,10 +134,10 @@ impl Session {
                 )),
                 // A negative language raises nothing and changes nothing (PnC06ReportLanguage.al:Language_Invalid, `-1`: no
                 // error, `post:1033`). That is measured for a report that had not set a language; after one it is not pinned.
-                Some(Value::Integer(n)) if self.report.curr_report_language.is_none() => {
-                    let _ = n;
-                    Ok(Value::Null)
-                }
+                Some(Value::Integer(n)) if *n > 0xFFFF => unsupported(format!(
+                    "CurrReport.Language set to {n}: only 99999 is pinned as an unsupported language (docs/probes-needed.md)"
+                )),
+                Some(Value::Integer(-1)) if self.report.curr_report_language.is_none() => Ok(Value::Null),
                 Some(Value::Integer(n)) => unsupported(format!(
                     "CurrReport.Language set to {n} after a language was set: whether a negative language keeps it is not pinned (docs/probes-needed.md)"
                 )),

@@ -343,6 +343,12 @@ registry! {
         tests: "Tests-ERM tests that call TestField on a Blob after CalcFields (XSD Parser `XMLSchema.TestField(XSD)`, about 25 tests).",
         probe: "Save a Blob with content, Get the record, CalcFields, then TestField(Blob); and TestField(Blob) after Get without CalcFields.",
     },
+    ReportViewOverStoredRequestFilters => {
+        id: "report-view-over-stored-request-filters",
+        assumed: "A data item the caller gave a view (SetTableView, or the record of Report.Run or RunModal) keeps that view when the report has SaveValues and an earlier run stored other filters for the data item. (That an OK stores the view's filters is pinned by report/lt-requestpage-savevalues-date-text-setvalue/P147SaveValuesFilter.al:P147_Filter_SetTableViewVsStored.)",
+        tests: "Tests-ERM tests that run `Suggest Fin. Charge Memo Lines` for a second memo in one codeunit (IssueFinanceChargeMemoWith* and others).",
+        probe: "A report with SaveValues: run it once with the filter A* stored by OK, then with SetTableView(C*) and see the data item's filter on the request page and in the run; the same with the record of Report.RunModal.",
+    },
     HttpRelativeRequestPath => {
         id: "http-relative-request-path",
         assumed: "HttpClient.Get/Post/Put/Delete/Patch with a path that is not an absolute uri joins it to the client's base address like new Uri(base, path), as a [HttpClientHandler] sees it: a rooted path replaces the base path, any other joins the base path's directory. (That a plain word and a rooted path with no base address, and the forms of P168 with a base address, are blocked without a handler is pinned by network/lt-http-relative-request/HttpRelativeRequestPath.al.)",

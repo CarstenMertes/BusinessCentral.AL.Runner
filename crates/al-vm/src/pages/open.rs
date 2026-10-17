@@ -431,6 +431,22 @@ impl Session {
                 .iter()
                 .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)));
         for (slot, v) in saved {
+            // A data item the caller gave a view (`SetTableView`, or the record of `Report.Run`/`RunModal`) keeps that view over the
+            // filters stored from an earlier run. Which of the two a request page shows is not pinned: the corpus pins that an OK
+            // stores the view's filters (report/lt-requestpage-savevalues-date-text-setvalue/P147SaveValuesFilter.al:
+            // P147_Filter_SetTableViewVsStored `plain after OK on the SetTableView run`), not what a later view does against them.
+            // Microsoft's "Suggest Fin. Charge Memo Lines" (SaveValues) is run once per memo with that memo as the record.
+            if self.is_request_page(st) && matches!(&v, Value::Record(_)) {
+                if let Value::Record(cur) = &inst.borrow().globals[slot] {
+                    let key = Rc::as_ptr(cur) as usize;
+                    if !cur.borrow().filters.is_empty() && self.report.set_view_filters.iter().any(|(k, _)| *k == key) {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::ReportViewOverStoredRequestFilters,
+                        );
+                        continue;
+                    }
+                }
+            }
             if caller_set && !matches!(v, Value::Record(_)) {
                 // The caller's value stays over the stored one (report/lt-requestpage-savevalues-date-text-setvalue/P147SaveValuesText.al:
                 // P147_Text_StoredVsCaller_Ok, P147_Boolean_CallerFalseOverStoredTrue, P147_Option_CallerSelectedOverStoredAll).

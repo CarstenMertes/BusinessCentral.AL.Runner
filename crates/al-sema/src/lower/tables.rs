@@ -37,6 +37,7 @@ impl Lowerer<'_> {
         let mut arms = Vec::new();
         for a in parsed {
             let mut conditions = Vec::new();
+            let mut blank_option = false;
             for (k, (name, value)) in a.conditions.iter().enumerate() {
                 let Some(pos) = field_pos(own, name) else {
                     return Vec::new();
@@ -52,6 +53,9 @@ impl Lowerer<'_> {
                     });
                     continue;
                 }
+                // `const(" ")` on an Option names its blank member (assumption relation-option-blank-const).
+                blank_option |=
+                    matches!(own.fields[pos].ty, Ty::Option(_)) && value.trim().trim_matches('"').trim().is_empty();
                 let Some(value) = self.condition_const(file, value, &own.fields[pos].ty) else {
                     return Vec::new();
                 };
@@ -142,10 +146,15 @@ impl Lowerer<'_> {
                 table_name: a.path.join("."),
                 field,
                 wheres,
-                assumes: if quoted {
-                    vec![al_builtins::assumptions::Assumption::TableRelationQuotes]
-                } else {
-                    Vec::new()
+                assumes: {
+                    let mut v = Vec::new();
+                    if quoted {
+                        v.push(al_builtins::assumptions::Assumption::TableRelationQuotes);
+                    }
+                    if blank_option {
+                        v.push(al_builtins::assumptions::Assumption::RelationOptionBlankConst);
+                    }
+                    v
                 },
             });
         }
@@ -479,10 +488,7 @@ impl Lowerer<'_> {
         let f = parse(text)?;
         // Names resolve where the field was written: its table or table extension.
         let file = self.ws.objects[declared_in].file;
-        let Resolution::Found(src) = self
-            .ws
-            .resolve_ref(file, ObjKind::Table, std::slice::from_ref(&f.table))
-        else {
+        let Resolution::Found(src) = self.ws.resolve_ref(file, ObjKind::Table, &f.table_path) else {
             return Err(format!(
                 "CalcFormula source: {}",
                 self.ws.outside_workspace(ObjKind::Table, &f.table)

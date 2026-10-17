@@ -7,7 +7,7 @@
 //!
 //! ```text
 //! formula := ['-'] method '(' source ['where' '(' cond {',' cond} ')'] ')'
-//! source  := table ['.' field]
+//! source  := table ['.' field]   (table may be namespace-qualified: `Ns.Table`)
 //! cond    := field '=' ( const(..) | filter(..) | field(ref) )
 //! ref     := name | upperlimit(name) | filter(name)
 //! ```
@@ -19,7 +19,10 @@ pub struct Formula {
     /// A leading `-` (corpus: record/TestCalcFormulaSignFiltersHeader.Table.al:24).
     pub negate: bool,
     pub method: CalcMethod,
+    /// The table's own name (the last segment of `table_path`).
     pub table: String,
+    /// The source table as written, namespace segments first (`Ns.Sub.Table`).
+    pub table_path: Vec<String>,
     pub field: Option<String>,
     pub conds: Vec<Cond>,
 }
@@ -177,16 +180,21 @@ impl Cursor {
             other => return Err(format!("unknown method `{other}`")),
         };
         self.expect('(')?;
-        let (table, _) = self.name()?;
-        let field = if self.i < self.c.len() && self.c[self.i] == '.' {
+        let mut path = vec![self.name()?.0];
+        while self.i < self.c.len() && self.c[self.i] == '.' {
             self.i += 1;
-            Some(self.name()?.0)
-        } else {
+            path.push(self.name()?.0);
+        }
+        // `Table.Field` for the methods that read a field; every segment is the table's
+        // (possibly namespace-qualified) name for count and exist, which take no field.
+        let field = if matches!(method, CalcMethod::Count | CalcMethod::Exist) || path.len() < 2 {
             None
+        } else {
+            path.pop()
         };
+        let table = path.last().cloned().unwrap_or_default();
         match (method, &field) {
-            (CalcMethod::Count | CalcMethod::Exist, Some(_)) => return Err("count and exist take no field".into()),
-            (CalcMethod::Count | CalcMethod::Exist, None) => {}
+            (CalcMethod::Count | CalcMethod::Exist, _) => {}
             (_, None) => return Err("this method needs a source field".into()),
             _ => {}
         }
@@ -212,6 +220,7 @@ impl Cursor {
             negate,
             method,
             table,
+            table_path: path,
             field,
             conds,
         })
@@ -275,6 +284,7 @@ mod tests {
                 negate: false,
                 method: CalcMethod::Count,
                 table: "ALT Child".into(),
+                table_path: vec!["ALT Child".into()],
                 field: None,
                 conds: vec![c("Parent Entry No.", CondValue::Field("Entry No.".into()))],
             }
@@ -287,6 +297,19 @@ mod tests {
         assert_eq!(f.method, CalcMethod::Sum);
         assert_eq!((f.table.as_str(), f.field.as_deref()), ("Line", Some("Amount")));
         assert_eq!(f.conds, vec![c("Doc", CondValue::Field("No".into()))]);
+    }
+
+    #[test]
+    fn namespace_qualified_source_table() {
+        // Microsoft test: Tests-ERM codeunit 134331 ERM Purchase Payables,
+        // PurchaseInvoiceAmountExclVATWithInheritFromParentAllocationAccount (a FlowField of Base
+        // Application reads `exist(Microsoft.Finance.AllocationAccount."Alloc. Acc. Manual Override" where(...))`).
+        let f = parse("exist(Ns.Sub.\"Some Table\" where(A = field(B)))").unwrap();
+        assert_eq!(f.table_path, ["Ns", "Sub", "Some Table"]);
+        assert_eq!((f.table.as_str(), f.field), ("Some Table", None));
+        let f = parse("sum(Ns.Line.Amount)").unwrap();
+        assert_eq!(f.table_path, ["Ns", "Line"]);
+        assert_eq!(f.field.as_deref(), Some("Amount"));
     }
 
     #[test]
@@ -454,10 +477,8 @@ mod tests {
 
     #[test]
     fn count_and_exist_take_no_field_and_the_others_need_one() {
-        for bad in ["count(T.F)", "exist(T.F where(A = field(B)))"] {
-            let e = parse(bad).unwrap_err();
-            assert!(e.contains("take no field"), "{bad}: {e}");
-        }
+        // `count(T.F)` reads as table `F` of namespace `T`; a name that resolves to no table is refused there.
+        assert_eq!(parse("count(T.F)").unwrap().field, None);
         for bad in [
             "sum(T)",
             "lookup(T where(A = field(B)))",

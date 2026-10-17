@@ -82,12 +82,33 @@ pub(crate) fn is_blank(v: &Value) -> Result<bool, Signal> {
         Value::Guid(g) => *g == [0; 16],
         Value::Option(o, _) => *o == 0,
         Value::Enum(_, o) => *o == 0,
-        // A RecordId field is blank when it was never assigned or cleared; the RecordId of a record with a blank key is not
-        // (errors/lt-ms-refusals-128/P128TestFieldRecordId.al:P128_TestField_RecordIdField_Blank, `blank target record id`).
-        Value::Library(al_builtins::library_kind::LibraryKind::RecordId, l) => {
-            matches!(&*l.borrow(), al_builtins::value::LibraryValue::Empty)
+        // A RecordId field is blank while nothing was assigned; the id of an initialized record that holds no key
+        // is a value (errors/lt-ms-refusals-135/P135RecordIdTestField.al:P135_TestField_BlankRecordId,
+        // P135_TestField_AssignedRecordId; errors/lt-ms-refusals-128/P128TestFieldRecordId.al:P128_TestField_RecordIdField_Blank).
+        Value::Library(al_builtins::library_kind::LibraryKind::RecordId, cell) => {
+            matches!(*cell.borrow(), al_builtins::value::LibraryValue::Empty)
         }
         Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_) | Value::Char(_) => false,
+        // A Blob with no content is blank, after CalcFields or not; one written through a stream and not saved is a value
+        // (misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob noDataNoCalc, noDataCalc, dataNoCalcPassed). A Blob that
+        // holds content the database gave is not pinned: it counts as a value under a registered assumption. A Blob the record
+        // has not fetched (no CalcFields) may hold content in the row: refused.
+        Value::Blob(b) => {
+            let buf = b.borrow();
+            if buf.render_pending.is_some() {
+                return unsupported("TestField of a Blob that holds the output of a report run for its effects only");
+            }
+            if !buf.loaded && !buf.written {
+                return unsupported(
+                    "TestField of a Blob the record has not fetched (CalcFields first; what BC reads from the row is not pinned)",
+                );
+            }
+            let blank = buf.bytes.is_empty();
+            if !blank && !buf.written {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestFieldBlobWithStoredContent);
+            }
+            blank
+        }
         other => {
             return unsupported(format!(
                 "TestField of a {} field: when it counts as blank, and the error text, are not pinned (docs/probes-needed.md)",

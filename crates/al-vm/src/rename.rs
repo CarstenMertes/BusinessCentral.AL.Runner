@@ -39,7 +39,14 @@ impl Session {
                 if !f.relation {
                     continue;
                 }
-                if f.relation_arms.is_empty() {
+                // The arms with `Field = filter(x)` conditions are kept apart (`relation_runtime`); a rename follows them as
+                // validation does (assumption rename-follows-filter-condition-arms).
+                let arms = if f.relation_arms.is_empty() {
+                    &f.relation_runtime
+                } else {
+                    &f.relation_arms
+                };
+                if arms.is_empty() {
                     let mentions = f.properties.iter().any(|(k, v)| {
                         k.eq_ignore_ascii_case("TableRelation") && crate::recmeta::mentions_table(v, &name)
                     });
@@ -51,9 +58,14 @@ impl Session {
                     }
                     continue;
                 }
-                for arm in &f.relation_arms {
+                for arm in arms {
                     match arm.table {
                         Some(a) if a == t.object as usize => {
+                            if arm.conditions.iter().any(|c| c.filter) {
+                                al_builtins::assumptions::assume(
+                                    al_builtins::assumptions::Assumption::RenameFollowsFilterConditionArms,
+                                );
+                            }
                             if arm.wheres.is_none() {
                                 return unsupported(format!(
                                     "Rename of {}: the where() of {}.{}'s relation is not understood yet",
@@ -167,10 +179,16 @@ impl Session {
             for row in rows {
                 // An `if` arm applies to rows whose conditions hold; a condition on a FlowFilter
                 // field is not evaluated.
-                let holds = r.arm.conditions.iter().all(|c| {
-                    ir::FieldFacts::of(&schema.fields[c.field]).class == ir::FieldClass::FlowFilter
-                        || ops::compare(&row[c.field], &crate::constant(&c.value)).ok() == Some(Ordering::Equal)
-                });
+                let mut holds = true;
+                for c in &r.arm.conditions {
+                    if ir::FieldFacts::of(&schema.fields[c.field]).class == ir::FieldClass::FlowFilter {
+                        continue;
+                    }
+                    if !self.relation_cond_holds(&child, &schema.fields[r.pos].name, c, &row[c.field])? {
+                        holds = false;
+                        break;
+                    }
+                }
                 if !holds {
                     continue;
                 }

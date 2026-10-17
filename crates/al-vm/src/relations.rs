@@ -67,36 +67,7 @@ impl Session {
                 if self.is_flow_filter(t.object, c.field) {
                     continue;
                 }
-                let ok = if c.filter {
-                    // `Field = filter(x)`: the arm applies when the field's value passes the filter, which reads
-                    // like a SetFilter text (`filter('')` the blank value, `filter(<> '')` any other; corpus types/
-                    // lt-filter-enum-relation-duration-guid/C_TableRelation.al: Zone_Blank_Arm_Loc and the `A|B`, `C` arms).
-                    let al_ir::Const::Text(text) = &c.value else {
-                        return unsupported("a filter condition of a TableRelation without its text");
-                    };
-                    // The AL string of `filter('A|B')` is the filter text `A|B`; the blank `filter('')` stays the blank value
-                    // (query/lt-query-links-relations-httpstream/RelArms.al:P100_ZoneFilterArms).
-                    let unquoted;
-                    let text = match text.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
-                        Some(inner) if !inner.is_empty() && !inner.replace("''", "").contains('\'') => {
-                            unquoted = inner.replace("''", "'");
-                            &unquoted
-                        }
-                        _ => text,
-                    };
-                    let engine = self.engine.clone();
-                    let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
-                    let expr = al_builtins::filter::parse_filter_with(text, &[], &t.fields[c.field].ty, &enums)
-                        .map_err(|e| {
-                            Signal::Unsupported(format!(
-                                "the filter condition `{text}` of the TableRelation of {}.{}: {e}",
-                                t.name, field.name
-                            ))
-                        })?;
-                    expr.matches(&r.fields[c.field])
-                } else {
-                    ops::compare(&r.fields[c.field], &crate::constant(&c.value)).ok() == Some(Ordering::Equal)
-                };
+                let ok = self.relation_cond_holds(t, &field.name, c, &r.fields[c.field])?;
                 if !ok {
                     holds = false;
                     break;
@@ -110,6 +81,45 @@ impl Session {
             }
         }
         Ok(None)
+    }
+
+    /// Whether the condition `c` of a TableRelation arm holds for `value`, the value of its field in a row of `t`
+    /// (`field_name` is the field that has the relation, for the messages).
+    pub(crate) fn relation_cond_holds(
+        &self,
+        t: &TableDef,
+        field_name: &str,
+        c: &ir::RelationCond,
+        value: &Value,
+    ) -> Result<bool, Signal> {
+        if !c.filter {
+            return Ok(ops::compare(value, &crate::constant(&c.value)).ok() == Some(Ordering::Equal));
+        }
+        // `Field = filter(x)`: the arm applies when the field's value passes the filter, which reads
+        // like a SetFilter text (`filter('')` the blank value, `filter(<> '')` any other; corpus types/
+        // lt-filter-enum-relation-duration-guid/C_TableRelation.al: Zone_Blank_Arm_Loc and the `A|B`, `C` arms).
+        let al_ir::Const::Text(text) = &c.value else {
+            return unsupported("a filter condition of a TableRelation without its text");
+        };
+        // The AL string of `filter('A|B')` is the filter text `A|B`; the blank `filter('')` stays the blank value
+        // (query/lt-query-links-relations-httpstream/RelArms.al:P100_ZoneFilterArms).
+        let unquoted;
+        let text = match text.strip_prefix('\'').and_then(|r| r.strip_suffix('\'')) {
+            Some(inner) if !inner.is_empty() && !inner.replace("''", "").contains('\'') => {
+                unquoted = inner.replace("''", "'");
+                &unquoted
+            }
+            _ => text,
+        };
+        let engine = self.engine.clone();
+        let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
+        let expr = al_builtins::filter::parse_filter_with(text, &[], &t.fields[c.field].ty, &enums).map_err(|e| {
+            Signal::Unsupported(format!(
+                "the filter condition `{text}` of the TableRelation of {}.{field_name}: {e}",
+                t.name
+            ))
+        })?;
+        Ok(expr.matches(value))
     }
 
     /// `FieldRef.Relation`: the id of the related table, 0 without a relation.

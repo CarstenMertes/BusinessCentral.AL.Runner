@@ -345,7 +345,13 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                         })
                     })
                     .collect::<Result<Vec<_>, _>>()?;
-                format!("{name}: {}", key.join(","))
+                // A RecordId read from a table name alone has no key and formats as the name (errors/lt-ms-refusals-128/
+                // P128EvalRecordId.al:P128_Evaluate_IntoRecordId_OtherTexts `table name only`).
+                if key.is_empty() {
+                    name.clone()
+                } else {
+                    format!("{name}: {}", key.join(","))
+                }
             }
             _ => String::new(),
         },

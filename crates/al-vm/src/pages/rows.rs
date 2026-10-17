@@ -1426,7 +1426,20 @@ impl Session {
         if self.has_source(st) {
             if let Some(r) = &record {
                 let rec = self.page_rec(st);
-                rec.borrow_mut().fields = r.borrow().fields.clone();
+                // The record of a SetTableView alone is a view: it carries no position, so it does not replace the Rec the
+                // page's own code set (Contact Profile Answers.SetRunFromForm does `Rec := ProfileQuestionnaireLine` after the test's
+                // SetTableView; its handler then reads Rec."Line No."). Not pinned: Microsoft's Tests-Marketing Marketing Profiling.
+                // Assumption typed-handler-keeps-rec-after-settableview.
+                let table = r.borrow().table as usize;
+                let blank = self.initial_fields(table);
+                let view_only = st.borrow().set_view && Value::all_identical(&r.borrow().fields, &blank);
+                if view_only {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TypedHandlerKeepsRecAfterSetTableView,
+                    );
+                } else {
+                    rec.borrow_mut().fields = r.borrow().fields.clone();
+                }
             }
         }
         {
@@ -1459,7 +1472,27 @@ impl Session {
         }
         let (_, finals) = handled?;
         match finals.get(1) {
-            Some(v @ Value::Option(..)) => Ok(v.clone()),
+            Some(v @ Value::Option(..)) => {
+                // LookupOK hands the page's record back to the record RunModal was given, as the TestPage handlers do (hand_back_selection).
+                // Not pinned for a Page-typed handler (Saved Segment Criteria List: the handler calls SetRecord, then ReuseCriteria reads
+                // the record it passed). Assumption typed-handler-lookupok-hands-back-rec.
+                let lookup_ok = matches!(v, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK"));
+                if let (true, Some(r), true) = (lookup_ok, &record, self.has_source(st)) {
+                    let page_rec = self.page_rec(st);
+                    if page_rec.borrow().table == r.borrow().table
+                        && page_rec.borrow().fields.len() == r.borrow().fields.len()
+                    {
+                        let fields = page_rec.borrow().fields.clone();
+                        if !Value::all_identical(&fields, &r.borrow().fields) {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::TypedHandlerLookupOkHandsBackRec,
+                            );
+                            r.borrow_mut().fields = fields;
+                        }
+                    }
+                }
+                Ok(v.clone())
+            }
             other => unsupported(format!(
                 "a Page-typed ModalPageHandler left {} in Response",
                 other.describe()

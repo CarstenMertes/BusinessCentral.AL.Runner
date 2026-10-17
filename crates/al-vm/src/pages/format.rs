@@ -361,6 +361,16 @@ impl Session {
                             "AssertEquals of an Enum on a text control (how BC writes it is not pinned)",
                         );
                     }
+                    // An Integer on a Text or Code control is spelled as plain digits (Tests-Marketing Tasks Matrix
+                    // TasksMatrixHandlerWithValue: `Field1.AssertEquals(1)` on a Text[1024] cell). Not pinned by the corpus; other numbers
+                    // keep ops::convert's TypeConversion refusal path. Assumption testpage-assertequals-integer-on-text-control.
+                    Some(RtType::Text(_) | RtType::Code(_)) if matches!(other, Value::Integer(_)) => {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::TestPageAssertEqualsIntegerOnTextControl,
+                        );
+                        let Value::Integer(n) = other else { unreachable!() };
+                        Value::Text(n.to_string().into())
+                    }
                     Some(rt) => ops::convert(other.clone(), &rt)?,
                     None => other.clone(),
                 };

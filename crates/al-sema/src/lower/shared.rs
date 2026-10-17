@@ -747,8 +747,13 @@ pub(crate) fn init_const(text: &str, ty: &Ty) -> Option<ir::Const> {
                 .replace("''", "'"),
         ),
         Ty::Option(m) => {
-            let name = t.trim_matches('"');
-            ir::Const::Option(m.iter().position(|x| x.eq_ignore_ascii_case(name))? as i32, m.clone())
+            // Both sides trimmed, as for an enum: the blank member `" "` is written `const(" ")` in a TableRelation
+            // (Finance Charge Memo Line."No."; unprobed for an Option, the enum form is pinned by Standard Service Line."No.").
+            let name = t.trim_matches('"').trim();
+            ir::Const::Option(
+                m.iter().position(|x| x.trim().eq_ignore_ascii_case(name))? as i32,
+                m.clone(),
+            )
         }
         // The text of a Guid reads as `Evaluate` reads it (`parse_guid`); a `const('..')` of a CalcFormula on a Guid field.
         Ty::Guid => ir::Const::Guid(al_builtins::ops::parse_guid(

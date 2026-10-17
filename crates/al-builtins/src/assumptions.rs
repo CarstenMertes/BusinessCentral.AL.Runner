@@ -67,6 +67,30 @@ pub struct Info {
 }
 
 registry! {
+    UpperLimitOfASingleValue => {
+        id: "upperlimit-of-a-single-value",
+        assumed: "field(upperlimit(F)) of a flow filter that holds one value (SetFilter(F, Format(d))) applies the range ..d, so the single value is its own upper limit; other non-range filters stay refused.",
+        tests: "Customer.\"Balance Due\" and \"Balance Due (LCY)\" (Detailed Cust. Ledg. Entry `Initial Entry Due Date = field(upperlimit(Date Filter))`): Tests-ERM UT_CustBalanceDueCalcOnMaxLimitOfDateFilter and 10 more.",
+        probe: "A flow filter set with SetFilter to a single value, SetFilter('..d') and SetFilter('<=d'), then CalcFields on a Sum with `Date = field(upperlimit(Filter))`: which rows are included.",
+    },
+    RenameFollowsFilterConditionArms => {
+        id: "rename-follows-filter-condition-arms",
+        assumed: "A rename of a primary key rewrites a referencing field through a TableRelation arm whose conditions include `Field = filter(x)`, when the referencing row's field passes the filter, as it does for `const` conditions.",
+        tests: "Tests-ERM price list tests that rename an Item, Resource, G/L Account or Item Variant (Assembly Header.\"Bin Code\" `Quantity = filter(< 0)`, Purchase Line.\"No.\" and \"Variant Code\" `Document Type = filter(<> \"Credit Memo\" & <> \"Return Order\")`); about 28 Tests-ERM tests.",
+        probe: "A table with a field whose TableRelation is `if (Kind = filter(<> B)) Parent else Other`: rename a Parent row with a referencing row of Kind A and one of Kind B; read both fields.",
+    },
+    RelationOptionBlankConst => {
+        id: "relation-option-blank-const",
+        assumed: "A TableRelation condition `Field = const(\" \")` on an Option field selects the arm when the field holds the option's blank member (ordinal of the member written \" \"), as it does for an Enum.",
+        tests: "Finance Charge Memo Line.\"No.\" (`if (Type = const(\" \")) \"Standard Text\"`); Tests-ERM ERM Finance Charge Memo Apply IssueFinanceChargeMemoWithInvoiceRounding and 25 more.",
+        probe: "An Option field with OptionMembers = \" \",A and a TableRelation if (Opt = const(\" \")) T1 else if (Opt = const(A)) T2: Validate a value of each table with Opt at each member.",
+    },
+    SetViewFieldByCaption => {
+        id: "set-view-field-by-caption",
+        assumed: "SetView resolves a field name that no field has by the field's caption (GetView writes captions, so SetView(GetView()) restores the view of a table whose caption differs from the name); a name wins over a caption.",
+        tests: "Purchase Alloc. Acc. Mgt.ReplaceInheritFromParent (SetView(GetView()) on Allocation Line, whose \"Line No.\" has Caption 'Primary Key'); about 20 Tests-ERM tests.",
+        probe: "A table with field \"Line No.\" (Caption 'Primary Key'): SetView(GetView()) after SetRange on it; SetView('WHERE(Primary Key=FILTER(2))'); a caption equal to another field's name.",
+    },
     PackageAutoIncrementFromOne => {
         id: "package-auto-increment-from-one",
         assumed: "A table built from a RapidStart package whose rows hold no value for the table's AutoIncrement field (Dimension Value.\"Dimension Value ID\" is not in the shipped package) gets 1, 2, 3 in the order of the package's rows, as the database numbers rows it inserts, and the counter continues after them.",
@@ -226,8 +250,8 @@ registry! {
     GuidAsTextArgument => {
         id: "guid-as-text-argument",
         assumed: "A Guid passed where a function wants a Text is its text form {XXXXXXXX-...}, as in an assignment.",
-        tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests.",
-        probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G).",
+        tests: "Match General Jnl Lines UT (CopyStr(CreateGuid(), 1, 50)); 61 Tests-General Journal tests. Error Message Handler.ShowNotification (Notification.SetData with a Guid); 27 Tests-ERM tests.",
+        probe: "CopyStr(G, 1, 50), StrLen(G), UpperCase(G), Notification.SetData('k', G) then GetData('k').",
     },
     FeatureKeyEnabledModify => {
         id: "feature-key-enabled-modify",
@@ -372,6 +396,18 @@ registry! {
         assumed: "SetLoadFields and AddLoadFields accept a field that is not stored (a FlowField) and add nothing to the load request for it. (The documentation says a runtime error or a false result; Microsoft's own code passes a FlowField and runs on real BC.)",
         tests: "Sales Line SetLoadFieldsForInvDiscoundCalculation (\"Reserved Quantity\"): about 2,350 Tests-ERM and Tests-SCM tests.",
         probe: "SetLoadFields(FlowField) and SetLoadFields(Normal, FlowField) then FindFirst and AreFieldsLoaded of the normal field; AddLoadFields the same; the result of SetLoadFields used as a value.",
+    },
+    TestFieldBlobWithStoredContent => {
+        id: "test-field-blob-with-stored-content",
+        assumed: "TestField of a Blob field that holds content from the database (after CalcFields) passes. (An empty Blob fails and a Blob written through a stream and not saved passes: misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob.)",
+        tests: "Tests-ERM tests that call TestField on a Blob after CalcFields (XSD Parser `XMLSchema.TestField(XSD)`, about 25 tests).",
+        probe: "Save a Blob with content, Get the record, CalcFields, then TestField(Blob); and TestField(Blob) after Get without CalcFields.",
+    },
+    ReportViewOverStoredRequestFilters => {
+        id: "report-view-over-stored-request-filters",
+        assumed: "A data item the caller gave a view (SetTableView, or the record of Report.Run or RunModal) keeps that view when the report has SaveValues and an earlier run stored other filters for the data item. (That an OK stores the view's filters is pinned by report/lt-requestpage-savevalues-date-text-setvalue/P147SaveValuesFilter.al:P147_Filter_SetTableViewVsStored.)",
+        tests: "Tests-ERM tests that run `Suggest Fin. Charge Memo Lines` for a second memo in one codeunit (IssueFinanceChargeMemoWith* and others).",
+        probe: "A report with SaveValues: run it once with the filter A* stored by OK, then with SetTableView(C*) and see the data item's filter on the request page and in the run; the same with the record of Report.RunModal.",
     },
     HttpRelativeRequestPath => {
         id: "http-relative-request-path",

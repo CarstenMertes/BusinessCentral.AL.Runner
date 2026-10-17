@@ -65,8 +65,49 @@ fn a_text_filter_on_a_date_formula_field_is_refused_with_its_reason() {
 
 // A Boolean `for` loop was refused here; it runs now (registry entry for-boolean, blocked_set_3.rs).
 
+// Pinned by misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob: an empty Blob fails with the usual error.
 #[test]
-fn test_field_of_a_blob_field_is_refused_with_its_reason() {
-    let why = why_not_run("[Test] procedure T4() var R: Record \"B7 Row\"; begin R.TestField(Pic); end;");
-    names_the_open_question(&why, &["TestField", "Blob"]);
+fn test_field_of_an_empty_blob_fails_with_the_usual_error() {
+    let (l, oi) = compile("[Test] procedure T4() var R: Record \"B7 Row\"; begin R.TestField(Pic); end;");
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let o = run_codeunit(&engine, &l, oi);
+    match &o[0].1 {
+        Outcome::Fail(m) => assert_eq!(m, "Pic must have a value in B7 Row: No.=. It cannot be zero or empty."),
+        other => panic!("{other:?}"),
+    }
+}
+
+// Pinned by the same corpus test: a Blob written through a stream passes TestField.
+#[test]
+fn test_field_of_a_blob_written_through_a_stream_passes() {
+    let (l, oi) = compile(
+        "[Test] procedure T5() var R: Record \"B7 Row\"; Out: OutStream; begin R.Pic.CreateOutStream(Out); Out.WriteText('x'); R.TestField(Pic); end;",
+    );
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let o = run_codeunit(&engine, &l, oi);
+    assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
+}
+
+// Still refused: a Blob with stored content read without CalcFields (only the CalcFields case is assumed;
+// see docs/probes-needed.md, TestField of a Blob field).
+#[test]
+fn test_field_of_a_stored_blob_not_fetched_with_calcfields_is_refused_with_its_reason() {
+    let why = why_not_run(
+        "[Test] procedure T6() var R: Record \"B7 Row\"; R2: Record \"B7 Row\"; Out: OutStream; begin \
+         R.\"No.\" := 'A'; R.Pic.CreateOutStream(Out); Out.WriteText('x'); R.Insert(); \
+         R2.Get('A'); R2.TestField(Pic); end;",
+    );
+    for w in ["TestField", "Blob", "CalcFields", "not pinned"] {
+        assert!(why.contains(w), "`{w}` missing from: {why}");
+    }
 }

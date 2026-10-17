@@ -91,3 +91,81 @@ fn name_of_a_field_ref_that_was_never_assigned_raises_not_initialized() {
         "{r:?}"
     );
 }
+
+/// Base Application's `Error Message Handler.ShowNotification` does `Notification.SetData('RegisterID', RegisterID)`
+/// with a Guid (27 Tests-ERM tests). The Guid is its text form (assumption guid-as-text-argument).
+#[test]
+fn notification_set_data_takes_a_guid_as_its_text_form() {
+    let r = run(
+        "procedure F(): Boolean var N: Notification; G: Guid; begin G := CreateGuid(); N.SetData('k', G); exit(N.GetData('k') = Format(G)); end;",
+    );
+    assert!(matches!(&r, Ok(Value::Boolean(true))), "{r:?}");
+}
+
+/// Evaluate into a Text takes the source as it is, an empty one too; into a Code it trims and upper-cases (corpus
+/// errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, P128_Evaluate_IntoCode). Purchase Prices.GetRecFilters
+/// does `Evaluate(StartingDateFilter, Rec.GetFilter("Starting Date"))` into a Text (52 Tests-ERM tests).
+#[test]
+fn evaluate_into_text_and_code() {
+    let r = run(
+        "procedure F(): Text var T: Text; C: Code[5]; Ok: Boolean; begin T := 'KEEP'; Ok := Evaluate(T, ''); C := 'KEEP'; Ok := Ok and Evaluate(C, ' ab '); exit(Format(Ok) + '|[' + T + ']|[' + C + ']'); end;",
+    );
+    assert_eq!(text(r), "Yes|[]|[AB]");
+}
+
+/// errors/lt-ms-refusals-135/P135RecordIdTestField.al: TestField on a RecordId field fails while nothing was assigned
+/// (Tests-ERM, 41 tests behind `Job Queue Entry.TestField("Record ID to Process")`-like checks) and passes for an assigned id,
+/// the id of an initialized record included.
+#[test]
+fn test_field_of_a_record_id_field() {
+    let src = r#"
+table 50960 "TRI Row" { fields { field(1; Id; Integer) { } field(2; Ref; RecordId) { } } keys { key(PK; Id) { } } }
+codeunit 50961 C
+{
+    procedure F(): Text
+    var R: Record "TRI Row"; T: Text;
+    begin
+        R.Id := 1;
+        asserterror R.TestField(Ref);
+        T := GetLastErrorText();
+        R.Ref := R.RecordId;
+        R.TestField(Ref);
+        exit(T);
+    end;
+}
+"#;
+    assert_eq!(
+        text(al_testkit::run_in(src, "C", "F")),
+        "Ref must have a value in TRI Row: Id=1. It cannot be zero or empty."
+    );
+}
+
+/// misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob: a Blob with no content fails TestField with the plain text, with or
+/// without CalcFields (noDataNoCalc, noDataCalc); one written through a stream and not yet saved passes (dataNoCalcPassed).
+/// A Blob that holds content the database gave is not pinned: it passes only as a flagged assumption (Tests-ERM, 25 tests).
+#[test]
+fn test_field_of_a_blob_field() {
+    let src = r#"
+table 50970 "TBF Row" { fields { field(1; Id; Integer) { } field(2; Pic; Blob) { } } keys { key(PK; Id) { } } }
+codeunit 50971 C
+{
+    procedure F(): Text
+    var R: Record "TBF Row"; T: Text; Out: OutStream;
+    begin
+        R.Id := 1;
+        R.Insert();
+        asserterror R.TestField(Pic);
+        T := GetLastErrorText();
+        R.CalcFields(Pic);
+        asserterror R.TestField(Pic);
+        T := T + '|' + GetLastErrorText();
+        R.Pic.CreateOutStream(Out);
+        Out.WriteText('x');
+        R.TestField(Pic);
+        exit(T + '|passed');
+    end;
+}
+"#;
+    let e = "Pic must have a value in TBF Row: Id=1. It cannot be zero or empty.";
+    assert_eq!(text(al_testkit::run_in(src, "C", "F")), format!("{e}|{e}|passed"));
+}

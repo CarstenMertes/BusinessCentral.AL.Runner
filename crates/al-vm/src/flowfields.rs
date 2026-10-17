@@ -519,6 +519,13 @@ impl Session {
                         Some(FilterExpr::Range(_, Some(hi))) => {
                             parts.push((c.field, FilterExpr::Range(None, Some(hi)), false));
                         }
+                        // A filter of one value is its own upper limit (assumption upperlimit-of-a-single-value).
+                        Some(FilterExpr::Eq(hi)) => {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::UpperLimitOfASingleValue,
+                            );
+                            parts.push((c.field, FilterExpr::Range(None, Some(hi)), false));
+                        }
                         Some(_) => return unsupported("upperlimit() of a filter that is not a range"),
                     }
                 }

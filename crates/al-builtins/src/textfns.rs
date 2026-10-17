@@ -707,16 +707,20 @@ fn grow_capacity(h: &Rc<RefCell<LibraryValue>>) {
 }
 
 fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    let h = string_of(r)?;
-    // A Variant holding an Integer, BigInteger or Decimal raises the Variant-to-Text conversion error and appends nothing
-    // (types/lt-number-to-text/NumberToTextIsFormat.al:193-216, TextBuilderAppend_VariantNumber_Result).
-    if let Some(n @ (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_))) = a.first() {
-        crate::ops::convert(n.clone(), &crate::value::RtType::Text(None))?;
-    }
-    let t = text(a, 0)?;
+    let (h, t) = (string_of(r)?, text(a, 0)?);
     with_string(&h, |s| s.push_str(&t));
     grow_capacity(&h);
     Ok(Value::Boolean(true))
+}
+
+/// `Append` of a Variant variable (lowering picks this for an argument that is a Variant variable or parameter): a number in it
+/// raises the Variant-to-Text conversion error and appends nothing (types/lt-number-to-text/NumberToTextIsFormat.al:193-216,
+/// TextBuilderAppend_VariantNumber_Result). A `FieldRef.Value()` argument keeps `tb_append`, which refuses a number.
+pub fn tb_append_variant(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
+    if let Some(n @ (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_))) = a.first() {
+        crate::ops::convert(n.clone(), &crate::value::RtType::Text(None))?;
+    }
+    tb_append(c, r, a)
 }
 
 /// The line terminator is a carriage return and a line feed (types/TestFormatEvaluateTextContracts.al:

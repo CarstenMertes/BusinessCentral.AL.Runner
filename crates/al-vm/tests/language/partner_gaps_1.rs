@@ -44,3 +44,15 @@ fn text_builder_append_of_a_variant_number_raises_the_type_conversion() {
         );
     }
 }
+
+#[test]
+fn text_builder_append_of_a_variant_returning_call_stays_refused() {
+    // Only a Variant variable is pinned (NumberToTextIsFormat.al:193-216); a call result such as FieldRef.Value() is not
+    // (its case is pinned on the staging corpus branch and refused until that bump lands).
+    let src = "codeunit 50100 C { procedure G(): Variant var N: Integer; begin N := 5; exit(N); end; procedure F(): Text var B: TextBuilder; begin B.Append(G()); exit(B.ToText()); end; }";
+    let r = al_testkit::run_in(src, "C", "F");
+    match r {
+        Err(al_builtins::native::Signal::Unsupported(m)) => assert!(m.contains("TextBuilder.Append#1"), "{m}"),
+        other => panic!("{other:?}"),
+    }
+}

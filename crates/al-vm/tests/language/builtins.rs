@@ -1245,6 +1245,20 @@ fn a_cleared_date_formula_is_the_empty_formula() {
     assert_eq!(r.unwrap(), "|2024-03-05|Yes|2024-03-05");
 }
 
+// misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al:P146_CalcDate_FormatBuilt_Formula: a plus sign, a percent sign
+// and a number before the unit read as the number (`<+%1D>` and `<+%1D` add one day). Only the plus sign is pinned.
+#[test]
+fn calcdate_reads_a_percent_sign_after_a_plus_as_the_number_that_follows() {
+    let r = text_of(
+        "D: Date;",
+        "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<+%1D>', D), 0, 9) + '|' + Format(CalcDate(Format('<+%1D>', 5), D), 0, 9));",
+    );
+    assert_eq!(r.unwrap(), "2024-01-16|2024-01-16");
+    // A minus or no sign in front of the percent sign is not pinned.
+    assert!(text_of("D: Date;", "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<-%1D>', D), 0, 9));").is_err());
+    assert!(text_of("D: Date;", "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<%1D>', D), 0, 9));").is_err());
+}
+
 // session/TestEnvironmentUserTenantContracts.al:195-201 and session/TestNavAppExtended.al:116-117:
 // GetModuleInfo of the null app id is true and answers a module whose data version is the installed
 // application's, at least 27. Its name is W1 and its publisher Microsoft (session/TestProbeSessionMiscContracts.al:ModuleInfo_NullAppId).

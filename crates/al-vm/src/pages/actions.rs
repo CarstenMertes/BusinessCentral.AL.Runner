@@ -345,8 +345,8 @@ impl Session {
         // OnAfterGetCurrRecord); the reads after it follow below.
         let dirty_reread_only = was_dirty
             && self.declares(st, "onaftergetrecord")
-            && !self.declares(st, "onfindrecord")
-            && !self.declares(st, "onnextrecord")
+            && (!self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord")
+                || self.declares(st, "onfindrecord") && self.declares(st, "onaftergetcurrrecord"))
             && self.has_source(st)
             && st.borrow().open
             && st.borrow().cursor == Cursor::Row
@@ -369,7 +369,10 @@ impl Session {
         // its re-read above).
         // A list that serves its rows from OnFindRecord and OnNextRecord does the same (misc/W2FindRecordUpdate.al: during_action
         // `AGR(20);ActionBegin;ActionEnd;`).
-        let find_list = self.declares(st, "onfindrecord") && self.is_list(st);
+        // (misc/W2FindRecordUpdate.al for a list; pages/lt-update-on-find/UpdateOnFindRecord.al for a card and a list that
+        // declare OnAfterGetCurrRecord: `AGR:2;act:Update(false)` first.)
+        let find_list = self.declares(st, "onfindrecord")
+            && (self.is_list(st) || self.declares(st, "onaftergetcurrrecord"));
         let reads_rows = (!was_dirty || dirty_reread_only)
             && self.declares(st, "onaftergetrecord")
             && (find_list || !self.declares(st, "onnextrecord") && !self.declares(st, "onfindrecord"))
@@ -418,7 +421,19 @@ impl Session {
             // handlers/TestPageExtensionBaseMembersContracts.al:195-218: "ext AfterGetCurrRecord"
             // after the extension's action and after the base's). A page that serves its rows from
             // OnFindRecord is left as `CurrPage.Update` alone re-reads it (re-anchoring not pinned).
-            if !self.declares(st, "onfindrecord") && !self.declares(st, "onnextrecord") {
+            let find_page = self.declares(st, "onfindrecord") || self.declares(st, "onnextrecord");
+            let find_pinned = find_page
+                && reads_rows
+                && self.declares(st, "onfindrecord")
+                && !self.is_list(st)
+                && self.declares(st, "onaftergetcurrrecord");
+            if find_pinned {
+                // pages/lt-update-on-find/UpdateOnFindRecord.al:P168_List_Update*, P168_Card_Update*: the reads come before
+                // the refresh's `Find:=`.
+                self.read_page_again(st)?;
+                st.borrow_mut().refresh = true;
+                self.run_refresh(st)?;
+            } else if !find_page {
                 // The reads the page does when it opens come first, then the refresh's own: a card
                 // reads its row twice, a list the rows of its window as it opens plus one (corpus
                 // pageext/PCCurrRecordReads.al:Card_ReadsAfterEachAction, List_ReadsAfterEachAction,
@@ -428,7 +443,9 @@ impl Session {
                 }
                 st.borrow_mut().refresh = true;
             }
-            self.run_refresh(st)?;
+            if !find_pinned {
+                self.run_refresh(st)?;
+            }
         }
         Ok(Value::Null)
     }
@@ -480,8 +497,13 @@ impl Session {
             // Other shapes are not pinned: the refresh alone stays (docs/probes-needed.md).
             return Ok(());
         }
+        let find = self.declares(st, "onfindrecord");
         let mut pk = key.to_vec();
         self.populate_current(st)?;
+        if find {
+            // The forward reads start with `=>` (pages/lt-update-on-find/UpdateOnFindRecord.al:P168_List_UpdateFalse).
+            self.nav_find(st, "=>")?;
+        }
         self.populate_current(st)?;
         let mut moved = false;
         for _ in 1..Self::WINDOW {
@@ -495,18 +517,21 @@ impl Session {
             self.ret_used = true;
             self.record_op(RecordOp::Get, rec, &mut pk)?;
         }
+        // Is there a row before it? Asked of the table: the page's own OnNextRecord is asked when the client steps.
+        self.ret_used = true;
+        let has_before = matches!(self.record_op(RecordOp::Next, rec, &mut [Value::Integer(-1)])?, Value::Integer(n) if n != 0);
+        self.ret_used = true;
+        self.record_op(RecordOp::Get, rec, &mut pk)?;
         let mut more_rows = moved;
-        if self.nav_next(st, -1)? {
+        if has_before {
             more_rows = true;
             if moved {
                 // The client reads the row again when it steps back onto it from the rows past it; the first row
                 // has no step back (Action_List_FirstRow reads 6 times after the action, Action_List_LaterRow 7).
-                self.ret_used = true;
-                self.record_op(RecordOp::Get, rec, &mut pk)?;
                 self.populate_current(st)?;
-                self.nav_next(st, -1)?;
             }
-            self.populate_current(st)?;
+        }
+        if has_before || find {
             while self.nav_next(st, -1)? {
                 self.populate_current(st)?;
             }
@@ -633,7 +658,11 @@ impl Session {
         }
         let first = forward[0].clone();
         rec.borrow_mut().fields = first.stored.clone();
-        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        // On the last row the client has not moved, so it puts nothing back (pages/lt-update-on-find/UpdateOnFindRecord.al:
+        // P168_List_UpdateOnLastRow: `Next:1;Next:-1;AGR:2`).
+        if forward.len() > 1 {
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+        }
         let mut before = Vec::new();
         while self.nav_next(st, -1)? {
             if before.len() + forward.len() + 1 >= Self::WINDOW {

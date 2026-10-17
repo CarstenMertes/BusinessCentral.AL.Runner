@@ -79,10 +79,20 @@ impl Session {
             Some(ir::PropVal::Lit(v)) => Some(v.clone()),
             _ => None,
         };
+        // The precision of the table field's AutoFormatExpression beats the control's DecimalPlaces when the control names no
+        // expression of its own (pages/lt-page-autoformat-lookups/P113AutoFormat.al: PDec `DecimalPlaces = 1 : 1` over a field
+        // with `<Precision,3:3>` shows three places).
+        let field_precision = if ctl.prop("autoformatexpression").is_none() {
+            from_field("autoformatexpression").and_then(|e| pagefmt::parse_precision(&unquote(&e)))
+        } else {
+            None
+        };
         let mut f = ControlFormat {
-            decimal_places: lit("decimalplaces")
-                .or_else(|| from_field("decimalplaces"))
-                .and_then(|p| pagefmt::parse_decimal_places(&p)),
+            decimal_places: field_precision.or_else(|| {
+                lit("decimalplaces")
+                    .or_else(|| from_field("decimalplaces"))
+                    .and_then(|p| pagefmt::parse_decimal_places(&p))
+            }),
             ..Default::default()
         };
         // An auto-format expression carries a precision: `<Precision,4:4><Standard Format,0>`
@@ -97,6 +107,11 @@ impl Session {
                 None => None,
             };
             f.decimal_places = expr.as_deref().and_then(pagefmt::parse_precision);
+            // The table field's own expression applies when the control has none (pages/lt-page-autoformat-lookups/
+            // P113AutoFormat.al: T10 `<Precision,3:3>` shows 1,234.500, PovT0 with type 0 keeps the field's 3 places).
+            if f.decimal_places.is_none() && expr.is_none() {
+                f.decimal_places = from_field("autoformatexpression").and_then(|e| pagefmt::parse_precision(&unquote(&e)));
+            }
             // AutoFormatType 1, 2, 4 and 5 (on the control, else on the table field): the places of an
             // amount or a unit amount, from the currency the expression names
             // (autoformat/PWAutoFormatTypes.al, see `auto_format_places`).
@@ -365,6 +380,65 @@ impl Session {
             .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
             .map(|(_, v)| unquote(v))
             .unwrap_or_else(|| o.name.clone())
+    }
+
+    /// The caption a TestPage shows: the page caption, then ` - ` and the values of the data caption fields of the row, joined
+    /// by ` ∙ `, empty ones left out; a new record has `New - ` in front. A list shows its caption alone. The fields are the
+    /// page's `DataCaptionFields` when it names some, else the table's. Pinned by pages/lt-page-autoformat-lookups/
+    /// P113DataCaption.al (P113_DC_CardCaption, _CardNewRecord, _PageLevelDataCaptionFields, _EmptyDataCaptionFields, _ListCaption,
+    /// _EmptyTable). A `DataCaptionExpression` is refused: the expression is not evaluated here.
+    pub(super) fn test_page_caption(&mut self, st: &St) -> Result<String, Signal> {
+        let base = self.page_caption(st);
+        let engine = self.engine();
+        let object = st.borrow().object as usize;
+        let has_prop = |name: &str| engine.program.objects[object].properties.iter().any(|(k, _)| k.eq_ignore_ascii_case(name));
+        if has_prop("DataCaptionExpression") {
+            return unsupported("the caption of a page with DataCaptionExpression (the expression is not evaluated)");
+        }
+        if !self.has_source(st) || self.is_list(st) || st.borrow().caption.is_some() {
+            return Ok(base);
+        }
+        let (cursor, draft) = {
+            let s = st.borrow();
+            (s.cursor, s.draft || s.mode == PageMode::New)
+        };
+        if cursor == Cursor::None {
+            return Ok(base);
+        }
+        let rec = self.page_rec(st);
+        let table = self.table(&rec)?;
+        let names_of = |props: &[(String, String)]| -> Option<String> {
+            props
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("DataCaptionFields"))
+                .map(|(_, v)| v.clone())
+                .filter(|v| !v.trim().is_empty())
+        };
+        // The page's own DataCaptionFields (empty or naming a field) does not change the fields: the table's are shown
+        // (P113_DC_PageLevelDataCaptionFields: `DataCaptionFields = Name` shows `C1 ∙ Alpha`).
+        let names = names_of(&engine.program.objects[table.object as usize].properties);
+        let mut parts = Vec::new();
+        if let Some(names) = names {
+            for name in names.split(',') {
+                let name = name.trim().trim_matches('"');
+                let Some(i) = table.fields.iter().position(|f| f.name.eq_ignore_ascii_case(name)) else {
+                    return unsupported(format!("DataCaptionFields names `{name}`, not a field of the table"));
+                };
+                let v = rec.borrow().fields[i].clone();
+                let text = pagefmt::control_text(&v, &pagefmt::ControlFormat::default(), &|_, o| o.to_string());
+                if !text.is_empty() {
+                    parts.push(text);
+                }
+            }
+        }
+        let mut caption = base;
+        if !parts.is_empty() {
+            caption = format!("{caption} - {}", parts.join(" \u{2219} "));
+        }
+        if draft {
+            caption = format!("New - {caption}");
+        }
+        Ok(caption)
     }
 
     pub(super) fn page_editable(&self, st: &St) -> bool {

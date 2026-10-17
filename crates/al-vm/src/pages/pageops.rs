@@ -372,7 +372,7 @@ impl Session {
             }
             PageMethod::Caption => {
                 self.require_open(st)?;
-                Ok(Value::Text(self.page_caption(st).into()))
+                Ok(Value::Text(self.test_page_caption(st)?.into()))
             }
             // `CurrPage.PromptMode := PromptMode::Prompt` states what a PromptDialog already starts in:
             // the pages of handlers/TbaPromptDeclared.Page.al and TbaPromptBare.Page.al do it in OnOpenPage

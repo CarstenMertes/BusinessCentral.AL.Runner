@@ -753,8 +753,8 @@ fn test_page_close_reports_ok_for_list_and_document_pages() {
 // Issue 33: Base Application's Tests-ERM declare `[ModalPageHandler] procedure H(var P: Page "X"; var
 // Response: Action)` (22 tests). No corpus test has a handler whose parameter is a Page rather than a
 // TestPage, and none has a page with triggers. Microsoft's `PaymentToleranceWarning` handler (page 591, whose OnOpenPage and
-// OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: assumed
-// (typed-modal-handler-skips-page-triggers, docs/probes-needed.md).
+// OnQueryClosePage overwrite what `InitializeOption` sets) needs the page's triggers not to run: pinned by
+// errors/lt-ms-refusals-136/P136PageTyped.al (OnInit runs before the handler, nothing else does).
 #[test]
 fn a_modal_page_handler_with_a_page_parameter_stands_in_for_the_page_and_runs_none_of_its_triggers() {
     passes(&format!(

@@ -37,6 +37,7 @@ impl Lowerer<'_> {
         let mut arms = Vec::new();
         for a in parsed {
             let mut conditions = Vec::new();
+            let mut blank_option = false;
             for (k, (name, value)) in a.conditions.iter().enumerate() {
                 let Some(pos) = field_pos(own, name) else {
                     return Vec::new();
@@ -52,6 +53,8 @@ impl Lowerer<'_> {
                     });
                     continue;
                 }
+                // `const(" ")` on an Option names its blank member (assumption relation-option-blank-const).
+                blank_option |= matches!(own.fields[pos].ty, Ty::Option(_)) && value.trim().trim_matches('"').trim().is_empty();
                 let Some(value) = self.condition_const(file, value, &own.fields[pos].ty) else {
                     return Vec::new();
                 };
@@ -142,10 +145,15 @@ impl Lowerer<'_> {
                 table_name: a.path.join("."),
                 field,
                 wheres,
-                assumes: if quoted {
-                    vec![al_builtins::assumptions::Assumption::TableRelationQuotes]
-                } else {
-                    Vec::new()
+                assumes: {
+                    let mut v = Vec::new();
+                    if quoted {
+                        v.push(al_builtins::assumptions::Assumption::TableRelationQuotes);
+                    }
+                    if blank_option {
+                        v.push(al_builtins::assumptions::Assumption::RelationOptionBlankConst);
+                    }
+                    v
                 },
             });
         }

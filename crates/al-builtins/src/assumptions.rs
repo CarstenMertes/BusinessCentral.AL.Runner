@@ -67,6 +67,12 @@ pub struct Info {
 }
 
 registry! {
+    RelationOptionBlankConst => {
+        id: "relation-option-blank-const",
+        assumed: "A TableRelation condition `Field = const(\" \")` on an Option field selects the arm when the field holds the option's blank member (ordinal of the member written \" \"), as it does for an Enum.",
+        tests: "Finance Charge Memo Line.\"No.\" (`if (Type = const(\" \")) \"Standard Text\"`); Tests-ERM ERM Finance Charge Memo Apply IssueFinanceChargeMemoWithInvoiceRounding and 25 more.",
+        probe: "An Option field with OptionMembers = \" \",A and a TableRelation if (Opt = const(\" \")) T1 else if (Opt = const(A)) T2: Validate a value of each table with Opt at each member.",
+    },
     SetViewFieldByCaption => {
         id: "set-view-field-by-caption",
         assumed: "SetView resolves a field name that no field has by the field's caption (GetView writes captions, so SetView(GetView()) restores the view of a table whose caption differs from the name); a name wins over a caption.",

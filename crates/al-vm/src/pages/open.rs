@@ -213,7 +213,15 @@ impl Session {
             // The platform applies the view in filter group 2: the page's own AL reads it with
             // FilterGroup(2) and finds group 0 empty (corpus handlers/TestPageSourceTableView.al:
             // FiltersAreInFilterGroup2WhenOnOpenPageRuns).
+            // The filters the handed record carries in group 2 (Bank Acc. Reconciliation.OpenWorksheet sets the statement there) stay: the view
+            // adds its own to the group instead of replacing it (assumption `page-run-record-and-source-table-view`).
+            let kept: Vec<_> = if record.is_some() {
+                rec.borrow().filters.iter().filter(|f| f.group == 2).cloned().collect()
+            } else {
+                Vec::new()
+            };
             self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
+            rec.borrow_mut().filters.extend(kept);
         }
         let result = (|| {
             // A `Page` variable whose procedure ran before this open was constructed then, and its

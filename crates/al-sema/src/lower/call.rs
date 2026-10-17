@@ -347,6 +347,14 @@ impl Lowerer<'_> {
                         || p.name.eq_ignore_ascii_case("FromField")
                         || p.name.to_ascii_lowercase().starts_with("column");
                     match (field_param, self.res(a).cloned()) {
+                        // `Page.RunModal(Id, Rec, Rec."Field")` names the field by its NUMBER (the runtime checks the table has it, errors/
+                        // P106RunErrors.al: a literal 999 is "supplied field number '999' cannot be found"); a field position would be wrong
+                        // for a table whose numbers have gaps (Segment Line."Contact Via" is field 34, position 30).
+                        (true, Some(Res::Field { table, id: fid })) if id.starts_with("Page.Run") => {
+                            self.readable_field_pos(table, fid)?;
+                            out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(fid as i32))));
+                            continue;
+                        }
                         (true, Some(Res::Field { table, id })) => {
                             self.readable_field_pos(table, id)?;
                             let field = self.field_ref(table, id);

@@ -457,16 +457,22 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
         // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
         // The same for an Enum (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer, `text_big`).
-        (Value::Integer(_) | Value::Enum(..), RtType::Text(_)) => raise(
-            "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.",
-            "TypeConversion",
-        ),
+        // A Variant holding a number or an Enum into a Text or Code field raises likewise, with NavCode for a Code target
+        // (types/lt-variant-to-text-fields/VariantNumberToField.al: TextField_FromVariantInteger_Result, _BigInteger_, _Decimal_,
+        // CodeField_FromVariantNumbers_Result; VariantEnumOptionToText.al:TextField_FromVariantEnum_Result).
+        (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Enum(..), RtType::Text(_) | RtType::Code(_)) => {
+            let nav = if matches!(t, RtType::Code(_)) { "NavCode" } else { "NavText" };
+            raise(
+                format!("The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.{nav} value."),
+                "TypeConversion",
+            )
+        }
         _ => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     }
 }
 
-/// A number a Variant holds (`FieldRef.Value()`) assigned to a Text or Code field of a record: its default `Format` text. Not pinned:
-/// assumption number-to-text-is-format. Base Application's Workflow Table Relation Value.CreateNew does `Value := FieldRef.Value()` into
+/// A number `FieldRef.Value()` returns, assigned to a Text or Code field of a record: its default `Format` text (types/lt-variant-to-text-fields/
+/// VariantFieldRefBigIntToText.al:TextField_FromFieldRefValue_Numbers); an Enum is assumed (number-to-text-is-format). Base Application's Workflow Table Relation Value.CreateNew does `Value := FieldRef.Value()` into
 /// a Text[250] field (114 Tests-Workflow tests). A Variant into a Text *variable* is not this: it raises (VaTCompare.al:af117).
 /// `None` when the value is no number or the target no Text or Code.
 #[cold]
@@ -487,7 +493,9 @@ pub fn number_into_text_field(
         RtType::Code(max) => (max, true),
         _ => return None,
     };
-    crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
+    if matches!(v, Value::Enum(..)) {
+        crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
+    }
     let text = match crate::format::try_format(v, 0, 0, ctx) {
         Ok(text) => text,
         Err(e) => return Some(Err(Signal::Unsupported(e))),

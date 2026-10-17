@@ -746,12 +746,13 @@ impl Lowerer<'_> {
             }
             _ => rhs,
         };
-        // A Variant into a record's Text or Code field stays unconverted here: the field write turns a number it holds into its
-        // Format text (assumption number-to-text-is-format), where the same into a variable raises (VaTCompare.al af117).
+        // A `FieldRef.Value()` into a record's Text or Code field stays unconverted here: the field write turns a number into its Format text.
         let variant_into_text_field = matches!(place, ir::Place::Field(..))
             && matches!(target_ty, Ty::Text(_) | Ty::Code(_))
-            // `FieldRef.Value()` is typed Unknown by the checker: a value only known at run time, like a Variant.
-            && matches!(self.ty_ref(&kids[1]), Ty::Variant | Ty::Unknown)
+            // `FieldRef.Value()` is typed Unknown by the checker: its number goes into the field as its Format text
+            // (types/lt-variant-to-text-fields/VariantFieldRefBigIntToText.al:TextField_FromFieldRefValue_Numbers), where a Variant holding
+            // a number raises TypeConversion (VariantNumberToField.al:TextField_FromVariantInteger_Result and siblings).
+            && matches!(self.ty_ref(&kids[1]), Ty::Unknown)
             && matches!(op_kind, Some(SyntaxKind::Assign) | None);
         // A Variant holding an Integer or a Date assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117 and af121); the conversion into a field, a parameter

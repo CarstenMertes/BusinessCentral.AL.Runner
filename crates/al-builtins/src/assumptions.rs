@@ -81,9 +81,9 @@ registry! {
     },
     NumberToTextIsFormat => {
         id: "number-to-text-is-format",
-        assumed: "An Integer, BigInteger, Decimal or Enum value (a Variant from FieldRef.Value) assigned to a record's Text or Code field is its default Format text (an enum value its member name), as Format gives it.",
+        assumed: "An Enum value that FieldRef.Value() returns, assigned to a record's Text or Code field, is its member name as Format gives it. (A number from FieldRef.Value() is pinned by types/lt-variant-to-text-fields/VariantFieldRefBigIntToText.al; a Variant holding a number or an Enum raises TypeConversion there.)",
         tests: "Workflow Table Relation Value.CreateNew (Value := FieldRef.Value()); 114 Tests-Workflow tests.",
-        probe: "A Variant holding an Integer, a BigInteger (2645 and 1234567), a Decimal and an enum value assigned to a Text[50] and a Code[50] field and variable and a Text parameter; compare with Format.",
+        probe: "An enum field's FieldRef.Value() assigned to a Text[50] and a Code[50] field; compare with Format.",
     },
     QueryClosedAfterLastRow => {
         id: "query-closed-after-last-row",

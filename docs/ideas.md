@@ -203,3 +203,24 @@ corpus case, found even though no existing test ever exercises it. The corpus wr
 container, compile legs, dupfinder) and the oracle comparison already exist; what is new is the generator:
 grammar- and catalog-driven programs over the pinned building blocks (types, triggers, events, record
 operations), kept small so a difference points at one cause, and deduplicated before they become cases.
+
+## Microsoft's test suite as one command for any developer (owner, 2026-10-17)
+
+The owner had this idea for the v2 runner. Nothing here is decided or planned.
+
+1. **The recipe ships with the runner.** The runner knows how Microsoft runs its own test
+   apps: which test apps, in which company, with which test type and bucket, and which tests
+   Microsoft disables (BCApps `build/projects/Test Apps <country>` settings and
+   `src/DisabledTests`). How much of that is embedded and how much is read from BCApps or the
+   artifacts is open. One command, for example `alrunner test --microsoft-suite ./MyApp`,
+   then installs the developer's app next to Microsoft's apps and runs the whole Microsoft
+   suite against it. Any developer sees which Microsoft tests their customization breaks,
+   without a container or a pipeline. The same run is how we report parity with Microsoft.
+2. **Only the tests that cover what I changed.** The runner records, per Microsoft test, the
+   routines and event publishers it reaches (it already has static reach and can record
+   dynamic reach). A customization that subscribes to one event in the sales posting routine
+   then runs only the Microsoft tests whose path raises that publisher, and the same for a
+   table or page extension (tests that touch the extended object) or a replaced procedure.
+   With a full run in a few minutes this matters less, but it makes the loop seconds long
+   and tells the developer which tests are relevant at all. The coverage map per test could
+   be built once per BC version and shipped with the compile cache.

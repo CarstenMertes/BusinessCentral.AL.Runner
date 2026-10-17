@@ -29,6 +29,8 @@ of a scratch app (`alrunner test <test app> <scratch app>`), pass.
 | Inventory Posting Setup | 13 rows; (EAST, FINISHED) is missing (EAST has RESALE only) | that row | "The Inventory Posting Setup does not exist ... Location Code='EAST',Invt. Posting Group Code='FINISHED'" (ERM Sales Document `LocationforReturnOrder`). Read with `al-bcdb read`; not confirmed by a scratch app |
 | FA Depreciation Book, `FA Posting Group` | blank for every fixed asset (FA000010 and the others, book COMPANY) | a posting group | "FA Posting Group must have a value in FA Depreciation Book: FA No.=FA000010, Depreciation Book Code=COMPANY" (ERM Purchase Payables `ArchivePurchaseOrder`). Read with `al-bcdb read`; not confirmed by a scratch app |
 | General Posting Setup, (DOMESTIC, MANUFACT) and (DOMESTIC, RAW MAT) | the rows exist; `Sales Line Disc. Account`, `Purch. Line Disc. Account` and `Sales Inv. Disc. Account` are blank (RETAIL, SERVICES, ZERO have 6910 and 7140) | an account | "Sales Line Disc. Account is missing in General Posting Setup ... MANUFACT" and "Purch. Line Disc. Account must have a value" (ERM Invoice Discount And VAT, two tests, and 5 behind them). Read with `al-bcdb read`; not confirmed by a scratch app |
+| Item Journal Batch ITEM/DEFAULT, `No. Series` | blank (`al-bcdb read ... --table "Item Journal Batch"`: the one row has blank No. Series and Posting No. Series) | a series, so `Calculate Whse. Adjustment` finds a next document no. | "Enter the document no." (Dialog) in SCM Inventory Item Tracking and the other tests that call `Library - Warehouse.CalculateWhseAdjustment` on that batch: 8 failures. Not confirmed with a scratch app |
+| Inventory Posting Setup | 13 rows; `OUT. LOG.` has `RESALE` only (read with `al-bcdb read ... --table "Inventory Posting Setup"`) | `OUT. LOG.` with `FINISHED` | "The Inventory Posting Setup does not exist ... Location Code='OUT. LOG.',Invt. Posting Group Code='FINISHED'": 12 failures in SCM Revaluation-II and others. Not confirmed with a scratch app |
 
 ## Proof
 
@@ -76,6 +78,7 @@ record/lt-filters-keys-finds/P68C_EmptyFinds.al). The backup holds 5 customers a
 | Service Item | Test Planning/Req.Wksh (PlanForServiceDemandNetChange, PlanAfterNeededByDateNetChange, MultipleDemandsSameDayNetChange) |
 | Warehouse Entry | SCM Warehouse Unit Tests, 27 tests |
 | Cost Journal Template | ERM CA Cost Journal, 16 tests |
+| Phys. Invt. Counting Period | SCM Physical Inventory tests that call FindFirst on it: "The Phys. Invt. Counting Period table is empty." (14 failures that were hidden behind refusals until the grouped-query and link-filter assumptions let those codeunits run) |
 | Cost Type, Responsibility Center | ERM Cost Accounting - Tables and Pages, ERM Sales Quotes (SalesQuoteCreation) |
 
 Not confirmed by a scratch app that seeds the rows; the other rows above are.

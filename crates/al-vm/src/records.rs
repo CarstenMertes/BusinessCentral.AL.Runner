@@ -991,9 +991,11 @@ impl Session {
                 return unsupported("CalcFields of a Blob field that holds no Blob");
             };
             // A temporary record's row that was never inserted has no stored content: CalcFields empties a Blob a stream
-            // wrote (P94XpDelim.al:Export_NothingDeclared exports into such a Blob and reads back nothing).
+            // wrote (P94XpDelim.al:Export_NothingDeclared exports into such a Blob and reads back nothing). A Blob of a row read
+            // with `Get` and written in memory is read back from the row too (record/lt-blob-calcfields-length/
+            // BlobCalcFieldsLength.al:BlobCalcFields_UnsavedContent_Result, 17 bytes in memory, 6 after CalcFields): see `BlobBuf::fetched`.
             let temporary = rec.borrow().temporary;
-            if buf.borrow().loaded && !buf.borrow().refetch && !temporary {
+            if buf.borrow().fetched && !buf.borrow().refetch && !temporary {
                 continue;
             }
             if stored.is_none() {
@@ -1015,12 +1017,25 @@ impl Session {
             };
             let mut b = buf.borrow_mut();
             b.bytes = bytes;
+            b.written = false;
+            b.fetched = true;
             // ADR-040: the stored row carries the mark of an output that was never produced.
             b.render_pending = pending;
             b.loaded = true;
             b.refetch = false;
         }
         Ok(())
+    }
+
+    /// A save makes the Blobs of the buffer what is stored: none counts as written any more.
+    fn clear_blob_written(rec: &Rec) {
+        for v in &rec.borrow().fields {
+            if let Value::Blob(b) = v {
+                let mut b = b.borrow_mut();
+                b.written = false;
+                b.fetched = true;
+            }
+        }
     }
 
     /// The first use of a record of a `TableType = CRM` table fails while no CRM table connection is
@@ -1069,11 +1084,12 @@ impl Session {
             self.coverage_read(&t, temporary)?;
         }
         let cx = self.cx_for(rec, &t)?;
-        // The next access of the table raises a deferred duplicate-key Insert.
+        // The next access of the table raises a deferred duplicate-key Insert, an Insert of another row not (the buffered inserts
+        // stay buffered: misc/lt-protected-var-abs-query-views/P146TableExtProtected.al:P146_Triggers_BaseThenExtension, where
+        // `R2.Insert(true)` succeeds and the next Modify raises it).
         if matches!(
             method,
-            RecordOp::Insert
-                | RecordOp::Modify
+            RecordOp::Modify
                 | RecordOp::Delete
                 | RecordOp::DeleteAll
                 | RecordOp::ModifyAll
@@ -1351,6 +1367,7 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     InsertOutcome::Inserted => {
+                        Self::clear_blob_written(rec);
                         // The Blob content an Insert of a temporary record stored is persisted, as one a Modify stored (see Rename).
                         if rec.borrow().temp_id.is_some() {
                             for v in &rec.borrow().fields {
@@ -1524,6 +1541,7 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     WriteOutcome::Done => {
+                        Self::clear_blob_written(rec);
                         // A Blob a Modify of a temporary record persisted does not survive a later Rename
                         // (streams/TestBlobRenameIsolation.al:TempBlob_CommittedWrite_Rename_SameInstanceReGet_LosesBlobValue);
                         // one written after the Insert and never modified does.
@@ -1964,8 +1982,31 @@ impl Session {
                 }
                 let engine = self.engine.clone();
                 let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
-                let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
+                let date_ctx = al_builtins::filter::DateFilterContext {
+                    today: self.today_day_number(),
+                    work_date: self.work_date_day().unwrap_or_else(|| self.today_day_number()),
+                    language: self.global_language,
+                };
+                let parsed = al_builtins::filter::with_date_context(date_ctx, || {
+                    al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
+                });
+                let expr = match parsed {
                     Ok(e) => e,
+                    // The German error of a date no Date filter reads (P143Date_DePlain.al, _DeRanges.al, _DeFormulas.al).
+                    Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE) => {
+                        let bad = &e[al_builtins::filter::INVALID_DATE.len()..];
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "Der Filter '{}' ist für das Feld '{}' der Tabelle '{}' nicht gültig. Das Format Date „{bad}“ stimmt nicht mit den Datumseinstellungen Ihres Geräts überein.\\\\Stellen Sie sicher, dass Tag, Monat und Jahr die richtige Reihenfolge aufweisen und das richtige Trennzeichen verwendet wird (z. b. - oder /). Alternativ können Sie das Format „jjjj-mm-tt“ verwenden.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_BOOLEAN) => {
                         let word = &e[al_builtins::filter::INVALID_BOOLEAN.len()..];

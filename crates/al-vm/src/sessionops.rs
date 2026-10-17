@@ -111,9 +111,12 @@ impl Session {
                         // The name is the pinned fragment of the error
                         // (:Database_RegisterTableConnection_CrmTest_Duplicate_Throws).
                         if !self.table_connections.insert(key) {
-                            return error(format!(
-                                "A table connection of type CRM named {name} is already registered."
-                            ));
+                            // The name as written in this call (record/lt-table-connection-duplicate/
+                            // TableConnectionDuplicateRegister.al:P161_RegisterTwice_SameAndOtherCase `twiceUpper`).
+                            return error_code(
+                                format!("Table connection {name} for table type CRM has already been registered."),
+                                "Argument",
+                            );
                         }
                         Ok(Value::Null)
                     }
@@ -201,6 +204,19 @@ impl Session {
             return Ok(Value::Text(self.cx.company.clone().into()));
         }
         if id == ids::COMPANYPROPERTY_ID_1 {
+            // The `Id` of the company's row of the Company table (session/lt-company-record/CompanyRecord.al:ID_EqualsTheCompanyRecordId).
+            if let Some(t) = self.company_table() {
+                let key = al_builtins::ops::convert(Value::Text(self.cx.company.to_string().into()), &t.fields[0].ty);
+                if let (Ok(key), Some(at)) = (key, t.fields.iter().position(|f| f.name == "Id")) {
+                    if let Ok(Some(row)) = al_data::Store::get(&self.store, &self.cx, &t, &[key]) {
+                        if let Value::Guid(g) = &row[at] {
+                            if g.iter().any(|b| *b != 0) {
+                                return Ok(Value::Guid(*g));
+                            }
+                        }
+                    }
+                }
+            }
             // A Guid that identifies the company; stable for a name (the Company table's SystemId is not modelled).
             let mut h: u64 = 0xcbf2_9ce4_8422_2325;
             for b in self.cx.company.bytes() {
@@ -389,6 +405,14 @@ impl Session {
                 // test and the next (:NumberSequence_Insert_OfAnExistingName_RaisesAndLeavesTheSequenceGone).
                 if self.sequences.remove(&key).is_some() {
                     return error_code(format!("The number sequence '{name}' already exists."), "AL");
+                }
+                // An Increment of 0 raises the SQL error and creates nothing
+                // (platform/lt-platform-members/PlTNumberSequence.al:Insert_ZeroIncrement; the name exists already: not pinned).
+                if increment == 0 {
+                    return error_code(
+                        "An unexpected error occurred after a database command was cancelled.".to_string(),
+                        "Sql:Sql",
+                    );
                 }
                 self.sequences.insert(
                     key,

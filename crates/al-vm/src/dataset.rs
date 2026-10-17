@@ -148,35 +148,38 @@ impl Header {
         element(out, 6, "AboutThisReportText", &self.about_text)?;
         element(out, 6, "ReportHelpLink", &self.help_link)?;
         out.push_str("    </ReportMetadata>\r\n");
-        // Tenant and environment: nothing in the corpus says what a test run reports.
-        element(out, 4, "TenantEntraId", "")?;
-        element(out, 4, "EnvironmentName", "")?;
-        element(out, 4, "EnvironmentType", "")?;
-        element(out, 4, "CompanyName", &self.company_name)?;
-        element(out, 4, "CompanyDisplayName", &self.company_name)?;
-        element(out, 4, "CompanyId", &self.company_id)?;
-        element(out, 4, "UserName", &self.user_name)?;
+        // The request information is one element, its children two spaces further in (report/lt-report-dataset-header/
+        // ReportDatasetHeaderRaw.al:Lines_Window2, `4|<ReportRequest>` and `6|<TenantEntraId>`). Tenant and environment: nothing in the
+        // corpus says what a test run reports.
+        out.push_str("    <ReportRequest>\r\n");
+        element(out, 6, "TenantEntraId", "")?;
+        element(out, 6, "EnvironmentName", "")?;
+        element(out, 6, "EnvironmentType", "")?;
+        element(out, 6, "CompanyName", &self.company_name)?;
+        element(out, 6, "CompanyDisplayName", &self.company_name)?;
+        element(out, 6, "CompanyId", &self.company_id)?;
+        element(out, 6, "UserName", &self.user_name)?;
         let (y, mo, d, h, mi) = self.now;
         element(
             out,
-            4,
+            6,
             "DateAndTime",
             &format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:00"),
         )?;
-        element(out, 4, "Language", LANGUAGE)?;
-        element(out, 4, "FormatRegion", LANGUAGE)?;
-        element(out, 4, "Year", &y.to_string())?;
-        element(out, 4, "MonthNumber", &mo.to_string())?;
-        element(out, 4, "DayNumber", &d.to_string())?;
-        element(out, 4, "Hour", &h.to_string())?;
-        element(out, 4, "Minute", &mi.to_string())?;
+        element(out, 6, "Language", LANGUAGE)?;
+        element(out, 6, "FormatRegion", LANGUAGE)?;
+        element(out, 6, "Year", &y.to_string())?;
+        element(out, 6, "MonthNumber", &mo.to_string())?;
+        element(out, 6, "DayNumber", &d.to_string())?;
+        element(out, 6, "Hour", &h.to_string())?;
+        element(out, 6, "Minute", &mi.to_string())?;
         if self.company_block {
             // The company information block: after `Minute`, in the order the probe lists it. The
             // corpus company has no information record whose values a test reads.
-            element(out, 4, "CompanyName", &self.company_name)?;
-            element(out, 4, "CompanyDisplayName", &self.company_name)?;
+            element(out, 6, "CompanyName", &self.company_name)?;
+            element(out, 6, "CompanyDisplayName", &self.company_name)?;
             for n in 1..=8 {
-                element(out, 4, &format!("CompanyAddressLine{n}"), "")?;
+                element(out, 6, &format!("CompanyAddressLine{n}"), "")?;
             }
             for (name, caption) in [
                 ("CompanyPhone", true),
@@ -193,12 +196,13 @@ impl Header {
                 ("CompanyBankSWIFT", true),
                 ("CompanyGiroNo", true),
             ] {
-                element(out, 4, name, "")?;
+                element(out, 6, name, "")?;
                 if caption {
-                    element(out, 4, &format!("{name}Caption"), "")?;
+                    element(out, 6, &format!("{name}Caption"), "")?;
                 }
             }
         }
+        out.push_str("    </ReportRequest>\r\n");
         out.push_str("  </BCReportInformation>\r\n");
         Ok(())
     }

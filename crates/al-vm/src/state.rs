@@ -75,6 +75,8 @@ pub(crate) struct EventState {
     pub(crate) event_stats: Rc<platform::EventStats>,
     /// `publish` is about to raise its event: the next `raise` has an event frame on the stack.
     pub(crate) publish_frame: bool,
+    /// Set by `publish` for an IncludeSender event whose sender is not pinned: a subscriber that asks for it is refused with this text.
+    pub(crate) sender_refused: Option<String>,
     /// Events being raised that have no publisher routine (table, page and Global Triggers
     /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
     /// live call stack is not answered while one runs.
@@ -82,6 +84,9 @@ pub(crate) struct EventState {
     /// What the subscribers of `Global Triggers` answered, per table object (globaltriggers.rs).
     pub(crate) global_setups: std::collections::HashMap<usize, globaltriggers::GlobalSetup>,
 }
+
+/// A filter of a SetTableView as (field, filter group, filter text).
+pub(crate) type ViewFilterKey = (usize, i32, String);
 
 /// Code coverage recording.
 pub(crate) struct CoverageState {
@@ -121,6 +126,9 @@ pub(crate) struct ReportState {
     /// For each report body running, innermost last: whether `CurrReport.Preview()` is pinned to be
     /// false for it (it was started by `Run` or `RunModal`).
     pub(crate) report_preview_pinned: Vec<bool>,
+    /// The filters each data item record got from a `SetTableView` (keyed by the record's address, as text): the request page shows
+    /// those and not the filters a procedure of the report set on the item.
+    pub(crate) set_view_filters: Vec<(usize, Vec<ViewFilterKey>)>,
     /// The dataset a `Report.SaveAs(.., Xml, ..)` run is writing (al-vm reports.rs).
     pub(crate) dataset: Option<crate::dataset::Dataset>,
 }

@@ -142,6 +142,16 @@ fn media_import(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out 
     // ImportStream_DescriptionOnly_AndEmptyDescription imports into the same field twice); what becomes
     // of the old media object is not pinned, it stays.
     id_of(&r)?;
+    // An empty stream imports no media: the field holds none afterwards (streams/StTMedia.al:MediaImportEmptyStream, `HasValue` No).
+    // What the call answers is not pinned; the null Guid is assumed.
+    if matches!(a.first(), Some(Value::Library(_, h))
+        if matches!(&*h.borrow(), LibraryValue::InStream(s) if s.rest().is_empty()))
+    {
+        if let Some(slot) = r {
+            *slot = Value::Guid([0; 16]);
+        }
+        return Ok(Value::Guid([0; 16]));
+    }
     let id = import_object(c, a)?;
     if let Some(slot) = r {
         *slot = Value::Guid(id);

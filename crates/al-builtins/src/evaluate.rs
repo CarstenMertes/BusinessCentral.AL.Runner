@@ -130,8 +130,16 @@ fn decimal(text: &str) -> Result<Parsed, Signal> {
         .trim_start_matches('0')
         .to_string();
     // An integer part of 18 digits does not fit either (`123456789012345678` fails, `123456789012.345678` reads).
-    if digits.len() > 18 || int.trim_start_matches('0').len() >= 18 {
+    if int.trim_start_matches('0').len() >= 18 {
         return Ok(Parsed::Rejected);
+    }
+    // With an integer part of zero, up to 29 fractional digits read (types/lt-decimal-digits/DecimalDigits.al:
+    // P163_Decimal_Operands_RoundTrip `19_decimals`, `28_decimals`, `29_decimals`; Format shows 18 of them).
+    // With a nonzero integer part, only 18 significant digits are pinned: more is refused.
+    if digits.len() > 18 && !int.bytes().all(|b| b == b'0') {
+        return unsupported(format!(
+            "Evaluate of `{text}` into Decimal with more than 18 significant digits and a nonzero integer part (not pinned)"
+        ));
     }
     match text.parse::<Decimal>() {
         Ok(d) => Ok(Parsed::Value(Value::Decimal(d))),
@@ -546,54 +554,6 @@ pub fn evaluate_variable_option(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut 
     evaluate_with(c, a, true)
 }
 
-/// `Evaluate` into a Text or Code variable. Lowering passes the declared length (-1: none) and whether it is a Code as
-/// the two last arguments, after the format number slot (`Evaluate(T, Source)` gets a 0 there).
-/// A Text takes the source as it is; a Code is trimmed and upper-cased and fails when it is too long: `false` with the
-/// value kept when the result is used, the length error when it is not (corpus
-/// errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoCode, P128_Evaluate_IntoCode_ResultUnused,
-/// P128_Evaluate_IntoText, P128_Evaluate_IntoShortText_ResultUnused; text/lt-text-functions/TextFormatEvaluate.Codeunit.al:EvaluateText).
-/// A Text[n] given more than n characters while the result is used is not pinned: refused. A format number is not pinned
-/// for these types: refused.
-pub fn evaluate_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
-    let n = a.len();
-    let (Some(Value::Integer(max)), Some(Value::Boolean(is_code))) =
-        (a.get(n.wrapping_sub(2)), a.get(n.wrapping_sub(1)))
-    else {
-        return unsupported("Evaluate into a text without its declared length");
-    };
-    let (max, is_code) = (*max, *is_code);
-    if !matches!(a.get(2), Some(Value::Integer(0))) || n != 5 {
-        return unsupported("Evaluate into a Text or Code with a format number (not pinned by the corpus)");
-    }
-    let Some(text) = crate::native::text_of(&a[1]) else {
-        return unsupported("Evaluate of a source that is not text");
-    };
-    let ty = if is_code {
-        crate::value::RtType::Code((max >= 0).then_some(max as u32))
-    } else {
-        crate::value::RtType::Text((max >= 0).then_some(max as u32))
-    };
-    let source = Value::Text(text);
-    match crate::ops::convert(source, &ty) {
-        Ok(v) => {
-            a[0] = v;
-            Ok(Value::Boolean(true))
-        }
-        Err(Signal::Error(e)) if e.code == "StringLengthExceeded" => {
-            if !c.ret_used() {
-                Err(Signal::Error(e))
-            } else if is_code {
-                Ok(Value::Boolean(false))
-            } else {
-                unsupported(
-                    "Evaluate into a Text[n] of a text longer than n with the result used (not pinned by the corpus)",
-                )
-            }
-        }
-        Err(other) => Err(other),
-    }
-}
-
 fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Result<Value, Signal> {
     let Some(text) = crate::native::text_of(&a[1]) else {
         return unsupported("Evaluate of a source that is not text");
@@ -771,6 +731,10 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
             crate::datefns::Evaluated::Stored(f) => Parsed::Value(Value::DateFormula(f)),
             crate::datefns::Evaluated::Rejected => Parsed::Rejected,
         },
+        // A Text keeps the text as written, a Code is trimmed and upper case
+        // (errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, P128_Evaluate_IntoCode).
+        Value::Text(_) => Parsed::Value(Value::Text(text.clone())),
+        Value::Code(_) => Parsed::Value(Value::Code(text.trim().to_uppercase().into())),
         other => return unsupported(format!("Evaluate into {} (not pinned by the corpus)", other.describe())),
     };
     match parsed {

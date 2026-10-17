@@ -17,7 +17,12 @@ impl<'a> Checker<'a> {
                 // How many arguments fit decides; among equals, the overload whose parameter types are the arguments'
                 // own types wins over one that only takes them as a Variant (Reservation Management has
                 // `SetReservSource(Variant)` and `SetReservSource(RecordRef)`; passing a RecordRef picks the latter).
-                let fit = args.iter().zip(&c.param_tys).filter(|(a, p)| fits(a, p)).count();
+                let is_proc = matches!(c.target, Res::Proc { .. });
+                let fit = args
+                    .iter()
+                    .zip(&c.param_tys)
+                    .filter(|(a, p)| if is_proc { fits_proc(a, p) } else { fits(a, p) })
+                    .count();
                 // Only among the procedures AL code declares: the catalog's overloads keep their order.
                 let exact = if matches!(c.target, Res::Proc { .. }) {
                     args.iter()

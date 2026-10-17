@@ -261,8 +261,37 @@ pub fn expand_ranges(src: &str, symbols: &BTreeSet<String>) -> Option<(String, V
             .then(|| obj.routines().map(|r| r.name().to_lowercase()).collect());
         let base = usize::from(obj.syntax().text_range().start());
         let mut text = String::new();
+        // The column routines below go in before the request page, so the lowering, which reads the expanded text, finds a control
+        // section that much further from the start of the object. The names of its routines carry that offset (Contact - Cover
+        // Sheet: 13 controls bound to array elements, Tests-Marketing).
+        let column_inserts: Vec<(usize, usize)> = if kind.starts_with("report") {
+            column_sections(&obj)
+                .iter()
+                .enumerate()
+                .filter_map(|(ordinal, sec)| {
+                    let expr = sec.args_raw().get(1).cloned()?;
+                    let len = format!(
+                        "\nprocedure {}(): Variant begin exit({expr}); end;",
+                        column_name(ordinal)
+                    )
+                    .len();
+                    Some((usize::from(sec.syntax().text_range().end()) - base, len))
+                })
+                .collect()
+        } else {
+            Vec::new()
+        };
+        let shifted = |offset: usize| {
+            offset
+                + column_inserts
+                    .iter()
+                    .filter(|(at, _)| *at <= offset)
+                    .map(|(_, l)| l)
+                    .sum::<usize>()
+        };
         for sec in control_sections(&obj) {
             for (prop, ty, offset, expr) in needed(&sec, base, &globals, extension_routines.as_ref()) {
+                let offset = shifted(offset);
                 text.push_str(&format!(
                     "\nprocedure {}(): {} begin exit({}); end;",
                     synthetic_name(&prop, offset),

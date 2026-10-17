@@ -139,6 +139,15 @@ pub(super) fn report_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         };
         let mut r = key.clone();
         r[pos(t, 2)] = Value::Text(o.name.clone().into());
+        // Caption: the Caption literal, else the English CaptionML, else the name (metadata/lt-report-metadata-columns/
+        // ReportMetadata.al:P175_Meta_Rdlc_Part1, _Multi_, _ProcessingOnly_ and _Word_).
+        match super::objects::declared_caption(prop(o, "Caption"), prop(o, "CaptionML"), &o.name) {
+            Ok(c) => r[pos(t, 3)] = Value::Text(c.chars().take(250).collect()),
+            Err(why) => {
+                out.push(Entry::poisoned(key, format!("report '{}': {why}", o.name)));
+                continue;
+            }
+        }
         // UseRequestPage defaults to true, ProcessingOnly to false (TestReportMetadataColumns.al:30-60).
         r[pos(t, 4)] = Value::Boolean(prop(o, "UseRequestPage").is_none_or(truthy));
         r[pos(t, 9)] = Value::Boolean(prop(o, "ProcessingOnly").is_some_and(truthy));

@@ -3,7 +3,7 @@
 use crate::describe::Describe;
 use crate::format::{FormatCtx, FormatFail, format_value, try_format};
 use crate::record_op::RecordOp;
-use crate::value::Value;
+use crate::value::{LibraryValue, Value};
 use std::rc::Rc;
 
 /// The error state AL code can read back (`GetLastErrorText`, ...).
@@ -326,7 +326,6 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         "System.EvaluateVariableOption#1",
         crate::evaluate::evaluate_variable_option,
     ),
-    ("System.EvaluateText#1", crate::evaluate::evaluate_text),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
     (
@@ -421,9 +420,9 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.Clear#1", clear),
     ("System.ArrayLen#1", array_len),
     // A progress dialog is a headless no-op in a test (handlers/TestHandlersDialogProgressNoOp.al:24-110).
-    ("Dialog.Open#1", |_, _, _| Ok(Value::Null)),
-    ("Dialog.Update#1", |_, _, _| Ok(Value::Null)),
-    ("Dialog.Close#1", |_, _, _| Ok(Value::Null)),
+    ("Dialog.Open#1", dialog_open),
+    ("Dialog.Update#1", dialog_update),
+    ("Dialog.Close#1", dialog_close),
     // Reading the latest committed data is what this runtime always does (session/TestBCDatabaseContracts.al:170-187).
     // Telemetry goes to the server's log, which AL cannot read (ADR-009).
     ("Session.LogMessage#1", |_, _, _| Ok(Value::Null)),
@@ -1105,6 +1104,113 @@ fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -
     Ok(Value::Null)
 }
 
+/// The numbers of the `#n####` and `@n@@@@` fields of a dialog template.
+fn dialog_fields(template: &str) -> Vec<i32> {
+    let c: Vec<char> = template.chars().collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < c.len() {
+        if matches!(c[i], '#' | '@') {
+            let mut j = i + 1;
+            while j < c.len() && c[j].is_ascii_digit() {
+                j += 1;
+            }
+            if j > i + 1 {
+                if let Ok(n) = c[i + 1..j].iter().collect::<String>().parse::<i32>() {
+                    out.push(n);
+                }
+            }
+            i = j;
+        } else {
+            i += 1;
+        }
+    }
+    out
+}
+
+fn dialog_not_open() -> Signal {
+    Signal::Error(Box::new(AlError {
+        message: "The operation failed because the dialog box is not open.".into(),
+        code: "Dialog".into(),
+        call_stack: String::new(),
+        ..Default::default()
+    }))
+}
+
+/// `Dialog.Open(Template)`: the dialog is open until `Close`; opening an open one is not an error
+/// (pages/lt-page-runtime/P82Dialog.al:Dialog_EdgeCases `open-reopen`, `open-empty-template`).
+fn dialog_open(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    if let (Some(Value::Library(_, h)), Some(t)) = (r, a.first().and_then(text_of)) {
+        *h.borrow_mut() = LibraryValue::Text(t.to_string());
+    }
+    Ok(Value::Null)
+}
+
+/// `Dialog.Update(Number, Value, ...)`. An unopened or closed dialog raises, and so does a number that is
+/// no field of the template, naming the template with each field as `%s` (errorinfo/lt-errnotif/EnTDialogSession.al:
+/// Dialog_Errors, Dialog_UpdateWithoutOpen; pages/lt-page-runtime/P82Dialog.al:Dialog_EdgeCases). Only `#` fields have their
+/// template text pinned: a failing number against a template with `@` fields is refused. `Update()` is a no-op
+/// on an open dialog (handlers/TestHandlersDialogProgressNoOp.al).
+fn dialog_update(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let template = match r {
+        Some(Value::Library(_, h)) => match &*h.borrow() {
+            LibraryValue::Text(t) => t.clone(),
+            _ => return Err(dialog_not_open()),
+        },
+        _ => return unsupported("Dialog.Update on something that is no Dialog"),
+    };
+    let fields = dialog_fields(&template);
+    for n in a.iter().step_by(2) {
+        let Value::Integer(n) = n else {
+            return unsupported("Dialog.Update with a field number that is not an Integer");
+        };
+        if !fields.contains(n) {
+            if template.contains('@') {
+                return unsupported(
+                    "Dialog.Update of a field number the template lacks, with an @ field (message not pinned)",
+                );
+            }
+            let mut shown = String::new();
+            let chars: Vec<char> = template.chars().collect();
+            let mut i = 0;
+            while i < chars.len() {
+                if chars[i] == '#' && chars.get(i + 1).is_some_and(char::is_ascii_digit) {
+                    i += 1;
+                    while i < chars.len() && (chars[i].is_ascii_digit() || chars[i] == '#') {
+                        i += 1;
+                    }
+                    shown.push_str("%s");
+                } else {
+                    shown.push(chars[i]);
+                    i += 1;
+                }
+            }
+            return Err(Signal::Error(Box::new(AlError {
+                message: format!("No parameter with index '{n}' was found in the format string '{shown}'."),
+                code: "FormatStringParameterNotFound".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
+        }
+    }
+    Ok(Value::Null)
+}
+
+/// `Dialog.Close()`: closing a dialog that is not open raises.
+fn dialog_close(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    match r {
+        Some(Value::Library(_, h)) => {
+            let open = matches!(&*h.borrow(), LibraryValue::Text(_));
+            if !open {
+                return Err(dialog_not_open());
+            }
+            *h.borrow_mut() = LibraryValue::Empty;
+            Ok(Value::Null)
+        }
+        _ => unsupported("Dialog.Close on something that is no Dialog"),
+    }
+}
+
 /// `Error(Text, Args...)`. The code is `Dialog` (probes-needed: Microsoft's
 /// test libraries and the corpus Assert's DialogTxt use it; no corpus test
 /// pins it directly).
@@ -1586,7 +1692,12 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
-        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload" | "HttpClient") => {
+        Value::Library(name, _)
+            if matches!(
+                name.as_str(),
+                "OutStream" | "InStream" | "FileUpload" | "HttpClient" | "HttpHeaders"
+            ) =>
+        {
             Value::Library(
                 name.clone(),
                 std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
@@ -1674,6 +1785,13 @@ fn enum_from_integer(ctx: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value
     // An Option argument converts to its ordinal, as any Integer parameter takes it.
     let n = match args.first() {
         Some(Value::Option(o, _)) => Some(*o),
+        // A Variant that holds an Enum (Library - Variable Storage hands back the enum value that was enqueued): the
+        // ordinal, as an assignment to an Integer reads it (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:
+        // EnumVariant_To_Integer). Passing it to FromInteger is an assumption.
+        Some(Value::Enum(_, o)) => {
+            crate::assumptions::assume(crate::assumptions::Assumption::EnumFromIntegerVariantEnum);
+            Some(*o)
+        }
         _ => int_arg(args, 0).and_then(|n| i32::try_from(n).ok()),
     };
     match n {
@@ -1937,7 +2055,6 @@ pub(crate) mod tests {
         // Ids lowering picks for a call of a catalog overload that needs another implementation (`Evaluate` into an Option variable).
         let derived = [
             "System.EvaluateVariableOption#1",
-            "System.EvaluateText#1",
             "System.FormatVariant#1",
             "System.FormatDecimalField#1",
             "Dialog.ErrorNotLiteral#1",

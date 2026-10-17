@@ -62,6 +62,17 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 Rc::new(RefCell::new(copy)),
             )
         }
+        // A Notification is a value too: `B := A` copies its message and data (errorinfo/lt-errnotif/EnTNotification.al:Copy_Semantics).
+        (Value::Library(crate::library_kind::LibraryKind::Notification, cell), T::Library(_)) => {
+            let copy = match &*cell.borrow() {
+                LibraryValue::Notification(s) => LibraryValue::Notification(s.clone()),
+                _ => LibraryValue::Empty,
+            };
+            Value::Library(
+                crate::library_kind::LibraryKind::Notification,
+                Rc::new(RefCell::new(copy)),
+            )
+        }
         // An HttpContent is a value: assignment and a by-value parameter copy its body and headers
         // (misc/W4XmlJsonHttp.al:RequestContent_IsCopyOrReference).
         (Value::Library(n, cell), T::Library(_))
@@ -759,6 +770,15 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 V::Duration(d) => *d,
                 other => int_of(other).expect("an integer"),
             };
+            // A BigInteger beyond the Int32 range raises the conversion error with the signed amount moved
+            // (types/lt-time-big-integer/TimeBigIntegerArithmetic.al:P170_TimePlusMinusBigInteger `plus_over_int32`, `minus_over_int32`).
+            if matches!(n, V::BigInteger(_)) && i32::try_from(ms).is_err() {
+                let delta = if op == Arith::Add { ms } else { -ms };
+                return raise(
+                    format!("Overflow under conversion of System.Int64 value {delta} to System.Int32."),
+                    "ConversionCast",
+                );
+            }
             let moved = if op == Arith::Add {
                 (a - 1).checked_add(ms)
             } else {
@@ -1061,7 +1081,7 @@ pub fn text_key_order(a: &str, b: &str) -> Ordering {
         }
         return Ordering::Equal;
     }
-    crate::collation::compare(a, b).unwrap_or_else(|_| a.cmp(b))
+    crate::collation::compare_total(a, b)
 }
 
 /// The order a filter applies to two texts when one starts with a hyphen and both are letters and digits besides it: the key order,
@@ -1081,26 +1101,16 @@ pub fn hyphen_filter_order(a: &Value, b: &Value) -> Option<Ordering> {
     ((x.starts_with('-') || y.starts_with('-')) && shape(x) && shape(y)).then(|| code_key_order(x, y))
 }
 
-/// The key order of two Code values: as [`text_key_order`], except that a leading hyphen does not count at the first level and a
-/// text with it follows the one without: `0|10|1A|3|-5|9|A` and `0|00|01|1|-1|10|-10` (types/lt-code-digits-compare-more/
+/// The key order of two Code values: the text key order of the texts without a leading hyphen, and for two that tie there the one
+/// with the hyphen is the greater: `0|10|1A|3|-5|9|A` and `0|00|01|1|-1|10|-10` (types/lt-code-digits-compare-more/
 /// CodeDigitsCompare.al:P182b_SecondaryKeyOrder_Mixed, _DigitsAndEmpty; both are Code fields). Only a hyphen at the start of a text
 /// of letters, digits and that hyphen is pinned, and only for Code; a Text key keeps [`text_key_order`] (docs/probes-needed.md).
+/// The hyphen is dropped from every Code, not only from the pinned shape: an order that dropped it for some pairs only is not
+/// transitive (`'+5' < '0' < '-0' < '+5'`) and `slice::sort` panics on it. The pairs outside the pinned shape are an assumption
+/// (docs/probes-needed.md).
 pub fn code_key_order(a: &str, b: &str) -> Ordering {
-    let hyphen_shape = |t: &str| {
-        t.strip_prefix('-')
-            .unwrap_or(t)
-            .bytes()
-            .all(|c| c.is_ascii_alphanumeric())
-    };
-    if (a.starts_with('-') || b.starts_with('-')) && hyphen_shape(a) && hyphen_shape(b) {
-        let (sa, sb) = (a.strip_prefix('-').unwrap_or(a), b.strip_prefix('-').unwrap_or(b));
-        let first = text_key_order(sa, sb);
-        if first != Ordering::Equal {
-            return first;
-        }
-        return a.starts_with('-').cmp(&b.starts_with('-'));
-    }
-    text_key_order(a, b)
+    let (sa, sb) = (a.strip_prefix('-').unwrap_or(a), b.strip_prefix('-').unwrap_or(b));
+    text_key_order(sa, sb).then_with(|| a.starts_with('-').cmp(&b.starts_with('-')))
 }
 
 /// [`compare`] for the values of a key: text follows [`text_key_order`].
@@ -1936,5 +1946,141 @@ mod tests {
             compare(&Value::Integer(0), &Value::Duration(5)).unwrap(),
             Ordering::Less
         );
+    }
+
+    /// Every sort comparator must be a total order (a violation panics `slice::sort` in std: "user-provided comparison function does
+    /// not correctly implement a total order"). Checks antisymmetry over all pairs and transitivity over all triples of a generated set.
+    fn check_total_order(name: &str, texts: &[String], cmp: &dyn Fn(&str, &str) -> Ordering) {
+        let n = texts.len();
+        let mut m = vec![Ordering::Equal; n * n];
+        for i in 0..n {
+            for j in 0..n {
+                m[i * n + j] = cmp(&texts[i], &texts[j]);
+            }
+        }
+        for i in 0..n {
+            assert_eq!(
+                m[i * n + i],
+                Ordering::Equal,
+                "{name}: {:?} not equal to itself",
+                texts[i]
+            );
+            for j in 0..n {
+                assert_eq!(
+                    m[i * n + j],
+                    m[j * n + i].reverse(),
+                    "{name}: antisymmetry {:?} vs {:?}",
+                    texts[i],
+                    texts[j]
+                );
+            }
+        }
+        for i in 0..n {
+            for j in 0..n {
+                let ij = m[i * n + j];
+                if ij == Ordering::Greater {
+                    continue;
+                }
+                for k in 0..n {
+                    let jk = m[j * n + k];
+                    if jk == Ordering::Greater {
+                        continue;
+                    }
+                    let ik = m[i * n + k];
+                    let want_eq = ij == Ordering::Equal && jk == Ordering::Equal;
+                    let ok = if want_eq {
+                        ik == Ordering::Equal
+                    } else {
+                        ik == Ordering::Less
+                    };
+                    assert!(
+                        ok,
+                        "{name}: transitivity {:?} {ij:?} {:?} {jk:?} {:?} but {ik:?}",
+                        texts[i], texts[j], texts[k]
+                    );
+                }
+            }
+        }
+    }
+
+    fn generated_texts() -> Vec<String> {
+        texts_over(&["", " ", "-", "0", "1", "9", "A", "a", "B", "_"])
+    }
+
+    /// Punctuation, accents and characters without a collation weight.
+    fn exotic_texts() -> Vec<String> {
+        texts_over(&["", " ", "-", "1", "A", "a", ".", "ä", "å", "ß"])
+    }
+
+    fn texts_over(alphabet: &[&str]) -> Vec<String> {
+        let mut out: Vec<String> = vec![String::new()];
+        let mut layer = vec![String::new()];
+        for _ in 0..3 {
+            let mut next = Vec::new();
+            for t in &layer {
+                for c in &alphabet[1..] {
+                    next.push(format!("{t}{c}"));
+                }
+            }
+            out.extend(next.iter().cloned());
+            layer = next;
+        }
+        for t in [
+            "-5",
+            "3",
+            "1A",
+            " 2",
+            "A-B",
+            "007",
+            "00",
+            "-0",
+            "+5",
+            "12345678901234567890123",
+            "012345678901234567890123",
+            "99999999999999999999999",
+            "-12345678901234567890123",
+            "ä",
+            "Ä",
+            "a ",
+            "A  ",
+        ] {
+            out.push(t.to_string());
+        }
+        out.sort();
+        out.dedup();
+        out
+    }
+
+    #[test]
+    fn text_key_order_is_a_total_order() {
+        check_total_order("text_key_order", &generated_texts(), &|a, b| text_key_order(a, b));
+    }
+
+    #[test]
+    fn key_orders_are_total_over_punctuation_accents_and_unweighted_characters() {
+        check_total_order("text_key_order(exotic)", &exotic_texts(), &|a, b| text_key_order(a, b));
+        check_total_order("code_key_order(exotic)", &exotic_texts(), &|a, b| code_key_order(a, b));
+    }
+
+    #[test]
+    fn code_key_order_is_a_total_order() {
+        check_total_order("code_key_order", &generated_texts(), &|a, b| code_key_order(a, b));
+    }
+
+    #[test]
+    fn compare_order_of_codes_is_a_total_order() {
+        check_total_order("compare_order(Code, Code)", &generated_texts(), &|a, b| {
+            compare_order(&Value::Code(a.into()), &Value::Code(b.into())).unwrap_or_else(|_| a.cmp(b))
+        });
+    }
+
+    #[test]
+    fn compare_key_value_of_codes_and_texts_is_a_total_order() {
+        check_total_order("compare_key_value(Code)", &generated_texts(), &|a, b| {
+            compare_key_value(&Value::Code(a.into()), &Value::Code(b.into())).unwrap()
+        });
+        check_total_order("compare_key_value(Text)", &generated_texts(), &|a, b| {
+            compare_key_value(&Value::Text(a.into()), &Value::Text(b.into())).unwrap()
+        });
     }
 }

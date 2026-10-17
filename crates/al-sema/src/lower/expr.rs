@@ -477,6 +477,8 @@ impl Lowerer<'_> {
                     Ty::Builtin(b) if al_builtins::sysenum::members(&b).is_some() => Ok(ir::Expr::Const(
                         ir::Const::Option(i, al_builtins::sysenum::option_members(&b).expect("checked")),
                     )),
+                    // A member named on an array of options is an Integer (infer.rs, `Kinds::Purchase`).
+                    Ty::Integer => Ok(ir::Expr::Const(ir::Const::Integer(i))),
                     _ => Err("option value without its option type".into()),
                 },
                 Some(Res::ObjectId(id)) => Ok(ir::Expr::Const(ir::Const::Integer(id))),

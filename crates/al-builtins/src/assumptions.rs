@@ -518,11 +518,11 @@ registry! {
         tests: "Code that tests the result of HttpHeaders.Add.",
         probe: "Format(H.Add(N, V)) for a bad value of each typed header (Accept, Authorization, Date, Content-Type) and for a bad name.",
     },
-    HttpContentLengthOnRewrite => {
-        id: "http-content-length-on-rewrite",
-        assumed: "A second WriteFrom adds a Content-Length of the new body to the content headers when it is a stream, or a text written after the Content-Type was removed; text over text with the type in place adds none. (Read from four pinned shapes: lt-http-header-rules/P87Content.al, HttpWriteFromStream.al.)",
-        tests: "Code that writes a content twice and reads its headers between.",
-        probe: "Text over text, stream over text, text over stream, each with the Content-Type in place and removed, 3 bytes over 5 and 9 over 5, and 0 bytes over 5; read Content-Length after each.",
+    HttpContentLengthAfterRead => {
+        id: "http-content-length-after-read",
+        assumed: "ReadAs(Text) of a content adds a Content-Length header of the body's length to its headers (the headers handed out before show it); a later WriteFrom sets the new length while the header is there. (PnE12HttpContent.al:WriteFromText_ThenReadAndHeaders reads 5 after WriteFrom('hello') and ReadAs; the P87 and P100 cases show none before a read.)",
+        tests: "Code that reads a content and then its headers; ReadAs(InStream) is not covered.",
+        probe: "WriteFrom('hello'), GetHeaders, Contains('Content-Length') before and after ReadAs(Text) and ReadAs(InStream); WriteFrom a longer text after the read and read the header.",
     },
     HttpHeaderRules => {
         id: "http-header-rules",

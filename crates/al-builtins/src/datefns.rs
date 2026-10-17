@@ -107,6 +107,11 @@ fn create_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> O
         Value::Date(n, c) if *n > 0 => (*n, *c),
         other => return plain_date(other, "CreateDateTime").map(|_| unreachable!()),
     };
+    // 0001-01-01 is no date a DateTime can be made of (types/lt-datetime/DateTimeFuncs.al:CreateDateTime_Variants `af32`,
+    // RoundDateTime_Edges `af118`).
+    if day == 1 {
+        return raise("The date is not valid.", "DateInvalid");
+    }
     let time_of_day = (t - 1).max(0) + if closing { 23 * 3_600_000 + 59 * 60_000 } else { 0 };
     Ok(Value::DateTime((i64::from(day) - 1) * MS_PER_DAY + time_of_day + 1))
 }
@@ -173,6 +178,10 @@ fn round_datetime(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Ou
             _ => below,
         }
     };
+    // A result past 9999-12-31 is not a DateTime (DateTimeFuncs.al:RoundDateTime_Edges `af126`, `af130`, RoundDateTime_Errors).
+    if rounded >= 3_652_059 * MS_PER_DAY {
+        return raise("The date is not valid.", "DateInvalid");
+    }
     Ok(Value::DateTime(rounded + 1))
 }
 

@@ -633,7 +633,7 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
             }
         }
         let (enc, pos) = (s.enc, s.pos);
-        if !s.is_empty() && pos >= s.len() {
+        if pos >= s.len() {
             s.hit_end = true;
         }
         let unit = enc.unit();
@@ -794,7 +794,9 @@ fn in_read(c: &mut dyn Ctx, mut r: Option<&mut Value>, a: &mut [Value]) -> NResu
     // At the end of a stream that holds data nothing is read: the result is 0 and the variable takes its default value
     // (streams/lt-stream-read-write-media/P102ReadTyped.al: every `pastend_*`). A stream without any data keeps the error below.
     let at_end = with_in(r.as_deref_mut(), |s| {
-        let at = !s.is_empty() && s.pos >= s.len();
+        // An empty stream is at its end like any other (types/lt-variant-is-text-streams/LTP89StreamNumbers.al:
+        // Integer_RoundTrip_PastEnd `read_empty`, with the second read raising: types/PRFileUpload.al:ReadFromUnfilledStream).
+        let at = s.pos >= s.len();
         // The first read at the end answers 0; one after another read already hit the end raises.
         let first = at && !s.hit_end;
         if at {

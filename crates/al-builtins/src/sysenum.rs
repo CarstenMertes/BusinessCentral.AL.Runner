@@ -191,7 +191,9 @@ pub fn is_field_table_type(members: &[String]) -> bool {
 /// 76, "format 2 prints the name too, not an ordinal").
 pub fn ordinals_hidden(members: &[String]) -> bool {
     let known = members_static("fieldtype");
-    members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b)
+    let same = |known: &[&str]| members.len() == known.len() && members.iter().zip(known).all(|(a, b)| a == b);
+    // The Action option too: `Format(Action::OK, 0, 2)` is `OK` (misc/lt-probes-needed-7/PnGActionOrdinals.al:MemberOrdinals).
+    same(known) || same(&crate::value::ACTION_MEMBERS)
 }
 
 /// Whether `members` is the `SecurityFilter` option, the one platform option an ordinal can be

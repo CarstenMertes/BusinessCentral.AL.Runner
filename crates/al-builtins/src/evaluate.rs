@@ -157,6 +157,8 @@ fn boolean(text: &str) -> Result<Parsed, Signal> {
 }
 
 fn guid(text: &str) -> Result<Parsed, Signal> {
+    // Blanks around the text do not count (types/lt-scalars/ScT70054.al:Guid_EvaluateInvalid `spaces`).
+    let text = text.trim_matches(' ');
     // The braced, the plain (36 characters) and the 32 digit forms; anything else, the empty text
     // included, is rejected (types/TestJsonTokenUnassignedEvaluateGuidContracts.al:EvaluateGuid_Forms_AndFailures).
     // Parentheses wrap it like braces (types/TestProbeScalarContracts.al:Guid_EvaluateAndFormat).

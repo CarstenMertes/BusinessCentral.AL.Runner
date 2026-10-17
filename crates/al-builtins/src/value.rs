@@ -66,6 +66,40 @@ pub enum RtType {
     DotNet(u32),
 }
 
+/// The items of a List: a `Vec<Value>` that counts the times it was borrowed mutably, so that a `foreach` over it notices
+/// a change (collections/RefSemantics.al:Foreach_ListAddWhileIterating, ...).
+#[derive(Debug, Clone, Default)]
+pub struct ListVec {
+    items: Vec<Value>,
+    pub version: u64,
+}
+
+impl From<Vec<Value>> for ListVec {
+    fn from(items: Vec<Value>) -> Self {
+        ListVec { items, version: 0 }
+    }
+}
+
+impl FromIterator<Value> for ListVec {
+    fn from_iter<I: IntoIterator<Item = Value>>(iter: I) -> Self {
+        ListVec::from(iter.into_iter().collect::<Vec<_>>())
+    }
+}
+
+impl std::ops::Deref for ListVec {
+    type Target = Vec<Value>;
+    fn deref(&self) -> &Vec<Value> {
+        &self.items
+    }
+}
+
+impl std::ops::DerefMut for ListVec {
+    fn deref_mut(&mut self) -> &mut Vec<Value> {
+        self.version += 1;
+        &mut self.items
+    }
+}
+
 #[derive(Debug, Clone)]
 pub enum Value {
     /// An unassigned Variant.
@@ -91,7 +125,7 @@ pub enum Value {
     /// Ordinal and the option's member names (needed by Format).
     Option(i32, std::sync::Arc<[String]>),
     Enum(u32, i32),
-    List(Rc<RefCell<Vec<Value>>>),
+    List(Rc<RefCell<ListVec>>),
     Dictionary(Rc<RefCell<Vec<(Value, Value)>>>),
     Array(Rc<RefCell<Vec<Value>>>),
     Codeunit(Rc<RefCell<Instance>>),

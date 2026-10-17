@@ -90,6 +90,18 @@ impl Session {
     /// does (`List of [BigInteger].Get(1, I)` leaves an Integer in `I`; an overflow raises the error of the conversion).
     #[inline]
     fn fit_ref_number(&self, p: &ir::Place, v: Value, f: &Frame) -> Result<Value, Signal> {
+        // A text a builtin stores in a bounded Text or Code variable is checked against its length, as an assignment is
+        // (json/JsonWriteTo.al:WriteToTextVariants `writeto_text10_overflow`).
+        if let Value::Text(t) = &v {
+            if let Some(ty @ (RtType::Text(Some(_)) | RtType::Code(Some(_)))) = self.place_ty(p, f) {
+                if let RtType::Text(Some(m)) | RtType::Code(Some(m)) = ty {
+                    if t.chars().count() > *m as usize {
+                        return al_builtins::ops::convert(v, ty);
+                    }
+                }
+            }
+            return Ok(v);
+        }
         if !matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
             return Ok(v);
         }
@@ -185,6 +197,18 @@ impl Session {
         let mut inst = f.instance.borrow_mut();
         for (i, v) in fresh.into_iter().enumerate() {
             if !keep.contains(&i) {
+                // A global temporary record keeps its rows, as Clear leaves them
+                // (types/ProbeTypeFormsAndFilters.al:Clear_TemporaryRecordWithRows_ThenCount); that ClearAll does the same
+                // is not pinned: Base Application's Purch.-Post ClearAllVariables relies on it.
+                if let (Value::Record(old), Value::Record(new)) = (&inst.globals[i], &v) {
+                    let id = old.borrow().temp_id.clone();
+                    if id.is_some() && old.borrow().temporary {
+                        new.borrow_mut().temp_id = id;
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::ClearAllKeepsTemporaryRows,
+                        );
+                    }
+                }
                 inst.globals[i] = v;
             }
         }
@@ -268,7 +292,7 @@ impl Session {
     /// The items a `foreach` runs over (a List, a JSON array or an XPath result).
     pub(crate) fn foreach_items(coll: Value) -> Result<Vec<Value>, Signal> {
         Ok(match coll {
-            Value::List(l) => l.borrow().clone(),
+            Value::List(l) => l.borrow().to_vec(),
             // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
             other => match al_builtins::json::array_items(&other).or_else(|| al_builtins::xml::node_list_items(&other))
             {
@@ -292,12 +316,12 @@ impl Session {
             B::And => Value::Boolean(ops::truthy(l)? & ops::truthy(r)?),
             B::Or => Value::Boolean(ops::truthy(l)? | ops::truthy(r)?),
             B::Xor => Value::Boolean(ops::truthy(l)? ^ ops::truthy(r)?),
-            B::Eq => Value::Boolean(ops::compare(l, r)? == Ordering::Equal),
-            B::Ne => Value::Boolean(ops::compare(l, r)? != Ordering::Equal),
-            B::Lt => Value::Boolean(ops::compare_order(l, r)? == Ordering::Less),
-            B::Le => Value::Boolean(ops::compare_order(l, r)? != Ordering::Greater),
-            B::Gt => Value::Boolean(ops::compare_order(l, r)? == Ordering::Greater),
-            B::Ge => Value::Boolean(ops::compare_order(l, r)? != Ordering::Less),
+            B::Eq => Value::Boolean(ops::compare_operator(l, r, false)? == Ordering::Equal),
+            B::Ne => Value::Boolean(ops::compare_operator(l, r, false)? != Ordering::Equal),
+            B::Lt => Value::Boolean(ops::compare_operator(l, r, true)? == Ordering::Less),
+            B::Le => Value::Boolean(ops::compare_operator(l, r, true)? != Ordering::Greater),
+            B::Gt => Value::Boolean(ops::compare_operator(l, r, true)? == Ordering::Greater),
+            B::Ge => Value::Boolean(ops::compare_operator(l, r, true)? != Ordering::Less),
             B::DotNetEq => Value::Boolean(dotnet::dotnet_equal(l, r)?),
             B::DotNetNe => Value::Boolean(!dotnet::dotnet_equal(l, r)?),
         })
@@ -853,7 +877,7 @@ impl Session {
                 format!(
                     "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
                     units.len(),
-                    String::from_utf16_lossy(&units)
+                    ops::shown_in_length_error(&String::from_utf16_lossy(&units))
                 ),
                 "StringLengthExceeded",
             );

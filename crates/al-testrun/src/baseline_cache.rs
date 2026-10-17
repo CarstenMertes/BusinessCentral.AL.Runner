@@ -143,7 +143,9 @@ fn op_name(code: u8) -> Option<&'static str> {
 }
 
 fn file(dir: &Path, key: &str) -> PathBuf {
-    dir.join(format!("{key}.{EXTENSION}"))
+    // The build tag first: a cleanup tells the builds apart by the name (ADR-022, "Cleanup of old builds").
+    let tag = al_cache::build_tag(&crate::compile_cache::runtime_build());
+    dir.join(format!("{tag}-{key}.{EXTENSION}"))
 }
 
 /// The run kept under `key` and the instant it began. A file that cannot be read is removed. A hit marks the file

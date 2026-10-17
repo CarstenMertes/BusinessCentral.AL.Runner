@@ -16,6 +16,14 @@ pub enum Command {
     Warm(Box<TestArgs>),
     /// `alrunner cache clear [--cache-dir DIR]`: remove every entry of the compile cache.
     CacheClear(Option<PathBuf>),
+    /// `alrunner cache prune [--dry-run] [--all-other-builds] [--cache-dir DIR]`.
+    CachePrune {
+        dir: Option<PathBuf>,
+        dry_run: bool,
+        all_other_builds: bool,
+    },
+    /// `alrunner cache info [--cache-dir DIR]`.
+    CacheInfo(Option<PathBuf>),
 }
 
 /// `alrunner test`.
@@ -136,7 +144,7 @@ alrunner: run AL tests without a service tier (AL Runner v3, preview)
 USAGE
     alrunner test [OPTIONS] APP...
     alrunner serve [--protocol 2] [OPTIONS]
-    alrunner cache clear [--cache-dir DIR]
+    alrunner cache clear|prune|info [--cache-dir DIR]
     alrunner --version | --help
 
 APP is an app folder (with app.json), a source archive (`Tests-SMB.Source.zip`) or an `.app`
@@ -177,7 +185,17 @@ COMPILE CACHE
     Company-Initialize leave in the database, with the demo data if the run has it. It is kept
     under a key of the alrunner build, the dependency apps, the app's sources, the BC target, the
     environment, the demo backup and the day, and a run that finds it starts its clock at the
-    instant the run that made it began. Entries nothing used for 30 days are removed.
+    instant the run that made it began.
+    Old entries go by themselves: at the end of `alrunner test`, at most once a day and for at most
+    200 ms, the folder is cleaned of entries of other alrunner builds unused for 7 days, entries of
+    any build unused for 30 days, and leftover temporary files older than a day. A cache hit
+    renews the entry. ALRUNNER_NO_CACHE_PRUNE=1 turns this off.
+    alrunner cache prune [--dry-run] [--all-other-builds] [--cache-dir DIR]
+                         Run that cleanup now and print how many files and bytes went (--dry-run:
+                         only print). --all-other-builds also removes entries of other builds that
+                         are younger than 7 days.
+    alrunner cache info [--cache-dir DIR]
+                         Print the entries, their size, and the split by alrunner build.
     alrunner cache clear [--cache-dir DIR]
                          Remove every entry of the compile cache (<cache dir>/compile/): use it
                          when a cached result is in doubt. The next run builds what it needs.
@@ -326,29 +344,39 @@ fn number(flag: &str, v: &str) -> Result<usize, String> {
     v.parse().map_err(|_| format!("{flag} needs a number, got `{v}`"))
 }
 
-/// `alrunner cache clear [--cache-dir DIR]`.
+/// `alrunner cache clear|prune|info`.
 fn parse_cache(mut it: impl Iterator<Item = String>) -> Result<Command, String> {
-    match it.next().as_deref() {
-        Some("clear") => {}
+    let sub = match it.next().as_deref() {
+        Some(s @ ("clear" | "prune" | "info")) => s.to_string(),
         Some(other) => {
             return Err(format!(
-                "unknown cache command `{other}` (only `alrunner cache clear` exists)"
+                "unknown cache command `{other}` (use `alrunner cache clear`, `prune` or `info`)"
             ));
         }
-        None => return Err("alrunner cache needs a command: `alrunner cache clear`".into()),
-    }
-    let mut dir = None;
+        None => return Err("alrunner cache needs a command: `clear`, `prune` or `info`".into()),
+    };
+    let (mut dir, mut dry_run, mut all_other_builds) = (None, false, false);
     while let Some(f) = it.next() {
         match f.as_str() {
             "--cache-dir" => dir = Some(it.next().ok_or("--cache-dir needs a value")?.into()),
+            "--dry-run" if sub == "prune" => dry_run = true,
+            "--all-other-builds" if sub == "prune" => all_other_builds = true,
             other => {
                 return Err(format!(
-                    "unknown option `{other}` for `alrunner cache clear` (see --help)"
+                    "unknown option `{other}` for `alrunner cache {sub}` (see --help)"
                 ));
             }
         }
     }
-    Ok(Command::CacheClear(dir))
+    Ok(match sub.as_str() {
+        "clear" => Command::CacheClear(dir),
+        "prune" => Command::CachePrune {
+            dir,
+            dry_run,
+            all_other_builds,
+        },
+        _ => Command::CacheInfo(dir),
+    })
 }
 
 /// `alrunner warm [PATH.bak] [--bc-version V] [--cache-dir DIR] [--no-download] [--test-data-company NAME]`.
@@ -705,6 +733,16 @@ mod tests {
             Command::CacheClear(Some(PathBuf::from("/c")))
         );
         assert!(p("cache").unwrap_err().contains("clear"));
+        assert_eq!(
+            p("cache prune --dry-run --all-other-builds --cache-dir /c").unwrap(),
+            Command::CachePrune {
+                dir: Some(PathBuf::from("/c")),
+                dry_run: true,
+                all_other_builds: true
+            }
+        );
+        assert_eq!(p("cache info").unwrap(), Command::CacheInfo(None));
+        assert!(p("cache info --dry-run").is_err(), "--dry-run belongs to prune");
         assert!(p("cache wipe").unwrap_err().contains("wipe"));
         assert!(p("cache clear --all").unwrap_err().contains("--all"));
     }

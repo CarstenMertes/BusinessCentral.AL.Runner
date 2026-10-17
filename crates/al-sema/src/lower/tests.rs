@@ -1757,11 +1757,18 @@ fn a_number_variable_into_text_is_refused_but_a_variant_into_text_lowers() {
         let (_, l) = lower_src(&format!(
             "codeunit 50100 C {{ procedure P() var I: Integer; B: BigInteger; D: Decimal; V: Variant; T: Text[50]; K: Code[20]; begin {body} end; }}"
         ));
-        l.unsupported.iter().flatten().flatten().cloned().collect::<Vec<String>>()
+        l.unsupported
+            .iter()
+            .flatten()
+            .flatten()
+            .cloned()
+            .collect::<Vec<String>>()
     };
     for bad in ["T := I;", "T := B;", "T := D;", "K := B;"] {
         assert!(
-            reasons(bad).iter().any(|r| r.contains("only a Variant holding a number converts")),
+            reasons(bad)
+                .iter()
+                .any(|r| r.contains("only a Variant holding a number converts")),
             "{bad}: {:?}",
             reasons(bad)
         );

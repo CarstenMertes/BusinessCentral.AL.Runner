@@ -297,9 +297,9 @@ registry! {
     },
     FilterTextReadAsEvaluate => {
         id: "filter-text-read-as-evaluate",
-        assumed: "A text value of a filter on a Date or Guid field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, a Guid with braces). A formula such as 1M, a Time or DateTime text and an empty text stay refused.",
+        assumed: "A text value of a filter on a Date field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, closing date `C01/17/27`). A formula such as 1M, a Time or DateTime text and an empty text stay refused. (A Guid filter text is pinned by types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al.)",
         tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
-        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; the same on a Guid field with Format(G); then GetFilter and Count.",
+        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; then GetFilter and Count.",
     },
     PageRunRecordAndSourceTableView => {
         id: "page-run-record-and-source-table-view",

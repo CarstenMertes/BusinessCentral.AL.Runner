@@ -1950,6 +1950,20 @@ impl Session {
                             ..Default::default()
                         })));
                     }
+                    // types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al:P143_GuidInvalid, P143Date_FieldRef.al:P143_FieldRefGuid.
+                    Err(e) if e.starts_with(al_builtins::filter::INVALID_GUID) => {
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
                     Err(e) => return Err(Signal::Unsupported(format!("SetFilter: {e}"))),
                 };
                 let mut r = rec.borrow_mut();

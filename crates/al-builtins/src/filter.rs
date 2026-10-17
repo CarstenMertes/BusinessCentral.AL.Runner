@@ -98,6 +98,8 @@ pub fn parse_filter(text: &str, args: &[crate::value::Value], ty: &crate::value:
 /// so that filters on enum fields can name members.
 /// Prefix of the parse error for a word a Boolean filter does not accept; the rest is the word.
 pub const INVALID_BOOLEAN: &str = "invalid Boolean filter value: ";
+/// The prefix of the error for a text no Guid filter reads (types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al:P143_GuidInvalid).
+pub const INVALID_GUID: &str = "invalid Guid filter value: ";
 
 pub fn parse_filter_with(
     text: &str,
@@ -359,9 +361,16 @@ impl Parser<'_> {
                     None => return Err(format!("`{text}` is not a member of the enum")),
                 }
             }
-            // Text built with `Format` reads as `Evaluate` reads it (Microsoft's tests filter dates and Guids this way;
+            // A Guid filter value is braced or plain, with dashes, or the 32 digits alone, in any case; it shows as the braced upper
+            // case form. A braced text without dashes, a missing brace, a wrong length, a non-hex digit, a number and a wildcard raise
+            // the Guid format error (P143Guid_Filters.al:P143_GuidBraced, P143_GuidInvalid, P143_GuidEmpty).
+            T::Guid if !text.trim().is_empty() => match crate::evaluate::read_text(self.ty, text.trim()) {
+                Some(v) if !text.trim().starts_with('(') => v,
+                _ => return Err(format!("{INVALID_GUID}{text}")),
+            },
+            // Date text built with `Format` reads as `Evaluate` reads it (Microsoft's tests filter dates this way;
             // assumption `filter-text-read-as-evaluate`). A formula, an empty text or anything else stays refused.
-            T::Date | T::Guid if !text.trim().is_empty() && !text.contains(['<', '>']) => {
+            T::Date if !text.trim().is_empty() && !text.contains(['<', '>']) => {
                 match crate::evaluate::read_text(self.ty, text.trim()).ok_or(()) {
                     Ok(v) => {
                         crate::assumptions::assume(crate::assumptions::Assumption::FilterTextReadAsEvaluate);

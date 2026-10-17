@@ -138,6 +138,10 @@ pub trait Ctx: FormatCtx {
     fn today_day(&self) -> Option<i32> {
         None
     }
+    /// The session's work date as a day number; `None` where there is no host.
+    fn work_date_day(&self) -> Option<i32> {
+        None
+    }
     /// The host clock in milliseconds since the Unix epoch; `None` where there is no host.
     fn now_unix_millis(&self) -> Option<i64> {
         None

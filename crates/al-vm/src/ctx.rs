@@ -32,6 +32,9 @@ impl al_builtins::native::Ctx for Session {
     fn today_day(&self) -> Option<i32> {
         Some(self.today_day_number())
     }
+    fn work_date_day(&self) -> Option<i32> {
+        Session::work_date_day(self)
+    }
     fn now_unix_millis(&self) -> Option<i64> {
         Some(self.now_millis())
     }

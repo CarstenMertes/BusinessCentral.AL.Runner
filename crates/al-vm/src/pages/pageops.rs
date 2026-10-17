@@ -315,6 +315,15 @@ impl Session {
             // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
             // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
             PageMethod::Caption if method.recv() == PageRecv::Page => {
+                // The caption read on a Page variable before the page runs is the page's own (Edit Dimension Set Entries.SetFormCaption
+                // reads `CurrPage.Caption` before Dimension Management runs the page); an assignment still needs an open page
+                // (assumption caption-read-before-the-page-runs).
+                if args.is_empty() && !st.borrow().open {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::CaptionReadBeforeThePageRuns,
+                    );
+                    return Ok(Value::Text(self.page_caption(st).into()));
+                }
                 self.require_open(st)?;
                 match args.first() {
                     Some(v) => match al_builtins::native::text_of(v) {

@@ -187,6 +187,14 @@ page 62320 "PM Hidden Part" { PageType = ListPart; SourceTable = "PM Row";
 page 62321 "PM Hidden Host" { PageType = Card; SourceTable = "PM Row";
   layout { area(Content) { field("No."; Rec."No.") { } part(Hid; "PM Hidden Part") { Visible = false; } } }
   trigger OnAfterGetCurrRecord() var P: Codeunit "PM Probe"; begin CurrPage.Hid.PAGE.Ping(Rec."No."); P.Note('host;'); end; }
+page 62323 "PM Find List" { PageType = List; SourceTable = "PM Row";
+  layout { area(Content) { repeater(R) { field("No."; Rec."No.") { } } } }
+  actions { area(Processing) { action(Refresh) { trigger OnAction() begin CurrPage.Update(false); end; } } }
+  trigger OnFindRecord(Which: Text): Boolean var P: Codeunit "PM Probe"; begin P.Note('F' + Which + ';'); exit(Rec.Find(Which)); end;
+  trigger OnAfterGetRecord() var P: Codeunit "PM Probe"; begin P.Note('R' + Rec."No." + ';'); end; }
+page 62324 "PM Caption Before" { PageType = Card; SourceTable = "PM Row"; Caption = 'Static Caption'; layout { area(Content) { field("No."; Rec."No.") { } } }
+  procedure Read(): Text begin exit(CurrPage.Caption); end; }
+page 62325 "PM Empty Class" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { CaptionClass = '3,'; } } } }
 page 62322 "PM Selection Own Update" { PageType = Card; SourceTable = "PM Row"; layout { area(Content) { field("No."; Rec."No.") { } } }
   procedure UseAfterClose() begin CurrPage.Update(false); end; }
 page 62098 "PM Find Card"
@@ -923,4 +931,44 @@ fn a_page_variable_procedure_using_curr_page_after_the_page_closed_is_refused_no
         matches!(&o[0].1, Outcome::NotRun(why) if why.contains("not open") && why.contains("not pinned")),
         "{o:?}"
     );
+}
+
+// misc/W2FindRecordUpdate.al:Update_False_OnOpenedPage, Update_True_OnOpenedPage (3 rows, the cursor on the middle one): a list refresh
+// re-reads the row, asks `=>`, reads on to the end, steps back to the start and asks `=` (Base Application's sales subforms have
+// OnFindRecord alone; there Next moves the record: assumption update-refresh-list-onfindrecord, docs/probes-needed.md).
+#[test]
+fn current_page_update_on_a_list_with_on_find_record_alone_refreshes_it_instead_of_being_refused() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Refreshes() var C: TestPage \"PM Find List\"; R: Record \"PM Row\"; P: Codeunit \"PM Probe\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); R.\"No.\" := 'B'; R.Insert(); R.\"No.\" := 'C'; R.Insert();
+            C.OpenEdit(); C.GoToKey('B'); P.Reset(); C.Refresh.Invoke();
+            if StrPos(P.Trace(), 'F=>;') = 0 then Error('no =>: %1', P.Trace());
+            if StrPos(P.Trace(), 'F=;') = 0 then Error('no =: %1', P.Trace());
+            Check('B', C.\"No.\".Value); C.Close(); end;"
+    ));
+}
+
+// A CaptionClass of '3,' with nothing after the comma (a matrix column nobody captioned) raises no event, so the page opens;
+// reading that caption stays refused (P84Captions.al Page_NoSubscriber c06 shows the caption is not the field's own).
+#[test]
+fn an_empty_caption_class_of_area_3_does_not_stop_the_page_from_opening() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Opens() var C: TestPage \"PM Empty Class\"; R: Record \"PM Row\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; R.Insert(); C.OpenView(); Check('A', C.\"No.\".Value); C.Close(); end;"
+    ));
+}
+
+// Edit Dimension Set Entries.SetFormCaption reads CurrPage.Caption on a Page variable before Dimension Management runs it
+// (assumption caption-read-before-the-page-runs).
+#[test]
+fn a_page_variable_reads_its_caption_before_it_runs() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Reads() var W: Page \"PM Caption Before\"; begin Check('Static Caption', W.Read()); end;"
+    ));
 }

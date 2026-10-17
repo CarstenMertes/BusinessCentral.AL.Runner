@@ -504,13 +504,13 @@ fn get_range_min_and_max_read_the_set_range() {
         "F",
     );
     assert_eq!(text(r), "5|10");
-    // Without a filter BC raises an error whose text the corpus does not pin: refused.
+    // Without a filter: DB:NoFilter (corpus record/lt-get-range-filter/GetRangeFilterGroups.al: P168_GetRange_FilterOnlyInGroup2).
     let r = run(
         "procedure F(): Text var R: Record \"ALT T\"; begin exit(Format(R.GetRangeMin(Grp))); end;",
         "F",
     );
     assert!(
-        matches!(r, Err(Signal::Unsupported(ref m)) if m.contains("GetRangeMin")),
+        matches!(r, Err(Signal::Error(ref e)) if e.code == "DB:NoFilter"),
         "{r:?}"
     );
 }
@@ -699,10 +699,8 @@ fn transfer_fields_moves_the_ordinal_between_an_enum_and_an_option_field() {
         end;",
         "F",
     );
-    assert!(
-        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("no such value")),
-        "{r:?}"
-    );
+    // The ordinal moves although the Enum lacks it, with no error (corpus TransferEnumOption.al: P98_OptionToEnum_MissingOrdinal).
+    assert!(matches!(&r, Ok(_)), "{r:?}");
 }
 
 // record/TestRecordSort.al:184-203 (SetAscending(false) makes FindFirst return the largest) and :205-.

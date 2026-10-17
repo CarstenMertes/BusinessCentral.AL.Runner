@@ -5237,7 +5237,16 @@
 69261 UiCall_InCodeunitOnRun_MessageIsHandled
 69302 Action_PendingEdit_OnCard
 69302 Action_PendingNewRow_OnCard
+69302 GoToKey_Card_WhichRowsAreRead
+69302 GoToKey_List_FiftyRows_RowsReadByAFarJump
+69302 GoToKey_List_FilteredOutKey
+69302 GoToKey_List_FiveRows_WhichRowsAreRead
+69302 GoToRecord_List_WhichRowsAreRead
+69302 NewRow_PageHandedRecord_FilterOnTextField
 69302 NewRow_PageHandedRecord_FilterWithTwoValues
+69302 NewRow_PageHandedRecord_NonKeySingleValueFilter
+69302 NewRow_PageHandedRecord_PrimaryKeySingleValueFilter
+69302 NewRow_PageHandedRecord_TwoSingleValueFilters
 69302 TestFilter_Changes_SaveTheRow_AndMoveToTheFirstMatch
 69302 TestFilter_CurrentKey_Text
 69303 Card_EditOpen_InsertPositioned
@@ -5249,6 +5258,7 @@
 69304 Editable_FalseAndTrueFromActions
 69304 Editable_FalseFromOnAfterGetCurrRecord
 69304 Editable_TrueOnAPageThatIsNotEditable
+69304 List_BufferLeftByOnAfterGetRecord_WhileTheRowIsUnchanged
 69304 TempSourcePage_ReadWriteLikeAStoredOne
 69304 Update_InOnAfterGetCurrRecord_Card
 69304 Update_InOnOpenPage_Card
@@ -6383,9 +6393,14 @@
 70174 InvisibleFieldMembers
 70174 PageGetFieldById
 70174 PartGetFieldById
+70175 GoToKeyFromALaterRow
+70175 GoToKeyFromTheFirstRow
+70175 GoToKeyMiss
+70175 GoToRecordFromTheFirstRow
 70176 ViewModeEmptyListInsertViaRec
 70177 BufferEditOfOnAfterGetRecordOnACard
 70177 CardOpenWithAndWithoutUpdateInOnOpenPage
+70177 ListOpenWithAndWithoutUpdateInOnOpenPage
 70179 NonModalPageHandlerCloseInHandler
 70179 NonModalPageHandlerCloseTriggers
 70179 NonModalPageHandlerEditThenReturn
@@ -6419,6 +6434,7 @@
 70186 HideValueAndShowMandatoryOnNewRow
 70186 IsExpandedAndExpandOnANonTreePage
 70187 RunCardPageType
+70187 RunListPageType
 70187 RunListPlusPageType
 70187 RunUndeclaredPageType
 70187 RunWorksheetPageType
@@ -9114,6 +9130,9 @@
 73859 Relation_QuotedFilter_NoRows
 73859 Relation_QuotedFilter_OnlyOtherKind
 73859 Relation_QuotedFilter_Single
+73863 ListOpen_FilteredView
+73863 ListOpen_SmallTables
+73863 ListOpen_Window_Boundary
 73874 FindList_Ascending_3Rows
 73880 Transfer_EnumToEnum_SameType
 73880 Transfer_EnumToOption

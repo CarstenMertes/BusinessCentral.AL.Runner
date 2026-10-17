@@ -213,6 +213,14 @@ fn n_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
             with_notification(r, |n| n.id = Some(g)).map(|()| Value::Null)
         }
         None => with_notification(r, |n| n.id.unwrap_or([0; 16])).map(Value::Guid),
+        // A Text takes the way a Text assigns into a Guid (record/TestRecordGetBySystemId*.al; Microsoft's Guided
+        // Experience tests write `Notification.Id := '9d730988-...'`).
+        Some(v @ (Value::Text(_) | Value::Code(_))) => {
+            let Value::Guid(g) = crate::ops::convert(v.clone(), &crate::value::RtType::Guid)? else {
+                return unsupported("Notification.Id with a Text that is no Guid");
+            };
+            with_notification(r, |n| n.id = Some(g)).map(|()| Value::Null)
+        }
         Some(other) => unsupported(format!("Notification.Id with {}", other.describe())),
     }
 }

@@ -361,6 +361,18 @@ registry! {
         tests: "Whse.-Source - Create Document and Production Order callers (Warehouse Request, Item data items): about 800 Tests-SCM and Tests-ERM tests.",
         probe: "A data item with DataItemTableView = where(F = filter(1..2)) run after SetTableView with F in 2..3, with a filter on another field, and the item's GetFilters in OnPreDataItem.",
     },
+    OpenNewSkipsOnFindRecord => {
+        id: "open-new-skips-onfindrecord",
+        assumed: "TestPage.OpenNew on a page with an OnFindRecord trigger does not run that trigger: the page finds its last row for xRec by itself (as for a page without the trigger) and goes to OnNewRecord.",
+        tests: "Service Credit Memo, Service Invoice and Service Order pages (OnFindRecord: Rec.Find(Which), else SetRange(\"No.\") and Find again): ServiceCreditMemoByPage, ServiceInvoiceByPage and about 30 more Tests-SCM-Service tests, and the 24 that follow them in their codeunits.",
+        probe: "A list or card with OnFindRecord(Which) that notes Which in a trace, a source table with and without rows: OpenNew, then the trace, xRec of OnNewRecord and the first Rec.",
+    },
+    TextToDecimalFromVariant => {
+        id: "text-to-decimal-from-variant",
+        assumed: "A Text of an optional sign, digits and at most one decimal point converts into a Decimal where a Variant meets a number, such as the return of DequeueDecimal; a text with anything else (thousands separators, other symbols, an empty text) stays refused.",
+        tests: "Library - Variable Storage.DequeueDecimal after a page handler enqueued a control's Value text: Service Statistics (OrderStatisticsNegativeProfit and 11 more Tests-SCM-Service tests).",
+        probe: "Dequeue a Variant holding Text '-111.69', '5', '1,000.5', '' and 'x' into a Decimal: the value or the error and its text.",
+    },
     PartLinkNotValidatedForUnsavedHost => {
         id: "part-link-not-validated-for-unsaved-host",
         assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",

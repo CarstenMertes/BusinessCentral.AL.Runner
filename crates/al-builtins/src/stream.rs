@@ -604,9 +604,19 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
     // (streams/TestProbeStreamContracts.al:ReadText_LengthPositionAndTerminators).
     let max_chars = match a.get(1) {
         None => usize::MAX,
-        Some(Value::Integer(n)) if *n >= 0 => *n as usize,
+        Some(Value::Integer(n)) if *n > 0 => *n as usize,
+        // A length of 0 or less raises and leaves the text and the position alone (streams/StTStreams.al:
+        // ReadTextLengthZeroAndNegative, `An invalid length 0 was specified in stream function...` for 0 and -1).
+        Some(Value::Integer(n)) => {
+            return crate::native::raise(
+                format!(
+                    "An invalid length {n} was specified in stream function. Length must be in range 1 to 2147483647."
+                ),
+                "InvalidStreamLength",
+            );
+        }
         Some(_) => {
-            return unsupported("InStream.ReadText with a length that is not a non-negative Integer (not pinned)");
+            return unsupported("InStream.ReadText with a length that is not an Integer (not pinned)");
         }
     };
     if a.len() > 2 {

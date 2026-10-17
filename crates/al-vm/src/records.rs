@@ -940,8 +940,9 @@ impl Session {
         }
         // A full load (the default) needs no bookkeeping beyond the flag; a partial one is worked
         // out in partial.rs.
+        let via_get = std::mem::take(&mut self.get_load);
         if rec.borrow().load.request.is_some() {
-            self.note_partial_fetch(rec, &row)?;
+            self.note_partial_fetch(rec, &row, via_get)?;
         } else {
             let mut r = rec.borrow_mut();
             r.load.buffer = Some(al_builtins::value::Buffer {
@@ -1681,7 +1682,10 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     Some(row) => {
-                        self.load(rec, row)?;
+                        self.get_load = true;
+                        let loaded = self.load(rec, row);
+                        self.get_load = false;
+                        loaded?;
                         Ok(Value::Boolean(true))
                     }
                     None => {
@@ -1959,7 +1963,7 @@ impl Session {
                     return Ok(Value::Null);
                 }
                 let engine = self.engine.clone();
-                let enums = |id: u32| engine.program.objects[id as usize].enum_values.clone();
+                let enums = |id: u32| crate::views::enum_filter_members(&engine.program.objects[id as usize]);
                 let expr = match al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums) {
                     Ok(e) => e,
                     // record/TestFilterTextBooleanFindContracts.al:130 (SetFilter_BooleanField_UnknownWord_Throws).

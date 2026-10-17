@@ -462,8 +462,15 @@ impl Session {
                         rec.borrow_mut().fields = r.borrow().fields.clone();
                         return Ok(Value::Null);
                     }
+                    let kept = st.borrow().set_record.clone().filter(|_| st.borrow().set_view);
+                    if let Some(view) = kept.filter(|v| v.borrow().table == r.borrow().table) {
+                        view.borrow_mut().fields = r.borrow().fields.clone();
+                        return Ok(Value::Null);
+                    }
                     let copy = Rc::new(RefCell::new(r.borrow().clone()));
-                    st.borrow_mut().set_record = Some(copy);
+                    let mut s = st.borrow_mut();
+                    s.set_record = Some(copy);
+                    s.set_view = false;
                     Ok(Value::Null)
                 }
                 other => unsupported(format!("Page.SetRecord with {}", other.describe())),
@@ -543,7 +550,9 @@ impl Session {
                         _ => self.initial_fields(table),
                     };
                     copy.borrow_mut().fields = fields;
-                    st.borrow_mut().set_record = Some(copy);
+                    let mut s = st.borrow_mut();
+                    s.set_record = Some(copy);
+                    s.set_view = true;
                     Ok(Value::Null)
                 }
                 other => unsupported(format!("Page.SetTableView with {}", other.describe())),

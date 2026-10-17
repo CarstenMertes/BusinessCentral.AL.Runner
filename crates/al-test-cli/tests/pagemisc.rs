@@ -861,7 +861,7 @@ fn a_part_linked_to_a_new_unsaved_host_does_not_validate_the_link_when_the_key_i
 
 // Base Application's lookups run `Page.RunModal(0, Rec) = Action::LookupOK` and read the record afterwards (Gen. Journal
 // Management's template selection: 10 Tests-ERM tests failed with an empty template name). On LookupOK the record holds
-// the row the page was left on. Not pinned by a corpus test (assumption page-run-modal-record-takes-selection).
+// the row the page was left on. Pinned by pages/lt-page-runmodal-rec/PageRunModalRecAfterClose.al.
 #[test]
 fn page_run_modal_with_a_record_hands_back_the_selected_row_on_lookup_ok() {
     passes(&format!(

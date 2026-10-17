@@ -174,6 +174,7 @@ impl Session {
                 Cursor::Row
             };
             s.draft = true;
+            s.new_by_call = true;
             s.dirty = false;
             s.refused = false;
             if !keep_focus {

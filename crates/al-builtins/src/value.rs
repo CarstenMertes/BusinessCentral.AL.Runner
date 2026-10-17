@@ -361,6 +361,11 @@ pub struct PageState {
     pub lower_key: Option<Vec<Value>>,
     /// The record `Page.SetRecord` handed a page variable, shown when the page runs.
     pub set_record: Option<Rc<RefCell<RecordState>>>,
+    /// `Page.SetTableView` gave `set_record` its filters and order: a later `SetRecord` moves the position only
+    /// (pages/lt-page-setrecord-settableview/PageVarSetRecordTableView.al:P157_List_SetTableViewThenSetRecord_*).
+    pub set_view: bool,
+    /// The line the page stands on was started by a `New()` call, not reached by moving onto the blank line.
+    pub new_by_call: bool,
     /// A `Page`-typed modal handler is running on this page: the page never opened, `GetRecord` and `SetRecord`
     /// read and write its Rec (handlers/PSModalPageHandlerTyped.al).
     pub typed_handler: bool,
@@ -442,6 +447,8 @@ impl PageState {
             hidden_parts: Vec::new(),
             lower_key: None,
             set_record: None,
+            set_view: false,
+            new_by_call: false,
             typed_handler: false,
             host: None,
             ext_instances: Vec::new(),

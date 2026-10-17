@@ -560,12 +560,6 @@ registry! {
         tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
         probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again.",
     },
-    PageRunModalRecordTakesSelection => {
-        id: "page-run-modal-record-takes-selection",
-        assumed: "Page.RunModal(Id, Rec) that answers LookupOK leaves in Rec the row the page was closed on, and not its own filters or key.",
-        tests: "Gen. Journal Management TemplateSelection (PAGE.RunModal(0, GenJnlTemplate) = ACTION::LookupOK, then GenJnlTemplate.Name): ERM Apply Sales/Receivables and about 9 more Tests-ERM tests.",
-        probe: "Page.RunModal(Page::X, Rec) with a handler that does GoToKey and OK; read Rec; the same with Cancel; with a page variable's RunModal and GetRecord.",
-    },
     FilterChangeLandsOnNewLine => {
         id: "filter-change-lands-on-new-line",
         assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",

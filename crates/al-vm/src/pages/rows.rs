@@ -1059,16 +1059,13 @@ impl Session {
         self.run_page_ui_with(st, record, modal, false)
     }
 
-    /// `Page.RunModal(Id, Rec)` leaves the row the lookup was closed on in `Rec` (Gen. Journal Management's template
-    /// selection reads it). Assumed, see Assumption::PageRunModalRecordTakesSelection.
+    /// `Page.RunModal(Id, Rec)` leaves the row the page was closed on in `Rec`, whichever way it closed (pages/lt-page-runmodal-rec/
+    /// PageRunModalRecAfterClose.al).
     fn hand_back_selection(&mut self, st: &St, handed: &Option<Rec>, answer: &Value) {
-        let lookup_ok = matches!(answer, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK"));
+        let closed_on_row = matches!(answer, Value::Option(n, m) if m.get(*n as usize).is_some_and(|a| a == "LookupOK" || a == "LookupCancel"));
         let picked = st.borrow_mut().selection.take();
-        if let (true, Some(r), Some(fields)) = (lookup_ok, handed, picked) {
+        if let (true, Some(r), Some(fields)) = (closed_on_row, handed, picked) {
             if r.borrow().fields.len() == fields.len() {
-                al_builtins::assumptions::assume(
-                    al_builtins::assumptions::Assumption::PageRunModalRecordTakesSelection,
-                );
                 r.borrow_mut().fields = fields;
             }
         }

@@ -133,6 +133,12 @@ registry! {
         tests: "Tests-Marketing Marketing Matrix Management.TaskWithStatus* (Tasks.StatusFilter.SetValue(StatusFilter::\" \") resets the filter); 7 tests.",
         probe: "A page with an Option variable control with OptionCaption ' ,A,B': TestPage SetValue(Var::\" \") after SetValue(A), then Value; and SetValue('') as text; the same for an option field of a table.",
     },
+    TypedHandlerKeepsRecAfterSetTableView => {
+        id: "typed-handler-keeps-rec-after-settableview",
+        assumed: "A Page-typed modal handler of a page variable that was given only SetTableView (no SetRecord) sees the Rec the page's own code assigned before (`Rec := X` in a procedure the test called), not a blank record.",
+        tests: "Contact Profile Answers.SetRunFromForm (Rec := ProfileQuestionnaireLine) then RunModal, handler calls UpdateProfileAnswer: Tests-Marketing Marketing Profiling CreateContactProfileManually, ContactToSegmentUsingProfile.",
+        probe: "A page variable: SetTableView(T) then a page procedure that does Rec := T (a row), then RunModal with a Page-typed handler reading Rec.Id through another page procedure and GetRecord.",
+    },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
         assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",

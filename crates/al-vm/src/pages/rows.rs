@@ -1400,7 +1400,20 @@ impl Session {
         if self.has_source(st) {
             if let Some(r) = &record {
                 let rec = self.page_rec(st);
-                rec.borrow_mut().fields = r.borrow().fields.clone();
+                // The record of a SetTableView alone is a view: it carries no position, so it does not replace the Rec the
+                // page's own code set (Contact Profile Answers.SetRunFromForm does `Rec := ProfileQuestionnaireLine` after the test's
+                // SetTableView; its handler then reads Rec."Line No."). Not pinned: Microsoft's Tests-Marketing Marketing Profiling.
+                // Assumption typed-handler-keeps-rec-after-settableview.
+                let table = r.borrow().table as usize;
+                let blank = format!("{:?}", self.initial_fields(table));
+                let view_only = st.borrow().set_view && format!("{:?}", r.borrow().fields) == blank;
+                if view_only {
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::TypedHandlerKeepsRecAfterSetTableView,
+                    );
+                } else {
+                    rec.borrow_mut().fields = r.borrow().fields.clone();
+                }
             }
         }
         {

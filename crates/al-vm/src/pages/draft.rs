@@ -284,6 +284,32 @@ impl Session {
     /// handlers/TestPageRecordTriggers.al:76 OnInsertRecord_ReturningFalse_SuppressesTheInsert).
     pub(super) fn insert_draft(&mut self, st: &St) -> Result<(), Signal> {
         let rec = self.page_rec(st);
+        // A part line whose host is a new, unsaved record with a blank link key: BC saves the host first (its OnInsert numbers it)
+        // and links the line to it. Which order the triggers run in, and what the line's key holds, are not pinned: refused.
+        let host_unsaved = st
+            .borrow()
+            .host
+            .as_ref()
+            .and_then(|(h, _)| h.upgrade())
+            .is_some_and(|h| h.borrow().draft);
+        if host_unsaved {
+            let table = self.table(&rec)?;
+            let blank_link = rec.borrow().filters.iter().any(|f| {
+                table.keys[0].contains(&f.field)
+                    && match &f.expr {
+                        al_builtins::filter::FilterExpr::Eq(Value::Text(t) | Value::Code(t)) => t.is_empty(),
+                        al_builtins::filter::FilterExpr::Range(Some(Value::Text(a) | Value::Code(a)), Some(Value::Text(b) | Value::Code(b))) => {
+                            a.is_empty() && b.is_empty()
+                        }
+                        _ => false,
+                    }
+            });
+            if blank_link {
+                return unsupported(
+                    "a part line inserted while its host is a new record whose link key is still blank (BC saves the host first; the order is not pinned)",
+                );
+            }
+        }
         // BelowxRec is Yes for a row added with New() at the end, as it is for OnNewRecord (corpus
         // handlers/TestPageRuntimeContracts.al:197-211 TestPage_New_AtTheEnd_PassesBelowxRecTrueToOnInsertRecord).
         // A row added in the middle is not pinned; it is given the same Yes as OnNewRecord gets.

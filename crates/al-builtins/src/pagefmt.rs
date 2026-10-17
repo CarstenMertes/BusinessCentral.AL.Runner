@@ -316,7 +316,23 @@ fn parse_typed(
                 .option_captions
                 .as_ref()
                 .and_then(|c| c.iter().position(|x| x.eq_ignore_ascii_case(t)));
-            let i = by_caption.or_else(|| members.iter().position(|x| x.eq_ignore_ascii_case(t)))?;
+            let i = by_caption.or_else(|| members.iter().position(|x| x.eq_ignore_ascii_case(t)));
+            // A blank text (the blank caption `' '` is trimmed to it) selects the first member whose caption or name
+            // is blank. Not pinned by the corpus; Microsoft's Tasks Matrix tests reset `StatusFilter.SetValue(StatusFilter::" ")`.
+            // Assumption testpage-setvalue-blank-option-member.
+            let i = match i {
+                Some(i) => i,
+                None if t.is_empty() => {
+                    let blank = |x: &String| x.trim().is_empty();
+                    let i = match &f.option_captions {
+                        Some(c) => c.iter().position(blank),
+                        None => members.iter().position(blank),
+                    }?;
+                    crate::assumptions::assume(crate::assumptions::Assumption::TestPageSetValueBlankOptionMember);
+                    i
+                }
+                None => return None,
+            };
             Value::Option(i as i32, members.clone().into())
         }
         T::Enum(id) => Value::Enum(*id, enum_by_text(*id, t)?),

@@ -115,6 +115,24 @@ registry! {
         tests: "Library - Error Message.LoadErrorMessages (Evaluate(TempErrorMessage.\"Record ID\", ErrorMessages.Source.Value, 9)); 36 Tests-Misc tests (Check Dimensions On Posting: Default Dimension, Sales Header, Dimension Value keys).",
         probe: "Evaluate(Rid, Format(Rid)) and Format(Rid, 0, 9) for a table with a Code+Code key, an Enum+Code key (Sales Header), an Integer+Code+Code key (Default Dimension), a Date key part and a Code value holding a comma; the result and Rid; and too few and too many values.",
     },
+    TempRecordByValueToPersistentParameter => {
+        id: "temp-record-by-value-to-persistent-parameter",
+        assumed: "A temporary record passed by value to a parameter that is not declared temporary gives the callee a record of the stored table holding the current row (the copy is no longer temporary); a parameter declared temporary gets an independent empty buffer (pinned).",
+        tests: "To-do.InsertTask / InsertTaskAndRelatedData (Task2: Record \"To-do\" receives the temporary Rec of CreateTaskFromTask, Task2.Insert(true), then Task2.Get); Tests-Marketing Marketing Matrix Management TaskWith* (10 tests).",
+        probe: "A temporary record with a row, passed by value to a procedure with a parameter of the same table not declared temporary: the callee's IsTemporary, Insert then Count of the stored table, and whether the caller's temporary rows change.",
+    },
+    TestPageAssertEqualsIntegerOnTextControl => {
+        id: "testpage-assertequals-integer-on-text-control",
+        assumed: "TestPageField.AssertEquals(<Integer>) on a control over a Text or Code value compares the plain digits of the integer with the control's text, instead of raising TypeConversion; another number or an Enum there stays refused.",
+        tests: "Tests-Marketing Marketing Matrix Management.TasksMatrixHandlerWithValue (Field1.AssertEquals(1) on the Text[1024] cells of Tasks Matrix); the 10 TaskWith* tests.",
+        probe: "A page with a field over a Text[30] variable holding '1': TestPage Field.AssertEquals(1) and AssertEquals(2), also with a Decimal and a BigInteger expected value, and a Code[10] control.",
+    },
+    TestPageSetValueBlankOptionMember => {
+        id: "testpage-setvalue-blank-option-member",
+        assumed: "TestPageField.SetValue of the first (blank) option member on a control whose OptionCaption starts with a blank caption (' ,Not Started,...') is accepted and selects that member; the client reads the caption ' ' as blank.",
+        tests: "Tests-Marketing Marketing Matrix Management.TaskWithStatus* (Tasks.StatusFilter.SetValue(StatusFilter::\" \") resets the filter); 7 tests.",
+        probe: "A page with an Option variable control with OptionCaption ' ,A,B': TestPage SetValue(Var::\" \") after SetValue(A), then Value; and SetValue('') as text; the same for an option field of a table.",
+    },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
         assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",

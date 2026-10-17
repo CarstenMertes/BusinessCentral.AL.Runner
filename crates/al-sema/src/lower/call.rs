@@ -177,7 +177,14 @@ impl Lowerer<'_> {
                 } else {
                     None
                 };
-                let emit_id = if id == "System.Evaluate#1"
+                let option_captions = if id == "System.Evaluate#1" {
+                    args.first().and_then(|a| self.option_field_captions(a))
+                } else {
+                    None
+                };
+                let emit_id = if option_captions.is_some() {
+                    "System.EvaluateOptionField#1".to_string()
+                } else if id == "System.Evaluate#1"
                     && args.first().is_some_and(|a| {
                         matches!(self.ty_of(a), Ty::Option(_))
                             && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
@@ -408,6 +415,13 @@ impl Lowerer<'_> {
                     } else {
                         ir::Arg::Value(self.expr(a)?)
                     });
+                }
+                // The OptionCaption of an Option field goes along as a fourth argument.
+                if let (true, Some(captions)) = (emit_id == "System.EvaluateOptionField#1", option_captions) {
+                    while out.len() < 3 {
+                        out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Integer(0))));
+                    }
+                    out.push(ir::Arg::Value(ir::Expr::Const(ir::Const::Text(captions))));
                 }
                 // The declared length of a Text or Code variable goes along as a fourth argument.
                 if emit_id == "System.EvaluateBounded#1" {

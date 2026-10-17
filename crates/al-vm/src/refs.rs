@@ -185,6 +185,62 @@ impl Session {
         }
     }
 
+    /// `Evaluate(RecordId, text)`: see `al_builtins::evaluate`. Only a table with a one-field primary key is read with a key.
+    pub(crate) fn evaluate_record_id_text(
+        &mut self,
+        text: &str,
+        number: i64,
+    ) -> Result<Option<LibraryValue>, Signal> {
+        let (name, key_text) = match text.split_once(':') {
+            Some((n, k)) => (n.trim(), Some(k)),
+            None => (text.trim(), None),
+        };
+        let tables: Vec<usize> = self
+            .engine
+            .program
+            .objects
+            .iter()
+            .enumerate()
+            .filter(|(_, o)| o.table.is_some() && o.name.eq_ignore_ascii_case(name))
+            .map(|(i, _)| i)
+            .collect();
+        let object = match tables.as_slice() {
+            [] => return Ok(None),
+            [one] => *one,
+            _ => return unsupported("Evaluate into a RecordId of a table name that two tables share (not pinned)"),
+        };
+        let o = &self.engine.program.objects[object];
+        if o.uncompiled {
+            return unsupported("Evaluate into a RecordId of a table of an app that is not compiled");
+        }
+        let table_no = o.id.unwrap_or(0);
+        let table_name = o.name.clone();
+        let schema = o.table.as_ref().expect("filtered on a table");
+        let key = match key_text {
+            None => Vec::new(),
+            Some(k) => {
+                let [pos] = schema.keys[0].as_slice() else {
+                    return unsupported("Evaluate into a RecordId of a table with a composite primary key (not pinned)");
+                };
+                let ty = schema.fields[*pos].ty.clone();
+                let k = k.strip_prefix(' ').unwrap_or(k);
+                if k.is_empty() {
+                    return unsupported("Evaluate into a RecordId with an empty key text (not pinned)");
+                }
+                match al_builtins::evaluate::evaluate_typed(self, &ty, k, number)? {
+                    Some(v) => vec![v],
+                    None => return Ok(None),
+                }
+            }
+        };
+        Ok(Some(LibraryValue::RecordId {
+            table: object as u32,
+            table_no,
+            name: table_name,
+            key,
+        }))
+    }
+
     fn open_ref(lib: &Lib, what: &str) -> Result<Rec, Signal> {
         match &*lib.borrow() {
             LibraryValue::RecordRef(r)

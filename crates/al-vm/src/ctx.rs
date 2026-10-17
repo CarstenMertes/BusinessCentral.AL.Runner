@@ -222,6 +222,32 @@ impl al_builtins::native::Ctx for Session {
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
         Some(self.engine.program.objects[id as usize].enum_values.clone())
     }
+    fn evaluate_record_id(
+        &mut self,
+        text: &str,
+        number: i64,
+    ) -> Option<Result<Option<al_builtins::value::LibraryValue>, Signal>> {
+        Some(self.evaluate_record_id_text(text, number))
+    }
+    fn evaluate_field_target(&mut self, v: &Value) -> Option<Result<al_builtins::native::FieldTarget, Signal>> {
+        let Value::Library(_, l) = v else { return None };
+        let (rec, pos) = match &*l.borrow() {
+            al_builtins::value::LibraryValue::FieldRef(r, p) | al_builtins::value::LibraryValue::KeyFieldRef(r, p) => {
+                (r.clone(), *p)
+            }
+            _ => return None,
+        };
+        let t = match self.table(&rec) {
+            Ok(t) => t,
+            Err(e) => return Some(Err(e)),
+        };
+        Some(Ok(al_builtins::native::FieldTarget {
+            ty: t.fields[pos].ty.clone(),
+            option_caption: self.field_property(&t, pos, "OptionCaption").is_some(),
+            rec,
+            pos,
+        }))
+    }
     fn enum_captions(&self, id: u32) -> Vec<(i32, String)> {
         self.engine.program.objects[id as usize].enum_captions.clone()
     }

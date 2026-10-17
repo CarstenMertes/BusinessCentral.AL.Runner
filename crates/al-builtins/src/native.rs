@@ -90,6 +90,14 @@ pub struct HttpOutgoing {
     pub joined_with_base: bool,
 }
 
+/// The field an `Evaluate` into a `FieldRef` writes (see [`Ctx::evaluate_field_target`]).
+pub struct FieldTarget {
+    pub rec: std::rc::Rc<std::cell::RefCell<crate::value::RecordState>>,
+    pub pos: usize,
+    pub ty: crate::value::RtType,
+    pub option_caption: bool,
+}
+
 pub trait Ctx: FormatCtx {
     /// Gives `request` to the running test's `[HttpClientHandler]` and answers the response it filled; raises the
     /// policy error without one. No request ever reaches a network.
@@ -163,6 +171,16 @@ pub trait Ctx: FormatCtx {
     /// `CopyStream` where one side is a `DotNet` stream (ADR-024). `None` where the context has no
     /// .NET host.
     fn copy_stream_dotnet(&mut self, _out: &Value, _src: &Value, _count: Option<i64>) -> Option<Result<(), Signal>> {
+        None
+    }
+    /// `Evaluate(RecordId, Text)`: the RecordId the text names (a table name, then `:` and the key), `Ok(None)` where no table
+    /// is named or the key is not a value of its type. `None` where the context has no program.
+    fn evaluate_record_id(&mut self, _text: &str, _number: i64) -> Option<Result<Option<crate::value::LibraryValue>, Signal>> {
+        None
+    }
+    /// The field a `FieldRef` stands on, for `Evaluate` into it: its record buffer, position, declared type and whether the field
+    /// declares an OptionCaption. `None` where the context has no program or `v` is no assigned `FieldRef`.
+    fn evaluate_field_target(&mut self, _v: &Value) -> Option<Result<FieldTarget, Signal>> {
         None
     }
     /// The declared values of enum object `id` as (ordinal, name), in declaration order with
@@ -327,6 +345,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
         crate::evaluate::evaluate_variable_option,
     ),
     ("System.EvaluateBounded#1", crate::evaluate::evaluate_bounded),
+    ("System.EvaluateOptionField#1", crate::evaluate::evaluate_option_field),
     ("System.Abs#1", abs),
     ("System.GetLastErrorText#1", get_last_error_text),
     (

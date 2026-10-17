@@ -136,6 +136,11 @@ impl Session {
                     }
                 }
             }
+            // An Enum handed to a text control (Analysis Types' "Item Ledger Entry Type Filter".SetValue(Enum)): the generic conversion
+            // raises TypeConversion for a Variant holding an Enum, which is not what a control does; how the client writes it is not pinned.
+            Value::Enum(..) if matches!(ty, RtType::Text(_) | RtType::Code(_)) => {
+                return unsupported("SetValue of an Enum on a text control (how BC writes it is not pinned)");
+            }
             other => {
                 let converted = ops::convert(other.clone(), &ty)?;
                 self.control_text(st, idx, &converted)?.into()

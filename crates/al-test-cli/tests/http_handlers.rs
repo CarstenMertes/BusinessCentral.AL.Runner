@@ -238,21 +238,23 @@ fn an_http_content_passed_by_reference_keeps_the_headers_handed_out_before() {
     );
 }
 
-// A Cache-Control with directives beyond no-store and no-cache is refused: the order is pinned by network/lt-http-header-names-cache-control/
-// CacheControl*.al but not implemented yet. A known header written in lower case is stored under its canonical name (HeaderNameCaseRequest.al).
+// Cache-Control directives are written in .NET's order (network/lt-http-header-names-cache-control/CacheControlPairs.al: `public, no-cache`
+// reads back `public, no-cache`, `no-cache, public` too), and a known header written in lower case is stored under its canonical
+// name (HeaderNameCaseRequest.al).
 #[test]
-fn an_unimplemented_cache_control_order_is_refused_and_a_lower_case_known_name_is_canonical() {
-    let why = not_run(
+fn cache_control_is_written_in_net_order_and_a_lower_case_known_name_is_canonical() {
+    all_pass(
         "",
         r#"
     [Test] procedure Order()
-    var Req: HttpRequestMessage; H: HttpHeaders;
+    var Req: HttpRequestMessage; H: HttpHeaders; V: array[3] of Text;
     begin
         Req.GetHeaders(H);
-        H.Add('Cache-Control', 'public, no-cache');
+        H.Add('Cache-Control', 'no-cache, public');
+        if not H.GetValues('Cache-Control', V) then Error('missing');
+        if V[1] <> 'public, no-cache' then Error('order %1', V[1]);
     end;"#,
     );
-    assert!(why.contains("Cache-Control") && why.contains("not pinned"), "{why}");
     all_pass(
         "",
         r#"

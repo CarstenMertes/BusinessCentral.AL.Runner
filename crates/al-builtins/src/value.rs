@@ -337,6 +337,8 @@ pub struct PageState {
     pub trapping: bool,
     /// `CurrPage.Update` was called: the client re-reads the row once the call that made it returns.
     pub refresh: bool,
+    /// `CurrPage.SaveRecord` ran in the action being invoked.
+    pub save_record_called: bool,
     /// A row with the new record's starting key was already stored when the draft started.
     pub draft_stored: bool,
     /// The row a new line was started below (`New()` on a stored row of a list): after the new row
@@ -437,6 +439,7 @@ impl PageState {
             result: None,
             trapping: false,
             refresh: false,
+            save_record_called: false,
             draft_stored: false,
             after_new: None,
             opening: false,

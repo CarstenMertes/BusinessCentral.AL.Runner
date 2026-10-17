@@ -597,6 +597,7 @@ impl Session {
             report: ReportState {
                 rebind_after_run: false,
                 curr_report_language: None,
+                format_region: None,
                 report_init_depth: None,
                 report_quit: false,
                 report_trigger: None,

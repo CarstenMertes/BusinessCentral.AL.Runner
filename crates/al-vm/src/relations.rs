@@ -248,8 +248,22 @@ impl Session {
             // (query/lt-query-links-relations-httpstream/RelQuotedEnum.al:P100_Validate_EachKind).
             code: if self.engine.program.objects[related.object as usize].id == Some(2_000_000_041) {
                 "DB:RecordNotFound".into()
+            } else if let [ir::RelationWhere::Value { related: w, .. } | ir::RelationWhere::Field { related: w, .. }] =
+                wheres.as_slice()
+            {
+                // A single where() on a field of the related table's primary key answers DB:RecordNotFound (corpus
+                // misc/lt-probes-needed-6/PnF13RelationFilterConditions.al:122-126, 144-149, 166-169, primary key (Code, Zone)); on
+                // another field DB:NothingInsideFilter (record/lt-relation-where-empty-term/RelationWhereEmptyTerm.al:173-177). Several conditions are refused.
+                if related.keys[0].contains(w) {
+                    "DB:RecordNotFound".into()
+                } else {
+                    "DB:NothingInsideFilter".into()
+                }
             } else if !wheres.is_empty() {
-                "DB:NothingInsideFilter".into()
+                // Several conditions: which code BC answers is not pinned (probe wanted), so the error path is refused.
+                return Err(Signal::Unsupported(
+                    "the error code of a TableRelation check with several where() conditions (not pinned)".into(),
+                ));
             } else {
                 "DB:PrimRecordNotFound".into()
             },

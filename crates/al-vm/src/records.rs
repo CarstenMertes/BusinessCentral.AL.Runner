@@ -927,6 +927,16 @@ impl Session {
                     *b = al_builtins::stream::copy_blob(b, false);
                 }
             }
+        } else {
+            // A Blob a Modify persisted reads empty after a Get until CalcFields, as a database record's does; one still being
+            // written keeps its content (misc/lt-probes-needed-1/PnABlobAssignRename.al:Assign_Temporary `regot-source = ''`).
+            for v in &mut row {
+                if let Value::Blob(b) = v {
+                    if b.borrow().persisted {
+                        *b = al_builtins::stream::copy_blob(b, false);
+                    }
+                }
+            }
         }
         // A full load (the default) needs no bookkeeping beyond the flag; a partial one is worked
         // out in partial.rs.
@@ -1340,6 +1350,14 @@ impl Session {
                     .map_err(|e| Signal::Unsupported(format!("{e}")))?
                 {
                     InsertOutcome::Inserted => {
+                        // The Blob content an Insert of a temporary record stored is persisted, as one a Modify stored (see Rename).
+                        if rec.borrow().temp_id.is_some() {
+                            for v in &rec.borrow().fields {
+                                if let Value::Blob(b) = v {
+                                    b.borrow_mut().persisted = true;
+                                }
+                            }
+                        }
                         if let (Some(a), false) = (auto, taken) {
                             self.note_explicit_key(&t, a, &row, &cx.company);
                         }
@@ -1471,7 +1489,21 @@ impl Session {
                 if self.is_user_row(&t, rec.borrow().temporary) {
                     self.user_before_modify(&t, rec)?;
                 }
-                let old_version = self.bump_row_version(&t, rec);
+                // A Modify that changes no field leaves the row version as it is: Microsoft's tests Modify a record after a refresh report
+                // modified its row without a change (Create Prod. Order Lines.Copy) and pass, which a bumped version would make a
+                // stale write (assumption modify-without-change-keeps-row-version).
+                let old_version = match stored_row.as_deref() {
+                    Some(old) if !rec.borrow().temporary && Session::modify_changes_nothing(&t, old, rec) => {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::ModifyWithoutChangeKeepsRowVersion,
+                        );
+                        if let Some(i) = t.fields.iter().position(|f| f.id == 2_000_000_005) {
+                            rec.borrow_mut().fields[i] = old[i].clone();
+                        }
+                        None
+                    }
+                    _ => self.bump_row_version(&t, rec),
+                };
                 let stamped = self.stamp_modify(&t, rec, stored_row.as_deref());
                 let mut row = rec.borrow().fields.clone();
                 for (i, v) in kept {
@@ -2199,6 +2231,22 @@ impl Session {
                 };
                 match outcome {
                     RenameOutcome::Renamed => {
+                        // The record itself shows no Blob value after a Rename of a temporary record; the row keeps one only when a write came
+                        // after the last Insert or Modify (misc/lt-probes-needed-1/PnABlobAssignRename.al:RenameTemporary_* `A..E-rec-content`).
+                        if rec.borrow().temp_id.is_some() {
+                            let own: Vec<(usize, Value)> = rec
+                                .borrow()
+                                .fields
+                                .iter()
+                                .enumerate()
+                                .filter(|(_, v)| matches!(v, Value::Blob(_)))
+                                .map(|(i, _)| (i, self.default_value(&t.fields[i].ty)))
+                                .collect();
+                            let mut r = rec.borrow_mut();
+                            for (i, empty) in own {
+                                r.fields[i] = empty;
+                            }
+                        }
                         // A company that is renamed takes its data with it
                         // (record/TestChangeCompanyRows... TestChangeCompanyFiltersCopyDeleteContracts.al:170-212).
                         if !same_key && self.is_company_table(&t) && !rec.borrow().temporary {

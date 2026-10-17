@@ -13,6 +13,71 @@ pub trait FormatCtx {
     fn language(&self) -> i32 {
         1033
     }
+    /// The format region a report set with `CurrReport.FormatRegion` while it runs (None: the session's own).
+    fn region(&self) -> Option<String> {
+        None
+    }
+}
+
+/// A context without the format region, for the plain en-US text a region then rewrites.
+struct WithoutRegion<'a>(&'a dyn FormatCtx);
+
+impl FormatCtx for WithoutRegion<'_> {
+    fn enum_name(&self, id: u32, ordinal: i32) -> String {
+        self.0.enum_name(id, ordinal)
+    }
+    fn language(&self) -> i32 {
+        self.0.language()
+    }
+}
+
+/// `Format` while a report's `FormatRegion` is set. Only `de-DE` is measured, and only a Date (`05.03.24`) and a Decimal
+/// (`1.234,5`) in the default format (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_SetAndRead). Texts are not culture
+/// sensitive; every other value is refused.
+fn format_in_region(
+    v: &Value,
+    length: i32,
+    standard: i32,
+    region: &str,
+    ctx: &dyn FormatCtx,
+) -> Result<String, FormatFail> {
+    let plain = WithoutRegion(ctx);
+    let refuse = || {
+        FormatFail::Unsupported(format!(
+            "Format of {} (standard format {standard}) while CurrReport.FormatRegion is '{region}' is not pinned (docs/probes-needed.md)",
+            type_phrase(v)
+        ))
+    };
+    match v {
+        Value::Null | Value::Text(_) | Value::Code(_) => format_value(v, length, standard, &plain),
+        // An Integer has no thousands separator in any culture, as in en-US: `lang2:1033` under de-DE (PnC06ReportLanguage.al:Language_SetAndRead).
+        Value::Integer(_) | Value::BigInteger(_) if standard == 0 => format_value(v, length, standard, &plain),
+        _ if region != "de-DE" => Err(refuse()),
+        Value::Date(..) if matches!(standard, 0 | 1) => {
+            let en = format_value(v, 0, standard, &plain)?;
+            let parts: Vec<&str> = en.split('/').collect();
+            match parts[..] {
+                [m, d, y] if en.chars().all(|c| c.is_ascii_digit() || c == '/') => {
+                    Ok(pad(format!("{d}.{m}.{y}"), length))
+                }
+                _ => Err(refuse()),
+            }
+        }
+        Value::Decimal(_) if standard == 0 => {
+            let en = format_value(v, 0, standard, &plain)?;
+            Ok(pad(
+                en.chars()
+                    .map(|c| match c {
+                        ',' => '.',
+                        '.' => ',',
+                        c => c,
+                    })
+                    .collect(),
+                length,
+            ))
+        }
+        _ => Err(refuse()),
+    }
 }
 
 /// Why a format did not produce a text.
@@ -47,6 +112,9 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
 
 /// `Format(Value, Length, Standard)` with BC's own errors kept apart from refusals.
 pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, FormatFail> {
+    if let Some(region) = ctx.region().filter(|r| !r.is_empty()) {
+        return format_in_region(v, length, standard, &region, ctx);
+    }
     let s = match v {
         Value::Null => String::new(),
         // The standard formats 3 to 8 do not exist for a Boolean, which the platform names 'Char' (types/lt-boolean-format/
@@ -60,6 +128,9 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             // `set_ok = Ja`, ObjectId_WithAnotherGlobalLanguage `set 1031 ok = Ja`, P142_Date_Language).
             (_, true) if ctx.language() == 1031 => "Ja".into(),
             (_, false) if ctx.language() == 1031 => "Nein".into(),
+            // French after GlobalLanguage(1036): `Oui` / `Non` (types/lt-conversions-hidden-parts-doctype/P142ToTextLang.al:153).
+            (_, true) if ctx.language() == 1036 => "Oui".into(),
+            (_, false) if ctx.language() == 1036 => "Non".into(),
             (_, true) => "Yes".into(),
             (_, false) => "No".into(),
         },
@@ -126,10 +197,10 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             (if buf.bytes.is_empty() { " " } else { "*" }).to_string()
         }
         Value::Date(0, _) | Value::Time(0) | Value::DateTime(0) => String::new(),
-        Value::Date(day, closing) => format_date(*day, *closing, standard)?,
+        Value::Date(day, closing) => format_date(*day, *closing, standard, ctx.language())?,
         Value::Time(t) => format_time(t - 1, standard)?,
         Value::DateTime(t) => format_datetime(t - 1, standard)?,
-        Value::Duration(ms) => format_duration(*ms, standard)?,
+        Value::Duration(ms) => format_duration(*ms, standard, ctx.language())?,
         // A formula prints without its angle brackets (types/TestDateRoundFormatStringContracts.al:
         // DateFormula_Evaluate_ThenFormat_PrintsTheNormalizedFormula).
         Value::DateFormula(f) => crate::datefns::formula_text(f),
@@ -621,7 +692,7 @@ fn duration_parts(ms: i64) -> Vec<(i64, usize)> {
 /// zero, and the sign on the first unit only (types/TestDateFormulaDurationFormatContracts.al:75-120).
 /// Format 2 is a list of pairs `<count> <unit code>`, the code being 0 day, 1 days, 2 hour, 3 hours,
 /// 4 minute, 5 minutes, 6 second, 7 seconds, 8 millisecond, 9 milliseconds (:11-15, :83-100).
-fn duration_format(ms: i64, codes: bool) -> String {
+fn duration_format(ms: i64, codes: bool, lang: i32) -> Result<String, FormatFail> {
     let mut out: Vec<String> = Vec::new();
     for (k, (n, i)) in duration_parts(ms).into_iter().enumerate() {
         let sign = if k == 0 && ms < 0 { "-" } else { "" };
@@ -629,14 +700,35 @@ fn duration_format(ms: i64, codes: bool) -> String {
         if codes {
             out.push(format!("{sign}{n} {}", i * 2 + usize::from(plural)));
         } else {
-            let unit = DURATION_UNITS[i].0;
-            out.push(format!("{sign}{n} {unit}{}", if plural { "s" } else { "" }));
+            let unit = unit_word(lang, i, plural).ok_or_else(|| {
+                FormatFail::Unsupported(format!(
+                    "Format of a Duration in language {lang}: the word for {} is not pinned (docs/probes-needed.md)",
+                    DURATION_UNITS[i].0
+                ))
+            })?;
+            out.push(format!("{sign}{n} {unit}"));
         }
     }
-    out.join(" ")
+    Ok(out.join(" "))
 }
 
-fn format_duration(ms: i64, standard: i32) -> Result<String, FormatFail> {
+/// The word for a Duration unit (index into `DURATION_UNITS`) in a language. English has all of them; German and French only the
+/// forms the probe measured: `1 Stunde 2 Minuten 3 Sekunden` (types/lt-conversions-hidden-parts-doctype/P142ToTextLang.al:190) and
+/// `1 heure 2 minutes 3 secondes` (:214). Every other form is refused.
+fn unit_word(lang: i32, unit: usize, plural: bool) -> Option<String> {
+    match (lang, unit, plural) {
+        (1031, 1, false) => Some("Stunde".into()),
+        (1031, 2, true) => Some("Minuten".into()),
+        (1031, 3, true) => Some("Sekunden".into()),
+        (1036, 1, false) => Some("heure".into()),
+        (1036, 2, true) => Some("minutes".into()),
+        (1036, 3, true) => Some("secondes".into()),
+        (1031 | 1036, ..) => None,
+        _ => Some(format!("{}{}", DURATION_UNITS[unit].0, if plural { "s" } else { "" })),
+    }
+}
+
+fn format_duration(ms: i64, standard: i32, lang: i32) -> Result<String, FormatFail> {
     // A Duration beyond what a .NET TimeSpan holds (ticks of 100 ns in an Int64) raises (D_Duration.al:Duration_To_Integer_BeyondRange `af128`).
     if ms.unsigned_abs() > (i64::MAX / 10_000) as u64 {
         return Err(FormatFail::Error {
@@ -645,8 +737,8 @@ fn format_duration(ms: i64, standard: i32) -> Result<String, FormatFail> {
         });
     }
     match standard {
-        0 | 1 => Ok(duration_format(ms, false)),
-        2 => Ok(duration_format(ms, true)),
+        0 | 1 => duration_format(ms, false, lang),
+        2 => duration_format(ms, true, lang),
         9 => {
             // The sign goes in front of the P (types/TestDateFormulaDurationFormatContracts.al:114-120).
             let sign = if ms < 0 { "-" } else { "" };
@@ -689,14 +781,26 @@ const MONTHS: [&str; 12] = [
 /// 7 `Mar 5, 2024`, 9 `yyyy-mm-dd`. Number 8 does not exist
 /// (:Format_Date_Format8_DoesNotExist). A closing date is marked with `C` in the formats the corpus
 /// shows it in (0, 1 and 2); the others are not pinned for one.
-fn format_date(day: i32, closing: bool, standard: i32) -> Result<String, FormatFail> {
+fn format_date(day: i32, closing: bool, standard: i32, lang: i32) -> Result<String, FormatFail> {
     let (y, m, d) = civil_from_day(day);
     let yy = y.rem_euclid(100);
     let c = if closing { "C" } else { "" };
     if closing && !matches!(standard, 0 | 1 | 2 | 9) {
         return Err(format!("Format of a closing date with standard format {standard} (not pinned)").into());
     }
-    let month = MONTHS[m as usize - 1];
+    // The month name of format 4 follows the language; only March is measured for German and French (P142ToTextLang.al:109
+    // `März 15, 2024`, :117 `mars 15, 2024`). Another month or language, and format 7, are refused.
+    let month = match (lang, m, standard) {
+        (1033, ..) => MONTHS[m as usize - 1],
+        (1031, 3, 4) => "März",
+        (1036, 3, 4) => "mars",
+        (_, _, 4 | 7) => {
+            return Err(FormatFail::Unsupported(format!(
+                "Format {standard} of a Date in language {lang}, month {m}: the month name is not pinned (docs/probes-needed.md)"
+            )));
+        }
+        _ => MONTHS[m as usize - 1],
+    };
     Ok(match standard {
         // The year has two digits from 1931 to 2030 and four otherwise, so a text reads back into the same year
         // (controls/W2ValueControls.al:Date_SessionFormatTwoDigitYear_*: 1929 and 1930 give 10 characters, 1999
@@ -846,6 +950,72 @@ mod tests {
         // types/TestFormatEvaluateTextContracts.al:Format_Time_StandardFormats: format 2 is the AL literal.
         assert_eq!(f2(Value::Time(13 * 3_600_000 + 10 * 60_000 + 1)), "131000T");
         assert_eq!(f2(Value::Time(1)), "000000T");
+    }
+
+    #[test]
+    fn language_changes_month_names_duration_words_and_booleans_as_measured() {
+        // types/lt-conversions-hidden-parts-doctype/P142ToTextLang.al:109,117,153,190,214
+        struct L(i32);
+        impl FormatCtx for L {
+            fn enum_name(&self, _: u32, o: i32) -> String {
+                o.to_string()
+            }
+            fn language(&self) -> i32 {
+                self.0
+            }
+        }
+        let d = Value::Date(day_from_civil(2024, 3, 15), false);
+        assert_eq!(format_value(&d, 0, 4, &L(1031)).unwrap(), "März 15, 2024");
+        assert_eq!(format_value(&d, 0, 4, &L(1036)).unwrap(), "mars 15, 2024");
+        assert_eq!(format_value(&d, 0, 0, &L(1036)).unwrap(), "03/15/24");
+        let jan = Value::Date(day_from_civil(2024, 1, 15), false);
+        assert!(matches!(
+            format_value(&jan, 0, 4, &L(1031)),
+            Err(FormatFail::Unsupported(_))
+        ));
+        assert!(matches!(
+            format_value(&d, 0, 4, &L(1030)),
+            Err(FormatFail::Unsupported(_))
+        ));
+        let du = Value::Duration(3_723_000);
+        assert_eq!(
+            format_value(&du, 0, 0, &L(1031)).unwrap(),
+            "1 Stunde 2 Minuten 3 Sekunden"
+        );
+        assert_eq!(
+            format_value(&du, 0, 0, &L(1036)).unwrap(),
+            "1 heure 2 minutes 3 secondes"
+        );
+        assert_eq!(format_value(&du, 0, 0, &L(1033)).unwrap(), "1 hour 2 minutes 3 seconds");
+        assert!(matches!(
+            format_value(&Value::Duration(86_400_000), 0, 0, &L(1031)),
+            Err(FormatFail::Unsupported(_))
+        ));
+        assert_eq!(format_value(&Value::Boolean(false), 0, 0, &L(1036)).unwrap(), "Non");
+        assert_eq!(format_value(&Value::Boolean(true), 0, 9, &L(1036)).unwrap(), "true");
+    }
+
+    #[test]
+    fn a_format_region_rewrites_date_and_decimal_and_refuses_the_rest() {
+        // misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_SetAndRead
+        struct R;
+        impl FormatCtx for R {
+            fn enum_name(&self, _: u32, o: i32) -> String {
+                o.to_string()
+            }
+            fn region(&self) -> Option<String> {
+                Some("de-DE".into())
+            }
+        }
+        let d = Value::Date(day_from_civil(2024, 3, 5), false);
+        assert_eq!(format_value(&d, 0, 0, &R).unwrap(), "05.03.24");
+        assert_eq!(format_value(&dec("1234.5"), 0, 0, &R).unwrap(), "1.234,5");
+        assert_eq!(format_value(&Value::Integer(1033), 0, 0, &R).unwrap(), "1033");
+        assert!(matches!(
+            format_value(&Value::Time(5), 0, 0, &R),
+            Err(FormatFail::Unsupported(_))
+        ));
+        assert!(matches!(format_value(&d, 0, 4, &R), Err(FormatFail::Unsupported(_))));
     }
 
     #[test]

@@ -418,6 +418,23 @@ fn time(text: &str, number: i64) -> Result<Parsed, Signal> {
         }
     } else if body.len() == 4 {
         num(&body[..2], 2).zip(num(&body[2..], 2)).map(|(h, m)| (h, m, 0, 0))
+    } else if body.len() == 6 && number == 0 {
+        // `hhmmss` and a bare hour (`23`) are not pinned: Microsoft's tests Evaluate `085606` (Calendar Management
+        // CalcTimeDelta) and `Format(RandInt(23))` into a Time (assumption evaluate-time-digit-forms).
+        let r = num(&body[..2], 2)
+            .zip(num(&body[2..4], 2))
+            .zip(num(&body[4..], 2))
+            .map(|((h, m), s)| (h, m, s, 0));
+        if r.is_some() {
+            crate::assumptions::assume(crate::assumptions::Assumption::EvaluateTimeDigitForms);
+        }
+        r
+    } else if (1..=2).contains(&body.len()) && number == 0 && body.bytes().all(|b| b.is_ascii_digit()) {
+        let r = num(body, 2).map(|h| (h, 0, 0, 0));
+        if r.is_some() {
+            crate::assumptions::assume(crate::assumptions::Assumption::EvaluateTimeDigitForms);
+        }
+        r
     } else {
         None
     };
@@ -804,6 +821,21 @@ mod tests {
         assert_eq!(ms("12:00", 9), None);
         assert_eq!(ms("24:00:00", 0), None);
         assert_eq!(ms("12:00:60", 0), None);
+    }
+
+    // Not pinned (assumption evaluate-time-digit-forms): six digits are hhmmss and one or two digits an hour, in format 0 only.
+    #[test]
+    fn times_read_six_digits_and_a_bare_hour_in_format_0() {
+        let ms = |s: &str, n: i64| match value(time(s, n)) {
+            Some(Value::Time(t)) => Some(t - 1),
+            _ => None,
+        };
+        assert_eq!(ms("085606", 0), Some(((8 * 60 + 56) * 60 + 6) * 1000));
+        assert_eq!(ms("23", 0), Some(23 * 3_600_000));
+        assert_eq!(ms("5", 0), Some(5 * 3_600_000));
+        assert_eq!(ms("246000", 0), None);
+        assert_eq!(ms("24", 0), None);
+        assert_eq!(ms("085606", 9), None);
     }
 
     // types/lt-datetime/Evaluate.al:Date_Default_Evaluate: the empty text reads as the empty date in format 0 too.

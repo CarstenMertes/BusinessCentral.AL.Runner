@@ -258,6 +258,11 @@ impl Session {
         )
     }
 
+    /// Whether a `Modify` of `rec` writes nothing new over the stored row `stored` (no field but the system fields differs).
+    pub(crate) fn modify_changes_nothing(t: &al_data::TableDef, stored: &[Value], rec: &crate::records::Rec) -> bool {
+        !changed(t, stored, &rec.borrow().fields)
+    }
+
     /// `SystemModifiedAt/By` of a row a `Modify` writes, when the write changes a field
     /// (record/TestRecordSystemId.al:677-750). A write that changes none keeps the pair the stored
     /// row has, whatever the buffer held. `stored` is the row before the write.

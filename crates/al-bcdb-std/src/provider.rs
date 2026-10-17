@@ -310,7 +310,13 @@ fn pick_company(companies: &[String], asked: Option<&str>, file: &str) -> Result
         [only] => Ok(only.clone()),
         many => {
             let demo = normalize_sql_name(DEFAULT_COMPANY);
-            many.iter().find(|c| eq_ci(c, &demo)).cloned().ok_or_else(|| {
+            // The demo company of another country has another name (`CRONUS USA, Inc.`): the one company whose
+            // name starts with CRONUS. Several of them, or none, need the name.
+            let cronus: Vec<&String> = many.iter().filter(|c| c.to_uppercase().starts_with("CRONUS")).collect();
+            many.iter().find(|c| eq_ci(c, &demo)).cloned().or_else(|| match cronus.as_slice() {
+                [only] => Some((*only).clone()),
+                _ => None,
+            }).ok_or_else(|| {
                 format!(
                     "{file} holds {} companies ({}) and none is '{DEFAULT_COMPANY}'; pick one with --test-data-company",
                     many.len(),
@@ -520,6 +526,23 @@ fn sequence_of(s: &al_bcdb::catalog::SqlSequence, sql_company: &str) -> Option<T
         increment: s.increment,
         current: s.current,
     })
+}
+
+#[cfg(test)]
+mod company_tests {
+    use super::*;
+
+    #[test]
+    fn the_demo_company_of_another_country_is_the_one_cronus_company() {
+        let two = ["CRONUS USA, Inc_".to_string(), "My Company".to_string()];
+        assert_eq!(pick_company(&two, None, "f.bak").unwrap(), "CRONUS USA, Inc_");
+        let w1 = ["CRONUS International Ltd_".to_string(), "My Company".to_string()];
+        assert_eq!(pick_company(&w1, None, "f.bak").unwrap(), "CRONUS International Ltd_");
+        let two_cronus = ["CRONUS USA, Inc_".to_string(), "CRONUS Test".to_string()];
+        assert!(pick_company(&two_cronus, None, "f.bak").is_err());
+        let none = ["A".to_string(), "B".to_string()];
+        assert!(pick_company(&none, None, "f.bak").is_err());
+    }
 }
 
 #[cfg(test)]

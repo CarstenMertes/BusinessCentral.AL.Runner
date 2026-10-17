@@ -78,6 +78,8 @@ pub struct TestArgs {
     /// Not a command line option: `captureValues` and `iterationTracking` of a server request.
     pub capture: al_vm::CaptureConfig,
     pub verbose: bool,
+    /// `--color auto|always|never` (default auto).
+    pub color: crate::style::ColorMode,
     pub quiet: bool,
     pub timings: bool,
     pub dotnet_sidecar: Option<PathBuf>,
@@ -200,11 +202,21 @@ SELECTION (a test is selected when any option matches it)
     tests are reported. Only the selected codeunits are compiled.
 
 OUTPUT
-    Default: header, one line per failing test with the AL call stack of its error below it (a
-    frame whose format is not known reads as such), the top refusal reasons, a summary.
-    --junit also holds the stack as the text of each <failure>.
-    --verbose            One line per test (PASS, FAIL, NOT RUN with its reason).
+    Default: the version line, one line per failing test with the AL call stack of its error
+    below it (a frame whose format is not known reads as such), the top refusal reasons, the
+    Tests and Result lines. A warning that changes how to read the result is one short line, only
+    when it applies (for example: baseline incomplete, 16 of 17 install roots ran to their end).
+    Errors go to stderr. --junit also holds the stack as the text of each <failure>.
+    --verbose            Everything else: first the setup (dependency notes, target, apps, build
+                         chosen by, dependencies, threads, isolation, server address, test data,
+                         baseline details), then one line per test (PASS, FAIL, NOT RUN with its
+                         reason) with its run time in ms, the test data rows line and the Time
+                         line. There is one level.
     --quiet              Summary only.
+    --color auto|always|never
+                         Color the report: PASS green, FAIL red, NOT RUN yellow, flagged cyan,
+                         headings bold. auto (default): only when stdout is a terminal and
+                         NO_COLOR is not set. JUnit and JSON output are never colored.
     --top-refusals [N]   List the N most common reasons tests were not run (default 10).
     --top-failures [N]   List the N most common failure messages (default 10), numbers and quoted
                          values folded.
@@ -598,6 +610,11 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                     "disabled" => al_testrun::isolation::TestIsolation::Disabled,
                     _ => return Err(format!("{flag} needs codeunit, test or disabled, got `{v}`")),
                 });
+            }
+            "--color" => {
+                let v = text()?;
+                a.color = crate::style::ColorMode::parse(&v)
+                    .ok_or_else(|| format!("--color needs auto, always or never, got `{v}`"))?;
             }
             "--refusal-detail" => a.refusal_detail = Some(text()?),
             "--junit" => a.junit = Some(text()?.into()),
@@ -997,6 +1014,12 @@ mod tests {
         assert!(p("test A --dep").unwrap_err().contains("needs a value"));
         assert!(p("frobnicate").unwrap_err().contains("unknown command"));
         assert!(p("test A --verbose --quiet").is_err());
+        assert_eq!(
+            test_args("test A --color always").color,
+            crate::style::ColorMode::Always
+        );
+        assert_eq!(test_args("test A").color, crate::style::ColorMode::Auto);
+        assert!(p("test A --color blue").is_err());
     }
 
     #[test]

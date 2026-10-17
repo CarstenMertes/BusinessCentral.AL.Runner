@@ -789,3 +789,25 @@ fn geturl_with_a_company_or_another_client_type_is_refused() {
         );
     }
 }
+
+#[test]
+fn geturl_refusal_says_which_form_is_built_and_how_many_arguments_the_call_had() {
+    let r = get_url(
+        "exit(GetUrl(ClientType::Web, CompanyName(), ObjectType::Page, 21));",
+        None,
+    );
+    let Err(Signal::Unsupported(w)) = &r else {
+        panic!("{r:?}")
+    };
+    assert!(w.contains("4 arguments"), "{w}");
+    assert!(
+        w.contains("only GetUrl(ClientType::Web) with no further arguments is built"),
+        "{w}"
+    );
+    assert!(w.contains("ADR-042"), "{w}");
+    let r = get_url("exit(GetUrl(ClientType::Phone));", None);
+    let Err(Signal::Unsupported(w)) = &r else {
+        panic!("{r:?}")
+    };
+    assert!(w.contains("1 argument,") || w.contains("1 argument)"), "{w}");
+}

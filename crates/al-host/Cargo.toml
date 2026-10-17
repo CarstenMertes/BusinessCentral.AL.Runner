@@ -6,6 +6,7 @@ license.workspace = true
 rust-version.workspace = true
 
 [dependencies]
+jiff = { version = "=0.2.38", default-features = false, features = ["std", "tzdb-bundle-always"] }
 md-5 = "0.10"
 sha1 = "0.10"
 sha2 = "0.10"

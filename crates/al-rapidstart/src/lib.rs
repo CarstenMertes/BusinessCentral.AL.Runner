@@ -107,7 +107,10 @@ impl Package {
                             orders.clear();
                         }
                         3 => {
-                            if matches!(name.as_str(), "TableID" | "PageID" | "SkipTableTriggers" | "DimensionsasColumns") {
+                            if matches!(
+                                name.as_str(),
+                                "TableID" | "PageID" | "SkipTableTriggers" | "DimensionsasColumns"
+                            ) {
                                 simple = Some((name, String::new()));
                             } else {
                                 record_name.get_or_insert(name);
@@ -316,7 +319,13 @@ fn decode_text(raw: &[u8]) -> Result<String, String> {
 pub fn element_name(field_name: &str) -> String {
     field_name
         .chars()
-        .filter_map(|c| if c == '-' { Some('_') } else { c.is_alphanumeric().then_some(c) })
+        .filter_map(|c| {
+            if c == '-' {
+                Some('_')
+            } else {
+                c.is_alphanumeric().then_some(c)
+            }
+        })
         .collect()
 }
 
@@ -739,7 +748,10 @@ mod tests {
 
     #[test]
     fn element_names_turn_a_hyphen_into_an_underscore_and_drop_other_punctuation() {
-        assert_eq!(element_name("Unit-Amount Rounding Precision"), "Unit_AmountRoundingPrecision");
+        assert_eq!(
+            element_name("Unit-Amount Rounding Precision"),
+            "Unit_AmountRoundingPrecision"
+        );
         assert_eq!(element_name("Bill-to Name"), "Bill_toName");
         assert_eq!(element_name("Asm.-to-Order Shpt. Bin Code"), "Asm_to_OrderShptBinCode");
         assert_eq!(element_name("Country/Region Code"), "CountryRegionCode");

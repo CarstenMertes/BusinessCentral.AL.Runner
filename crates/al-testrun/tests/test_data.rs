@@ -18,6 +18,8 @@ struct Fake {
     tables: HashMap<String, TableRows>,
     asked: Mutex<Vec<String>>,
     sequences: Vec<TestSequence>,
+    /// Behaves as a source of untyped values (a configuration package): `wants_fields`.
+    untyped: bool,
 }
 
 impl Fake {
@@ -27,7 +29,13 @@ impl Fake {
             tables: HashMap::new(),
             asked: Mutex::new(Vec::new()),
             sequences: Vec::new(),
+            untyped: false,
         }
+    }
+
+    fn untyped(mut self) -> Fake {
+        self.untyped = true;
+        self
     }
 
     fn sequence(mut self, name: &str, company_specific: bool, start: i64, current: i64) -> Fake {
@@ -62,6 +70,9 @@ impl TableProvider for Fake {
     }
     fn sequences(&self) -> Vec<TestSequence> {
         self.sequences.clone()
+    }
+    fn wants_fields(&self) -> bool {
+        self.untyped
     }
     fn read(&self, t: &TableRequest) -> Result<Arc<TableRows>, TableError> {
         self.asked.lock().unwrap().push(t.name.clone());
@@ -98,6 +109,7 @@ table 50102 "Setup" { fields { field(1; "Primary Key"; Code[10]) { } field(2; Va
 table 50103 "Broken" { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { } } }
 table 50104 "Odd" { fields { field(1; K; Code[10]) { } field(2; Ref; RecordId) { } } keys { key(PK; K) { } } }
 table 50106 "Log" { fields { field(1; "No."; Integer) { AutoIncrement = true; } field(2; What; Text[30]) { } } keys { key(PK; "No.") { } } }
+table 50107 "Dim Val" { fields { field(1; Code; Code[10]) { } field(2; "Value ID"; Integer) { AutoIncrement = true; } } keys { key(PK; Code) { } } }
 table 50105 "Shared" { DataPerCompany = false; fields { field(1; K; Code[10]) { } field(2; V; Integer) { } } keys { key(PK; K) { } } }
 "#;
 
@@ -389,6 +401,52 @@ fn an_auto_increment_key_continues_after_the_restored_rows() {
     );
     assert_eq!(outcome(&rt, 50001, "Next"), Outcome::Pass);
     assert_eq!(outcome(&rt, 50001, "AnExplicitRestoredKeyIsStillTaken"), Outcome::Pass);
+}
+
+/// A configuration package holds no value for an AutoIncrement field (Dimension Value."Dimension Value ID" is not in the
+/// shipped package); the database numbers such rows 1, 2, 3 in the order they were imported. Microsoft's Sales-Calc.
+/// Discount Test and ERM Sales Quotes need a nonzero id there (unprobed: docs/probes-needed.md, registry entry
+/// `package-auto-increment-from-one`). A backup, which holds the column, keeps its own values.
+#[test]
+fn an_auto_increment_field_the_package_does_not_hold_is_numbered_in_row_order() {
+    let fake = Arc::new(Fake::new("CRONUS International Ltd.").untyped().table(
+        "Dim Val",
+        &["Code"],
+        vec![vec![text("B")], vec![text("A")], vec![text("C")]],
+    ));
+    let (rt, _) = run(
+        r#"codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Go() var D: Record "Dim Val"; begin
+    D.Get('B'); if D."Value ID" <> 1 then Error('B %1', D."Value ID");
+    D.Get('A'); if D."Value ID" <> 2 then Error('A %1', D."Value ID");
+    D.Get('C'); if D."Value ID" <> 3 then Error('C %1', D."Value ID");
+    Clear(D); D.Code := 'N'; D.Insert();
+    if D."Value ID" <> 4 then Error('new %1', D."Value ID");
+  end; }"#,
+        DEP,
+        Some(&fake),
+    );
+    assert_eq!(outcome(&rt, 50001, "Go"), Outcome::Pass);
+}
+
+#[test]
+fn an_auto_increment_field_the_backup_holds_keeps_its_values() {
+    let fake = Arc::new(Fake::new("CRONUS International Ltd.").table(
+        "Dim Val",
+        &["Code", "Value ID"],
+        vec![vec![text("B"), Cell::Int(40)], vec![text("A"), Cell::Int(5)]],
+    ));
+    let (rt, _) = run(
+        r#"codeunit 50001 "T" { Subtype = Test;
+  [Test] procedure Go() var D: Record "Dim Val"; begin
+    D.Get('B'); if D."Value ID" <> 40 then Error('B %1', D."Value ID");
+    Clear(D); D.Code := 'N'; D.Insert();
+    if D."Value ID" <> 41 then Error('new %1', D."Value ID");
+  end; }"#,
+        DEP,
+        Some(&fake),
+    );
+    assert_eq!(outcome(&rt, 50001, "Go"), Outcome::Pass);
 }
 
 #[test]

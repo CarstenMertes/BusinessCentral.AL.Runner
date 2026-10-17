@@ -312,6 +312,8 @@ pub struct WarmCtx {
     /// Called for each selected test as it finishes.
     /// With a capture asked for, the second argument is its JSON for that test (`capture::json`).
     pub on_test: Option<OnTest>,
+    /// Called just before each selected test starts to run.
+    pub on_start: Option<al_testrun::events::OnStart>,
     /// Set from outside: the run stops after the current test.
     pub cancel: Option<Arc<std::sync::atomic::AtomicBool>>,
     /// What the last run came to.
@@ -754,6 +756,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                         }
                     }) as Arc<dyn Fn(al_testrun::events::TestEvent) + Send + Sync>
                 }),
+                on_start: w.on_start.clone(),
                 cancel: w.cancel.clone(),
             }
         }

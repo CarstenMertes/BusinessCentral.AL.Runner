@@ -1213,7 +1213,7 @@ impl Session {
             ("Cancel", true, true) => "LookupCancel".into(),
             ("Close", true, true) => "LookupCancel".into(),
             ("Close", true, false) => "OK".into(),
-            ("Close", false, _) => "Cancel".into(),
+            ("Close", false, _) => "OK".into(),
             (other, _, _) => other.into(),
         }
     }

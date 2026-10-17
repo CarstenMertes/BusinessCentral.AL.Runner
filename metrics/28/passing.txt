@@ -7381,8 +7381,11 @@
 70945 P170_TableSeparator_SetOnInstance_OneTable
 70953 P170_Flow_BreakInTriggerItself
 70953 P170_Flow_BreakUnboundInTriggerItself
+70953 P170_Flow_BreakUnboundViaProcedure
+70953 P170_Flow_BreakViaProcedure
 70953 P170_Flow_NoCallBaseline
 70953 P170_Flow_QuitInTriggerItself
+70953 P170_Flow_QuitViaProcedure
 71000 Append_Basics
 71000 Append_Long_Text
 71000 Append_Returns_Nothing_Chain

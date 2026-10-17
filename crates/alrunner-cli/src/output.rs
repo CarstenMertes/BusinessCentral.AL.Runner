@@ -219,7 +219,12 @@ fn not_run_message(why: &str) -> String {
     format!("NotRun: out-of-scope: {}", why.lines().next().unwrap_or(""))
 }
 
-pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> String {
+pub fn junit(
+    results: &[&TestResult],
+    bc_build: Option<&str>,
+    wall_s: f64,
+    disabled: &dyn Fn(u32, &str) -> bool,
+) -> String {
     let mut suites: Vec<al_testrun::junit::Suite> = Vec::new();
     let mut i = 0;
     while i < results.len() {
@@ -244,6 +249,7 @@ pub fn junit(results: &[&TestResult], bc_build: Option<&str>, wall_s: f64) -> St
                     } else {
                         stack_lines(&r.call_stack).join("\n")
                     },
+                    disabled: disabled(r.codeunit, &r.test),
                 })
                 .collect(),
         });

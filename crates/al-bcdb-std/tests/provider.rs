@@ -16,6 +16,7 @@ fn request(name: &str, app_id: Option<&str>, per_company: bool) -> TableRequest 
         name: name.into(),
         app_id: app_id.map(str::to_string),
         per_company,
+        ..Default::default()
     }
 }
 

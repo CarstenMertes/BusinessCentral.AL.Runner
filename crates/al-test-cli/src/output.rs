@@ -102,6 +102,7 @@ pub fn junit_with(
                     outcome: o,
                     assumptions: marks,
                     stack: String::new(),
+                    disabled: false,
                 })
                 .collect(),
         })

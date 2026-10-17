@@ -523,8 +523,15 @@ pub(crate) fn read_all_text(stream: &mut Value) -> Result<String, Signal> {
             _ => &bytes[..],
         };
         match enc {
+            // Bytes that are no UTF-8 raise the stream data error, as ReadText does (corpus pages/lt-pages-xmlport-upload-members/
+            // P112XpXml.al:P112_Export_TriggerOrder, af379: the UTF-16 bytes of an export read through a UTF-8 stream).
             Encoding::Utf8 if std::str::from_utf8(body).is_err() => {
-                unsupported("BigText.Read of bytes that are not valid UTF-8 (not pinned)")
+                Err(Signal::Error(Box::new(crate::native::AlError {
+                    message: "Invalid data encountered in stream, unable to read text.".into(),
+                    code: "InvalidStreamData".into(),
+                    call_stack: String::new(),
+                    ..Default::default()
+                })))
             }
             Encoding::Utf16 if body.len() % 2 != 0 => {
                 unsupported("BigText.Read of a UTF-16 stream with an odd number of bytes (not pinned)")

@@ -1534,9 +1534,10 @@ fn a_filter_on_a_field_the_data_item_link_joins_is_refused() {
 
 // handlers/TestReportCurrReportLanguage.al:TestReport_SettingCurrReportLanguage_RunsAndIsReadableBack (:58-84):
 // a language set in a trigger reads back at once (1031, not the session's 1033); FormatRegion set in
-// OnPreReport reads back empty for a run that renders no layout.
+// OnPreReport reads back empty for a SaveAs-Xml run. In a report started by Run it is kept and reads back
+// (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_SetAndRead), so this test, which uses Run, expects it.
 #[test]
-fn curr_report_language_reads_back_and_format_region_reads_empty() {
+fn curr_report_language_reads_back_and_format_region_is_kept_by_run() {
     assert_eq!(
         f(
             "var Probe: Report \"CRL Report\"; Log: Codeunit \"CRL Log\"; H: Codeunit Helpers; begin
@@ -1546,7 +1547,7 @@ fn curr_report_language_reads_back_and_format_region_reads_empty() {
             exit(Format(Log.GetReads()) + '|' + Format(Log.GetLang()) + '|[' + Log.GetRegion() + ']');
         end;"
         ),
-        "1|1031|[]"
+        "1|1031|[en-US]"
     );
 }
 

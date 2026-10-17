@@ -34,7 +34,13 @@ impl FormatCtx for WithoutRegion<'_> {
 /// `Format` while a report's `FormatRegion` is set. Only `de-DE` is measured, and only a Date (`05.03.24`) and a Decimal
 /// (`1.234,5`) in the default format (misc/lt-probes-needed-3/PnC06ReportLanguage.al:Language_SetAndRead). Texts are not culture
 /// sensitive; every other value is refused.
-fn format_in_region(v: &Value, length: i32, standard: i32, region: &str, ctx: &dyn FormatCtx) -> Result<String, FormatFail> {
+fn format_in_region(
+    v: &Value,
+    length: i32,
+    standard: i32,
+    region: &str,
+    ctx: &dyn FormatCtx,
+) -> Result<String, FormatFail> {
     let plain = WithoutRegion(ctx);
     let refuse = || {
         FormatFail::Unsupported(format!(
@@ -51,7 +57,9 @@ fn format_in_region(v: &Value, length: i32, standard: i32, region: &str, ctx: &d
             let en = format_value(v, 0, standard, &plain)?;
             let parts: Vec<&str> = en.split('/').collect();
             match parts[..] {
-                [m, d, y] if en.chars().all(|c| c.is_ascii_digit() || c == '/') => Ok(pad(format!("{d}.{m}.{y}"), length)),
+                [m, d, y] if en.chars().all(|c| c.is_ascii_digit() || c == '/') => {
+                    Ok(pad(format!("{d}.{m}.{y}"), length))
+                }
                 _ => Err(refuse()),
             }
         }
@@ -946,13 +954,28 @@ mod tests {
         assert_eq!(format_value(&d, 0, 4, &L(1036)).unwrap(), "mars 15, 2024");
         assert_eq!(format_value(&d, 0, 0, &L(1036)).unwrap(), "03/15/24");
         let jan = Value::Date(day_from_civil(2024, 1, 15), false);
-        assert!(matches!(format_value(&jan, 0, 4, &L(1031)), Err(FormatFail::Unsupported(_))));
-        assert!(matches!(format_value(&d, 0, 4, &L(1030)), Err(FormatFail::Unsupported(_))));
+        assert!(matches!(
+            format_value(&jan, 0, 4, &L(1031)),
+            Err(FormatFail::Unsupported(_))
+        ));
+        assert!(matches!(
+            format_value(&d, 0, 4, &L(1030)),
+            Err(FormatFail::Unsupported(_))
+        ));
         let du = Value::Duration(3_723_000);
-        assert_eq!(format_value(&du, 0, 0, &L(1031)).unwrap(), "1 Stunde 2 Minuten 3 Sekunden");
-        assert_eq!(format_value(&du, 0, 0, &L(1036)).unwrap(), "1 heure 2 minutes 3 secondes");
+        assert_eq!(
+            format_value(&du, 0, 0, &L(1031)).unwrap(),
+            "1 Stunde 2 Minuten 3 Sekunden"
+        );
+        assert_eq!(
+            format_value(&du, 0, 0, &L(1036)).unwrap(),
+            "1 heure 2 minutes 3 secondes"
+        );
         assert_eq!(format_value(&du, 0, 0, &L(1033)).unwrap(), "1 hour 2 minutes 3 seconds");
-        assert!(matches!(format_value(&Value::Duration(86_400_000), 0, 0, &L(1031)), Err(FormatFail::Unsupported(_))));
+        assert!(matches!(
+            format_value(&Value::Duration(86_400_000), 0, 0, &L(1031)),
+            Err(FormatFail::Unsupported(_))
+        ));
         assert_eq!(format_value(&Value::Boolean(false), 0, 0, &L(1036)).unwrap(), "Non");
         assert_eq!(format_value(&Value::Boolean(true), 0, 9, &L(1036)).unwrap(), "true");
     }
@@ -973,7 +996,10 @@ mod tests {
         assert_eq!(format_value(&d, 0, 0, &R).unwrap(), "05.03.24");
         assert_eq!(format_value(&dec("1234.5"), 0, 0, &R).unwrap(), "1.234,5");
         assert_eq!(format_value(&Value::Integer(1033), 0, 0, &R).unwrap(), "1033");
-        assert!(matches!(format_value(&Value::Time(5), 0, 0, &R), Err(FormatFail::Unsupported(_))));
+        assert!(matches!(
+            format_value(&Value::Time(5), 0, 0, &R),
+            Err(FormatFail::Unsupported(_))
+        ));
         assert!(matches!(format_value(&d, 0, 4, &R), Err(FormatFail::Unsupported(_))));
     }
 

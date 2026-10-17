@@ -289,6 +289,31 @@ impl Session {
     }
 
     /// Calculates the FlowField at `pos` of `rec` from the table as it is now.
+    /// Whether the source table holds a row for the FlowField of `rec`, under the formula's filters. A sum, average, min or max
+    /// over no row is NULL in SQL and `CalcFields` shows 0; a query that averages, takes the minimum or the maximum of such a
+    /// column leaves the NULL out (corpus query/lt-query-flowfield-methods/QueryFlowFieldAvgMinMax.al:
+    /// Average_NoFlowFilter_GroupedByGroupCode `B|10`, Min_NoFlowFilter_GroupedByGroupCode, Min_FlowFilterRange_GroupedByGroupCode).
+    pub(crate) fn calc_has_source_rows(&mut self, rec: &Rec, pos: usize) -> Result<bool, Signal> {
+        let engine = self.engine.clone();
+        let table = rec.borrow().table as usize;
+        let f = &engine.program.objects[table].table.as_ref().expect("table").fields[pos];
+        let Some(calc) = f.calc.as_ref() else { return Ok(true) };
+        if !matches!(
+            calc.method,
+            ir::CalcMethod::Sum | ir::CalcMethod::Average | ir::CalcMethod::Min | ir::CalcMethod::Max
+        ) {
+            return Ok(true);
+        }
+        let filters = self.calc_filters(rec, calc, &mut Vec::new())?;
+        let src_t = self.engine.tables[calc.table].clone().expect("table");
+        let cx = self.cx_for(rec, &src_t)?;
+        let n = self
+            .store
+            .count(&cx, &src_t, &filters)
+            .map_err(|e| Signal::Unsupported(format!("store error {e}")))?;
+        Ok(n > 0)
+    }
+
     pub(crate) fn calc_value(&mut self, rec: &Rec, pos: usize, stack: &mut Vec<usize>) -> Result<Value, Signal> {
         // Corpus record/TestCalcFormulaFlowFieldValueTests.Codeunit.al:176-221: a formula
         // that needs itself, directly or through another FlowField, is a recursion error.

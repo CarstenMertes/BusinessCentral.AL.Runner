@@ -509,7 +509,8 @@ impl Session {
                     // A page on no row because its table is empty selects nothing, and the record keeps no filter
                     // (pages/lt-page-runtime/P82CurrPage.al:SetSelectionFilter_EmptyPage: `sel=0 filter=''`). A page on no row
                     // over a table that has rows is not pinned.
-                    let table_empty = dst.borrow().filters.is_empty()
+                    let table_empty = st.borrow().open
+                        && dst.borrow().filters.is_empty()
                         && matches!(
                             self.record_op(RecordOp::IsEmpty, dst, &mut []),
                             Ok(Value::Boolean(true))
@@ -517,7 +518,9 @@ impl Session {
                     if table_empty {
                         return self.record_op(RecordOp::SetRecFilter, dst, &mut []);
                     }
-                    return unsupported("Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)");
+                    return unsupported(
+                        "Page.SetSelectionFilter of a page on no row of a table that has rows (not pinned)",
+                    );
                 }
                 if !dst.borrow().filters.is_empty() {
                     return unsupported("Page.SetSelectionFilter into a record that has filters (not pinned)");
@@ -632,7 +635,7 @@ impl Session {
                     None => Err(error_code("Index out of bounds.", "IndexOutOfBounds")),
                 }
             }
-            // A part the page's own code created without opening it (a literal `Visible = false`, `InvisiblePartForPageCode`) has no
+            // A part the page's own code created without opening it (a literal `Visible = false`) has no
             // client to refresh: `CurrPage.Update` in its procedure does nothing. Base Application's Approval FactBox ends
             // `UpdateApprovalEntriesFromSourceRecord` with it (assumption hidden-part-update-is-noop).
             PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => {

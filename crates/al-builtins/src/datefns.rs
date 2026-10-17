@@ -383,10 +383,9 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
     // Brackets are optional on either side, and the letters may be lower case
     // (text/TestProbeTextDateFormatContracts.al:Dates_CalcDate_Formulas, DateFormula_EvaluateForms).
     let upper = text.trim().to_ascii_uppercase();
-    // Spaces are ignored: inside the brackets (types/lt-datetime/Evaluate.al:Format_Evaluate `< 1D >`) and, assumed,
-    // between the terms (Microsoft's `<CM + 1D>`, Tests-SCM Item.TestField("Next Counting Start Date", ..)).
+    // Spaces are ignored: inside the brackets (types/lt-datetime/Evaluate.al:Format_Evaluate `< 1D >`) and between the terms
+    // (types/lt-date-formula-spaces/DateFormulaSpaces.al: CalcDate_Spaces, EvaluateDateFormula_Spaces).
     let upper = if upper.contains(' ') {
-        crate::assumptions::assume(crate::assumptions::Assumption::DateFormulaSpacesBetweenTerms);
         upper.replace(' ', "")
     } else {
         upper

@@ -474,6 +474,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.Filename#1", vm_only),
     ("Xmlport.CurrentPath#1", vm_only),
     ("Xmlport.Break#1", vm_only),
+    ("Xmlport.Skip#1", vm_only),
     ("Xmlport.BreakUnbound#1", vm_only),
     ("Xmlport.Quit#1", vm_only),
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The
@@ -1744,7 +1745,9 @@ fn primitive_to_text(c: &mut dyn Ctx, r: Option<&mut Value>, what: &str, a: &[Va
         // round-trip form (Format standard 9): `13:45:01`, `2024-03-15T13:45:01Z`, `true`, `1234567.891`, and the Duration words
         // `1 hour 2 minutes 3 seconds` (types/lt-conversions-hidden-parts-doctype/P142ToTextLang.al:131-135, 156-160, 175-190,
         // 237-253).
-        Some(v @ (Value::Time(_) | Value::DateTime(_) | Value::Duration(_) | Value::Boolean(_) | Value::Decimal(_))) => {
+        Some(
+            v @ (Value::Time(_) | Value::DateTime(_) | Value::Duration(_) | Value::Boolean(_) | Value::Decimal(_)),
+        ) => {
             let inv = matches!(a.first(), Some(Value::Boolean(true)));
             match crate::format::try_format(v, 0, if inv { 9 } else { 0 }, &*c) {
                 Ok(t) => Ok(Value::Text(t.into())),

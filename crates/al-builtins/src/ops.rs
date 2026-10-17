@@ -451,6 +451,24 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
 fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
     match (&v, t) {
         (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
+        // A number handed to a Text or Code (`Value := FieldRef.Value()` in Base Application's Workflow Table Relation Value
+        // with a BigInteger field; 114 Tests-Workflow tests) is its default `Format` text. Not pinned: assumption
+        // number-to-text-is-format.
+        (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_), RtType::Text(_) | RtType::Code(_)) => {
+            struct NoEnums;
+            impl crate::format::FormatCtx for NoEnums {
+                fn enum_name(&self, _: u32, _: i32) -> String {
+                    String::new()
+                }
+            }
+            crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
+            let text = crate::format::try_format(&v, 0, 0, &NoEnums).map_err(Signal::Unsupported)?;
+            match t {
+                RtType::Text(max) => Ok(Value::Text(fit_txt(text.into(), *max)?)),
+                RtType::Code(max) => Ok(Value::Code(fit(upper_code(text.trim()), *max)?.into())),
+                _ => unreachable!(),
+            }
+        }
         _ => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     }
 }
@@ -1469,6 +1487,18 @@ mod tests {
 
     /// Duration `/`, `div` and `mod` with a whole number, and Duration / Duration, as corpus
     /// types/lt-filter-enum-relation-duration-guid/D_Duration.al:Duration_Arithmetic pins them (D1 = 90000 ms, D2 = 30000 ms).
+    /// A number assigned to a Text is its Format text (assumption number-to-text-is-format); a BigInteger has no thousands separator in Format.
+    #[test]
+    fn a_number_converts_into_a_text_as_its_default_format() {
+        use crate::value::RtType as T;
+        let got = convert(Value::BigInteger(2645), &T::Text(Some(250)));
+        assert!(matches!(&got, Ok(Value::Text(t)) if &**t == "2645"), "{got:?}");
+        assert!(matches!(
+            convert(Value::Integer(7), &T::Code(Some(20))),
+            Ok(Value::Code(t)) if &*t == "7"
+        ));
+    }
+
     #[test]
     fn a_duration_divides_and_takes_the_remainder_by_a_whole_number() {
         let d1 = Value::Duration(90_000);

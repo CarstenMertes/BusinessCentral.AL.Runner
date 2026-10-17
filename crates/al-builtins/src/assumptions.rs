@@ -109,6 +109,18 @@ registry! {
         tests: "Item Tracking Lines (InsertRecord inserts into the page's temporary source, ValidateAndInsert answers false); Tests-Manufacturing PostProductionJournalUsingLotItemTracking and the item tracking tests that set a lot and a quantity.",
         probe: "A page with OnInsertRecord { Rec.Insert(); exit(false) } and OnModifyRecord { Rec.Modify(); exit(false) }: OpenNew, set the key, set a second field, OK; read the row and count the trigger calls.",
     },
+    NumberToTextIsFormat => {
+        id: "number-to-text-is-format",
+        assumed: "An Integer, BigInteger or Decimal (a Variant from FieldRef.Value) assigned to a Text or Code is its default Format text, as Format gives it.",
+        tests: "Workflow Table Relation Value.CreateNew (Value := FieldRef.Value()); 114 Tests-Workflow tests.",
+        probe: "A Variant holding an Integer, a BigInteger (2645 and 1234567) and a Decimal assigned to a Text[50] and a Code[50]; compare with Format.",
+    },
+    QueryClosedAfterLastRow => {
+        id: "query-closed-after-last-row",
+        assumed: "A query whose Read has returned false after its last row is closed: SetRange and SetFilter take a new filter and Open runs it again.",
+        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 125 Tests-Workflow tests.",
+        probe: "Open a query, Read to false, SetRange on a column, Open and Read again; the same without the SetRange; Open twice after the last row.",
+    },
     DateAddWholeDecimal => {
         id: "date-add-whole-decimal",
         assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",

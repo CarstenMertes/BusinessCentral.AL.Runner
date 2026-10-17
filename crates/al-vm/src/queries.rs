@@ -148,7 +148,10 @@ impl Session {
                 // Opening an open query is not an error (query/TestQueryRuntimeContracts.al:
                 // Query_StateMisuse_DoesNotThrow); once rows were read what it does is not pinned.
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
-                    return unsupported("Open on a query that is already open and was read from (not pinned)");
+                    if !Self::query_read_to_the_end(&qs) {
+                        return unsupported("Open on a query that is already open and was read from (not pinned)");
+                    }
+                    qs.borrow_mut().run = None;
                 }
                 // OnBeforeOpen runs inside Open, after the filters set so far, and a filter it sets
                 // applies to this read (query/TestQueryOnBeforeOpenVariablesContracts.al:104-140).
@@ -181,7 +184,10 @@ impl Session {
                 let col = arg_col(args, 0)?;
                 // A filter set after Open and before the first Read is in force when the query runs.
                 if qs.borrow().run.as_ref().is_some_and(|r| r.started) {
-                    return unsupported(format!("{method} on a query that was read from (not pinned)"));
+                    if !Self::query_read_to_the_end(&qs) {
+                        return unsupported(format!("{method} on a query that was read from (not pinned)"));
+                    }
+                    qs.borrow_mut().run = None;
                 }
                 let ty = def.columns[col].ty.clone();
                 let expr = if method == "SetRange" {
@@ -560,6 +566,21 @@ impl Session {
         let mut out: Vec<_> = filters.iter().filter(|(c, _)| !is_text(*c)).cloned().collect();
         out.extend(filters.iter().filter(|(c, _)| is_text(*c)).cloned());
         Ok(out)
+    }
+
+    /// Whether the query was read to its last row. Such a query is closed: a filter can be set and `Open` runs it again.
+    /// Not pinned: Base Application's Workflow Step Instance.SetTableRelationValues does so once per table relation
+    /// (assumption query-closed-after-last-row).
+    fn query_read_to_the_end(qs: &Qs) -> bool {
+        let done = qs
+            .borrow()
+            .run
+            .as_ref()
+            .is_some_and(|r| r.started && r.current.is_none() && r.next >= r.rows.len());
+        if done {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::QueryClosedAfterLastRow);
+        }
+        done
     }
 
     fn query_read(&mut self, def: &ir::Query, qs: &Qs) -> Result<Value, Signal> {

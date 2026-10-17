@@ -663,7 +663,27 @@ impl Session {
         let cursor = st.borrow().cursor;
         let landed = match how {
             PageMethod::First => self.nav_find(st, "-")?,
-            PageMethod::Last => self.nav_find(st, "+")?,
+            PageMethod::Last => {
+                let found = self.nav_find(st, "+")?;
+                // The blank line is the last line the client shows: it is reached first, then the client settles on the
+                // last row (misc/lt-probes-needed-3/PnC07TestPage.al:New_AtTheEnd and New_AfterMovingAwayFromNewRow, OnNewRecord
+                // twice with the New(); New_InTheMiddle after First() has one).
+                if found
+                    && cursor == Cursor::Row
+                    && st.borrow().new_line
+                    && st.borrow().host.is_none()
+                    && self.is_list(st)
+                    && !self.declares(st, "onfindrecord")
+                    && !self.declares(st, "onnextrecord")
+                {
+                    self.land_on_new_line(st)?;
+                    self.nav_find(st, "+")?;
+                    let mut s = st.borrow_mut();
+                    s.draft = false;
+                    s.cursor = Cursor::Row;
+                }
+                found
+            }
             PageMethod::Next => match cursor {
                 Cursor::Row => {
                     if self.nav_next(st, 1)? {

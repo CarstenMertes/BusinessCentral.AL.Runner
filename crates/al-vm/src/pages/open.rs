@@ -678,6 +678,12 @@ impl Session {
             Ok(())
         } else if st.borrow().new_line {
             self.land_on_new_line(st)?;
+            // A list with no row but the blank line reads it twice, as a list of one row reads its row (misc/lt-probes-needed-3/
+            // PnC07TestPage.al:New_OnEmptyPage `OnNewRecord` three times with the New() call, misc/lt-probes-needed-7/
+            // PnGNewRecord.al:HandedRecordKeyFieldFilter `OnNewRecord;AGCR(FILTERED,FILTERED)` twice).
+            if self.is_list(st) && st.borrow().host.is_none() {
+                self.land_on_new_line(st)?;
+            }
             self.populate_expressions(st)
         } else {
             self.populate_expressions(st)

@@ -421,7 +421,7 @@ impl Session {
                 // reads its row twice, a list the rows of its window as it opens plus one (corpus
                 // pageext/PCCurrRecordReads.al:Card_ReadsAfterEachAction, List_ReadsAfterEachAction,
                 // pinned for a card and a list of 3 rows with the cursor on the first).
-                if reads_rows && !st.borrow().refresh {
+                if reads_rows {
                     self.read_page_again(st)?;
                 }
                 st.borrow_mut().refresh = true;
@@ -445,22 +445,76 @@ impl Session {
             return self.populate_current(st);
         }
         let key = self.row_key(&rec)?;
+        if self.declares(st, "onaftergetcurrrecord") && self.declares(st, "onaftergetrecord") {
+            return self.read_list_again_from_row(st, &rec, &key);
+        }
         let first = {
             let s = st.borrow();
             s.window_from_start
                 && s.window.len() < Self::WINDOW
                 && s.window.first().is_some_and(|w| Self::same_key(&w.key, &key))
         };
-        // With the cursor off the first row, or more rows than a window, the reads are not pinned: the
-        // refresh alone stays (docs/probes-needed.md).
         if !first {
-            return Ok(());
+            return self.read_list_again_from_row(st, &rec, &key);
         }
         st.borrow_mut().landing_first = true;
         let r = self.populate_window(st);
         st.borrow_mut().landing_first = false;
         r?;
         st.borrow_mut().window_from_start = true;
+        Ok(())
+    }
+
+    /// The reads of an action on a list whose cursor is not on the first row: the row again, the rows from it on (up to 20),
+    /// the row again when the view goes on past it, the rows back to the first one, and the row twice more before the refresh's
+    /// own read. Pinned by misc/lt-probes-needed-6/PnF05ActionReads.al:Action_List_LaterRow (row 2 and 3 of 3 rows: 7 and 6
+    /// reads after the action) and :Action_List_ManyRows (row 6 of 25: 29 reads), and, with the row identities, by
+    /// misc/lt-probes-needed-7/PnGNewRecord.al:ListPendingNewRowSavedBeforeAction (last row of three: `P1;P1;N2;N1;P1;P1;C`)
+    /// and misc/lt-probes-needed-7/PnGListUpdate.al:ListModifyWithAndWithoutUpdate (`U2;U2;U3;U2;U1;U2;U2;C`). Only a page that declares both row triggers and serves its rows from the table is
+    /// pinned; the identities of the rows beyond the window held are the table order.
+    fn read_list_again_from_row(&mut self, st: &St, rec: &Rec, key: &[Value]) -> Result<(), Signal> {
+        let ok = self.declares(st, "onaftergetrecord") && st.borrow().window_from_start;
+        if !ok {
+            // Other shapes are not pinned: the refresh alone stays (docs/probes-needed.md).
+            return Ok(());
+        }
+        let mut pk = key.to_vec();
+        self.populate_current(st)?;
+        self.populate_current(st)?;
+        let mut moved = false;
+        for _ in 1..Self::WINDOW {
+            if !self.nav_next(st, 1)? {
+                break;
+            }
+            moved = true;
+            self.populate_current(st)?;
+        }
+        if moved {
+            self.ret_used = true;
+            self.record_op(RecordOp::Get, rec, &mut pk)?;
+        }
+        let mut more_rows = moved;
+        if self.nav_next(st, -1)? {
+            more_rows = true;
+            if moved {
+                // The client reads the row again when it steps back onto it from the rows past it; the first row
+                // has no step back (Action_List_FirstRow reads 6 times after the action, Action_List_LaterRow 7).
+                self.ret_used = true;
+                self.record_op(RecordOp::Get, rec, &mut pk)?;
+                self.populate_current(st)?;
+                self.nav_next(st, -1)?;
+            }
+            self.populate_current(st)?;
+            while self.nav_next(st, -1)? {
+                self.populate_current(st)?;
+            }
+        }
+        self.ret_used = true;
+        self.record_op(RecordOp::Get, rec, &mut pk)?;
+        // A view of one row has no step back onto it (a list of one row opens with RRC, not RRRC; Action_List_FewRows).
+        if more_rows {
+            self.populate_current(st)?;
+        }
         Ok(())
     }
 

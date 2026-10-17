@@ -705,17 +705,28 @@ impl Session {
             .iter()
             .filter(|i| i.table == Some(table as usize))
             .collect();
-        let [item] = items[..] else {
-            return unsupported(format!(
-                "a table view for report \"{}\", which has {} data items over that table (not pinned)",
-                schema.name(),
-                items.len()
-            ));
+        // No data item over the table is an error; with several the view filters the first
+        // (corpus errors/lt-ms-refusals-136/P136Report.al:P136_Report_ViewOverTableWithoutDataItem and
+        // P136_Report_ViewWithTwoDataItemsOverTheTable: `A:a;A:b;B:a;B:b;B:c;`).
+        let Some(&item) = items.first() else {
+            let (id, name) = {
+                let o = &self.engine.program.objects[table as usize];
+                (o.id.unwrap_or(0), o.name.clone())
+            };
+            return Err(Signal::Error(Box::new(al_builtins::native::AlError {
+                message: format!(
+                    "The {} report does not have a DataItem that uses the table (Table {id} {name}) specified in the function SetTableView.",
+                    schema.name()
+                ),
+                code: "ReportNoDataItem".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
         };
         let v = view.borrow();
-        if v.temporary || v.marked_only || v.key != 0 || !v.ascending {
-            return unsupported("a table view with a temporary, marked or re-sorted record (not pinned)");
-        }
+        // The data item reads the table itself, so a temporary record's rows do not count, only its filters do; the marks of a
+        // marked-only record, its key and its direction carry over (corpus errors/lt-ms-refusals-136/P136Report.al:
+        // temporary, temporaryFiltered, markedOnly, markedNotOnly, keyQty, keyQtyDescending, descendingPrimary, keyQtyFiltered).
         // A view handed to SetTableView stays in force over a DataItemTableView that only sorts
         // (handlers/TestReportRuntimeContracts.al:393-410 "Probe Rep Order"). Over one that filters, both apply
         // (the item's filters live in the report's own filter group): assumed, Whse.-Source - Create Document and its
@@ -731,6 +742,14 @@ impl Session {
         let mut t = target.borrow_mut();
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
+        t.key = v.key;
+        t.adhoc = v.adhoc.clone();
+        t.ascending = v.ascending;
+        t.field_descending = v.field_descending;
+        if !v.temporary {
+            t.marks = v.marks.clone();
+            t.marked_only = v.marked_only;
+        }
         Ok(())
     }
 

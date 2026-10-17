@@ -467,8 +467,15 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
 /// `None` when the value is no number or the target no Text or Code.
 #[cold]
 #[inline(never)]
-pub fn number_into_text_field(v: &Value, t: &RtType) -> Option<Result<Value, Signal>> {
-    if !matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
+pub fn number_into_text_field(
+    v: &Value,
+    t: &RtType,
+    ctx: &dyn crate::format::FormatCtx,
+) -> Option<Result<Value, Signal>> {
+    if !matches!(
+        v,
+        Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Enum(..)
+    ) {
         return None;
     }
     let (max, code) = match t {
@@ -476,14 +483,8 @@ pub fn number_into_text_field(v: &Value, t: &RtType) -> Option<Result<Value, Sig
         RtType::Code(max) => (max, true),
         _ => return None,
     };
-    struct NoEnums;
-    impl crate::format::FormatCtx for NoEnums {
-        fn enum_name(&self, _: u32, _: i32) -> String {
-            String::new()
-        }
-    }
     crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
-    let text = match crate::format::try_format(v, 0, 0, &NoEnums) {
+    let text = match crate::format::try_format(v, 0, 0, ctx) {
         Ok(text) => text,
         Err(e) => return Some(Err(Signal::Unsupported(e))),
     };
@@ -1532,11 +1533,17 @@ mod tests {
     #[test]
     fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {
         use crate::value::RtType as T;
-        let got = number_into_text_field(&Value::BigInteger(2645), &T::Text(Some(250)));
+        struct NoEnums;
+        impl crate::format::FormatCtx for NoEnums {
+            fn enum_name(&self, _: u32, _: i32) -> String {
+                String::new()
+            }
+        }
+        let got = number_into_text_field(&Value::BigInteger(2645), &T::Text(Some(250)), &NoEnums);
         assert!(matches!(&got, Some(Ok(Value::Text(t))) if &**t == "2645"), "{got:?}");
-        let got = number_into_text_field(&Value::Integer(7), &T::Code(Some(20)));
+        let got = number_into_text_field(&Value::Integer(7), &T::Code(Some(20)), &NoEnums);
         assert!(matches!(&got, Some(Ok(Value::Code(t))) if &**t == "7"), "{got:?}");
-        assert!(number_into_text_field(&Value::Boolean(true), &T::Text(None)).is_none());
+        assert!(number_into_text_field(&Value::Boolean(true), &T::Text(None), &NoEnums).is_none());
         let Err(Signal::Error(e)) = convert(Value::Integer(5), &T::Text(Some(10))) else {
             panic!("an Integer into a Text variable raises");
         };

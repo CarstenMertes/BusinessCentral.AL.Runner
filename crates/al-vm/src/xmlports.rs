@@ -1439,6 +1439,12 @@ impl Session {
         let n = schema.node(node);
         let rec = self.xp_record(inst, schema.node(n.table_node.expect("field nodes have a table node")))?;
         let pos = n.field.expect("field nodes have a field");
+        // A FlowField is calculated for the export (assumption xmlport-exports-flowfield-calculated).
+        if !self.table(&rec)?.fields[pos].stored {
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::XmlportExportsFlowfieldCalculated);
+            self.ret_used = false;
+            self.record_op(RecordOp::CalcFields, &rec, &mut [Value::Integer(pos as i32)])?;
+        }
         let v = rec.borrow().fields[pos].clone();
         if schema.xp().format_evaluate_xml {
             return self.xp_field_text_xml(&v);

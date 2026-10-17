@@ -117,15 +117,21 @@ registry! {
     },
     NumberToTextIsFormat => {
         id: "number-to-text-is-format",
-        assumed: "An Integer, BigInteger or Decimal (a Variant from FieldRef.Value) assigned to a Text or Code is its default Format text, as Format gives it.",
+        assumed: "An Integer, BigInteger, Decimal or Enum value (a Variant from FieldRef.Value) assigned to a record's Text or Code field is its default Format text (an enum value its member name), as Format gives it.",
         tests: "Workflow Table Relation Value.CreateNew (Value := FieldRef.Value()); 114 Tests-Workflow tests.",
-        probe: "A Variant holding an Integer, a BigInteger (2645 and 1234567) and a Decimal assigned to a Text[50] and a Code[50]; compare with Format.",
+        probe: "A Variant holding an Integer, a BigInteger (2645 and 1234567), a Decimal and an enum value assigned to a Text[50] and a Code[50] field and variable and a Text parameter; compare with Format.",
     },
     QueryClosedAfterLastRow => {
         id: "query-closed-after-last-row",
         assumed: "A query whose Read has returned false after its last row is closed: SetRange and SetFilter take a new filter and Open runs it again.",
         tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 125 Tests-Workflow tests.",
         probe: "Open a query, Read to false, SetRange on a column, Open and Read again; the same without the SetRange; Open twice after the last row.",
+    },
+    XmlportExportsFlowfieldCalculated => {
+        id: "xmlport-exports-flowfield-calculated",
+        assumed: "An XmlPort field element or attribute bound to a FlowField exports the calculated value, as if CalcFields had run on the row; an import sets the in-memory value only.",
+        tests: "Import / Export Workflow (\"Workflow Step Argument\".\"Response Option Group\", a Lookup FlowField); 76 Tests-Workflow tests.",
+        probe: "An export-only XmlPort with a fieldelement over a Sum FlowField and over a Lookup FlowField of a row with children: the exported text with and without a CalcFields on the row before; an import of the same element.",
     },
     DateAddWholeDecimal => {
         id: "date-add-whole-decimal",

@@ -7,6 +7,7 @@ use al_testrun::runtime::{CorpusRuntime, RunOptions, SuiteRun};
 use al_testrun::{CaseId, Outcome};
 
 const SRC: &str = r#"
+enum 50500 "VNT Kind" { value(0; Alpha) { } value(1; Beta) { } }
 table 50500 "VNT Row" { fields { field(1; Id; Integer) { } field(2; Txt; Text[50]) { } field(3; Cd; Code[20]) { } } keys { key(PK; Id) { Clustered = true; } } }
 codeunit 50500 "T"
 {
@@ -30,6 +31,14 @@ codeunit 50500 "T"
         FR := RR.Field(1);
         Dst.Txt := FR.Value();
         if Dst.Txt <> '2645' then Error('text %1', Dst.Txt);
+    end;
+    [Test]
+    procedure AnEnumIntoAField()
+    var V: Variant; Row: Record "VNT Row"; K: Enum "VNT Kind";
+    begin
+        K := K::Beta; V := K;
+        Row.Txt := V;
+        if Row.Txt <> 'Beta' then Error('text %1', Row.Txt);
     end;
     [Test]
     procedure IntoAVariable()
@@ -59,7 +68,7 @@ fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {
         &[SuiteRun::everything()],
         &RunOptions::default(),
     );
-    for name in ["IntoAField", "FromAFieldRef", "IntoAVariable"] {
+    for name in ["IntoAField", "FromAFieldRef", "AnEnumIntoAField", "IntoAVariable"] {
         let o = rt.first_outcome(&CaseId {
             codeunit: 50500,
             name: name.into(),

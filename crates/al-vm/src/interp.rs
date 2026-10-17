@@ -779,8 +779,11 @@ impl Session {
             let ty = self.place_type(p, f);
             // A number a Variant holds goes into a Text or Code field as its Format text (the lowering leaves it unconverted for
             // that); the guard is one test on the common path.
-            let v = if matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
-                match ops::number_into_text_field(&v, &ty) {
+            let v = if matches!(
+                v,
+                Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_) | Value::Enum(..)
+            ) {
+                match ops::number_into_text_field(&v, &ty, &*self) {
                     Some(r) => r?,
                     None => ops::convert(v, &ty)?,
                 }

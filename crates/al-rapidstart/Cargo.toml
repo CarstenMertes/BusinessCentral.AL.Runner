@@ -1,0 +1,12 @@
+[package]
+name = "al-rapidstart"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Reads a RapidStart configuration package (gzip, UTF-16 XML) and serves its tables as test data (ADR-020). No OS access (ADR-006): the host reads the file."
+
+[dependencies]
+al-host.workspace = true
+flate2 = { version = "1.1", default-features = false, features = ["zlib-rs"] }
+quick-xml.workspace = true

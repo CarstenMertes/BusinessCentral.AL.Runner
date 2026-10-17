@@ -68,6 +68,11 @@ the runtime is verified against (29). The corpus is checked against BC 27, 28 an
 same BC build. It is on by default. The first run downloads about 520 MB into the cache; progress
 shows on stderr. If the backup cannot be had, test data is turned off and the run says why.
 `--no-test-data` turns it off yourself. Without test data, Microsoft's setup tables are empty.
+`--company-data package` builds the company the way Microsoft's Legacy test lane does, from the
+artifact's RapidStart package, instead of restoring the backup (opt-in; see the next two flags
+for the rest of Microsoft's recipe). For a parity report, `--disabled-tests DIR` reads Microsoft's
+`src/DisabledTests` folder from BCApps. A normal run still runs those tests and marks them in
+the summary and the JUnit file. `--parity` also skips them.
 
 **6. .NET is optional.** Nothing in the core needs .NET. AL code that uses the `DotNet` type
 is served by a .NET 8 helper process. A few common types (for example `StringBuilder`,

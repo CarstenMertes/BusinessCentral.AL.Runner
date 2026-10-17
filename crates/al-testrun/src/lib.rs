@@ -10,6 +10,7 @@ pub mod compile_cache;
 pub mod coverage;
 mod cpuclock;
 pub mod deps;
+pub mod disabled;
 pub mod discover;
 pub mod dotnet;
 pub mod events;

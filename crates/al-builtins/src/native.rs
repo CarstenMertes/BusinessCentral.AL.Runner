@@ -323,6 +323,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("System.GetLastErrorCode#1", get_last_error_code),
     ("System.GetLastErrorCallStack#1", get_last_error_call_stack),
     ("System.ClearLastError#1", clear_last_error),
+    ("System.CodeCoverageRefresh#1", code_coverage_refresh),
     ("Dialog.Error#2", error_text),
     ("Dialog.ErrorNotLiteral#1", error_text_not_literal),
     ("Dialog.Error#1", crate::errorinfo::raise),
@@ -1051,6 +1052,14 @@ fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [
     }
     out.push_str(&ctx.runner_call_stack());
     Ok(Value::Text(out.into()))
+}
+
+/// `CodeCoverageRefresh()`: loads the recorded coverage into the Code Coverage table. The runtime serves the table from the live
+/// recording, so there is nothing to load (corpus codeunit/TestCodeCoverageTable.al reads the table right after
+/// `CodeCoverageLog(false, false)`). Not pinned on its own: assumption code-coverage-refresh-is-a-no-op.
+fn code_coverage_refresh(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    crate::assumptions::assume(crate::assumptions::Assumption::CodeCoverageRefreshIsANoOp);
+    Ok(Value::Null)
 }
 
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {

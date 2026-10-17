@@ -259,7 +259,10 @@ impl Session {
         }
         // A control bound to an expression has the type of the value the expression gives now (its routine returns a
         // Variant); only the plain kinds, and only when the expression can be written.
-        if matches!(ctl.binding, ir::Binding::Expr(_)) && ctl.trigger("__sourceset").is_some() && self.has_source(st) {
+        if matches!(ctl.binding, ir::Binding::Expr(_))
+            && ctl.trigger("__sourceset").is_some()
+            && (self.has_source(st) || self.is_request_page(st))
+        {
             return match v {
                 Value::Decimal(_) => Some(RtType::Decimal),
                 Value::Integer(_) => Some(RtType::Integer),

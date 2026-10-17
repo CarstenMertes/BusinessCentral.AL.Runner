@@ -109,6 +109,12 @@ registry! {
         tests: "Item Tracking Lines (InsertRecord inserts into the page's temporary source, ValidateAndInsert answers false); Tests-Manufacturing PostProductionJournalUsingLotItemTracking and the item tracking tests that set a lot and a quantity.",
         probe: "A page with OnInsertRecord { Rec.Insert(); exit(false) } and OnModifyRecord { Rec.Modify(); exit(false) }: OpenNew, set the key, set a second field, OK; read the row and count the trigger calls.",
     },
+    CodeCoverageRefreshIsANoOp => {
+        id: "code-coverage-refresh-is-a-no-op",
+        assumed: "CodeCoverageRefresh() changes nothing: the Code Coverage table is served from the live recording, so a read after CodeCoverageLog(false, ...) already holds the hits.",
+        tests: "System Application's Code Coverage Mgt.Refresh, called by Microsoft's code coverage helpers; 9 Tests-SCM-Costing tests.",
+        probe: "CodeCoverageLog(true, false), run code, CodeCoverageLog(false, false); count the Code Coverage rows before and after CodeCoverageRefresh().",
+    },
     DateAddWholeDecimal => {
         id: "date-add-whole-decimal",
         assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",

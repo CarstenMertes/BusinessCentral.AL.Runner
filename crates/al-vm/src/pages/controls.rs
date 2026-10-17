@@ -67,7 +67,10 @@ impl Session {
             // A control bound to an expression on a page with no source table is pinned for the write itself
             // (misc/lt-probes-needed-7/PnGTempControl.al, pages/W1Controls.al:TempRecordControl_SetValue) but the page also
             // refreshes after an action there (AGCR), which is not modelled: refused.
-            if matches!(ctl.binding, ir::Binding::Expr(_)) && ctl.trigger("__sourceset").is_some() {
+            if matches!(ctl.binding, ir::Binding::Expr(_))
+                && ctl.trigger("__sourceset").is_some()
+                && !self.is_request_page(st)
+            {
                 return unsupported(
                     "SetValue on a control bound to an expression of a page with no source table (the refresh after an action is not modelled)",
                 );

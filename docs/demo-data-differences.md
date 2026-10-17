@@ -72,6 +72,7 @@ record/lt-filters-keys-finds/P68C_EmptyFinds.al). The backup holds 5 customers a
 | Service Item | Test Planning/Req.Wksh (PlanForServiceDemandNetChange, PlanAfterNeededByDateNetChange, MultipleDemandsSameDayNetChange) |
 | Warehouse Entry | SCM Warehouse Unit Tests, 27 tests |
 | Cost Journal Template | ERM CA Cost Journal, 16 tests |
+| Phys. Invt. Counting Period | SCM Physical Inventory tests that call FindFirst on it: "The Phys. Invt. Counting Period table is empty." (14 failures that were hidden behind refusals until the grouped-query and link-filter assumptions let those codeunits run) |
 | Cost Type, Responsibility Center | ERM Cost Accounting - Tables and Pages, ERM Sales Quotes (SalesQuoteCreation) |
 
 Not confirmed by a scratch app that seeds the rows; the other rows above are.

@@ -165,7 +165,8 @@ dependency stack and read it back. Nothing here is a design; it is what the numb
   before compression. It would not make decode faster (decode time is allocation, see 2). The dictionary reaches
   nearly the same size with no format change. Recommendation: dictionary, no string table.
 - **Dependency IR carries no source positions** (0 of 53 376 positions in the program belong to a dependency
-  object). `Program::positions` and `sources` are workspace-only and stay out of the entries.
+  object). `Program::positions` and `sources` are workspace-only and stay out of the entries. (Superseded by ADR-041,
+  accepted 2026-10-17: the entries now hold the positions of dependency routines, and the key records `AL_NO_DEP_POSITIONS`.)
 - **One entry (blocks with dictionary, object index, member tables, block index) is about 16 to 19 MB per BC build.**
   The Tests-ERM closure is the same size (15.9 MB blocks).
 

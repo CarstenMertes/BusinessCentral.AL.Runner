@@ -5,4 +5,4 @@ mod file;
 mod provider;
 
 pub use file::FileSource;
-pub use provider::{BackupProvider, DEFAULT_COMPANY, default_backup, default_backup_in};
+pub use provider::{BackupProvider, DEFAULT_COMPANY, default_backup, default_backup_in, default_backup_in_country};

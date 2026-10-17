@@ -22,6 +22,7 @@ fn provision(cache: &Path, download: bool) -> Provision {
         download,
         query: BuildQuery::new(Some("27.5"), 27, Some((27, 0))),
         local_artifacts: None,
+        country: String::new(),
     }
 }
 

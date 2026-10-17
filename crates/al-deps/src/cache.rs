@@ -63,12 +63,20 @@ pub fn bcartifacts_sandbox_from_env() -> Option<PathBuf> {
 
 /// The builds of a folder of extracted artifacts (`<root>/<build>/platform`).
 pub fn local_builds(root: &Path) -> Vec<BuildId> {
+    local_builds_for(root, "w1")
+}
+
+/// [`local_builds`] that also have the folder of `country` (`<root>/<build>/<country>`), unless the
+/// country is `w1`: the platform artifact serves that one.
+pub fn local_builds_for(root: &Path, country: &str) -> Vec<BuildId> {
     let Ok(rd) = std::fs::read_dir(root) else {
         return Vec::new();
     };
+    let w1 = crate::artifact::is_w1(country);
     let mut out: Vec<BuildId> = rd
         .filter_map(|e| e.ok())
         .filter(|e| e.path().join("platform").is_dir())
+        .filter(|e| w1 || e.path().join(country.to_ascii_lowercase()).is_dir())
         .filter_map(|e| BuildId::parse(&e.file_name().to_string_lossy()).ok())
         .collect();
     out.sort();
@@ -95,6 +103,27 @@ pub fn local_platform_files(root: &Path, build: &BuildId) -> Vec<(String, PathBu
             }
         }
     }
+    out.sort();
+    out
+}
+
+/// The files of an extracted country artifact that hold that country's Microsoft apps:
+/// `<root>/<build>/<country>/Applications.<COUNTRY>/*`, as (entry name as the archive would spell it,
+/// path). Empty when the folder is not there.
+pub fn local_country_files(root: &Path, build: &BuildId, country: &str) -> Vec<(String, PathBuf)> {
+    let folder = crate::artifact::applications_folder(country);
+    let dir = root
+        .join(build.as_str())
+        .join(country.to_ascii_lowercase())
+        .join(&folder);
+    let Ok(rd) = std::fs::read_dir(&dir) else {
+        return Vec::new();
+    };
+    let mut out: Vec<(String, PathBuf)> = rd
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.is_file())
+        .filter_map(|p| Some((format!("{folder}/{}", p.file_name()?.to_string_lossy()), p)))
+        .collect();
     out.sort();
     out
 }
@@ -132,6 +161,20 @@ impl Store {
     pub fn build(&self, b: &BuildId) -> BuildDir {
         BuildDir {
             dir: self.artifacts.join(b.as_str()),
+            build: b.clone(),
+        }
+    }
+
+    /// Where the Microsoft apps of a country other than `w1` are cached: a folder of their own
+    /// (`<build>/country-<country>/`), because they have the file names of the platform's apps
+    /// (`Base Application.Source.zip`) and other contents. It keeps the country artifact's central
+    /// directory under the same file names a build folder uses for the platform's.
+    pub fn country_build(&self, b: &BuildId, country: &str) -> BuildDir {
+        BuildDir {
+            dir: self
+                .artifacts
+                .join(b.as_str())
+                .join(format!("country-{}", country.to_ascii_lowercase())),
             build: b.clone(),
         }
     }

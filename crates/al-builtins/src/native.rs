@@ -138,6 +138,10 @@ pub trait Ctx: FormatCtx {
     fn today_day(&self) -> Option<i32> {
         None
     }
+    /// `CodeCoverageRefresh()`: writes what was recorded into the Code Coverage tables.
+    fn code_coverage_refresh(&mut self) -> Result<(), Signal> {
+        Ok(())
+    }
     /// The session's work date as a day number; `None` where there is no host.
     fn work_date_day(&self) -> Option<i32> {
         None
@@ -1087,11 +1091,11 @@ fn get_last_error_call_stack(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [
     Ok(Value::Text(out.into()))
 }
 
-/// `CodeCoverageRefresh()`: loads the recorded coverage into the Code Coverage table. The runtime serves the table from the live
-/// recording, so there is nothing to load (corpus codeunit/TestCodeCoverageTable.al reads the table right after
-/// `CodeCoverageLog(false, false)`). Not pinned on its own: assumption code-coverage-refresh-is-a-no-op.
-fn code_coverage_refresh(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    crate::assumptions::assume(crate::assumptions::Assumption::CodeCoverageRefreshIsANoOp);
+/// `CodeCoverageRefresh()`: loads what was recorded into the Code Coverage tables. While logging is on a read of the table holds
+/// nothing until this call or until logging stops; after logging stopped the call changes nothing (platform/lt-code-coverage-refresh/
+/// CodeCoverageRefreshLogged.al: CodeCoverageRefresh_WhileLogging_Result, _AfterLoggingStopped_Result, _NeverLogging_Result).
+fn code_coverage_refresh(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
+    ctx.code_coverage_refresh()?;
     Ok(Value::Null)
 }
 

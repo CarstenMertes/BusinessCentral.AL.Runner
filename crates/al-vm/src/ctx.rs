@@ -35,6 +35,9 @@ impl al_builtins::native::Ctx for Session {
     fn today_day(&self) -> Option<i32> {
         Some(self.today_day_number())
     }
+    fn code_coverage_refresh(&mut self) -> Result<(), Signal> {
+        self.coverage_refresh()
+    }
     fn work_date_day(&self) -> Option<i32> {
         Session::work_date_day(self)
     }

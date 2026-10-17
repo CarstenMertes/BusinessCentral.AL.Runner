@@ -123,6 +123,16 @@ impl Session {
         if temporary || self.coverage_table(t).is_none() {
             return Ok(());
         }
+        // While logging is on the tables hold nothing new: what was recorded lands in them when logging stops or at
+        // CodeCoverageRefresh (platform/lt-code-coverage-refresh/CodeCoverageRefreshLogged.al: `rows before nonzero` No).
+        if self.coverage.code_coverage {
+            return Ok(());
+        }
+        self.coverage_flush()
+    }
+
+    /// `CodeCoverageRefresh()`.
+    pub(crate) fn coverage_refresh(&mut self) -> Result<(), Signal> {
         self.coverage_flush()
     }
 

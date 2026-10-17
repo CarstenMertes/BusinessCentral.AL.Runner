@@ -796,11 +796,11 @@ impl Session {
         let target = self.base_item_record(inst, item)?;
         let mut t = target.borrow_mut();
         let key = Rc::as_ptr(&target) as usize;
-        let origin: Vec<(usize, i32, String)> = v
+        let origin: Vec<crate::state::ViewFilterKey> = v
             .filters
             .iter()
-            .map(|f| (f.field, f.group, format!("{:?}", f.expr)))
-            .collect();
+            .map(|f| Ok((f.field, f.group, self.filter_text(&f.expr)?)))
+            .collect::<Result<_, Signal>>()?;
         self.report.set_view_filters.retain(|(k, _)| *k != key);
         self.report.set_view_filters.push((key, origin));
         t.filters = v.filters.clone();
@@ -1042,7 +1042,7 @@ impl Session {
         for r in run.all_items() {
             let rec = self.report_item_record(run, r)?;
             let key = Rc::as_ptr(&rec) as usize;
-            let from_view: Vec<(usize, i32, String)> = self
+            let from_view: Vec<crate::state::ViewFilterKey> = self
                 .report
                 .set_view_filters
                 .iter()
@@ -1050,11 +1050,16 @@ impl Session {
                 .map(|(_, v)| v.clone())
                 .unwrap_or_default();
             let mut dropped = false;
-            rec.borrow_mut().filters.retain(|f| {
-                let keep = f.group != 0 || from_view.contains(&(f.field, f.group, format!("{:?}", f.expr)));
+            let mut kept = Vec::new();
+            let filters = rec.borrow().filters.clone();
+            for f in filters {
+                let keep = f.group != 0 || from_view.contains(&(f.field, f.group, self.filter_text(&f.expr)?));
                 dropped |= !keep;
-                keep
-            });
+                if keep {
+                    kept.push(f);
+                }
+            }
+            rec.borrow_mut().filters = kept;
             any |= dropped;
         }
         Ok(any)
@@ -1064,7 +1069,11 @@ impl Session {
     /// a rendering section), `None` when the report has a layout, is processing only or has no column to render.
     fn no_valid_layout(&self, schema: &Schema) -> Result<Option<al_builtins::native::AlError>, Signal> {
         let report = schema.report();
-        if report.processing_only || report.layout != ir::ReportLayout::None || report.layout_file_missing {
+        if report.processing_only
+            || report.layout != ir::ReportLayout::None
+            || report.layout_file_missing
+            || !report.output.is_empty()
+        {
             return Ok(None);
         }
         if !report.items.iter().any(|i| !i.columns.is_empty()) {

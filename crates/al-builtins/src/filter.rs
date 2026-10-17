@@ -399,10 +399,7 @@ impl Parser<'_> {
             // as `C` and a date, `T` and `W` (any case) for today and the work date, and in English `CD` the closing date of today, `cd` and
             // `0D` today. The empty text is no filter. A text that is none of these is an error in German (its text is pinned there);
             // in any other language it is refused.
-            T::Date if !text.trim().is_empty() && !text.contains(['<', '>']) => match date_filter_value(text.trim()) {
-                Ok(v) => v,
-                Err(e) => return Err(e),
-            },
+            T::Date if !text.trim().is_empty() && !text.contains(['<', '>']) => date_filter_value(text.trim())?,
             // The empty text is the empty formula (Microsoft's Library - ERM `GetDiscountPaymentTerm`).
             T::DateFormula if text.trim().is_empty() => {
                 crate::assumptions::assume(crate::assumptions::Assumption::FilterEmptyTextDateFormula);

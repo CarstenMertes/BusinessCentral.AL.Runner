@@ -83,6 +83,9 @@ pub(crate) struct EventState {
     pub(crate) global_setups: std::collections::HashMap<usize, globaltriggers::GlobalSetup>,
 }
 
+/// A filter of a SetTableView as (field, filter group, filter text).
+pub(crate) type ViewFilterKey = (usize, i32, String);
+
 /// Code coverage recording.
 pub(crate) struct CoverageState {
     /// `CodeCoverageLog` is recording.
@@ -123,7 +126,7 @@ pub(crate) struct ReportState {
     pub(crate) report_preview_pinned: Vec<bool>,
     /// The filters each data item record got from a `SetTableView` (keyed by the record's address, as text): the request page shows
     /// those and not the filters a procedure of the report set on the item.
-    pub(crate) set_view_filters: Vec<(usize, Vec<(usize, i32, String)>)>,
+    pub(crate) set_view_filters: Vec<(usize, Vec<ViewFilterKey>)>,
     /// The dataset a `Report.SaveAs(.., Xml, ..)` run is writing (al-vm reports.rs).
     pub(crate) dataset: Option<crate::dataset::Dataset>,
 }

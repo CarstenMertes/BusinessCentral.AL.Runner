@@ -1460,3 +1460,21 @@ table 60610 "MM Row"
     );
     assert_eq!(text(r), "10/30/99 20/20 0/0");
 }
+
+// Assumption upperlimit-of-a-single-value (Tests-ERM UT_CustBalanceDueCalcOnMaxLimitOfDateFilter): a flow filter that holds one
+// value is its own upper limit. Lines of D1 are dated 2024-01-10 (40), 2024-02-10 (-10), 2024-03-10 (75), 2024-04-10 (20).
+#[test]
+fn upperlimit_of_a_flow_filter_with_one_value_is_that_value() {
+    let r = run_lines(
+        "procedure F(): Text
+        var H: Record \"FF Head\";
+        begin
+            SeedLines();
+            H.Get('D1');
+            H.SetFilter(\"Date Filter\", Format(20240210D));
+            H.CalcFields(Period, Balance);
+            exit(Format(H.Period) + '/' + Format(H.Balance));
+        end;",
+    );
+    assert_eq!(text(r), "-10/30");
+}

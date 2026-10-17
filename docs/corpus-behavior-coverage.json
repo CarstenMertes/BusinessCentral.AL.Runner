@@ -13455,7 +13455,7 @@
         "code": "Notification",
         "file": "crates/al-builtins/src/sessiontypes.rs",
         "generic": false,
-        "line": 304,
+        "line": 313,
         "pinned": true,
         "site": "errorinfo/lt-errnotif/EnTNotification.al:288",
         "template": "Message cannot be empty when sending a Notification."
@@ -13497,10 +13497,19 @@
         "template": "The date is not valid."
       },
       {
+        "code": "ALSystemString",
+        "file": "crates/al-builtins/src/textfns.rs",
+        "generic": false,
+        "line": 482,
+        "pinned": true,
+        "site": "errors/lt-ms-refusals-136/P136Text.al:113",
+        "template": "Incorrect use of the where parameter."
+      },
+      {
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/textfns.rs",
         "generic": false,
-        "line": 823,
+        "line": 836,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13644,7 +13653,7 @@
         "code": "DB:NoFilter",
         "file": "crates/al-vm/src/recmeta.rs",
         "generic": false,
-        "line": 336,
+        "line": 362,
         "pinned": true,
         "site": "pages/lt-page-filtergroup-assumptions/P99RangeGroups.al:115",
         "template": "Specify a filter for the % field in the % table."
@@ -13779,13 +13788,13 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 418,
+        "line": 434,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 56,
-    "sites": 59
+    "pinned": 57,
+    "sites": 60
   }
 }

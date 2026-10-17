@@ -250,7 +250,10 @@ fn date(text: &str, number: i64, today: Option<i32>, work: Option<i32>) -> Resul
             None => unsupported("Evaluate of `CD` into a Date without a clock"),
         };
     }
-    if let Some(rest) = text.strip_prefix(['C', 'c']).filter(|r| r.starts_with(|c: char| c.is_ascii_digit())) {
+    if let Some(rest) = text
+        .strip_prefix(['C', 'c'])
+        .filter(|r| r.starts_with(|c: char| c.is_ascii_digit()))
+    {
         return Ok(match date(rest, 0, today, work)? {
             Parsed::Value(Value::Date(d, false)) => Parsed::Value(Value::Date(d, true)),
             _ => Parsed::Rejected,

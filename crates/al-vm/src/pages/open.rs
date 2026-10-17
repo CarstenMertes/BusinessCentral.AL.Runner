@@ -219,7 +219,9 @@ impl Session {
                 let lower = view.to_ascii_lowercase();
                 if lower.contains("order(") {
                     self.mark_closed(st);
-                    return unsupported("Page.Run with a record on a page whose SourceTableView names an order (not pinned)");
+                    return unsupported(
+                        "Page.Run with a record on a page whose SourceTableView names an order (not pinned)",
+                    );
                 }
             }
             let rec = self.page_rec(st);

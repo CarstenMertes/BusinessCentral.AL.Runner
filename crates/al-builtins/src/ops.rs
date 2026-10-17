@@ -747,7 +747,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             // amount (`-3000000000.0`, `-1000.5`), TimeAddWholeDecimal.al:TimeDecimal_Whole_BeyondInteger, TimeDecimal_Fractional.
             let d = if op == Arith::Sub { -*d } else { *d };
             return raise(
-                format!("Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."),
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {d} to System.Int32."
+                ),
                 "ConversionCast",
             );
         }

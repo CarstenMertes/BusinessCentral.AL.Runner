@@ -1576,10 +1576,12 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
         // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
         // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
-        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload" | "HttpClient") => Value::Library(
-            name.clone(),
-            std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
-        ),
+        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload" | "HttpClient") => {
+            Value::Library(
+                name.clone(),
+                std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
+            )
+        }
         other => return unsupported(&format!("Clear of a {} value", value_kind(other))),
     };
     Ok(Value::Null)

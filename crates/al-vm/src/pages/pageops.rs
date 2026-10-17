@@ -622,9 +622,7 @@ impl Session {
             // (pages/lt-hidden-part-currpage/HiddenPartCurrPageUpdateFalse.al:UpdateFalse_LiteralInvisible_OpenEdit,
             // HiddenPartCurrPageUpdateTrue.al:UpdateTrue_LiteralInvisible_OpenEdit). Base Application's Approval FactBox ends
             // `UpdateApprovalEntriesFromSourceRecord` with it.
-            PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => {
-                Ok(Value::Null)
-            }
+            PageMethod::Update if st.borrow().host.is_some() && !st.borrow().open => Ok(Value::Null),
             PageMethod::Update | PageMethod::SaveRecord => {
                 self.require_open(st)?;
                 // CurrPage.Update() without an argument saves (the parameter defaults to true).

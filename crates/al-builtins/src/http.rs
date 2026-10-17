@@ -335,7 +335,9 @@ fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal
     if path.contains("://") || base.is_empty() {
         return match normalize_uri(path) {
             Ok(u) => Ok((u, false)),
-            Err(_) if !path.is_empty() && !path.contains(char::is_whitespace) && !path.contains("://") => Ok((path.to_string(), false)),
+            Err(_) if !path.is_empty() && !path.contains(char::is_whitespace) && !path.contains("://") => {
+                Ok((path.to_string(), false))
+            }
             Err(_) => invalid_url(),
         };
     }

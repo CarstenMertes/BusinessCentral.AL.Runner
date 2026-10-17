@@ -64,17 +64,25 @@ echo "run $run: green, commit $sha on $branch"
 
 # 2. The artifacts: per leg the larger is the oracle, the smaller the OnPrem file.
 arts="$("$gh" api "repos/$repo/actions/runs/$run/artifacts?per_page=100")"
-declare -A oracle_id onprem_id
+declare -A oracle_id onprem_id dotnet_id
 for leg in $legs; do
-  read -r n big small < <(python3 -c '
+  # Two artifacts: the oracle (larger) and the OnPrem file. Three (since the OnPrem DotNet app runs in CI): the DotNet file is the smallest.
+  read -r n big mid small < <(python3 -c '
 import json, sys
 a = [x for x in json.loads(sys.argv[1]).get("artifacts", []) if x.get("name") == "junit-test-results-" + sys.argv[2]]
 a.sort(key=lambda x: x.get("size_in_bytes", 0))
-print(len(a), a[-1]["id"] if len(a) == 2 else 0, a[0]["id"] if len(a) == 2 else 0)' "$arts" "$leg")
-  [ "$n" = 2 ] || die "run $run has $n artifact(s) named junit-test-results-$leg, expected 2 (the oracle and the OnPrem file)"
+n = len(a)
+if n == 2:
+    print(n, a[1]["id"], a[0]["id"], 0)
+elif n == 3:
+    print(n, a[2]["id"], a[1]["id"], a[0]["id"])
+else:
+    print(n, 0, 0, 0)' "$arts" "$leg")
+  { [ "$n" = 2 ] || [ "$n" = 3 ]; } || die "run $run has $n artifact(s) named junit-test-results-$leg, expected 2 or 3 (the oracle, the OnPrem file, and the OnPrem DotNet file)"
   oracle_id[$leg]=$big
-  onprem_id[$leg]=$small
-  echo "$leg: oracle artifact $big, onprem artifact $small"
+  onprem_id[$leg]=$mid
+  dotnet_id[$leg]=$small
+  echo "$leg: oracle artifact $big, onprem artifact $mid${small:+, dotnet artifact $small}"
 done
 
 old="$(git -C "$root" ls-tree HEAD corpus 2>/dev/null | awk '{print $3}')"
@@ -128,6 +136,8 @@ for leg in $legs; do
   major="${leg%%.*}"
   fetch_xml "${oracle_id[$leg]}" "$root/oracle/$major/junit.xml"
   fetch_xml "${onprem_id[$leg]}" "$root/oracle/$major/junit-onprem.xml"
+  # The DotNet file is the oracle of the onprem-dotnet suite of oracle.toml.
+  if [ "${dotnet_id[$leg]}" != 0 ]; then fetch_xml "${dotnet_id[$leg]}" "$root/oracle/$major/junit-dotnet.xml"; fi
 done
 
 # 5. oracle.toml and README.md.
@@ -147,7 +157,7 @@ for leg in $legs; do
   major="${leg%%.*}"
   args+=("$major" "${oracle_id[$leg]}" "${onprem_id[$leg]}" "$(cases "$root/oracle/$major/junit.xml")" "$(cases "$root/oracle/$major/junit-onprem.xml")")
 done
-python3 "$here/corpus_bump_edit.py" "$root" "$sha" "$run" "${args[@]}"
+DOTNET_IDS="27=${dotnet_id[27.5]} 28=${dotnet_id[28.5]} 29=${dotnet_id[29.0]}" python3 "$here/corpus_bump_edit.py" "$root" "$sha" "$run" "${args[@]}"
 
 # 6. Baselines (al-test-cli refuses while a baseline case regresses).
 cd "$root"

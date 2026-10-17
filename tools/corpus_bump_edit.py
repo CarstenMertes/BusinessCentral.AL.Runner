@@ -6,8 +6,10 @@
 Writes the new pin, the run and the artifact ids of each leg (the version's own oracle and its onprem suite;
 other suites, such as the isolation probe from another run, are left alone), and the README's pin and leg rows.
 """
-import re, sys
+import os, re, sys
 root, sha, run, rest = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4:]
+# DOTNET_IDS="27=ID 28=ID 29=ID": the artifact ids of the OnPrem DotNet files (suite onprem-dotnet).
+dotnet = {k: v for k, v in (x.split("=") for x in os.environ.get("DOTNET_IDS", "").split()) if v != "0"}
 legs = [rest[i:i + 5] for i in range(0, len(rest), 5)]
 # oracle.toml: the pin, then per [[version]] table its run and artifact, and its onprem suite's.
 p = root + "/oracle/oracle.toml"
@@ -30,7 +32,10 @@ for b in blocks[1:]:
         parts = re.split(r'(?m)^(?=\[\[version\.suite\]\])', b)
         # The version's own oracle, then its onprem suite; other suites come from other runs.
         parts = [leg_fields(parts[0], oracle)] + [
-            leg_fields(s, onprem) if re.search(r'^name = "onprem"', s, re.M) else s for s in parts[1:]
+            leg_fields(s, onprem) if re.search(r'^name = "onprem"', s, re.M)
+            else leg_fields(s, dotnet[major]) if re.search(r'^name = "onprem-dotnet"', s, re.M) and major in dotnet
+            else s
+            for s in parts[1:]
         ]
         b = "".join(parts)
     out.append(b)

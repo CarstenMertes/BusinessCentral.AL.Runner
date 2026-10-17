@@ -398,6 +398,13 @@ fn xmlport_text_elements_are_variables() {
 }
 
 #[test]
+fn xmlport_bigtext_text_element_is_a_bigtext_variable() {
+    // corpus xmlport/lt-xmlport-bigtext/XmlPortBigText.al: a text element with TextType = BigText is a BigText variable.
+    let x = "xmlport 50901 X { schema { textelement(Root) { textelement(Big) { TextType = BigText; } } } trigger OnPreXmlPort() var N: Integer; begin Big.AddText('x'); N := Big.Length(); end; }";
+    assert_eq!(diags(&[x]), Vec::<String>::new());
+}
+
+#[test]
 fn page_extension_controls_are_test_page_members() {
     let ext =
         "pageextension 50903 E extends \"ALT List\" { layout { addlast(Content) { field(ExtCtl; Rec.Amount) { } } } }";

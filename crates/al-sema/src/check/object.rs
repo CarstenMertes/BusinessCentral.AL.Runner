@@ -169,7 +169,17 @@ impl<'a> Checker<'a> {
             let n = sec.name().to_ascii_lowercase();
             if n == "textelement" || n == "textattribute" {
                 if let Some(name) = sec.args().first() {
-                    globals.insert(name.to_lowercase(), Ty::Text(None));
+                    // TextType = BigText makes the element a BigText variable (corpus xmlport/lt-xmlport-bigtext/XmlPortBigText.al).
+                    let big = sec.properties().any(|p| {
+                        p.name().eq_ignore_ascii_case("TextType")
+                            && p.value_text().trim().eq_ignore_ascii_case("BigText")
+                    });
+                    let ty = if big {
+                        Ty::Builtin("BigText".into())
+                    } else {
+                        Ty::Text(None)
+                    };
+                    globals.insert(name.to_lowercase(), ty);
                 }
             }
         }

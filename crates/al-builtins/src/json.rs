@@ -659,6 +659,12 @@ fn write(h: &Handle, out: &mut String) -> Result<(), Signal> {
                     out.push_str(".0");
                 }
             }
+            // An undefined Date, Time and DateTime are written as the first day, midnight and the first day at midnight, the
+            // date-time without the `Z` (json/lt-json-typed-overloads/P101ArrayAdd.al:P101_Add_Date `0001-01-01`, P101_Add_Time
+            // `00:00:00`, P101_Add_DateTime `0001-01-01T00:00:00.0000000`).
+            Value::Date(0, _) => write_string(out, "0001-01-01"),
+            Value::Time(0) => write_string(out, "00:00:00"),
+            Value::DateTime(0) => write_string(out, "0001-01-01T00:00:00.0000000"),
             Value::Date(d, _) if d > 0 => {
                 let (y, m, day) = crate::format::civil_from_day(d);
                 write_string(out, &format!("{y:04}-{m:02}-{day:02}"));
@@ -1215,6 +1221,108 @@ fn array_add(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<
     })
 }
 
+/// The index a `JsonArray` method takes, as a number.
+fn array_index(v: &Value) -> Result<i64, Signal> {
+    match v {
+        Value::Integer(i) => Ok(i64::from(*i)),
+        other => unsupported(format!("JSON array index {}", other.describe())),
+    }
+}
+
+/// `Insert(Index, Value)`: the value goes in before that index; an index from 0 to the count is allowed, another raises
+/// `Index out of bounds.` / IndexOutOfBounds (json/lt-json-typed-overloads/P101ArrayInsert.al:P101_Insert_Boolean `ins_oob`, and the
+/// same for every other type).
+fn array_insert(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let i = array_index(&a[0])?;
+    let count = with_node(&h, |n| match n {
+        JsonNode::Array(kids) => Ok(kids.len() as i64),
+        _ => unsupported("JsonArray.Insert on a JSON value that is not an array"),
+    })?;
+    if i < 0 || i > count {
+        return Err(index_out_of_bounds());
+    }
+    let child = attach(&h, node_for(&a[1])?);
+    with_node(&h, |n| {
+        if let JsonNode::Array(kids) = n {
+            kids.insert(i as usize, child);
+        }
+    });
+    Ok(Value::Null)
+}
+
+/// `Set(Index, Value)`: the value replaces the one at that index; an index from 0 to the count minus one is allowed
+/// (P101ArraySet.al:P101_Set_Boolean `set_oob` is the count itself).
+fn array_set(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let i = array_index(&a[0])?;
+    let count = with_node(&h, |n| match n {
+        JsonNode::Array(kids) => Ok(kids.len() as i64),
+        _ => unsupported("JsonArray.Set on a JSON value that is not an array"),
+    })?;
+    if i < 0 || i >= count {
+        return Err(index_out_of_bounds());
+    }
+    let child = attach(&h, node_for(&a[1])?);
+    let old = with_node(&h, |n| match n {
+        JsonNode::Array(kids) => Some(std::mem::replace(&mut kids[i as usize], child)),
+        _ => None,
+    });
+    if let Some(old) = old {
+        set_parent(&old, None);
+    }
+    Ok(Value::Null)
+}
+
+/// `IndexOf(Value)`: the index of the first element that is the value, -1 when there is none. A typed value compares by value
+/// (P101ArrayIndexOf.al:P101_IndexOf_Boolean `dup_first`, `empty`); a JsonObject or JsonArray is found only when the array holds that
+/// very object, never an equal copy (:P101_IndexOf_JsonObject, :P101_IndexOf_JsonArray). A typed value against an element of
+/// another type, and a JsonToken or JsonValue that holds a scalar (BC finds the token it was added as, which a copied scalar
+/// cannot show), are refused.
+fn array_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let h = recv(r)?;
+    let kids: Vec<Handle> = with_node(&h, |n| match n {
+        JsonNode::Array(kids) => Ok(kids.clone()),
+        _ => unsupported("JsonArray.IndexOf on a JSON value that is not an array"),
+    })?;
+    let needle = &a[0];
+    let found = if matches!(needle, Value::Library(..)) {
+        let target = handle_of(needle)?;
+        if with_node(&target, |n| matches!(n, JsonNode::Scalar(_))) {
+            return unsupported(
+                "JsonArray.IndexOf of a JsonToken or JsonValue holding a scalar (which element it names is not modelled)",
+            );
+        }
+        kids.iter().position(|k| Rc::ptr_eq(k, &target))
+    } else {
+        let mut at = None;
+        for (i, k) in kids.iter().enumerate() {
+            let same = with_node(k, |n| match n {
+                JsonNode::Scalar(Scalar::Val(v)) => {
+                    if std::mem::discriminant(v) == std::mem::discriminant(needle) {
+                        Some(crate::ops::compare(v, needle).is_ok_and(|o| o == std::cmp::Ordering::Equal))
+                    } else {
+                        None
+                    }
+                }
+                _ => Some(false),
+            });
+            match same {
+                Some(true) => {
+                    at = Some(i);
+                    break;
+                }
+                Some(false) => {}
+                None => {
+                    return unsupported("JsonArray.IndexOf of a value against an element of another type (not pinned)");
+                }
+            }
+        }
+        at
+    };
+    Ok(Value::Integer(found.map_or(-1, |i| i as i32)))
+}
+
 /// The tokens of a JsonArray as `JsonToken` values, for `foreach`: in order, and as the array was when the
 /// loop started (an element added inside is not visited; corpus types/PVLabelSplitForeach.al on the
 /// staging branch). `None` for any other value.
@@ -1254,7 +1362,20 @@ fn array_get(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<
 /// Invalid JSON is reported as `false` when the result is used (docs: "returns false if
 /// the operation was not successful"; no corpus test feeds invalid JSON, see probes-needed.md).
 fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Option<&str>) -> Result<Value, Signal> {
-    let h = recv(r)?;
+    let mut r = r;
+    let mut h = recv(r.as_deref_mut())?;
+    // A variable whose node sits inside a container (it was added) reads into a new node of its own: the container keeps what it
+    // holds (json/lt-json-typed-overloads/P101ArrayAdd.al:P101_Add_JsonToken, `Tk.ReadFrom(..)` after `A.Add(Tk)` leaves `A` as it was).
+    if parent_link(&h).and_then(|w| w.upgrade()).is_some() {
+        if let Some(slot @ Value::Library(..)) = r {
+            let Value::Library(name, _) = &*slot else {
+                unreachable!()
+            };
+            let fresh = new_handle(JsonNode::Scalar(Scalar::Null));
+            *slot = Value::Library(name.clone(), fresh.clone());
+            h = fresh;
+        }
+    }
     // ReadFrom(InStream) reads the rest of the stream and parses it like the text form.
     let text = if matches!(&a[0], Value::Library(_, h) if matches!(&*h.borrow(), LibraryValue::InStream(_))) {
         let text = crate::stream::read_serialised_text(&mut a[0])?;
@@ -1706,6 +1827,9 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
             [_, _],
         ) => select_token,
         ("JsonArray.Add", [_]) => array_add,
+        ("JsonArray.Insert", [_, _]) => array_insert,
+        ("JsonArray.Set", [_, _]) => array_set,
+        ("JsonArray.IndexOf", [_]) => array_index_of,
         ("JsonArray.Count", []) => array_count,
         ("JsonArray.Get", [_, _]) => array_get,
         ("JsonArray.GetBoolean", _) => arr_boolean,

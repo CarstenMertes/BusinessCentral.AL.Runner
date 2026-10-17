@@ -410,6 +410,15 @@ impl Session {
             .iter()
             .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
             .map(|(_, v)| unquote(v))
+            // A page with CaptionML only shows its ENU text (types/lt-caption-before-run/CaptionReadMl.al:P182b_Ml_BeforeRunAfterRunModal,
+            // `[LT ML Caption]` before, during and after the run). A CaptionML without an ENU entry keeps the page name.
+            .or_else(|| {
+                let (_, v) = o.properties.iter().find(|(k, _)| k.eq_ignore_ascii_case("CaptionML"))?;
+                let at = v.to_ascii_uppercase().find("ENU")?;
+                let rest = v[at + 3..].trim_start().strip_prefix('=')?.trim_start();
+                let rest = rest.strip_prefix('\'')?;
+                Some(rest[..rest.find('\'')?].to_string())
+            })
             .unwrap_or_else(|| o.name.clone())
     }
 

@@ -1781,14 +1781,7 @@ impl Session {
                                         Some(row) if self.row_passes(rec, &t, &row)? => {
                                             if key == 0 {
                                                 Some(row)
-                                            } else if {
-                                                let theirs = position(&t, key, &row);
-                                                theirs.len() == pos.len()
-                                                    && theirs.iter().zip(pos.iter()).all(|(a, b)| {
-                                                        al_builtins::ops::compare(a, b)
-                                                            .is_ok_and(|o| o == std::cmp::Ordering::Equal)
-                                                    })
-                                            } {
+                                            } else if Self::same_key_values(&t, key, &row, &pos) {
                                                 al_builtins::assumptions::assume(
                                                     al_builtins::assumptions::Assumption::FindEqualOnAnotherKey,
                                                 );
@@ -2244,5 +2237,17 @@ pub(crate) fn unevaluable_init_value(f: &al_ir::Field) -> Option<String> {
                 .then(|| format!("The format of the Date '{text}' does not match your device's date settings."))
         }
         _ => None,
+    }
+}
+
+impl Session {
+    /// Whether `row` holds the values of `pos` in the fields of key `key` (and the primary key after them).
+    fn same_key_values(t: &al_data::TableDef, key: usize, row: &[Value], pos: &[Value]) -> bool {
+        let theirs = position(t, key, row);
+        theirs.len() == pos.len()
+            && theirs
+                .iter()
+                .zip(pos.iter())
+                .all(|(a, b)| al_builtins::ops::compare(a, b).is_ok_and(|o| o == std::cmp::Ordering::Equal))
     }
 }

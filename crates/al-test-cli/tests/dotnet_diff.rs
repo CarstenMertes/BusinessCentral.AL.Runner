@@ -911,6 +911,7 @@ fn time_zone_checks(pair: &mut Pair) -> BTreeSet<String> {
     );
     for id in &ids {
         covered.extend(both(pair, &|r| {
+            r.seen.push(format!("zone id {id:?}"));
             let Some(z) = r.invoke(
                 "System.TimeZoneInfo.FindSystemTimeZoneById",
                 st("System.TimeZoneInfo"),

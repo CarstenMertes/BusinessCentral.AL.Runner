@@ -602,7 +602,9 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
 /// its value. A format number is not pinned.
 fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option<u32>) -> Result<Parsed, Signal> {
     if number != 0 {
-        return unsupported(format!("Evaluate into a Text or Code with format number {number} (not pinned)"));
+        return unsupported(format!(
+            "Evaluate into a Text or Code with format number {number} (not pinned)"
+        ));
     }
     let code = matches!(a, Value::Code(_));
     let kept = if code { text.trim() } else { text };
@@ -633,7 +635,12 @@ fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option
 }
 
 /// The value `text` reads as for type `ty` (`Evaluate` into a fresh variable of that type): `None` where it is rejected.
-pub fn evaluate_typed(c: &mut dyn Ctx, ty: &crate::value::RtType, text: &str, number: i64) -> Result<Option<Value>, Signal> {
+pub fn evaluate_typed(
+    c: &mut dyn Ctx,
+    ty: &crate::value::RtType,
+    text: &str,
+    number: i64,
+) -> Result<Option<Value>, Signal> {
     let max = match ty {
         crate::value::RtType::Text(m) | crate::value::RtType::Code(m) => *m,
         _ => None,
@@ -676,7 +683,9 @@ fn into_record_id(c: &mut dyn Ctx, a: &mut [Value], text: &str, number: i64) -> 
             *cell.borrow_mut() = v;
             Ok(Value::Boolean(true))
         }
-        None if !blank => unsupported("a failed Evaluate into a RecordId that is not blank (what it keeps is not pinned)"),
+        None if !blank => {
+            unsupported("a failed Evaluate into a RecordId that is not blank (what it keeps is not pinned)")
+        }
         None if c.ret_used() => Ok(Value::Boolean(false)),
         None => unsupported("Evaluate into a RecordId failing with the result unused (error text not pinned yet)"),
     }
@@ -708,7 +717,12 @@ fn into_field_ref(c: &mut dyn Ctx, a: &mut [Value], number: i64) -> Result<Value
     Ok(ok)
 }
 
-fn evaluate_with_max(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool, max: Option<u32>) -> Result<Value, Signal> {
+fn evaluate_with_max(
+    c: &mut dyn Ctx,
+    a: &mut [Value],
+    variable_option: bool,
+    max: Option<u32>,
+) -> Result<Value, Signal> {
     let Some(text) = crate::native::text_of(&a[1]) else {
         return unsupported("Evaluate of a source that is not text");
     };

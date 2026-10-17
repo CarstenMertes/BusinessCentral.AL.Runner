@@ -208,6 +208,11 @@ impl Session {
     /// `GetFilters`: `Caption: filter` pairs joined by `, ` (docs/probes-needed.md).
     pub(crate) fn get_filters(&self, rec: &Rec, t: &TableDef) -> Result<String, Signal> {
         let mut parts = Vec::new();
+        // A record on MarkedOnly names it first (errors/lt-ms-refusals-128/P128SelectionFilter.al `marked A only`,
+        // lt-ms-refusals-135/P135SelectionFilter.al:357 `filters=[Marked: Yes]` with no other filter).
+        if rec.borrow().marked_only {
+            parts.push("Marked: Yes".to_string());
+        }
         for f in Self::filters_in_field_order(rec) {
             parts.push(format!(
                 "{}: {}",

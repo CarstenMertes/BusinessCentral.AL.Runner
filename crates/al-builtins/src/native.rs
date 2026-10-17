@@ -175,7 +175,11 @@ pub trait Ctx: FormatCtx {
     }
     /// `Evaluate(RecordId, Text)`: the RecordId the text names (a table name, then `:` and the key), `Ok(None)` where no table
     /// is named or the key is not a value of its type. `None` where the context has no program.
-    fn evaluate_record_id(&mut self, _text: &str, _number: i64) -> Option<Result<Option<crate::value::LibraryValue>, Signal>> {
+    fn evaluate_record_id(
+        &mut self,
+        _text: &str,
+        _number: i64,
+    ) -> Option<Result<Option<crate::value::LibraryValue>, Signal>> {
         None
     }
     /// The field a `FieldRef` stands on, for `Evaluate` into it: its record buffer, position, declared type and whether the field

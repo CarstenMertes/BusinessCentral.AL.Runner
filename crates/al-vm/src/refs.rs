@@ -186,11 +186,7 @@ impl Session {
     }
 
     /// `Evaluate(RecordId, text)`: see `al_builtins::evaluate`. Only a table with a one-field primary key is read with a key.
-    pub(crate) fn evaluate_record_id_text(
-        &mut self,
-        text: &str,
-        number: i64,
-    ) -> Result<Option<LibraryValue>, Signal> {
+    pub(crate) fn evaluate_record_id_text(&mut self, text: &str, number: i64) -> Result<Option<LibraryValue>, Signal> {
         let (name, key_text) = match text.split_once(':') {
             Some((n, k)) => (n.trim(), Some(k)),
             None => (text.trim(), None),
@@ -220,7 +216,9 @@ impl Session {
             None => Vec::new(),
             Some(k) => {
                 let [pos] = schema.keys[0].as_slice() else {
-                    return unsupported("Evaluate into a RecordId of a table with a composite primary key (not pinned)");
+                    return unsupported(
+                        "Evaluate into a RecordId of a table with a composite primary key (not pinned)",
+                    );
                 };
                 let ty = schema.fields[*pos].ty.clone();
                 let k = k.strip_prefix(' ').unwrap_or(k);

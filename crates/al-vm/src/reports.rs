@@ -195,6 +195,21 @@ impl Session {
             }
             ids::REPORT_RUN_1 | ids::REPORT_RUNMODAL_1 => {
                 let (inst, quit) = self.report_instance_for(receiver, true, id == ids::REPORT_RUN_1)?;
+                // An instance that already ran (one a variable gave up after its Run) cannot run again, and the attempt resets it
+                // (report/lt-report-this-passed-on/P141ThisStored.al:P141_StoredAfterRun_RunAgain: the error, then a blank marker).
+                if id == ids::REPORT_RUN_1
+                    && self
+                        .report
+                        .report_executed
+                        .iter()
+                        .any(|w| w.upgrade().is_some_and(|i| Rc::ptr_eq(&i, &inst)))
+                {
+                    self.report_clear(&inst);
+                    return Err(crate::transactions::al_error_code(
+                        "The object has been run. Use the function CLEAR(Report).",
+                        "ObjectHasAlreadyBeenRun",
+                    ));
+                }
                 let schema = self.report_schema(&inst)?;
                 let window = Self::report_shows_page(&inst, &schema);
                 let result = if quit {
@@ -209,7 +224,7 @@ impl Session {
                 // `RunModal` does not clear it: a getter called after it reads what the run collected (corpus
                 // reportextensiontrigger/TestPrecompiledReportExtensionDataItems.al: "Run frees the variable's report
                 // instance when it ends ... RunModal keeps it", as Base Application's Reservation Worksheet relies on).
-                if id == ids::REPORT_RUN_1 {
+                if id == ids::REPORT_RUN_1 && !self.report.rebind_after_run {
                     self.report_clear(&inst);
                 }
                 result.map(|()| Value::Null)
@@ -662,6 +677,19 @@ impl Session {
     /// `OnInitReport` does not run again (handlers/TestReportRuntimeContracts.al:395-414; a global
     /// read afterwards is a default: handlers/TestReportSetTableView.al:17-22,
     /// handlers/TestReportRunWithRequestPage.al:32-36).
+    /// A variable after `Run` holds a new instance; whoever kept the instance that ran (a SingleInstance codeunit that stored `this`) still
+    /// reads its state (report/lt-report-this-passed-on/P141ThisStored.al:P141_StoredAfterRun_ReadAndChange `ok:post`, _SecondRunReplaces).
+    pub(crate) fn report_fresh_instance(&mut self, old: &Inst) -> Inst {
+        let object = old.borrow().object as usize;
+        let fresh = self.instance(object);
+        {
+            let mut f = fresh.borrow_mut();
+            f.initialized = true;
+            f.rerun = true;
+        }
+        fresh
+    }
+
     fn report_clear(&mut self, inst: &Inst) {
         let object = inst.borrow().object as usize;
         let fresh = self.instance(object);

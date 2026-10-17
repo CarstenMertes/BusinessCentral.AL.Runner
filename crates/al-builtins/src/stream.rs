@@ -609,7 +609,9 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         // ReadTextLengthZeroAndNegative, `An invalid length 0 was specified in stream function...` for 0 and -1).
         Some(Value::Integer(n)) => {
             return crate::native::raise(
-                format!("An invalid length {n} was specified in stream function. Length must be in range 1 to 2147483647."),
+                format!(
+                    "An invalid length {n} was specified in stream function. Length must be in range 1 to 2147483647."
+                ),
                 "InvalidStreamLength",
             );
         }

@@ -23,6 +23,7 @@ const RUN_TESTS_FIELDS: &[&str] = &[
     "testIsolation",
     "captureValues",
     "iterationTracking",
+    "announceStart",
 ];
 /// The request fields of `execute`.
 const EXECUTE_FIELDS: &[&str] = &[
@@ -61,6 +62,8 @@ enum Input {
 struct Flags {
     running: AtomicBool,
     cancel: Arc<AtomicBool>,
+    /// The request asked for a `started` line, and it was not written yet.
+    announce: AtomicBool,
 }
 
 /// Reads stdin on a thread of its own: `cancel` is answered here, at once, also while a run keeps the main thread busy;
@@ -120,6 +123,14 @@ pub fn serve(daemon: &[String]) -> Result<(), String> {
             }
             out(&Value::Object(line));
         })),
+        on_start: Some({
+            let flags = flags.clone();
+            Arc::new(move |codeunit: u32, test: &str| {
+                if flags.announce.swap(false, Ordering::SeqCst) {
+                    out(&json!({ "type": "started", "codeunit": codeunit, "test": test }));
+                }
+            })
+        }),
         ..WarmCtx::default()
     };
     crate::run::keep_backups();
@@ -247,6 +258,9 @@ fn run_tests(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, fl
     );
     // A cancel that arrived while nothing ran was answered as a no-op: it does not stop the next run.
     flags.cancel.store(false, Ordering::SeqCst);
+    flags
+        .announce
+        .store(flag(fields, "announceStart").unwrap_or(false), Ordering::SeqCst);
     flags.running.store(true, Ordering::SeqCst);
     ctx.report = None;
     ctx.used = None;
@@ -444,6 +458,9 @@ fn execute(base: &TestArgs, fields: &Map<String, Value>, ctx: &mut WarmCtx, flag
     a.quiet = true;
     a.execute = true;
     flags.cancel.store(false, Ordering::SeqCst);
+    flags
+        .announce
+        .store(flag(fields, "announceStart").unwrap_or(false), Ordering::SeqCst);
     flags.running.store(true, Ordering::SeqCst);
     ctx.report = None;
     ctx.used = None;

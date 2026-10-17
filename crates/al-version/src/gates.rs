@@ -81,6 +81,10 @@ pub enum Gate {
     /// `Base64Convert.ToBase64` of a Text with `TextEncoding::Windows` or `MSDos` and no code page gives the code page 1252
     /// bytes from BC 28 (`äöü` is `5Pb8`); before, the UTF-8 bytes (`w6TDtsO8`) (types/PVBase64.al, corpus bump 13).
     Base64TextIsWindows1252From28,
+    /// The `TestField` error text for a Guid value has braces around the expected value from BC 28 (`must be equal to
+    /// '{1111...}'`); BC 27 writes it without braces. A Byte value is written as a number on BC 27. The corpus guards the
+    /// typed-value tests with `#if BC28PLUS` (record/lt-testfield-typed-values/, corpus bump 17). Not consumed yet.
+    TestFieldTypedValueTexts,
 }
 
 impl Gate {
@@ -103,6 +107,7 @@ impl Gate {
         Gate::ProbedValuesDifferFrom28,
         Gate::ProbedValuesDifferFrom29,
         Gate::Base64TextIsWindows1252From28,
+        Gate::TestFieldTypedValueTexts,
     ];
 
     /// The first BC major with the new behaviour.
@@ -125,7 +130,8 @@ impl Gate {
             | Gate::TableFilterEvaluateError
             | Gate::ConversionErrorTextsFrom28
             | Gate::ProbedValuesDifferFrom28
-            | Gate::Base64TextIsWindows1252From28 => 28,
+            | Gate::Base64TextIsWindows1252From28
+            | Gate::TestFieldTypedValueTexts => 28,
         }
     }
 
@@ -326,6 +332,24 @@ impl Gate {
                 file: "types/PVBase64.al",
                 lines: "83,88,231",
             }],
+            Gate::TestFieldTypedValueTexts => &[
+                Evidence {
+                    file: "record/lt-testfield-typed-values/FieldRefTestFieldTypedNumeric.al",
+                    lines: "143,165,175,207",
+                },
+                Evidence {
+                    file: "record/lt-testfield-typed-values/FieldRefTestFieldTypedOther.al",
+                    lines: "137,159,169,201",
+                },
+                Evidence {
+                    file: "record/lt-testfield-typed-values/RecordTestFieldTypedOther.al",
+                    lines: "121,139,149,177",
+                },
+                Evidence {
+                    file: "record/lt-testfield-typed-values/RecordTestFieldWrongTypeGuidOnText.al",
+                    lines: "8,53,60,67,75",
+                },
+            ],
             Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
                 file: "types/W7Media.al",
                 lines: "134,141,146",

@@ -87,6 +87,8 @@ pub struct TestArgs {
     pub files_dir: Option<PathBuf>,
     /// `--environment saas|onprem`: what Environment Information answers (default saas, as probed).
     pub environment: Option<al_host::Environment>,
+    /// `--server-url URL` (else `$ALRUNNER_SERVER_URL`): the base address `GetUrl` answers with (ADR-042).
+    pub server_url: Option<String>,
     /// `--test-data [PATH]`: restore a CRONUS company from a BC backup (ADR-020).
     pub test_data: bool,
     /// `--no-test-data`: run without company data. Test data is on by default (ADR-020, owner
@@ -292,6 +294,9 @@ TEST DATA
     --parity             With --disabled-tests: do not run those tests.
 
 OTHER
+    --server-url URL     The base address of the web client that GetUrl(ClientType::Web) answers with
+                         (default http://localhost:8080/BC/, else $ALRUNNER_SERVER_URL). Absolute http or
+                         https URL without a query. The summary prints the address. Other GetUrl forms are refused.
     --environment ENV    The server Environment Information describes: `saas` (default; the probed
                          sandbox: IsSaaS and IsSandbox Yes) or `onprem` (IsSaaS and IsSandbox No
                          until a test library's SetTestability* calls change them; Microsoft's own
@@ -586,6 +591,9 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--timings" => a.timings = true,
             "--files-dir" => a.files_dir = Some(text()?.into()),
             "--environment" => a.environment = Some(text()?.parse().map_err(|e| format!("--environment: {e}"))?),
+            "--server-url" => {
+                a.server_url = Some(al_host::check_server_url(&text()?).map_err(|e| format!("--server-url: {e}"))?)
+            }
             "--dotnet-sidecar" => a.dotnet_sidecar = Some(text()?.into()),
             "--dotnet-assembly-dir" => a.dotnet_assembly_dirs.push(text()?.into()),
             "--dotnet-allow-roll-forward" => a.dotnet_allow_roll_forward = true,
@@ -725,6 +733,24 @@ mod tests {
         for needle in ["--company-data", "--package", "--disabled-tests", "--parity"] {
             assert!(HELP.contains(needle), "{needle}");
         }
+    }
+
+    #[test]
+    fn server_url_is_checked_when_parsed() {
+        assert_eq!(
+            test_args("test A --server-url http://h:1/BC/").server_url.as_deref(),
+            Some("http://h:1/BC/")
+        );
+        assert!(test_args("test A").server_url.is_none());
+        for bad in ["h", "ftp://h/", "http://h/?a=1"] {
+            assert!(
+                p(&format!("test A --server-url {bad}"))
+                    .unwrap_err()
+                    .contains("--server-url"),
+                "{bad}"
+            );
+        }
+        assert!(HELP.contains("--server-url"));
     }
 
     #[test]

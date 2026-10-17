@@ -9,22 +9,27 @@ pub fn test_codeunits(src: &str) -> Vec<(u32, Vec<String>)> {
     scan(&strip_comments(src))
 }
 
-/// Blanks `//` line comments and `/* */` block comments, keeping string
-/// literals intact so a `//` inside quotes is not mistaken for a comment.
+/// Blanks `//` line comments and `/* */` block comments and the text of string
+/// literals, so a `//` inside quotes is not mistaken for a comment and words in a string are not code.
 fn strip_comments(src: &str) -> String {
     let b = src.as_bytes();
     let mut out = String::with_capacity(src.len());
     let mut i = 0;
     while i < b.len() {
         match b[i] {
-            b'\'' => {
+            q @ (b'\'' | b'"') => {
                 let start = i;
                 i += 1;
-                while i < b.len() && b[i] != b'\'' && b[i] != b'\n' {
+                while i < b.len() && b[i] != q && b[i] != b'\n' {
                     i += 1;
                 }
                 i = (i + 1).min(b.len());
-                out.push_str(&src[start..i]);
+                // The text of a string is blanked (same length): words inside it (`codeunit 449`) are not code.
+                out.extend(
+                    src[start..i]
+                        .chars()
+                        .map(|c| if c == '\'' || c == '"' || c == '\n' { c } else { ' ' }),
+                );
             }
             b'/' if b.get(i + 1) == Some(&b'/') => {
                 while i < b.len() && b[i] != b'\n' {
@@ -40,7 +45,7 @@ fn strip_comments(src: &str) -> String {
             }
             _ => {
                 let start = i;
-                while i < b.len() && b[i] != b'\'' && b[i] != b'/' {
+                while i < b.len() && b[i] != b'\'' && b[i] != b'"' && b[i] != b'/' {
                     i += 1;
                 }
                 if i == start {
@@ -87,4 +92,39 @@ fn scan(src: &str) -> Vec<(u32, Vec<String>)> {
         i += 1;
     }
     out.into_iter().filter(|c| c.2).map(|c| (c.0, c.1)).collect()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn a_quoted_name_that_starts_with_a_number_does_not_start_a_codeunit() {
+        // Tests-Misc "6.0SP1 - VAT 1 to 1" (132517): `Codeunit::"6.0SP1 - VAT 1 to 1"` reads as the words `Codeunit 6`; 38 tests were lost.
+        let src = "codeunit 132517 \"6.0SP1 - VAT 1 to 1\"\n{\n Subtype = Test;\n [Test]\n procedure A()\n begin X(Codeunit::\"6.0SP1 - VAT 1 to 1\"); end;\n [Test]\n procedure B()\n begin end;\n}\n";
+        assert_eq!(
+            test_codeunits(src),
+            vec![(132517, vec!["A".to_string(), "B".to_string()])]
+        );
+    }
+
+    #[test]
+    fn a_string_that_says_codeunit_and_a_number_does_not_start_a_codeunit() {
+        // Tests-Misc "Test Job Queue SNAP" (139020): a Label text names "COD449" and "codeunit 449"; the scan took that for a
+        // second codeunit header and lost every [Test] after it, so `--parity` dropped 68 tests that Microsoft does not disable.
+        let src = "codeunit 139020 \"Snap\"\n{\n Subtype = Test;\n var T: Label 'run codeunit 449 now';\n [Test]\n procedure A()\n begin end;\n [Test]\n procedure B()\n begin end;\n}\n";
+        assert_eq!(
+            test_codeunits(src),
+            vec![(139020, vec!["A".to_string(), "B".to_string()])]
+        );
+    }
+
+    #[test]
+    fn two_codeunits_and_comments_are_still_found() {
+        let src = "codeunit 1 \"A\" { Subtype = Test; [Test] procedure X() begin end; }\n// codeunit 9 \"no\"\ncodeunit 2 \"B\" { Subtype = Test; [Test] procedure Y() begin end; }";
+        assert_eq!(
+            test_codeunits(src),
+            vec![(1, vec!["X".to_string()]), (2, vec!["Y".to_string()])]
+        );
+    }
 }

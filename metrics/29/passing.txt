@@ -172,7 +172,9 @@
 60055 Record_GetPosition_ReturnsCurrentKey
 60055 Record_GetPosition_UseNamesFalse_ReturnsNumbers
 60055 Record_GetRangeMax_AfterSetRange_ReturnsMax
+60055 Record_GetRangeMax_NoFilter_ThrowsError
 60055 Record_GetRangeMin_AfterSetRange_ReturnsMin
+60055 Record_GetRangeMin_NoFilter_ThrowsError
 60055 Record_GetView_ReturnsCurrentSortAndFilter
 60055 Record_GetView_UseNamesFalse_ReturnsFieldNumbers
 60055 Record_GetView_UseNamesTrue_ReturnsFieldNames
@@ -1137,7 +1139,9 @@
 60149 FilterGroup2_CombinesWithFilterGroup0_AsAND
 60149 FindFirst_OnEmptyFilteredSet_ReturnsFalse_NoError
 60149 GetRangeMax_AfterSetRange_ReturnsExactBound
+60149 GetRangeMax_WithoutFilter_Throws
 60149 GetRangeMin_AfterSetRange_ReturnsExactBound
+60149 GetRangeMin_WithoutFilter_Throws
 60149 Reset_AfterFilterGroup2_ClearsBothGroups
 60149 SetFilter_WithWildcard_MatchesPrefix
 60149 SetRange_SameValueBothEnds_EquivalentToSingleValue
@@ -1222,6 +1226,7 @@
 60154 EventSubscriber_Error_PropagatesThroughPublisher
 60154 FieldError_CustomMessage_ContainsCustomText
 60154 FieldError_DefaultMessage_ContainsFieldCaption
+60154 GetRangeMin_NoFilter_ErrorCode_HasContent
 60154 Interface_Error_PropagatesToCaller
 60154 OnValidate_TriggerFires_After_FieldIsSet
 60154 OnValidate_Validate_SetsField_BeforeTrigger
@@ -6518,6 +6523,8 @@
 70232 P144_Dec_Precision
 70232 P144_Int_Precision
 70233 P144_MonthText_December
+70233 P144_MonthText_March
+70233 P144_WeekdayText_Monday
 70233 P144_WeekdayText_Thursday
 70234 P144_EnsureCapacity_BetweenLengthAndCapacity
 70234 P144_EnsureCapacity_OnEmptyAndAfterSet
@@ -6589,11 +6596,13 @@
 70335 P98_EnumToOption_MissingOrdinal
 70335 P98_EnumToOption_Present
 70335 P98_EnumToSmallOption_Boundary
+70335 P98_OptionToEnum_MissingOrdinal
 70335 P98_OptionToEnum_Present
 70335 P98_SmallOptionToEnum_ThenBack
 70337 P98_FieldOfRecordRefResult
 70337 P98_FieldOfResult_FromDatabase
 70337 P98_FieldOfResult_Rvalue
+70340 P98_Get_RecordId_Empty
 70340 P98_Get_RecordId_Found
 70340 P98_Get_RecordId_Missing_ResultUnused
 70340 P98_Get_RecordId_Missing_ResultUsed
@@ -6655,6 +6664,8 @@
 70395 ArrayIndex_OptionMember_Result
 70395 ArrayIndex_OptionVariable_Result
 70399 Validate_BlankKindFilter_Result
+70410 P99_DifferentValuesInGroups
+70410 P99_NoFilterAtAll
 70410 P99_RangeOnlyInGroup0
 70410 P99_RangeOnlyInGroup2
 70410 P99_SameValueInBothGroups
@@ -6866,6 +6877,8 @@
 70720 BlankFilter_Integer
 70720 BlankFilter_OtherFiltersKept
 70720 BlankFilter_Text
+70721 FilterOnOtherField
+70721 NoFilter_Integer_Text_Date
 70721 RangeFilters_Integer
 70722 Empty_Asserterror_FindFirst_FindLast
 70722 Filtered_Out_Comp_Table
@@ -6893,6 +6906,7 @@
 70727 Stale_Buffer_Refetched_Then_Modify
 70727 Stale_Buffer_Same_Variable_Twice
 70728 Enum_To_Option_Ordinals
+70728 Option_To_Enum_Ordinals
 70728 Other_Fields_And_Key_Transfer
 70728 Round_Trip_And_Stored_Row
 70728 Skip_Fields_Not_Matching_Type
@@ -7691,8 +7705,11 @@
 71313 SumCount_FlowFilterRange_GroupedByGroupCode
 71313 SumCount_NoFlowFilter_GroupedByGroupCode
 71319 Average_FlowFilterRange_GroupedByGroupCode
+71319 Average_NoFlowFilter_GroupedByGroupCode
 71319 Max_FlowFilterRange_GroupedByGroupCode
 71319 Max_NoFlowFilter_GroupedByGroupCode
+71319 Min_FlowFilterRange_GroupedByGroupCode
+71319 Min_NoFlowFilter_GroupedByGroupCode
 71337 OnQueryClosePage_UnnamedFallThroughHandlerCancel_Observed
 71344 OnQueryClosePage_NamedNeverAssignedHandlerCancel_Observed
 71344 OnQueryClosePage_NamedNeverAssignedHandlerOk_Observed
@@ -9760,6 +9777,7 @@
 73881 ReturnedRecord_FieldRvalue
 73881 ReturnedRecord_IsCopy
 73881 ReturnedRecord_MissingRow
+73884 GetRecordId_EmptyRecordId
 73884 GetRecordId_Existing
 73884 GetRecordId_KeepsFilters
 73884 GetRecordId_Missing
@@ -10357,7 +10375,10 @@
 74812 WriteFrom_Text_Special
 74820 P168_List_UpdateFalse_LogsWhichAndTriggers
 74820 P168_List_UpdateTrue_LogsWhichAndTriggers
+74822 P168_GetRange_BothGroupsHaveAFilter
 74822 P168_GetRange_FilterInGroup0ReadFromGroup2
+74822 P168_GetRange_FilterOnlyInGroup2
+74822 P168_GetRange_OtherFieldAndReset
 74836 P168_Chained_ThreeDimensionsAndText
 74836 P168_Chained_TwoDimensions_ReadWrite
 74838 P168_Chained_ArrayOfRecords

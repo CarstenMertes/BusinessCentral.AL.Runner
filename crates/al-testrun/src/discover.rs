@@ -25,7 +25,11 @@ fn strip_comments(src: &str) -> String {
                 }
                 i = (i + 1).min(b.len());
                 // The text of a string is blanked (same length): words inside it (`codeunit 449`) are not code.
-                out.extend(src[start..i].chars().map(|c| if c == '\'' || c == '"' || c == '\n' { c } else { ' ' }));
+                out.extend(
+                    src[start..i]
+                        .chars()
+                        .map(|c| if c == '\'' || c == '"' || c == '\n' { c } else { ' ' }),
+                );
             }
             b'/' if b.get(i + 1) == Some(&b'/') => {
                 while i < b.len() && b[i] != b'\n' {
@@ -98,7 +102,10 @@ mod tests {
     fn a_quoted_name_that_starts_with_a_number_does_not_start_a_codeunit() {
         // Tests-Misc "6.0SP1 - VAT 1 to 1" (132517): `Codeunit::"6.0SP1 - VAT 1 to 1"` reads as the words `Codeunit 6`; 38 tests were lost.
         let src = "codeunit 132517 \"6.0SP1 - VAT 1 to 1\"\n{\n Subtype = Test;\n [Test]\n procedure A()\n begin X(Codeunit::\"6.0SP1 - VAT 1 to 1\"); end;\n [Test]\n procedure B()\n begin end;\n}\n";
-        assert_eq!(test_codeunits(src), vec![(132517, vec!["A".to_string(), "B".to_string()])]);
+        assert_eq!(
+            test_codeunits(src),
+            vec![(132517, vec!["A".to_string(), "B".to_string()])]
+        );
     }
 
     #[test]
@@ -106,7 +113,10 @@ mod tests {
         // Tests-Misc "Test Job Queue SNAP" (139020): a Label text names "COD449" and "codeunit 449"; the scan took that for a
         // second codeunit header and lost every [Test] after it, so `--parity` dropped 68 tests that Microsoft does not disable.
         let src = "codeunit 139020 \"Snap\"\n{\n Subtype = Test;\n var T: Label 'run codeunit 449 now';\n [Test]\n procedure A()\n begin end;\n [Test]\n procedure B()\n begin end;\n}\n";
-        assert_eq!(test_codeunits(src), vec![(139020, vec!["A".to_string(), "B".to_string()])]);
+        assert_eq!(
+            test_codeunits(src),
+            vec![(139020, vec!["A".to_string(), "B".to_string()])]
+        );
     }
 
     #[test]

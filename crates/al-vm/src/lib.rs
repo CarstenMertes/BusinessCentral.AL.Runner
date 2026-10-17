@@ -592,6 +592,7 @@ impl Session {
                 bindings: Vec::new(),
                 event_stats,
                 publish_frame: false,
+                sender_refused: None,
                 unpinned_event_depth: 0,
                 global_setups: Default::default(),
             },

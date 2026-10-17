@@ -85,9 +85,20 @@ impl Session {
                 (a, _) => ops::convert(a, &r.locals[i].ty)?,
             });
         }
+        let mut sender_refused = None;
         let sender = if p.include_sender {
             let o = &engine.program.objects[object];
             match (o.kind, o.rec_slot) {
+                // The sender of a reportextension's event is not pinned (the corpus pins a report's and a tableextension's). The
+                // event runs for subscribers that take no sender; one that asks for it is refused. Microsoft's tests need this:
+                // Serv. Get Source Documents publishes OnAfterServiceLineOnPreDataItem so (Tests-SCM-Service).
+                (al_ir::ObjKind::ReportExtension, _) => {
+                    sender_refused = Some(format!(
+                        "{}: IncludeSender on a reportextension (what the subscriber's Sender is, is not pinned)",
+                        r.name
+                    ));
+                    None
+                }
                 (al_ir::ObjKind::Codeunit, _) => Some(Value::Codeunit(instance)),
                 // The sender of a page's event is the page (a `Page` variable), not its Rec: Item Tracking Lines
                 // publishes with IncludeSender and Asm. Item Tracking Mgt. takes `var sender: Page "Item Tracking
@@ -123,7 +134,9 @@ impl Session {
             pos: al_ir::NO_POS,
         });
         self.events.publish_frame = true;
+        self.events.sender_refused = sender_refused;
         let raised = self.raise(&call, &mut values);
+        self.events.sender_refused = None;
         self.events.publish_frame = false;
         let top = self.call_stack.pop();
         self.frames.pop();
@@ -177,6 +190,7 @@ impl Session {
         } = ev;
         let (object, event, element, isolated) = (*object, *event, *element, *isolated);
         let engine = self.engine.clone();
+        let sender_refused = self.events.sender_refused.take();
         for (s, inst) in self.event_targets(object, event, element)? {
             let r = &engine.program.objects[s.object].routines[s.routine];
             let mut map: Vec<Option<usize>> = Vec::with_capacity(r.params);
@@ -187,6 +201,8 @@ impl Session {
                 } else if sender.is_some() && !sender_taken {
                     sender_taken = true;
                     map.push(None);
+                } else if let Some(why) = &sender_refused {
+                    return unsupported(why.clone());
                 } else {
                     return unsupported(format!(
                         "subscriber {}.{}: parameter `{}` matches no parameter of event `{event}`",

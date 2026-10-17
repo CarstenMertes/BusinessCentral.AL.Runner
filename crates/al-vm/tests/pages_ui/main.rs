@@ -7,3 +7,4 @@ mod pageext;
 mod pages;
 mod parts;
 mod run_record_group2;
+mod trap_reopen;

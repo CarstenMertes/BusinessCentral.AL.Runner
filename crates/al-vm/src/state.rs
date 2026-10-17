@@ -75,6 +75,8 @@ pub(crate) struct EventState {
     pub(crate) event_stats: Rc<platform::EventStats>,
     /// `publish` is about to raise its event: the next `raise` has an event frame on the stack.
     pub(crate) publish_frame: bool,
+    /// Set by `publish` for an IncludeSender event whose sender is not pinned: a subscriber that asks for it is refused with this text.
+    pub(crate) sender_refused: Option<String>,
     /// Events being raised that have no publisher routine (table, page and Global Triggers
     /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
     /// live call stack is not answered while one runs.

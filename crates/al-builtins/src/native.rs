@@ -82,9 +82,12 @@ pub enum ModuleLookup {
 pub struct HttpOutgoing {
     /// `GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD` or the request's own method, upper case.
     pub method: String,
-    /// The absolute uri in its normal form.
+    /// The absolute uri in its normal form; for a relative path with no base address (or a request with no uri) the path as
+    /// written, which only a request that no handler sees can carry (network/lt-http-relative-request/HttpRelativeRequestPath.al).
     pub url: String,
     pub has_secret_uri: bool,
+    /// The uri came from joining a path to the client's base address (registry entry http-relative-request-path).
+    pub joined_with_base: bool,
 }
 
 pub trait Ctx: FormatCtx {
@@ -1567,7 +1570,9 @@ fn clear(ctx: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result
             ));
         }
         // A cleared stream is one that was never created again (streams/TestProbeStreamContracts.al:RecordAssign_CopiesBlobBytes).
-        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload") => Value::Library(
+        // A cleared HttpClient is a new one: no base address, the default timeout, no default headers; the next call
+        // starts it fresh (network/lt-http-relative-request/HttpRelativeRequestPath.al:NewClient clears, then sets the base address).
+        Value::Library(name, _) if matches!(name.as_str(), "OutStream" | "InStream" | "FileUpload" | "HttpClient") => Value::Library(
             name.clone(),
             std::rc::Rc::new(std::cell::RefCell::new(crate::value::LibraryValue::Empty)),
         ),

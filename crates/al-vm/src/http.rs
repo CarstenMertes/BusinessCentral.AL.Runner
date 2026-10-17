@@ -78,6 +78,14 @@ impl Session {
                 ),
             };
         }
+        if !request.url.contains("://") {
+            return unsupported(
+                "a request to a relative path with no base address, or with no uri, reaches a [HttpClientHandler]: what the handler sees is not measured",
+            );
+        }
+        if request.joined_with_base {
+            assume(Assumption::HttpRelativeRequestPath);
+        }
         assume(Assumption::HttpHandlerEveryVersion);
         let (path, params) = split_url(&request.url);
         let query = Value::Dictionary(Rc::new(RefCell::new(

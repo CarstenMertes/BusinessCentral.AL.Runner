@@ -202,12 +202,10 @@ pub fn normalize_uri(input: &str) -> Result<String, bool> {
     if input.starts_with('/') && !input.starts_with("//") {
         return Err(false);
     }
+    // A text with no colon has no scheme, so it is no absolute uri: `Req.SetRequestUri('orders')` raises like '/orders'
+    // (network/lt-http-relative-request/HttpRelativeRequestPath.al:P168_Send_RelativeRequestUri `af109`).
     let Some(colon) = input.find(':') else {
-        return if input.chars().any(char::is_whitespace) {
-            Err(false)
-        } else {
-            Err(true)
-        };
+        return Err(false);
     };
     let scheme = &input[..colon];
     let scheme_ok = !scheme.is_empty()
@@ -329,18 +327,18 @@ fn percent_decode(s: &str) -> String {
     String::from_utf8_lossy(&out).into_owned()
 }
 
-/// Resolves `path` against the client's base address the way `new Uri(base, path)` does for the forms in use.
-fn resolve_request_path(base: &str, path: &str) -> Result<String, Signal> {
+/// Resolves `path` against the client's base address the way `new Uri(base, path)` does for the forms in use. The second
+/// value says the uri was joined to the base address. A relative path with no base address stays as written: such a
+/// request raises the blocked-request error with no handler bound, and a handler refuses it (`http_send_impl`); the
+/// corpus pins that `orders`, `/orders` and `https://...` all reach the policy check (HttpRelativeRequestPath.al:P168_Get_NoBaseAddress).
+fn resolve_request_path(base: &str, path: &str) -> Result<(String, bool), Signal> {
     if path.contains("://") || base.is_empty() {
         return match normalize_uri(path) {
-            Ok(u) => Ok(u),
-            Err(false) => invalid_url(),
-            Err(true) => unsupported(format!(
-                "HttpClient with the request path `{path}` and no base address: whether it is valid is not measured"
-            )),
+            Ok(u) => Ok((u, false)),
+            Err(_) if !path.is_empty() && !path.contains(char::is_whitespace) && !path.contains("://") => Ok((path.to_string(), false)),
+            Err(_) => invalid_url(),
         };
     }
-    assume(crate::assumptions::Assumption::HttpRelativeRequestPath);
     let Some(after) = base.find("://").map(|i| i + 3) else {
         return unsupported("HttpClient with a base address that has no authority");
     };
@@ -352,7 +350,7 @@ fn resolve_request_path(base: &str, path: &str) -> Result<String, Signal> {
         let dir = &base_path[..base_path.rfind('/').map_or(0, |i| i + 1)];
         format!("{origin}{dir}{path}")
     };
-    normalize_uri(&joined).or_else(|_| invalid_url())
+    normalize_uri(&joined).map(|u| (u, true)).or_else(|_| invalid_url())
 }
 
 fn invalid_url<T>() -> Result<T, Signal> {
@@ -1265,11 +1263,12 @@ fn client_use_cookies(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -
 }
 
 /// Hands `(method, url)` to the session and writes the response it returns into the `var Response` argument.
-fn send(c: &mut dyn Ctx, method: &str, url: String, response: Option<&Value>) -> Out {
+fn send(c: &mut dyn Ctx, method: &str, url: (String, bool), response: Option<&Value>) -> Out {
     let state = c.http_send(HttpOutgoing {
         method: method.to_ascii_uppercase(),
-        url,
+        url: url.0,
         has_secret_uri: false,
+        joined_with_base: url.1,
     })?;
     let Some(Value::Library(_, cell)) = response else {
         return unsupported("HttpClient call without a response variable");
@@ -1315,10 +1314,12 @@ fn client_send(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         LibraryValue::Empty => ("GET".into(), None),
         other => return unsupported(format!("HttpClient.Send of {}", other.describe())),
     };
-    let Some(uri) = uri else {
-        return unsupported("HttpClient.Send of a request with no uri: not measured");
+    // A request whose SetRequestUri failed has no uri; Send still reaches the policy check
+    // (HttpRelativeRequestPath.al:P168_Send_RelativeRequestUri `send-relative`), so it carries an empty url.
+    let url = match uri {
+        Some(uri) => resolve_request_path(&base, &uri)?,
+        None => (String::new(), false),
     };
-    let url = resolve_request_path(&base, &uri)?;
     send(c, &method, url, a.get(1))
 }
 
@@ -1802,6 +1803,7 @@ mod tests {
         for bad in [
             "",
             "/relative/path",
+            "orders",
             "http://",
             "ht!tp://x",
             "https://exa mple.invalid/",

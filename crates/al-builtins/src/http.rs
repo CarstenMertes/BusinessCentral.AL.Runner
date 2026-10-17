@@ -202,15 +202,11 @@ pub fn normalize_uri(input: &str) -> Result<String, bool> {
     if input.starts_with('/') && !input.starts_with("//") {
         return Err(false);
     }
-    // A text with no colon has no scheme, so it is no absolute uri: `Req.SetRequestUri('orders')` raises like '/orders'
-    // (network/lt-http-relative-request/HttpRelativeRequestPath.al:P168_Send_RelativeRequestUri `af109`).
-    // Only a plain word is pinned; other texts with no colon are not measured.
+    // A text with no colon has no scheme and is no absolute uri: 'orders' (misc/lt-probes-needed-4/PnD06_SetRequestUri.al is the wide pin:
+    // `/api/v1/items`, `api/v1/items`, `./items`, `../items`, `?a=1`, `#top`, `/`; network/lt-http-relative-request/HttpRelativeRequestPath.al:
+    // P168_Send_RelativeRequestUri `af109` for `orders`) is invalid.
     let Some(colon) = input.find(':') else {
-        return if input.chars().all(|c| c.is_ascii_alphanumeric()) || input.chars().any(char::is_whitespace) {
-            Err(false)
-        } else {
-            Err(true)
-        };
+        return Err(false);
     };
     let scheme = &input[..colon];
     let scheme_ok = !scheme.is_empty()

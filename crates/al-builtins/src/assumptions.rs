@@ -353,7 +353,7 @@ registry! {
         id: "http-relative-request-path",
         assumed: "HttpClient.Get/Post/Put/Delete/Patch with a path that is not an absolute uri joins it to the client's base address like new Uri(base, path), as a [HttpClientHandler] sees it: a rooted path replaces the base path, any other joins the base path's directory. (That a plain word and a rooted path with no base address, and the forms of P168 with a base address, are blocked without a handler is pinned by network/lt-http-relative-request/HttpRelativeRequestPath.al.)",
         tests: "Microsoft and NP Retail code that sets SetBaseAddress and then Get('/orders').",
-        probe: "SetBaseAddress('https://example.invalid/api/v1/') then Get('orders'), Get('/orders'), Get('../x'), Get('?q=1') with a handler printing Request.Path. Also wanted: SetRequestUri and Get with no base address for 'a/b', 'a.b' and '?q=1' (invalid, or relative?); these stay refused.",
+        probe: "SetBaseAddress('https://example.invalid/api/v1/') then Get('orders'), Get('/orders'), Get('../x'), Get('?q=1') with a handler printing Request.Path. Also wanted: Get with no base address for 'a/b', 'a.b' and '?q=1' (only a plain word and a rooted word are pinned; the others stay refused).",
     },
     HttpHeadersAddUsedResult => {
         id: "http-headers-add-used-result",

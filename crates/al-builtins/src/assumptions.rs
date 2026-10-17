@@ -415,6 +415,12 @@ registry! {
         tests: "Get Source Documents and Whse.-Source - Create Document (the Assembly Header item: DataItemTableView where(\"Document Type\" = const(Order)) and a link on \"Document Type\"), and the Value Entry, Item Journal Line and Item Ledger Entry items of the cost reports; about 37 Tests-SCM tests.",
         probe: "A nested item with DataItemTableView = where(G = filter(1|2)) and DataItemLink = G = field(G) over parents with G 1 to 3: which children each parent shows; the same with the filter set by SetTableView.",
     },
+    TableRelationSeveralWhereNonKey => {
+        id: "table-relation-several-where-non-key",
+        assumed: "A TableRelation check that fails, with several where() conditions none of which is on a primary key field of the related table, raises DB:NothingInsideFilter, as one condition on a non-key field does. (A mix with key fields stays refused.)",
+        tests: "Item Blocked Test and Item Variant Blocked Test (Item where(Blocked = const(false), \"Service Blocked\" = const(false)) and the sales and purchase variants), SCM Dedicated Bins; about 26 Tests-SCM tests. They compare the message only.",
+        probe: "A relation with two non-key where() conditions and a value that fails one of them, and one that is missing: GetLastErrorCode; the same with one key and one non-key condition.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

@@ -261,6 +261,83 @@ fn junit_has_a_suite_per_codeunit_and_skipped_with_the_reason() {
     assert!(x.contains("<skipped message=\""), "{x}");
 }
 
+/// Microsoft's list of disabled tests for the `mixed` app: Fails by name, the whole Other Tests codeunit.
+fn disabled_list(root: &Path) -> PathBuf {
+    let dir = root.join("DisabledTests").join("Mixed");
+    write(
+        &dir,
+        "a.json",
+        r#"[{"codeunitId":50100,"codeunitName":"Mixed Tests","method":"Fails","bug":1},
+           {"codeunitId":50101,"codeunitName":"Other Tests","method":"*"}]"#,
+    );
+    root.join("DisabledTests")
+}
+
+#[test]
+fn disabled_tests_still_run_in_a_normal_run_and_are_marked() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let list = disabled_list(d.path());
+    let out = d.path().join("junit.xml");
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--disabled-tests",
+        list.to_str().unwrap(),
+        "--junit",
+        out.to_str().unwrap(),
+    ]);
+    let t = text(&o);
+    assert_eq!(code(&o), 1, "{t}");
+    assert!(t.contains("Tests: 4 total, 2 passed, 1 failed, 1 not run"), "{t}");
+    assert!(
+        t.contains("Disabled by Microsoft: 2 of the tests run (1 passed, 1 failed, 0 not run; 2 entries of 1 files)"),
+        "{t}"
+    );
+    let x = std::fs::read_to_string(&out).unwrap();
+    assert_eq!(x.matches("disabled_by_microsoft").count(), 2, "{x}");
+}
+
+#[test]
+fn parity_leaves_out_the_tests_microsoft_disables_and_says_how_many() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let list = disabled_list(d.path());
+    let o = alrunner(&[
+        "test",
+        app.to_str().unwrap(),
+        "--no-download",
+        "--disabled-tests",
+        list.to_str().unwrap(),
+        "--parity",
+        "--verbose",
+    ]);
+    let t = text(&o);
+    assert!(t.contains("Tests: 2 total, 1 passed, 0 failed, 1 not run"), "{t}");
+    assert!(!t.contains("Mixed Tests.Fails"), "{t}");
+    assert!(!t.contains("AlsoPasses"), "{t}");
+    assert!(
+        t.contains("Disabled by Microsoft: 2 tests not run (--parity; 2 entries of 1 files)"),
+        "{t}"
+    );
+}
+
+#[test]
+fn parity_without_a_list_and_a_list_without_json_are_start_up_errors() {
+    let d = tempfile::tempdir().unwrap();
+    let app = mixed_app(d.path());
+    let a = app.to_str().unwrap();
+    let o = alrunner(&["test", a, "--no-download", "--parity"]);
+    assert_eq!(code(&o), 2, "{}", text(&o));
+    assert!(text(&o).contains("--parity needs --disabled-tests"), "{}", text(&o));
+    let empty = d.path().join("empty");
+    std::fs::create_dir_all(&empty).unwrap();
+    let o = alrunner(&["test", a, "--no-download", "--disabled-tests", empty.to_str().unwrap()]);
+    assert_ne!(code(&o), 0, "{}", text(&o));
+    assert!(text(&o).contains("no *.json file"), "{}", text(&o));
+}
+
 #[test]
 fn an_unwritable_junit_path_fails_before_the_run() {
     let d = tempfile::tempdir().unwrap();

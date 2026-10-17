@@ -165,7 +165,9 @@ impl Session {
             s.result = None;
             s.editable_off = false;
             // A caption assigned to the variable before its first run stays (assumption caption-assigned-before-the-page-runs).
-            if !first_run {
+            // It stays for a second run too (types/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al:P187_SecondRun_NoReassign,
+            // `OnOpenPage [Assigned One]` twice); a caption assigned while the page ran is dropped.
+            if !first_run && !s.caption_assigned_closed {
                 s.caption = None;
             }
             s.opening = true;

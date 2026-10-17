@@ -1138,7 +1138,9 @@ impl Session {
         }
         self.ret_used = true;
         let mut more = !no_rows && matches!(self.record_op(RecordOp::FindSet, &rec, &mut [])?, Value::Boolean(true));
+        let mut iterations = 0u32;
         'rows: while more {
+            iterations += 1;
             if run.dataset {
                 self.dataset_autocalc(run, r, &rec)?;
             }
@@ -1177,6 +1179,10 @@ impl Session {
                 if run.dataset {
                     self.report.dataset.as_mut().expect("a SaveAs run has a dataset").end();
                 }
+            }
+            // MaxIteration stops an Integer item after that many rows (misc/lt-probes-needed-8/PnH3Link.al:MaxIteration_*).
+            if item.max_iteration.is_some_and(|m| iterations >= m) {
+                break 'rows;
             }
             self.ret_used = true;
             more = !matches!(self.record_op(RecordOp::Next, &rec, &mut [])?, Value::Integer(0));

@@ -1747,3 +1747,33 @@ fn integer_and_boolean_expressions_get_their_types() {
     }
     assert!(all.iter().all(|t| *t != ExprTy::Unknown), "{all:?}");
 }
+
+/// `number-to-text-is-format` converts a Variant at run time (Base Application's `Value := FieldRef.Value()` into a Text[250] field).
+/// A number variable assigned to a Text or Code is a compile error in AL (AL0122) and stays refused by the lowering; a Variant
+/// into a Text lowers.
+#[test]
+fn a_number_variable_into_text_is_refused_but_a_variant_into_text_lowers() {
+    let reasons = |body: &str| {
+        let (_, l) = lower_src(&format!(
+            "codeunit 50100 C {{ procedure P() var I: Integer; B: BigInteger; D: Decimal; V: Variant; T: Text[50]; K: Code[20]; begin {body} end; }}"
+        ));
+        l.unsupported
+            .iter()
+            .flatten()
+            .flatten()
+            .cloned()
+            .collect::<Vec<String>>()
+    };
+    for bad in ["T := I;", "T := B;", "T := D;", "K := B;"] {
+        assert!(
+            reasons(bad)
+                .iter()
+                .any(|r| r.contains("only a Variant holding a number converts")),
+            "{bad}: {:?}",
+            reasons(bad)
+        );
+    }
+    for ok in ["T := V;", "K := V;", "T := Format(B);"] {
+        assert!(reasons(ok).is_empty(), "{ok}: {:?}", reasons(ok));
+    }
+}

@@ -133,6 +133,13 @@ pub(super) fn field_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             let mut r = blank.row();
             r[pos(t, 1)] = Value::Integer(tid as i32);
             r[pos(t, 2)] = Value::Integer(f.id as i32);
+            // IsPartOfPrimaryKey: the field is in the primary key (metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:
+            // FieldTable_IsPartOfPrimaryKey_OwnTable and _BaseApp).
+            if let Some(col) = t.fields.iter().position(|x| x.name == "IsPartOfPrimaryKey") {
+                let idx = schema.fields.iter().position(|x| x.id == f.id);
+                let in_key = idx.is_some_and(|i| schema.keys.first().is_some_and(|k| k.contains(&i)));
+                r[col] = Value::Boolean(in_key);
+            }
             match field_row(&c, o, schema, f, t, &blank, &mut r) {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => {
@@ -306,6 +313,12 @@ pub(super) fn key_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                     .join(",")
                     .into(),
             );
+            // SumIndexFields: the names of the property, comma-joined without the blanks and quotes
+            // (metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:KeyTable_SumIndexFields_OwnTable, _BaseApp).
+            if let (Some(col), Some(sum)) = (t.fields.iter().position(|x| x.name == "SumIndexFields"), kprop("SumIndexFields")) {
+                let names: Vec<String> = sum.split(',').map(|n| n.trim().trim_matches('"').to_string()).collect();
+                r[col] = Value::Text(names.join(",").into());
+            }
             r[pos(t, 7)] = Value::Boolean(kprop("Enabled").is_none_or(truthy));
             r[pos(t, 10)] = Value::Boolean(n == 0 || kprop("Clustered").is_some_and(truthy));
             // True only for a key that has SumIndexFields and does not say `MaintainSIFTIndex = false`

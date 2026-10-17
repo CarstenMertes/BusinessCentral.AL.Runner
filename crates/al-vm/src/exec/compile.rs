@@ -1020,11 +1020,15 @@ impl<'a> Compiler<'a> {
                 let lid = if self.captured { Some(self.alloc()?) } else { None };
                 let items = self.alloc()?;
                 let at = self.alloc()?;
+                let watch = self.alloc()?;
+                let ver = self.alloc()?;
                 self.chunk.foreachs.push(ForeachSite {
                     var: rvar,
                     coll,
                     items,
                     at,
+                    watch,
+                    ver,
                     collection: matches!(collection, ir::Expr::Load(_)).then(|| collection.clone()),
                     cap_loop: lid,
                 });

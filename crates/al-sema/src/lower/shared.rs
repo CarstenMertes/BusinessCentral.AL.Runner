@@ -547,6 +547,26 @@ pub(crate) fn lower_object<'a>(
         } else {
             lw.stub(r)
         };
+        // An action's OnAction that cannot be lowered is refused when the action runs: a test that opens the page and never
+        // invokes the action runs (Base Application's Item Card has Xmlport.Run and Media.ExportFile in actions; 81
+        // Tests-SCM tests only open the card). Only a routine that was compiled and checked: a stub keeps its static reason.
+        let mut routine = routine;
+        if reached
+            && checked.panic_of(oi, routine_offsets[oi][ri]).is_none()
+            && matches!(o.kind, ObjKind::Page | ObjKind::PageExtension)
+            && r.is_trigger()
+            && r.name().eq_ignore_ascii_case("onaction")
+            && r.syntax()
+                .ancestors()
+                .filter_map(ast::Section::cast)
+                .any(|s| s.name().eq_ignore_ascii_case("action"))
+            && lw.reasons.len() > global_reasons.len()
+        {
+            let why = lw.reasons[global_reasons.len()..].join("; ");
+            routine.body = vec![ir::Stmt::Expr(ir::Expr::Refused(format!("{}.OnAction: {why}", o.name)))];
+            lw.reasons = global_reasons.clone();
+            lw.calls.clear();
+        }
         if sh.export {
             direct.push(lw.calls.clone());
         }

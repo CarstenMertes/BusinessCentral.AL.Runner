@@ -360,13 +360,24 @@ fn fit_txt(s: crate::text::Txt, max: Option<u32>) -> Result<crate::text::Txt, Si
     }
 }
 
+/// The value an over-long text error shows: the first 200 characters and `...` after them (recordref/lt-refs/RfTValues.al:
+/// Value_Truncation_And_Length `text250_over`, misc/lt-system-functions/ErrorMessage.al `af235`).
+pub fn shown_in_length_error(s: &str) -> String {
+    if s.chars().count() > 200 {
+        format!("{}...", s.chars().take(200).collect::<String>())
+    } else {
+        s.to_string()
+    }
+}
+
 fn fit(s: String, max: Option<u32>) -> Result<String, Signal> {
     match max {
         // types/TestProbeScalarContracts.al:CodeAssign_UpperAndTrim, `too_long_11` (a Code[10] given 11 characters).
         Some(m) if Value::text_len(&s) > m as usize => crate::native::raise(
             format!(
-                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {s}",
-                Value::text_len(&s)
+                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                Value::text_len(&s),
+                shown_in_length_error(&s)
             ),
             "StringLengthExceeded",
         ),
@@ -406,7 +417,8 @@ pub fn int_arith(op: Arith, a: i32, b: i32) -> Result<i32, Signal> {
         Arith::Mul => a.checked_mul(b),
         Arith::IntDiv | Arith::Mod if b == 0 => return raise("Attempted to divide by zero.", "AL:DivideByZero"),
         Arith::IntDiv => a.checked_div(b),
-        Arith::Mod => Some(a.wrapping_rem(b)),
+        // The smallest Integer mod -1 overflows, as div does (types/lt-scalars/ScT70056.al:Integer_Overflow `min_mod_neg`).
+        Arith::Mod => a.checked_rem(b),
         Arith::Div => return Err(Signal::Unsupported("int_arith of the quotient operator".into())),
     };
     n.ok_or_else(arith_overflow)
@@ -657,7 +669,14 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Duration(a - b));
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
-        (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => return Ok(V::Integer(a - b)),
+        // An undefined date has no difference, and the whole range is too wide a difference (types/lt-datetime/
+        // Arithmetic.al:Date_Plus_Minus_Integer `af30`, `af32`, `af34`).
+        (V::Date(a, _), V::Date(b, _)) if op == Arith::Sub => {
+            if *a == 0 || *b == 0 || (a - b).abs() >= 3_652_058 {
+                return date_invalid();
+            }
+            return Ok(V::Integer(a - b));
+        }
         // A whole-number Decimal adds days like an Integer (`StartDate + Days` with `Days: Decimal` holding
         // `(EndDate - StartDate + 1) div 2` in Base Application's Phys. Invt. Count.-Management). A fraction
         // would round or truncate: not pinned, so it stays refused below (docs/probes-needed.md).
@@ -665,8 +684,24 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             if matches!(n, V::Decimal(_)) {
                 crate::assumptions::assume(crate::assumptions::Assumption::DateAddWholeDecimal);
             }
-            let n = whole_days(n).expect("whole") as i32;
-            return Ok(V::Date(if op == Arith::Add { a + n } else { a - n }, *c));
+            // The result stays within 0001-01-01 and 9999-12-31, an undefined date takes no days, and the sum of days is
+            // computed in 32 bits (Arithmetic.al:Date_Arithmetic_Errors, Date_Plus_Minus_Integer `af39`, `af41`).
+            let n = whole_days(n).expect("whole");
+            let Ok(n) = i32::try_from(n) else {
+                return raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+            };
+            let sum = if op == Arith::Add {
+                a.checked_add(n)
+            } else {
+                a.checked_sub(n)
+            };
+            let Some(sum) = sum else {
+                return raise("Arithmetic operation resulted in an overflow.", "AL:Overflow");
+            };
+            if *a == 0 || !(1..=3_652_059).contains(&sum) {
+                return date_invalid();
+            }
+            return Ok(V::Date(sum, *c));
         }
         _ => {}
     }
@@ -696,6 +731,8 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             return Ok(V::Decimal(
                 a.checked_div(b)
                     .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+                    // A quotient carries no trailing zeros (types/lt-scalars/ScT70056.al:Integer_DivisionResult `value 3.5`).
+                    .map(|q| q.normalize())
                     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?,
             ));
         }
@@ -703,7 +740,8 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         Arith::Mod => Some(a % b),
     }
     .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
-    if any_dec && !matches!(op, Arith::IntDiv | Arith::Mod) {
+    // A Decimal mod keeps the fraction (types/lt-scalars/ScT70058.al:Decimal_Basic `mod_int`, Decimal_DivModTruncation `mod2`).
+    if any_dec && !matches!(op, Arith::IntDiv) {
         return Ok(V::Decimal(res));
     }
     let n = res.trunc().mantissa() / 10i128.pow(res.trunc().scale());
@@ -740,6 +778,21 @@ fn int_of(v: &Value) -> Option<i64> {
         Value::BigInteger(i) => Some(*i),
         _ => None,
     }
+}
+
+fn date_invalid<T>() -> Result<T, Signal> {
+    raise("The date is not valid.", "DateInvalid")
+}
+
+/// `=`, `<>`, `<`, ... on two values in AL code: as [`compare`], except that an undefined date against 0001-01-01 raises
+/// (types/lt-datetime/Arithmetic.al:Date_Comparisons `af72`, `af75`, `af79`).
+pub fn compare_operator(l: &Value, r: &Value, ordered: bool) -> Result<Ordering, Signal> {
+    if let (Value::Date(a, _), Value::Date(b, _)) = (l, r) {
+        if (*a == 0 && *b == 1) || (*a == 1 && *b == 0) {
+            return date_invalid();
+        }
+    }
+    if ordered { compare_order(l, r) } else { compare(l, r) }
 }
 
 /// Ordering for `<`, `<=`, `>` and `>=`: as [`compare`], except that text follows the culture order
@@ -845,7 +898,7 @@ pub fn compare(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if !a.has_marker() && !b.has_marker() => {
             return Ok(a.cmp(b));
         }
-        // A call stack with an untracked frame holds the marker U+E000, so it is not empty: against the empty text the
+        // A call stack with an untracked frame holds the marker `CALL_STACK_MARK`, so it is not empty: against the empty text the
         // answer is exact (Assert.ExpectedError: `GetLastErrorCallstack = ''`; Tests-ERM, 92 tests). Against any other
         // text it stays refused.
         (V::Text(a) | V::Code(a), V::Text(b) | V::Code(b)) if (a.has_marker() && b.as_str().is_empty()) => {
@@ -986,7 +1039,7 @@ mod tests {
 
     #[test]
     fn a_text_with_the_call_stack_marker_is_not_equal_to_the_empty_text() {
-        let marked = Value::Text("a\u{E000}b".into());
+        let marked = Value::Text("a\u{FDD0}b".into());
         let empty = Value::Text("".into());
         assert_eq!(compare(&marked, &empty).unwrap(), Ordering::Greater);
         assert_eq!(compare(&empty, &marked).unwrap(), Ordering::Less);
@@ -1034,6 +1087,8 @@ mod tests {
             Arith::Mul => x * y,
             Arith::IntDiv | Arith::Mod if y == 0 => return Some(Err(ZERO)),
             Arith::IntDiv => x / y,
+            // The smallest Integer mod -1 overflows (types/lt-scalars/ScT70056.al:Integer_Overflow `min_mod_neg`).
+            Arith::Mod if a == i32::MIN && b == -1 => return Some(Err(OVERFLOW)),
             Arith::Mod => x % y,
             Arith::Div => return None,
         };

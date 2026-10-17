@@ -660,7 +660,7 @@ fn headers_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out 
             .map(|(n, _)| Value::Text(n.clone().into()))
             .collect::<Vec<_>>()
     })?;
-    Ok(Value::List(Rc::new(RefCell::new(keys))))
+    Ok(Value::List(Rc::new(RefCell::new(keys.into()))))
 }
 
 /// `GetValues(Name, var Values)` fills an array or a list with the values in order and answers true; a name that is
@@ -1121,7 +1121,7 @@ fn response_cookie_names(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]
     let headers = with_response(r, |s| s.headers.clone())?;
     let cookies = response_cookies(c, &headers)?;
     let names: Vec<Value> = cookies.into_iter().map(|k| Value::Text(k.name.into())).collect();
-    Ok(Value::List(Rc::new(RefCell::new(names))))
+    Ok(Value::List(Rc::new(RefCell::new(names.into()))))
 }
 
 fn response_get_cookie(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {

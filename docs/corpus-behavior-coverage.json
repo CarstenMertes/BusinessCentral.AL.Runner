@@ -13140,7 +13140,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 257,
+        "line": 113,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
         "template": "The date is not valid."
@@ -13149,7 +13149,25 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/datefns.rs",
         "generic": false,
-        "line": 291,
+        "line": 183,
+        "pinned": true,
+        "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
+        "template": "The date is not valid."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/datefns.rs",
+        "generic": false,
+        "line": 266,
+        "pinned": true,
+        "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
+        "template": "The date is not valid."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/datefns.rs",
+        "generic": false,
+        "line": 300,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
         "template": "The date is not valid."
@@ -13212,7 +13230,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 407,
+        "line": 418,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13221,7 +13239,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 609,
+        "line": 621,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -13230,16 +13248,34 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 652,
+        "line": 664,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
       },
       {
+        "code": "AL:Overflow",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 691,
+        "pinned": true,
+        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
+        "template": "Arithmetic operation resulted in an overflow."
+      },
+      {
+        "code": "AL:Overflow",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 699,
+        "pinned": true,
+        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
+        "template": "Arithmetic operation resulted in an overflow."
+      },
+      {
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 687,
+        "line": 722,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13248,7 +13284,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 713,
+        "line": 751,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13257,10 +13293,19 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 718,
+        "line": 756,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
+      },
+      {
+        "code": "DateInvalid",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 784,
+        "pinned": true,
+        "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
+        "template": "The date is not valid."
       },
       {
         "code": "InvalidStreamData",
@@ -13275,7 +13320,7 @@
         "code": "InvalidStreamData",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 826,
+        "line": 828,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnAStreamReadMisc.al:182",
         "template": "Invalid data encountered in stream, unable to read text."
@@ -13284,7 +13329,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/stream.rs",
         "generic": false,
-        "line": 858,
+        "line": 860,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
         "template": "The date is not valid."
@@ -13344,6 +13389,15 @@
         "template": "An error was expected inside an ASSERTERROR statement."
       },
       {
+        "code": "AL:InvalidOperation",
+        "file": "crates/al-vm/src/exec/run.rs",
+        "generic": false,
+        "line": 563,
+        "pinned": true,
+        "site": "collections/RefSemantics.al:343",
+        "template": "Collection was modified; enumeration operation may not execute."
+      },
+      {
         "code": "AL:Overflow",
         "file": "crates/al-vm/src/flowfields.rs",
         "generic": false,
@@ -13398,13 +13452,31 @@
         "template": "Top number of rows cannot be negative"
       },
       {
+        "code": "QueryNoDataSet",
+        "file": "crates/al-vm/src/queries.rs",
+        "generic": false,
+        "line": 574,
+        "pinned": true,
+        "site": "xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:84",
+        "template": "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function."
+      },
+      {
         "code": "DB:Ok",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 1533,
+        "line": 1534,
         "pinned": true,
         "site": "record/TestPlatformTablesWritableContracts.al:107",
         "template": "It is not possible to delete any record in the Tenant License State table."
+      },
+      {
+        "code": "RenameArgument",
+        "file": "crates/al-vm/src/records.rs",
+        "generic": false,
+        "line": 2143,
+        "pinned": true,
+        "site": "recordref/lt-refs/RfTWrite.al:223",
+        "template": "The number of field arguments does not match the primary key size."
       },
       {
         "code": "RecordNotOpened",
@@ -13482,7 +13554,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 418,
+        "line": 441,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -13491,7 +13563,7 @@
         "code": "MissingUIHandler",
         "file": "crates/al-vm/src/ui.rs",
         "generic": false,
-        "line": 446,
+        "line": 469,
         "pinned": true,
         "site": "controls/W2PageVariableInit.al:288",
         "template": "Unhandled UI: % %"
@@ -13515,7 +13587,7 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 40,
-    "sites": 43
+    "pinned": 48,
+    "sites": 51
   }
 }

@@ -147,7 +147,8 @@ impl Session {
         let mut parts = Vec::new();
         for &i in &t.keys[0] {
             let v = al_builtins::format::try_format(&fields[i], 0, 0, self).map_err(Signal::Unsupported)?;
-            parts.push(format!("{}='{}'", t.fields[i].name, v));
+            // The field's caption names it (recordref/lt-recordref-fieldref-members + records/lt-record-meta: `Code Caption='A1'`).
+            parts.push(format!("{}='{}'", self.field_caption(t, i), v));
         }
         Ok(parts.join(","))
     }
@@ -1766,7 +1767,11 @@ impl Session {
                             found = match c {
                                 // Another current key looks for the neighbour by that key's fields
                                 // (events/TestProbeEventContracts.al:Find_NeighbourSearch_WithFilterAndOtherKey, key Name).
-                                '=' if key != 0 => None,
+                                // The row itself is the one with the record's primary key whose fields of that key still
+                                // hold the record's values and that passes the filters. Not pinned for a row that exists
+                                // (the corpus names only keys whose values no row holds); Base Application's Req. Wksh.-Make
+                                // Order `Code` needs it for the Requisition Line the Carry Out Action Msg. report read by its
+                                // own sorting (docs/probes-needed.md, find-equal-on-another-key).
                                 '=' => {
                                     let pk = t.primary_key(&rec.borrow().fields);
                                     let exact = self
@@ -1774,7 +1779,18 @@ impl Session {
                                         .get(&cx, &t, &pk)
                                         .map_err(|e| Signal::Unsupported(format!("{e}")))?;
                                     match exact {
-                                        Some(row) if self.row_passes(rec, &t, &row)? => Some(row),
+                                        Some(row) if self.row_passes(rec, &t, &row)? => {
+                                            if key == 0 {
+                                                Some(row)
+                                            } else if Self::same_key_values(&t, key, &row, &pos) {
+                                                al_builtins::assumptions::assume(
+                                                    al_builtins::assumptions::Assumption::FindEqualOnAnotherKey,
+                                                );
+                                                Some(row)
+                                            } else {
+                                                None
+                                            }
+                                        }
                                         _ => None,
                                     }
                                 }
@@ -1801,6 +1817,19 @@ impl Session {
                     // with a filter): the text lists the filters; without one it is not pinned.
                     None => {
                         let filters = self.get_filters(rec, &t)?;
+                        // Without a filter the table itself is empty, on every version: FindFirst and FindLast
+                        // record/lt-filters-keys-finds/P68C_EmptyFinds.al:215-250 ( passes on the BC 27 oracle
+                        // too), FindSet ErTTriggerErrors.al:140-147 and P68C_EmptyFinds.al:202-204.
+                        if filters.is_empty()
+                            && matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
+                        {
+                            return Err(Signal::Error(Box::new(AlError {
+                                message: format!("The {} table is empty.", self.caption(&t)),
+                                code: "DB:TableIsEmpty".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
+                        }
                         if filters.is_empty()
                             || !matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
                         {
@@ -2108,6 +2137,15 @@ impl Session {
                         }
                     }
                 }
+                // More values than the primary key has fields (recordref/lt-refs/RfTWrite.al:Rename_Variants `rename_too_many`).
+                if args.len() > t.keys[0].len() {
+                    return Err(Signal::Error(Box::new(AlError {
+                        message: "The number of field arguments does not match the primary key size.".into(),
+                        code: "RenameArgument".into(),
+                        call_stack: String::new(),
+                        ..Default::default()
+                    })));
+                }
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
                     if let Some(v) = args.get(n) {
@@ -2180,8 +2218,11 @@ impl Session {
                         rec.borrow_mut().fields = old.clone();
                         self.fail(&t, &old, false)
                     }
+                    // A rename that cannot be done raises whether or not the Boolean is used (RfTWrite.al:Rename_Variants
+                    // `rename_existing`: `B := RecRef.Rename('D2')`).
                     RenameOutcome::AlreadyExists => {
                         rec.borrow_mut().fields = old;
+                        self.ret_used = false;
                         self.fail(&t, &row, true)
                     }
                 }
@@ -2222,5 +2263,17 @@ pub(crate) fn unevaluable_init_value(f: &al_ir::Field) -> Option<String> {
                 .then(|| format!("The format of the Date '{text}' does not match your device's date settings."))
         }
         _ => None,
+    }
+}
+
+impl Session {
+    /// Whether `row` holds the values of `pos` in the fields of key `key` (and the primary key after them).
+    fn same_key_values(t: &al_data::TableDef, key: usize, row: &[Value], pos: &[Value]) -> bool {
+        let theirs = position(t, key, row);
+        theirs.len() == pos.len()
+            && theirs
+                .iter()
+                .zip(pos.iter())
+                .all(|(a, b)| al_builtins::ops::compare(a, b).is_ok_and(|o| o == std::cmp::Ordering::Equal))
     }
 }

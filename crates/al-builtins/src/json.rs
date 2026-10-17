@@ -580,6 +580,9 @@ fn write_string(out: &mut String, s: &str) {
             '\u{8}' => out.push_str("\\b"),
             '\u{c}' => out.push_str("\\f"),
             c if (c as u32) < 0x20 => out.push_str(&format!("\\u{:04x}", c as u32)),
+            // The line and paragraph separators are written as escapes (json/JsonWriteTo.al:UnicodeAndEscapes `line_sep`;
+            // U+0085 and U+2029 follow Json.NET's list, not pinned).
+            c @ ('\u{85}' | '\u{2028}' | '\u{2029}') => out.push_str(&format!("\\u{:04x}", c as u32)),
             c => out.push(c),
         }
     }
@@ -640,9 +643,13 @@ fn write(h: &Handle, out: &mut String) -> Result<(), Signal> {
             Value::Decimal(d) => {
                 let digits = d.abs().mantissa().to_string().len();
                 let text = if digits > 18 {
-                    let mut r = d.round_sf(18).unwrap_or(d);
-                    r.rescale(d.scale());
-                    r.to_string()
+                    // The zeros the cut leaves behind are not written (json/JsonWriteTo.al:NumberFormattingInWriteTo, 12345678901234567900.0).
+                    let t = d.round_sf(18).unwrap_or(d).to_string();
+                    if t.contains('.') {
+                        t.trim_end_matches('0').trim_end_matches('.').to_string()
+                    } else {
+                        t
+                    }
                 } else {
                     d.to_string()
                 };
@@ -972,7 +979,7 @@ fn object_keys(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Resul
             .collect::<Vec<_>>()),
         _ => unsupported("JsonObject.Keys on a JSON value that is not an object"),
     })?;
-    Ok(Value::List(Rc::new(std::cell::RefCell::new(keys))))
+    Ok(Value::List(Rc::new(std::cell::RefCell::new(keys.into()))))
 }
 
 fn object_contains(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
@@ -1549,17 +1556,35 @@ fn set_scalar(h: &Handle, s: Scalar) -> Result<Value, Signal> {
     })
 }
 
-fn value_set(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
-    let h = recv(r)?;
-    let src = node_for(&a[0])?;
-    let s = scalar_of(&src)?;
+/// `SetValue` on a value that sits in an object or array leaves that tree as it is: the variable takes a value of its own
+/// (json/JsonWriteTo.al:ModifyNestedThroughToken, `after_value_setvalue`).
+fn set_own_scalar(r: Option<&mut Value>, s: Scalar) -> Result<Value, Signal> {
+    let Some(v) = r else {
+        return unsupported("JSON method without a receiver");
+    };
+    let h = handle_of(v)?;
+    let attached = matches!(&*h.borrow(), LibraryValue::Json(c) if c.parent.is_some());
+    if attached {
+        if let Value::Library(name, slot) = v {
+            let fresh = new_handle(JsonNode::Scalar(s));
+            let _ = slot;
+            *v = Value::Library(name.clone(), fresh);
+            return Ok(Value::Null);
+        }
+    }
     set_scalar(&h, s)
 }
+
+fn value_set(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
+    let src = node_for(&a[0])?;
+    let s = scalar_of(&src)?;
+    set_own_scalar(r, s)
+}
 fn value_set_null(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    set_scalar(&recv(r)?, Scalar::Null)
+    set_own_scalar(r, Scalar::Null)
 }
 fn value_set_undefined(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    set_scalar(&recv(r)?, Scalar::Undefined)
+    set_own_scalar(r, Scalar::Undefined)
 }
 
 // ------------------------------------------------------------ SelectToken

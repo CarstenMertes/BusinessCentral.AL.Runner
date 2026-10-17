@@ -778,12 +778,38 @@ impl Session {
                         Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)
                     )
                 );
-                let want = if text_pair || number_pair {
+                // The expected value as the message writes it, for the typed values the corpus pins (record/lt-testfield-typed-values/):
+                // an Enum on an Integer field shows its member (`One`, RecordTestFieldWrongTypeEnumOnInteger.al); a Byte is written as an
+                // escaped character from BC 28 (`\u0008`, FieldRefTestFieldTypedNumeric.al:P189_FldRef_Byte_Value; a number before);
+                // a Guid on a Text field is never equal and is written with braces from BC 28 (RecordTestFieldWrongTypeGuidOnText.al).
+                // A Byte above 9 and a Guid against another field type are not pinned.
+                let from28 = self.has(al_version::Gate::TestFieldTypedValueTexts);
+                let mut shown: Option<String> = None;
+                let mut never_equal = false;
+                match (&current, want) {
+                    (Value::Integer(_), Value::Enum(id, o)) => shown = Some(al_builtins::format::FormatCtx::enum_name(self, *id, *o)),
+                    (Value::Text(_) | Value::Code(_), Value::Guid(g)) => {
+                        let braced = al_builtins::format::format_guid(g);
+                        shown = Some(if from28 { braced } else { braced.trim_matches(['{', '}']).to_string() });
+                        never_equal = true;
+                    }
+                    (_, Value::Byte(b)) if from28 && matches!(current, Value::Integer(_)) => {
+                        if *b > 9 {
+                            return unsupported("TestField against a Byte above 9 (the escaped form is not pinned)");
+                        }
+                        shown = Some(format!("\\u{:04X}", b));
+                    }
+                    (_, Value::Guid(_)) => return unsupported("TestField against a Guid on a field that is not Text (not pinned)"),
+                    _ => {}
+                }
+                let want = if text_pair || number_pair || never_equal {
                     want.clone()
                 } else {
                     ops::convert(want.clone(), &t.fields[pos].ty)?
                 };
-                let equal = if text_pair {
+                let equal = if never_equal {
+                    false
+                } else if text_pair {
                     // Exact, case and trailing blanks included; a Code field reads the value as Code does upper-cased
                     // (P96Text.al: `cd_lower` is equal, `cd_trailing_blank` and `txt_case` are not).
                     let (a, b) = (
@@ -803,7 +829,10 @@ impl Session {
                     return Err(error_redacted(
                         format!(
                             "{caption} must be equal to '{}'  in {table}: {key}. Current value is '{}'.",
-                            self.member_caption(t, pos, &want)?,
+                            match shown {
+                                Some(text) => text,
+                                None => self.member_caption(t, pos, &want)?,
+                            },
                             self.member_caption(t, pos, &current)?
                         ),
                         "TestField",

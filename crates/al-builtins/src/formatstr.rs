@@ -111,7 +111,8 @@ fn canonical_template(template: &str) -> Option<String> {
         };
         // `Filler Char` is the short spelling Microsoft's Data Exchange tests use (assumption `format-code-spelling`).
         let known = CODE_NAMES.iter().find(|c| {
-            c.eq_ignore_ascii_case(name.trim()) || (**c == "Filler Character" && name.trim().eq_ignore_ascii_case("Filler Char"))
+            c.eq_ignore_ascii_case(name.trim())
+                || (**c == "Filler Character" && name.trim().eq_ignore_ascii_case("Filler Char"))
         });
         let canon = match known {
             Some(c) => {

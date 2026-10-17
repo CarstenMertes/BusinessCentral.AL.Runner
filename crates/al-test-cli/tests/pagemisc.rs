@@ -1146,3 +1146,14 @@ fn set_table_view_of_a_temporary_record_does_not_replace_the_rows_of_a_temporary
         [ModalPageHandler] procedure H(var P: TestPage \"PM Open Modify\") begin P.First(); Check('T1', P.\"No.\".Value()); Check('marked', P.Descr.Value()); P.OK().Invoke(); end;"
     ));
 }
+
+// SCM RTAM Item Tracking-II sets a Code control to a Decimal (assumption setvalue-whole-number-into-text-control).
+#[test]
+fn set_value_of_a_whole_decimal_on_a_text_control_enters_its_digits() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Digits() var C: TestPage \"PM Card\"; D: Decimal; begin
+            D := 14; C.OpenNew(); C.NoCtl.SetValue(D); Check('14', C.NoCtl.Value()); C.Close(); end;"
+    ));
+}

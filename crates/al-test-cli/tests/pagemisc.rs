@@ -1031,7 +1031,7 @@ fn an_empty_caption_class_of_area_3_does_not_stop_the_page_from_opening() {
 }
 
 // Edit Dimension Set Entries.SetFormCaption reads CurrPage.Caption on a Page variable before Dimension Management runs it
-// (assumption caption-read-before-the-page-runs).
+// (pinned by pages/lt-caption-before-run/CaptionReadBeforeRun.al).
 #[test]
 fn a_page_variable_reads_its_caption_before_it_runs() {
     passes(&format!(

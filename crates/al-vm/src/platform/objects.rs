@@ -213,7 +213,7 @@ pub(super) fn al_sema_platform_app_id() -> &'static str {
 
 /// The caption a declaration states: the `Caption` literal, else the `ENU` entry of `CaptionML`, else the
 /// name (AL's default caption). A caption that is not a literal is not known.
-pub(super) fn declared_caption(caption: Option<&str>, caption_ml: Option<&str>, name: &str) -> Result<String, String> {
+pub(crate) fn declared_caption(caption: Option<&str>, caption_ml: Option<&str>, name: &str) -> Result<String, String> {
     if let Some(c) = caption {
         return string_lit(c).ok_or_else(|| format!("Caption `{c}` is not a literal"));
     }

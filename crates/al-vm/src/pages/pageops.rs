@@ -329,29 +329,28 @@ impl Session {
             // `CurrPage.Caption := x` sets the page's caption for as long as it stays open; without an
             // argument it answers the caption in force (handlers/TestPageCaption_Page.al:44).
             PageMethod::Caption if method.recv() == PageRecv::Page => {
-                // The caption read on a Page variable before the page runs is the page's own (Edit Dimension Set Entries.SetFormCaption
-                // reads `CurrPage.Caption` before Dimension Management runs the page); an assignment still needs an open page
-                // (assumption caption-read-before-the-page-runs).
-                if !args.is_empty() && !st.borrow().open && !st.borrow().ran {
+                // The caption read on a Page variable while the page is not open is the page's own, or the one assigned (Edit
+                // Dimension Set Entries.SetFormCaption reads `CurrPage.Caption` before Dimension Management runs the page;
+                // pages/lt-caption-before-run/CaptionReadBeforeRun.al, CaptionDirectMember.al), and an assignment then sets it for the
+                // runs that follow (pages/lt-caption-assigned-before-run/CaptionAssignedBeforeRun.al).
+                if !args.is_empty() && !st.borrow().open {
                     if let Some(t) = args.first().and_then(al_builtins::native::text_of) {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::CaptionAssignedBeforeThePageRuns,
-                        );
-                        st.borrow_mut().caption = Some(t.to_string());
+                        let mut s = st.borrow_mut();
+                        s.caption = Some(t.to_string());
+                        s.caption_before_run = true;
                         return Ok(Value::Null);
                     }
                 }
                 if args.is_empty() && !st.borrow().open {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::CaptionReadBeforeThePageRuns,
-                    );
                     return Ok(Value::Text(self.page_caption(st).into()));
                 }
                 self.require_open(st)?;
                 match args.first() {
                     Some(v) => match al_builtins::native::text_of(v) {
                         Some(t) => {
-                            st.borrow_mut().caption = Some(t.to_string());
+                            let mut s = st.borrow_mut();
+                            s.caption = Some(t.to_string());
+                            s.caption_before_run = false;
                             Ok(Value::Null)
                         }
                         None => unsupported(format!("CurrPage.Caption with {}", v.describe())),

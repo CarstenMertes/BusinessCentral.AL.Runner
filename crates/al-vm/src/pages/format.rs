@@ -411,11 +411,18 @@ impl Session {
         let engine = self.engine();
         let object = st.borrow().object as usize;
         let o = &engine.program.objects[object];
-        o.properties
-            .iter()
-            .find(|(k, _)| k.eq_ignore_ascii_case("Caption"))
-            .map(|(_, v)| unquote(v))
-            .unwrap_or_else(|| o.name.clone())
+        let prop = |n: &str| {
+            o.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case(n))
+                .map(|(_, v)| v.as_str())
+        };
+        // `Caption`, else the ENU entry of `CaptionML`, else the name (pages/lt-caption-before-run/CaptionReadMl.al:
+        // P182b_Ml_BeforeRunAfterRunModal).
+        match crate::platform::objects::declared_caption(prop("Caption"), prop("CaptionML"), &o.name) {
+            Ok(c) => c,
+            Err(_) => prop("Caption").map(unquote).unwrap_or_else(|| o.name.clone()),
+        }
     }
 
     /// The caption a TestPage shows: the page caption, then ` - ` and the values of the data caption fields of the row, joined

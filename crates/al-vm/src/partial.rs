@@ -257,7 +257,8 @@ impl Session {
                     // :70-92 Init and Validate, :94-117 Insert and Modify, :174-221 temporary).
                     // "Filled" is read from the buffer differing from a fresh one: a field assigned its own default
                     // value is not told apart from an untouched one (docs/probes-needed.md).
-                    let filled = format!("{:?}", fresh) != format!("{:?}", r.fields);
+                    let filled = fresh.len() != r.fields.len()
+                        || fresh.iter().zip(r.fields.iter()).any(|(a, b)| !a.identical(b));
                     return Ok(Value::Boolean(filled));
                 };
                 let mut all = true;

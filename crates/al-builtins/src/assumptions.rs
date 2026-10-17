@@ -73,6 +73,12 @@ registry! {
         tests: "Payment Export Mgt Unit Test.FilterByHasPaymentExportError (Gen. Journal Line.\"Has Payment Export Error\", a FlowField with Editable = false, on the Payment Journal).",
         probe: "A table field with Editable = false (stored, and a FlowField) and one without; a page with a plain field control over each and one that sets Editable = true itself: Editable() of each control on an open TestPage, and whether SetValue on the first is refused.",
     },
+    ListPlusBlankRecordOnEmptyView => {
+        id: "listplus-blank-record-on-empty-view",
+        assumed: "A ListPlus page without a repeater, opened for edit over an empty view, stands on a blank record: OnNewRecord and OnAfterGetCurrRecord run after OnOpenPage. A Card or Document over an empty view is not covered.",
+        tests: "Suggest Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted (Purchase Price List sets PriceListIsEditable in OnAfterGetCurrRecord).",
+        probe: "A ListPlus, a Card and a Document page over an empty table, each with OnOpenPage, OnNewRecord, OnAfterGetRecord and OnAfterGetCurrRecord logging, opened with OpenEdit and OpenView: the trigger sequence and the field values.",
+    },
     ClearAllKeepsTemporaryRows => {
         id: "clear-all-keeps-temporary-rows",
         assumed: "ClearAll() resets the fields and filters of a global temporary record but keeps its rows, as Clear(Rec) does.",

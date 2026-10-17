@@ -285,6 +285,19 @@ table 50040 "PG RO Row"
     keys { key(PK; "No.") { } }
 }
 
+page 50042 "PG ListPlus"
+{
+    PageType = ListPlus;
+    SourceTable = "PG Row";
+    layout { area(Content) { field(NoCtl; Rec."No.") { } } }
+    var
+        Trace: Codeunit "PG Trace";
+        Flag: Boolean;
+    trigger OnOpenPage() begin Trace.Add('open;'); end;
+    trigger OnNewRecord(BelowxRec: Boolean) begin Trace.Add('new;'); end;
+    trigger OnAfterGetCurrRecord() begin Flag := true; Trace.Add('agcr;'); end;
+}
+
 page 50041 "PG RO Card"
 {
     PageType = Card;
@@ -1071,4 +1084,20 @@ fn a_page_field_over_a_source_field_with_editable_false_is_not_editable() {
         "F",
     );
     assert_eq!(text(r), "YesNoYes");
+}
+
+// Microsoft's Suggest Price Lines UT.T212_CopyLinesEnabledOnPurchPriceListPageIfFixedUpgradeCompleted opens the
+// Purchase Price List (a ListPlus page without a repeater) over an empty table and needs its OnAfterGetCurrRecord
+// to have run (PriceListIsEditable). Unprobed: assumption listplus-blank-record-on-empty-view. A Card or a
+// Document over an empty view stays as it was (only OnOpenPage runs).
+#[test]
+fn a_list_plus_page_over_an_empty_view_runs_new_record_and_get_curr_record() {
+    let r = run(
+        "procedure F(): Text var TP: TestPage \"PG ListPlus\"; T: Codeunit \"PG Trace\"; X: Text; begin
+            TP.OpenEdit();
+            exit(T.Take());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "open;new;agcr;");
 }

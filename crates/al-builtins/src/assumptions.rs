@@ -187,12 +187,6 @@ registry! {
         tests: "platform/lt-xmlport-session-navapp-cookie/P94Cookie.al assigns the result to a Text it never reads (SetName_DoesNotTouchOtherMembers, Copy_AndClear).",
         probe: "Format of the result of C.Name('n') and C.Value('v') on a cookie that had other values before.",
     },
-    PrimitiveToTextIsFormat => {
-        id: "primitive-totext-is-format",
-        assumed: "Date.ToText() and Boolean.ToText() give Format(value) with the default format (en-US).",
-        tests: "Customer Mgt.CalcLastPaymentInfo via the Customer Statistics FactBox: 49 Tests-ERM tests.",
-        probe: "D.ToText() against Format(D) for a Date and a blank Date; B.ToText() for true and false.",
-    },
     FormatTextCodeWidthPads => {
         id: "format-text-code-width-pads",
         assumed: "In a Format picture, `<Month Text,N>` and `<Weekday Text,N>` give the name cut to N characters (pinned for N = 3) and, when it is shorter than N, padded with trailing spaces to N.",

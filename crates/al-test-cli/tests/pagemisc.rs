@@ -169,6 +169,20 @@ page 62302 "PM Host Lines" { PageType = ListPart; SourceTable = "PM Host Line"; 
 page 62303 "PM Host Card" { PageType = ListPlus; SourceTable = "PM Host";
   layout { area(Content) { group(G) { field("No."; Rec."No.") { } field(Name; Rec.Name) { } }
     part(Lines; "PM Host Lines") { SubPageLink = "Host No." = field("No."); } } } }
+table 62340 "PM SH" { fields { field(0; "Document Type"; Option) { OptionMembers = Quote,"Order"; } field(1; "No."; Code[20]) { } field(2; "Customer No."; Code[20]) { } }
+  keys { key(PK; "Document Type", "No.") { } }
+  trigger OnInsert() begin if "No." = '' then "No." := 'SVO001'; end; }
+table 62341 "PM SIL" { fields {
+    field(1; "Document No."; Code[20]) { TableRelation = "PM SH"."No." where("Document Type" = field("Document Type")); }
+    field(2; "Line No."; Integer) { } field(3; Info; Text[30]) { }
+    field(43; "Document Type"; Option) { OptionMembers = Quote,"Order"; } }
+  keys { key(PK; "Document Type", "Document No.", "Line No.") { } } }
+page 62342 "PM SIL Part" { PageType = ListPart; SourceTable = "PM SIL"; SourceTableView = where("Document Type" = const("Order")); AutoSplitKey = true; DelayedInsert = true;
+  layout { area(Content) { repeater(R) { field(Info; Rec.Info) { } } } } }
+page 62343 "PM SH Card" { PageType = Document; SourceTable = "PM SH"; SourceTableView = where("Document Type" = filter("Order"));
+  layout { area(Content) { group(G) { field("No."; Rec."No.") { } field("Customer No."; Rec."Customer No.") { } }
+    part(Lines; "PM SIL Part") { SubPageLink = "Document No." = field("No."); } } }
+  trigger OnNewRecord(BelowxRec: Boolean) begin Rec."Document Type" := Rec."Document Type"::"Order"; end; }
 table 62304 "PM Pick" { LookupPageId = "PM Pick List"; fields { field(1; Id; Code[10]) { } field(2; Grp; Integer) { } } keys { key(PK; Id) { } } }
 page 62305 "PM Pick List" { PageType = List; SourceTable = "PM Pick"; Editable = false;
   layout { area(Content) { repeater(R) { field(Id; Rec.Id) { } } } } }
@@ -1155,5 +1169,19 @@ fn set_value_of_a_whole_decimal_on_a_text_control_enters_its_digits() {
         [Test]
         procedure Digits() var C: TestPage \"PM Card\"; D: Decimal; begin
             D := 14; C.OpenNew(); C.NoCtl.SetValue(D); Check('14', C.NoCtl.Value()); C.Close(); end;"
+    ));
+}
+
+// Library - Service.CreateServiceOrderHeaderUsingPage (Microsoft's Tests-TestLibraries): OpenNew a Service Order, Activate Customer No.,
+// read No., OK. About 9 Tests-SCM-Service tests failed with "The field Document No. of table Service Item Line contains a value ... that
+// cannot be found in the related table (Service Header)".
+#[test]
+fn a_new_document_with_a_part_linked_on_its_number_opens_activates_a_field_and_closes() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure OpenNewActivateOk() var C: TestPage \"PM SH Card\"; H: Record \"PM SH\"; begin
+            H.DeleteAll(); C.OpenNew(); C.\"Customer No.\".Activate(); Check('SVO001', C.\"No.\".Value()); C.OK().Invoke();
+            if not H.Get(H.\"Document Type\"::\"Order\", 'SVO001') then Error('host not saved'); end;"
     ));
 }

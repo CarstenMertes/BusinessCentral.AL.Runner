@@ -274,6 +274,7 @@ pub(crate) fn run_codeunit_core(
         if crate::events::cancelled() {
             break;
         }
+        crate::events::starting(obj.id.unwrap_or(0), &obj.routines[r].name);
         let test_started = std::time::Instant::now();
         let draws_before = session.random_draws();
         let routine = &obj.routines[r];

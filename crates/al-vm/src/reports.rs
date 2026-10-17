@@ -795,6 +795,14 @@ impl Session {
         }
         let target = self.base_item_record(inst, item)?;
         let mut t = target.borrow_mut();
+        let key = Rc::as_ptr(&target) as usize;
+        let origin: Vec<(usize, i32, String)> = v
+            .filters
+            .iter()
+            .map(|f| (f.field, f.group, format!("{:?}", f.expr)))
+            .collect();
+        self.report.set_view_filters.retain(|(k, _)| *k != key);
+        self.report.set_view_filters.push((key, origin));
         t.filters = v.filters.clone();
         t.filter_group = v.filter_group;
         t.key = v.key;
@@ -1023,6 +1031,35 @@ impl Session {
         Ok(run)
     }
 
+    /// A filter a procedure of the report set on a data item (`RowDi.SetFilter`) before the request page opens is not on the page: the
+    /// page shows the filters of a `SetTableView` and what was stored (report/lt-requestpage-savevalues-date-text-setvalue/
+    /// P147SaveValuesFilter.al:P147_Filter_ProcedureFilterVsStored, `procedure filter B* code filter = []`; the view of
+    /// P147_Filter_SetTableViewVsStored is shown). The page's own filters replace the item's user filters when it closes with OK, so what a
+    /// procedure set is gone for that run; with a cancelled page there is no run. Whether the run keeps it is not pinned (registry entry
+    /// report-procedure-filter-under-request-page).
+    fn hide_procedure_filters(&mut self, run: &Run) -> Result<bool, Signal> {
+        let mut any = false;
+        for r in run.all_items() {
+            let rec = self.report_item_record(run, r)?;
+            let key = Rc::as_ptr(&rec) as usize;
+            let from_view: Vec<(usize, i32, String)> = self
+                .report
+                .set_view_filters
+                .iter()
+                .find(|(k, _)| *k == key)
+                .map(|(_, v)| v.clone())
+                .unwrap_or_default();
+            let mut dropped = false;
+            rec.borrow_mut().filters.retain(|f| {
+                let keep = f.group != 0 || from_view.contains(&(f.field, f.group, format!("{:?}", f.expr)));
+                dropped |= !keep;
+                keep
+            });
+            any |= dropped;
+        }
+        Ok(any)
+    }
+
     /// The error of a rendering run of a report with columns and no layout of any kind (none of DefaultLayout, the layout properties,
     /// a rendering section), `None` when the report has a layout, is processing only or has no column to render.
     fn no_valid_layout(&self, schema: &Schema) -> Result<Option<al_builtins::native::AlError>, Signal> {
@@ -1069,6 +1106,7 @@ impl Session {
         // the run without an error (handlers/TestReportRunWithRequestPage.al:
         // Report_Run_CancelledRequestPageRunsNothingAndRaisesNoError).
         if shows_page {
+            let hidden = self.hide_procedure_filters(&run)?;
             let ext: Vec<(usize, Inst)> = run.exts.iter().map(|(i, e)| (*e, i.clone())).collect();
             match self.run_request_page(inst, schema.object, None, ext, false)?.0 {
                 RequestClosed::Cancel => return Ok(false),
@@ -1076,7 +1114,13 @@ impl Session {
                 // (al-language-onprem/handlers/TestRequestPageSaveAsXmlContracts.al:
                 // SaveAsXml_RunsTheReportOnce_AndClosesTheRequestPage): it does not run a second time.
                 RequestClosed::SavedAsXml => return Ok(true),
-                RequestClosed::Ok => {}
+                RequestClosed::Ok => {
+                    if hidden {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::ReportProcedureFilterUnderRequestPage,
+                        );
+                    }
+                }
             }
         }
         self.report_after_page(&run, schema)

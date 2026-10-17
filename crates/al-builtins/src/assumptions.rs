@@ -114,6 +114,7 @@ registry! {
         assumed: "CodeCoverageRefresh() changes nothing: the Code Coverage table is served from the live recording, so a read after CodeCoverageLog(false, ...) already holds the hits.",
         tests: "System Application's Code Coverage Mgt.Refresh, called by Microsoft's code coverage helpers; 9 Tests-SCM-Costing tests.",
         probe: "CodeCoverageLog(true, false), run code, CodeCoverageLog(false, false); count the Code Coverage rows before and after CodeCoverageRefresh().",
+    },
     NumberToTextIsFormat => {
         id: "number-to-text-is-format",
         assumed: "An Integer, BigInteger or Decimal (a Variant from FieldRef.Value) assigned to a Text or Code is its default Format text, as Format gives it.",

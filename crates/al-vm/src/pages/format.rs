@@ -238,10 +238,15 @@ impl Session {
         // TestPage_Members_ShowMandatoryHideValue_Defaults, `hidevalue_field_value` is empty).
         {
             let engine = self.engine();
-            if let Some(ir::PropVal::Lit(l)) = page_of(&engine, st).controls[idx].prop("hidevalue") {
-                if unquote(l).eq_ignore_ascii_case("true") {
-                    return Ok(String::new());
-                }
+            // A label keeps showing its caption (pages/lt-page-presentation-properties/P119LabelHideValue.al:P119_HideValue `label-value`).
+            let is_label = matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Caption);
+            // HideValue may name a variable: `HideValue = HideName` set in OnAfterGetRecord hides the value of that row
+            // (pages/lt-page-presentation-properties/P119LabelHideValue.al:P119_HideValue `name-value`).
+            if !is_label
+                && page_of(&engine, st).controls[idx].prop("hidevalue").is_some()
+                && self.prop_bool_now(st, idx, "hidevalue", false)?
+            {
+                return Ok(String::new());
             }
         }
         let f = self.control_format(st, idx)?;
@@ -273,6 +278,21 @@ impl Session {
                         _ => None,
                     },
                 );
+            // ExtendedDatatype = Masked shows ten bullets for a text of 11 characters (pages/lt-page-presentation-properties/
+            // P119PageFields.al:P119_SetValues `secret`). Whether the count is fixed or the length capped at ten is not pinned,
+            // so a shorter text is refused; the empty text shows empty (`secret-value`).
+            if ext.as_ref().is_some_and(|e| e.trim().eq_ignore_ascii_case("masked")) {
+                if let Value::Text(t) | Value::Code(t) = v {
+                    let n = t.chars().count();
+                    if n >= 10 {
+                        text = "\u{2022}".repeat(10);
+                    } else if n > 0 {
+                        return unsupported(
+                            "a Masked control that shows a text shorter than ten characters (not pinned)",
+                        );
+                    }
+                }
+            }
             if ext.is_some_and(|e| e.trim().eq_ignore_ascii_case("ratio")) {
                 match v {
                     Value::Decimal(d) if d.is_zero() => text = "0%".to_string(),

@@ -268,6 +268,9 @@ pub struct Report {
     pub on_init: Option<usize>,
     pub on_pre: Option<usize>,
     pub on_post: Option<usize>,
+    /// `OnPreRendering(var RenderingPayload: JsonObject)` as a routine index.
+    #[serde(default)]
+    pub on_pre_rendering: Option<usize>,
     /// The reportextensions (object indices) that change what a run does, in the order they apply:
     /// by object id (ADR-025). Empty: none does.
     #[serde(default)]
@@ -471,6 +474,9 @@ pub struct ReportItem {
     /// `PrintOnlyIfDetail = true`: the dataset leaves out a row whose nested items wrote no row.
     #[serde(default)]
     pub print_only_if_detail: bool,
+    /// `CalcFields`: the field positions of the FlowFields calculated for each row, before the row's triggers.
+    #[serde(default)]
+    pub calc_fields: Vec<usize>,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).

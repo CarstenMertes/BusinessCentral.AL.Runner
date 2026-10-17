@@ -157,13 +157,27 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
             2 | 9 if crate::sysenum::platform_ordinal(members, *o).is_some() => {
                 crate::sysenum::platform_ordinal(members, *o).unwrap_or(*o).to_string()
             }
+            // The IsolationLevel option shows member names for format 2 (misc/lt-probes-needed-1/PnAPlatformOptions.al:
+            // IsolationLevel_Members: Default, UpdLock, ReadCommitted, RepeatableRead). ReadUncommitted is not pinned.
+            2 | 9 if crate::sysenum::is_isolation_level(members) => {
+                match members.get(*o as usize).map(String::as_str) {
+                    Some("ReadUncommitted") | None => {
+                        return Err(FormatFail::Unsupported(
+                            "Format 2 of IsolationLevel::ReadUncommitted (not pinned)".into(),
+                        ));
+                    }
+                    Some(m) => m.to_string(),
+                }
+            }
             2 | 9 if !crate::sysenum::ordinals_hidden(members) => o.to_string(),
             // `Option` declared without members is the one empty name: it shows the number
             // (types/lt-scalars/ScT70062.al:Option_Defaults `nomembers_len`, `nomembers_3`).
             _ if members.len() == 1 && members[0].is_empty() => o.to_string(),
             // A member with a blank name shows as one space (types/lt-scalars/ScT70053.al:Option_Format `blank_len`).
             _ => match members.get(*o as usize) {
-                Some(m) if m.is_empty() => " ".to_string(),
+                // An unquoted empty member shows its number (misc/lt-inferred-behaviors/P69OptionInText.al:Option_StrSubstNo
+                // `subst_2`; record/lt-record-write/RcBInit.al:Props_BlankZero_Option_Caption `opt blank member`).
+                Some(m) if m.is_empty() => o.to_string(),
                 Some(m) => m.clone(),
                 None => o.to_string(),
             },
@@ -467,12 +481,23 @@ fn format_decimal(d: &rust_decimal::Decimal, standard: i32) -> Result<String, Fo
     } else {
         d.trunc().abs().to_string().len() as u32
     };
+    let orig = *d;
     let d = &if int_digits < 18 {
         d.round_dp_with_strategy(18 - int_digits, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
     } else {
         *d
     };
     let n = d.normalize();
+    // A negative value that is too small to show reads `-0` in the XML form, not `0` (misc/lt-probes-needed-1/
+    // PnAStreamDecimalBytes.al:Write_Decimal_Tiny `minus-1E-28`). The other standard formats are not pinned for it.
+    if n.is_zero() && orig.is_sign_negative() && !orig.is_zero() {
+        if standard == 9 {
+            return Ok("-0".to_string());
+        }
+        return Err(FormatFail::Unsupported(
+            "Format of a negative Decimal too small to show, in a standard format other than 9 (not pinned)".into(),
+        ));
+    }
     let plain = n.to_string();
     if matches!(standard, 1 | 2 | 9) {
         return Ok(plain);

@@ -226,6 +226,9 @@ pub struct QueryRun {
     /// Whether the query has run. `Open` does not run it: the first `Read` does, so a row written
     /// in between is read (query/TestQueryOuterJoinDescendingSaveAsContracts.al).
     pub started: bool,
+    /// A SetRange or SetFilter came after `Open` and before the first `Read`: `Read` raises until the query is opened again
+    /// (misc/lt-probes-needed-1/PnAQueryOpenRead.al:SetRangeBetweenOpenAndFirstRead, SetRangeBeforeOpen_ThenChangedBeforeFirstRead).
+    pub filters_changed: bool,
     /// The rows still to read, in the query's order.
     pub rows: Vec<QueryRow>,
     pub next: usize,
@@ -312,6 +315,8 @@ pub struct PageState {
     pub window_whole: bool,
     /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
     pub landing_first: bool,
+    /// The part opens with its host and reads its rows last to first, once each (see `view_names_link_field`).
+    pub read_backwards: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
     /// focus to a non-key control of a new row is what inserts it (corpus
     /// handlers/TestPageBlankKeyInsert.al:1-25).
@@ -429,6 +434,7 @@ impl PageState {
             window_eof: false,
             window_whole: false,
             landing_first: false,
+            read_backwards: false,
             focus: None,
             focus_in_row: false,
             errors: Vec::new(),

@@ -1541,3 +1541,54 @@ fn the_database_trigger_setup_is_asked_again_when_the_company_changes() {
     let log = ins(&mut b, 2);
     assert!(!log.contains("ONDATABASEINSERT"), "{log}");
 }
+
+// An IncludeSender event published by a reportextension (Base Application's "Serv. Get Source Documents" extension publishes
+// OnAfterServiceLineOnPreDataItem so; Tests-SCM-Service). What a subscriber's Sender is, is not pinned (the corpus pins a
+// report's sender and a tableextension's, not a reportextension's): the event runs for subscribers that take no sender and
+// a subscriber that asks for one is refused.
+const REPORT_EXT_SENDER: &str = r#"
+report 50300 Base { ProcessingOnly = true; UsageCategory = None; dataset { } }
+reportextension 50301 Ext extends Base
+{
+    procedure Raise(): Integer begin OnPing(5); exit(1); end;
+    [IntegrationEvent(true, false)] local procedure OnPing(Value: Integer) begin end;
+}
+codeunit 50302 Sink { SingleInstance = true; var Seen: Integer; procedure Note(V: Integer) begin Seen += V; end; procedure Get(): Integer begin exit(Seen); end; }
+"#;
+
+#[test]
+fn a_reportextension_event_with_include_sender_runs_for_a_subscriber_without_a_sender() {
+    let src = format!(
+        r#"{REPORT_EXT_SENDER}
+codeunit 50303 Sub
+{{
+    [EventSubscriber(ObjectType::Report, Report::Base, 'OnPing', '', false, false)]
+    local procedure H(Value: Integer) var S: Codeunit Sink; begin S.Note(Value); end;
+}}
+codeunit 50100 C
+{{
+    procedure F(): Integer var R: Report Base; S: Codeunit Sink; begin R.Raise(); exit(S.Get()); end;
+}}"#
+    );
+    assert_eq!(int(run(&src, "F")), 5);
+}
+
+#[test]
+fn a_reportextension_event_with_include_sender_refuses_a_subscriber_that_takes_the_sender() {
+    let src = format!(
+        r#"{REPORT_EXT_SENDER}
+codeunit 50303 Sub
+{{
+    [EventSubscriber(ObjectType::Report, Report::Base, 'OnPing', '', false, false)]
+    local procedure H(Value: Integer; Sender: Report Base) begin end;
+}}
+codeunit 50100 C
+{{
+    procedure F() var R: Report Base; begin R.Raise(); end;
+}}"#
+    );
+    match run(&src, "F") {
+        Err(Signal::Unsupported(m)) => assert!(m.contains("IncludeSender on a reportextension"), "{m}"),
+        other => panic!("expected a refusal, got {other:?}"),
+    }
+}

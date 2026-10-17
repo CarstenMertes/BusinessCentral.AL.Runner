@@ -59,7 +59,10 @@ impl Describe for Value {
                 Err(_) => "List".into(),
             },
             Value::Dictionary(d) => match d.try_borrow() {
-                Ok(d) => format!("Dictionary of {} entries", d.len()),
+                Ok(d) => format!(
+                    "Dictionary of {} entries",
+                    d.iter().filter(|(k, _)| !matches!(k, Value::Null)).count()
+                ),
                 Err(_) => "Dictionary".into(),
             },
             Value::Array(a) => match a.try_borrow() {

@@ -112,6 +112,13 @@ fn canonical_template(template: &str) -> Option<String> {
             Some((n, a)) => (n, Some(a)),
             None => (code, None),
         };
+        // `<Decimal,3>` is read as `<Decimals,3>` (types/lt-format-currency-prefix/FormatCurrencyPrefix.al:P157_NotAtStart `beforeSign`,
+        // `integerDecimal`: `1234.5` shows `1,234.50` and `1234.50`). The bare `<Decimal>` is not pinned and stays invalid.
+        let name = if name.eq_ignore_ascii_case("Decimal") && arg.is_some() {
+            "Decimals"
+        } else {
+            name
+        };
         // `Filler Char` is the short spelling Microsoft's Data Exchange tests use (assumption `format-code-spelling`).
         let known = CODE_NAMES.iter().find(|c| {
             c.eq_ignore_ascii_case(name) || (**c == "Filler Character" && name.eq_ignore_ascii_case("Filler Char"))
@@ -391,7 +398,9 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
     // `<C,GBP>`: the currency code Base Application's Amount Auto Format puts in front of a format string. Format accepts it
     // and writes nothing for it (corpus types/lt-format-currency-prefix/FormatCurrencyPrefix.al: P157_Gbp_AmountAutoFormatShape,
     // P157_Gbp_PrefixPlusOtherTags).
-    if code.starts_with("C,") && code.len() > 2 {
+    // An empty code is accepted too (`<C,>`; FormatCurrencyPrefix.al:P157_UnknownAndEmptyCurrency `empty`, `emptyOnly`).
+    // `<C>` alone reads as no code at all too (`noComma`), while `<CGBP>` is an invalid format.
+    if code.starts_with("C,") || code == "C" {
         return Ok(String::new());
     }
     if let Some(n) = numeric {

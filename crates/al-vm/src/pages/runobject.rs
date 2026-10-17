@@ -137,7 +137,11 @@ impl Session {
             }
         }
         if target_state.borrow().open {
-            return unsupported("running a page that is already open");
+            if !trapped {
+                return unsupported("running a page that is already open");
+            }
+            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TrappedPageLeftOpenIsReplaced);
+            self.mark_closed(&target_state);
         }
         target_state.borrow_mut().modal = modal;
         let record = self.run_object_record(st, &target_state, ro, mode)?;

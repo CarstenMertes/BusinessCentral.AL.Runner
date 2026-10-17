@@ -674,6 +674,29 @@ fn a_part_filter_restricts_its_own_rowset_and_reads_back() {
     assert_eq!(text(r), "10..20[]2,4,|3,1,4,");
 }
 
+// TestFilter.SetFilter with an empty text takes the filter off the field, as Record.SetFilter and FieldRef.SetFilter do
+// (errors/lt-ms-refusals-134/P134DateTextFilters.al:P134_FieldRef_Date_EmptyAndBlankForms pins FieldRef; for a page filter it is an
+// assumption, testfilter-setfilter-empty-clears).
+#[test]
+fn an_empty_page_filter_text_clears_the_filter_of_the_field() {
+    let r = run(
+        &format!(
+            "procedure F(): Text var R: Record \"PT Rank\"; H: TestPage \"PT View Host\"; T: Text; begin
+                {RANKS}
+                H.OpenView();
+                H.Plain.Filter.SetFilter(Rank, '10..20');
+                H.Plain.Filter.SetFilter(Rank, '');
+                T := '[' + H.Plain.Filter.GetFilter(Rank) + ']';
+                if H.Plain.First() then repeat T += H.Plain.Entry.Value() + ','; until not H.Plain.Next();
+                H.Close();
+                exit(T);
+            end;"
+        ),
+        "F",
+    );
+    assert_eq!(text(r), "[]1,2,3,4,");
+}
+
 // handlers/TestPageTempPart_Host.al: the host's OnOpenPage reaches the part page it shows through
 // CurrPage.<Part>.Page, so the part page exists before the host's own triggers run, and the part's
 // OnOpenPage runs after the host's.
@@ -908,4 +931,61 @@ fn set_value_written_as_an_assignment_is_the_call() {
         "F",
     );
     assert_eq!(text(r), "viaassign");
+}
+
+// misc/lt-probes-needed-7/PnGPartTriggers.al:OpenOrderOfHostWithSixParts (17 part reads) and pages/lt-part-reads/PartReadsOpen.al:
+// OpenView_SixParts_ReadsPerPartLogged (`open-Same`, 3 rows read 30000, 20000, 10000, count 4 with OnOpenPage): a part whose SubPageView
+// restricts the field its SubPageLink names reads its rows once each, last to first, when the host opens; every other part reads
+// its rows and then the first row again.
+#[test]
+fn a_part_viewing_its_linked_field_reads_its_rows_backwards_once_at_open() {
+    let mut objs = String::from(
+        "table 52000 \"SX Line\" { fields { field(1; \"Head Code\"; Code[10]) { } field(2; \"Line No.\"; Integer) { } } keys { key(PK; \"Head Code\", \"Line No.\") { } } }
+         table 52001 \"SX Head\" { fields { field(1; \"Code\"; Code[10]) { } } keys { key(PK; \"Code\") { } } }
+         codeunit 52002 \"SX Log\" { SingleInstance = true; var T: Text; procedure Add(s: Text) begin T += s + ';'; end; procedure Dump(): Text begin exit(T); end; }
+",
+    );
+    for i in 1..=6 {
+        objs += &format!(
+            "page {} \"SX Part {i}\" {{ PageType = ListPart; SourceTable = \"SX Line\"; layout {{ area(Content) {{ repeater(R) {{ field(H; Rec.\"Head Code\") {{ }} field(L; Rec.\"Line No.\") {{ }} }} }} }}
+              trigger OnAfterGetRecord() var Lg: Codeunit \"SX Log\"; begin Lg.Add('P{i}/' + Format(Rec.\"Line No.\")); end; }}\n",
+            52010 + i
+        );
+    }
+    let views = [
+        "",
+        "",
+        "",
+        "",
+        "SubPageView = where(\"Line No.\" = filter('>10'));",
+        "SubPageView = where(\"Head Code\" = const('ZZZ'));",
+    ];
+    let vis = ["", "", "Enabled = false;", "Visible = Hide;", "", ""];
+    let ed = ["", "Editable = false;", "", "", "", ""];
+    let mut parts = String::new();
+    for i in 0..6 {
+        parts += &format!(
+            "part(P{}; \"SX Part {}\") {{ {} {} {} SubPageLink = \"Head Code\" = field(\"Code\"); }}\n",
+            i + 1,
+            i + 1,
+            views[i],
+            vis[i],
+            ed[i]
+        );
+    }
+    objs += &format!(
+        "page 52030 \"SX Host\" {{ PageType = Document; SourceTable = \"SX Head\"; layout {{ area(Content) {{ field(C; Rec.\"Code\") {{ }} {parts} }} }} var Hide: Boolean; }}\n"
+    );
+    let src = format!(
+        "{objs}\ncodeunit 52100 C {{ procedure F(): Text var H: Record \"SX Head\"; L: Record \"SX Line\"; Pg: TestPage \"SX Host\"; Lg: Codeunit \"SX Log\"; begin H.Code := 'D1'; H.Insert(); L.\"Head Code\" := 'D1'; L.\"Line No.\" := 10000; L.Insert(); L.\"Line No.\" := 20000; L.Insert(); Pg.OpenEdit(); exit(Lg.Dump()); end; }}"
+    );
+    let l = al_testkit::compile(&src);
+    let oi = l.program.objects.iter().position(|o| o.name == "C").unwrap();
+    let mut s = al_testkit::session(l);
+    let inst = s.instance(oi);
+    let r = s.call(oi, 0, inst, vec![]).map(|(v, _)| v);
+    assert_eq!(
+        text(r),
+        "P1/10000;P1/20000;P1/10000;P2/10000;P2/20000;P2/10000;P3/10000;P3/20000;P3/10000;P4/10000;P4/20000;P4/10000;P5/10000;P5/20000;P5/10000;P6/20000;P6/10000;"
+    );
 }

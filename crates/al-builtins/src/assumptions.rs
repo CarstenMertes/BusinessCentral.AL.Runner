@@ -265,6 +265,18 @@ registry! {
         tests: "Pages with SaveValues and page extensions in the buckets.",
         probe: "A SaveValues page extended by a control bound to a variable and by one bound to a field.",
     },
+    TrappedPageLeftOpenIsReplaced => {
+        id: "trapped-testpage-left-open-is-replaced",
+        assumed: "A TestPage variable that trapped a page and was left open (never closed) can trap the next Page.Run or RunObject of its page: the new page replaces the open one, whose close triggers do not run.",
+        tests: "Library - Error Message keeps one TestPage \"Error Messages\" in a codeunit variable, traps it in every VerifyDimErrors and never closes it; Tests-Misc Check Dimensions On Posting (35 tests) trap it again in the next test of the codeunit.",
+        probe: "A codeunit with a TestPage variable that Trap()s and runs a page in test one and leaves it open; test two Trap()s the same variable and runs the page again: does it open, and do OnQueryClosePage and OnClosePage of the first page run?",
+    },
+    RunModalFieldKeptUnlessLookupOk => {
+        id: "runmodal-field-kept-unless-lookupok",
+        assumed: "Page.RunModal(Id, Rec, Field) with a handler that answers anything but LookupOK leaves the field and the record as the handler left them; only LookupOK copies the page's value into the field (a LookupOK answer is refused).",
+        tests: "Segment Line.RunCreateInteraction (PAGE.RunModal(PAGE::\"Create Interaction\", Rec, \"Interaction Template Code\")) in Tests-Marketing: CampaignAndInteractionsLinked and about 32 more, answered by Page-typed handlers that leave Response alone.",
+        probe: "Page.RunModal(Page::P, Rec, Rec.F) with a ModalPageHandler that (a) invokes OK, (b) Cancel, (c) does nothing, (d) a Page-typed handler leaving Response; with P a card and a list in lookup mode, for LookupOK: what Rec.F holds and what the call returns.",
+    },
     SubPageLinkEmptyTerm => {
         id: "subpagelink-empty-term-selects-blank",
         assumed: "An empty const('') or filter('') term of a SubPageLink or RunPageLink selects the rows whose field is blank, as the same term of a TableRelation where() does (pinned there, not for links).",
@@ -282,12 +294,6 @@ registry! {
         assumed: "A Date assigned or converted to a DateTime is that day at midnight; the blank Date is the blank DateTime.",
         tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
         probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
-    },
-    FilterTextReadAsEvaluate => {
-        id: "filter-text-read-as-evaluate",
-        assumed: "A text value of a filter on a Date field (SetFilter, SetRange with text) reads as Evaluate reads the text, in the runtime's fixed region (en-US short date `01/17/27`, closing date `C01/17/27`). A formula such as 1M, a Time or DateTime text and an empty text stay refused. (A Guid filter text is pinned by types/lt-in-precedence-date-guid-filters/P143Guid_Filters.al.)",
-        tests: "about 700 tests of the Tests-SCM buckets filter dates with text built by Format.",
-        probe: "SetFilter on a Date field with Format(D), with '..' + Format(D), and with '' and '1M'; then GetFilter and Count.",
     },
     BooleanToTextAsFormat => {
         id: "boolean-to-text-as-format",
@@ -339,9 +345,9 @@ registry! {
     },
     HttpHeaderRules => {
         id: "http-header-rules",
-        assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and Accept, Authorization, Date and Content-Type values are checked; every other header .NET types (Cache-Control, Range, Via, ...) is accepted as written, and the content headers other than Content-Type and Content-Length follow the same rule as those two.",
+        assumed: "HttpHeaders.Add checks a header the way the probes measured: the name is a token (empty: Argument, otherwise Format), the value has no line break, a content header is refused on request, response and client headers, and Accept, Authorization, Date and Content-Type values are checked; every other header .NET types (Range, Via, ...) is accepted as written, and the content headers other than Content-Type and Content-Length follow the same rule as those two.",
         tests: "Every Microsoft or NP Retail test that builds a request with headers (Authorization, Accept, Content-Type, custom X- headers).",
-        probe: "network/lt-http/HttpHeaders.al covers the measured part; the case and the content-or-not of all 39 known names are pinned by network/lt-http-header-names-cache-control/HeaderNameCase*.al. Wanted: the value rules of Range, If-Match, Content-Disposition, Content-Encoding and Expires on request and content headers. The Cache-Control directive order is pinned by CacheControl*.al but not implemented yet (it stays refused).",
+        probe: "network/lt-http/HttpHeaders.al covers the measured part; the case and the content-or-not of all 39 known names are pinned by network/lt-http-header-names-cache-control/HeaderNameCase*.al. Wanted: the value rules of the typed headers other than Cache-Control (Range, If-Match, Content-Disposition, Content-Encoding, Expires and the rest) on request, response and content headers; Cache-Control (directive order, values, merging) is pinned by CacheControl*.al.",
     },
     HttpHandlerEveryVersion => {
         id: "http-handler-every-version",
@@ -391,11 +397,89 @@ registry! {
         tests: "Post Inventory Cost to G/L (PostValueEntryToGL.MarkedOnly(true); DeleteAll() in OnPostDataItem, then CapValueEntryLoop Gets the capacity entries left): SCM Kitting D3 Part 2 and SCM Costing Batch, and every test that posts inventory cost with the report.",
         probe: "Mark two of three rows, MarkedOnly(true), DeleteAll: which rows remain; the same with a filter that excludes a marked row, and DeleteAll(true) with an OnDelete trigger.",
     },
+    DateFormulaEvaluatePercentPlaceholder => {
+        id: "date-formula-evaluate-percent-placeholder",
+        assumed: "Evaluate into a DateFormula reads `<+%1D>` as CalcDate of the same text does (one day: misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al pins CalcDate only) and stores the text as typed; what Format of that DateFormula prints is not assumed anywhere.",
+        tests: "SCM Planning and SCM Planning NTF tests Initialize: Evaluate(DaysInMonthFormula, Format('<+%1D>', CalcDate('<1M>') - Today)); about 200 Tests-SCM tests.",
+        probe: "Evaluate(F, '<+%1D>') for a DateFormula: the Boolean, Format(F) and CalcDate(F, D).",
+    },
+    CalcDateClosingBracketMissingAfterPlus => {
+        id: "calcdate-closing-bracket-missing-after-plus",
+        assumed: "CalcDate of a formula that starts with `<+` and has no closing bracket (`<+6W`) reads it as the same formula with the bracket. (P146FormatCalcDate.al pins it for `<+%1D` only.)",
+        tests: "Tests-SCM tests that build a formula with Format of a text and a length: `<+6W` (13), `<+7W` (3), `<+1D` (2), `<+0D` (1).",
+        probe: "CalcDate('<+6W', D), CalcDate('<+0D', D) and CalcDate('<-1D', D) with the closing bracket missing: the date or the error text.",
+    },
+    GroupedQueryTiesInGroupingOrder => {
+        id: "grouped-query-ties-in-grouping-order",
+        assumed: "Groups of an aggregated query that tie on every OrderBy column are read in the order of the query's grouping columns (column declaration order, each ascending).",
+        tests: "Create Pick's CalcQtyInWhseEntries (OrderBy Block_Movement, ten grouping columns): SCM Extend Warehouse CheckItemAvailabilityWhenCreatingPickAndExistReservedQtyForProdOrder and the tests that create a pick for a directed put-away location; about 77 Tests-SCM tests.",
+        probe: "An aggregated query with an OrderBy on a column most groups share and several grouping columns, rows inserted in non-key order: the order of the tied groups on Read.",
+    },
+    PageGetValidationErrorNoIndex => {
+        id: "page-getvalidationerror-no-index",
+        assumed: "TestPage.GetValidationError() without an index answers the first validation error of the page, and an empty text while the page has none.",
+        tests: "SCM Item Tracking III (Job Journal, Purchase Order and Prod. Order Components pages: Assert.AreEqual('', Page.GetValidationError(), ...) and StrPos(Page.GetValidationError(), ItemTrackingExistErr) > 0); about 28 Tests-SCM tests.",
+        probe: "A TestPage with no error: GetValidationError(); after one refused SetValue and after two refused SetValues on different controls: GetValidationError() next to GetValidationError(1) and (2).",
+    },
+    ReportItemCalcFieldsNestedOrList => {
+        id: "report-dataitem-calcfields-nested-or-list",
+        assumed: "The CalcFields property of a report data item that is nested under another item, or that lists several fields, calculates every listed FlowField of each row before the row's triggers, as for a top-level item with one field (pinned by misc/lt-probes-needed-8/PnH3Link.al).",
+        tests: "Get Inbound Source Documents (CalcFields = \"Put-away Qty.\", \"Put-away Qty. (Base)\" on Posted Whse. Receipt Line): about 32 Tests-SCM tests.",
+        probe: "A report with a nested item that has CalcFields = A, B (two FlowFields), and a reportextension-added item with CalcFields: the values in OnAfterGetRecord; one name that is not a FlowField.",
+    },
+    ReportItemFilterOnLinkFieldReplaced => {
+        id: "report-item-filter-on-link-field-replaced",
+        assumed: "A filter that is on a field of a report data item's DataItemLink before the run starts (the item's DataItemTableView, or a SetTableView of the caller) is in the report's filter group, where the link's range on that field takes its place for each parent row.",
+        tests: "Get Source Documents and Whse.-Source - Create Document (the Assembly Header item: DataItemTableView where(\"Document Type\" = const(Order)) and a link on \"Document Type\"), and the Value Entry, Item Journal Line and Item Ledger Entry items of the cost reports; about 37 Tests-SCM tests.",
+        probe: "A nested item with DataItemTableView = where(G = filter(1|2)) and DataItemLink = G = field(G) over parents with G 1 to 3: which children each parent shows; the same with the filter set by SetTableView.",
+    },
+    TableRelationSeveralWhereNonKey => {
+        id: "table-relation-several-where-non-key",
+        assumed: "A TableRelation check that fails, with several where() conditions none of which is on a primary key field of the related table, raises DB:NothingInsideFilter, as one condition on a non-key field does. (A mix with key fields stays refused.)",
+        tests: "Item Blocked Test and Item Variant Blocked Test (Item where(Blocked = const(false), \"Service Blocked\" = const(false)) and the sales and purchase variants), SCM Dedicated Bins; about 26 Tests-SCM tests. They compare the message only.",
+        probe: "A relation with two non-key where() conditions and a value that fails one of them, and one that is missing: GetLastErrorCode; the same with one key and one non-key condition.",
+    },
+    EnumFromIntegerVariantEnum => {
+        id: "enum-from-integer-variant-enum",
+        assumed: "Enum.FromInteger(V) with a Variant V that holds an Enum value takes the ordinal, as an assignment of that Variant to an Integer does (pinned by B_EnumOptionVariant.al:EnumVariant_To_Integer).",
+        tests: "SCM Performance Tests ItemTrackingLinesPageHandler (\"Item Tracking Entry Type\".FromInteger(OptionValue), OptionValue dequeued from Library - Variable Storage after an enum was enqueued): 9 Tests-SCM tests.",
+        probe: "V := EnumValue; E := \"Enum\".FromInteger(V): the ordinal or the error; the same with an Option in the Variant.",
+    },
+    ForeachIntegerIntoEnum => {
+        id: "foreach-integer-into-enum",
+        assumed: "A foreach over a List of Integer whose loop variable is an Enum gives the variable the enum value of each ordinal (an ordinal the enum does not declare is kept).",
+        tests: "Email Account Impl.GetAllAccounts (`foreach Connector in Connector.Ordinals do`), which Job Planning Lines.OnInit reaches through Email Account.IsAnyAccountRegistered: SCM Fulfillment and other tests that open the Job Planning Lines page; 6 Tests-SCM tests.",
+        probe: "foreach E in E.Ordinals with E an Enum variable: Format(E) and E.AsInteger() in the body; the same with a List of Integer that holds an ordinal the enum lacks.",
+    },
+    TestFilterSetFilterEmptyClears => {
+        id: "testfilter-setfilter-empty-clears",
+        assumed: "TestFilter.SetFilter(Field, '') (a text empty or of spaces) on a page or request page filter removes the user's filter on that field, as FieldRef.SetFilter does (pinned: P134DateTextFilters.al:P134_FieldRef_Date_EmptyAndBlankForms).",
+        tests: "SCM Inventory Misc. II (Inventory Pick and Put-away \"WithAdditionalFilters\"), SCM Invt Item Tracking III, SCM Plan-Req. Wksht, SCM Inventory Journals, SCM Inventory Miscellaneous: about 17 Tests-SCM tests that clear a request page filter with an empty text.",
+        probe: "TestPage.Filter.SetFilter(F, '') and (F, ' ') after a filter on F: GetFilter(F) and the rows; the same on a request page's data item filter.",
+    },
+    PageRunRecordViewOrderApplies => {
+        id: "page-run-record-view-order-applies",
+        assumed: "Page.Run with a record on a page whose SourceTableView names an ORDER(ascending|descending): the page runs in the view's direction, as the view alone does. (P145PageRunView.al pins the view's SORTING and the record's direction when the view names none.)",
+        tests: "Pages with SourceTableView = sorting(...) order(descending), such as Item Ledger Entries, opened with a record: SCM Item Journal and SCM Warehouse tests; about 11 Tests-SCM tests.",
+        probe: "Page.Run(Page, Rec) with Rec ascending and the page's view order(descending), and the reverse: the first row the page shows.",
+    },
+    ListGoneOnlyRowWithoutUpdate => {
+        id: "list-gone-only-row-without-update",
+        assumed: "A list whose only row an action deleted, when the action did not call CurrPage.Update, shows its blank line and raises OnAfterGetCurrRecord three times, as it does after an action that called CurrPage.Update (pageupdate/TestPageUpdateGoneRow.al pins that case).",
+        tests: "Planning worksheet and requisition tests whose action deletes the only line (SCM Plan-Req. Wksht CalcPlan... from a blanket order): about 11 Tests-SCM tests.",
+        probe: "The Gone List fixture of TestPageUpdateGoneRow.al with an action that deletes the only row and does not call CurrPage.Update: the trace of OnAfterGetCurrRecord calls.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",
         tests: "Post Inventory Cost to G/L through Library - Costing and Library - Assembly PostInvtCostToGL (SCM Kitting D3 Part 1 and 2, SCM WIP Costing Production I and II, SCM Costing Batch); Check.SaveAsPdf (ERM Cash Manager, Match Bank Rec. Scenarios).",
         probe: "A report on the list saved to a temp file and to a stream on a Windows tier: the answer, the order of the triggers, File.Exists and TempBlob.Length afterwards.",
+    },
+    ReportProcedureFilterUnderRequestPage => {
+        id: "report-procedure-filter-under-request-page",
+        assumed: "A filter a procedure of the report set on a data item before a run with a request page is not in that run: the page does not show it (pinned) and the filters of the page replace it when the page closes with OK (assumed).",
+        tests: "Microsoft tests that call a report procedure which filters a data item and then RunModal the report with its request page.",
+        probe: "A report procedure RowDi.SetFilter(Code, 'B*'), RunModal with a handler that clicks OK and a report that counts the rows in OnPreDataItem and OnAfterGetRecord: are the B rows alone read?",
     },
 }
 

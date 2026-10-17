@@ -17,15 +17,15 @@ fn strip_comments(src: &str) -> String {
     let mut i = 0;
     while i < b.len() {
         match b[i] {
-            b'\'' => {
+            q @ (b'\'' | b'"') => {
                 let start = i;
                 i += 1;
-                while i < b.len() && b[i] != b'\'' && b[i] != b'\n' {
+                while i < b.len() && b[i] != q && b[i] != b'\n' {
                     i += 1;
                 }
                 i = (i + 1).min(b.len());
                 // The text of a string is blanked (same length): words inside it (`codeunit 449`) are not code.
-                out.extend(src[start..i].chars().map(|c| if c == '\'' || c == '\n' { c } else { ' ' }));
+                out.extend(src[start..i].chars().map(|c| if c == '\'' || c == '"' || c == '\n' { c } else { ' ' }));
             }
             b'/' if b.get(i + 1) == Some(&b'/') => {
                 while i < b.len() && b[i] != b'\n' {
@@ -41,7 +41,7 @@ fn strip_comments(src: &str) -> String {
             }
             _ => {
                 let start = i;
-                while i < b.len() && b[i] != b'\'' && b[i] != b'/' {
+                while i < b.len() && b[i] != b'\'' && b[i] != b'"' && b[i] != b'/' {
                     i += 1;
                 }
                 if i == start {
@@ -93,6 +93,13 @@ fn scan(src: &str) -> Vec<(u32, Vec<String>)> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_quoted_name_that_starts_with_a_number_does_not_start_a_codeunit() {
+        // Tests-Misc "6.0SP1 - VAT 1 to 1" (132517): `Codeunit::"6.0SP1 - VAT 1 to 1"` reads as the words `Codeunit 6`; 38 tests were lost.
+        let src = "codeunit 132517 \"6.0SP1 - VAT 1 to 1\"\n{\n Subtype = Test;\n [Test]\n procedure A()\n begin X(Codeunit::\"6.0SP1 - VAT 1 to 1\"); end;\n [Test]\n procedure B()\n begin end;\n}\n";
+        assert_eq!(test_codeunits(src), vec![(132517, vec!["A".to_string(), "B".to_string()])]);
+    }
 
     #[test]
     fn a_string_that_says_codeunit_and_a_number_does_not_start_a_codeunit() {

@@ -7,17 +7,13 @@
 use al_testkit::{run_in, text};
 
 fn observe(body: &str) -> String {
-    let src = format!(
-        "codeunit 50100 C {{ var C5: Code[5]; C10: Code[10]; procedure F(): Text begin {body} end; }}"
-    );
+    let src = format!("codeunit 50100 C {{ var C5: Code[5]; C10: Code[10]; procedure F(): Text begin {body} end; }}");
     text(run_in(&src, "C", "F"))
 }
 
 #[test]
 fn code_values_compare_as_the_corpus_pins() {
-    let r = observe(
-        "C5 := 'abc'; C10 := 'ABC'; exit(Format(C5 = C10));",
-    );
+    let r = observe("C5 := 'abc'; C10 := 'ABC'; exit(Format(C5 = C10));");
     assert_eq!(r, "Yes", "eq");
     let r = observe(
         "C5 := 'abc'; C10 := 'abd'; exit(Format(C5 < C10) + Format(C5 > C10) + Format(C5 <= C10) + Format(C5 >= C10) + Format(C5 = 'ABC') + Format(C5 < 'abd'));",

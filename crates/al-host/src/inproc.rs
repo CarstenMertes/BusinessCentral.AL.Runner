@@ -57,6 +57,7 @@ impl DotNetHost for InprocHost {
             inner: self.inner.open_session(cfg),
             locals: HashMap::new(),
             next: LOCAL_BASE,
+            zones: HashMap::new(),
         })
     }
 }
@@ -171,6 +172,16 @@ enum Local {
         algo: Algo,
         disposed: bool,
     },
+    /// `TimeZoneInfo` from `FindSystemTimeZoneById`: the id as asked and the base offset in ticks.
+    Zone {
+        id: String,
+        base: i64,
+    },
+    /// `DateTimeOffset`: the clock time in ticks (as `.DateTime`) and the offset in ticks.
+    Offset {
+        clock: i64,
+        offset: i64,
+    },
     /// The object moved to the sidecar: its handle there.
     Forward(u64),
 }
@@ -181,6 +192,23 @@ pub struct InprocSession {
     inner: Box<dyn DotNetSession>,
     locals: HashMap<u64, Cell>,
     next: u64,
+    /// One `TimeZoneInfo` object per id (upper-cased key), as .NET caches them (reference equality is observable).
+    zones: HashMap<String, Cell>,
+}
+
+/// `DateTime.MaxValue` in ticks.
+const MAX_TICKS: i64 = 3_155_378_975_999_999_999;
+const TICKS_PER_MINUTE: i64 = 600_000_000;
+const MAX_OFFSET_TICKS: i64 = 14 * 60 * TICKS_PER_MINUTE;
+
+/// A `DateTimeOffset` when .NET would accept the arguments; `None` leaves the call (and its exception) to the sidecar.
+fn offset_of(clock: i64, offset: i64) -> Option<Local> {
+    let utc = clock.checked_sub(offset)?;
+    let ok = (0..=MAX_TICKS).contains(&clock)
+        && (0..=MAX_TICKS).contains(&utc)
+        && offset % TICKS_PER_MINUTE == 0
+        && offset.abs() <= MAX_OFFSET_TICKS;
+    ok.then_some(Local::Offset { clock, offset })
 }
 
 type Reply = Result<DotNetReply, DotNetFailure>;
@@ -406,6 +434,24 @@ impl InprocSession {
                 _ => None,
             };
         }
+        if is_static(target, "System.TimeZoneInfo") && member == "FindSystemTimeZoneById" && vals.len() == 1 {
+            let DotNetValue::Str(id) = vals[0] else { return None };
+            // .NET caches by id, ignoring case: a second lookup in another case finds the same object.
+            if let Some(cell) = self.zones.get(&id.to_ascii_uppercase()).cloned() {
+                return Some(self.alias(&cell, "System.TimeZoneInfo"));
+            }
+            let base = crate::tz::base_utc_offset_ticks(id)?;
+            let reply = self.make(Local::Zone { id: id.clone(), base }, "System.TimeZoneInfo");
+            if let Ok(DotNetReply {
+                value: DotNetValue::Handle { handle, .. },
+                ..
+            }) = &reply
+            {
+                let cell = self.locals[handle].clone();
+                self.zones.insert(id.to_ascii_uppercase(), cell);
+            }
+            return Some(reply);
+        }
         if is_static(target, "System.Security.Cryptography.HashAlgorithm") && member == "Create" && vals.len() == 1 {
             let DotNetValue::Str(name) = vals[0] else { return None };
             let algo = Algo::of(name)?;
@@ -418,6 +464,7 @@ impl InprocSession {
         enum Act {
             Reply(DotNetValue),
             Alias(&'static str),
+            Fresh(Local, &'static str),
             Bytes(Vec<u8>),
             Void,
         }
@@ -494,6 +541,18 @@ impl InprocSession {
                     }
                     _ => return None,
                 },
+                Local::Zone { base, .. } => match (member, vals) {
+                    ("BaseUtcOffset", []) => Act::Reply(DotNetValue::TimeSpan(*base)),
+                    _ => return None,
+                },
+                Local::Offset { clock, offset } => match (member, vals) {
+                    ("Offset", []) => Act::Reply(DotNetValue::TimeSpan(*offset)),
+                    ("DateTime", []) => Act::Reply(DotNetValue::DateTime(*clock)),
+                    // The session's local time zone is UTC (ADR-014 section 9): the local time is the UTC time.
+                    ("LocalDateTime", []) => Act::Reply(DotNetValue::DateTime(*clock - *offset)),
+                    ("ToLocalTime", []) => Act::Fresh(offset_of(*clock - *offset, 0)?, "System.DateTimeOffset"),
+                    _ => return None,
+                },
                 Local::Forward(_) => return None,
             }
         };
@@ -501,6 +560,7 @@ impl InprocSession {
             Act::Reply(v) => Ok(DotNetReply::value(v)),
             Act::Alias(ty) => self.alias(cell, ty),
             Act::Bytes(b) => self.bytes_reply(b),
+            Act::Fresh(state, ty) => self.make(state, ty),
             Act::Void => Ok(DotNetReply::value(DotNetValue::Null)),
         })
     }
@@ -523,6 +583,15 @@ impl InprocSession {
                 DotNetTarget::Static(net_type("System.Text.Encoding")),
                 e.member(),
                 vec![],
+            ),
+            Local::Zone { id, .. } => self.inner.invoke(
+                DotNetTarget::Static(net_type("System.TimeZoneInfo")),
+                "FindSystemTimeZoneById",
+                vec![arg(DotNetValue::Str(id.clone()))],
+            ),
+            Local::Offset { clock, offset } => self.inner.construct(
+                &net_type("System.DateTimeOffset"),
+                vec![arg(DotNetValue::Int64(*clock)), arg(DotNetValue::TimeSpan(*offset))],
             ),
             Local::Hash { algo, .. } => self.inner.invoke(
                 DotNetTarget::Static(net_type("System.Security.Cryptography.HashAlgorithm")),
@@ -583,6 +652,17 @@ impl DotNetSession for InprocSession {
                     return self.make(Local::Builder(String::new()), "System.Text.StringBuilder");
                 }
                 _ => {}
+            }
+        }
+        if ty.name == "System.DateTimeOffset" {
+            let state = match args.iter().map(|a| &a.value).collect::<Vec<_>>().as_slice() {
+                // `DateTimeOffset(DateTime)`: a clock time of unspecified kind is local time, and local is UTC.
+                [DotNetValue::DateTime(t)] => offset_of(*t, 0),
+                [DotNetValue::Int64(t), DotNetValue::TimeSpan(o)] => offset_of(*t, *o),
+                _ => None,
+            };
+            if let Some(state) = state {
+                return self.make(state, "System.DateTimeOffset");
             }
         }
         let args = self.args_out(args)?;
@@ -682,6 +762,7 @@ mod tests {
             inner: Box::new(Stub(seen.clone())),
             locals: HashMap::new(),
             next: LOCAL_BASE,
+            zones: HashMap::new(),
         };
         (s, seen)
     }
@@ -760,6 +841,70 @@ mod tests {
         assert!(seen.lock().unwrap().is_empty(), "forwarded: {:?}", seen.lock().unwrap());
         // The list names every one of them (and the properties and constructors the calls above stand for).
         assert!(listed().len() >= 20, "{:?}", listed());
+    }
+
+    #[test]
+    fn time_zone_and_offset_members_are_answered_without_the_sidecar() {
+        let (mut s, seen) = session();
+        let tz = handle_of(s.invoke(
+            DotNetTarget::Static(net_type("System.TimeZoneInfo")),
+            "FindSystemTimeZoneById",
+            vec![arg(DotNetValue::Str("W. Europe Standard Time".into()))],
+        ));
+        let base = s.get_property(DotNetTarget::Instance(tz), "BaseUtcOffset").unwrap();
+        assert_eq!(base.value, DotNetValue::TimeSpan(36_000_000_000));
+        let dto = handle_of(s.construct(
+            &net_type("System.DateTimeOffset"),
+            vec![arg(DotNetValue::DateTime(1_000_000))],
+        ));
+        let me = DotNetTarget::Instance(dto);
+        assert_eq!(
+            s.get_property(me.clone(), "Offset").unwrap().value,
+            DotNetValue::TimeSpan(0)
+        );
+        assert_eq!(
+            s.get_property(me.clone(), "LocalDateTime").unwrap().value,
+            DotNetValue::DateTime(1_000_000)
+        );
+        assert_eq!(
+            s.get_property(me.clone(), "DateTime").unwrap().value,
+            DotNetValue::DateTime(1_000_000)
+        );
+        assert!(s.invoke(me, "ToLocalTime", vec![]).is_ok());
+        let two = handle_of(s.construct(
+            &net_type("System.DateTimeOffset"),
+            vec![
+                arg(DotNetValue::Int64(900_000_000_000)),
+                arg(DotNetValue::TimeSpan(36_000_000_000)),
+            ],
+        ));
+        assert_eq!(
+            s.get_property(DotNetTarget::Instance(two), "LocalDateTime")
+                .unwrap()
+                .value,
+            DotNetValue::DateTime(864_000_000_000)
+        );
+        assert!(seen.lock().unwrap().is_empty(), "forwarded: {:?}", seen.lock().unwrap());
+    }
+
+    #[test]
+    fn what_the_stand_in_cannot_know_goes_to_the_sidecar() {
+        let (mut s, seen) = session();
+        // An id outside the table; an offset that is not whole minutes; ticks that leave the DateTime range.
+        let _ = s.invoke(
+            DotNetTarget::Static(net_type("System.TimeZoneInfo")),
+            "FindSystemTimeZoneById",
+            vec![arg(DotNetValue::Str("Nowhere Standard Time".into()))],
+        );
+        let _ = s.construct(
+            &net_type("System.DateTimeOffset"),
+            vec![arg(DotNetValue::Int64(5)), arg(DotNetValue::TimeSpan(10))],
+        );
+        let _ = s.construct(
+            &net_type("System.DateTimeOffset"),
+            vec![arg(DotNetValue::Int64(5)), arg(DotNetValue::TimeSpan(36_000_000_000))],
+        );
+        assert_eq!(seen.lock().unwrap().len(), 3, "{:?}", seen.lock().unwrap());
     }
 
     #[test]

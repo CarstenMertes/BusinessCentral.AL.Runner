@@ -203,6 +203,39 @@ impl Session {
     /// populates a new window). The window is 20 rows: the corpus pins it only between 20 and 24.
     pub(super) const WINDOW: usize = 20;
 
+    /// The window of a part that reads its rows last to first, once each, without reading the first row again. Pinned
+    /// for 2 and 3 rows (pages/lt-part-reads/PartReadsOpen.al:OpenView_SixParts_ReadsPerPartLogged `open-Same`;
+    /// misc/lt-probes-needed-7/PnGPartTriggers.al:OpenOrderOfHostWithSixParts); one row or more than 3 is refused.
+    fn populate_window_backwards(&mut self, st: &St, start: Vec<Value>) -> Result<(), Signal> {
+        let rec = self.page_rec(st);
+        let mut rows: Vec<al_builtins::value::WindowRow> = Vec::new();
+        loop {
+            let key = self.row_key(&rec)?;
+            let stored = rec.borrow().fields.clone();
+            rows.push(al_builtins::value::WindowRow { key, stored: stored.clone(), shown: stored });
+            if rows.len() > 3 || !self.nav_next(st, 1)? {
+                break;
+            }
+        }
+        if rows.len() == 1 || rows.len() > 3 {
+            return unsupported(
+                "a part viewing its linked field with a number of rows other than 2 or 3 (reads not pinned)",
+            );
+        }
+        for row in rows.iter_mut().rev() {
+            rec.borrow_mut().fields = row.stored.clone();
+            self.populate_current(st)?;
+            row.shown = rec.borrow().fields.clone();
+        }
+        self.ret_used = true;
+        self.record_op(RecordOp::Get, &rec, &mut start.clone())?;
+        rec.borrow_mut().fields = rows[0].shown.clone();
+        let first_stored = rows[0].stored.clone();
+        self.set_xrec_fields(st, first_stored);
+        st.borrow_mut().window = rows;
+        Ok(())
+    }
+
     pub(super) fn populate_window(&mut self, st: &St) -> Result<(), Signal> {
         st.borrow_mut().window_from_start = false;
         st.borrow_mut().window_eof = false;
@@ -213,6 +246,9 @@ impl Session {
         let mut walked = 0;
         let mut end_reached = false;
         let opening = std::mem::take(&mut st.borrow_mut().landing_first);
+        if std::mem::take(&mut st.borrow_mut().read_backwards) {
+            return self.populate_window_backwards(st, start);
+        }
         for i in 0..Self::WINDOW {
             let key = self.row_key(&rec)?;
             let stored = rec.borrow().fields.clone();

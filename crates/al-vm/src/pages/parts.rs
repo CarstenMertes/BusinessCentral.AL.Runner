@@ -259,11 +259,54 @@ impl Session {
         for pass in [false, true] {
             for (i, child) in &parts {
                 if has_provider(*i) == pass {
+                    if opening && self.view_names_link_field(st, *i, child)? {
+                        child.borrow_mut().read_backwards = true;
+                    }
                     self.sync_part(st, *i, child)?;
                 }
             }
         }
         Ok(())
+    }
+
+    /// Whether the part control's SubPageView restricts, with a `const` condition, a field its SubPageLink also names.
+    /// Such a part reads its rows last to first, once each, when the host opens (pages/lt-part-reads/PartReadsOpen.al:
+    /// OpenView_SixParts_ReadsPerPartLogged `open-Same`, 3 rows; misc/lt-probes-needed-7/PnGPartTriggers.al:
+    /// OpenOrderOfHostWithSixParts, 2 rows). Only `const` on a linked field is pinned: another condition on a linked field
+    /// is refused, since the reads it gives are not known.
+    fn view_names_link_field(&self, host: &St, control: usize, child: &St) -> Result<bool, Signal> {
+        let engine = self.engine();
+        let page = page_of(&engine, host);
+        let Some(link) = page.controls[control].part_link.as_ref() else {
+            return Ok(false);
+        };
+        let Some(view) = link.view.as_ref() else {
+            return Ok(false);
+        };
+        if !self.has_source(child) {
+            return Ok(false);
+        }
+        let table = self.table(&self.page_rec(child))?;
+        let view = view.to_ascii_lowercase();
+        let mut found = false;
+        for entry in &link.entries {
+            let ir::LinkEntry::Field(pf, _) = entry else { continue };
+            let name = table.fields[*pf].name.to_ascii_lowercase();
+            for form in [format!("\"{name}\""), name.clone()] {
+                let Some(at) = view.find(&format!("{form} =")).or_else(|| view.find(&format!("{form}="))) else {
+                    continue;
+                };
+                let after = view[at + form.len()..].trim_start().trim_start_matches('=').trim_start();
+                if !after.starts_with("const(") {
+                    return unsupported(format!(
+                        "a SubPageView condition other than const on the linked field {name} (not pinned)"
+                    ));
+                }
+                found = true;
+                break;
+            }
+        }
+        Ok(found)
     }
 
     /// After part `child` moved, the parts that take their link from it follow.

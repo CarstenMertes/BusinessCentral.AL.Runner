@@ -473,6 +473,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Xmlport.Filename#1", vm_only),
     ("Xmlport.CurrentPath#1", vm_only),
     ("Xmlport.Break#1", vm_only),
+    ("Xmlport.Skip#1", vm_only),
     ("Xmlport.BreakUnbound#1", vm_only),
     ("Xmlport.Quit#1", vm_only),
     // Report runs execute triggers and write records: the VM runs them (al-vm reports.rs). The

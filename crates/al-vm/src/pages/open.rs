@@ -268,21 +268,7 @@ impl Session {
                 return Ok(());
             }
             let new_line = has_source && self.offers_new_line(st)?;
-            // A temporary record handed to a modal list with no filter opens it without the blank line, and a first edit
-            // brings the line (corpus record/lt-loadfields-pagesource-validate/P81PageTempSource.al: RunModal_TempRecord_ShowsTempRows
-            // rows T1..T3 and no blank; RunModal_TempRecord_EditWritesToTemp a blank row after an edit; RunModal_TempRecord_WithFilter
-            // and PageRun_TempRecord_NonModal a blank row). Why the filter matters is not known (docs/probes-needed.md).
-            let held_back = new_line
-                && record.is_some()
-                && st.borrow().modal
-                && !self.page_prop_true(st, "SourceTableTemporary")
-                && {
-                    let rec = self.page_rec(st);
-                    let r = rec.borrow();
-                    r.temporary && r.filters.is_empty()
-                };
-            st.borrow_mut().new_line = new_line && !held_back;
-            st.borrow_mut().new_line_on_edit = held_back;
+            st.borrow_mut().new_line = new_line;
             // Visible is evaluated once, at open.
             let mut frozen = Vec::new();
             for i in 0..page.controls.len() {
@@ -963,16 +949,5 @@ impl Session {
         };
         rec.borrow_mut().fields[last] = ops::convert(Value::Decimal(number), &ty)?;
         Ok(())
-    }
-}
-
-impl Session {
-    fn page_prop_true(&self, st: &St, name: &str) -> bool {
-        let engine = self.engine();
-        let object = st.borrow().object as usize;
-        engine.program.objects[object]
-            .properties
-            .iter()
-            .any(|(k, v)| k.eq_ignore_ascii_case(name) && v.trim().eq_ignore_ascii_case("true"))
     }
 }

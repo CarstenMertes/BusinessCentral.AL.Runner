@@ -294,8 +294,6 @@ pub struct PageState {
     pub cursor: Cursor,
     /// The page offers the trailing new-row line.
     pub new_line: bool,
-    /// The new-row line is held back until a control of the page is edited (a temporary record handed to a modal list without a filter).
-    pub new_line_on_edit: bool,
     /// The cursor stands on a row that is not stored yet (OpenNew, New).
     pub draft: bool,
     /// Fields written by the client since the row was loaded.
@@ -412,7 +410,6 @@ impl PageState {
             instance: None,
             cursor: Cursor::None,
             new_line: false,
-            new_line_on_edit: false,
             draft: false,
             dirty: false,
             frozen_visible: Vec::new(),

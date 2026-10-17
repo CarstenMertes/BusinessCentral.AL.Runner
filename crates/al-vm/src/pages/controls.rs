@@ -285,12 +285,7 @@ impl Session {
         // name control calls SaveRecord from OnValidate on a DelayedInsert page; Tests-SCM-Planning
         // OrderTrackingForCalcRegenPlanSalesUsingForecastLFLItem).
         if rec_bound {
-            let mut s = st.borrow_mut();
-            s.dirty = true;
-            if s.new_line_on_edit {
-                s.new_line = true;
-                s.new_line_on_edit = false;
-            }
+            st.borrow_mut().dirty = true;
         }
         let result = (|| -> Result<(), Signal> {
             match ctl.binding.clone() {

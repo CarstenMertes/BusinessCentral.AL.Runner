@@ -739,9 +739,13 @@ impl Session {
         if aggregated && k > 0 {
             for w in rows.windows(2) {
                 if key_cmp(&w[0].key[..k], &w[1].key[..k], &dirs) == Ordering::Equal {
-                    return unsupported(
-                        "rows that tie on every OrderBy column in a grouped query (their order is not pinned)",
+                    // Microsoft's own queries do this (Create Pick's CalcQtyInWhseEntries orders by one Option column
+                    // and groups by ten): the groups stay in the order of their grouping columns, which
+                    // `group_rows` produced and the stable sort kept. Not pinned: an assumption.
+                    al_builtins::assumptions::assume(
+                        al_builtins::assumptions::Assumption::GroupedQueryTiesInGroupingOrder,
                     );
+                    break;
                 }
             }
         }

@@ -256,6 +256,32 @@ codeunit 69342 C
     ));
 }
 
+// A failing TableRelation check with several where() conditions, none on a primary key field of the related table, answers
+// DB:NothingInsideFilter like one condition on a non-key field does (record/lt-relation-where-empty-term/RelationWhereEmptyTerm.al:173-177);
+// the several-condition form is an assumption (table-relation-several-where-non-key). A mix of key and non-key conditions stays refused.
+#[test]
+fn a_failing_relation_with_several_non_key_conditions_answers_nothing_inside_filter() {
+    let src = r#"
+table 69345 "Itm" { fields { field(1; No; Code[10]) { } field(2; Blocked; Boolean) { } field(3; SBlocked; Boolean) { } } keys { key(PK; No) { } } }
+table 69346 "Ln"
+{
+    fields { field(1; Id; Integer) { } field(2; ItemNo; Code[10]) { TableRelation = Itm.No where(Blocked = const(false), SBlocked = const(false)); } }
+    keys { key(PK; Id) { } }
+}
+codeunit 69347 C
+{
+    procedure F(): Text
+    var I: Record Itm; L: Record Ln;
+    begin
+        I.No := 'A'; I.Blocked := true; I.Insert();
+        asserterror L.Validate(ItemNo, 'A');
+        exit(GetLastErrorCode());
+    end;
+}
+"#;
+    assert_eq!(text(run(src, "F")), "DB:NothingInsideFilter");
+}
+
 #[test]
 fn get_takes_a_record_id() {
     let src = r#"

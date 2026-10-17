@@ -1521,13 +1521,16 @@ fn after_a_report_under_none_a_direct_write_is_refused_again() {
     );
 }
 
-// How a filter on a field that a DataItemLink joins combines with the link is not pinned.
+// How a filter on a field that a DataItemLink joins combines with the link is an assumption
+// (report-item-filter-on-link-field-replaced); the report runs (see report_link_filter.rs for the rows).
 #[test]
-fn a_filter_on_a_field_the_data_item_link_joins_is_refused() {
-    let why = refusal(
-        "var H: Codeunit Helpers; begin H.Seed(); Report.Run(Report::\"MX Link Filter\", false, false); exit('ran'); end;",
+fn a_filter_on_a_field_the_data_item_link_joins_runs_on_an_assumption() {
+    assert_eq!(
+        f(
+            "var H: Codeunit Helpers; begin H.Seed(); Report.Run(Report::\"MX Link Filter\", false, false); exit('ran'); end;"
+        ),
+        "ran"
     );
-    assert!(why.contains("DataItemLink joins"), "{why}");
 }
 
 // ---------------------------------------------------------------- CurrReport.Language and FormatRegion

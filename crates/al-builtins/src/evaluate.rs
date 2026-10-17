@@ -723,6 +723,13 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
             crate::datefns::Evaluated::Stored(f) => Parsed::Value(Value::DateFormula(f)),
             crate::datefns::Evaluated::Rejected => Parsed::Rejected,
         },
+        // A RecordId reads the text `Format` gives: a table name and its key, in any case, with format 0 and 9; the
+        // empty text is a blank RecordId, a table name alone is that table with no key, anything else is rejected
+        // (errors/lt-ms-refusals-128/P128EvalRecordId.al).
+        Value::Library(crate::library_kind::LibraryKind::RecordId, _) => match c.evaluate_record_id(&text)? {
+            Some(v) => Parsed::Value(v),
+            None => Parsed::Rejected,
+        },
         other => return unsupported(format!("Evaluate into {} (not pinned by the corpus)", other.describe())),
     };
     match parsed {

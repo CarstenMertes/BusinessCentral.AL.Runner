@@ -1213,6 +1213,68 @@ impl Session {
         )
     }
 
+    /// `Evaluate` into a RecordId (errors/lt-ms-refusals-128/P128EvalRecordId.al, `Eval*` procedures): the text is
+    /// `Table name: key` (name in any case, blanks around the key allowed or not), a table name alone, or empty.
+    /// Pinned for tables with a single Code or Integer key field. Anything past that is refused, not guessed.
+    pub(crate) fn evaluate_record_id(&mut self, text: &str) -> Result<Option<Value>, Signal> {
+        if text.is_empty() {
+            return Ok(Some(Value::Library(
+                "RecordId".into(),
+                Rc::new(RefCell::new(al_builtins::value::LibraryValue::Empty)),
+            )));
+        }
+        let (name, key_text) = match text.split_once(':') {
+            Some((n, k)) => (n, Some(k)),
+            None => (text, None),
+        };
+        let objects = &self.engine.program.objects;
+        let Some(index) = objects
+            .iter()
+            .position(|o| o.is_kind(al_ir::ObjKind::Table) && o.table.is_some() && o.name.eq_ignore_ascii_case(name))
+        else {
+            return Ok(None);
+        };
+        let Some(t) = self.engine.tables.get(index).cloned().flatten() else {
+            return unsupported(format!("Evaluate into a RecordId of table `{name}`, which has no compiled schema"));
+        };
+        let key = match key_text {
+            None => Vec::new(),
+            Some(k) => {
+                let k = k.strip_prefix(' ').unwrap_or(k);
+                if t.keys[0].len() != 1 {
+                    return unsupported(format!(
+                        "Evaluate into a RecordId of table `{}` with a primary key of {} fields (only a single-field key is pinned)",
+                        t.name,
+                        t.keys[0].len()
+                    ));
+                }
+                let ty = &t.fields[t.keys[0][0]].ty;
+                match ty {
+                    RtType::Code(_) => vec![ops::convert(Value::Text(k.into()), ty)?],
+                    RtType::Integer => match self.parse_filter_text(k, ty) {
+                        Ok(al_builtins::filter::FilterExpr::Eq(v)) if !k.is_empty() => vec![v],
+                        _ => return Ok(None),
+                    },
+                    _ => {
+                        return unsupported(format!(
+                            "Evaluate into a RecordId of table `{}` whose key field is not a Code or Integer (not pinned)",
+                            t.name
+                        ));
+                    }
+                }
+            }
+        };
+        Ok(Some(Value::Library(
+            "RecordId".into(),
+            Rc::new(RefCell::new(al_builtins::value::LibraryValue::RecordId {
+                table: index as u32,
+                table_no: objects[index].id.unwrap_or(0),
+                name: t.name.clone(),
+                key,
+            })),
+        )))
+    }
+
     /// `FieldError(Field [, Text])`. With a text: `<caption> <text> in <table> <key>.`; without:
     /// `<caption> must not be <value> in <table> <key>.` The key is `Name='value'` pairs joined by
     /// commas, no colon after the table (corpus record/TestRecordRuntimeTextsAndViews.al:

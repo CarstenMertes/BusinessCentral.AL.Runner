@@ -174,6 +174,11 @@ pub trait Ctx: FormatCtx {
     fn enum_captions(&self, _id: u32) -> Vec<(i32, String)> {
         Vec::new()
     }
+    /// `Evaluate` into a RecordId: the value `text` (`Table name: key`) names, `None` when the text is not
+    /// one (the call answers false).
+    fn evaluate_record_id(&mut self, _text: &str) -> Result<Option<Value>, Signal> {
+        Err(Signal::Unsupported("Evaluate into RecordId needs a program".into()))
+    }
     /// Builtins that read or change session state (number sequences, the transaction state): the
     /// VM implements them. `id` is the catalog overload id (`NumberSequence.Next#1`); `args` holds
     /// the call's arguments, with `var` parameters written back in place.

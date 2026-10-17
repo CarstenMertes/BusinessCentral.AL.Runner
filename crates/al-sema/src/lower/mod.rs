@@ -334,10 +334,12 @@ pub(crate) fn is_stmt(k: SyntaxKind) -> bool {
 /// - `TestHttpResponseMessage.HttpStatusCode`, `.ReasonPhrase`, `.IsBlockedByEnvironment`, `.IsSuccessfulRequest` and
 ///   `HttpClient.Timeout`: the HTTP probes (PZHttpHandler.al; network/lt-http/HttpClient.al, TestHttpMessages.al).
 /// - `File.TextMode`, `File.WriteMode`: Base Application's "Export Consolidation" report.
+/// - `FilterPageBuilder.PageCaption`: the call form is pinned by filterpage/TestFilterPageBuilder.al:600.
 fn is_property_setter(receiver: &str, name: &str) -> bool {
     matches!(
         (receiver, name),
         ("FieldRef" | "TestField", "Value")
+            | ("FilterPageBuilder", "PageCaption")
             | ("InStream" | "OutStream", "Position")
             | ("Page", "Editable" | "PromptMode" | "Caption" | "LookupMode")
             | ("RequestPage", "Caption")

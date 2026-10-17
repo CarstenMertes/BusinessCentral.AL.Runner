@@ -777,7 +777,16 @@ impl Session {
         }
         if let ir::Place::Field(base, pos) = p {
             let ty = self.place_type(p, f);
-            let v = ops::convert(v, &ty)?;
+            // A number a Variant holds goes into a Text or Code field as its Format text (the lowering leaves it unconverted for
+            // that); the guard is one test on the common path.
+            let v = if matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
+                match ops::number_into_text_field(&v, &ty) {
+                    Some(r) => r?,
+                    None => ops::convert(v, &ty)?,
+                }
+            } else {
+                ops::convert(v, &ty)?
+            };
             return match self.read(base, f)? {
                 Value::Record(rc) => {
                     self.connection_check(&rc)?;

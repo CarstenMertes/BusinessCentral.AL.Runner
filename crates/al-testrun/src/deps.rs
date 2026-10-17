@@ -50,6 +50,8 @@ pub struct Provision {
     /// Extracted artifacts on disk (`~/.bcartifacts.cache/sandbox`), see
     /// [`al_deps::artifact::Fetch::local_artifacts`].
     pub local_artifacts: Option<PathBuf>,
+    /// `--country` (lower case); empty or `w1`: the platform artifact's Microsoft apps (ADR-020 amendment).
+    pub country: String,
 }
 
 fn app_json(dir: &Path) -> Result<AppJson, String> {
@@ -138,6 +140,7 @@ pub fn load_project_with(
                 download: p.download,
                 query: p.query.clone(),
                 local_artifacts: p.local_artifacts.clone(),
+                country: p.country.clone(),
             };
             let got = load_with_artifacts(&req, &fetch, &HttpCdn::from_env()).map_err(|e| {
                 format!("{e}\n(pass --no-download to run without the dependency apps the artifact feed would supply)")

@@ -481,7 +481,7 @@ impl Lowerer<'_> {
         let file = self.ws.objects[declared_in].file;
         let Resolution::Found(src) = self
             .ws
-            .resolve_ref(file, ObjKind::Table, std::slice::from_ref(&f.table))
+            .resolve_ref(file, ObjKind::Table, &f.table_path)
         else {
             return Err(format!(
                 "CalcFormula source: {}",

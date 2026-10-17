@@ -531,7 +531,7 @@ impl Checker<'_> {
                 if let Ok(formula) = crate::calcformula::parse(text) {
                     if let Resolution::Found(r) =
                         self.ws
-                            .resolve_ref(decl_file, ObjKind::Table, std::slice::from_ref(&formula.table))
+                            .resolve_ref(decl_file, ObjKind::Table, &formula.table_path)
                     {
                         self.touch_schema(r);
                     }

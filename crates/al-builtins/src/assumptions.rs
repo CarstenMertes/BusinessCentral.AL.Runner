@@ -67,6 +67,12 @@ pub struct Info {
 }
 
 registry! {
+    SetViewFieldByCaption => {
+        id: "set-view-field-by-caption",
+        assumed: "SetView resolves a field name that no field has by the field's caption (GetView writes captions, so SetView(GetView()) restores the view of a table whose caption differs from the name); a name wins over a caption.",
+        tests: "Purchase Alloc. Acc. Mgt.ReplaceInheritFromParent (SetView(GetView()) on Allocation Line, whose \"Line No.\" has Caption 'Primary Key'); about 20 Tests-ERM tests.",
+        probe: "A table with field \"Line No.\" (Caption 'Primary Key'): SetView(GetView()) after SetRange on it; SetView('WHERE(Primary Key=FILTER(2))'); a caption equal to another field's name.",
+    },
     ClearAllKeepsTemporaryRows => {
         id: "clear-all-keeps-temporary-rows",
         assumed: "ClearAll() resets the fields and filters of a global temporary record but keeps its rows, as Clear(Rec) does.",

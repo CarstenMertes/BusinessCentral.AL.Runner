@@ -284,6 +284,22 @@ impl Session {
         Ok(out)
     }
 
+    /// The field a view names: by name or `Field<n>`; failing that by caption, which is what
+    /// `GetView` writes (assumption set-view-field-by-caption).
+    fn view_field(&self, t: &TableDef, name: &str) -> Result<usize, Signal> {
+        if let Some(p) = field_by_name(t, name) {
+            return Ok(p);
+        }
+        let wanted = name.trim_matches('"');
+        match (0..t.fields.len()).find(|&p| self.field_caption(t, p).eq_ignore_ascii_case(wanted)) {
+            Some(p) => {
+                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SetViewFieldByCaption);
+                Ok(p)
+            }
+            None => unsupported(format!("view field `{wanted}`")),
+        }
+    }
+
     /// `SetView`: replaces the key, the order and all filters by those of the view.
     pub(crate) fn set_view(&mut self, rec: &Rec, t: &TableDef, view: &str) -> Result<(), Signal> {
         self.set_view_in(rec, t, view, None, false, false)
@@ -319,7 +335,7 @@ impl Session {
                 "SORTING" => {
                     let wanted = inner
                         .split(',')
-                        .map(|n| field_by_name(t, n.trim()))
+                        .map(|n| self.view_field(t, n.trim()))
                         .collect::<Result<Vec<_>, _>>()?;
                     // Fields no key starts with order the rows by themselves, as SetCurrentKey does (a view that
                     // GetView wrote for such a key sets it back). Not pinned for SetView; Microsoft's tests set views
@@ -345,7 +361,7 @@ impl Session {
                         let (field, cond) = item
                             .split_once('=')
                             .ok_or_else(|| Signal::Unsupported(format!("view condition `{item}`")))?;
-                        let pos = field_by_name(t, field.trim())?;
+                        let pos = self.view_field(t, field.trim())?;
                         let cond = cond.trim();
                         let open = cond
                             .find('(')
@@ -582,15 +598,14 @@ fn split_top(s: &str, sep: char) -> Vec<&str> {
 }
 
 /// A view names a field by its name or, in the numeric form, as `Field<n>`.
-fn field_by_name(t: &TableDef, name: &str) -> Result<usize, Signal> {
+fn field_by_name(t: &TableDef, name: &str) -> Option<usize> {
     let name = name.trim_matches('"');
     if let Some(p) = t.fields.iter().position(|f| f.name.eq_ignore_ascii_case(name)) {
-        return Ok(p);
+        return Some(p);
     }
     name.strip_prefix("Field")
         .and_then(|n| n.parse::<u32>().ok())
         .and_then(|id| t.fields.iter().position(|f| f.id == id))
-        .map_or_else(|| unsupported(format!("view field `{name}`")), Ok)
 }
 
 /// The members of an enum for a text filter: the captions first, then the names (see `filter::parse_filter_with`).

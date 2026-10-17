@@ -6385,6 +6385,7 @@
 70095 DateTime_MillisecondValues
 70095 DateTime_WithMilliseconds
 70095 DateTime_ZeroMilliseconds
+70095 Date_NumbersAbove9
 70096 Format9_Values
 70096 FormatNumbers_ForOneValue
 70097 Insert_Cases
@@ -6425,6 +6426,7 @@
 70170 ReadsAfterInit
 70171 CueFieldAssertEquals
 70171 CueGroupFieldsAndSetValue
+70171 LabelValueAndCaption
 70172 AssertEqualsThroughTheControls
 70172 ReadsThroughTheControls
 70173 ShowFilterFalseCancelled
@@ -6573,6 +6575,7 @@
 70279 P147_AutoIncrement_Rename_ErrorAfterObserve
 70279 P147_AutoIncrement_Rename_RelativeText
 70296 P115_ExtensionField_Editable
+70298 P115_GridAndLabel_Editable
 70303 LoadFields_FindSet_Loop
 70303 Modify_AfterLoadingOnlyBlob_NewText
 70303 Modify_AfterLoadingOnlyFlowField
@@ -7456,6 +7459,7 @@
 71037 TextConst_To_Text_Basics
 71042 DefaultValues
 71042 Format_AllValues
+71042 Format_InvalidFormatNumbers
 71042 Format_Length
 71042 OrdinalsAndNames_Color
 71042 OrdinalsAndNames_NoZeroAndBlank
@@ -7554,12 +7558,16 @@
 71108 New_AtTheEnd
 71108 New_InTheMiddle
 71108 New_OnEmptyPage
+71109 FindField_MissWithUnusedResult
 71109 FindFirstField_Hit_And_Miss
+71109 GetValidationError_AfterFailedValidation
 71109 GetValidationError_Indexes_NoErrors
 71110 SetValue_Editable
 71110 ValueAssign_Editable
 71110 ValueAssign_NotEditable
+71110 ValueAssign_Number_FromText_And_Decimal
 71110 ValueAssign_OnViewPage
+71110 ValueAssign_ValidationError
 71111 Confirm_Unhandled
 71111 Handler_Error_Confirm
 71111 Handler_Error_Message
@@ -7649,14 +7657,17 @@
 71200 PageVar_SetRecord_Positions
 71200 PageVar_SetTableView_Filters
 71200 PageVar_SetTableView_Sorting
+71200 RunModal_CurrPageClose_Action
 71200 RunModal_List_CurrPageClose_Action
 71200 RunModal_NumberAndRecord
+71200 RunModal_NumberAndRecord_Cancel
 71200 RunModal_Number_OnCard
 71200 RunModal_UnknownPageNumber
 71200 RunModal_WithoutHandler
 71200 Run_NumberAndRecord_Modeless
 71200 Run_Number_Modeless
 71202 Caption_List_Open
+71202 Close_FromAction_Triggers
 71202 Close_TestPageClose_Triggers
 71202 Close_ThenUseTestPage
 71202 Editable_ReadInTrigger
@@ -7961,6 +7972,7 @@
 71628 P119_ExtDecimalPlaces
 71628 P119_ExtMaxValue
 71630 P119_BlankZeroField
+71630 P119_FieldState
 71630 P119_MailBadValue
 71630 P119_NotBlankMandatory
 71630 P119_ShowCaptionField
@@ -9218,6 +9230,7 @@
 73102 P113_MA_ActionsAreVisible
 73102 P113_MA_ActionsInvoke
 73102 P113_MA_ActionsWithoutSelectedRow
+73102 P113_MA_CardEditable
 73102 P113_MA_CardViewMode
 73102 P113_MA_DefaultListEditable
 73102 P113_MA_ListNavigationStillWorks
@@ -9972,10 +9985,13 @@
 73937 Find_RowOnlyAbove
 73937 Find_RowOnlyBelow
 73943 Boolean_EvaluateFromBigIntegerText
+73943 Boolean_EvaluateFromText
+73943 Boolean_FormatNumbers
 73943 Boolean_FromVariantAndCompare
 73943 Boolean_ToIntegerViaFormat
 73947 Evaluate_FromBigIntegerText
 73948 AsInteger_AndFormatTwo
+73948 Enum_FormatNumbers
 73948 Names_AndOrdinalsTable
 73948 RoundTrip_ArithmeticOnOrdinal
 73949 Field_NumbersAndEnum

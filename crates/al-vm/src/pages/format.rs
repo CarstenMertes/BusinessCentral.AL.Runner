@@ -267,14 +267,18 @@ impl Session {
                         .find(|(k, _)| k.eq_ignore_ascii_case("ExtendedDatatype"))
                         .map(|(_, v)| v.clone())
                 })
-                .or_else(|| match page_of(&self.engine(), st).controls[idx].prop("extendeddatatype") {
-                    Some(ir::PropVal::Lit(l)) => Some(l.clone()),
-                    _ => None,
-                });
+                .or_else(
+                    || match page_of(&self.engine(), st).controls[idx].prop("extendeddatatype") {
+                        Some(ir::PropVal::Lit(l)) => Some(l.clone()),
+                        _ => None,
+                    },
+                );
             if ext.is_some_and(|e| e.trim().eq_ignore_ascii_case("ratio")) {
                 match v {
                     Value::Decimal(d) if d.is_zero() => text = "0%".to_string(),
-                    Value::Decimal(_) => return unsupported("a Ratio control that shows a value other than zero (not pinned)"),
+                    Value::Decimal(_) => {
+                        return unsupported("a Ratio control that shows a value other than zero (not pinned)");
+                    }
                     _ => {}
                 }
             }

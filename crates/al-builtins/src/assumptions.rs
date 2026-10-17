@@ -109,6 +109,12 @@ registry! {
         tests: "Create Prod. Order Lines.Copy (ProdOrder.Modify after Refresh Production Order) followed by the test's Modify of the same Production Order; 4 Tests-SCM-Manufacturing tests (SCM Prod. Whse. Handling).",
         probe: "Two variables Get the same row; one Modifies with no change and Commit; the other changes a field and Modifies: accepted or DB:RecordChanged; the same after a Modify that changes a field.",
     },
+    EvaluateRecordIdCompositeKey => {
+        id: "evaluate-recordid-composite-key",
+        assumed: "Evaluate into a RecordId of a table whose primary key has several fields reads `Table: v1,v2,...` as Format writes it (a value that is empty or holds a comma is in double quotes): one value per key field, each read as Evaluate reads that field's type (a Code as written, an Integer or an Enum by its name or ordinal); a count of values other than the key's field count is rejected.",
+        tests: "Library - Error Message.LoadErrorMessages (Evaluate(TempErrorMessage.\"Record ID\", ErrorMessages.Source.Value, 9)); 36 Tests-Misc tests (Check Dimensions On Posting: Default Dimension, Sales Header, Dimension Value keys).",
+        probe: "Evaluate(Rid, Format(Rid)) and Format(Rid, 0, 9) for a table with a Code+Code key, an Enum+Code key (Sales Header), an Integer+Code+Code key (Default Dimension), a Date key part and a Code value holding a comma; the result and Rid; and too few and too many values.",
+    },
     EvaluateTimeDigitForms => {
         id: "evaluate-time-digit-forms",
         assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",

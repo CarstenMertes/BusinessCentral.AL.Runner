@@ -1241,26 +1241,75 @@ impl Session {
             None => Vec::new(),
             Some(k) => {
                 let k = k.strip_prefix(' ').unwrap_or(k);
-                if t.keys[0].len() != 1 {
-                    return unsupported(format!(
-                        "Evaluate into a RecordId of table `{}` with a primary key of {} fields (only a single-field key is pinned)",
-                        t.name,
-                        t.keys[0].len()
-                    ));
-                }
-                let ty = &t.fields[t.keys[0][0]].ty;
-                match ty {
-                    RtType::Code(_) => vec![ops::convert(Value::Text(k.into()), ty)?],
-                    RtType::Integer => match self.parse_filter_text(k, ty) {
-                        Ok(al_builtins::filter::FilterExpr::Eq(v)) if !k.is_empty() => vec![v],
-                        _ => return Ok(None),
-                    },
-                    _ => {
-                        return unsupported(format!(
-                            "Evaluate into a RecordId of table `{}` whose key field is not a Code or Integer (not pinned)",
-                            t.name
-                        ));
+                let fields = &t.keys[0];
+                if fields.len() == 1 {
+                    // Pinned: one Code or Integer key field.
+                    let ty = &t.fields[fields[0]].ty;
+                    match ty {
+                        RtType::Code(_) => vec![ops::convert(Value::Text(k.into()), ty)?],
+                        RtType::Integer => match self.parse_filter_text(k, ty) {
+                            Ok(al_builtins::filter::FilterExpr::Eq(v)) if !k.is_empty() => vec![v],
+                            _ => return Ok(None),
+                        },
+                        _ => {
+                            return unsupported(format!(
+                                "Evaluate into a RecordId of table `{}` whose key field is not a Code or Integer (not pinned)",
+                                t.name
+                            ));
+                        }
                     }
+                } else {
+                    // Not pinned: the values as Format writes them, split at the commas outside double quotes
+                    // (assumption evaluate-recordid-composite-key).
+                    let mut parts: Vec<String> = Vec::new();
+                    let mut rest = k;
+                    loop {
+                        if let Some(q) = rest.strip_prefix('"') {
+                            let Some((v, tail)) = q.split_once('"') else {
+                                return Ok(None);
+                            };
+                            parts.push(v.to_string());
+                            match tail.strip_prefix(',') {
+                                Some(more) => rest = more,
+                                None if tail.is_empty() => break,
+                                None => return Ok(None),
+                            }
+                        } else {
+                            match rest.split_once(',') {
+                                Some((v, more)) => {
+                                    parts.push(v.to_string());
+                                    rest = more;
+                                }
+                                None => {
+                                    parts.push(rest.to_string());
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                    if parts.len() != fields.len() {
+                        return Ok(None);
+                    }
+                    let mut key = Vec::new();
+                    for (v, &p) in parts.iter().zip(fields) {
+                        let ty = &t.fields[p].ty;
+                        match ty {
+                            RtType::Code(_) | RtType::Text(_) => key.push(ops::convert(Value::Text(v.as_str().into()), ty)?),
+                            RtType::Integer | RtType::Enum(..) => match self.parse_filter_text(v, ty) {
+                                Ok(al_builtins::filter::FilterExpr::Eq(x)) if !v.is_empty() => key.push(x),
+                                _ => return Ok(None),
+                            },
+                            _ => {
+                                return unsupported(format!(
+                                    "Evaluate into a RecordId of table `{}` with a key field of type {} (not pinned)",
+                                    t.name,
+                                    ty.describe()
+                                ));
+                            }
+                        }
+                    }
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::EvaluateRecordIdCompositeKey);
+                    key
                 }
             }
         };

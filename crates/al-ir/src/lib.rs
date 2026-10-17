@@ -471,6 +471,9 @@ pub struct ReportItem {
     /// `PrintOnlyIfDetail = true`: the dataset leaves out a row whose nested items wrote no row.
     #[serde(default)]
     pub print_only_if_detail: bool,
+    /// `CalcFields`: the field positions of the FlowFields calculated for each row, before the row's triggers.
+    #[serde(default)]
+    pub calc_fields: Vec<usize>,
 }
 
 /// The direction an xmlport declares (`Direction`, default `Both`).

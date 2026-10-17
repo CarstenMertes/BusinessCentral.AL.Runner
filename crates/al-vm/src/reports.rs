@@ -1235,6 +1235,15 @@ impl Session {
         let mut iterations = 0u32;
         'rows: while more {
             iterations += 1;
+            // The CalcFields property: the listed FlowFields of the row, before its triggers. Pinned for one field of a
+            // top-level item (misc/lt-probes-needed-8/PnH3Link.al:CalcFields_Property_CalculatesTheFlowField); a nested
+            // item or a list of several fields is the same on an assumption.
+            if !item.calc_fields.is_empty() {
+                if item.parent.is_some() || item.calc_fields.len() > 1 {
+                    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ReportItemCalcFieldsNestedOrList);
+                }
+                self.calc_fields(&rec, &item.calc_fields)?;
+            }
             if run.dataset {
                 self.dataset_autocalc(run, r, &rec)?;
             }

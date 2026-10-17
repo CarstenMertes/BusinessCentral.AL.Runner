@@ -403,6 +403,12 @@ registry! {
         tests: "SCM Item Tracking III (Job Journal, Purchase Order and Prod. Order Components pages: Assert.AreEqual('', Page.GetValidationError(), ...) and StrPos(Page.GetValidationError(), ItemTrackingExistErr) > 0); about 28 Tests-SCM tests.",
         probe: "A TestPage with no error: GetValidationError(); after one refused SetValue and after two refused SetValues on different controls: GetValidationError() next to GetValidationError(1) and (2).",
     },
+    ReportItemCalcFieldsNestedOrList => {
+        id: "report-dataitem-calcfields-nested-or-list",
+        assumed: "The CalcFields property of a report data item that is nested under another item, or that lists several fields, calculates every listed FlowField of each row before the row's triggers, as for a top-level item with one field (pinned by misc/lt-probes-needed-8/PnH3Link.al).",
+        tests: "Get Inbound Source Documents (CalcFields = \"Put-away Qty.\", \"Put-away Qty. (Base)\" on Posted Whse. Receipt Line): about 32 Tests-SCM tests.",
+        probe: "A report with a nested item that has CalcFields = A, B (two FlowFields), and a reportextension-added item with CalcFields: the values in OnAfterGetRecord; one name that is not a FlowField.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

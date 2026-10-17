@@ -641,7 +641,8 @@ impl Lowerer<'_> {
             // member of the implicit Rec of table, page and dataitem code (`FilterGroup := 2`).
             let implicit = !member
                 && sig.as_ref().is_some_and(|s| {
-                    !s.instance || (s.receiver == "Record" && (self.rec_slot.is_some() || self.from_with(&kids[0])))
+                    !s.instance
+                        || (s.receiver == "Record" && (self.rec_slot.is_some() || self.supplied_by_with(&kids[0])))
                 });
             if let Some(sig) = sig.filter(|_| member || implicit) {
                 // A test page control's setter form is run by the test client, not a native builtin.

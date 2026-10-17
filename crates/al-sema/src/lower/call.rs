@@ -54,7 +54,7 @@ impl Lowerer<'_> {
                     }
                     Some(_) => return Err("procedure calls on this receiver are not lowered yet".into()),
                     // A procedure of the record of a `with` statement runs on that record.
-                    None if self.from_with(node) => Some(Box::new(ir::Expr::Load(self.implicit_rec(node)?))),
+                    None if self.supplied_by_with(node) => Some(Box::new(ir::Expr::Load(self.implicit_rec(node)?))),
                     None if object == self.oi => {
                         self.declared_in_both_proc(object, offset)?;
                         None

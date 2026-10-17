@@ -27,7 +27,7 @@ impl<'a> Lowerer<'a> {
     }
 
     /// Whether a `with` statement supplied the name `n`.
-    pub(crate) fn from_with(&self, n: &SyntaxNode) -> bool {
+    pub(crate) fn supplied_by_with(&self, n: &SyntaxNode) -> bool {
         self.checked
             .resolutions
             .get(&key(self.file, n))

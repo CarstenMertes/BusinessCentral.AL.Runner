@@ -152,6 +152,10 @@ fn boolean(text: &str) -> Result<Parsed, Signal> {
     match text.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" | "1" | "t" | "y" => Ok(Parsed::Value(Value::Boolean(true))),
         "false" | "no" | "0" | "f" | "n" => Ok(Parsed::Value(Value::Boolean(false))),
+        // `1.0` reads as true (types/lt-boolean-format/Boolean_EvaluateFromText `1.0 = ok/1`); `0.0` and other numbers are not pinned.
+        t if t.strip_prefix("1.").is_some_and(|r| !r.is_empty() && r.bytes().all(|c| c == b'0')) => {
+            Ok(Parsed::Value(Value::Boolean(true)))
+        }
         _ => Ok(Parsed::Rejected),
     }
 }

@@ -7283,6 +7283,7 @@
 70777 P100_Item_FilterByHand
 70777 P100_Validate_EachKind
 70777 P100_Validate_ErrorAsserterror
+70784 P100_ArmsWithOwnWhere
 70784 P100_KindArms_A_And_B
 70784 P100_KindArms_NeitherApplies
 70784 P100_ThreeArms
@@ -7375,6 +7376,8 @@
 70876 CalcFormula_CountWhereEmptyTerms
 70876 CalcFormula_SetAutoCalcFieldsAndFilterOnFlowField
 70876 CalcFormula_SumExistLookupWithEmptySource
+70876 Relation_ErrorTextOfFailedValidate
+70876 Relation_WhereBlankFilterAndConst
 70876 Relation_WhereFieldSourceEmptyAndFilled
 70876 Relation_WhereNotBlank
 70903 P140_IntegerFormat_Compare

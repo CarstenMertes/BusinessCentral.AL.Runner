@@ -822,7 +822,9 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                     }
                     return Decimal::from(*d)
                         .checked_div(*b)
-                        .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+                        .and_then(|q| {
+                            q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero)
+                        })
                         .map(|q| V::Decimal(q.normalize()))
                         .ok_or_else(|| Signal::Unsupported("decimal overflow".into()));
                 }
@@ -1605,9 +1607,17 @@ mod tests {
     fn a_duration_divided_by_a_decimal_is_a_decimal() {
         // Microsoft's Calculate Routing Line CalcDuration divides a Time difference by CalendarMgt.TimeFactor (a Decimal);
         // the quotient need not be whole, so it cannot be a Duration (assumption duration-divided-by-decimal).
-        let q = arith(Arith::Div, &Value::Duration(26_820_000), &Value::Decimal(Decimal::from(60_000)));
+        let q = arith(
+            Arith::Div,
+            &Value::Duration(26_820_000),
+            &Value::Decimal(Decimal::from(60_000)),
+        );
         assert!(matches!(q, Ok(Value::Decimal(x)) if x == Decimal::from(447)), "{q:?}");
-        let q = arith(Arith::Div, &Value::Duration(30_000), &Value::Decimal(Decimal::from(60_000)));
+        let q = arith(
+            Arith::Div,
+            &Value::Duration(30_000),
+            &Value::Decimal(Decimal::from(60_000)),
+        );
         assert!(matches!(q, Ok(Value::Decimal(x)) if x == Decimal::new(5, 1)), "{q:?}");
     }
 

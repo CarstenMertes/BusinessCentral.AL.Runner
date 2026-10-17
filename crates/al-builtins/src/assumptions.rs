@@ -145,6 +145,18 @@ registry! {
         tests: "Temp Blob Impl.FromFieldRef (FieldRef.CalcField on each Blob it reads); 14 Tests-SCM-Manufacturing tests (Demand Forecast Card).",
         probe: "A FieldRef on a Blob field of a stored row read without CalcFields: CalcField() then Value and HasValue; the same on a Code field (the error text) and on a FlowField.",
     },
+    ModifyWithoutChangeKeepsRowVersion => {
+        id: "modify-without-change-keeps-row-version",
+        assumed: "A Modify of a persistent record whose fields equal the stored row's does not change the row's SystemRowVersion, so a buffer another variable read before it is not stale afterwards.",
+        tests: "Create Prod. Order Lines.Copy (ProdOrder.Modify after Refresh Production Order) followed by the test's Modify of the same Production Order; 4 Tests-SCM-Manufacturing tests (SCM Prod. Whse. Handling).",
+        probe: "Two variables Get the same row; one Modifies with no change and Commit; the other changes a field and Modifies: accepted or DB:RecordChanged; the same after a Modify that changes a field.",
+    },
+    EvaluateTimeDigitForms => {
+        id: "evaluate-time-digit-forms",
+        assumed: "Evaluate into a Time (format 0) reads six digits as hhmmss and one or two digits as an hour; an hour from 24, minutes or seconds from 60 are rejected.",
+        tests: "Calendar Management CalcTimeDelta tests (Evaluate of '085606') and Evaluate(RandomTime, Format(RandInt(23))); 11 Tests-SCM-Manufacturing tests.",
+        probe: "Evaluate(T, '085606'), '23', '5', '246000', '24', '0856', '8:56' into a Time: the result and the return value; with and without a format number.",
+    },
     DateAddWholeDecimal => {
         id: "date-add-whole-decimal",
         assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",

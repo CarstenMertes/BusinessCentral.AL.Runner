@@ -1801,6 +1801,19 @@ impl Session {
                     // with a filter): the text lists the filters; without one it is not pinned.
                     None => {
                         let filters = self.get_filters(rec, &t)?;
+                        // Without a filter the table itself is empty, on every version: FindFirst and FindLast
+                        // record/lt-filters-keys-finds/P68C_EmptyFinds.al:215-250 ( passes on the BC 27 oracle
+                        // too), FindSet ErTTriggerErrors.al:140-147 and P68C_EmptyFinds.al:202-204.
+                        if filters.is_empty()
+                            && matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
+                        {
+                            return Err(Signal::Error(Box::new(AlError {
+                                message: format!("The {} table is empty.", self.caption(&t)),
+                                code: "DB:TableIsEmpty".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
+                        }
                         if filters.is_empty()
                             || !matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
                         {

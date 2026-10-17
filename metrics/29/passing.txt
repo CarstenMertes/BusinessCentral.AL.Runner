@@ -6296,6 +6296,7 @@
 70073 FieldErrorFromOnValidate
 70073 TestFieldForms
 70073 TestFieldOnTempRecordAndCaptions
+70074 ModifyAllWithTriggerError
 70074 OnDeleteError
 70074 OnInsertErrorRaisedOnlyWithTrigger
 70074 OnModifyError
@@ -6714,6 +6715,7 @@
 70720 BlankFilter_OtherFiltersKept
 70720 BlankFilter_Text
 70721 RangeFilters_Integer
+70722 Empty_Asserterror_FindFirst_FindLast
 70722 Filtered_Out_Comp_Table
 70722 Get_Miss_Keyed_And_Flt
 70723 Secondary_Key_Descending
@@ -8108,6 +8110,7 @@
 72274 P105_SaveAsCsv_Stream_UnknownId
 72274 P105_SaveAsCsv_Stream_WithFilter
 72411 P106_Err_FieldNoNotExisting
+72411 P106_Err_FieldRefVariants
 72411 P106_Err_UnknownPage
 72411 P106_Err_WrongTableRecord
 72412 P106_Inst_RunModal_List

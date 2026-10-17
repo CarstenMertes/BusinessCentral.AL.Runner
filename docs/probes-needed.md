@@ -333,8 +333,8 @@ bump.
 
 **Stays refused**
 
-3. **Published Application, "Tenant Visible" (column 30)**, 44. Measure it for an app published by the test (this
-   corpus app), for System Application, Base Application and the platform `System` app, and with `Installed` true and false.
+3. **Published Application, "Tenant Visible" (column 30)** is pinned and implemented (true for every listed app,
+   record/TestPublishedApplicationSysTable.al:294-365); a probe for an unlisted or per-tenant app is still wanted.
 9. **Permission, "Security Filter" (11)**, 3; **Metadata Permission, column 14**, 10; **All Profile, "Disable Personalization" (13)**, 1;
     **Published Application, Description (15, a Blob)**, 1.
 10. **Tables with no provider** (reads and writes of their persistent rows are refused; a temporary record works):

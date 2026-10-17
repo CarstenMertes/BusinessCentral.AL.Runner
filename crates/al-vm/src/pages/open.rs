@@ -148,6 +148,7 @@ impl Session {
             s.window = Vec::new();
             s.window_from_start = false;
             s.window_eof = false;
+            s.window_whole = false;
             s.focus = None;
             s.focus_in_row = false;
             s.errors = Vec::new();
@@ -329,8 +330,18 @@ impl Session {
                 self.ret_used = true;
                 let mut pk = self.table(&rec)?.primary_key(&rec.borrow().fields);
                 if matches!(self.record_op(RecordOp::Get, &rec, &mut pk)?, Value::Boolean(true)) {
-                    st.borrow_mut().cursor = Cursor::Row;
-                    return self.arrive(st);
+                    // A row the view does not admit is not the page's: it opens on the first row at or after it in the view
+                    // (pages/lt-page-setrecord-settableview/PageVarSetRecordTableView.al:P157_List_SetRecordThenSetTableView_RecordOutsideView
+                    // `B` over `Grp = 1` opens on `C`, P157_Card_SetRecordOutsideView).
+                    if !rec.borrow().filters.is_empty() {
+                        if self.nav_find(st, "=>")? {
+                            st.borrow_mut().cursor = Cursor::Row;
+                            return self.arrive(st);
+                        }
+                    } else {
+                        st.borrow_mut().cursor = Cursor::Row;
+                        return self.arrive(st);
+                    }
                 }
             }
         }
@@ -548,7 +559,15 @@ impl Session {
         }
         // Not on the blank new-line row of a page: corpus misc/lt-page-run-overloads RunModal_NonTempRecord_ShowsDbRows keeps
         // `Row.Code` = D1 after a handler that read the page down to its new line and pressed OK.
-        if action == "LookupOK" && self.has_source(st) && st.borrow().cursor == Cursor::Row && !st.borrow().draft {
+        // A line started with New() is the row the page ends on, blank or typed (pages/lt-page-runmodal-rec/
+        // PageRunModalRecAfterClose.al:P174_NonTemp_StartA_HandlerNewRowThenOk, _NewRowTypedKeyThenOk, _NewRowThenCancel), and
+        // Cancel leaves the row the cursor stood on in Rec as OK does (:P174_NonTemp_StartA_HandlerNextThenCancel).
+        let on_row = st.borrow().cursor == Cursor::Row && !st.borrow().draft;
+        let on_new = st.borrow().draft && st.borrow().new_by_call;
+        // A page the platform closes after the handler returned hands back nothing on Cancel (handlers/
+        // TestPageActionRunObjectPageRec_Tests.al:PageRunModalTargetMovingItsRecAndTheCallersRecord).
+        let hands_back = action == "LookupOK" || (action == "LookupCancel" && via_action);
+        if hands_back && self.has_source(st) && (on_row || on_new) {
             let fields = self.page_rec(st).borrow().fields.clone();
             st.borrow_mut().selection = Some(fields);
         }
@@ -696,6 +715,12 @@ impl Session {
             Ok(())
         } else if st.borrow().new_line {
             self.land_on_new_line(st)?;
+            // A list with no row but the blank line reads it twice, as a list of one row reads its row (misc/lt-probes-needed-3/
+            // PnC07TestPage.al:New_OnEmptyPage `OnNewRecord` three times with the New() call, misc/lt-probes-needed-7/
+            // PnGNewRecord.al:HandedRecordKeyFieldFilter `OnNewRecord;AGCR(FILTERED,FILTERED)` twice).
+            if self.is_list(st) && st.borrow().host.is_none() {
+                self.land_on_new_line(st)?;
+            }
             self.populate_expressions(st)
         } else {
             self.populate_expressions(st)

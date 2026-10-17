@@ -247,12 +247,6 @@ registry! {
         tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
         probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback.",
     },
-    TypedModalHandlerSkipsPageTriggers => {
-        id: "typed-modal-handler-skips-page-triggers",
-        assumed: "A [ModalPageHandler] typed as the Page itself stands in for the page: none of the page's triggers (OnInit, OnOpenPage, OnQueryClosePage, ...) run for that call.",
-        tests: "Tests-ERM `PaymentToleranceWarning` handler (`PaymentToleranceWarning.InitializeOption(OptionValue)`, page 591, whose OnOpenPage and OnQueryClosePage would overwrite the result) and about 47 more tests.",
-        probe: "A page with Trace logging in OnInit, OnOpenPage, OnQueryClosePage and OnClosePage, run with RunModal under a ModalPageHandler typed as the Page that logs and sets Response.",
-    },
     QueryColumnRecordId => {
         id: "query-column-record-id",
         assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",
@@ -396,12 +390,6 @@ registry! {
         assumed: "A Date assigned or converted to a DateTime is that day at midnight; the blank Date is the blank DateTime.",
         tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
         probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
-    },
-    DurationArithmeticWithNumber => {
-        id: "duration-arithmetic-with-number",
-        assumed: "A whole number added to or subtracted from a Duration (or a Duration from a whole number) is a Duration, as milliseconds.",
-        tests: "Microsoft's routing code (a day in milliseconds added to a Duration): Tests-SCM-Manufacturing, about 20 tests.",
-        probe: "D: Duration; I: Integer; Format(D + I), Format(I + D), Format(D - I), Format(I - D).",
     },
     SetViewSortingWithoutKey => {
         id: "set-view-sorting-without-a-key",
@@ -607,12 +595,6 @@ registry! {
         assumed: "The blank line of a part whose host record is a new, unsaved row takes the SubPageLink values without validating them (the table relation of a link field would not find the host row yet); it is stamped and validated again when the host is saved.",
         tests: "Allocation Account (ListPlus page with parts linked on \"No.\"), OpenNew then \"No.\".SetValue: Alloc. Account Sales and Purchase E2E tests, about 34.",
         probe: "A card with a part linked on the card's key, DelayedInsert false: OpenNew, SetValue of the key, then read the part's draft line and its link field; SetValue of a second field and read again.",
-    },
-    PageRunModalRecordTakesSelection => {
-        id: "page-run-modal-record-takes-selection",
-        assumed: "Page.RunModal(Id, Rec) that answers LookupOK leaves in Rec the row the page was closed on, and not its own filters or key.",
-        tests: "Gen. Journal Management TemplateSelection (PAGE.RunModal(0, GenJnlTemplate) = ACTION::LookupOK, then GenJnlTemplate.Name): ERM Apply Sales/Receivables and about 9 more Tests-ERM tests.",
-        probe: "Page.RunModal(Page::X, Rec) with a handler that does GoToKey and OK; read Rec; the same with Cancel; with a page variable's RunModal and GetRecord.",
     },
     FilterChangeLandsOnNewLine => {
         id: "filter-change-lands-on-new-line",

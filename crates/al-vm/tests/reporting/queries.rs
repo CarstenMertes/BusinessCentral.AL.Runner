@@ -66,6 +66,20 @@ query 60872 "QX Reverse Sign Total"
         }
     }
 }
+query 60874 "QX Tie Groups"
+{
+    QueryType = Normal;
+    OrderBy = ascending(Grp);
+    elements
+    {
+        dataitem(Num; "QX Num")
+        {
+            column(Grp; Grp) { }
+            column(Big; Big) { }
+            column(DecTotal; Dec) { Method = Sum; }
+        }
+    }
+}
 query 60873 "QX Min Max"
 {
     QueryType = Normal;
@@ -1582,4 +1596,22 @@ fn cross_join_with_a_data_item_link_is_refused() {
         "procedure F(): Text var Q: Query \"QC Cross Linked\"; begin exit(''); end;",
     ));
     assert!(unsupported(r).contains("CrossJoin"), "refusal");
+}
+
+// Groups that tie on every OrderBy column come in the order of their grouping columns, on an assumption
+// (grouped-query-ties-in-grouping-column-order); nothing in the corpus pins the order of such rows.
+#[test]
+fn grouped_rows_that_tie_on_the_order_by_come_in_grouping_column_order() {
+    let r = run("procedure F(): Text
+        var Q: Query \"QX Tie Groups\"; N: Record \"QX Num\"; Seen: Text;
+        begin
+            N.\"No.\" := 1; N.Grp := 'A'; N.Big := 30; N.Dec := 1; N.Insert();
+            N.\"No.\" := 2; N.Grp := 'A'; N.Big := 10; N.Dec := 2; N.Insert();
+            N.\"No.\" := 3; N.Grp := 'A'; N.Big := 20; N.Dec := 4; N.Insert();
+            Q.Open();
+            while Q.Read() do
+                Seen += StrSubstNo('%1:%2:%3;', Q.Grp, Q.Big, Q.DecTotal);
+            exit(Seen);
+        end;");
+    assert_eq!(text(r), "A:10:2;A:20:4;A:30:1;");
 }

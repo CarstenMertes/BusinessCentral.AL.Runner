@@ -391,6 +391,12 @@ registry! {
         tests: "Tests-SCM tests that build a formula with Format of a text and a length: `<+6W` (13), `<+7W` (3), `<+1D` (2), `<+0D` (1).",
         probe: "CalcDate('<+6W', D), CalcDate('<+0D', D) and CalcDate('<-1D', D) with the closing bracket missing: the date or the error text.",
     },
+    GroupedQueryTiesInGroupingOrder => {
+        id: "grouped-query-ties-in-grouping-order",
+        assumed: "Groups of an aggregated query that tie on every OrderBy column are read in the order of the query's grouping columns (column declaration order, each ascending).",
+        tests: "Create Pick's CalcQtyInWhseEntries (OrderBy Block_Movement, ten grouping columns): SCM Extend Warehouse CheckItemAvailabilityWhenCreatingPickAndExistReservedQtyForProdOrder and the tests that create a pick for a directed put-away location; about 77 Tests-SCM tests.",
+        probe: "An aggregated query with an OrderBy on a column most groups share and several grouping columns, rows inserted in non-key order: the order of the tied groups on Read.",
+    },
     ReportRenderDiscarded => {
         id: "report-render-discarded",
         assumed: "A rendering save (SaveAsPdf, SaveAsExcel, SaveAsWord, SaveAsHtml, SaveAs to Pdf, Excel, Word or Html) of a report on the allow-list (ADR-040) runs the report as the Xml path does, answers true and writes no output; AL that looks at the output is refused.",

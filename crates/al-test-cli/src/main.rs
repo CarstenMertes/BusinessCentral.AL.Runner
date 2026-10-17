@@ -411,6 +411,7 @@ fn run_version(
             download: !args.no_download,
             query: target::build_query(Some(&leg.to_string()), &chosen, &app_versions),
             local_artifacts: None,
+            country: String::new(),
         };
         let deps = deps::load_with(
             &root.join(&cfg.corpus_app),
@@ -448,6 +449,7 @@ fn run_version(
         )),
         require: args.require_compile_cache,
         rebuild: false,
+        country: String::new(),
     });
     if args.build_compile_cache {
         let cc = compile_cache
@@ -1104,6 +1106,7 @@ fn fetch_project(args: &Args, root: &Path, project: &Path) -> Result<ExitCode, S
         download: !args.no_download,
         query: target::build_query(args.bc_version.as_deref(), &chosen, &app_versions),
         local_artifacts: None,
+        country: String::new(),
     };
     let deps = deps::load_with(project, &[], &args.deps, Some(&provision))?;
     for line in &deps.log {

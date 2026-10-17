@@ -325,19 +325,23 @@ fn choose_test_data(
                 let cdn = al_deps::artifact::HttpCdn::from_env();
                 let mut printed = 0u64;
                 let t = Instant::now();
-                eprintln!("test data: downloading the demo data of build {build} (about 520 MB, once) ...");
-                let got = al_deps::demo::ensure_demo_backup(&cdn, &cache_root, build, "w1", &mut |read, total| {
-                    let pct = (read * 100).checked_div(total).unwrap_or(100);
-                    if pct >= printed + 10 || (pct == 100 && printed < 100) {
-                        printed = pct - pct % 10;
-                        eprintln!(
-                            "test data: {pct}% ({} of {} MB, {:.0} s)",
-                            read >> 20,
-                            total >> 20,
-                            t.elapsed().as_secs_f64()
-                        );
-                    }
-                })?;
+                eprintln!(
+                    "test data: downloading the {} demo data of build {build} (about 0.5 GB, once) ...",
+                    a.country()
+                );
+                let got =
+                    al_deps::demo::ensure_demo_backup(&cdn, &cache_root, build, a.country(), &mut |read, total| {
+                        let pct = (read * 100).checked_div(total).unwrap_or(100);
+                        if pct >= printed + 10 || (pct == 100 && printed < 100) {
+                            printed = pct - pct % 10;
+                            eprintln!(
+                                "test data: {pct}% ({} of {} MB, {:.0} s)",
+                                read >> 20,
+                                total >> 20,
+                                t.elapsed().as_secs_f64()
+                            );
+                        }
+                    })?;
                 Ok(got.path)
             });
             let found = testdata::locate(
@@ -349,8 +353,9 @@ fn choose_test_data(
                     local_root: local.as_deref(),
                     cache_root: &cache_root,
                     download,
+                    explicit_country: a.country.is_some(),
                 },
-                "w1",
+                a.country(),
             );
             match found.path {
                 Some(p) => (p, found.notes),
@@ -377,8 +382,18 @@ fn choose_test_data(
     }
 }
 
+/// Whether the run looks for a demo backup (and so may download one): never with `--no-test-data`, whatever the
+/// country (owner 2026-10-17: partners who test across countries write tests that need no data); not when a backup
+/// is open already; a default run with no Microsoft app has no use for the CRONUS company.
+fn should_choose_test_data(a: &TestArgs, already_open: bool, microsoft: bool) -> bool {
+    a.wants_test_data() && !already_open && (microsoft || a.test_data_asked_for())
+}
+
 /// `alrunner warm`: finds the backup, opens it, and so builds the index kept next to the compile cache.
 pub fn warm(a: &TestArgs) -> Result<(), String> {
+    if a.country.is_some() && !a.no_download {
+        al_deps::artifact::check_country(&al_deps::artifact::HttpCdn::from_env(), a.country())?;
+    }
     let version = a.bc_version.as_deref();
     let numbers: Vec<u16> = version
         .map(|v| v.split('.').map_while(|p| p.parse().ok()).collect())
@@ -501,6 +516,12 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         std::sync::atomic::Ordering::Relaxed,
     );
     let test_timeout = test_timeout_secs(a)?;
+    // The country of the run (ADR-020 amendment): only `--country` selects it. An unknown one stops here, before
+    // anything is loaded.
+    let country = a.country().to_string();
+    if a.country.is_some() && !a.no_download {
+        al_deps::artifact::check_country(&al_deps::artifact::HttpCdn::from_env(), &country)?;
+    }
     // The key of the compile cache starts with a hash of this executable (10 ms): make it beside the loading.
     if !a.no_compile_cache {
         std::thread::spawn(|| {
@@ -656,6 +677,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         download: !a.no_download,
         query: target::build_query(a.bc_version.as_deref(), &chosen, floor_versions).with_preferred(preferred),
         local_artifacts: al_deps::cache::bcartifacts_sandbox_from_env(),
+        country: country.clone(),
     };
     // The text of a package's files is left unread: a run whose tests reach nothing in it never needs it.
     // ALRUNNER_EAGER_SOURCES=1 reads it at once, as before (the other side of the differential check).
@@ -669,7 +691,9 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
         true,
         lazy_sources,
     )?;
-    if a.wants_test_data() && test_data.is_none() {
+    let microsoft = inputs.iter().any(|i| apps::is_microsoft(&i.manifest.publisher))
+        || dependencies.manifests.iter().any(|m| apps::is_microsoft(&m.publisher));
+    if should_choose_test_data(a, test_data.is_some(), microsoft) {
         // The build of the Microsoft apps is the build of the data: what the feed gave, what
         // --bc-version named, then the versions of the loaded packages and of the APPs
         // (Microsoft's test archives carry the build as their version).
@@ -696,10 +720,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
                 downloadable.push(b);
             }
         }
-        // A default run with no Microsoft app has no use for the CRONUS company.
-        let microsoft = inputs.iter().any(|i| apps::is_microsoft(&i.manifest.publisher))
-            || dependencies.manifests.iter().any(|m| apps::is_microsoft(&m.publisher));
-        if microsoft || a.test_data_asked_for() {
+        {
             let chosen_data = choose_test_data(
                 a,
                 &builds,
@@ -759,6 +780,9 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
 
     if !a.quiet {
         say!("alrunner {} ({})", env!("CARGO_PKG_VERSION"), env!("ALRUNNER_COMMIT"));
+        if a.country.is_some() {
+            say!("country: {country}");
+        }
         say!(
             "target: BC {}, runtime {}{}",
             chosen.target.bc,
@@ -932,6 +956,7 @@ pub fn test_with(a: &TestArgs, mut warm: Option<&mut WarmCtx>) -> Result<u8, Str
             )),
             require: a.require_compile_cache,
             rebuild: a.rebuild_compile_cache,
+            country: country.clone(),
         }),
     };
     let load_time = started.elapsed();
@@ -1429,4 +1454,41 @@ fn explain(
         Outcome::Fail(_) => 1,
         Outcome::NotRun(_) => 7,
     })
+}
+
+#[cfg(test)]
+mod country_tests {
+    use super::*;
+
+    fn args(country: Option<&str>, no_test_data: bool) -> TestArgs {
+        TestArgs {
+            country: country.map(str::to_string),
+            no_test_data,
+            ..TestArgs::default()
+        }
+    }
+
+    #[test]
+    fn no_test_data_never_looks_for_a_backup_in_any_country() {
+        for country in [None, Some("us"), Some("gb")] {
+            // Even for a run that uses Microsoft's apps: nothing is located, nothing is downloaded.
+            assert!(
+                !should_choose_test_data(&args(country, true), false, true),
+                "{country:?}"
+            );
+            assert!(
+                !should_choose_test_data(&args(country, true), false, false),
+                "{country:?}"
+            );
+        }
+    }
+
+    #[test]
+    fn test_data_on_looks_for_the_backup_of_the_country_when_microsoft_apps_are_used() {
+        for country in [None, Some("us")] {
+            assert!(should_choose_test_data(&args(country, false), false, true));
+            assert!(!should_choose_test_data(&args(country, false), false, false));
+            assert!(!should_choose_test_data(&args(country, false), true, true));
+        }
+    }
 }

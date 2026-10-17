@@ -60,6 +60,7 @@ fn run(cache: &Path) -> Outcome {
                 dir: cache.to_path_buf(),
                 require: false,
                 rebuild: false,
+                country: String::new(),
             }),
             ..Default::default()
         },

@@ -72,6 +72,7 @@ fn cache(dir: &Path, require: bool) -> Option<CompileCache> {
         dir: dir.to_path_buf(),
         require,
         rebuild: false,
+        country: String::new(),
     })
 }
 
@@ -826,4 +827,28 @@ fn build_hash_of_bytes_depends_on_every_byte_and_the_length() {
     a.swap_with_slice(&mut rest[..chunk]);
     assert_ne!(h, hash_build_bytes(&swapped), "chunk order is part of the hash");
     assert_ne!(hash_build_bytes(&[]), hash_build_bytes(&[0]));
+}
+
+#[test]
+fn a_country_other_than_w1_has_layers_of_its_own() {
+    let dir = tempfile::tempdir().unwrap();
+    let country = |c: &str| {
+        Some(CompileCache {
+            dir: dir.path().to_path_buf(),
+            require: false,
+            rebuild: false,
+            country: c.to_string(),
+        })
+    };
+    let report = |rt: &CorpusRuntime| rt.phases.cache.clone().unwrap();
+    let first = run(BASE, country("")).unwrap();
+    assert!(report(&first).built && !report(&first).hit);
+    // `w1` and no country are the same layers.
+    assert!(report(&run(BASE, country("w1")).unwrap()).hit);
+    // The same sources for another country do not read w1's layers: they are built, then hit.
+    let us = run(BASE, country("us")).unwrap();
+    assert!(report(&us).built && !report(&us).hit, "{:?}", report(&us));
+    assert!(report(&run(BASE, country("US")).unwrap()).hit);
+    // And w1 still has its own.
+    assert!(report(&run(BASE, country("")).unwrap()).hit);
 }

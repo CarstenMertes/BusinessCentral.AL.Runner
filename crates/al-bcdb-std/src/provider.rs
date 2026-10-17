@@ -433,6 +433,18 @@ pub fn default_backup(builds: &[String], major: u16, minor: Option<u16>) -> Resu
 
 /// [`default_backup`] in the artifact cache `root`.
 pub fn default_backup_in(root: &Path, builds: &[String], major: u16, minor: Option<u16>) -> Result<PathBuf, String> {
+    default_backup_in_country(root, builds, major, minor, None)
+}
+
+/// [`default_backup_in`] for `country`: with `Some`, only that country's backup answers (an explicit
+/// `--country` never falls back to another country's data); with `None`, `w1`, else `us`, else the only one.
+pub fn default_backup_in_country(
+    root: &Path,
+    builds: &[String],
+    major: u16,
+    minor: Option<u16>,
+    country: Option<&str>,
+) -> Result<PathBuf, String> {
     let mut versions: Vec<String> = std::fs::read_dir(root)
         .map_err(|e| {
             format!(
@@ -463,17 +475,23 @@ pub fn default_backup_in(root: &Path, builds: &[String], major: u16, minor: Opti
         )
     })?;
     let dir = root.join(version);
-    let country = ["w1", "us"]
-        .iter()
-        .map(|c| dir.join(c))
-        .find(|p| p.is_dir())
-        .or_else(|| {
-            std::fs::read_dir(&dir)
-                .ok()?
-                .filter_map(|e| e.ok().map(|e| e.path()))
-                .find(|p| p.is_dir() && p.file_name().is_some_and(|n| n != "platform"))
-        })
-        .ok_or_else(|| format!("{} holds no country folder", dir.display()))?;
+    let country = match country {
+        Some(c) => Some(dir.join(c.to_ascii_lowercase())).filter(|p| p.is_dir()),
+        None => ["w1", "us"]
+            .iter()
+            .map(|c| dir.join(c))
+            .find(|p| p.is_dir())
+            .or_else(|| {
+                std::fs::read_dir(&dir)
+                    .ok()?
+                    .filter_map(|e| e.ok().map(|e| e.path()))
+                    .find(|p| p.is_dir() && p.file_name().is_some_and(|n| n != "platform"))
+            }),
+    }
+    .ok_or_else(|| match country {
+        Some(c) => format!("{} holds no folder for country {c}", dir.display()),
+        None => format!("{} holds no country folder", dir.display()),
+    })?;
     let name = country
         .file_name()
         .map(|n| n.to_string_lossy().to_uppercase())

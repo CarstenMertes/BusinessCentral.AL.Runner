@@ -20,6 +20,9 @@ pub struct CompileCache {
     /// `--rebuild-compile-cache`: no entry is read, every one this run needs is built and written anew (the
     /// layers, the source index and the install baseline). Other entries in the folder stay.
     pub rebuild: bool,
+    /// The country of the run (`w1` or empty: the default). A country other than `w1` is part of every layer's key, so
+    /// layers made for one country are never read for another, whatever the source hashes say (ADR-020 amendment).
+    pub country: String,
 }
 
 impl CompileCache {
@@ -362,6 +365,16 @@ pub fn layer_ranges(apps: &[&AppSource], manifests: &[crate::runtime::Manifest])
     out
 }
 
+/// What the lowest layer's key starts from: nothing for `w1` (so the keys of w1 runs are the same as before the
+/// country flag), else a digest of the country code.
+pub fn country_seed(country: &str) -> [u8; 32] {
+    if country.is_empty() || country.eq_ignore_ascii_case("w1") {
+        [0; 32]
+    } else {
+        Sha256::digest(format!("country {}", country.to_ascii_lowercase()).as_bytes()).into()
+    }
+}
+
 /// The key of each layer, lowest first: a layer's key holds its own apps and the key of the layer
 /// below, so a change in any app changes its layer and every layer above it.
 pub fn layer_keys(
@@ -369,8 +382,9 @@ pub fn layer_keys(
     manifests: &[crate::runtime::Manifest],
     target: Option<&al_version::Target>,
     identities: &[Option<[u8; 32]>],
+    country: &str,
 ) -> Vec<(std::ops::Range<usize>, Key)> {
-    let mut below = [0u8; 32];
+    let mut below = country_seed(country);
     layer_ranges(apps, manifests)
         .into_iter()
         .map(|r| {
@@ -546,7 +560,7 @@ pub fn open_or_build_with(
     let opened = std::time::Instant::now();
     let planned = {
         let dep_refs: Vec<&AppSource> = apps.iter().collect();
-        layer_keys(&dep_refs, manifests, target, identities)
+        layer_keys(&dep_refs, manifests, target, identities, &cc.country)
     };
     let mut report = CacheReport::default();
     let mut entries: Vec<Option<Entry>> = Vec::new();

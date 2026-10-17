@@ -313,13 +313,6 @@ registry! {
         tests: "The Data Exchange tests' GetNodeID (`<Integer,4><Filler Char,0>`, about 30 tests).",
         probe: "Format(5, 0, '<Integer,4><Filler Char,0>') next to '<Integer,4><Filler Character,0>', for an Integer, a Decimal and a Text.",
     },
-    DataItemsEmptyElement => {
-        id: "dataitems-empty-element",
-        assumed: "A report dataset saved with no row at all writes its DataItems element in the XmlWriter's short form <DataItems />. (Only the prefix <DataItems is pinned: handlers/PWReportSaveAsColumns.al:Labels_NoRowAtAll.)",
-        tests: "Report SaveAs datasets of reports with no rows in Tests-ERM.",
-        probe: "Confirmed by a corpus bump 9 probe (empty DataItems); delete when the bump is merged.",
-        note: "Probably pinned by corpus bump 9 (\"Empty DataItems <DataItems /> confirmed\"): check and delete.",
-    },
     EnumOptionIntegerOrdinal => {
         id: "enum-option-integer-ordinal",
         assumed: "A BigInteger converts into an Option or an Enum by ordinal; an ordinal beyond the members is kept. (An Enum value into an Option, an Integer or a Decimal, and an Integer into an Enum, are pinned: types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al, types/PROptionInteger.al, types/PEOptionEnumBigText.al.)",

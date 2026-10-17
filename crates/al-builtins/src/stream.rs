@@ -13,7 +13,7 @@
 //! Windows-1252 unless an encoding says otherwise (:WriteText_DefaultEncodingIsWindows1252_NotUtf8).
 
 use crate::describe::Describe;
-use crate::native::{Ctx, NativeFn, Signal};
+use crate::native::{Ctx, NativeFn, Signal, raise};
 use crate::signature::Signature;
 use crate::value::{LibraryValue, Value};
 use std::cell::RefCell;
@@ -703,7 +703,12 @@ fn in_read_text(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NRes
         Ok(text)
     })?;
     // The count is the bytes of the text in the stream's encoding, without the terminators (a UTF-16 `ab` is 4).
-    let n = (Value::text_len(&text) * enc_used.unit()) as i32;
+    // UTF-8 counts its own bytes: `aéb` is 4 (streams/lt-stream-non-ascii/StreamRawBytes.al:P175_Raw_EAcute_ReadText `utf8 utf8`).
+    let n = if enc_used == Encoding::Utf8 {
+        text.len() as i32
+    } else {
+        (Value::text_len(&text) * enc_used.unit()) as i32
+    };
     a[0] = Value::Text(text.into());
     Ok(Value::Integer(n))
 }
@@ -1006,9 +1011,18 @@ fn decimal_bytes(d: &rust_decimal::Decimal) -> Result<Vec<u8>, Signal> {
     let digits = d.mantissa().unsigned_abs().to_string();
     let exponent = digits.len() as i32 - 1 - d.scale() as i32;
     let digits = digits.trim_end_matches('0');
-    if digits.len() > 18 {
-        return unsupported("OutStream.Write of a Decimal with more than 18 digits (not pinned)");
-    }
+    // Digits after the 18th are dropped (misc/lt-probes-needed-1/PnAStreamDecimalBytes.al:Write_Decimal_Tiny, `thirds-28-places`:
+    // 28 threes write 18). Whether a dropped digit of 5 or more rounds up is not pinned: refused.
+    let digits = if digits.len() > 18 {
+        if digits.as_bytes()[18] >= b'5' {
+            return unsupported(
+                "OutStream.Write of a Decimal with more than 18 digits whose 19th digit is 5 or more (rounding not pinned)",
+            );
+        }
+        digits[..18].trim_end_matches('0')
+    } else {
+        digits
+    };
     out[0] = (0x40 + exponent) as u8 | if d.is_sign_negative() { 0x80 } else { 0 };
     for (i, c) in digits.bytes().enumerate() {
         let v = c - b'0';
@@ -1189,17 +1203,31 @@ fn copy_array(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResul
         return unsupported("CopyArray position that is not an Integer");
     };
     let src = src.borrow();
-    let pos = usize::try_from(pos - 1).map_err(|_| Signal::Unsupported("CopyArray position below 1".into()))?;
-    let len = match a.get(3) {
-        Some(Value::Integer(n)) => {
-            usize::try_from(*n).map_err(|_| Signal::Unsupported("CopyArray negative length".into()))?
-        }
-        None => src.len().saturating_sub(pos),
+    let mut dst = dst.borrow_mut();
+    // The length parameter is the Length given, else what is left of the source from Position on. When it is not the length of
+    // the destination, the copy raises (misc/lt-system-functions/Arrays.al:CopyArray_Forms `af30`, `af37`, `af44`, `into smaller`,
+    // `from 6`, `from 0`, `count 6`, `count -1`, `from 5 count 2`; CopyArray_Texts). Position 0 and 6 of 5 are pinned, others outside are not.
+    let length = match a.get(3) {
+        Some(Value::Integer(n)) => i64::from(*n),
+        None if (0..=src.len() as i64 + 1).contains(&i64::from(pos)) => src.len() as i64 + 1 - i64::from(pos),
+        None => return unsupported("CopyArray from a position outside the source (not pinned)"),
         Some(other) => return unsupported(format!("CopyArray length {}", other.describe())),
     };
-    let mut dst = dst.borrow_mut();
-    if pos + len > src.len() || len > dst.len() {
-        return unsupported("CopyArray range outside the arrays (error text not pinned)");
+    if length != dst.len() as i64 {
+        return raise(
+            format!(
+                "CopyArray: The length parameter {length} does not match the length of the destination array {}.",
+                dst.len()
+            ),
+            "ArrayLengthMismatch",
+        );
+    }
+    let len = dst.len();
+    let Ok(pos) = usize::try_from(pos - 1) else {
+        return unsupported("CopyArray position below 1 with a length that fits (not pinned)");
+    };
+    if pos + len > src.len() {
+        return unsupported("CopyArray range outside the source (not pinned)");
     }
     for i in 0..len {
         dst[i] = src[pos + i].clone();

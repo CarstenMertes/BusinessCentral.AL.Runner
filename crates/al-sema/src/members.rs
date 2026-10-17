@@ -478,7 +478,12 @@ fn split_option_members(text: &str) -> Vec<String> {
         }
     }
     out.into_iter()
-        .map(|(name, quoted)| if quoted { name } else { name.trim().to_string() })
+        .map(|(name, quoted)| match (quoted, name.is_empty()) {
+            // `""` is one space, an unquoted empty member stays empty (see `TypeRef::option_members`).
+            (true, true) => " ".to_string(),
+            (true, false) => name,
+            _ => name.trim().to_string(),
+        })
         .collect()
 }
 

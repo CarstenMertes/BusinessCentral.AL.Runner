@@ -111,9 +111,12 @@ impl Session {
                         // The name is the pinned fragment of the error
                         // (:Database_RegisterTableConnection_CrmTest_Duplicate_Throws).
                         if !self.table_connections.insert(key) {
-                            return error(format!(
-                                "A table connection of type CRM named {name} is already registered."
-                            ));
+                            // The name as written in this call (record/lt-table-connection-duplicate/
+                            // TableConnectionDuplicateRegister.al:P161_RegisterTwice_SameAndOtherCase `twiceUpper`).
+                            return error_code(
+                                format!("Table connection {name} for table type CRM has already been registered."),
+                                "Argument",
+                            );
                         }
                         Ok(Value::Null)
                     }
@@ -389,6 +392,14 @@ impl Session {
                 // test and the next (:NumberSequence_Insert_OfAnExistingName_RaisesAndLeavesTheSequenceGone).
                 if self.sequences.remove(&key).is_some() {
                     return error_code(format!("The number sequence '{name}' already exists."), "AL");
+                }
+                // An Increment of 0 raises the SQL error and creates nothing
+                // (platform/lt-platform-members/PlTNumberSequence.al:Insert_ZeroIncrement; the name exists already: not pinned).
+                if increment == 0 {
+                    return error_code(
+                        "An unexpected error occurred after a database command was cancelled.".to_string(),
+                        "Sql:Sql",
+                    );
                 }
                 self.sequences.insert(
                     key,

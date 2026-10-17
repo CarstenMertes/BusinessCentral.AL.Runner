@@ -172,41 +172,34 @@ fn index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult 
 /// types/TestFormatEvaluateTextContracts.al:Text_EmptyArguments_ContainsStartsEndsAreTrueIndexOfIsOne.
 fn last_index_of(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
     let (st, sb) = (recv_text(&r)?, text(a, 0)?);
-    // Text of ASCII only is searched where it lies, with no copy of it.
-    if st.is_ascii() && sb.is_ascii() {
-        let limit = if a.len() > 1 {
-            let n = int(a, 1)?;
-            if n < 1 || n as usize > st.len() {
-                return Err(out_of_range(
-                    "Index was out of range. Must be non-negative and less than the size of the collection. (Parameter 'startIndex')",
-                ));
-            }
-            n as usize
-        } else {
-            st.len()
-        };
-        if sb.is_empty() {
-            return Ok(Value::Integer(st.len() as i32 + 1));
-        }
-        return Ok(Value::Integer(
-            st[..limit].rfind(sb.as_str()).map_or(0, |p| p as i32 + 1),
-        ));
-    }
-    let (s, sub) = (u16s(&st), u16s(&sb));
-    let limit = if a.len() > 1 {
+    // A start index is valid from 1 to one past the end (corpus
+    // text/lt-text-instance/Search1.Codeunit.al:LastIndexOf_StartIndex: 10 of 9 characters is
+    // allowed, 0, -1 and 100 are not; misc/lt-probes-needed-1/PnATextFunctions.al:LastIndexOf_Cases).
+    // The empty text is found one past the start index (`'abcabcabc'.LastIndexOf('', 5) = 6`).
+    let ascii = st.is_ascii() && sb.is_ascii();
+    let len = if ascii { st.len() } else { u16s(&st).len() };
+    let start = if a.len() > 1 {
         let n = int(a, 1)?;
-        if n < 1 || n as usize > s.len() {
+        if n < 1 || n as usize > len + 1 {
             return Err(out_of_range(
                 "Index was out of range. Must be non-negative and less than the size of the collection. (Parameter 'startIndex')",
             ));
         }
         n as usize
     } else {
-        s.len()
+        len + 1
     };
-    if sub.is_empty() {
-        return Ok(Value::Integer(s.len() as i32 + 1));
+    if sb.is_empty() {
+        return Ok(Value::Integer(start as i32 + if a.len() > 1 { 1 } else { 0 }));
     }
+    let limit = start.min(len);
+    // Text of ASCII only is searched where it lies, with no copy of it.
+    if ascii {
+        return Ok(Value::Integer(
+            st[..limit].rfind(sb.as_str()).map_or(0, |p| p as i32 + 1),
+        ));
+    }
+    let (s, sub) = (u16s(&st), u16s(&sb));
     let pos = s[..limit].windows(sub.len()).rposition(|w| w == sub.as_slice());
     Ok(Value::Integer(pos.map_or(0, |p| p as i32 + 1)))
 }

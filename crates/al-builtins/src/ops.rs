@@ -62,6 +62,17 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
                 Rc::new(RefCell::new(copy)),
             )
         }
+        // A Notification is a value too: `B := A` copies its message and data (errorinfo/lt-errnotif/EnTNotification.al:Copy_Semantics).
+        (Value::Library(crate::library_kind::LibraryKind::Notification, cell), T::Library(_)) => {
+            let copy = match &*cell.borrow() {
+                LibraryValue::Notification(s) => LibraryValue::Notification(s.clone()),
+                _ => LibraryValue::Empty,
+            };
+            Value::Library(
+                crate::library_kind::LibraryKind::Notification,
+                Rc::new(RefCell::new(copy)),
+            )
+        }
         // An HttpContent is a value: assignment and a by-value parameter copy its body and headers
         // (misc/W4XmlJsonHttp.al:RequestContent_IsCopyOrReference).
         (Value::Library(n, cell), T::Library(_))
@@ -759,6 +770,15 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 V::Duration(d) => *d,
                 other => int_of(other).expect("an integer"),
             };
+            // A BigInteger beyond the Int32 range raises the conversion error with the signed amount moved
+            // (types/lt-time-big-integer/TimeBigIntegerArithmetic.al:P170_TimePlusMinusBigInteger `plus_over_int32`, `minus_over_int32`).
+            if matches!(n, V::BigInteger(_)) && i32::try_from(ms).is_err() {
+                let delta = if op == Arith::Add { ms } else { -ms };
+                return raise(
+                    format!("Overflow under conversion of System.Int64 value {delta} to System.Int32."),
+                    "ConversionCast",
+                );
+            }
             let moved = if op == Arith::Add {
                 (a - 1).checked_add(ms)
             } else {

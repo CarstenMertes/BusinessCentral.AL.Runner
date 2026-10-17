@@ -123,6 +123,26 @@ impl Session {
             st.borrow_mut().refresh = false;
         }
         let v = result?;
+        // The client refreshes the page after an AssistEdit trigger: OnAfterGetRecord runs again
+        // (pages/lt-page-runtime/P82Lookups.al:AssistEdit_Trigger, `OnAssistEdit;OnAfterGetRecord(L1)`). A DrillDown and a Lookup are not pinned to.
+        // The row is not read again: a field the trigger set on the record stays (pages/lt-page-editability-width-lookups/
+        // P115Lookups.al:P115_AssistEdit_Trigger `after = assisted`).
+        if method == PageMethod::AssistEdit
+            && st.borrow().open
+            && self.has_source(st)
+            && st.borrow().cursor == Cursor::Row
+            && !st.borrow().draft
+            && !self.declares(st, "onfindrecord")
+            && !self.declares(st, "onnextrecord")
+        {
+            let r = (|| {
+                self.populate_current(st)?;
+                self.page_trigger(st, "onaftergetcurrrecord", vec![])?;
+                self.page_event(st, "onaftergetcurrrecordevent", None, None)
+            })();
+            self.torn_down_on_error(st, r)?;
+            self.sync_parts(st)?;
+        }
         self.run_refresh(st)?;
         Ok(v)
     }

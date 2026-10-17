@@ -280,6 +280,8 @@ struct Parser<'a> {
     s: &'a [u8],
     i: usize,
     depth: usize,
+    /// Set when the text holds a `//` comment: whether the reader takes it is not pinned.
+    line_comment: bool,
 }
 
 type PResult<T> = Result<T, ParseError>;
@@ -293,9 +295,25 @@ enum ParseError {
 }
 
 impl Parser<'_> {
+    /// Blanks and `/* */` comments (json/JsonReadFrom.al:ObjectReadFromErrors `comment`).
     fn ws(&mut self) {
-        while self.i < self.s.len() && matches!(self.s[self.i], b' ' | b'\t' | b'\n' | b'\r') {
-            self.i += 1;
+        loop {
+            while self.i < self.s.len() && matches!(self.s[self.i], b' ' | b'\t' | b'\n' | b'\r') {
+                self.i += 1;
+            }
+            if self.s[self.i..].starts_with(b"/*") {
+                match self.s[self.i + 2..].windows(2).position(|w| w == b"*/") {
+                    Some(end) => {
+                        self.i += 2 + end + 2;
+                        continue;
+                    }
+                    None => return,
+                }
+            }
+            if self.s[self.i..].starts_with(b"//") {
+                self.line_comment = true;
+            }
+            return;
         }
     }
     fn eat(&mut self, c: u8) -> bool {
@@ -324,7 +342,7 @@ impl Parser<'_> {
         let h = match self.s.get(self.i) {
             Some(b'{') => self.object()?,
             Some(b'[') => self.array()?,
-            Some(b'"') => {
+            Some(b'"' | b'\'') => {
                 let t = self.string()?;
                 new_handle(JsonNode::Scalar(Scalar::Val(Value::Text(t.into()))))
             }
@@ -332,6 +350,11 @@ impl Parser<'_> {
             Some(b'f') if self.lit("false") => new_handle(JsonNode::Scalar(Scalar::Val(Value::Boolean(false)))),
             Some(b'n') if self.lit("null") => new_handle(JsonNode::Scalar(Scalar::Null)),
             Some(b'-' | b'0'..=b'9') => self.number()?,
+            // `NaN` reads as the text "NaN" (ReadFrom_Invalid `nan`); Infinity and the like are not pinned.
+            Some(b'N') if self.lit("NaN") => new_handle(JsonNode::Scalar(Scalar::Val(Value::Text("NaN".into())))),
+            Some(b'I') if self.s[self.i..].starts_with(b"Infinity") => {
+                return Err(ParseError::Unsupported("JSON Infinity (not pinned)"));
+            }
             _ => return Err(ParseError::Invalid),
         };
         self.depth -= 1;
@@ -345,10 +368,22 @@ impl Parser<'_> {
         if !self.eat(b'}') {
             loop {
                 self.ws();
-                if self.s.get(self.i) != Some(&b'"') {
-                    return Err(ParseError::Invalid);
+                // A closing brace after a comma ends the object (`{"a":1,}`: json/JsonReadFrom.al:ObjectReadFromErrors `trailing_comma`).
+                if !kids.is_empty() && self.eat(b'}') {
+                    break;
                 }
-                let k = self.string()?;
+                let k = match self.s.get(self.i) {
+                    Some(b'"' | b'\'') => self.string()?,
+                    // An unquoted key (`{a:1}`: `unquoted_key`); only plain names are taken.
+                    Some(c) if c.is_ascii_alphabetic() || *c == b'_' => {
+                        let from = self.i;
+                        while self.s.get(self.i).is_some_and(|c| c.is_ascii_alphanumeric() || *c == b'_') {
+                            self.i += 1;
+                        }
+                        String::from_utf8_lossy(&self.s[from..self.i]).into_owned()
+                    }
+                    _ => return Err(ParseError::Invalid),
+                };
                 self.ws();
                 if !self.eat(b':') {
                     return Err(ParseError::Invalid);
@@ -382,6 +417,14 @@ impl Parser<'_> {
                 kids.push(self.value()?);
                 self.ws();
                 if self.eat(b',') {
+                    // `[1,]` is `[1]` (json/JsonReadFrom.al:ArrayReadFromErrors `trailing_comma`).
+                    self.ws();
+                    if self.eat(b']') {
+                        break;
+                    }
+                    if self.s.get(self.i) == Some(&b',') {
+                        return Err(ParseError::Unsupported("an empty element in a JSON array (not pinned)"));
+                    }
                     continue;
                 }
                 if self.eat(b']') {
@@ -404,12 +447,14 @@ impl Parser<'_> {
     }
 
     fn string(&mut self) -> PResult<String> {
+        // Either quote opens a string and the same one closes it (`{'a':1}`, `single_quotes`).
+        let quote = self.s[self.i];
         self.i += 1;
         let mut units: Vec<u16> = Vec::new();
         loop {
             let b = *self.s.get(self.i).ok_or(ParseError::Invalid)?;
             match b {
-                b'"' => {
+                q if q == quote => {
                     self.i += 1;
                     break;
                 }
@@ -419,6 +464,7 @@ impl Parser<'_> {
                     self.i += 1;
                     let c = match e {
                         b'"' => '"' as u16,
+                        b'\'' => '\'' as u16,
                         b'\\' => '\\' as u16,
                         b'/' => '/' as u16,
                         b'b' => 8,
@@ -463,8 +509,13 @@ impl Parser<'_> {
             self.i += 1;
         }
         let int_len = self.i - int_start;
-        if int_len == 0 || (int_len > 1 && self.s[int_start] == b'0') {
+        if int_len == 0 {
             return Err(ParseError::Invalid);
+        }
+        // `007` reads as 7 (json/lt-json-overloads/P88ValueReadFrom.al:ReadFrom_Invalid `leading_zero`); what a leading zero
+        // does in front of a fraction or an exponent is not pinned.
+        if int_len > 1 && self.s[int_start] == b'0' && matches!(self.s.get(self.i), Some(b'.' | b'e' | b'E')) {
+            return Err(ParseError::Unsupported("a JSON number with leading zeros and a fraction or exponent (not pinned)"));
         }
         let mut is_int = true;
         if self.eat(b'.') {
@@ -543,14 +594,19 @@ fn parse(text: &str) -> Result<Option<Handle>, Signal> {
         s: text.as_bytes(),
         i: 0,
         depth: 0,
+        line_comment: false,
     };
     match p.value() {
         Ok(h) => {
             p.ws();
+            if p.line_comment {
+                return unsupported("a // comment in JSON text (not pinned)");
+            }
             // Text after the first value is ignored (json/TestProbeJsonContracts.al:ReadFrom_Invalid_Statement,
             // `trailing_garbage`: `{"a":1} trailing` raises nothing).
             Ok(Some(h))
         }
+        Err(ParseError::Invalid) if p.line_comment => unsupported("a // comment in JSON text (not pinned)"),
         Err(ParseError::Invalid) => Ok(None),
         Err(ParseError::Unsupported(what)) => unsupported(what),
     }
@@ -811,6 +867,9 @@ fn as_text(s: &Scalar) -> Result<Value, Signal> {
         // json/TestProbeJsonContracts.al:TypedGetters_WrongKinds: a number and a Boolean read as text (`True`).
         Scalar::Val(Value::Integer(n)) => Ok(Value::Text(n.to_string().into())),
         Scalar::Val(Value::BigInteger(n)) => Ok(Value::Text(n.to_string().into())),
+        // A whole number read as a double keeps the one decimal place only in the written JSON, not in its text
+        // (json/lt-json-overloads/P88ValueReadFrom.al:ReadFrom_Scalars `exp`: text 1000, json 1000.0).
+        Scalar::Val(Value::Decimal(d)) if d.scale() == 1 && d.fract().is_zero() => Ok(Value::Text(d.trunc().to_string().into())),
         Scalar::Val(Value::Decimal(d)) => Ok(Value::Text(d.to_string().into())),
         Scalar::Val(Value::Boolean(b)) => Ok(Value::Text(if *b { "True" } else { "False" }.into())),
         Scalar::Raw(t) => Ok(Value::Text(t.clone().into())),
@@ -1420,15 +1479,24 @@ fn read_from(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value], want: Opti
             ))
         } else {
             // json/TestProbeJsonContracts.al:ReadFrom_ArrayIntoObject_Statement, ReadFrom_ObjectIntoArray_Statement.
-            let kind = syntax
-                .as_ref()
-                .map(|p| with_node(p, |n| matches!(n, JsonNode::Array(_))))
-                .unwrap_or(false);
+            // A scalar names its own type (misc/lt-probes-needed-1/PnAJsonReadKinds.al:StatementForm_WrongKind: Integer, String,
+            // Null, Boolean); a fractional number is not pinned.
+            let kind = syntax.as_ref().map(|p| {
+                with_node(p, |n| match n {
+                    JsonNode::Array(_) => Some("Array"),
+                    JsonNode::Object(_) => Some("Object"),
+                    JsonNode::Scalar(Scalar::Null) => Some("Null"),
+                    JsonNode::Scalar(Scalar::Val(Value::Text(_))) => Some("String"),
+                    JsonNode::Scalar(Scalar::Val(Value::Boolean(_))) => Some("Boolean"),
+                    JsonNode::Scalar(Scalar::Val(Value::BigInteger(_) | Value::Integer(_))) => Some("Integer"),
+                    _ => None,
+                })
+            });
+            let Some(Some(kind)) = kind else {
+                return unsupported("ReadFrom of a number with a fraction into an object or array (token type name not pinned)");
+            };
             Err(error(
-                format!(
-                    "JSON tokens of type '{}' are not supported by this implementation.",
-                    if kind { "Array" } else { "Object" }
-                ),
+                format!("JSON tokens of type '{kind}' are not supported by this implementation."),
                 "InvalidJsonType",
             ))
         };

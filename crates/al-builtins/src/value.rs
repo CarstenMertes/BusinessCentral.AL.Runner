@@ -226,6 +226,9 @@ pub struct QueryRun {
     /// Whether the query has run. `Open` does not run it: the first `Read` does, so a row written
     /// in between is read (query/TestQueryOuterJoinDescendingSaveAsContracts.al).
     pub started: bool,
+    /// A SetRange or SetFilter came after `Open` and before the first `Read`: `Read` raises until the query is opened again
+    /// (misc/lt-probes-needed-1/PnAQueryOpenRead.al:SetRangeBetweenOpenAndFirstRead, SetRangeBeforeOpen_ThenChangedBeforeFirstRead).
+    pub filters_changed: bool,
     /// The rows still to read, in the query's order.
     pub rows: Vec<QueryRow>,
     pub next: usize,

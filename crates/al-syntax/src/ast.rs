@@ -661,7 +661,12 @@ impl TypeRef {
             match t.kind() {
                 SyntaxKind::Comma => out.push(String::new()),
                 SyntaxKind::Ident | SyntaxKind::QuotedIdent | SyntaxKind::Integer => {
-                    *out.last_mut().expect("non-empty") = ident_text(&t)
+                    // A quoted empty name (`""`) shows as one space; an unquoted empty member shows its number
+                    // (types/lt-scalars/ScT70053.al:Option_Format `blank_len` against misc/lt-inferred-behaviors/P69OptionInText.al:
+                    // Option_StrSubstNo `subst_2`). The two are told apart by keeping the quoted one as a space.
+                    let name = ident_text(&t);
+                    *out.last_mut().expect("non-empty") =
+                        if name.is_empty() && t.kind() == SyntaxKind::QuotedIdent { " ".into() } else { name }
                 }
                 _ => {}
             }

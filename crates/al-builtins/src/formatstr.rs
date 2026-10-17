@@ -391,7 +391,8 @@ fn code(v: &Value, code: &str, numeric: Option<&Numeric>, ctx: &dyn FormatCtx) -
     // `<C,GBP>`: the currency code Base Application's Amount Auto Format puts in front of a format string. Format accepts it
     // and writes nothing for it (corpus types/lt-format-currency-prefix/FormatCurrencyPrefix.al: P157_Gbp_AmountAutoFormatShape,
     // P157_Gbp_PrefixPlusOtherTags).
-    if code.starts_with("C,") && code.len() > 2 {
+    // An empty code is accepted too (`<C,>`; FormatCurrencyPrefix.al:P157_UnknownAndEmptyCurrency `empty`, `emptyOnly`).
+    if code.starts_with("C,") {
         return Ok(String::new());
     }
     if let Some(n) = numeric {

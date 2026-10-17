@@ -298,6 +298,15 @@ fn n_send(c: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> Out {
     let Some(recv) = r else {
         return unsupported("Notification.Send without a receiver");
     };
+    // A notification with no message cannot be sent (errorinfo/lt-errnotif/EnTNotification.al:Send_EmptyMessage); no handler runs.
+    if with_notification(Some(&mut *recv), |n| n.message.is_none())? {
+        return Err(Signal::Error(Box::new(crate::native::AlError {
+            message: "Message cannot be empty when sending a Notification.".into(),
+            code: "Notification".into(),
+            call_stack: String::new(),
+            ..Default::default()
+        })));
+    }
     let fresh = c.new_guid();
     let id = with_notification(Some(&mut *recv), |n| *n.id.get_or_insert(fresh))?;
     let copy = notification_copy(Some(&mut *recv))?;

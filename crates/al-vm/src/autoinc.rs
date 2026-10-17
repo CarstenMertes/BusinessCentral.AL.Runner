@@ -130,7 +130,14 @@ impl Session {
                 })
             });
         if has_media {
-            return error("Truncate is not supported when the field has Media and/or MediaSet fields.");
+            // Code DB:Ok (misc/lt-probes-needed-3/PnC03Truncate.al:Truncate_MediaTable, Truncate_MediaTable_Empty;
+            // record/lt-truncate-guards/TruncateGuards.al:P163_Truncate_MediaSetTable_AndFilters).
+            return Err(Signal::Error(Box::new(AlError {
+                message: "Truncate is not supported when the field has Media and/or MediaSet fields.".into(),
+                code: "DB:Ok".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
         }
         // Corpus record/TestRecordTruncateTryScope.al:34: the scope is inherited by called frames.
         if self.tx.try_depth > 0 {

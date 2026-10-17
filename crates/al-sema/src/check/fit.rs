@@ -87,6 +87,19 @@ pub(crate) fn fits(arg: &Ty, param: &str) -> bool {
     }
 }
 
+/// Whether an argument fits a parameter of a procedure AL code declares, where two overloads compete (misc/lt-inferred-behaviors/
+/// P69Overloads.al:Overload_IntegerVsVariant, Overload_TextVsVariant): a BigInteger or a Decimal does not take the Integer overload
+/// (the Variant one wins), a Char takes the Text overload over the Variant one. Other pairs fit as `fits` says.
+pub(crate) fn fits_proc(arg: &Ty, param: &str) -> bool {
+    let p = param.to_ascii_lowercase();
+    let p = p.split(['[', ' ']).next().unwrap_or("");
+    match (arg, p) {
+        (Ty::BigInteger | Ty::Decimal, "integer") => false,
+        (Ty::Char, "text") => true,
+        _ => fits(arg, param),
+    }
+}
+
 /// A `List of [..]` or `Dictionary of [..]` spelled for comparing element types: lower case, no
 /// lengths, Code as Text.
 pub(crate) fn generic_shape(t: &str) -> String {

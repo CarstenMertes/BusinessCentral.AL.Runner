@@ -225,7 +225,12 @@ impl Session {
                 Vec::new()
             };
             self.set_view_in(&rec, &table, &view, Some(2), sub_view.is_some(), false)?;
-            rec.borrow_mut().filters.extend(kept);
+            // A field the view filters itself keeps the view's filter alone (two equal filters of one field read as a doubled value
+            // when a new line takes it: Purchase Price List's "Price Type").
+            let mut r = rec.borrow_mut();
+            let viewed: Vec<usize> = r.filters.iter().filter(|f| f.group == 2).map(|f| f.field).collect();
+            r.filters
+                .extend(kept.into_iter().filter(|f| !viewed.contains(&f.field)));
         }
         let result = (|| {
             // A `Page` variable whose procedure ran before this open was constructed then, and its

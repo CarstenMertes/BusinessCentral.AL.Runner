@@ -264,7 +264,11 @@ fn both(pair: &mut Pair, script: &dyn Fn(&mut Run)) -> BTreeSet<String> {
     let (x, y) = (bare.seen.clone(), mine.seen.clone());
     pair.bare = Some(bare.session);
     pair.mine = Some(mine.session);
-    assert_eq!(x.len(), y.len(), "number of observations\nsidecar: {x:?}\nin proc: {y:?}");
+    assert_eq!(
+        x.len(),
+        y.len(),
+        "number of observations\nsidecar: {x:?}\nin proc: {y:?}"
+    );
     for (k, (x, y)) in x.iter().zip(&y).enumerate() {
         assert_eq!(x, y, "observation {k}\nsidecar : {x}\nin proc : {y}");
     }

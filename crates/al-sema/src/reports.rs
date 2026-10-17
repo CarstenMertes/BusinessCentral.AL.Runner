@@ -978,7 +978,9 @@ fn item_ir(
         on_after_get: trigger("OnAfterGetRecord"),
         on_post: trigger("OnPostDataItem"),
         columns: o.columns(sec, table),
-        max_iteration: prop("MaxIteration").and_then(|v| v.trim().parse::<u32>().ok()).filter(|n| *n > 0),
+        max_iteration: prop("MaxIteration")
+            .and_then(|v| v.trim().parse::<u32>().ok())
+            .filter(|n| *n > 0),
     }
 }
 

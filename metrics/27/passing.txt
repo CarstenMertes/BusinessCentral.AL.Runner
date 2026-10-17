@@ -6402,6 +6402,7 @@
 70121 NullAppId
 70122 P147_Filter_SetTableViewVsStored
 70127 ThreeFilters_EntryTxtQty_AllOrders
+70128 CloseSetRangeReopen
 70170 AssignedThenReadBack
 70170 HandlerSeesInitSettings
 70170 HandlerSeesPristineSettings
@@ -6644,6 +6645,7 @@
 70390 VisiblePart_FollowsHostRow_Result
 70391 Add_LargeValues_Result
 70391 Add_NegativeOperands_Result
+70391 Add_TwoVariables_Result
 70394 CalcSums_AfterFlowFieldFilterReset_Result
 70394 CalcSums_FilterFlowFieldNotZero_Result
 70394 CalcSums_FlowFieldRangeAndStoredFilter_Result
@@ -6832,6 +6834,8 @@
 70598 Link_ChildSetsOwnFilters_InPreDataItem
 70598 Link_TwoFields_FiltersPerParentRow
 70598 Link_TwoFields_ParentFiltered
+70598 MaxIteration_NestedPerParentRow
+70598 MaxIteration_StopsTheIntegerItem
 70604 LinkReference_Grandparent
 70613 Members_SaveAs
 70629 One_Extension_FullOrder_Run
@@ -7379,6 +7383,7 @@
 71034 Compare_After_Conversion_Numbers
 71034 Compare_After_Conversion_Text
 71034 Compare_Format_Of_Variants
+71034 Concat_After_Conversion
 71035 Evaluate_Error_Texts_Through_Typed_Targets
 71035 Format_Of_Duration_BigInteger_Char_Byte_Enum
 71035 Format_Of_Variants
@@ -8648,6 +8653,7 @@
 72689 Zone_Blank_Arm_Loc
 72691 Duration_To_BigInteger_Decimal
 72691 Duration_To_Integer_InRange
+72692 Duration_Arithmetic
 72692 Duration_Format
 72693 Dictionary_Text_Text_Add_Guid
 72693 Guid_Null_To_Text

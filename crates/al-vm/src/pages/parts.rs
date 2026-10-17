@@ -34,6 +34,21 @@ impl Session {
             let Some(part_page) = c.part_page else {
                 return unsupported(format!("part {} shows no page", c.name));
             };
+            // A part page the host's code reached before the host ran (see `part_page`, assumption part-of-a-page-that-never-ran) is the
+            // one the page opens with: what that call set on it stays (Warehouse Pick Summary.SetRecords hands the summary
+            // rows to its part before the page runs).
+            let early = {
+                let mut s = st.borrow_mut();
+                let at = s
+                    .hidden_parts
+                    .iter()
+                    .position(|(c, p)| *c == i && !p.borrow().open && !p.borrow().ran);
+                at.map(|at| s.hidden_parts.remove(at).1)
+            };
+            if let Some(child) = early {
+                st.borrow_mut().parts.push((i, child));
+                continue;
+            }
             let child = Rc::new(RefCell::new(PageState::closed(part_page as u32)));
             child.borrow_mut().host = Some((Rc::downgrade(st), i));
             self.page_instance(&child)?;
@@ -138,7 +153,17 @@ impl Session {
         if never_ran {
             al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::PartOfAPageThatNeverRan);
         } else {
-            self.require_open(st)?;
+            match self.require_open(st) {
+                // The page's own code reaching a part after the page ran and closed is not a TestPage the test closed (Posted Purchase
+                // Document Lines.CopyLineToDoc reads `CurrPage.PostedRcpts.PAGE` after its RunModal returned): refused, as the other
+                // calls of such a page are (see test_page_op).
+                Err(Signal::Error(e)) if runtime && e.code == "TestPageNotOpened" => {
+                    return unsupported(
+                        "a part of a page that is not open, reached by the code of that page (what it does then is not pinned)",
+                    );
+                }
+                r => r?,
+            }
         }
         let found = st
             .borrow()

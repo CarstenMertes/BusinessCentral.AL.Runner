@@ -451,8 +451,47 @@ pub fn arith(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
 fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
     match (&v, t) {
         (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
+        // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
+        // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
+        (Value::Integer(_), RtType::Text(_)) => raise(
+            "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.",
+            "TypeConversion",
+        ),
         _ => unsupported(format!("conversion of {} to {t}", v.describe(), t = t.describe())),
     }
+}
+
+/// A number a Variant holds (`FieldRef.Value()`) assigned to a Text or Code field of a record: its default `Format` text. Not pinned:
+/// assumption number-to-text-is-format. Base Application's Workflow Table Relation Value.CreateNew does `Value := FieldRef.Value()` into
+/// a Text[250] field (114 Tests-Workflow tests). A Variant into a Text *variable* is not this: it raises (VaTCompare.al:af117).
+/// `None` when the value is no number or the target no Text or Code.
+#[cold]
+#[inline(never)]
+pub fn number_into_text_field(v: &Value, t: &RtType) -> Option<Result<Value, Signal>> {
+    if !matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
+        return None;
+    }
+    let (max, code) = match t {
+        RtType::Text(max) => (max, false),
+        RtType::Code(max) => (max, true),
+        _ => return None,
+    };
+    struct NoEnums;
+    impl crate::format::FormatCtx for NoEnums {
+        fn enum_name(&self, _: u32, _: i32) -> String {
+            String::new()
+        }
+    }
+    crate::assumptions::assume(crate::assumptions::Assumption::NumberToTextIsFormat);
+    let text = match crate::format::try_format(v, 0, 0, &NoEnums) {
+        Ok(text) => text,
+        Err(e) => return Some(Err(Signal::Unsupported(e))),
+    };
+    Some(if code {
+        fit(upper_code(text.trim()), *max).map(|c| Value::Code(c.into()))
+    } else {
+        fit_txt(text.into(), *max).map(Value::Text)
+    })
 }
 
 /// A Date into a DateTime is that day at midnight, the blank Date the blank DateTime (as CreateDateTime(D, 0T)). Not pinned;
@@ -481,6 +520,56 @@ fn duration_with_number(op: Arith, duration_first: bool, d: i64, k: i64) -> Resu
     }
     .map(Value::Duration)
     .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()))
+}
+
+/// Duration `/`, `div` and `mod` by a whole number, and Duration / Duration (pinned by corpus
+/// types/lt-filter-enum-relation-duration-guid/D_Duration.al:354-370 with 90000 ms: `/ 4` is 22500 ms, `div 7` is 12,857, `mod 7` is 1,
+/// Duration / Duration is the Decimal 3, `/ 7` raises ConversionCast because the quotient is no whole number of milliseconds).
+#[cold]
+#[inline(never)]
+fn duration_divide(op: Arith, a: i64, r: &Value) -> Result<Value, Signal> {
+    let (b, by_duration) = match r {
+        Value::Duration(ms) => (*ms, true),
+        other => (int_of(other).unwrap_or(0), false),
+    };
+    if b == 0 {
+        return raise("Attempted to divide by zero.", "AL:DivideByZero");
+    }
+    if by_duration {
+        // Only the quotient of two Durations is pinned.
+        if op != Arith::Div {
+            return unsupported(format!("{} of two Durations (not pinned)", op.describe()));
+        }
+        let q = Decimal::from(a)
+            .checked_div(Decimal::from(b))
+            .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+            .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
+        return Ok(Value::Decimal(q));
+    }
+    match op {
+        Arith::IntDiv | Arith::Mod => {
+            // The result formats as a Decimal (`D1 div 7` is '12,857' in Format; D_Duration.al:369).
+            Ok(Value::Decimal(Decimal::from(if op == Arith::IntDiv {
+                a / b
+            } else {
+                a % b
+            })))
+        }
+        Arith::Div if a % b == 0 => Ok(Value::Duration(a / b)),
+        Arith::Div => {
+            let q = Decimal::from(a)
+                .checked_div(Decimal::from(b))
+                .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+                .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
+            raise(
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {q} to System.Int64."
+                ),
+                "ConversionCast",
+            )
+        }
+        _ => unsupported("Duration arithmetic (not pinned)".to_string()),
+    }
 }
 
 fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
@@ -541,17 +630,16 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
                 .map(V::Duration)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
-        // Duration +/- Duration is a Duration in milliseconds. Assumed (registry entry duration-add-duration): Match Bank
-        // Payments adds the Durations of its telemetry timers.
+        // Duration +/- Duration is a BigInteger of milliseconds: `Format(D1 + D2)` answers '4000', not a duration text, and `R := D1 + D2`
+        // converts it back (corpus types/lt-duration-arithmetic/DurationAddDuration.al:Add_TwoVariables_Result, sum_format_default).
         (V::Duration(a), V::Duration(b)) if matches!(op, Arith::Add | Arith::Sub) => {
-            crate::assumptions::assume(crate::assumptions::Assumption::DurationAddDuration);
             let n = if op == Arith::Add {
                 a.checked_add(*b)
             } else {
                 a.checked_sub(*b)
             };
             return n
-                .map(V::Duration)
+                .map(V::BigInteger)
                 .ok_or_else(|| Signal::Unsupported("Duration overflow (error text not pinned yet)".into()));
         }
         // A whole number and a Duration add and subtract as milliseconds, into a Duration (`duration_with_number`).
@@ -706,6 +794,15 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
         _ => {}
     }
     let (Some(a), Some(b)) = (as_decimal(l), as_decimal(r)) else {
+        // Duration `/`, `div` and `mod` a whole number, and Duration / Duration (types/lt-filter-enum-relation-duration-guid/
+        // D_Duration.al:Duration_Arithmetic). Here, off the path of the numbers.
+        if let V::Duration(d) = l {
+            if matches!(op, Arith::Div | Arith::IntDiv | Arith::Mod)
+                && (int_of(r).is_some() || matches!(r, V::Duration(_)))
+            {
+                return duration_divide(op, *d, r);
+            }
+        }
         return unsupported(format!(
             "{} of {l} and {r}",
             op.describe(),
@@ -1049,9 +1146,9 @@ mod tests {
     #[test]
     fn two_durations_add_and_subtract_as_milliseconds() {
         let add = arith(Arith::Add, &Value::Duration(1500), &Value::Duration(500)).unwrap();
-        assert!(matches!(add, Value::Duration(2000)));
+        assert!(matches!(add, Value::BigInteger(2000)));
         let sub = arith(Arith::Sub, &Value::Duration(500), &Value::Duration(1500)).unwrap();
-        assert!(matches!(sub, Value::Duration(-1000)));
+        assert!(matches!(sub, Value::BigInteger(-1000)));
     }
 
     #[test]
@@ -1421,10 +1518,57 @@ mod tests {
         ));
         assert!(
             matches!(
-                arith(Arith::Div, &hour, &Value::Integer(2)),
+                arith(Arith::Mul, &hour, &Value::Duration(2)),
                 Err(Signal::Unsupported(_))
             ),
             "other Duration arithmetic is not pinned"
+        );
+    }
+
+    /// Duration `/`, `div` and `mod` with a whole number, and Duration / Duration, as corpus
+    /// types/lt-filter-enum-relation-duration-guid/D_Duration.al:Duration_Arithmetic pins them (D1 = 90000 ms, D2 = 30000 ms).
+    /// A Variant's number into a record's Text or Code field is its Format text (assumption number-to-text-is-format; a BigInteger has
+    /// no thousands separator in Format); into a Text variable an Integer raises TypeConversion (corpus VaTCompare.al af117).
+    #[test]
+    fn a_variant_number_becomes_text_in_a_field_and_raises_in_a_variable() {
+        use crate::value::RtType as T;
+        let got = number_into_text_field(&Value::BigInteger(2645), &T::Text(Some(250)));
+        assert!(matches!(&got, Some(Ok(Value::Text(t))) if &**t == "2645"), "{got:?}");
+        let got = number_into_text_field(&Value::Integer(7), &T::Code(Some(20)));
+        assert!(matches!(&got, Some(Ok(Value::Code(t))) if &**t == "7"), "{got:?}");
+        assert!(number_into_text_field(&Value::Boolean(true), &T::Text(None)).is_none());
+        let Err(Signal::Error(e)) = convert(Value::Integer(5), &T::Text(Some(10))) else {
+            panic!("an Integer into a Text variable raises");
+        };
+        assert_eq!(e.code, "TypeConversion");
+    }
+
+    #[test]
+    fn a_duration_divides_and_takes_the_remainder_by_a_whole_number() {
+        let d1 = Value::Duration(90_000);
+        assert!(matches!(
+            arith(Arith::Div, &d1, &Value::Integer(4)),
+            Ok(Value::Duration(22_500))
+        ));
+        assert!(matches!(
+            arith(Arith::IntDiv, &d1, &Value::Integer(7)),
+            Ok(Value::Decimal(x)) if x == Decimal::from(12_857)
+        ));
+        assert!(matches!(
+            arith(Arith::Mod, &d1, &Value::Integer(7)),
+            Ok(Value::Decimal(x)) if x == Decimal::from(1)
+        ));
+        assert!(matches!(
+            arith(Arith::Div, &d1, &Value::Duration(30_000)),
+            Ok(Value::Decimal(x)) if x == Decimal::from(3)
+        ));
+        let Err(Signal::Error(e)) = arith(Arith::Div, &d1, &Value::Integer(7)) else {
+            panic!("a fraction of a millisecond raises");
+        };
+        assert_eq!(e.code, "ConversionCast");
+        assert_eq!(
+            e.message,
+            "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value 12857.1428571428571 to System.Int64."
         );
     }
 

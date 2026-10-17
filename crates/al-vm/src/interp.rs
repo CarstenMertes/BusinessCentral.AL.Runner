@@ -439,7 +439,26 @@ impl Session {
                 // A table procedure runs with the record as its Rec, on the record
                 // variable's own globals (ADR-021).
                 Value::Record(rc) => {
-                    let (inst, saved) = self.enter_record(object, rc, None)?;
+                    // `Rec.InitType()` in a page's code: the table procedure's xRec is the page's own xRec, as the page's triggers see it
+                    // (Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type; assumption
+                    // page-rec-procedure-sees-page-xrec).
+                    let page_xrec = {
+                        let fi = f.instance.borrow();
+                        let o = &self.engine.program.objects[fi.object as usize];
+                        match (o.kind == al_ir::ObjKind::Page, o.rec_slot, o.xrec_slot) {
+                            (true, Some(r), Some(x)) => match (&fi.globals[r], &fi.globals[x]) {
+                                (Value::Record(pr), Value::Record(px)) if Rc::ptr_eq(pr, &rc) => Some(px.clone()),
+                                _ => None,
+                            },
+                            _ => None,
+                        }
+                    };
+                    if page_xrec.is_some() {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::PageRecProcedureSeesPageXrec,
+                        );
+                    }
+                    let (inst, saved) = self.enter_record(object, rc, page_xrec.as_ref())?;
                     let r = self.finish_call(object, routine, inst.clone(), args, values, try_call, f);
                     Self::leave_record(&inst, saved);
                     return r;
@@ -758,7 +777,16 @@ impl Session {
         }
         if let ir::Place::Field(base, pos) = p {
             let ty = self.place_type(p, f);
-            let v = ops::convert(v, &ty)?;
+            // A number a Variant holds goes into a Text or Code field as its Format text (the lowering leaves it unconverted for
+            // that); the guard is one test on the common path.
+            let v = if matches!(v, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) {
+                match ops::number_into_text_field(&v, &ty) {
+                    Some(r) => r?,
+                    None => ops::convert(v, &ty)?,
+                }
+            } else {
+                ops::convert(v, &ty)?
+            };
             return match self.read(base, f)? {
                 Value::Record(rc) => {
                     self.connection_check(&rc)?;

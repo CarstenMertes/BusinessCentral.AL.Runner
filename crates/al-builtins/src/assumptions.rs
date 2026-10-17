@@ -109,6 +109,18 @@ registry! {
         tests: "Item Tracking Lines (InsertRecord inserts into the page's temporary source, ValidateAndInsert answers false); Tests-Manufacturing PostProductionJournalUsingLotItemTracking and the item tracking tests that set a lot and a quantity.",
         probe: "A page with OnInsertRecord { Rec.Insert(); exit(false) } and OnModifyRecord { Rec.Modify(); exit(false) }: OpenNew, set the key, set a second field, OK; read the row and count the trigger calls.",
     },
+    NumberToTextIsFormat => {
+        id: "number-to-text-is-format",
+        assumed: "An Integer, BigInteger or Decimal (a Variant from FieldRef.Value) assigned to a Text or Code is its default Format text, as Format gives it.",
+        tests: "Workflow Table Relation Value.CreateNew (Value := FieldRef.Value()); 114 Tests-Workflow tests.",
+        probe: "A Variant holding an Integer, a BigInteger (2645 and 1234567) and a Decimal assigned to a Text[50] and a Code[50]; compare with Format.",
+    },
+    QueryClosedAfterLastRow => {
+        id: "query-closed-after-last-row",
+        assumed: "A query whose Read has returned false after its last row is closed: SetRange and SetFilter take a new filter and Open runs it again.",
+        tests: "Workflow Step Instance.SetTableRelationValues (one query variable, filtered and opened once per table relation); 125 Tests-Workflow tests.",
+        probe: "Open a query, Read to false, SetRange on a column, Open and Read again; the same without the SetRange; Open twice after the last row.",
+    },
     DateAddWholeDecimal => {
         id: "date-add-whole-decimal",
         assumed: "Date + Decimal and Date - Decimal with a whole number add or subtract days like an Integer; a fraction is refused.",
@@ -223,6 +235,12 @@ registry! {
         tests: "Tests-ERM Initialize (`FeatureKey.Enabled := FeatureKey.Enabled::None; FeatureKey.Modify()` for ReminderTermsCommunicationTexts): 243 tests.",
         probe: "FindFirst, Modify() with nothing changed; Enabled := Enabled then Modify; Enabled changed then Modify, then Get again and read Enabled; after a rollback.",
     },
+    QueryColumnRecordId => {
+        id: "query-column-record-id",
+        assumed: "A query column over a RecordId field returns the stored RecordId, groups and orders by it like the field, and cannot carry a Method, a ColumnFilter or ReverseSign (refused).",
+        tests: "Base Application's \"Workflow Instance\" query (column Record_ID), opened by Workflow Step Instance.SetTableRelationValues and Approvals Mgmt.; 142 Tests-Workflow tests.",
+        probe: "A query with a column over a RecordId field of a table with rows: Open, Read, Format of the column, grouping and OrderBy on it, SetFilter on the column, SaveAsCsv.",
+    },
     QueryMethodOverFlowField => {
         id: "query-method-over-flowfield",
         assumed: "A query column over a FlowField with Method Sum, Average, Min or Max aggregates the value calculated for each joined row (with the flow filters of its dataitem), as a column without a method shows it.",
@@ -253,6 +271,12 @@ registry! {
         tests: "Discount Setup Notifications (T130_NotifyAboutMissingSalesSetupOnInvDiscountValidation, a Sales document page) and about 87 more Tests-ERM tests.",
         probe: "A card with OnFindRecord and OnAfterGetCurrRecord that log, an action that calls CurrPage.Update: the Which string and the trigger order; the same on a list, and after an edit not yet saved.",
     },
+    PageRecProcedureSeesPageXrec => {
+        id: "page-rec-procedure-sees-page-xrec",
+        assumed: "A table procedure the page's code calls on Rec (Rec.InitType()) sees the page's xRec as its xRec, not a blank record.",
+        tests: "Test Item Lookup (TestSalesInvoiceItemLookupInDescription and four siblings): Sales Invoice Subform.OnNewRecord calls Rec.InitType, which copies xRec.Type.",
+        probe: "A table with a procedure returning xRec.\"No.\"; a page whose OnAfterGetCurrRecord returns it through Rec.Proc() after moving between two rows; the same in OnNewRecord.",
+    },
     UpdateRefreshListOnFindRecord => {
         id: "update-refresh-list-onfindrecord",
         assumed: "CurrPage.Update on a list with OnFindRecord (with or without OnNextRecord) reads the rows as the pinned table of 3 rows with the cursor on the middle one does (misc/W2FindRecordUpdate.al), for any number of rows and any cursor position below a window.",
@@ -264,6 +288,12 @@ registry! {
         assumed: "CurrPage.Caption read in a procedure the caller invokes on a Page variable before Run or RunModal answers the page's Caption property, and raises nothing.",
         tests: "Alloc. Account Sales E2E Tests (TestOverrideGLAllocation) and 20 more Tests-ERM tests that open Edit Dimension Set Entries through Dimension Management.",
         probe: "A page with Caption = 'X' and a procedure returning CurrPage.Caption, called on a Page variable before RunModal and after it closed; also with a Caption assigned in OnOpenPage.",
+    },
+    CaptionAssignedBeforeThePageRuns => {
+        id: "caption-assigned-before-the-page-runs",
+        assumed: "`PageVariable.Caption := x` before the variable's first Run or RunModal raises nothing, and the page shows x when it opens (its own OnOpenPage may assign another).",
+        tests: "SCM Transfers (UndoTransShpt_SNTracking and about 20 more Tests-SCM tests): Item Tracking Data Collection.SelectMultipleTrackingNo sets the caption of Item Tracking Summary before it runs.",
+        probe: "A page variable with Caption := 'X' before RunModal; read TestPage.Caption in the handler; the same with OnOpenPage assigning CurrPage.Caption.",
     },
     PartOfAPageThatNeverRan => {
         id: "part-of-a-page-that-never-ran",
@@ -565,12 +595,6 @@ registry! {
         assumed: "When a TestPage filter (or key) change leaves an editable list without a row, the page stands on its blank line, with the single-valued filters on it (a page opened with OpenNew starts a new row again); typing into it inserts the row.",
         tests: "Item Vendor Catalog (OpenNew, Filter.SetFilter(\"Item No.\"), then SetValue of the vendor): ERM Item Reference Purchase and about 12 more Tests-ERM tests.",
         probe: "An editable list opened with OpenNew and with OpenEdit over an empty filtered result: SetValue of a non-key field and the stored row's key; Next() and the row triggers that run.",
-    },
-    DurationAddDuration => {
-        id: "duration-add-duration",
-        assumed: "A Duration plus or minus a Duration is a Duration of the summed or subtracted milliseconds; an overflow is refused. (Duration times a whole number, DateTime and Time with a Duration are pinned by types/TestDurationContracts.al and types/PUTimeArithmetic.al.)",
-        tests: "Match Bank Payments (the telemetry timers of MatchEntries) through Tests-Bank ERM Bank Reconciliation and ERM Cash Manager: about 268 tests.",
-        probe: "D1 + D2, D1 - D2 and a negative result for two Duration variables, Format(Result, 0, 9), and the overflow at the BigInteger edge.",
     },
     CalcSumsFlowFieldFilter => {
         id: "calcsums-flowfield-filter",

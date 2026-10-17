@@ -489,7 +489,9 @@ fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
         return raise("Incorrect use of the where parameter.", "ALSystemString");
     }
     if wh.chars().count() > 3 {
-        return unsupported(format!("DelChr with Where `{wh}` (more than three characters is not pinned)"));
+        return unsupported(format!(
+            "DelChr with Where `{wh}` (more than three characters is not pinned)"
+        ));
     }
     let (all, lead, trail) = (wh.contains('='), wh.contains('<'), wh.contains('>'));
     Ok(Value::Text(match (all, lead, trail) {

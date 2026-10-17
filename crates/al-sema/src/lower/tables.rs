@@ -54,7 +54,8 @@ impl Lowerer<'_> {
                     continue;
                 }
                 // `const(" ")` on an Option names its blank member (assumption relation-option-blank-const).
-                blank_option |= matches!(own.fields[pos].ty, Ty::Option(_)) && value.trim().trim_matches('"').trim().is_empty();
+                blank_option |=
+                    matches!(own.fields[pos].ty, Ty::Option(_)) && value.trim().trim_matches('"').trim().is_empty();
                 let Some(value) = self.condition_const(file, value, &own.fields[pos].ty) else {
                     return Vec::new();
                 };
@@ -487,10 +488,7 @@ impl Lowerer<'_> {
         let f = parse(text)?;
         // Names resolve where the field was written: its table or table extension.
         let file = self.ws.objects[declared_in].file;
-        let Resolution::Found(src) = self
-            .ws
-            .resolve_ref(file, ObjKind::Table, &f.table_path)
-        else {
+        let Resolution::Found(src) = self.ws.resolve_ref(file, ObjKind::Table, &f.table_path) else {
             return Err(format!(
                 "CalcFormula source: {}",
                 self.ws.outside_workspace(ObjKind::Table, &f.table)

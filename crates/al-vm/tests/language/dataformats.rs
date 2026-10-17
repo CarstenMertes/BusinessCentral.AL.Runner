@@ -781,7 +781,10 @@ fn text_functions() {
     );
     assert_eq!(t, "ab|ab|ab|axbxx|xxaxb|axb|axb|xxaxbxx|");
     let (m, c) = raised("", "exit(DelChr('xxaxbxx', '< ', 'x'));");
-    assert_eq!((m.as_str(), c.as_str()), ("Incorrect use of the where parameter.", "ALSystemString"));
+    assert_eq!(
+        (m.as_str(), c.as_str()),
+        ("Incorrect use of the where parameter.", "ALSystemString")
+    );
     let t = text_of(
         "",
         "exit(IncStr('ABC1') + '|' + IncStr('ABC9') + '|' + IncStr('Item 001') + '|' + IncStr('Item 009') + '|' + IncStr('ABC') + '|');",

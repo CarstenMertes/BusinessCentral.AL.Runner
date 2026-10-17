@@ -122,14 +122,20 @@ fn evaluate_into_a_code_that_is_too_long() {
     );
     assert_eq!(text(r), "No|[KEEP]");
     let r = run("procedure F() var C: Code[5]; begin Evaluate(C, 'abcdef'); end;");
-    assert!(matches!(&r, Err(Signal::Error(e)) if e.code == "StringLengthExceeded"), "{r:?}");
+    assert!(
+        matches!(&r, Err(Signal::Error(e)) if e.code == "StringLengthExceeded"),
+        "{r:?}"
+    );
 }
 
 /// A Text[n] given more than n characters with the result used is not pinned: refused.
 #[test]
 fn evaluate_into_a_short_text_that_is_too_long_with_the_result_used_is_refused() {
     let r = run("procedure F(): Boolean var T: Text[5]; begin exit(Evaluate(T, 'abcdef')); end;");
-    assert!(matches!(&r, Err(Signal::Unsupported(m)) if m.contains("not pinned")), "{r:?}");
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("not pinned")),
+        "{r:?}"
+    );
 }
 
 /// errors/lt-ms-refusals-135/P135RecordIdTestField.al: TestField on a RecordId field fails while nothing was assigned

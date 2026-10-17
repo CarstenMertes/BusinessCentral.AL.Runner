@@ -556,7 +556,9 @@ pub fn evaluate_variable_option(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut 
 /// for these types: refused.
 pub fn evaluate_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Result<Value, Signal> {
     let n = a.len();
-    let (Some(Value::Integer(max)), Some(Value::Boolean(is_code))) = (a.get(n.wrapping_sub(2)), a.get(n.wrapping_sub(1))) else {
+    let (Some(Value::Integer(max)), Some(Value::Boolean(is_code))) =
+        (a.get(n.wrapping_sub(2)), a.get(n.wrapping_sub(1)))
+    else {
         return unsupported("Evaluate into a text without its declared length");
     };
     let (max, is_code) = (*max, *is_code);
@@ -583,7 +585,9 @@ pub fn evaluate_text(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) ->
             } else if is_code {
                 Ok(Value::Boolean(false))
             } else {
-                unsupported("Evaluate into a Text[n] of a text longer than n with the result used (not pinned by the corpus)")
+                unsupported(
+                    "Evaluate into a Text[n] of a text longer than n with the result used (not pinned by the corpus)",
+                )
             }
         }
         Err(other) => Err(other),

@@ -22,8 +22,6 @@ allow = [
     "CDLA-Permissive-2.0",
     "BSL-1.0",
 ]
-# Crates without a usable license expression are not allowed silently.
-unlicensed = "deny"
 private = { ignore = true }
 
 exceptions = [
@@ -48,7 +46,6 @@ exceptions = [
     { crate = "al-sema", allow = ["BUSL-1.1"] },
     { crate = "al-syntax", allow = ["BUSL-1.1"] },
     { crate = "al-test-cli", allow = ["BUSL-1.1"] },
-    { crate = "al-testkit", allow = ["BUSL-1.1"] },
     { crate = "al-testrun", allow = ["BUSL-1.1"] },
     { crate = "al-version", allow = ["BUSL-1.1"] },
     { crate = "al-vm", allow = ["BUSL-1.1"] },

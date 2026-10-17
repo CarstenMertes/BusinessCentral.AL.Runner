@@ -95,10 +95,18 @@ impl Session {
                 }
             }
         }
+        // The part pages the variable's code reached before it ran go with the page (Warehouse Pick Summary.SetRecords hands rows to its
+        // part, then Run opens the page the test trapped).
+        let early = std::mem::take(&mut from.borrow_mut().hidden_parts);
+        for (_, child) in &early {
+            let host = child.borrow().host.as_ref().map(|(_, i)| (Rc::downgrade(to), *i));
+            child.borrow_mut().host = host;
+        }
         let mut t = to.borrow_mut();
         t.instance = instance;
         t.ext_instances = exts;
         t.inited = inited;
+        t.hidden_parts = early;
     }
 
     /// Opens the page: OnInit, OnOpenPage, the control expressions and the first row. `record`

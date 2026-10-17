@@ -1067,3 +1067,15 @@ fn the_temporary_rows_of_a_page_variable_survive_its_run() {
         [ModalPageHandler] procedure H(var P: TestPage \"PM Temp Var\") begin Check('marked', P.Descr.Value()); P.OK().Invoke(); end;"
     ));
 }
+
+// Warehouse Pick Summary.SetRecords hands rows to its part, then Page.Run opens the page a test trapped: the trapped page has those rows.
+#[test]
+fn rows_handed_to_a_part_before_a_trapped_run_are_on_the_trapped_page() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Keeps() var W: Page \"PM Temp Host\"; T: Record \"PM Row\" temporary; P: TestPage \"PM Temp Host\"; begin
+            T.\"No.\" := 'T1'; T.Descr := 'kept'; T.Insert(); P.Trap(); W.Fill(T); W.Run();
+            Check('kept', P.Sub.Descr.Value()); P.Close(); end;"
+    ));
+}

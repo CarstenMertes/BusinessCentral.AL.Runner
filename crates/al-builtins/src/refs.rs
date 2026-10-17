@@ -110,6 +110,8 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "FieldRef.Type#1",
     "FieldRef.Class#1",
     "FieldRef.GetFilter#1",
+    "FieldRef.GetRangeMin#1",
+    "FieldRef.GetRangeMax#1",
     "FieldRef.Record#1",
     "FieldRef.Validate#1",
     "FieldRef.CalcField#1",

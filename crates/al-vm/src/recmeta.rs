@@ -365,6 +365,47 @@ impl Session {
                         ..Default::default()
                     })));
                 }
+                // One filter that is not a closed range (record/lt-filters-keys-finds/P68B_RangeMinMax.al: RangeFilters_* and
+                // NonRangeFilters_Text_Date; FieldRef: recordref/lt-refs/RfTFieldFilters.al:183 GetRangeMinMax). A filter of
+                // several ranges (`<>`, `|`) raises the one-range error; `>` and `>=` have no upper bound, `<` and `<=` no lower
+                // bound, a wildcard neither. The bound of `>2` is 2 itself.
+                if let [only] = found.as_slice() {
+                    let want_max = method == RecordOp::GetRangeMax;
+                    let text = || -> Result<String, Signal> {
+                        let table = self.table(rec)?;
+                        self.filter_text(&self.with_option_captions(&table, pos, &only.expr))
+                    };
+                    let no_bound = |side: &str| -> Result<Value, Signal> {
+                        Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter \"{}\" on the {f_cap} field in the {t_cap} table has no {side} bound.",
+                                text()?
+                            ),
+                            code: "DB:Ok".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })))
+                    };
+                    match &only.expr {
+                        F::Gt(v) | F::Ge(v) if !want_max => return Ok(v.clone()),
+                        F::Gt(_) | F::Ge(_) => return no_bound("upper"),
+                        F::Lt(v) | F::Le(v) if want_max => return Ok(v.clone()),
+                        F::Lt(_) | F::Le(_) => return no_bound("lower"),
+                        F::Like(..) => return no_bound(if want_max { "upper" } else { "lower" }),
+                        F::Ne(_) | F::Or(_) => {
+                            return Err(Signal::Error(Box::new(AlError {
+                                message: format!(
+                                    "The filter expression \"{}\" applied to the field {f_cap} in the {t_cap} table results in more than one range.",
+                                    text()?
+                                ),
+                                code: "DB:NotIntervalFilter".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
+                        }
+                        _ => {}
+                    }
+                }
                 // The bounds of every filter, as (low, high); a filter that is not a single range is not modelled.
                 let mut lo: Option<Value> = None;
                 let mut hi: Option<Value> = None;

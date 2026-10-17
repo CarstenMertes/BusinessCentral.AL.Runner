@@ -3955,6 +3955,15 @@
           "site": null
         },
         {
+          "corpus_uses": 3,
+          "group": "report/dataitem",
+          "ms_uses": 22,
+          "name": "MaxIteration",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "misc/lt-probes-needed-8/PnH3Link.al:194"
+        },
+        {
           "corpus_uses": 0,
           "group": "reportextension/column",
           "ms_uses": 22,
@@ -3962,15 +3971,6 @@
           "pinned": false,
           "runtime_reads": true,
           "site": null
-        },
-        {
-          "corpus_uses": 3,
-          "group": "report/dataitem",
-          "ms_uses": 22,
-          "name": "MaxIteration",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "misc/lt-probes-needed-8/PnH3Link.al:194"
         },
         {
           "corpus_uses": 0,
@@ -4649,6 +4649,15 @@
         },
         {
           "corpus_uses": 0,
+          "group": "report/labels",
+          "ms_uses": 9,
+          "name": "PageCaption",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
           "group": "table/field",
           "ms_uses": 9,
           "name": "BlankNumbers",
@@ -4661,15 +4670,6 @@
           "group": "report/group",
           "ms_uses": 9,
           "name": "ShowCaption",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "report/labels",
-          "ms_uses": 9,
-          "name": "PageCaption",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -13236,10 +13236,19 @@
         "template": "Attempted to divide by zero."
       },
       {
+        "code": "AL:DivideByZero",
+        "file": "crates/al-builtins/src/ops.rs",
+        "generic": false,
+        "line": 515,
+        "pinned": true,
+        "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
+        "template": "Attempted to divide by zero."
+      },
+      {
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 621,
+        "line": 695,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:81",
         "template": "Adding to an undefined (0T) time."
@@ -13248,7 +13257,7 @@
         "code": "InvalidTime",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 664,
+        "line": 738,
         "pinned": true,
         "site": "misc/lt-probes-needed-6/PnF31TimeArithmetic.al:116",
         "template": "Subtracting from an undefined (0T) time."
@@ -13257,7 +13266,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 691,
+        "line": 765,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13266,7 +13275,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 699,
+        "line": 773,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13275,7 +13284,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 722,
+        "line": 796,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -13284,7 +13293,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 751,
+        "line": 825,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13293,7 +13302,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 756,
+        "line": 830,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -13302,7 +13311,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 784,
+        "line": 858,
         "pinned": true,
         "site": "misc/lt-probes-needed-1/PnADateTimeZone.al:85",
         "template": "The date is not valid."
@@ -13446,7 +13455,7 @@
         "code": "",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 261,
+        "line": 267,
         "pinned": true,
         "site": "query/TestQueryTopProperty.al:179",
         "template": "Top number of rows cannot be negative"
@@ -13455,7 +13464,7 @@
         "code": "QueryNoDataSet",
         "file": "crates/al-vm/src/queries.rs",
         "generic": false,
-        "line": 574,
+        "line": 595,
         "pinned": true,
         "site": "xmlport/lt-xmlport-query-datatransfer/XpTQueryBasic.al:84",
         "template": "You have not yet retrieved a dataset for this query. The READ function can only be called after the dataset is retrieved with a call to the OPEN function."
@@ -13587,7 +13596,7 @@
         "template": "Invalid expression of type: table view.%%"
       }
     ],
-    "pinned": 48,
-    "sites": 51
+    "pinned": 49,
+    "sites": 52
   }
 }

@@ -6387,6 +6387,7 @@
 70120 Undefined_AndDateOnly
 70121 NullAppId
 70127 ThreeFilters_EntryTxtQty_AllOrders
+70128 CloseSetRangeReopen
 70170 AssignedThenReadBack
 70170 HandlerSeesInitSettings
 70170 HandlerSeesPristineSettings
@@ -6737,6 +6738,8 @@
 70598 Link_ChildSetsOwnFilters_InPreDataItem
 70598 Link_TwoFields_FiltersPerParentRow
 70598 Link_TwoFields_ParentFiltered
+70598 MaxIteration_NestedPerParentRow
+70598 MaxIteration_StopsTheIntegerItem
 70604 LinkReference_Grandparent
 70613 Members_SaveAs
 70629 One_Extension_FullOrder_Run

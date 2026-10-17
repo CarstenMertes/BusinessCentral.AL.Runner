@@ -173,8 +173,15 @@ fn strip_text_attributes(text: String) -> String {
             }
             let rest = text[i + 1..].trim_start();
             if let Some(after) = rest.strip_prefix(',') {
-                let name = after.trim_start().split(|c: char| !c.is_ascii_alphabetic()).next().unwrap_or("");
-                if ["Locked", "MaxLength", "Comment"].iter().any(|a| a.eq_ignore_ascii_case(name)) {
+                let name = after
+                    .trim_start()
+                    .split(|c: char| !c.is_ascii_alphabetic())
+                    .next()
+                    .unwrap_or("");
+                if ["Locked", "MaxLength", "Comment"]
+                    .iter()
+                    .any(|a| a.eq_ignore_ascii_case(name))
+                {
                     return text[..=i].to_string();
                 }
             }

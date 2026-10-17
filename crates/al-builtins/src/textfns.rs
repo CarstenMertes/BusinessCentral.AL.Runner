@@ -274,11 +274,11 @@ fn remove(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
 // ---------------------------------------------------- transforming
 
 fn to_upper(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    Ok(Value::Text(recv_text(&r)?.to_uppercase().into()))
+    Ok(Value::Text(crate::native::method_upper(&recv_text(&r)?).into()))
 }
 
 fn to_lower(_: &mut dyn Ctx, r: Option<&mut Value>, _: &mut [Value]) -> NResult {
-    Ok(Value::Text(recv_text(&r)?.to_lowercase().into()))
+    Ok(Value::Text(crate::native::method_lower(&recv_text(&r)?).into()))
 }
 
 /// Trim removes white space (the corpus only has spaces); with a character set, those characters.

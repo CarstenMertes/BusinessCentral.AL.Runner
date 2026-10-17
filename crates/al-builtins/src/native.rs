@@ -1667,7 +1667,7 @@ fn value_kind(v: &Value) -> String {
 /// `<Date or Boolean>.ToText()` as `Format(value)` (assumption `primitive-totext-is-format`).
 /// Case mapping one character to one (types/lt-scalars/ScT70509.al:LowerUpperBasic `a9`, LowerUpperLengthsAndTargets `lenu`): an
 /// upper-case `ß` stays `ß` and the dotted capital I is a plain `i`.
-fn simple_upper(s: &str) -> String {
+pub(crate) fn simple_upper(s: &str) -> String {
     s.chars()
         .map(|c| {
             let mut up = c.to_uppercase();
@@ -1679,7 +1679,36 @@ fn simple_upper(s: &str) -> String {
         .collect()
 }
 
-fn simple_lower(s: &str) -> String {
+/// `Text.ToUpper()` / `ToLower()`: one character to one, and a character the mapping would turn into several stays (`ß`, `ﬁ`, the dotted
+/// capital `İ`), the dotless `ı` stays too (text/lt-text-instance/CaseTrim1.Codeunit.al:ToLower_ToUpper_Unicode; unlike `UpperCase`/`LowerCase`).
+pub(crate) fn method_upper(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            if c == 'ı' {
+                return c;
+            }
+            let mut up = c.to_uppercase();
+            match (up.next(), up.next()) {
+                (Some(u), None) => u,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn method_lower(s: &str) -> String {
+    s.chars()
+        .map(|c| {
+            let mut low = c.to_lowercase();
+            match (low.next(), low.next()) {
+                (Some(l), None) => l,
+                _ => c,
+            }
+        })
+        .collect()
+}
+
+pub(crate) fn simple_lower(s: &str) -> String {
     s.chars().map(|c| c.to_lowercase().next().unwrap_or(c)).collect()
 }
 

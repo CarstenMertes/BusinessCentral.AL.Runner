@@ -371,8 +371,8 @@ impl Session {
         // `AGR(20);ActionBegin;ActionEnd;`).
         // (misc/W2FindRecordUpdate.al for a list; pages/lt-update-on-find/UpdateOnFindRecord.al for a card and a list that
         // declare OnAfterGetCurrRecord: `AGR:2;act:Update(false)` first.)
-        let find_list = self.declares(st, "onfindrecord")
-            && (self.is_list(st) || self.declares(st, "onaftergetcurrrecord"));
+        let find_list =
+            self.declares(st, "onfindrecord") && (self.is_list(st) || self.declares(st, "onaftergetcurrrecord"));
         let reads_rows = (!was_dirty || dirty_reread_only)
             && self.declares(st, "onaftergetrecord")
             && (find_list || !self.declares(st, "onnextrecord") && !self.declares(st, "onfindrecord"))
@@ -519,7 +519,8 @@ impl Session {
         }
         // Is there a row before it? Asked of the table: the page's own OnNextRecord is asked when the client steps.
         self.ret_used = true;
-        let has_before = matches!(self.record_op(RecordOp::Next, rec, &mut [Value::Integer(-1)])?, Value::Integer(n) if n != 0);
+        let has_before =
+            matches!(self.record_op(RecordOp::Next, rec, &mut [Value::Integer(-1)])?, Value::Integer(n) if n != 0);
         self.ret_used = true;
         self.record_op(RecordOp::Get, rec, &mut pk)?;
         let mut more_rows = moved;

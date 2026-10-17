@@ -110,7 +110,8 @@ impl Session {
             // The table field's own expression applies when the control has none (pages/lt-page-autoformat-lookups/
             // P113AutoFormat.al: T10 `<Precision,3:3>` shows 1,234.500, PovT0 with type 0 keeps the field's 3 places).
             if f.decimal_places.is_none() && expr.is_none() {
-                f.decimal_places = from_field("autoformatexpression").and_then(|e| pagefmt::parse_precision(&unquote(&e)));
+                f.decimal_places =
+                    from_field("autoformatexpression").and_then(|e| pagefmt::parse_precision(&unquote(&e)));
             }
             // AutoFormatType 1, 2, 4 and 5 (on the control, else on the table field): the places of an
             // amount or a unit amount, from the currency the expression names
@@ -391,7 +392,12 @@ impl Session {
         let base = self.page_caption(st);
         let engine = self.engine();
         let object = st.borrow().object as usize;
-        let has_prop = |name: &str| engine.program.objects[object].properties.iter().any(|(k, _)| k.eq_ignore_ascii_case(name));
+        let has_prop = |name: &str| {
+            engine.program.objects[object]
+                .properties
+                .iter()
+                .any(|(k, _)| k.eq_ignore_ascii_case(name))
+        };
         if has_prop("DataCaptionExpression") {
             return unsupported("the caption of a page with DataCaptionExpression (the expression is not evaluated)");
         }
@@ -421,7 +427,12 @@ impl Session {
         // Without DataCaptionFields the caption shows the primary key (pages/lt-page-runtime/P82RunModal*.al:RunModal_Number_OnCard
         // `LT P82 Card Caption - A`, P117 `LT P117 Card - 1`).
         let names = names.or_else(|| {
-            let key: Vec<String> = table.keys.first()?.iter().map(|&i| table.fields[i].name.clone()).collect();
+            let key: Vec<String> = table
+                .keys
+                .first()?
+                .iter()
+                .map(|&i| table.fields[i].name.clone())
+                .collect();
             Some(key.join(","))
         });
         if let Some(names) = names {

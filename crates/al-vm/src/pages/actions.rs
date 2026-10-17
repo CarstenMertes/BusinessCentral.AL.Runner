@@ -464,6 +464,27 @@ impl Session {
             return self.populate_current(st);
         }
         let key = self.row_key(&rec)?;
+        // A list part with one row, without OnAfterGetCurrRecord: the row is read once more before the refresh's own read (misc/
+        // lt-probes-needed-7/PnGNewRecord.al:PartPendingNewRowSavedBeforeAction: `Part.AGR` twice after the action). More rows are not pinned.
+        if st.borrow().host.is_some() && !self.declares(st, "onaftergetcurrrecord") {
+            let alone = {
+                self.ret_used = true;
+                let after = matches!(self.record_op(RecordOp::Next, &rec, &mut [Value::Integer(1)])?, Value::Integer(n) if n != 0);
+                let mut pk = key.clone();
+                self.ret_used = true;
+                self.record_op(RecordOp::Get, &rec, &mut pk)?;
+                self.ret_used = true;
+                let before = matches!(self.record_op(RecordOp::Next, &rec, &mut [Value::Integer(-1)])?, Value::Integer(n) if n != 0);
+                let mut pk = key.clone();
+                self.ret_used = true;
+                self.record_op(RecordOp::Get, &rec, &mut pk)?;
+                !after && !before
+            };
+            if alone {
+                return self.populate_current(st);
+            }
+            return Ok(());
+        }
         if self.declares(st, "onaftergetcurrrecord") && self.declares(st, "onaftergetrecord") {
             return self.read_list_again_from_row(st, &rec, &key);
         }

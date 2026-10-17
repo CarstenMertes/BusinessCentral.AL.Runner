@@ -107,18 +107,12 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
         // the assignment compiles (the target must state AssignmentCompatibility, AL0122) is the checker's.
         (Value::Enum(_, o), T::Enum(to)) => Value::Enum(*to, o),
         (Value::Option(o, _), T::Option(m)) => Value::Option(o, m.clone().into()),
-        // An Enum value into an Option or an Integer is its ordinal, a BigInteger into an Option likewise (an ordinal
-        // beyond the members is kept, as for an Integer). Not pinned by the corpus (docs/probes-needed.md).
-        (Value::Enum(_, o), T::Option(m))
-            if crate::assumptions::hit(crate::assumptions::Assumption::EnumOptionIntegerOrdinal) =>
-        {
-            Value::Option(o, m.clone().into())
-        }
-        (Value::Enum(_, o), T::Integer)
-            if crate::assumptions::hit(crate::assumptions::Assumption::EnumOptionIntegerOrdinal) =>
-        {
-            Value::Integer(o)
-        }
+        // An Enum value into an Option, an Integer or a Decimal is its ordinal; one beyond the members is kept
+        // (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_DirectAssign_Option_Integer, EnumVariant_To_Integer).
+        (Value::Enum(_, o), T::Option(m)) => Value::Option(o, m.clone().into()),
+        (Value::Enum(_, o), T::Integer) => Value::Integer(o),
+        (Value::Enum(_, o), T::Decimal) => Value::Decimal(Decimal::from(o)),
+        // A BigInteger into an Option likewise (not pinned: assumption enum-option-integer-ordinal).
         (Value::BigInteger(n), T::Option(m)) => match i32::try_from(n) {
             Ok(o) => {
                 crate::assumptions::assume(crate::assumptions::Assumption::EnumOptionIntegerOrdinal);
@@ -453,7 +447,8 @@ fn convert_rare(v: Value, t: &RtType) -> Result<Value, Signal> {
         (Value::Date(n, false), RtType::DateTime) if *n >= 0 => Ok(date_to_datetime(*n)),
         // A Variant holding an Integer assigned to a Text variable raises TypeConversion (corpus
         // types/lt-variant/VaTCompare.al:Concat_After_Conversion, af117). The other numbers and a Code target are not pinned.
-        (Value::Integer(_), RtType::Text(_)) => raise(
+        // The same for an Enum (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer, `text_big`).
+        (Value::Integer(_) | Value::Enum(..), RtType::Text(_)) => raise(
             "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.",
             "TypeConversion",
         ),
@@ -1045,6 +1040,8 @@ fn compare_general(l: &Value, r: &Value) -> Result<Ordering, Signal> {
         (V::Guid(a), V::Guid(b)) => a.cmp(b),
         (V::Option(a, _), V::Option(b, _)) => a.cmp(b),
         (V::Option(a, _), V::Integer(b)) | (V::Integer(a), V::Option(b, _)) => a.cmp(b),
+        // An Option column against an Enum value compares by ordinal (B_EnumOptionVariant.al:SetFilter_FlowField_And_Compare).
+        (V::Option(a, _), V::Enum(_, b)) | (V::Enum(_, a), V::Option(b, _)) => a.cmp(b),
         // A Duration compares with a whole number of milliseconds (json/TestJsonComplete.al: `Dur > 0`).
         (V::Duration(a), V::Integer(b)) => a.cmp(&i64::from(*b)),
         (V::Integer(a), V::Duration(b)) => i64::from(*a).cmp(b),

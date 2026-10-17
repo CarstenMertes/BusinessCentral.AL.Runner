@@ -890,7 +890,6 @@ impl Lowerer<'_> {
                     .ok_or_else(|| format!("implicit variable `{name}` is not lowered yet")),
                 Some(Res::BaseGlobal(name)) => {
                     let name = name.clone();
-                    self.note_base_var_use();
                     let (slot, _, _) = self.base_var(&name)?;
                     Ok(ir::Place::BaseGlobal(slot))
                 }

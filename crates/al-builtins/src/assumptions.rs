@@ -399,15 +399,9 @@ registry! {
     },
     FormatCodeSpelling => {
         id: "format-code-spelling",
-        assumed: "The codes of a Format string are read in any case (`<sign><integer>`), with blanks around the name and after the comma (`<precision, 2:2><standard format,0>`), and `Filler Char` stands for `Filler Character`.",
-        tests: "Microsoft's test libraries (`<sign><integer>`, about 60 tests of the Tests-SCM buckets), Base Application's percent texts, and the Data Exchange tests' GetNodeID (`<Integer,4><Filler Char,0>`, about 30 tests).",
-        probe: "Format of an Integer, a Decimal and a Date with the same codes in capitals, small letters and with a blank after the comma; compare with the canonical spelling.",
-    },
-    TableExtensionBaseVars => {
-        id: "table-extension-base-vars",
-        assumed: "A table extension reads and writes the `protected var` variables of its base table, on the same per-record globals the base table's own code uses (a procedure of the extension sees what a trigger of the base set).",
-        tests: "tableextension 906 \"Asm. Requisition Line\" (Assembly) uses Requisition Line's Item, TempPlanningErrorLog, PlanningResiliency and MissingFieldValueErr; about 600 tests of the Tests-SCM-Planning bucket.",
-        probe: "A table with a protected var, a table extension procedure that reads and writes it, and a base trigger that reads it back; on one record variable and on a second one; with a Record and a Codeunit protected var.",
+        assumed: "In a Format string `Filler Char` stands for `Filler Character`. (Any case of the other code names, and blanks after the comma, are pinned by types/lt-format-codes-textbuilder-pagerun-labels/P144FormatCodes.al.)",
+        tests: "The Data Exchange tests' GetNodeID (`<Integer,4><Filler Char,0>`, about 30 tests).",
+        probe: "Format(5, 0, '<Integer,4><Filler Char,0>') next to '<Integer,4><Filler Character,0>', for an Integer, a Decimal and a Text.",
     },
     DataItemsEmptyElement => {
         id: "dataitems-empty-element",
@@ -418,15 +412,9 @@ registry! {
     },
     EnumOptionIntegerOrdinal => {
         id: "enum-option-integer-ordinal",
-        assumed: "An Enum value converts into an Option or an Integer, and a BigInteger into an Option or an Enum, by ordinal; an ordinal beyond the members is kept. (Integer into Option, Option into Integer and Option into Enum are pinned by types/PROptionInteger.al and types/PEOptionEnumBigText.al.)",
-        tests: "Sales Line UpdatePlanned (the FlowField filter of Reserved Quantity: Option column against an Enum field) in about 7,000 Tests-ERM and Tests-SCM tests; Library - Variable Storage DequeueInteger of an enqueued enum (ERM TestMultipleGenJnlLines).",
-        probe: "Opt := Variant(EnumValue), Int := Variant(EnumValue), a FlowField filter and a SetRange that compare an Option column with an Enum field, with an ordinal the Option lacks. Corpus-topic issue 67.",
-    },
-    RecordIdInMessage => {
-        id: "record-id-in-message",
-        assumed: "A RecordId as a %1 of an error, or in TestField and FieldError text, reads as Format(RecordId) does (Table: key1,key2). (Format(RecordId) is pinned by record/TestProbeRecordRefContracts.al:472-502.)",
-        tests: "Gen. Jnl.-Post Line PostVend (ERM Gen. Lines for Vendor, over 1,000 Tests-ERM and Tests-General Journal tests).",
-        probe: "Error('%1', Rec.RecordId), StrSubstNo and TestField on a RecordId field, with a text key that needs quotes.",
+        assumed: "A BigInteger converts into an Option or an Enum by ordinal; an ordinal beyond the members is kept. (An Enum value into an Option, an Integer or a Decimal, and an Integer into an Enum, are pinned: types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al, types/PROptionInteger.al, types/PEOptionEnumBigText.al.)",
+        tests: "Code that assigns a BigInteger to an Option or an Enum variable.",
+        probe: "Opt := BigIntegerValue and E := BigIntegerValue for an ordinal the Option or Enum lacks and for one beyond Integer.",
     },
     DateTimeDateTimeMethods => {
         id: "datetime-date-time-methods",

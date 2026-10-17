@@ -15,13 +15,8 @@ impl Lowerer<'_> {
 
     /// Variable `name` (lower case) of the base object, seen from the extension being lowered
     /// (ADR-023): its slot among the base object's globals, and its type. Refused until the probes
-    /// of ADR-023 pin the access.
-    /// Notes the assumption a table extension's use of a base table variable rests on.
-    pub(crate) fn note_base_var_use(&mut self) {
-        if self.ws.objects[self.oi].kind == ObjKind::TableExtension {
-            self.assume(al_builtins::assumptions::Assumption::TableExtensionBaseVars);
-        }
-    }
+    /// of ADR-023 pin the access. A table extension's use of a base table variable is pinned by
+    /// misc/lt-protected-var-abs-query-views/P146TableExtProtected.al.
 
     pub(crate) fn base_var(&self, name: &str) -> L<(usize, Ty, Option<String>)> {
         // A table extension sees the protected variables of its base table, on the globals of the same record

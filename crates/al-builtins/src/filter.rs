@@ -311,6 +311,10 @@ impl Parser<'_> {
     fn typed(&self, t: Tok) -> Result<Value, String> {
         use crate::value::RtType as T;
         let text = match t {
+            // An Enum value given for an Option column through SetFilter's %1 filters by its ordinal and shows under the Enum's own name
+            // (types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:Filter_OptionColumn_SetRange_EnumValue, `filter_green_filter`
+            // is `Green`; SetRange shows the Option's member, `range_green_filter` is `One`).
+            Tok::Typed(v @ Value::Enum(..)) if matches!(self.ty, T::Option(_)) => return Ok(v),
             Tok::Typed(v) => return crate::ops::convert(v, self.ty).map_err(|e| e.describe()),
             // A quoted empty text is the blank date (corpus record/lt-loadfields-pagesource-validate/P81DateFilters.al:193-194,
             // :308). The unquoted empty text stays refused.

@@ -119,13 +119,34 @@ fn relational(p: &mut Parser) {
     additive(p);
     while matches!(p.current(), Eq | Neq | Lt | Le | Gt | Ge) || p.at_any_kw(&["in", "is", "as"]) {
         let type_operator = p.at_kw("is") || p.at_kw("as");
+        let membership = p.at_kw("in");
         p.start_at(cp, BinExpr);
         p.bump_any();
         if type_operator {
             type_name(p);
+        } else if membership && p.at(LBrack) {
+            // The set of `in` ends at its bracket: `x in [1] and y` is `(x in [1]) and y`.
+            unary(p);
         } else {
             additive(p);
         }
+        p.finish();
+        if membership {
+            boolean_tail(p, cp);
+        }
+    }
+}
+
+/// `in` binds tighter than `and`, `or` and `xor` on both sides (corpus types/lt-in-precedence-date-guid-filters/P143Prec_*.al,
+/// pinned on BC 27, 28 and 29: `true in [true] and false`, `a and i in [j]`, `1 + 2 in [3] and true`): what follows a finished
+/// `in` through `and`, `or` and `xor` continues the expression with the `in` as the left operand.
+fn boolean_tail(p: &mut Parser, cp: crate::builder::Checkpoint) {
+    while p.at_any_kw(&["and", "or", "xor"]) {
+        p.start_at(cp, BinExpr);
+        p.bump_any();
+        let operand = p.checkpoint();
+        unary(p);
+        membership_of_operand(p, operand);
         p.finish();
     }
 }

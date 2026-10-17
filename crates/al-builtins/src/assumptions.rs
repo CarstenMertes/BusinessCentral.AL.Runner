@@ -373,35 +373,11 @@ registry! {
         tests: "Microsoft's production order and routing code (Starting Date-Time := Starting Date): Tests-SCM-Manufacturing, about 20 tests.",
         probe: "DT := D for a defined and for a blank Date; Format(DT, 0, 9); DT := ClosingDate(D).",
     },
-    DurationArithmeticWithNumber => {
-        id: "duration-arithmetic-with-number",
-        assumed: "A whole number added to or subtracted from a Duration (or a Duration from a whole number) is a Duration, as milliseconds.",
-        tests: "Microsoft's routing code (a day in milliseconds added to a Duration): Tests-SCM-Manufacturing, about 20 tests.",
-        probe: "D: Duration; I: Integer; Format(D + I), Format(I + D), Format(D - I), Format(I - D).",
-    },
-    SetViewSortingWithoutKey => {
-        id: "set-view-sorting-without-a-key",
-        assumed: "SetView of a SORTING(...) that no key starts with orders the rows by those fields, then by the primary key, as SetCurrentKey of such fields does.",
-        tests: "Microsoft's tests that set a view written by GetView after an ad hoc SetCurrentKey (Posting Preview and Item Journal tests): Tests-SCM and Tests-SCM-Manufacturing, about 110 tests.",
-        probe: "SetCurrentKey on fields no key starts with, GetView, a second record SetView(that view): compare the order and CurrentKey().",
-    },
     RelationWhereReadsValidatedValue => {
         id: "relation-where-reads-the-validated-value",
         assumed: "A where() condition of a TableRelation that names the validated field itself (Code = field(\"Variant Code\")) reads the value being validated, not the value the field holds before the assignment.",
         tests: "Prod. Order Line, Assembly Header and Assembly Line \"Variant Code\" (Item Variant.Code where(\"Item No.\" = field(\"Item No.\"), Code = field(\"Variant Code\"), ...)): Tests-SCM and Tests-SCM-Assembly, about 60 tests, among them SCM Order Tracking OrderTrackingOnSalesWithVariant.",
         probe: "A table relation whose where() has Code = field(<the field itself>); Validate a value that exists; read the field and the error.",
-    },
-    ChainedArrayIndex => {
-        id: "chained-array-index",
-        assumed: "A[x][y] on a multi-dimensional array is A[x, y].",
-        tests: "Backup Storage test library (array[20, 1000] of RecordRef); 43 Tests-Misc tests.",
-        probe: "The chained form on a two-dimensional array, read and write.",
-    },
-    InBindsTighterThanAnd => {
-        id: "in-binds-tighter-than-and",
-        assumed: "`a and b in [..]` (also `or`, `xor`) without parentheses is `a and (b in [..])`, not `(a and b) in [..]`.",
-        tests: "Base Application's Purchase Header, field Buy-from Vendor No. (Self-Billing Invoice); every Tests-SCM and Tests-ERM test that validates it.",
-        probe: "A Boolean variable and an enum value joined with and, then in a set, with and without parentheses; a Boolean result for each.",
     },
     FilterTextReadAsEvaluate => {
         id: "filter-text-read-as-evaluate",

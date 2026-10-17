@@ -861,10 +861,10 @@ impl Lowerer<'_> {
             SyntaxKind::ParenExpr => self.place(&n.children().next().ok_or("empty parentheses")?),
             SyntaxKind::IndexExpr => {
                 let kids: Vec<SyntaxNode> = n.children().collect();
-                // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index.
+                // `A[x] [y]` on a multi-dimensional array is `A[x, y]`: the chain becomes one index (misc/lt-chained-array-index/
+                // ChainedArrayIndex.al:P168_Chained_TwoDimensions_ReadWrite, P168_Chained_ThreeDimensionsAndText).
                 if kids[0].kind() == SyntaxKind::IndexExpr && matches!(self.ty_ref(&kids[0]), Ty::Array(..)) {
                     if let ir::Place::Index(root, mut idx) = self.place(&kids[0])? {
-                        self.assume(al_builtins::assumptions::Assumption::ChainedArrayIndex);
                         for k in &kids[1..] {
                             idx.push(self.expr(k)?);
                         }

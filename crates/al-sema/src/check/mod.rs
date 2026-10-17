@@ -677,6 +677,13 @@ fn binary_ty(op: &str, l: &Ty, r: &Ty) -> Ty {
             (Ty::Time, _) => Ty::Time,
             // Duration +/- Duration is a BigInteger of milliseconds (corpus types/lt-duration-arithmetic/DurationAddDuration.al).
             (Ty::Duration, Ty::Duration) if op == "+" || op == "-" => Ty::BigInteger,
+            // Duration +/- a whole number is a BigInteger too (types/lt-duration-integer-arithmetic/DurationPlusInteger.al:
+            // DurationPlusInteger_ResultType_Result, IntegerPlusDuration.al, IntegerMinusDuration.al).
+            (Ty::Duration, Ty::Integer | Ty::BigInteger) | (Ty::Integer | Ty::BigInteger, Ty::Duration)
+                if op == "+" || op == "-" =>
+            {
+                Ty::BigInteger
+            }
             (Ty::Duration, _) => Ty::Duration,
             _ => Ty::Unknown,
         },

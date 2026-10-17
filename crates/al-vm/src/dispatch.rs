@@ -75,6 +75,7 @@ impl Session {
         instance: Inst,
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
+        let origins = std::mem::take(&mut self.events.var_origins);
         let engine = self.engine.clone();
         let p = &engine.events.publishers[&(object, routine)];
         let r = &engine.program.objects[object].routines[routine];
@@ -135,6 +136,7 @@ impl Session {
         });
         self.events.publish_frame = true;
         self.events.sender_refused = sender_refused;
+        self.events.var_origins = origins;
         let raised = self.raise(&call, &mut values);
         self.events.sender_refused = None;
         self.events.publish_frame = false;
@@ -191,7 +193,18 @@ impl Session {
         let (object, event, element, isolated) = (*object, *event, *element, *isolated);
         let engine = self.engine.clone();
         let sender_refused = self.events.sender_refused.take();
+        let origins = std::mem::take(&mut self.events.var_origins);
+        // The publisher's global a `var` argument names is the variable itself while the event runs: whoever changes it (a subscriber
+        // through its parameter, or through the sender) changes what the next subscriber receives and what the publisher's caller sees.
+        let refresh = |args: &mut [Value]| {
+            for (j, o) in origins.iter().enumerate() {
+                if let (Some((inst, g)), Some(a)) = (o, args.get_mut(j)) {
+                    *a = inst.borrow().globals[*g].clone();
+                }
+            }
+        };
         for (s, inst) in self.event_targets(object, event, element)? {
+            refresh(args);
             let r = &engine.program.objects[s.object].routines[s.routine];
             let mut map: Vec<Option<usize>> = Vec::with_capacity(r.params);
             let mut sender_taken = false;
@@ -233,7 +246,18 @@ impl Session {
             let isolate = isolated && !self.store.has_uncommitted();
             let before = isolate.then(|| self.store.clone());
             let phase = self.tx.tx_phase;
-            let (_, finals) = match self.call(s.object, s.routine, inst, call_args) {
+            // A `var` argument that is a global of the publisher is the same variable as the subscriber's parameter.
+            self.events.next_aliases = map
+                .iter()
+                .enumerate()
+                .filter_map(|(i, m)| match (m, r.by_var[i]) {
+                    (Some(j), true) => origins.get(*j).and_then(Clone::clone).map(|(inst, g)| (i, inst, g)),
+                    _ => None,
+                })
+                .collect();
+            let called = self.call(s.object, s.routine, inst, call_args);
+            self.events.next_aliases.clear();
+            let (_, finals) = match called {
                 Err(Signal::Error(e)) if isolate => {
                     self.store = before.expect("snapshot taken when isolating");
                     // The subscriber's own transaction is gone with its writes.
@@ -249,9 +273,13 @@ impl Session {
             for (i, m) in map.iter().enumerate() {
                 if let (Some(j), true) = (m, r.by_var[i]) {
                     args[*j] = finals[i].clone();
+                    if let Some(Some((inst, g))) = origins.get(*j) {
+                        inst.borrow_mut().globals[*g] = finals[i].clone();
+                    }
                 }
             }
         }
+        refresh(args);
         Ok(())
     }
 

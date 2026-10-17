@@ -593,6 +593,8 @@ impl Session {
                 event_stats,
                 publish_frame: false,
                 sender_refused: None,
+                var_origins: Vec::new(),
+                next_aliases: Vec::new(),
                 unpinned_event_depth: 0,
                 global_setups: Default::default(),
             },
@@ -938,6 +940,7 @@ impl Session {
         instance: Rc<RefCell<Instance>>,
         args: Vec<Value>,
     ) -> Result<(Value, Vec<Value>), Signal> {
+        let aliases = std::mem::take(&mut self.events.next_aliases);
         self.first_use(&instance)?;
         let engine = self.engine.clone();
         let r = &engine.program.objects[object].routines[routine];
@@ -964,18 +967,16 @@ impl Session {
                     let st = rc.borrow().clone();
                     Value::Record(Rc::new(RefCell::new(st)))
                 }
-                // A temporary record handed by value to a parameter that is NOT declared temporary gives a persistent
-                // copy of its current row: Base Application's To-do.InsertTask does `Task2.Get(..)` after
-                // inserting through another by-value copy, and the Tasks matrix then lists the new tasks (Tests-Marketing
-                // Marketing Matrix Management.TaskWithSalesperson and 9 more). The corpus pins only the parameter declared
-                // `temporary` (record/TestTempTableContracts.al:141-148). Assumption temp-record-by-value-to-persistent-parameter.
+                // A temporary record handed by value to a parameter that is NOT declared temporary gives the callee a record of the
+                // stored table, not a temporary one: IsTemporary is No, Count sees the stored rows, Insert, Modify and DeleteAll reach the
+                // stored table and the caller's temporary rows do not change
+                // (record/lt-temp-record-by-value/TempRecordByValue.al:TempRecord_ByValue_ToPersistentParameter, :TempRecord_ByValue_ModifyAndDeleteAll).
+                // The copy keeps the record's current values and filters like any by-value copy. A parameter declared `temporary` gets
+                // an independent empty buffer (record/TestTempTableContracts.al:141-148). Base Application's To-do.InsertTask relies on it.
                 (Value::Record(rc), false)
                     if rc.borrow().temporary
                         && matches!(r.locals[i].ty, RtType::Record(t, false) if !self.engine.object_facts[t as usize].temporary()) =>
                 {
-                    al_builtins::assumptions::assume(
-                        al_builtins::assumptions::Assumption::TempRecordByValueToPersistentParameter,
-                    );
                     let mut st = rc.borrow().clone();
                     st.temporary = false;
                     st.temp_id = None;
@@ -1039,6 +1040,7 @@ impl Session {
             routine,
             instance,
             locals,
+            aliases,
         };
         let facts = engine.facts[object][routine];
         let is_try = facts.is_try;
@@ -1253,6 +1255,10 @@ struct Frame {
     routine: usize,
     instance: Rc<RefCell<Instance>>,
     locals: Vec<Value>,
+    /// `var` parameters of an event subscriber that are the publisher's global variables: (parameter slot, instance, global
+    /// slot). Kept in step with the global around every call the frame makes (`finish_call`), so a change the sender makes to
+    /// the global shows in the parameter and the other way round (corpus events/lt-event-var-through-sender).
+    aliases: Vec<(usize, Rc<RefCell<Instance>>, usize)>,
 }
 
 fn int(v: &Value) -> Result<i64, Signal> {

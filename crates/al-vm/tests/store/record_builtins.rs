@@ -700,7 +700,7 @@ fn transfer_fields_moves_the_ordinal_between_an_enum_and_an_option_field() {
         "F",
     );
     // The ordinal moves although the Enum lacks it, with no error (corpus TransferEnumOption.al: P98_OptionToEnum_MissingOrdinal).
-    assert!(matches!(&r, Ok(_)), "{r:?}");
+    assert!(r.is_ok(), "{r:?}");
 }
 
 // record/TestRecordSort.al:184-203 (SetAscending(false) makes FindFirst return the largest) and :205-.

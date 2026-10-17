@@ -67,12 +67,6 @@ pub struct Info {
 }
 
 registry! {
-    FindEqualOnAnotherKey => {
-        id: "find-equal-on-another-key",
-        assumed: "Find with `=` among several directions (`=><`) on a record whose current key is not the primary key finds the row itself when the record's primary key names a row that passes the filters and the fields of the current key still hold the row's values; only then is the neighbour searched.",
-        tests: "Req. Wksh.-Make Order (Code: ReqLine.Find('=><') on the Requisition Line the Carry Out Action Msg. report read by its own sorting); Tests-SCM UnitCostOnPurchLineWithCarryOutActionMsg and the tests that carry out action messages.",
-        probe: "SetCurrentKey(SecondaryKey), set the key fields and the primary key to an existing row, Find('=>'), Find('=<') and Find('=><'); then change one key field and repeat.",
-    },
     ClearAllKeepsTemporaryRows => {
         id: "clear-all-keeps-temporary-rows",
         assumed: "ClearAll() resets the fields and filters of a global temporary record but keeps its rows, as Clear(Rec) does.",

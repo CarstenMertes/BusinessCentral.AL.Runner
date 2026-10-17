@@ -188,7 +188,7 @@ mod tests {
             "{text}"
         );
         assert!(
-            text.contains("find-equal-on-another-key  (not hit in the last run)"),
+            text.contains("next-whole-decimal  (not hit in the last run)"),
             "{text}"
         );
         let _ = std::fs::remove_dir_all(&dir);

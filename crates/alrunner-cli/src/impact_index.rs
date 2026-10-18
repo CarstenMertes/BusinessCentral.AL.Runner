@@ -157,7 +157,12 @@ impl Index {
                 Some("pass") => Outcome::Pass,
                 Some("fail") => Outcome::Fail(message),
                 Some("notrun") => Outcome::NotRun(message),
-                other => return Err(format!("the index has a test with outcome {other:?}")),
+                other => {
+                    return Err(format!(
+                        "the index has a test with outcome `{}`",
+                        other.unwrap_or_default()
+                    ));
+                }
             };
             let keys_of = undelta(&t["keys"]);
             if keys_of.iter().any(|&k| k as usize >= keys.len()) {
@@ -244,9 +249,10 @@ pub fn key(a: &TestArgs) -> Result<String, String> {
         &a.company_name,
     )
         .hash(&mut h);
-    format!("{:?}", a.isolation).hash(&mut h);
+    a.isolation.hash(&mut h);
     a.defines.hash(&mut h);
-    format!("{:?} {:?} {:?}", a.environment, a.server_url, a.test_timeout_secs).hash(&mut h);
+    a.environment.as_ref().map(std::mem::discriminant).hash(&mut h);
+    (&a.server_url, a.test_timeout_secs).hash(&mut h);
     if let Some(dir) = &a.disabled_tests_dir {
         hash_tree(dir, &mut h).map_err(|e| format!("--disabled-tests {e}"))?;
     }

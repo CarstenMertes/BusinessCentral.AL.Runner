@@ -9,6 +9,7 @@ impl al_builtins::format::FormatCtx for Session {
     }
     /// The caption a value declares, else its name (types/TestEnumCaption.al).
     fn enum_name(&self, id: u32, value: i32) -> String {
+        self.note_enum(id);
         let o = &self.engine.program.objects[id as usize];
         if let Some((_, c)) = o.enum_captions.iter().find(|(v, _)| *v == value) {
             return c.clone();
@@ -220,6 +221,7 @@ impl al_builtins::native::Ctx for Session {
         self.in_test_codeunit
     }
     fn enum_members(&self, id: u32) -> Option<Vec<(i32, String)>> {
+        self.note_enum(id);
         Some(self.engine.program.objects[id as usize].enum_values.clone())
     }
     fn evaluate_record_id(
@@ -249,6 +251,7 @@ impl al_builtins::native::Ctx for Session {
         }))
     }
     fn enum_captions(&self, id: u32) -> Vec<(i32, String)> {
+        self.note_enum(id);
         self.engine.program.objects[id as usize].enum_captions.clone()
     }
     fn commit(&mut self) -> Result<(), Signal> {

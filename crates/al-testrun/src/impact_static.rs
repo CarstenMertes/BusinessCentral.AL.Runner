@@ -1,0 +1,680 @@
+//! Static selection for an impact run (ADR-043 section 2.3): which tests can reach an impact point of an extension,
+//! found from the compiled program instead of from a run.
+//!
+//! The graph's nodes are the routines of the program, one node per object ("the object is used": a record operation
+//! on a table, a page opened, a report run, a codeunit run, an enum's values read), one per event, the `Global
+//! Triggers` write node, and five nodes for what the program does not name: a codeunit, table, page or report whose
+//! id is held in a variable, and a routine that was not compiled. Edges:
+//!
+//! - a routine to what it calls (`Lowered::calls_of`: procedures, interface implementers, what page and report
+//!   variables drive);
+//! - a publisher routine to its event; an event to its subscribers;
+//! - a routine to the object of each record, page, test page, codeunit and enum variable it holds (its locals and its
+//!   object's globals), and to the codeunit, page, report or table a `Codeunit.Run`, `Page.Run`, `Report.Run` or
+//!   `RecordRef.Open` names with a constant id (else to the matching "id in a variable" node);
+//! - a routine that writes a record to the `Global Triggers` write events;
+//! - a table to its triggers, its extensions' triggers, its events, the tables its fields relate to and the enums of
+//!   its fields; a page to its routines, its extensions' routines, its events and its source table; a report to its
+//!   routines, its extensions' routines, its events and the tables of its records; a codeunit to its `OnRun`.
+//!
+//! A test *reaches* an impact point when a path from one of its roots (the test, its codeunit's `OnRun`, its handler
+//! functions) leads to the point without passing an "id in a variable" or "not compiled" node, and *cannot rule it
+//! out* when every such path passes one. The graph over-selects (a variable of a table counts as using the table, an
+//! interface call reaches every implementer, a branch that never runs counts); it misses only what no node stands
+//! for: events the platform raises with no static raiser, and setup rows that name an object to run.
+
+use crate::impact_trace::{ImpactPoint, Site};
+use al_builtins::value::RtType;
+use al_ir::{ObjKind, Program};
+use al_sema::lower::Lowered;
+use std::collections::HashMap;
+
+/// The `Global Triggers` events the runtime raises for table writes (`al_vm` globaltriggers.rs).
+pub const GLOBAL_WRITE_EVENTS: [&str; 10] = [
+    "getglobaltabletriggermask",
+    "getdatabasetabletriggersetup",
+    "onglobalinsert",
+    "onglobalmodify",
+    "onglobaldelete",
+    "onglobalrename",
+    "ondatabaseinsert",
+    "ondatabasemodify",
+    "ondatabasedelete",
+    "ondatabaserename",
+];
+
+/// The record methods that change the database.
+const WRITES: [&str; 6] = ["Insert", "Modify", "Delete", "DeleteAll", "ModifyAll", "Rename"];
+
+/// The nodes for what the program does not name.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Unnamed {
+    Codeunit,
+    Table,
+    Page,
+    Report,
+    NotCompiled,
+}
+
+const UNNAMED: [Unnamed; 5] = [
+    Unnamed::Codeunit,
+    Unnamed::Table,
+    Unnamed::Page,
+    Unnamed::Report,
+    Unnamed::NotCompiled,
+];
+
+impl Unnamed {
+    fn label(self) -> &'static str {
+        match self {
+            Unnamed::Codeunit => "Codeunit.Run with an id from a variable",
+            Unnamed::Table => "RecordRef.Open with a table number from a variable",
+            Unnamed::Page => "Page.Run with an id from a variable",
+            Unnamed::Report => "Report.Run with an id from a variable",
+            Unnamed::NotCompiled => "a routine that was not compiled",
+        }
+    }
+}
+
+/// The static graph of a program (see the module documentation).
+pub struct Graph {
+    /// First node of each object's routines.
+    base: Vec<usize>,
+    /// The number of routine nodes; object `o` is node `routines + o`.
+    routines: usize,
+    /// (publisher object as `al_vm::events::Registry` keys it, lower-case event) -> node.
+    events: HashMap<(usize, String), usize>,
+    /// The first of the `UNNAMED` nodes.
+    unnamed: usize,
+    edges: Vec<Vec<u32>>,
+    rev: Vec<Vec<u32>>,
+    /// Objects by kind and id.
+    by_id: HashMap<(ObjKind, u32), usize>,
+    /// The object `Global Triggers` subscribers are registered under (`Registry::global_key`).
+    global_key: usize,
+}
+
+/// The nodes a search found: `precise` without passing an unnamed node, `possible` with or without.
+pub struct Reach {
+    pub precise: Vec<bool>,
+    pub possible: Vec<bool>,
+}
+
+impl Graph {
+    pub fn build(lowered: &Lowered) -> Graph {
+        let program = &lowered.program;
+        let registry = al_vm::events::Registry::build(program);
+        let objs = &program.objects;
+        let mut base = Vec::with_capacity(objs.len());
+        let mut routines = 0;
+        for o in objs {
+            base.push(routines);
+            routines += o.routines.len();
+        }
+        let objects = objs.len();
+        let mut events: HashMap<(usize, String), usize> = HashMap::new();
+        let mut next = routines + objects;
+        let mut event_keys: Vec<(usize, String)> = registry.subscribers.keys().cloned().collect();
+        event_keys.extend(registry.publishers.values().map(|p| (p.object, p.event.clone())));
+        event_keys.sort();
+        event_keys.dedup();
+        for k in event_keys {
+            events.insert(k, next);
+            next += 1;
+        }
+        let global_write = next;
+        let unnamed = next + 1;
+        let n = unnamed + UNNAMED.len();
+        let mut g = Graph {
+            base,
+            routines,
+            events,
+            unnamed,
+            edges: vec![Vec::new(); n],
+            rev: Vec::new(),
+            by_id: HashMap::new(),
+            global_key: registry.global_key,
+        };
+        // Objects by kind and id, for the ids `Codeunit.Run`, `Page.Run`, `Report.Run` and `RecordRef.Open` name.
+        let mut by_id: HashMap<(ObjKind, u32), usize> = HashMap::new();
+        let mut by_name: HashMap<(ObjKind, String), usize> = HashMap::new();
+        for (oi, o) in objs.iter().enumerate() {
+            if let Some(id) = o.id {
+                by_id.entry((o.kind, id)).or_insert(oi);
+            }
+            by_name.entry((o.kind, o.name.to_lowercase())).or_insert(oi);
+        }
+        let mut edges = std::mem::take(&mut g.edges);
+        for (oi, o) in objs.iter().enumerate() {
+            for (ri, r) in o.routines.iter().enumerate() {
+                let from = g.base[oi] + ri;
+                let out = &mut edges[from];
+                for (co, cr) in lowered.calls_of(oi, ri) {
+                    if co < objs.len() && cr < objs[co].routines.len() {
+                        out.push((g.base[co] + cr) as u32);
+                    }
+                }
+                if let Some(p) = registry.publishers.get(&(oi, ri))
+                    && let Some(&e) = g.events.get(&(p.object, p.event.clone()))
+                {
+                    out.push(e as u32);
+                }
+                if lowered.unsupported[oi][ri]
+                    .iter()
+                    .any(|s| s.starts_with("not compiled"))
+                {
+                    out.push(g.unnamed_node(Unnamed::NotCompiled) as u32);
+                }
+                for s in r.locals.iter().chain(&o.globals) {
+                    if let Some(t) = slot_object(&s.ty) {
+                        out.push((routines + t) as u32);
+                    }
+                }
+                let ty_of = |p: &al_ir::Place| -> Option<&RtType> {
+                    let mut p = p;
+                    while let al_ir::Place::Index(b, _) = p {
+                        p = b;
+                    }
+                    let mut ty = match p {
+                        al_ir::Place::Local(i) => &r.locals.get(*i)?.ty,
+                        al_ir::Place::Global(i) => &o.globals.get(*i)?.ty,
+                        _ => return None,
+                    };
+                    while let RtType::Array(_, inner) = ty {
+                        ty = inner;
+                    }
+                    Some(ty)
+                };
+                al_ir::types::for_each_expr_post(&r.body, &mut |e| {
+                    let al_ir::Expr::Builtin { id, receiver, args, .. } = e else {
+                        return;
+                    };
+                    let name = id.name();
+                    let method = id.method();
+                    let (class, _) = name.split_once('.').unwrap_or((name, ""));
+                    let constant = |i: usize| match args.get(i) {
+                        Some(al_ir::Arg::Value(al_ir::Expr::Const(al_ir::Const::Integer(n)))) => Some(*n as u32),
+                        _ => None,
+                    };
+                    let receiver_ty = receiver.as_deref().and_then(|a| match a {
+                        al_ir::Arg::Ref(p) => ty_of(p),
+                        al_ir::Arg::Value(al_ir::Expr::Load(p)) => ty_of(p),
+                        _ => None,
+                    });
+                    let named = |kind: ObjKind, unnamed: Unnamed, out: &mut Vec<u32>| match constant(0) {
+                        Some(id) => {
+                            if let Some(&t) = by_id.get(&(kind, id)) {
+                                out.push((routines + t) as u32);
+                            }
+                        }
+                        None => out.push(g.unnamed_node(unnamed) as u32),
+                    };
+                    match (class, method) {
+                        ("Codeunit", "Run") => match receiver_ty {
+                            Some(RtType::Codeunit(c)) => out.push((routines + *c as usize) as u32),
+                            _ if receiver.is_none() => named(ObjKind::Codeunit, Unnamed::Codeunit, out),
+                            _ => out.push(g.unnamed_node(Unnamed::Codeunit) as u32),
+                        },
+                        ("Page", "Run" | "RunModal") if receiver.is_none() => named(ObjKind::Page, Unnamed::Page, out),
+                        ("Report", m)
+                            if receiver.is_none()
+                                && (m.starts_with("Run")
+                                    || m.starts_with("SaveAs")
+                                    || matches!(m, "Execute" | "Print" | "RdlcLayout" | "WordLayout")) =>
+                        {
+                            named(ObjKind::Report, Unnamed::Report, out)
+                        }
+                        ("RecordRef", "Open") => named(ObjKind::Table, Unnamed::Table, out),
+                        ("Record" | "RecordRef", m) if WRITES.contains(&m) => out.push(global_write as u32),
+                        _ => {}
+                    }
+                });
+            }
+        }
+        // Objects: what using them runs.
+        for (oi, o) in objs.iter().enumerate() {
+            let from = routines + oi;
+            let mut out: Vec<u32> = Vec::new();
+            let all = |q: usize, out: &mut Vec<u32>| {
+                out.extend((0..objs[q].routines.len()).map(|r| (g.base[q] + r) as u32));
+            };
+            let triggers = |q: usize, out: &mut Vec<u32>| {
+                out.extend(
+                    objs[q]
+                        .routines
+                        .iter()
+                        .enumerate()
+                        .filter(|(_, r)| r.is_trigger)
+                        .map(|(r, _)| (g.base[q] + r) as u32),
+                );
+            };
+            let record_globals = |q: usize, out: &mut Vec<u32>| {
+                for s in &objs[q].globals {
+                    if let Some(t) = slot_object(&s.ty)
+                        && objs[t].kind == ObjKind::Table
+                    {
+                        out.push((routines + t) as u32);
+                    }
+                }
+            };
+            match o.kind {
+                ObjKind::Table => {
+                    triggers(oi, &mut out);
+                    if let Some(t) = &o.table {
+                        for &e in &t.extensions {
+                            triggers(e, &mut out);
+                        }
+                        for f in &t.fields {
+                            for rel in f.relation_table.iter().chain(&f.relation_tables) {
+                                if let Some(&r) = by_name.get(&(ObjKind::Table, rel.to_lowercase())) {
+                                    out.push((routines + r) as u32);
+                                }
+                            }
+                            if let Some(e) = slot_object(&f.ty) {
+                                out.push((routines + e) as u32);
+                            }
+                        }
+                    }
+                }
+                ObjKind::Page => {
+                    all(oi, &mut out);
+                    for &e in o.page.iter().flat_map(|p| p.extensions.iter()) {
+                        all(e, &mut out);
+                    }
+                    record_globals(oi, &mut out);
+                }
+                ObjKind::Report => {
+                    all(oi, &mut out);
+                    for (e, x) in objs.iter().enumerate() {
+                        if x.report_ext.as_ref().is_some_and(|x| x.base == oi) {
+                            all(e, &mut out);
+                        }
+                    }
+                    record_globals(oi, &mut out);
+                }
+                ObjKind::XmlPort | ObjKind::Query => {
+                    all(oi, &mut out);
+                    record_globals(oi, &mut out);
+                }
+                ObjKind::Codeunit => {
+                    out.extend(
+                        o.routines
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, r)| r.is_trigger && r.name.eq_ignore_ascii_case("OnRun"))
+                            .map(|(r, _)| (g.base[oi] + r) as u32),
+                    );
+                }
+                _ => {}
+            }
+            edges[from] = out;
+        }
+        // Events: their subscribers. An event of an object is raised when the object is used (table, page and report
+        // events, which the platform raises).
+        for ((object, event), &node) in &g.events {
+            for s in registry
+                .subscribers
+                .get(&(*object, event.clone()))
+                .into_iter()
+                .flatten()
+            {
+                if s.object < objs.len() && s.routine < objs[s.object].routines.len() {
+                    edges[node].push((g.base[s.object] + s.routine) as u32);
+                }
+            }
+            if *object < objs.len()
+                && matches!(objs[*object].kind, ObjKind::Table | ObjKind::Page | ObjKind::Report)
+                && !registry
+                    .publishers
+                    .values()
+                    .any(|p| p.object == *object && &p.event == event)
+            {
+                edges[routines + *object].push(node as u32);
+            }
+            if *object == registry.global_key && GLOBAL_WRITE_EVENTS.contains(&event.as_str()) {
+                edges[global_write].push(node as u32);
+            }
+        }
+        // What the program does not name: any object of the kind.
+        for u in UNNAMED {
+            let kind = match u {
+                Unnamed::Codeunit => ObjKind::Codeunit,
+                Unnamed::Table => ObjKind::Table,
+                Unnamed::Page => ObjKind::Page,
+                Unnamed::Report => ObjKind::Report,
+                Unnamed::NotCompiled => continue,
+            };
+            let node = g.unnamed_node(u);
+            edges[node] = objs
+                .iter()
+                .enumerate()
+                .filter(|(_, o)| o.kind == kind)
+                .map(|(oi, _)| (routines + oi) as u32)
+                .collect();
+        }
+        for e in &mut edges {
+            e.sort_unstable();
+            e.dedup();
+        }
+        let mut rev = vec![Vec::new(); n];
+        for (from, out) in edges.iter().enumerate() {
+            for &to in out {
+                rev[to as usize].push(from as u32);
+            }
+        }
+        g.edges = edges;
+        g.rev = rev;
+        g.by_id = by_id;
+        g
+    }
+
+    /// The object of this kind and id.
+    pub fn object_of(&self, kind: ObjKind, id: u32) -> Option<usize> {
+        self.by_id.get(&(kind, id)).copied()
+    }
+
+    fn unnamed_node(&self, u: Unnamed) -> usize {
+        self.unnamed + u as usize
+    }
+
+    fn is_unnamed(&self, n: usize) -> bool {
+        n >= self.unnamed
+    }
+
+    pub fn routine_node(&self, object: usize, routine: usize) -> usize {
+        self.base[object] + routine
+    }
+
+    pub fn object_node(&self, object: usize) -> usize {
+        self.routines + object
+    }
+
+    pub fn event_node(&self, object: usize, event: &str) -> Option<usize> {
+        self.events.get(&(object, event.to_lowercase())).copied()
+    }
+
+    pub fn len(&self) -> usize {
+        self.edges.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.edges.is_empty()
+    }
+
+    /// The nodes from which one of `targets` can be reached.
+    pub fn reaching(&self, targets: &[usize]) -> Reach {
+        Reach {
+            precise: self.search(targets, &self.rev, false),
+            possible: self.search(targets, &self.rev, true),
+        }
+    }
+
+    /// The nodes `roots` can reach.
+    pub fn reached_from(&self, roots: &[usize]) -> Reach {
+        Reach {
+            precise: self.search(roots, &self.edges, false),
+            possible: self.search(roots, &self.edges, true),
+        }
+    }
+
+    fn search(&self, from: &[usize], adj: &[Vec<u32>], through_unnamed: bool) -> Vec<bool> {
+        let mut seen = vec![false; adj.len()];
+        let mut stack: Vec<usize> = Vec::new();
+        for &f in from {
+            if !seen[f] {
+                seen[f] = true;
+                stack.push(f);
+            }
+        }
+        while let Some(n) = stack.pop() {
+            for &m in &adj[n] {
+                let m = m as usize;
+                if seen[m] || (!through_unnamed && self.is_unnamed(m)) {
+                    continue;
+                }
+                seen[m] = true;
+                stack.push(m);
+            }
+        }
+        seen
+    }
+
+    /// The unnamed nodes `reach` holds, as text for a verdict.
+    pub fn unnamed_in(&self, reach: &[bool]) -> Vec<&'static str> {
+        UNNAMED
+            .iter()
+            .filter(|u| reach[self.unnamed_node(**u)])
+            .map(|u| u.label())
+            .collect()
+    }
+
+    /// The node an impact point's site stands for, or `None` when nothing in the graph stands for it.
+    pub fn site_nodes(&self, site: &Site) -> Option<Vec<usize>> {
+        match site {
+            Site::Event(object, event) => self.event_node(*object, event).map(|n| vec![n]),
+            Site::Object(o) => Some(vec![self.object_node(*o)]),
+            Site::Tables(tables) => Some(tables.iter().map(|&t| self.object_node(t)).collect()),
+            Site::None(_) => None,
+        }
+    }
+}
+
+/// The node a key of the impact index (`impact_trace::keys`) stands for: `table` and `write` keys the table, `page`,
+/// `report` and `enum` keys the object, an event its event node, or the object for a table, page or report event no
+/// one subscribes to (using the object raises it). `None`: the graph has no node for it.
+pub fn key_node(graph: &Graph, program: &Program, key: &str) -> Option<usize> {
+    let (what, rest) = key.split_once(' ')?;
+    let object = |kind: ObjKind, id: &str| graph.object_of(kind, id.parse().ok()?);
+    let simple = |kind: ObjKind| object(kind, rest).map(|o| graph.object_node(o));
+    match what {
+        "table" | "write" => simple(ObjKind::Table),
+        "page" => simple(ObjKind::Page),
+        "report" => simple(ObjKind::Report),
+        "enum" => simple(ObjKind::Enum),
+        "event" => {
+            let mut p = rest.splitn(3, ' ');
+            let (kind, id, event) = (p.next()?, p.next()?, p.next()?);
+            let event = event.split('/').next()?;
+            let o = match (kind, id) {
+                ("platform", "captionclass") => al_vm::events::CAPTION_CLASS,
+                ("platform", "reportingtriggers") => al_vm::events::REPORTING_TRIGGERS,
+                ("codeunit", "2000000002") => graph.global_key,
+                _ => object(kind.parse().ok()?, id)?,
+            };
+            graph.event_node(o, event).or_else(|| {
+                (o < program.objects.len()
+                    && matches!(
+                        program.objects[o].kind,
+                        ObjKind::Table | ObjKind::Page | ObjKind::Report
+                    ))
+                .then(|| graph.object_node(o))
+            })
+        }
+        _ => None,
+    }
+}
+
+/// The object a variable of this type uses: a table, page, test page, codeunit or enum.
+fn slot_object(ty: &RtType) -> Option<usize> {
+    let mut ty = ty;
+    while let RtType::Array(_, inner) = ty {
+        ty = inner;
+    }
+    match ty {
+        RtType::Record(t, _) | RtType::Page(t) | RtType::TestPage(t) | RtType::Codeunit(t) | RtType::Enum(t) => {
+            Some(*t as usize)
+        }
+        _ => None,
+    }
+}
+
+/// Whether the object is a test codeunit (`Subtype = Test`).
+pub fn is_test_codeunit(o: &al_ir::Object) -> bool {
+    o.kind == ObjKind::Codeunit
+        && o.properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Test"))
+}
+
+/// The roots of a test: the test routine, its codeunit's `OnRun` and the handler functions its `[HandlerFunctions]`
+/// names.
+pub fn test_roots(program: &Program, object: usize, routine: usize) -> Vec<(usize, usize)> {
+    let o = &program.objects[object];
+    let mut out = vec![(object, routine)];
+    out.extend(
+        o.routines
+            .iter()
+            .enumerate()
+            .filter(|(_, r)| r.is_trigger && r.name.eq_ignore_ascii_case("OnRun"))
+            .map(|(r, _)| (object, r)),
+    );
+    for a in o.routines[routine]
+        .attributes
+        .iter()
+        .filter(|a| a.name.eq_ignore_ascii_case("HandlerFunctions"))
+    {
+        for arg in &a.args {
+            if let al_ir::Const::Text(list) = arg {
+                for name in list.split(',').map(str::trim) {
+                    out.extend(
+                        o.routines
+                            .iter()
+                            .enumerate()
+                            .filter(|(_, r)| r.name.eq_ignore_ascii_case(name))
+                            .map(|(r, _)| (object, r)),
+                    );
+                }
+            }
+        }
+    }
+    out
+}
+
+/// What static reach says of one test and one impact point.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum Verdict {
+    /// A path from the test to the point passes only named code.
+    Reaches,
+    /// Only paths through what the program does not name lead to the point (the text names what).
+    CannotRuleOut(String),
+}
+
+/// Static selection over a set of tests.
+pub struct Selection {
+    /// Per impact point: why static selection cannot select for it (every test codeunit runs), else `None`.
+    pub everything: Vec<Option<String>>,
+    /// Per test (object, routine) that reaches or cannot rule out a point: (point index, verdict).
+    pub verdicts: HashMap<(usize, usize), Vec<(usize, Verdict)>>,
+}
+
+impl Selection {
+    /// Whether the selection must take every test codeunit.
+    pub fn takes_everything(&self) -> bool {
+        self.everything.iter().any(Option::is_some)
+    }
+}
+
+/// Static selection (ADR-043 section 2.3): per impact point one search backwards from what stands for it, then each
+/// test's roots looked up. `tests` are (object, routine) of test routines; `baseline_roots` the routines the install
+/// baseline runs (an impact point that runs code and that they reach changes the data every test starts from).
+pub fn select(
+    lowered: &Lowered,
+    graph: &Graph,
+    points: &[ImpactPoint],
+    tests: &[(usize, usize)],
+    baseline_roots: &[(usize, usize)],
+) -> Selection {
+    let program = &lowered.program;
+    let mut sel = Selection {
+        everything: vec![None; points.len()],
+        verdicts: HashMap::new(),
+    };
+    let roots: Vec<(usize, Vec<usize>)> = tests
+        .iter()
+        .enumerate()
+        .map(|(i, &(o, r))| {
+            (
+                i,
+                test_roots(program, o, r)
+                    .into_iter()
+                    .map(|(o, r)| graph.routine_node(o, r))
+                    .collect(),
+            )
+        })
+        .collect();
+    let baseline: Vec<usize> = baseline_roots.iter().map(|&(o, r)| graph.routine_node(o, r)).collect();
+    // Per unnamed node: the nodes that reach it through named code (to say why a test cannot rule a point out).
+    let to_unnamed: Vec<Vec<bool>> = UNNAMED
+        .iter()
+        .map(|u| graph.search(&[graph.unnamed_node(*u)], &graph.rev, false))
+        .collect();
+    for (pi, p) in points.iter().enumerate() {
+        let Some(targets) = graph.site_nodes(&p.site) else {
+            let why = match &p.site {
+                Site::None(why) => why.clone(),
+                _ => "nothing in the program stands for it".into(),
+            };
+            sel.everything[pi] = Some(format!("{}: {why}", p.what));
+            continue;
+        };
+        let reach = graph.reaching(&targets);
+        if p.runs_code && baseline.iter().any(|&b| reach.precise[b]) {
+            sel.everything[pi] = Some(format!(
+                "{}: the install code can reach it, so it can change the data every test starts from",
+                p.what
+            ));
+            continue;
+        }
+        for (i, nodes) in &roots {
+            let verdict = if nodes.iter().any(|&n| reach.precise[n]) {
+                Verdict::Reaches
+            } else if nodes.iter().any(|&n| reach.possible[n]) {
+                // Name what the test reaches that can lead to the point.
+                let mut via: Vec<&str> = UNNAMED
+                    .iter()
+                    .zip(&to_unnamed)
+                    .filter(|(u, from)| reach.possible[graph.unnamed_node(**u)] && nodes.iter().any(|&n| from[n]))
+                    .map(|(u, _)| u.label())
+                    .collect();
+                if via.is_empty() {
+                    via = graph.unnamed_in(&reach.possible);
+                }
+                Verdict::CannotRuleOut(via.join(", "))
+            } else {
+                continue;
+            };
+            sel.verdicts.entry(tests[*i]).or_default().push((pi, verdict));
+        }
+    }
+    sel
+}
+
+/// The routines the install baseline runs: Base Application's `Company-Initialize` (its `OnRun`) and the install
+/// triggers of every install codeunit of an app `is_dependency` accepts (the extension's own install codeunits are
+/// impact points of their own).
+pub fn baseline_roots(program: &Program, is_dependency: impl Fn(usize) -> bool) -> Vec<(usize, usize)> {
+    let mut out = Vec::new();
+    for (oi, o) in program.objects.iter().enumerate() {
+        if o.kind != ObjKind::Codeunit || !is_dependency(oi) {
+            continue;
+        }
+        let install = o
+            .properties
+            .iter()
+            .any(|(k, v)| k.eq_ignore_ascii_case("Subtype") && v.trim().eq_ignore_ascii_case("Install"));
+        let company_initialize = o.id == Some(2) && o.name.eq_ignore_ascii_case("Company-Initialize");
+        for (ri, r) in o.routines.iter().enumerate() {
+            let root = r.is_trigger
+                && if install {
+                    r.name.eq_ignore_ascii_case("OnInstallAppPerCompany")
+                        || r.name.eq_ignore_ascii_case("OnInstallAppPerDatabase")
+                } else {
+                    company_initialize && r.name.eq_ignore_ascii_case("OnRun")
+                };
+            if root {
+                out.push((oi, ri));
+            }
+        }
+    }
+    out
+}

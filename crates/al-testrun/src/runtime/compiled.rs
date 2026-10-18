@@ -56,6 +56,8 @@ pub struct RunOptions {
 /// What [`RunOptions::narrow`] sees of the compile.
 pub struct NarrowInput<'a> {
     pub program: &'a al_ir::Program,
+    /// The lowering `program` is part of: its call graph and why routines are refused (static selection).
+    pub lowered: &'a Lowered,
     /// Per app of the program: its index as the caller gave it.
     pub order: &'a [usize],
     /// The test codeunits the run would run (caller's app index, codeunit id); `None`: all.

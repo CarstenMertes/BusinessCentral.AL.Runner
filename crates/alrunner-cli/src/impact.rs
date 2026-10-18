@@ -500,26 +500,39 @@ fn build_command(args: &[String]) -> String {
     out.join(" ")
 }
 
-/// The warning of a run with no cached index (ADR-043 section 2.3, owner decision 1).
-fn no_index_warning(a: &TestArgs) -> String {
+/// What static selection misses (ADR-043 section 2.3), for the warning of a run with no cached index.
+const STATIC_MISSES: &str = "Codeunit, Page and Report.Run with an id from a variable or a table field, RecordRef on a table number from a variable, events raised by the platform and setup-driven dispatch";
+
+/// The warning of a run with no cached index (ADR-043 section 2.3, owner decision 1). `cannot_rule_out`: the number of
+/// selected tests that reach a site static reach cannot see through, once the selection is known.
+fn no_index_warning(a: &TestArgs, cannot_rule_out: Option<usize>) -> String {
     let args: Vec<String> = std::env::args().collect();
+    let marked = match cannot_rule_out {
+        Some(n) => format!(
+            "{n} selected test{} reach such a site (\"cannot rule out\") and were run",
+            if n == 1 { "" } else { "s" }
+        ),
+        None => "selected tests that reach such a site are marked \"cannot rule out\" and run".to_string(),
+    };
     format!(
-        "warning: no impact index for these test apps and options (country {}, this runtime build): every selected test runs without and with the extension, which costs two runs of the test apps. With an index, only the test codeunits that reach one of the extension's impact points run, once. Static selection, the fallback ADR-043 plans for a run without an index, is not built yet. Build the index once with: {}",
+        "warning: no impact index for these test apps and options (country {}, this runtime build): tests were selected by static reach, which misses {STATIC_MISSES}; {marked}. Build the index once with: {}",
         a.country(),
         build_command(&args)
     )
 }
 
-/// `alrunner test --impact-of ...`: with a cached index (and not `--impact all`) dynamic selection, else both runs and
-/// the diff. Exit 1 when a test newly fails, fails differently, is newly not run or is a selection miss; a run that
-/// selected nothing or stopped exits as that run did.
+/// `alrunner test --impact-of ...`: `--impact all` runs everything on both sides; `--impact static`, or no cached
+/// index, selects by static reach; else dynamic selection with the index. Exit 1 when a test newly fails, fails
+/// differently, is newly not run or is a selection miss; a run that selected nothing or stopped exits as that run did.
 pub fn run(a: &TestArgs) -> Result<u8, String> {
-    if a.impact.as_deref() == Some("all") {
-        return run_all(a, None);
+    match a.impact.as_deref() {
+        Some("all") => return run_all(a, None),
+        Some("static") => return run_static(a, false),
+        _ => {}
     }
     match crate::impact_index::lookup(&side_args(a))? {
         Some((index, path)) => run_dynamic(a, index, &path),
-        None => run_all(a, Some(no_index_warning(a))),
+        None => run_static(a, true),
     }
 }
 
@@ -629,7 +642,7 @@ fn decide(index: &crate::impact_index::Index, input: &NarrowInput) -> Decision {
     // The extensions: every app of the compile the index's run did not have.
     let known: std::collections::HashSet<&str> = index.apps.iter().map(|(id, _, _)| id.as_str()).collect();
     let extension: Vec<bool> = program.apps.iter().map(|p| !known.contains(p.id.as_str())).collect();
-    let points = impact_points(program, |oi| {
+    let points = impact_points(input.lowered, |oi| {
         extension
             .get(program.objects[oi].app as usize)
             .copied()
@@ -748,7 +761,7 @@ fn run_dynamic(a: &TestArgs, index: crate::impact_index::Index, path: &std::path
             build_command(&std::env::args().collect::<Vec<_>>())
         );
         println!("{}", style::yellow(&w));
-        return run_all(a, Some(w));
+        return run_static(a, false);
     }
     if !matches!(code, 0 | 1 | 6 | 7 | 8) {
         return Ok(code);
@@ -793,6 +806,281 @@ fn run_dynamic(a: &TestArgs, index: crate::impact_index::Index, path: &std::path
         a.verbose,
         Some((left_out.len(), left_out_units.len())),
     ) {
+        println!("{line}");
+    }
+    Ok(verdict(&rows))
+}
+
+/// What static selection decided once the "with" side was compiled (ADR-043 section 2.3).
+struct StaticDecision {
+    /// The test codeunits to run (caller's app index, id); `None`: every one, for the reasons in `reasons`.
+    select: Option<Vec<(usize, u32)>>,
+    reasons: Vec<String>,
+    /// The test codeunits the run would run without selection.
+    would: Vec<(usize, u32)>,
+    /// Per test (app, codeunit, lower-case name) that reaches an impact point or cannot rule one out: the points, as
+    /// text.
+    reached: HashMap<(usize, u32, String), Vec<String>>,
+}
+
+impl StaticDecision {
+    /// The tests in the codeunits left out, and those codeunits.
+    fn left_out(&self, by_unit: &HashMap<(usize, u32), usize>) -> (usize, usize) {
+        let Some(units) = &self.select else {
+            return (0, 0);
+        };
+        let chosen: std::collections::HashSet<&(usize, u32)> = units.iter().collect();
+        let out: Vec<&(usize, u32)> = self.would.iter().filter(|u| !chosen.contains(u)).collect();
+        (
+            out.iter().map(|u| by_unit.get(u).copied().unwrap_or(0)).sum(),
+            out.len(),
+        )
+    }
+}
+
+/// Marks an impact point a test cannot rule out (static reach passes a site it cannot see through).
+const CANNOT_RULE_OUT: &str = " (cannot rule out: ";
+
+/// The test routines of the test codeunits a run would run: ((caller's app, codeunit id), (object, routine), name).
+pub(crate) type TestRoutine = ((usize, u32), (usize, usize), String);
+
+pub(crate) fn test_routines(input: &NarrowInput, tests: usize) -> Vec<TestRoutine> {
+    let mut out = Vec::new();
+    for (oi, o) in input.program.objects.iter().enumerate() {
+        let (Some(&app), Some(id)) = (input.order.get(o.app as usize), o.id) else {
+            continue;
+        };
+        if app >= tests
+            || !al_testrun::impact_static::is_test_codeunit(o)
+            || input.only.is_some_and(|only| !only.contains(&(app, id)))
+        {
+            continue;
+        }
+        for (ri, r) in o.routines.iter().enumerate() {
+            if r.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test")) {
+                out.push(((app, id), (oi, ri), r.name.clone()));
+            }
+        }
+    }
+    out
+}
+
+/// Per app of the program: whether it is part of the extension: an APP given with `--impact-of` (the caller's apps
+/// `tests..tests + extensions`) or an app one of them depends on that the test apps do not depend on.
+fn extension_apps(input: &NarrowInput, tests: usize, extensions: usize) -> Vec<bool> {
+    let apps = &input.program.apps;
+    let closure = |roots: Vec<usize>| {
+        let mut seen = vec![false; apps.len()];
+        let mut stack = roots;
+        while let Some(p) = stack.pop() {
+            if std::mem::replace(&mut seen[p], true) {
+                continue;
+            }
+            for d in &apps[p].dependencies {
+                stack.extend(apps.iter().position(|x| x.id.eq_ignore_ascii_case(d)));
+            }
+        }
+        seen
+    };
+    let caller = |p: usize| input.order.get(p).copied().unwrap_or(usize::MAX);
+    let base = closure((0..apps.len()).filter(|&p| caller(p) < tests).collect());
+    let ext = closure(
+        (0..apps.len())
+            .filter(|&p| (tests..tests + extensions).contains(&caller(p)))
+            .collect(),
+    );
+    ext.iter().zip(&base).map(|(e, b)| *e && !b).collect()
+}
+
+/// Static selection over the compiled "with" side: `is_ext_app` says which apps of the program are the extension;
+/// `keep` which tests (app, codeunit, lower-case name) to decide for.
+fn decide_static(
+    input: &NarrowInput,
+    tests: usize,
+    is_ext_app: &[bool],
+    keep: impl Fn(&(usize, u32), &str) -> bool,
+) -> StaticDecision {
+    use al_testrun::impact_static::{Graph, Verdict, baseline_roots, select};
+    use al_testrun::impact_trace::impact_points;
+    let program = input.program;
+    let is_ext = |oi: usize| {
+        is_ext_app
+            .get(program.objects[oi].app as usize)
+            .copied()
+            .unwrap_or(false)
+    };
+    let points = impact_points(input.lowered, is_ext);
+    let routines: Vec<TestRoutine> = test_routines(input, tests)
+        .into_iter()
+        .filter(|(u, _, n)| keep(u, &n.to_lowercase()))
+        .collect();
+    let mut would: Vec<(usize, u32)> = routines.iter().map(|(u, _, _)| *u).collect();
+    would.sort_unstable();
+    would.dedup();
+    let started = std::time::Instant::now();
+    let graph = Graph::build(input.lowered);
+    let units: Vec<(usize, usize)> = routines.iter().map(|(_, t, _)| *t).collect();
+    // The install baseline: Company-Initialize and the install codeunits of every app that is not the extension.
+    let roots = baseline_roots(program, |oi| !is_ext(oi));
+    let sel = select(input.lowered, &graph, &points, &units, &roots);
+    let mut reached: HashMap<(usize, u32, String), Vec<String>> = HashMap::new();
+    let mut per_point = vec![(0usize, 0usize); points.len()];
+    let mut selected = std::collections::BTreeSet::new();
+    for (unit, t, name) in &routines {
+        let Some(list) = sel.verdicts.get(t) else {
+            continue;
+        };
+        let texts = list
+            .iter()
+            .map(|(pi, v)| match v {
+                Verdict::Reaches => {
+                    per_point[*pi].0 += 1;
+                    points[*pi].what.clone()
+                }
+                Verdict::CannotRuleOut(via) => {
+                    per_point[*pi].1 += 1;
+                    format!("{}{CANNOT_RULE_OUT}{via})", points[*pi].what)
+                }
+            })
+            .collect();
+        selected.insert(*unit);
+        reached.insert((unit.0, unit.1, name.to_lowercase()), texts);
+    }
+    println!(
+        "static selection: {} impact point(s) of the extension (static graph of {} nodes, {:.1} s)",
+        points.len(),
+        graph.len(),
+        started.elapsed().as_secs_f64()
+    );
+    for ((p, (r, c)), why) in points.iter().zip(&per_point).zip(&sel.everything) {
+        match why {
+            Some(_) => println!("  {}: static reach cannot select for it", p.what),
+            None => println!(
+                "  {}: reached by {r} of {} tests, {c} more cannot rule it out",
+                p.what,
+                routines.len()
+            ),
+        }
+    }
+    let reasons: Vec<String> = sel.everything.iter().flatten().cloned().collect();
+    StaticDecision {
+        select: reasons
+            .is_empty()
+            .then(|| would.iter().copied().filter(|u| selected.contains(u)).collect()),
+        reasons,
+        would,
+        reached,
+    }
+}
+
+/// Static selection (ADR-043 section 2.3): the "with" side is compiled first and decides the test codeunits; both
+/// sides run those. `no_index`: the run fell back to it because no index is cached (it warns).
+fn run_static(a: &TestArgs, no_index: bool) -> Result<u8, String> {
+    use std::sync::{Arc, Mutex};
+    println!(
+        "impact of {} on the tests of {}: static selection{}",
+        names(&a.impact_of),
+        names(&a.apps),
+        if no_index { "" } else { " (--impact static)" }
+    );
+    if no_index {
+        println!("{}", style::yellow(&no_index_warning(a, None)));
+    }
+    let (tests, extensions) = (a.apps.len(), a.impact_of.len());
+    let decision: Arc<Mutex<Option<(StaticDecision, HashMap<(usize, u32), usize>)>>> = Arc::new(Mutex::new(None));
+    let dec = decision.clone();
+    let narrow = al_testrun::runtime::Narrow(Arc::new(move |input: &NarrowInput| {
+        let ext = extension_apps(input, tests, extensions);
+        let d = decide_static(input, tests, &ext, |_, _| true);
+        let mut by_unit: HashMap<(usize, u32), usize> = HashMap::new();
+        for (u, _, _) in test_routines(input, tests) {
+            *by_unit.entry(u).or_default() += 1;
+        }
+        let only = match &d.select {
+            Some(units) => {
+                println!(
+                    "static selection: selected {} of {} test codeunits",
+                    units.len(),
+                    d.would.len()
+                );
+                Some(units.clone())
+            }
+            None => {
+                println!(
+                    "{}",
+                    style::yellow(&format!(
+                        "warning: static reach cannot select for every impact point of the extension, so all {} test codeunits run on both sides:",
+                        d.would.len()
+                    ))
+                );
+                for r in &d.reasons {
+                    println!("  {r}");
+                }
+                None
+            }
+        };
+        *dec.lock().expect("the decision") = Some((d, by_unit));
+        only
+    }));
+
+    println!("\nwith the extension:");
+    let mut with_side = side_args(a);
+    with_side.apps.extend(a.impact_of.iter().cloned());
+    with_side.coverage = true;
+    let mut with = Collected {
+        narrow: Some(narrow),
+        ..Default::default()
+    };
+    let code = run::test_collect(&with_side, &mut with)?;
+    let Some((d, by_unit)) = decision.lock().expect("the decision").take() else {
+        // The run stopped before its compile was done.
+        return Ok(code);
+    };
+    if !matches!(code, 0 | 1 | 6 | 7 | 8) {
+        return Ok(code);
+    }
+    let mut without = Collected::default();
+    if d.select.as_ref().is_none_or(|u| !u.is_empty()) {
+        println!("\nwithout the extension:");
+        let units = d.select.clone();
+        without.narrow = Some(al_testrun::runtime::Narrow(Arc::new(move |_: &NarrowInput| {
+            units.clone()
+        })));
+        let code = run::test_collect(&side_args(a), &mut without)?;
+        if !matches!(code, 0 | 1 | 6 | 7 | 8) {
+            return Ok(code);
+        }
+    }
+
+    let routines = Routines::of(&with.statements, |app| app >= tests);
+    let points_of = |r: &TestResult| -> Vec<String> {
+        d.reached
+            .get(&(r.app, r.codeunit, r.test.to_lowercase()))
+            .cloned()
+            .unwrap_or_default()
+    };
+    let rows = diff_reached(&without.results, &with.results, &routines, Some(&points_of));
+    let cannot = rows
+        .iter()
+        .filter(|r| !r.points.is_empty() && r.points.iter().all(|p| p.contains(CANNOT_RULE_OUT)))
+        .count();
+    println!();
+    if no_index {
+        println!("{}\n", style::yellow(&no_index_warning(a, Some(cannot))));
+    }
+    let mut lines = report_with(&rows, &routines, a.verbose, None);
+    if d.select.is_some() {
+        let (left_tests, left_units) = d.left_out(&by_unit);
+        lines.insert(
+            1,
+            format!(
+                "not selected: {} in {}: static reach finds no path from them to an impact point of the extension",
+                plural(left_tests, "test"),
+                plural(left_units, "codeunit")
+            ),
+        );
+    }
+    for line in lines {
         println!("{line}");
     }
     Ok(verdict(&rows))

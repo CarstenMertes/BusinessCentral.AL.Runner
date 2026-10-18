@@ -118,6 +118,7 @@ impl CorpusRuntime {
         let narrowed = opts.narrow.as_ref().and_then(|narrow| {
             let input = NarrowInput {
                 program: &compiled.lowered.program,
+                lowered: &compiled.lowered,
                 order: &compiled.order,
                 only: opts.only.as_deref(),
             };

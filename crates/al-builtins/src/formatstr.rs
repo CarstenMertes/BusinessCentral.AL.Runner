@@ -231,6 +231,26 @@ fn comma_template(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -
         "<Sign><Integer><Decimals><Comma,,>",
         "<Sign><Integer><Decimals><Comma>",
         "<Decimals><Comma,.>",
+        // types/lt-format-comma-more/FormatCommaMore.al (an Integer value; the same strings on a Decimal read below).
+        "<Integer><Comma,,><Decimals>",
+        "<Integer Thousand><Comma,.><Decimals,3>",
+    ];
+    // The strings that read on a Decimal as the same string without the `<Comma,..>` element, the decimal point staying a point
+    // (FormatCommaMore.al:Format_CommaBeforeDecimals_Decimal, :Format_CommaWithThousandAndWidth_Decimal).
+    const COMMA_DROPPED: [(&str, &str); 7] = [
+        ("<Integer><Comma,,><Decimals>", "<Integer><Decimals>"),
+        ("<Integer Thousand><Comma,,><Decimals>", "<Integer Thousand><Decimals>"),
+        ("<Integer Thousand><Comma,.><Decimals,3>", "<Integer Thousand><Decimals,3>"),
+        ("<Integer,10><Comma,.><Decimals,3>", "<Integer,10><Decimals,3>"),
+        ("<Integer Thousand,12><Comma,.><Decimals,3>", "<Integer Thousand,12><Decimals,3>"),
+        (
+            "<Sign><Integer Thousand><Comma,.><Decimals,2>",
+            "<Sign><Integer Thousand><Decimals,2>",
+        ),
+        (
+            "<Integer,8><Filler Character,0><Comma,.><Decimals,2>",
+            "<Integer,8><Filler Character,0><Decimals,2>",
+        ),
     ];
     match v {
         Value::Decimal(_) => {
@@ -241,6 +261,10 @@ fn comma_template(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -
                 "<Decimals><Comma,.>" => ("<Decimals>", '.'),
                 "<Comma,.>" => return Ok(crate::format::pad(String::new(), length)),
                 "<Sign><Integer><Decimals><Comma>" => return invalid(),
+                t if COMMA_DROPPED.iter().any(|(k, _)| *k == t) => {
+                    let plain = COMMA_DROPPED.iter().find(|(k, _)| *k == t).map(|(_, p)| *p).unwrap_or(t);
+                    return Ok(crate::format::pad(format_with_string(v, 0, plain, ctx)?, length));
+                }
                 _ => {
                     return Err(format!(
                         "format string `{template}`: the `<Comma` element is pinned for six strings only"
@@ -263,6 +287,21 @@ fn comma_template(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -
                 ))
             }
         }
+        // A BigInteger, a Duration and a DateTime (FormatCommaMore.al:Format_CommaOnOtherTypes, :Format_CommaWithoutDecimals_OtherTypes):
+        // the element alone writes nothing; `<Integer Thousand>` before it reads on a BigInteger and is invalid on the others;
+        // a `<Decimals>` after it is invalid on all three.
+        Value::BigInteger(_) | Value::Duration(_) | Value::DateTime(_) => match template {
+            "<Comma,.>" => Ok(crate::format::pad(String::new(), length)),
+            "<Integer Thousand><Comma,.>" if matches!(v, Value::BigInteger(_)) => {
+                Ok(crate::format::pad(format_with_string(v, 0, "<Integer Thousand>", ctx)?, length))
+            }
+            "<Integer Thousand><Comma,.>" | "<Integer Thousand><Comma,.><Decimals>" | "<Integer><Comma,,><Decimals>" => {
+                invalid()
+            }
+            _ => Err(format!(
+                "format string `{template}`: the `<Comma` element is pinned for six strings only"
+            )),
+        },
         _ => Err(format!(
             "format string `{template}`: the `<Comma` element is not pinned for {}",
             v.describe()

@@ -105,6 +105,10 @@ impl Session {
             FilterExpr::Range(None, Some(b)) => format!("..{}", self.filter_value_with(b, iso)?),
             FilterExpr::Range(None, None) => return unsupported("an unbounded range filter"),
             FilterExpr::Eq(v) => self.filter_value_with(v, iso)?,
+            FilterExpr::RangeSame(v) => {
+                let t = self.filter_value_with(v, iso)?;
+                format!("{t}..{t}")
+            }
             FilterExpr::Ne(v) => format!("<>{}", self.filter_value_with(v, iso)?),
             FilterExpr::Lt(v) => format!("<{}", self.filter_value_with(v, iso)?),
             FilterExpr::Le(v) => format!("<={}", self.filter_value_with(v, iso)?),
@@ -145,6 +149,7 @@ impl Session {
         match e {
             FilterExpr::Range(a, b) => FilterExpr::Range(a.as_ref().map(map), b.as_ref().map(map)),
             FilterExpr::Eq(v) => FilterExpr::Eq(map(v)),
+            FilterExpr::RangeSame(v) => FilterExpr::RangeSame(map(v)),
             FilterExpr::Ne(v) => FilterExpr::Ne(map(v)),
             FilterExpr::Lt(v) => FilterExpr::Lt(map(v)),
             FilterExpr::Le(v) => FilterExpr::Le(map(v)),
@@ -267,19 +272,28 @@ impl Session {
             // SetAscending_TwoFieldKey_OneFieldAtATime). Every field descending, a field of the primary key's part, or the
             // numeric form is not pinned.
             let key_bits = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
-            if mask & !key_bits != 0 || mask == key_bits || !(use_names || !record_form) {
+            if mask & !key_bits != 0 {
                 return unsupported("GetView of a record with SetAscending on these fields of a sorting (not pinned)");
             }
-            let dirs: Vec<&str> = (0..fields)
-                .map(|i| {
-                    if mask & (1 << i) != 0 {
-                        "Descending"
-                    } else {
-                        "Ascending"
-                    }
-                })
-                .collect();
-            out.push_str(&format!(" ORDER({})", dirs.join(",")));
+            if mask == key_bits {
+                // Every field descending reads as the one direction (SetAscendingEdges.al:GetView_AllKeyFieldsDescending).
+                out.push_str(if use_names || !record_form {
+                    " ORDER(Descending)"
+                } else {
+                    " ORDER(1)"
+                });
+            } else {
+                // The numeric form of a record: 1 descending, 0 ascending (SetAscendingEdges.al:GetView_MixedDirections).
+                let dirs: Vec<&str> = (0..fields)
+                    .map(|i| match (mask & (1 << i) != 0, use_names || !record_form) {
+                        (true, true) => "Descending",
+                        (false, true) => "Ascending",
+                        (true, false) => "1",
+                        (false, false) => "0",
+                    })
+                    .collect();
+                out.push_str(&format!(" ORDER({})", dirs.join(",")));
+            }
         } else if !ascending {
             out.push_str(if use_names || !record_form {
                 " ORDER(Descending)"
@@ -309,17 +323,15 @@ impl Session {
     }
 
     /// The field a view names: by name or `Field<n>`; failing that by caption, which is what
-    /// `GetView` writes (assumption set-view-field-by-caption).
+    /// `GetView` writes; a name wins over a caption (record/lt-setview-caption/SetViewByCaption.al: SetView_CaptionInWhere
+    /// `name_beta_is_also_a_caption`, SetView_CaptionInSorting).
     fn view_field(&self, t: &TableDef, name: &str) -> Result<usize, Signal> {
         if let Some(p) = field_by_name(t, name) {
             return Ok(p);
         }
         let wanted = name.trim_matches('"');
         match (0..t.fields.len()).find(|&p| self.field_caption(t, p).eq_ignore_ascii_case(wanted)) {
-            Some(p) => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SetViewFieldByCaption);
-                Ok(p)
-            }
+            Some(p) => Ok(p),
             None => unsupported(format!("view field `{wanted}`")),
         }
     }
@@ -347,6 +359,9 @@ impl Session {
         let mut key = None;
         let mut adhoc: Option<Vec<usize>> = None;
         let mut ascending = None;
+        // ORDER with one direction per SORTING field (true = descending) and the number of SORTING fields.
+        let mut order_dirs: Option<Vec<bool>> = None;
+        let mut sorting_len = 0usize;
         let mut filters: Vec<FieldFilter> = Vec::new();
         let group = group.unwrap_or(rec.borrow().filter_group);
         let mut rest = view.trim();
@@ -361,6 +376,7 @@ impl Session {
                         .split(',')
                         .map(|n| self.view_field(t, n.trim()))
                         .collect::<Result<Vec<_>, _>>()?;
+                    sorting_len = wanted.len();
                     // Fields no key starts with order the rows by themselves, as SetCurrentKey does (a view that
                     // GetView wrote for such a key sets it back). Not pinned for SetView; Microsoft's tests set views
                     // of ad hoc keys (assumption set-view-sorting-without-a-key).
@@ -373,13 +389,18 @@ impl Session {
                         None => adhoc = Some(wanted),
                     }
                 }
-                "ORDER" => match inner.trim().to_ascii_lowercase().as_str() {
-                    "ascending" => ascending = Some(true),
-                    "descending" => ascending = Some(false),
-                    "1" => ascending = Some(false),
-                    "0" => ascending = Some(true),
-                    other => return unsupported(format!("view ORDER({other})")),
-                },
+                "ORDER" => {
+                    let mut dirs = Vec::new();
+                    for item in inner.split(',') {
+                        match item.trim().to_ascii_lowercase().as_str() {
+                            "ascending" | "0" => dirs.push(false),
+                            "descending" | "1" => dirs.push(true),
+                            other => return unsupported(format!("view ORDER({other})")),
+                        }
+                    }
+                    ascending = Some(!dirs[0]);
+                    order_dirs = Some(dirs);
+                }
                 "WHERE" => {
                     for item in split_top(inner, ',') {
                         let (field, cond) = item
@@ -423,7 +444,40 @@ impl Session {
             }
             rest = after.trim();
         }
+        // One direction, or one per SORTING field (SetAscendingEdges.al:SetView_OrderClauses); any other count is an error.
+        let mut field_mask = 0u32;
+        if let Some(dirs) = &order_dirs {
+            if dirs.len() > 1 {
+                if dirs.len() != sorting_len {
+                    return Err(crate::transactions::al_error_code(
+                        "The number of ascending/descending specifications in the ORDER clause must either be 1 or the same as number of fields specified in the SORTING clause.",
+                        "DB:Ok",
+                    ));
+                }
+                // Every field the same way is one direction (SetAscendingEdges.al:`sorting_order_desc_desc`). Mixed
+                // directions are pinned only for a SORTING that is a whole key.
+                if dirs.iter().all(|d| *d) {
+                    ascending = Some(false);
+                } else if dirs.iter().all(|d| !*d) {
+                    ascending = Some(true);
+                } else if key.is_some_and(|k| t.keys[k].len() == sorting_len) && sorting_len < 32 {
+                    ascending = Some(true);
+                    for (i, d) in dirs.iter().enumerate() {
+                        if *d {
+                            field_mask |= 1 << i;
+                        }
+                    }
+                } else {
+                    return unsupported(
+                        "view ORDER with mixed directions on a SORTING that is not a whole key (not pinned)",
+                    );
+                }
+            }
+        }
         let mut r = rec.borrow_mut();
+        if order_dirs.is_some() {
+            r.field_descending = field_mask;
+        }
         // The view replaces the filters of the current group; other groups stay.
         r.filters.retain(|f| f.group != group);
         r.filters.extend(filters);
@@ -471,6 +525,7 @@ fn ordinals(e: &FilterExpr) -> FilterExpr {
     match e {
         FilterExpr::Range(a, b) => FilterExpr::Range(a.as_ref().map(v), b.as_ref().map(v)),
         FilterExpr::Eq(x) => FilterExpr::Eq(v(x)),
+        FilterExpr::RangeSame(x) => FilterExpr::RangeSame(v(x)),
         FilterExpr::Ne(x) => FilterExpr::Ne(v(x)),
         FilterExpr::Lt(x) => FilterExpr::Lt(v(x)),
         FilterExpr::Le(x) => FilterExpr::Le(v(x)),

@@ -1391,7 +1391,8 @@ fn lookup_over_rows_that_agree_returns_their_value() {
 // CalcSums only takes stored number fields; both a stored non-number and a FlowField are refused.
 #[test]
 fn calcsums_refuses_stored_non_numbers_and_flow_fields() {
-    for field in ["Txt", "Dur"] {
+    #[allow(clippy::single_element_loop)]
+    for field in ["Txt"] {
         let r = run_ffx(&format!(
             "procedure F(): Text
             var S: Record \"FFX Src\";
@@ -1477,4 +1478,106 @@ fn upperlimit_of_a_flow_filter_with_one_value_is_that_value() {
         end;",
     );
     assert_eq!(text(r), "-10/30");
+}
+
+// Record.CalcSums of a Duration is not pinned (only FieldRef.CalcSum is, FieldRefCalcSumTypes; corpus issue 630 item 3): refused.
+#[test]
+fn record_calcsums_of_a_duration_field_is_refused_but_fieldref_calcsum_sums_it() {
+    const T: &str = r#"
+table 60010 "ALT Dur"
+{
+    fields { field(1; "No."; Integer) { } field(2; D; Duration) { } }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+"#;
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var R: Record \"ALT Dur\";
+        begin
+            R.\"No.\" := 1; R.D := 5; R.Insert();
+            R.CalcSums(D);
+            exit('ran');
+        end;",
+        "F",
+    );
+    assert!(unsupported(r).contains("CalcSums on D"));
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var R: Record \"ALT Dur\"; RR: RecordRef; FR: FieldRef;
+        begin
+            R.\"No.\" := 1; R.D := 5; R.Insert();
+            RR.GetTable(R); FR := RR.Field(2);
+            FR.CalcSum();
+            exit(Format(FR.Value));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "5 milliseconds");
+}
+
+// record/lt-temporary-blob/TemporaryBlobAutoCalc.al:Temporary_SetAutoCalcFields_ThenFind: a temporary record with
+// SetAutoCalcFields(Blob) loads the Blob on Find, FindFirst, Get and FindSet.
+#[test]
+fn set_auto_calc_fields_of_a_blob_on_a_temporary_record_loads_it() {
+    const T: &str = r#"
+table 60011 "ALT TB"
+{
+    fields { field(1; Id; Integer) { } field(2; Data; Blob) { } }
+    keys { key(PK; Id) { Clustered = true; } }
+}
+"#;
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var Row: Record \"ALT TB\" temporary; Fresh: Record \"ALT TB\" temporary; OutS: OutStream; s: Text;
+        begin
+            Row.Id := 1;
+            Row.Data.CreateOutStream(OutS); OutS.WriteText('hello');
+            Row.Insert();
+            Fresh.Copy(Row, true);
+            Fresh.SetAutoCalcFields(Data);
+            s := Format(Fresh.FindFirst()) + Format(Fresh.Data.Length());
+            Clear(Fresh); Fresh.Copy(Row, true); Fresh.SetAutoCalcFields(Data);
+            s += '|' + Format(Fresh.Get(1)) + Format(Fresh.Data.Length());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes5|Yes5");
+}
+
+// record/lt-testfield-blob-decimal/TestFieldBlobDecimal.al:TestField_Blob_StoredContent: TestField of a Blob passes after Get
+// without CalcFields when the row holds content, and fails once the saved content was cleared.
+#[test]
+fn test_field_of_a_blob_after_get_without_calcfields_passes_when_the_row_holds_content() {
+    const T: &str = r#"
+table 60012 "ALT TFB"
+{
+    fields { field(1; Id; Integer) { } field(2; Data; Blob) { } }
+    keys { key(PK; Id) { Clustered = true; } }
+}
+"#;
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var Row: Record \"ALT TFB\"; OutS: OutStream; s: Text;
+        begin
+            Row.Id := 1; Row.Insert();
+            Row.Data.CreateOutStream(OutS); OutS.WriteText('content');
+            Row.Modify();
+            Row.Get(1);
+            Row.TestField(Data);
+            s := 'ok';
+            Clear(Row.Data); Row.Modify(); Row.Get(1); Row.CalcFields(Data);
+            asserterror Row.TestField(Data);
+            exit(s + '|' + GetLastErrorText());
+        end;",
+        "F",
+    );
+    assert_eq!(
+        text(r),
+        "ok|Data must have a value in ALT TFB: Id=1. It cannot be zero or empty."
+    );
 }

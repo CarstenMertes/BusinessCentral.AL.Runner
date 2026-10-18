@@ -89,25 +89,17 @@ pub(crate) fn is_blank(v: &Value) -> Result<bool, Signal> {
             matches!(*cell.borrow(), al_builtins::value::LibraryValue::Empty)
         }
         Value::Integer(_) | Value::BigInteger(_) | Value::Byte(_) | Value::Char(_) => false,
-        // A Blob with no content is blank, after CalcFields or not; one written through a stream and not saved is a value
-        // (misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob noDataNoCalc, noDataCalc, dataNoCalcPassed). A Blob that
-        // holds content the database gave is not pinned: it counts as a value under a registered assumption. A Blob the record
-        // has not fetched (no CalcFields) may hold content in the row: refused.
+        // A Blob with no content is blank, after CalcFields or not; one with content is a value, written through a stream and not
+        // saved, fetched by CalcFields, or read by Get or Find without CalcFields (misc/lt-probes-needed-5/PnE08RecordMisc.al:
+        // TestField_Blob noDataNoCalc, noDataCalc, dataNoCalcPassed; record/lt-testfield-blob-decimal/TestFieldBlobDecimal.al:
+        // TestField_Blob_StoredContent `after_get_without_calcfields`, `after_calcfields`, `after_clear_saved_and_calcfields`;
+        // TestField_Blob_AutoCalcAndSetLoadFields).
         Value::Blob(b) => {
             let buf = b.borrow();
             if buf.render_pending.is_some() {
                 return unsupported("TestField of a Blob that holds the output of a report run for its effects only");
             }
-            if !buf.loaded && !buf.written {
-                return unsupported(
-                    "TestField of a Blob the record has not fetched (CalcFields first; what BC reads from the row is not pinned)",
-                );
-            }
-            let blank = buf.bytes.is_empty();
-            if !blank && !buf.written {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TestFieldBlobWithStoredContent);
-            }
-            blank
+            buf.bytes.is_empty()
         }
         other => {
             return unsupported(format!(
@@ -554,14 +546,32 @@ impl Session {
                     } else {
                         "SetAscending"
                     };
+                    // The field's name, not its caption (record/lt-filters-keys-finds/SetAscendingEdges.al:
+                    // SetAscending_FieldOutsideTheKey_ErrorText, `Qty` for the field captioned 'LT Quantity').
                     return Err(crate::transactions::al_error_code(
                         &format!(
                             "Cannot call {name} on field {} because it is not part of the current sorting.",
-                            self.field_caption(t, pos)
+                            t.fields[pos].name
                         ),
                         "DB:Ok",
                     ));
                 };
+                // A primary key field that only follows the current key can be read but not set
+                // (SetAscendingEdges.al:SetAscending_PrimaryKeyFieldFollowingTheKey).
+                if method == RecordOp::SetAscending && bit >= t.keys[key].len() {
+                    return Err(crate::transactions::al_error_code(
+                        &format!(
+                            "The specified sorting could not be set on field '{}' with the key consisting of '{}'.",
+                            t.fields[pos].name,
+                            t.keys[key]
+                                .iter()
+                                .map(|&p| t.fields[p].name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
+                        ),
+                        "InvalidSortingFields",
+                    ));
+                }
                 if bit >= 32 {
                     return unsupported(format!("{method} on the {bit}th field of a sorting"));
                 }
@@ -578,7 +588,11 @@ impl Session {
                 // against ..._ReadByALaterAction); `Ascending` keeps its own, view-borne flag.
                 let mut r = rec.borrow_mut();
                 if !r.ascending {
-                    return unsupported("SetAscending on a record that also has Ascending(false) (not pinned)");
+                    // After Ascending(false) every field of the key reads as descending, and the one field changes
+                    // (SetAscendingEdges.al:SetAscending_AfterAscendingFalse, `then_grp_true_view`).
+                    r.ascending = true;
+                    let fields = t.keys[key].len();
+                    r.field_descending = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
                 }
                 if ascending {
                     r.field_descending &= !(1 << bit);
@@ -1188,7 +1202,18 @@ impl Session {
             _ => None,
         };
         let Some(g) = &parsed else {
-            return unsupported(format!("GetBySystemId of {}", args.first().describe()));
+            return match args.first() {
+                // GetWithTextArgument.al:GetBySystemId_TextAndGuid, `empty_text`, `text_not_a_guid`, `integer`.
+                Some(Value::Text(_) | Value::Code(_)) => Err(crate::transactions::al_error_code(
+                    "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+                    "InvalidGuidFormat",
+                )),
+                Some(Value::Integer(_)) => Err(crate::transactions::al_error_code(
+                    "The expression Variant cannot be type-converted to a GUID value.",
+                    "TypeConversion",
+                )),
+                other => unsupported(format!("GetBySystemId of {}", other.describe())),
+            };
         };
         let found = if *g == [0; 16] {
             None

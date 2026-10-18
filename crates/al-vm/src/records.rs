@@ -1713,6 +1713,26 @@ impl Session {
                 for (n, &field) in t.keys[0].iter().enumerate() {
                     let ty = t.fields[field].ty.clone();
                     pk.push(match args.get(n) {
+                        // A text for an Integer key reads as Evaluate reads it; a text that is no number raises
+                        // (GetWithTextArgument.al:Get_TextForIntegerKey, Get_TextVariableDirect; BC 27 names the type
+                        // unknown).
+                        Some(Value::Text(s) | Value::Code(s)) if matches!(ty, RtType::Integer) => {
+                            match s.trim_matches(' ').parse::<i32>().ok() {
+                                Some(n) => Value::Integer(n),
+                                None if self.engine.target.as_ref().map_or(29, |t| t.bc.major) >= 28 => {
+                                    return Err(crate::transactions::al_error_code(
+                                        &format!("The value \"{s}\" can't be evaluated into type Integer."),
+                                        "Evaluate:Format",
+                                    ));
+                                }
+                                None => {
+                                    return Err(crate::transactions::al_error_code(
+                                        "The type NavInteger is unknown.",
+                                        "NotSupportedType",
+                                    ));
+                                }
+                            }
+                        }
                         Some(v) => ops::convert(v.clone(), &ty)?,
                         None => self.default_value(&ty),
                     });
@@ -1889,12 +1909,53 @@ impl Session {
                         // Without a filter the table itself is empty, on every version: FindFirst and FindLast
                         // record/lt-filters-keys-finds/P68C_EmptyFinds.al:215-250 ( passes on the BC 27 oracle
                         // too), FindSet ErTTriggerErrors.al:140-147 and P68C_EmptyFinds.al:202-204.
+                        // Find('-') and Find('+') of an empty, unfiltered table say so as well
+                        // (record/lt-find-empty-table/FindEmptyTable.al:Find_EmptyTable `unused_first`, `unused_last`).
                         if filters.is_empty()
-                            && matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
+                            && (matches!(method, RecordOp::FindFirst | RecordOp::FindLast | RecordOp::FindSet)
+                                || (method == RecordOp::Find && matches!(which.as_str(), "-" | "+")))
                         {
                             return Err(Signal::Error(Box::new(AlError {
                                 message: format!("The {} table is empty.", self.caption(&t)),
                                 code: "DB:TableIsEmpty".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
+                        }
+                        // The search strings the corpus pins on an empty table: none or `=` (the key alone), `>`, `<` and `=><`
+                        // (FindEmptyTable.al:Find_EmptyTable `unused_default` .. `unused_all_directions`). A table with rows
+                        // that lacks the key, and the other combinations, are not pinned.
+                        if filters.is_empty()
+                            && method == RecordOp::Find
+                            && matches!(which.as_str(), "=" | ">" | "<" | "=><")
+                            && self
+                                .store_for(rec)
+                                .count(&cx, &t, &[])
+                                .map_err(|e| Signal::Unsupported(format!("{e}")))?
+                                == 0
+                        {
+                            let fields = rec.borrow().fields.clone();
+                            let pk = t.primary_key(&fields);
+                            if !pk.iter().all(|v| crate::recmeta::is_blank(v).unwrap_or(false)) {
+                                return unsupported(
+                                    "Find on an empty table with a key value other than the default: only default keys are pinned (FindEmptyTable.al)",
+                                );
+                            }
+                            let id = self.identification(&t, &fields)?;
+                            let message = if which == "=" {
+                                format!(
+                                    "The {} does not exist. Identification fields and values: {id}",
+                                    self.caption(&t)
+                                )
+                            } else {
+                                format!(
+                                    "The {} does not exist. {which}{BR}{BR}Identification fields and values:{BR}{BR}{id}",
+                                    self.caption(&t)
+                                )
+                            };
+                            return Err(Signal::Error(Box::new(AlError {
+                                message,
+                                code: "DB:RecordNotFound".into(),
                                 call_stack: String::new(),
                                 ..Default::default()
                             })));
@@ -2023,6 +2084,35 @@ impl Session {
                 let expr = match parsed {
                     Ok(e) => e,
                     // The German error of a date no Date filter reads (P143Date_DePlain.al, _DeRanges.al, _DeFormulas.al).
+                    Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE) && self.global_language == 1033 => {
+                        // P81DateFilters.al:SetFilter_Date_InvalidTexts.
+                        let bad = &e[al_builtins::filter::INVALID_DATE.len()..];
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. The format of the Date '{bad}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
+                    Err(e) if e.starts_with(al_builtins::filter::FILTER_SYNTAX) && self.global_language == 1033 => {
+                        let inner = &e[al_builtins::filter::FILTER_SYNTAX.len()..];
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. {inner}",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE) => {
                         let bad = &e[al_builtins::filter::INVALID_DATE.len()..];
                         return Err(Signal::Error(Box::new(AlError {

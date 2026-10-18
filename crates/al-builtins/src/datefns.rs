@@ -375,23 +375,17 @@ pub fn formula_text(text: &str) -> String {
 /// with no term, lower case letters and the like are not pinned.
 fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
     let refuse = || unsupported(format!("date formula `{text}`: this form is not pinned by the corpus"));
-    // The empty formula, `<>` and a text of white space are formulas without a term; CalcDate with
-    // them returns the date (types/TestDateFormulaDurationFormatContracts.al:28-74).
+    // The empty formula, `<>`, `<` and a text of white space are formulas without a term; CalcDate with
+    // them returns the date (types/TestDateFormulaDurationFormatContracts.al:28-74,
+    // types/lt-date-formula-edges/DateFormulaEdges.al:ClosingBracket_MissingAfterPlus).
     if is_blank_formula(text) {
         return Ok(Vec::new());
     }
-    // Brackets are optional on either side, and the letters may be lower case
-    // (text/TestProbeTextDateFormatContracts.al:Dates_CalcDate_Formulas, DateFormula_EvaluateForms).
-    let upper = text.trim().to_ascii_uppercase();
-    // Spaces are ignored: inside the brackets (types/lt-datetime/Evaluate.al:Format_Evaluate `< 1D >`) and between the terms
-    // (types/lt-date-formula-spaces/DateFormulaSpaces.al: CalcDate_Spaces, EvaluateDateFormula_Spaces).
-    let upper = if upper.contains(' ') {
-        upper.replace(' ', "")
-    } else {
-        upper
-    };
-    let body = upper.strip_prefix('<').unwrap_or(&upper);
-    let body = body.strip_suffix('>').unwrap_or(body);
+    let body = normalize_formula(text)?;
+    if body.is_empty() {
+        return Ok(Vec::new());
+    }
+    let body = body.as_str();
     let b = body.as_bytes();
     let unit_of = |c: Option<&u8>| match c {
         Some(b'D') => Some(Unit::Day),
@@ -401,16 +395,20 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
         Some(b'Y') => Some(Unit::Year),
         _ => None,
     };
-    // `1WD` evaluates and CalcDate gives the next day from Friday 2024-03-15 (types/W7EvaluateTests.al:
-    // EvaluateDateFormula_Format2_NonEnglishFormulas), which fits no term this parser knows; what it means is not pinned.
-    if (1..b.len()).any(|k| {
-        b[k] == b'W'
-            && b.get(k + 1) == Some(&b'D')
-            && b[k - 1].is_ascii_digit()
-            && !b.get(k + 2).is_some_and(u8::is_ascii_digit)
-    }) {
-        return refuse();
-    }
+    let err_number = || {
+        raise(
+            format!("The date formula '{body}' should include a number."),
+            "Evaluate",
+        )
+    };
+    let err_unit = || {
+        raise(
+            format!(
+                "The date formula '{body}' should include a time unit.\\\\Time units can be: D,WD,W,M,Q, or Y.\\C, meaning current time unit based on date, can be specified as a prefix to the time unit."
+            ),
+            "Evaluate",
+        )
+    };
     let mut terms = Vec::new();
     let mut i = 0;
     while i < b.len() {
@@ -434,11 +432,9 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
             }
             _ => false,
         };
-        // `<+%1D>` adds one day: the percent sign between a plus and the number is skipped
-        // (misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al:P146_CalcDate_FormatBuilt_Formula, `literal placeholder`).
-        // Only the plus sign is pinned; `-%1D` and `%1D` stay refused.
-        if plus && b.get(i) == Some(&b'%') && b.get(i + 1).is_some_and(u8::is_ascii_digit) {
-            i += 1;
+        // A sign followed by a sign has no number (DateFormulaEdges.al:SignsAndDigits_ErrorTexts, `++1D`, `+-1D`).
+        if plus && matches!(b.get(i), Some(b'+' | b'-')) {
+            return err_number();
         }
         if b.get(i) == Some(&b'C') {
             let Some(unit) = unit_of(b.get(i + 1)) else {
@@ -459,6 +455,9 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
                         ),
                         "Evaluate",
                     );
+                }
+                if i + 2 == b.len() {
+                    return err_number();
                 }
                 return refuse();
             };
@@ -488,12 +487,33 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
             i += 1;
         }
         if start == i {
+            // A unit with no number, as the whole formula, with or without a sign (DateFormulaEdges.al:
+            // SignsAndDigits_ErrorTexts `D`, `+D`, `-D`; WeekAndWeekdayUnits `W`, `WD`; TextsFromTheTestLibraries `Y`;
+            // Placeholders_PercentN `+%D`). The other units (M, Q) are not pinned.
+            let rest = &b[i..];
+            if matches!(rest, b"D" | b"W" | b"WD" | b"Y" | b"%D") {
+                return err_number();
+            }
             return refuse();
         }
         let Ok(n) = body[start..i].parse::<i32>() else {
             return refuse();
         };
+        // `nWD` moves n days (DateFormulaEdges.al:WeekAndWeekdayUnits `2WD`, `1WD+1D`; types/W7EvaluateTests.al:
+        // EvaluateDateFormula_Format2_NonEnglishFormulas, Friday + `1WD` is the Saturday). Pinned without a sign only.
+        if b.get(i) == Some(&b'W') && b.get(i + 1) == Some(&b'D') && !b.get(i + 2).is_some_and(u8::is_ascii_digit) {
+            if plus || negative {
+                return refuse();
+            }
+            terms.push(Term::Step(Unit::Day, n));
+            i += 2;
+            continue;
+        }
         let Some(unit) = unit_of(b.get(i)) else {
+            // A number with no unit: at the end of the formula or before a slash (`+5`, `5`, `01/01/26`).
+            if i == b.len() || b[i] == b'/' {
+                return err_unit();
+            }
             return refuse();
         };
         i += 1;
@@ -509,7 +529,57 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
 /// stores the empty formula, which `Format` prints as an empty text
 /// (types/TestDateFormulaDurationFormatContracts.al:28-74: `''`, `'<>'`, `' '`).
 pub fn is_blank_formula(text: &str) -> bool {
-    text == "<>" || text.trim().is_empty()
+    matches!(text, "<>" | "<") || text.trim().is_empty()
+}
+
+/// The formula in upper case without spaces, angle brackets and `%` placeholders. Brackets are read where the corpus
+/// pins them: any number of `<` at the start or right after a sign, and of `>` at the end or right before a sign
+/// (DateFormulaEdges.al:ClosingBracket_MissingAfterPlus `<1D>>`, `<<1D>`; TextsFromTheTestLibraries `8D+<1D>`,
+/// `<8D>+<1D>`, `<8D+<1D>>`). Elsewhere they are refused. A `%` before a number is dropped after a sign or at the
+/// start, for the units D, W and M (DateFormulaEdges.al:Placeholders_PercentN).
+fn normalize_formula(text: &str) -> Result<String, Signal> {
+    let refuse = |why: &str| unsupported(format!("date formula `{text}`: {why} is not pinned by the corpus"));
+    // Spaces are ignored: inside the brackets (types/lt-datetime/Evaluate.al:Format_Evaluate `< 1D >`) and between the terms
+    // (types/lt-date-formula-spaces/DateFormulaSpaces.al: CalcDate_Spaces, EvaluateDateFormula_Spaces).
+    let chars: Vec<char> = text
+        .chars()
+        .filter(|c| !c.is_whitespace())
+        .map(|c| c.to_ascii_uppercase())
+        .collect();
+    let mut out = String::with_capacity(chars.len());
+    for (i, &c) in chars.iter().enumerate() {
+        match c {
+            '<' => {
+                if !(i == 0 || matches!(chars[i - 1], '<' | '+' | '-')) {
+                    return refuse("an angle bracket inside a term");
+                }
+            }
+            '>' => {
+                let tail_ok = chars[i + 1..].iter().all(|c| *c == '>') || matches!(chars.get(i + 1), Some('+' | '-'));
+                if !tail_ok {
+                    return refuse("an angle bracket inside a term");
+                }
+            }
+            '%' if chars.get(i + 1).is_some_and(char::is_ascii_digit) => {
+                let at_term_start = out.is_empty() || out.ends_with(['+', '-']);
+                let unit = chars[i + 1..].iter().find(|c| !c.is_ascii_digit());
+                let unit_ok = match unit {
+                    Some('D' | 'M') => true,
+                    Some('W') => !chars[i + 1..]
+                        .iter()
+                        .skip_while(|c| c.is_ascii_digit())
+                        .nth(1)
+                        .is_some_and(|c| *c == 'D'),
+                    _ => false,
+                };
+                if !at_term_start || !unit_ok {
+                    return refuse("a % placeholder here");
+                }
+            }
+            _ => out.push(c),
+        }
+    }
+    Ok(out)
 }
 
 /// Whether `Evaluate` rejects `text` as a date formula: it holds a letter that no formula uses
@@ -525,8 +595,11 @@ pub fn is_garbage_formula(text: &str) -> bool {
 pub enum Evaluated {
     /// The formula to store, in the normal form `<TERMS>` (empty for the empty formula).
     Stored(String),
-    /// `Evaluate` answers false.
-    Rejected,
+    /// `Evaluate` answers false when its result is used. With a message, the statement form raises it
+    /// (code Evaluate); without one, that error text is not pinned.
+    Rejected(Option<String>),
+    /// The statement form raises this error (code Evaluate). What the form with a used result does is not pinned.
+    Failed(String),
 }
 
 /// `Evaluate` into a DateFormula (types/TestDateFormulaEvaluateLeftoversContracts.al:35-69, BC 27.5):
@@ -535,28 +608,28 @@ pub enum Evaluated {
 /// Rejected: a letter no formula uses (`1X`, `LW`), a `D` alone, a number alone, a decimal point,
 /// and two parts without a sign (`1D1W`). Any other text stays refused (docs/probes-needed.md).
 pub fn evaluate_formula(text: &str) -> Result<Evaluated, Signal> {
-    // Only a pair of brackets around the whole text is pinned.
-    let trimmed = text.trim();
-    // A bracket on one side only is read as well (DateFormula_EvaluateForms: `<1D` and `1D>`).
-    let inner = trimmed.strip_prefix('<').unwrap_or(trimmed);
-    let inner = inner.strip_suffix('>').unwrap_or(inner);
-    if inner.contains(['<', '>']) {
-        return unsupported(format!(
-            "date formula `{text}`: angle brackets that do not wrap it are not pinned"
-        ));
-    }
-    let n: String = inner
-        .chars()
-        .filter(|c| !c.is_whitespace())
-        .map(|c| c.to_ascii_uppercase())
-        .collect();
+    let n = normalize_formula(text)?;
     if n.is_empty() {
         return Ok(Evaluated::Stored(String::new()));
     }
     // A number of five digits does not fit (`99999D`).
     let long_number = n.as_bytes().windows(5).any(|w| w.iter().all(u8::is_ascii_digit));
-    if n.contains('.') || is_garbage_formula(&n) || long_number || n == "D" || n.bytes().all(|b| b.is_ascii_digit()) {
-        return Ok(Evaluated::Rejected);
+    if n == "D" {
+        return Ok(Evaluated::Rejected(Some(
+            "The date formula 'D' should include a number.".to_string(),
+        )));
+    }
+    if long_number {
+        return Ok(Evaluated::Rejected(None));
+    }
+    if n.bytes().all(|b| b.is_ascii_digit()) {
+        return Ok(Evaluated::Rejected(match parse_formula(&n) {
+            Err(Signal::Error(e)) => Some(e.message),
+            _ => None,
+        }));
+    }
+    if n.contains('.') || is_garbage_formula(&n) || long_number {
+        return Ok(Evaluated::Rejected(None));
     }
     // A step (`digits` then a unit) followed by a digit starts a second part with no sign.
     let b = n.as_bytes();
@@ -566,12 +639,14 @@ pub fn evaluate_formula(text: &str) -> Result<Evaluated, Signal> {
             && b[i + 2].is_ascii_digit()
             && !(b[i + 1] == b'D' && i > 0 && b[i - 1] == b'W');
         if after_step {
-            return Ok(Evaluated::Rejected);
+            return Ok(Evaluated::Rejected(None));
         }
     }
-    parse_formula(&n)?;
-    if n.contains('%') {
-        crate::assumptions::assume(crate::assumptions::Assumption::DateFormulaEvaluatePercentPlaceholder);
+    match parse_formula(&n) {
+        Ok(_) => {}
+        // The errors of a formula without a number or a time unit.
+        Err(Signal::Error(e)) if e.message.contains("should include a") => return Ok(Evaluated::Failed(e.message)),
+        Err(e) => return Err(e),
     }
     Ok(Evaluated::Stored(format!("<{n}>")))
 }
@@ -647,28 +722,6 @@ fn apply(terms: &[Term], from: i32) -> Result<i32, Signal> {
 }
 
 fn calcdate(ctx: &dyn Ctx, formula: &str, base: Option<&Value>) -> Out {
-    // `%1` in `+%1D` counts as the day count 1: CalcDate('<+%1D>') and CalcDate('<+%1D') (what Format('<+%1D>', 5) cuts the text to)
-    // both add one day (misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al:P146_CalcDate_FormatBuilt_Formula,
-    // `literal placeholder` and `format 5`). The brackets are optional for CalcDate (Dates_CalcDate_Formulas), which carries the
-    // pin to the bare `+%1D`. Another count behind `%`, another unit and Evaluate of such a text are not pinned.
-    if matches!(formula.trim(), "<+%1D>" | "<+%1D" | "+%1D") {
-        return calcdate(ctx, "<+1D>", base);
-    }
-    // Evaluate takes a formula with one bracket missing (DateFormula_EvaluateForms, `<1D`); CalcDate of one is not pinned.
-    let t = formula.trim();
-    // `<+%1D` (the closing bracket missing, after a plus) adds one day
-    // (misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al:P146_CalcDate_FormatBuilt_Formula, `format 5 result`). Another
-    // formula that starts with `<+` and has no closing bracket is read the same way on an assumption; any other
-    // single bracket stays refused.
-    let plus_open = t.starts_with("<+") && !t.ends_with('>');
-    if plus_open && !t.contains('%') {
-        crate::assumptions::assume(crate::assumptions::Assumption::CalcDateClosingBracketMissingAfterPlus);
-    }
-    if !plus_open && t.starts_with('<') != t.ends_with('>') && !t.is_empty() {
-        return unsupported(format!(
-            "CalcDate of `{formula}`, a formula with one angle bracket (not pinned)"
-        ));
-    }
     let terms = parse_formula(formula)?;
     // Without a date the calculation counts from TODAY, not from WorkDate (types/
     // TestDateTimeIntegerCalcDateContracts.al:CalcDateWithoutADate_UsesToday_NotWorkDate).
@@ -1047,13 +1100,49 @@ mod tests {
     #[test]
     fn calcdate_refuses_forms_the_corpus_does_not_pin() {
         let from = date(2024, 3, 15);
-        for f in ["<MON>", "<1W+MON>", "<2CM>", "<1X>", "<D>", "<+>", "<1D", "<WD0>"] {
+        for f in [
+            "<MON>", "<1W+MON>", "<2CM>", "<1X>", "<+>", "<WD0>", "<1D>M", "<-1WD>", "<+M>", "<1<D>",
+        ] {
             refused(calc(f, from.clone()));
         }
         // A result off the calendar.
         refused(calc("<1Y>", date(9999, 6, 1)));
         refused(calc("<-1Y>", date(1, 6, 1)));
         refused(call("System.CalcDate#2", vec![t("<1D>")]));
+    }
+
+    // types/lt-date-formula-edges/DateFormulaEdges.al: from Monday 2024-01-15.
+    #[test]
+    fn calcdate_edges_of_the_grammar() {
+        let mon = date(2024, 1, 15);
+        for (f, d) in [
+            ("<+%2D>", 17),
+            ("%1D", 16),
+            ("<-%1D>", 14),
+            ("<1D", 16),
+            ("<<1D>", 16),
+            ("<1D>>", 16),
+            ("8D+<1D>", 24),
+            ("<8D>+<1D>", 24),
+            ("2WD", 17),
+            ("<1WD+1D>", 17),
+            ("<", 15),
+        ] {
+            is_date(calc(f, mon.clone()), 2024, 1, d);
+        }
+        for (f, msg) in [
+            ("<D>", "The date formula 'D' should include a number."),
+            ("<++1D>", "The date formula '++1D' should include a number."),
+            ("<+%D>", "The date formula '+%D' should include a number."),
+            ("<WD>", "The date formula 'WD' should include a number."),
+            ("<+5>", "The date formula '+5' should include a time unit."),
+            ("01/01/26", "The date formula '01/01/26' should include a time unit."),
+        ] {
+            match calc(f, mon.clone()) {
+                Err(Signal::Error(e)) => assert!(e.message.starts_with(msg), "{f}: {}", e.message),
+                other => panic!("{f}: {other:?}"),
+            }
+        }
     }
 
     #[test]

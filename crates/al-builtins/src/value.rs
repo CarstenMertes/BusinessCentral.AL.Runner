@@ -579,6 +579,10 @@ pub struct RecordState {
     /// AL code has written a field of the buffer. BC builds the buffer of a record variable on
     /// the first write, and evaluates the `InitValue`s only then (record/TestDateTimeInitValue.Codeunit.al).
     pub touched: bool,
+    /// What a RecordRef last read or wrote into the buffer: `RecordRef.IsDirty` compares with it, not with the stored row
+    /// (recordref/lt-recordref-fieldref-members/RecordRefIsDirtyEdges.al:IsDirty_TwoRefs_OtherModifies). `None` when the
+    /// buffer came from elsewhere (GetTable, Init).
+    pub dirty_base: Option<Vec<Value>>,
     /// The table's and its extensions' global variables of this record variable (ADR-021).
     pub globals: TableGlobals,
 }

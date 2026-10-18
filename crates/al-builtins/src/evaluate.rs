@@ -1254,7 +1254,17 @@ fn evaluate_with_max(
         // (types/TestDateFormulaDurationFormatContracts.al:28-74, TestDateFormulaEvaluateLeftoversContracts.al).
         Value::DateFormula(_) => match crate::datefns::evaluate_formula(&text)? {
             crate::datefns::Evaluated::Stored(f) => Parsed::Value(Value::DateFormula(f)),
-            crate::datefns::Evaluated::Rejected => Parsed::Rejected,
+            // A statement form raises the formula's error (types/lt-date-formula-edges/DateFormulaEdges.al:SignsAndDigits_ErrorTexts).
+            crate::datefns::Evaluated::Rejected(Some(m)) if !c.ret_used() => {
+                return crate::native::raise(m, "Evaluate");
+            }
+            crate::datefns::Evaluated::Rejected(_) => Parsed::Rejected,
+            crate::datefns::Evaluated::Failed(m) if !c.ret_used() => return crate::native::raise(m, "Evaluate"),
+            crate::datefns::Evaluated::Failed(_) => {
+                return unsupported(format!(
+                    "Evaluate of `{text}` into a DateFormula with the result used (only the statement form is pinned)"
+                ));
+            }
         },
         other => return unsupported(format!("Evaluate into {} (not pinned by the corpus)", other.describe())),
     };

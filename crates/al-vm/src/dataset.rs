@@ -24,6 +24,40 @@ pub(crate) fn dataset_name(name: &str) -> Result<String, Signal> {
     if !name.is_empty() && name.chars().all(|c| c.is_alphanumeric() || c == '_') {
         return Ok(name.to_string());
     }
+    // Dots, slashes and spaces: a run of them is one underscore; a single trailing dot is dropped; a single leading dot is an
+    // underscore (ReportDatasetNames.al:SaveAsXml_DataItemNames_DotsAndSlashes `A. B`, `C/D`, `G..H`, `I./J`, `K  L`, `M.`, `.N`,
+    // `O. . P`, `Q//R`). A name that also has a parenthesis is read by the example below.
+    if !name.contains(['(', ')']) && name.contains(['.', '/', ' ']) {
+        let separator = |c: char| matches!(c, '.' | '/' | ' ');
+        let body = name
+            .strip_suffix('.')
+            .filter(|b| !b.ends_with(separator))
+            .unwrap_or(name);
+        let mut out = String::new();
+        let mut in_run = false;
+        for c in body.chars() {
+            if separator(c) {
+                if !in_run {
+                    out.push('_');
+                }
+                in_run = true;
+            } else if c.is_alphanumeric() || c == '_' {
+                out.push(c);
+                in_run = false;
+            } else {
+                return unsupported(format!(
+                    "the dataset name of `{name}` (only letters, digits, underscores, dots, slashes, spaces and parentheses are pinned)"
+                ));
+            }
+        }
+        // A run at the end that is not one trailing dot, or at the start that is not one dot or a space run inside, is not pinned.
+        if out.ends_with('_') && !name.ends_with('_') || name.starts_with([' ', '/']) {
+            return unsupported(format!(
+                "the dataset name of `{name}` (a trailing run other than one dot, or a leading space or slash, is not pinned)"
+            ));
+        }
+        return Ok(out);
+    }
     let simple = name
         .chars()
         .all(|c| c.is_alphanumeric() || c == '_' || c == ' ' || c == '(' || c == ')');
@@ -570,16 +604,29 @@ mod tests {
         );
     }
 
+    // ReportDatasetNames.al:SaveAsXml_DataItemNames_DotsAndSlashes.
     #[test]
-    fn a_dot_or_a_slash_in_a_name_is_refused() {
-        assert!(dataset_name("Cust. Ledger Entry").is_err());
-        assert!(dataset_name("G/L Account").is_err());
+    fn a_run_of_dots_slashes_and_spaces_is_one_underscore() {
+        for (name, want) in [
+            ("A. B", "A_B"),
+            ("C/D", "C_D"),
+            ("G..H", "G_H"),
+            ("I./J", "I_J"),
+            ("K  L", "K_L"),
+            ("M.", "M"),
+            (".N", "_N"),
+            ("O. . P", "O_P"),
+            ("Q//R", "Q_R"),
+        ] {
+            assert_eq!(dataset_name(name).unwrap(), want, "{name}");
+        }
+        assert!(dataset_name("M..").is_err());
+        assert!(dataset_name("/M").is_err());
     }
 
     #[test]
     fn a_name_the_example_does_not_cover_is_refused() {
         assert!(dataset_name("A(B)").is_err());
-        assert!(dataset_name("No.").is_err());
         assert!(dataset_name("").is_err());
     }
 

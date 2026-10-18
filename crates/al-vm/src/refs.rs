@@ -434,7 +434,8 @@ impl Session {
         };
         let Some((table, key)) = id else {
             if !self.ret_used {
-                return unsupported("RecordRef.Get of a blank RecordId with the result unused (not pinned)");
+                // RecordRefGetRecordId.al:Get_BlankRecordId_AsStatement: the table with the ID 0 does not exist.
+                return Err(self.missing_object("Table", 0));
             }
             return Ok(Some(Value::Boolean(false)));
         };
@@ -443,9 +444,11 @@ impl Session {
                 return Ok(None);
             }
             let c = cur.borrow();
-            if c.temporary || !c.filters.is_empty() || c.marked_only {
+            // The filters of the ref are gone with the table it leaves (RecordRefGetRecordId.al:Get_RecordIdOfAnotherTable);
+            // marks and a temporary table are not pinned.
+            if c.temporary || c.marked_only || !c.marks.is_empty() {
                 return unsupported(
-                    "RecordRef.Get of a RecordId of another table on a ref with filters, marks or a temporary table (not pinned)",
+                    "RecordRef.Get of a RecordId of another table on a ref with marks or a temporary table (not pinned)",
                 );
             }
         }
@@ -459,33 +462,59 @@ impl Session {
                 *lib.borrow_mut() = LibraryValue::RecordRef(rec);
                 Ok(Some(found))
             }
-            Value::Boolean(false) if current.is_none() => Ok(Some(found)),
+            Value::Boolean(false) if current.is_none() || self.ret_used => Ok(Some(found)),
             _ => unsupported("RecordRef.Get of a missing row of another table than the open one (not pinned)"),
         }
     }
 
-    /// Whether the buffer differs from the row stored under its primary key; with no stored row, from a fresh buffer.
-    /// Stored fields only (a FlowField is not part of the row). A partial load, or a value that cannot be compared
-    /// (a Blob), is refused: nothing pins them.
+    /// Whether the buffer differs from what the ref last read or wrote (`dirty_base`); a buffer that came from elsewhere
+    /// (GetTable, Init) is compared with the row stored under its primary key, or with a fresh buffer when there is none
+    /// (assumption record-ref-is-dirty-against-stored-row). Stored fields only (a FlowField is not part of the row). On a
+    /// partial load a field that was written without being loaded is dirty whatever it holds, and one that was never
+    /// loaded is not compared (RecordRefIsDirtyEdges.al:IsDirty_SetLoadFields_*). A value that cannot be compared (a Blob)
+    /// is refused: nothing pins it.
     fn rr_is_dirty(&mut self, rec: &Rec, t: &TableDef) -> Result<Value, Signal> {
-        al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefIsDirtyAgainstStoredRow);
-        if rec.borrow().load.partial || rec.borrow().load.request.is_some() {
-            return unsupported("RecordRef.IsDirty on a partially loaded record (what BC compares is not pinned)");
-        }
-        let cx = self.cx_for(rec, t)?;
         let fields = rec.borrow().fields.clone();
-        let pk = t.primary_key(&fields);
-        let stored = self
-            .store_for(rec)
-            .get(&cx, t, &pk)
-            .map_err(|e| Signal::Unsupported(format!("{e}")))?;
-        let base = match stored {
-            Some(row) => row,
-            None => self.initial_fields(t.object as usize),
+        let base = match rec.borrow().dirty_base.clone() {
+            Some(b) => b,
+            None => {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::RecordRefIsDirtyAgainstStoredRow,
+                );
+                let cx = self.cx_for(rec, t)?;
+                let pk = t.primary_key(&fields);
+                let stored = self
+                    .store_for(rec)
+                    .get(&cx, t, &pk)
+                    .map_err(|e| Signal::Unsupported(format!("{e}")))?;
+                match stored {
+                    Some(row) => row,
+                    None => self.initial_fields(t.object as usize),
+                }
+            }
+        };
+        let (partial, have, unsure) = {
+            let r = rec.borrow();
+            match (&r.load.buffer, r.load.partial) {
+                (Some(b), true) => (true, b.have.clone(), b.unsure.clone()),
+                _ => (
+                    false,
+                    al_builtins::value::FieldSet::All,
+                    al_builtins::value::FieldSet::Of(Vec::new()),
+                ),
+            }
         };
         for (i, f) in t.fields.iter().enumerate() {
             if !f.stored {
                 continue;
+            }
+            if partial {
+                if unsure.contains(i) {
+                    return Ok(Value::Boolean(true));
+                }
+                if !have.contains(i) {
+                    continue;
+                }
             }
             match ops::compare(&fields[i], &base[i]) {
                 Ok(std::cmp::Ordering::Equal) => {}
@@ -502,6 +531,28 @@ impl Session {
     }
 
     fn recordref_op(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
+        let r = self.recordref_op_inner(method, lib, args);
+        // What the ref read or wrote is what IsDirty compares with. A read that found nothing leaves the buffer alone.
+        let snapshot = match (&r, method) {
+            (Ok(Value::Boolean(false)), _) | (Ok(Value::Integer(0)), "Next") => None,
+            (
+                Ok(_),
+                "Open" | "Find" | "FindFirst" | "FindLast" | "FindSet" | "Next" | "Get" | "GetBySystemId" | "Insert"
+                | "Modify" | "Rename",
+            ) => Some(true),
+            (Ok(_), "Init" | "Clear" | "Close" | "GetTable" | "Copy") => Some(false),
+            _ => None,
+        };
+        if let Some(keep) = snapshot {
+            if let LibraryValue::RecordRef(rec) = &*lib.borrow() {
+                let mut s = rec.borrow_mut();
+                s.dirty_base = keep.then(|| s.fields.clone());
+            }
+        }
+        r
+    }
+
+    fn recordref_op_inner(&mut self, method: &str, lib: &Lib, args: &mut [Value]) -> Result<Value, Signal> {
         match method {
             "Open" => return self.rr_open(lib, args),
             "Get" if matches!(args.first(), Some(Value::Library(n, _)) if n.eq_ignore_ascii_case("RecordId")) => {
@@ -952,6 +1003,10 @@ impl Session {
                 // `after_opt` = Erste, recordref/lt-refs/RfTValue*.al:Value_Get_Defaults).
                 None => {
                     let v = rec.borrow().fields[pos].clone();
+                    // A read loads a field the partial buffer left out (RecordRefIsDirtyEdges.al:IsDirty_SetLoadFields_ReadUnloadedThenCompare).
+                    if rec.borrow().load.partial {
+                        rec.borrow_mut().load.touch(pos);
+                    }
                     if let (Value::Option(o, _), Ok(Some((false, members)))) = (&v, self.members_of_field(&t, pos)) {
                         let captions: std::sync::Arc<[String]> =
                             members.iter().map(|m| m.2.clone()).collect::<Vec<_>>().into();
@@ -971,7 +1026,11 @@ impl Session {
                         Some(r) => r?,
                         None => ops::convert(v.clone(), &field.ty)?,
                     };
-                    rec.borrow_mut().fields[pos] = v;
+                    let mut r = rec.borrow_mut();
+                    r.fields[pos] = v;
+                    if r.load.partial {
+                        r.load.written(pos);
+                    }
                     Ok(Value::Null)
                 }
             },
@@ -1056,7 +1115,22 @@ impl Session {
                     (f.stored, f.flow_filter, f.ty.clone())
                 };
                 let flow_field = !stored && !flow_filter;
-                if flow_field || (stored && matches!(ty, RtType::Text(_) | RtType::Code(_))) {
+                // Pinned for every type of FieldRefCalcSumTypes.al:CalcSum_NumericTypes, CalcSum_NonNumericTypes: a FlowFilter,
+                // Option, Boolean, Date, Time, DateTime, Text and Code field raise too; BigInteger and Duration sum.
+                if flow_field
+                    || flow_filter
+                    || (stored
+                        && matches!(
+                            ty,
+                            RtType::Text(_)
+                                | RtType::Code(_)
+                                | RtType::Option(..)
+                                | RtType::Boolean
+                                | RtType::Date
+                                | RtType::Time
+                                | RtType::DateTime
+                        ))
+                {
                     return Err(crate::transactions::al_error_code(
                         &format!(
                             "Cannot calculate a sum of the values in the {} field in the {} table because one or more values are not normal numeric fields.",
@@ -1066,10 +1140,15 @@ impl Session {
                         "DB:Ok",
                     ));
                 }
-                if !stored || !matches!(ty, RtType::Decimal | RtType::Integer) {
+                if !stored
+                    || !matches!(
+                        ty,
+                        RtType::Decimal | RtType::Integer | RtType::BigInteger | RtType::Duration
+                    )
+                {
                     return unsupported("FieldRef.CalcSum on a field of another type (not pinned)");
                 }
-                self.flow_op(RecordOp::CalcSums, &rec, &[Value::Integer(pos as i32)])?;
+                self.calc_sums(&rec, &[pos], true)?;
                 Ok(Value::Boolean(true))
             }
             "Validate" => {

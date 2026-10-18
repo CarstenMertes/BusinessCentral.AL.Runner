@@ -37,7 +37,6 @@ impl Lowerer<'_> {
         let mut arms = Vec::new();
         for a in parsed {
             let mut conditions = Vec::new();
-            let mut blank_option = false;
             for (k, (name, value)) in a.conditions.iter().enumerate() {
                 let Some(pos) = field_pos(own, name) else {
                     return Vec::new();
@@ -53,9 +52,16 @@ impl Lowerer<'_> {
                     });
                     continue;
                 }
-                // `const(" ")` on an Option names its blank member (assumption relation-option-blank-const).
-                blank_option |=
-                    matches!(own.fields[pos].ty, Ty::Option(_)) && value.trim().trim_matches('"').trim().is_empty();
+                // `const(" ")` on an Option names its blank member, pinned for a blank FIRST member (OptionMembers = " ",A:
+                // record/lt-table-relation-arms/TableRelationArms.al, the arm of the blank member and of A). A blank member
+                // elsewhere is not pinned: the relation is not understood.
+                if let Ty::Option(members) = &own.fields[pos].ty {
+                    if value.trim().trim_matches('"').trim().is_empty()
+                        && members.iter().position(|m| m.trim().is_empty()) != Some(0)
+                    {
+                        return Vec::new();
+                    }
+                }
                 let Some(value) = self.condition_const(file, value, &own.fields[pos].ty) else {
                     return Vec::new();
                 };
@@ -150,9 +156,6 @@ impl Lowerer<'_> {
                     let mut v = Vec::new();
                     if quoted {
                         v.push(al_builtins::assumptions::Assumption::TableRelationQuotes);
-                    }
-                    if blank_option {
-                        v.push(al_builtins::assumptions::Assumption::RelationOptionBlankConst);
                     }
                     v
                 },

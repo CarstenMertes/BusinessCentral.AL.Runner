@@ -207,7 +207,7 @@ fn source_root() -> Option<PathBuf> {
 }
 
 /// Writes `text` to `path`, creating the parent folders (OUT-11).
-fn write_file(path: &Path, text: &str) -> Result<(), String> {
+pub fn write_file(path: &Path, text: &str) -> Result<(), String> {
     if let Some(dir) = path.parent().filter(|d| !d.as_os_str().is_empty()) {
         std::fs::create_dir_all(dir).map_err(|e| format!("{}: {e}", dir.display()))?;
     }
@@ -474,6 +474,11 @@ pub struct Collected {
     pub impact_baseline: Option<Vec<u32>>,
     /// The apps of the compiled program: (id, name, version).
     pub program_apps: Vec<(String, String, String)>,
+    /// For the JUnit of an impact run: the Microsoft build, the assumptions of the install baseline, and per result
+    /// whether Microsoft turns the test off.
+    pub bc_build: Option<String>,
+    pub baseline_assumptions: Vec<String>,
+    pub disabled: Vec<bool>,
 }
 
 /// A run whose selected tests and coverage statements are handed back in `into` (one side of an impact run).
@@ -1504,6 +1509,12 @@ fn test_inner(a: &TestArgs, mut warm: Option<&mut WarmCtx>, collect: Option<&mut
         into.impact_keys = rt.impact_keys().to_vec();
         into.impact_baseline = rt.impact_baseline().map(<[u32]>::to_vec);
         into.program_apps = rt.program_apps().to_vec();
+        into.bc_build = bc_build.clone();
+        into.baseline_assumptions = rt.phases.baseline_assumptions.clone();
+        into.disabled = results
+            .iter()
+            .map(|r| disabled.as_ref().is_some_and(|d| d.is_disabled(r.codeunit, &r.test)))
+            .collect();
         return Ok(code);
     }
     let result = format!("Result: {verdict} (exit {code})");

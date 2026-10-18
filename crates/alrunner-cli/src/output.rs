@@ -283,6 +283,20 @@ pub fn junit(
     disabled: &dyn Fn(u32, &str) -> bool,
     baseline_assumptions: &[String],
 ) -> String {
+    junit_with(results, bc_build, wall_s, disabled, baseline_assumptions, &|_| {
+        Vec::new()
+    })
+}
+
+/// [`junit`], with further properties per test (an impact run's change class, ADR-043 step 3).
+pub fn junit_with(
+    results: &[&TestResult],
+    bc_build: Option<&str>,
+    wall_s: f64,
+    disabled: &dyn Fn(u32, &str) -> bool,
+    baseline_assumptions: &[String],
+    properties: &dyn Fn(&TestResult) -> Vec<(String, String)>,
+) -> String {
     let mut suites: Vec<al_testrun::junit::Suite> = Vec::new();
     let mut i = 0;
     while i < results.len() {
@@ -308,6 +322,7 @@ pub fn junit(
                         stack_lines(&r.call_stack).join("\n")
                     },
                     disabled: disabled(r.codeunit, &r.test),
+                    properties: properties(r),
                 })
                 .collect(),
         });

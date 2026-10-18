@@ -451,7 +451,10 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
   reaches 343 tests in all 17 codeunits; both find the 2 newly failing tests, no selection miss.
   Tests-Job (1289 tests, 36 codeunits): 0 keys missed of 12695; static reach selects 7.7x the tests and 3.5x the
   codeunits for `write` keys, 11.9x and 4.7x for events, 4.2x and 2.4x for `table` keys, 4.2x and 2.9x for enums.
-  For the example extension's event: the index 131 tests in 12 codeunits, static reach 1288 tests in all 36.
+  For the example extension's event: the index 131 tests in 12 codeunits, static reach 1288 tests in all 36. The
+  static run (all 36 codeunits on both sides) finds no change; the dynamic run reports `Job Posting.
+  PurchaseOrderFCYWithJob` newly failing on a rounding difference (23,432.19 for 23,432.2), which points to an
+  outcome that depends on the selection (condition 1 of section 2.2), not to the extension.
 - **Why static stays coarse for posting code.** In Microsoft's Base Application a write of almost any table raises
   a table event that `Workflow Event Handling` subscribes to; `Workflow Management` then runs the responses of
   enabled workflow steps, and `Workflow Response Handling` can post documents. Which steps are enabled is data, so

@@ -449,7 +449,9 @@ apps in `tests/fixtures/impact`, including the selection-independence test).
   for events, 8.9x and 4.4x for `table` keys, 8.1x and 4.0x for enums. The example extension (subscriber to
   `Res. Jnl.-Post Line` `OnBeforeResLedgEntryInsert`): dynamic selects 20 tests in 5 of 17 codeunits; static
   reaches 343 tests in all 17 codeunits; both find the 2 newly failing tests, no selection miss.
-  Tests-Job: see the numbers below.
+  Tests-Job (1289 tests, 36 codeunits): 0 keys missed of 12695; static reach selects 7.7x the tests and 3.5x the
+  codeunits for `write` keys, 11.9x and 4.7x for events, 4.2x and 2.4x for `table` keys, 4.2x and 2.9x for enums.
+  For the example extension's event: the index 131 tests in 12 codeunits, static reach 1288 tests in all 36.
 - **Why static stays coarse for posting code.** In Microsoft's Base Application a write of almost any table raises
   a table event that `Workflow Event Handling` subscribes to; `Workflow Management` then runs the responses of
   enabled workflow steps, and `Workflow Response Handling` can post documents. Which steps are enabled is data, so

@@ -153,7 +153,9 @@ impl DirFileSystem {
     }
 
     fn resolve(&self, path: &str) -> Option<PathBuf> {
-        let rel = PathBuf::from(path.replace('\\', "/"));
+        // A leading backslash is the root of the Windows-style `\TEMP\` path AL code gets from TemporaryPath(); it names the files
+        // directory's own root. A leading `/` still names no file.
+        let rel = PathBuf::from(path.strip_prefix('\\').unwrap_or(path).replace('\\', "/"));
         let mut out = self.root.clone();
         for c in rel.components() {
             match c {

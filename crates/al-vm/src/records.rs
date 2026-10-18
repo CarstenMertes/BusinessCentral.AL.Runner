@@ -47,6 +47,20 @@ pub(crate) struct RecSlots {
 }
 
 impl Session {
+    /// The platform takes Insert on Tenant License State and refuses Modify and Delete (al-language-onprem/session/PZPlatformSurvey.al:
+    /// PlatformTable_TenantLicenseState: `It is not possible to modify any record in the Tenant License State table.`, code `DB:Ok`).
+    fn tenant_license_state_refuses(&self, t: &TableDef, verb: &str) -> Result<(), Signal> {
+        if self.engine.program.objects[t.object as usize].id == Some(2_000_000_189) {
+            return Err(Signal::Error(Box::new(AlError {
+                message: format!("It is not possible to {verb} any record in the Tenant License State table."),
+                code: "DB:Ok".into(),
+                call_stack: String::new(),
+                ..Default::default()
+            })));
+        }
+        Ok(())
+    }
+
     pub(crate) fn table(&self, rec: &Rec) -> Result<Arc<TableDef>, Signal> {
         let r = rec.borrow();
         let t = self.engine.tables[r.table as usize]
@@ -1451,6 +1465,7 @@ impl Session {
             }
             RecordOp::Modify => {
                 let run = arg_bool(args, 0)?;
+                self.tenant_license_state_refuses(&t, "modify")?;
                 let pk = t.primary_key(&rec.borrow().fields);
                 let stored = self
                     .store_for(rec)
@@ -1576,20 +1591,13 @@ impl Session {
             }
             RecordOp::Delete => {
                 let run = arg_bool(args, 0)?;
+                self.tenant_license_state_refuses(&t, "delete")?;
                 self.delete_row(&t, rec, run)
             }
             RecordOp::DeleteAll => {
                 let run = arg_bool(args, 0)?;
-                // The platform takes no delete on Tenant License State (record/
-                // TestPlatformTablesWritableContracts.al:96-101; the single-record Delete is not pinned).
-                if self.engine.program.objects[t.object as usize].id == Some(2_000_000_189) {
-                    return Err(Signal::Error(Box::new(AlError {
-                        message: "It is not possible to delete any record in the Tenant License State table.".into(),
-                        code: "DB:Ok".into(),
-                        call_stack: String::new(),
-                        ..Default::default()
-                    })));
-                }
+                // The platform takes no delete on Tenant License State (record/TestPlatformTablesWritableContracts.al:96-101).
+                self.tenant_license_state_refuses(&t, "delete")?;
                 let (filters, flow_field_filters) = self.split_filters(rec);
                 if !flow_field_filters.is_empty() {
                     return unsupported("DeleteAll with a filter on a FlowField");

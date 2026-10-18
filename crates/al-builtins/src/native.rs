@@ -376,7 +376,7 @@ const REGISTRY: &[(&str, NativeFn)] = &[
     ("Session.LogMessage#1", log_message),
     ("Session.LogMessage#2", log_message),
     ("Session.LogSecurityAudit#1", log_message),
-    ("Session.LogAuditMessage#1", log_message),
+    ("Session.LogAuditMessage#1", log_audit_message),
     ("System.Hyperlink#1", hyperlink),
     ("System.Variant2Date#1", variant_2_date),
     ("System.Variant2Time#1", variant_2_time),
@@ -1376,6 +1376,23 @@ fn strpos(_: &mut dyn Ctx, _: Option<&mut Value>, args: &mut [Value]) -> Result<
 /// Change Log Management, which logs a security audit entry, and reads only the change log).
 fn log_message(_: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
     Ok(Value::Null)
+}
+
+/// `Session.LogAuditMessage(Description, Result, Category, Operation, OperationResult [, Dimensions])`: the audit log has no effect AL
+/// code can see, but an Operation outside the members of AuditMessageOperation (0 to 7, as the error text lists them) raises
+/// (al-language-onprem/lt-system-database-onprem/PLogAuditMessage.al:P109_LogAuditMessage_Overload1 `negative`, `large`).
+fn log_audit_message(c: &mut dyn Ctx, r: Option<&mut Value>, args: &mut [Value]) -> Result<Value, Signal> {
+    if let Some(Value::Integer(op)) = args.get(3) {
+        if !(0..=7).contains(op) {
+            return raise(
+                format!(
+                    "The AuditMessageOperation value '{op}' is invalid. Please use one the following values: 0 = AdministeredEnvironment, 1 = ConfiguredExtension, 2 = AdministeredUser, 3 = AdministeredCompany, 4 = ConfiguredIntegration, 5 = ConfiguredCopilot, 6 = ConfiguredCloudMigration, 7 = AdministeredReport."
+                ),
+                "InvalidValue",
+            );
+        }
+    }
+    log_message(c, r, args)
 }
 
 /// `Hyperlink(Url)` asks the client to open a page. A test has no handler for it, so the platform raises

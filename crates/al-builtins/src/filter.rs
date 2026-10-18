@@ -143,7 +143,9 @@ pub fn parse_filter_with(
     // Three dots in a Date filter read as two (P81DateFilters.al:SetFilter_Date_InvalidTexts, `010126...020126`).
     let dots;
     let text = if matches!(ty, crate::value::RtType::Date)
-        && DATE_CONTEXT.with(std::cell::Cell::get).is_some_and(|c| c.language == 1033)
+        && DATE_CONTEXT
+            .with(std::cell::Cell::get)
+            .is_some_and(|c| c.language == 1033)
         && text.contains("...")
         && !text.contains('\'')
         && !text.contains("....")
@@ -329,13 +331,17 @@ impl Parser<'_> {
 
     fn or(&mut self) -> Result<FilterExpr, String> {
         if self.date() && self.peek_op() == Some("|") {
-            return Err(format!("{FILTER_SYNTAX}The left side of '|' operators cannot be empty."));
+            return Err(format!(
+                "{FILTER_SYNTAX}The left side of '|' operators cannot be empty."
+            ));
         }
         let mut xs = vec![self.and()?];
         while self.peek_op() == Some("|") {
             self.i += 1;
             if self.date() && self.peek_op() == Some("|") {
-                return Err(format!("{FILTER_SYNTAX}The right side of '|' operators cannot be empty."));
+                return Err(format!(
+                    "{FILTER_SYNTAX}The right side of '|' operators cannot be empty."
+                ));
             }
             xs.push(self.and()?);
         }
@@ -348,7 +354,9 @@ impl Parser<'_> {
 
     fn and(&mut self) -> Result<FilterExpr, String> {
         if self.date() && self.peek_op() == Some("&") {
-            return Err(format!("{FILTER_SYNTAX}The left side of '&' operators cannot be empty."));
+            return Err(format!(
+                "{FILTER_SYNTAX}The left side of '&' operators cannot be empty."
+            ));
         }
         let mut xs = vec![self.term()?];
         while self.peek_op() == Some("&") {
@@ -519,7 +527,9 @@ impl Parser<'_> {
             Some("..") => {
                 self.i += 1;
                 if self.date() && self.i == self.toks.len() && self.i == 1 {
-                    return Err(format!("{FILTER_SYNTAX}Both sides of the range ('..') cannot be empty."));
+                    return Err(format!(
+                        "{FILTER_SYNTAX}Both sides of the range ('..') cannot be empty."
+                    ));
                 }
                 let hi = self.value().ok_or("value expected after ..")?;
                 Ok(FilterExpr::Range(None, Some(self.typed(hi)?)))
@@ -536,7 +546,11 @@ impl Parser<'_> {
                         Some(h) => Some(self.typed(h)?),
                         None => None,
                     };
-                    if self.date() && hi.as_ref().is_some_and(|h| compare(h, &lo).ok() == Some(Ordering::Equal)) {
+                    if self.date()
+                        && hi
+                            .as_ref()
+                            .is_some_and(|h| compare(h, &lo).ok() == Some(Ordering::Equal))
+                    {
                         return Ok(FilterExpr::RangeSame(lo));
                     }
                     return Ok(FilterExpr::Range(Some(lo), hi));
@@ -631,7 +645,9 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
         if b.len() == 10
             && b[2] == b'-'
             && b[5] == b'-'
-            && b.iter().enumerate().all(|(i, c)| i == 2 || i == 5 || c.is_ascii_digit())
+            && b.iter()
+                .enumerate()
+                .all(|(i, c)| i == 2 || i == 5 || c.is_ascii_digit())
         {
             if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &text.replace('-', "/")) {
                 return Ok(v);

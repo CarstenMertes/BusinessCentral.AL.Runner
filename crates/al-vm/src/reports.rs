@@ -2113,8 +2113,7 @@ impl Session {
             let items = &run.report().items;
             let earlier = (0..i)
                 .filter(|&j| {
-                    items[j].parent == items[i].parent
-                        && dataset::dataset_name(&items[j].name).is_ok_and(|n| n == name)
+                    items[j].parent == items[i].parent && dataset::dataset_name(&items[j].name).is_ok_and(|n| n == name)
                 })
                 .count();
             if earlier > 0 {

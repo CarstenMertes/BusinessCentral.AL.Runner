@@ -395,7 +395,12 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
         Some(b'Y') => Some(Unit::Year),
         _ => None,
     };
-    let err_number = || raise(format!("The date formula '{body}' should include a number."), "Evaluate");
+    let err_number = || {
+        raise(
+            format!("The date formula '{body}' should include a number."),
+            "Evaluate",
+        )
+    };
     let err_unit = || {
         raise(
             format!(
@@ -560,7 +565,11 @@ fn normalize_formula(text: &str) -> Result<String, Signal> {
                 let unit = chars[i + 1..].iter().find(|c| !c.is_ascii_digit());
                 let unit_ok = match unit {
                     Some('D' | 'M') => true,
-                    Some('W') => !chars[i + 1..].iter().skip_while(|c| c.is_ascii_digit()).nth(1).is_some_and(|c| *c == 'D'),
+                    Some('W') => !chars[i + 1..]
+                        .iter()
+                        .skip_while(|c| c.is_ascii_digit())
+                        .nth(1)
+                        .is_some_and(|c| *c == 'D'),
                     _ => false,
                 };
                 if !at_term_start || !unit_ok {
@@ -1091,7 +1100,9 @@ mod tests {
     #[test]
     fn calcdate_refuses_forms_the_corpus_does_not_pin() {
         let from = date(2024, 3, 15);
-        for f in ["<MON>", "<1W+MON>", "<2CM>", "<1X>", "<+>", "<WD0>", "<1D>M", "<-1WD>", "<+M>", "<1<D>"] {
+        for f in [
+            "<MON>", "<1W+MON>", "<2CM>", "<1X>", "<+>", "<WD0>", "<1D>M", "<-1WD>", "<+M>", "<1<D>",
+        ] {
             refused(calc(f, from.clone()));
         }
         // A result off the calendar.

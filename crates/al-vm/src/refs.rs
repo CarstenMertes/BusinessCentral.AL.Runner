@@ -478,7 +478,9 @@ impl Session {
         let base = match rec.borrow().dirty_base.clone() {
             Some(b) => b,
             None => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::RecordRefIsDirtyAgainstStoredRow);
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::RecordRefIsDirtyAgainstStoredRow,
+                );
                 let cx = self.cx_for(rec, t)?;
                 let pk = t.primary_key(&fields);
                 let stored = self
@@ -495,7 +497,11 @@ impl Session {
             let r = rec.borrow();
             match (&r.load.buffer, r.load.partial) {
                 (Some(b), true) => (true, b.have.clone(), b.unsure.clone()),
-                _ => (false, al_builtins::value::FieldSet::All, al_builtins::value::FieldSet::Of(Vec::new())),
+                _ => (
+                    false,
+                    al_builtins::value::FieldSet::All,
+                    al_builtins::value::FieldSet::Of(Vec::new()),
+                ),
             }
         };
         for (i, f) in t.fields.iter().enumerate() {
@@ -1134,7 +1140,12 @@ impl Session {
                         "DB:Ok",
                     ));
                 }
-                if !stored || !matches!(ty, RtType::Decimal | RtType::Integer | RtType::BigInteger | RtType::Duration) {
+                if !stored
+                    || !matches!(
+                        ty,
+                        RtType::Decimal | RtType::Integer | RtType::BigInteger | RtType::Duration
+                    )
+                {
                     return unsupported("FieldRef.CalcSum on a field of another type (not pinned)");
                 }
                 self.flow_op(RecordOp::CalcSums, &rec, &[Value::Integer(pos as i32)])?;

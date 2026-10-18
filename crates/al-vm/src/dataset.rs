@@ -29,7 +29,10 @@ pub(crate) fn dataset_name(name: &str) -> Result<String, Signal> {
     // `O. . P`, `Q//R`). A name that also has a parenthesis is read by the example below.
     if !name.contains(['(', ')']) && name.contains(['.', '/', ' ']) {
         let separator = |c: char| matches!(c, '.' | '/' | ' ');
-        let body = name.strip_suffix('.').filter(|b| !b.ends_with(separator)).unwrap_or(name);
+        let body = name
+            .strip_suffix('.')
+            .filter(|b| !b.ends_with(separator))
+            .unwrap_or(name);
         let mut out = String::new();
         let mut in_run = false;
         for c in body.chars() {
@@ -624,7 +627,7 @@ mod tests {
     #[test]
     fn a_name_the_example_does_not_cover_is_refused() {
         assert!(dataset_name("A(B)").is_err());
-                assert!(dataset_name("").is_err());
+        assert!(dataset_name("").is_err());
     }
 
     // handlers/TestReportSaveAsDatasetContracts.al:SaveAs_Xml_DataItemsBlock_ExactText (`one <&>`)

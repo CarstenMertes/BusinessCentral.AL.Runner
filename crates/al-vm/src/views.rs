@@ -470,7 +470,9 @@ impl Session {
                         }
                     }
                 } else {
-                    return unsupported("view ORDER with mixed directions on a SORTING that is not a whole key (not pinned)");
+                    return unsupported(
+                        "view ORDER with mixed directions on a SORTING that is not a whole key (not pinned)",
+                    );
                 }
             }
         }

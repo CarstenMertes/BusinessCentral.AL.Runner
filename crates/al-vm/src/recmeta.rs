@@ -571,7 +571,11 @@ impl Session {
                         &format!(
                             "The specified sorting could not be set on field '{}' with the key consisting of '{}'.",
                             t.fields[pos].name,
-                            t.keys[key].iter().map(|&p| t.fields[p].name.as_str()).collect::<Vec<_>>().join(",")
+                            t.keys[key]
+                                .iter()
+                                .map(|&p| t.fields[p].name.as_str())
+                                .collect::<Vec<_>>()
+                                .join(",")
                         ),
                         "InvalidSortingFields",
                     ));

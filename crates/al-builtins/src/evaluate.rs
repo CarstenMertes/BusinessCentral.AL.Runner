@@ -1255,7 +1255,9 @@ fn evaluate_with_max(
         Value::DateFormula(_) => match crate::datefns::evaluate_formula(&text)? {
             crate::datefns::Evaluated::Stored(f) => Parsed::Value(Value::DateFormula(f)),
             // A statement form raises the formula's error (types/lt-date-formula-edges/DateFormulaEdges.al:SignsAndDigits_ErrorTexts).
-            crate::datefns::Evaluated::Rejected(Some(m)) if !c.ret_used() => return crate::native::raise(m, "Evaluate"),
+            crate::datefns::Evaluated::Rejected(Some(m)) if !c.ret_used() => {
+                return crate::native::raise(m, "Evaluate");
+            }
             crate::datefns::Evaluated::Rejected(_) => Parsed::Rejected,
             crate::datefns::Evaluated::Failed(m) if !c.ret_used() => return crate::native::raise(m, "Evaluate"),
             crate::datefns::Evaluated::Failed(_) => {

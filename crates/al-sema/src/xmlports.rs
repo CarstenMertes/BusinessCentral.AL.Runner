@@ -48,6 +48,20 @@ pub struct Layout {
     pub run_reasons: Vec<String>,
 }
 
+/// `Table.Field` at the first dot outside quotes: a table name may hold a dot (`"Data Exch. Def".Code`).
+fn split_source_at_dot(source: &str) -> Option<(&str, &str)> {
+    let mut quote: Option<char> = None;
+    for (i, c) in source.char_indices() {
+        match (quote, c) {
+            (None, '"' | '\'') => quote = Some(c),
+            (Some(q), c) if c == q => quote = None,
+            (None, '.') => return Some((&source[..i], &source[i + 1..])),
+            _ => {}
+        }
+    }
+    None
+}
+
 fn bool_prop(value: &str) -> Option<bool> {
     match value.trim().to_ascii_lowercase().as_str() {
         "true" | "yes" => Some(true),
@@ -414,7 +428,7 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
             }
             ir::XmlNodeKind::Field | ir::XmlNodeKind::FieldAttr => {
                 let source = raw.args.get(1).cloned().unwrap_or_default();
-                let (table_name, field_name) = match source.split_once('.') {
+                let (table_name, field_name) = match split_source_at_dot(&source) {
                     Some((t, f)) => (crate::scan::unquote_xmlport(t), crate::scan::unquote_xmlport(f)),
                     None => (String::new(), crate::scan::unquote_xmlport(&source)),
                 };
@@ -739,6 +753,16 @@ xmlport 50010 X
             );
         }
         assert_eq!(reasons_of(SRC.to_string()), "");
+    }
+
+    #[test]
+    fn a_quoted_table_name_with_a_dot_binds_its_field() {
+        // Base Application's xmlport 1225 binds `"Data Exch. Def".Code`: the dot inside the quotes is part of the name.
+        let src = SRC
+            .replace("tableelement(P; Parent)", "tableelement(\"P. Q\"; Parent)")
+            .replace("fieldelement(Number; P.No)", "fieldelement(Number; \"P. Q\".No)")
+            .replace("LinkTable = P;", "LinkTable = \"P. Q\";");
+        assert_eq!(reasons_of(src), "");
     }
 
     #[test]

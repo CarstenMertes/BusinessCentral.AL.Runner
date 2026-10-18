@@ -270,3 +270,96 @@ pub(super) fn windows_language_count(t: &TableDef, filters: &[FieldFilter]) -> R
         .filter(|r| filters.iter().all(|f| f.expr.matches(&r[f.field])))
         .count())
 }
+
+// ---- License Permission ---------------------------------------------------------------------------
+
+/// The rows the corpus pins (platform/lt-platform-tables/PtCloudTables.al:60-76, LicensePermission_InsertModifyDelete):
+/// the first row of the table, `TableData` 0 with every permission blank, and `Table` 99999 with Read, Insert, Modify, Delete
+/// and Execute `Yes` and Limited Usage blank. The table lists the permissions of the license, which no test pins beyond
+/// these two rows: a read that would have to answer for any other object is refused.
+const LICENSE_ROWS: &[(i32, i32, i32)] = &[(0, 0, 0), (1, 99999, 1)];
+const LICENSE_OBJECT_TYPE: u32 = 1;
+const LICENSE_OBJECT_NUMBER: u32 = 2;
+const LICENSE_PERMISSIONS: [u32; 5] = [10, 11, 12, 13, 14];
+
+fn license_row(t: &TableDef, object_type: i32, number: i32, permission: i32) -> Row {
+    let mut r = blank(t);
+    r[pos(t, LICENSE_OBJECT_TYPE)] = option(t, LICENSE_OBJECT_TYPE, object_type);
+    r[pos(t, LICENSE_OBJECT_NUMBER)] = Value::Integer(number);
+    for f in LICENSE_PERMISSIONS {
+        r[pos(t, f)] = option(t, f, permission);
+    }
+    r
+}
+
+fn license_known(t: &TableDef, object_type: i64, number: i64) -> Option<Row> {
+    LICENSE_ROWS
+        .iter()
+        .find(|(ot, n, _)| i64::from(*ot) == object_type && i64::from(*n) == number)
+        .map(|&(ot, n, p)| license_row(t, ot, n, p))
+}
+
+fn license_num(v: &Value) -> Option<i64> {
+    match v {
+        Value::Integer(i) => Some(i64::from(*i)),
+        Value::Option(n, _) => Some(i64::from(*n)),
+        _ => None,
+    }
+}
+
+fn license_unpinned(object_type: i64, number: i64) -> StoreError {
+    refused(format!(
+        "License Permission: whether object type {object_type} number {number} is a row is not pinned (only TableData 0 and Table 99999 are)"
+    ))
+}
+
+/// The one object a filter names by both key fields, if it does.
+fn license_exact(t: &TableDef, filters: &[FieldFilter]) -> Result<Option<(i64, i64)>, StoreError> {
+    let one = |id: u32| -> Result<Option<i64>, StoreError> {
+        let set = ranges::of_field(filters, pos(t, id), &license_num, i64::MIN / 4, i64::MAX / 4)
+            .map_err(|e| refused(format!("License Permission: {e}")))?;
+        Ok(match set.as_slice() {
+            [(a, b)] if a == b => Some(*a),
+            _ => None,
+        })
+    };
+    Ok(one(LICENSE_OBJECT_TYPE)?.zip(one(LICENSE_OBJECT_NUMBER)?))
+}
+
+pub(super) fn license_permission_get(t: &TableDef, pk: &[Value]) -> Result<Option<Row>, StoreError> {
+    let (Some(ot), Some(n)) = (pk.first().and_then(license_num), pk.get(1).and_then(license_num)) else {
+        return Err(refused(
+            "License Permission: a key that is not an object type and a number",
+        ));
+    };
+    license_known(t, ot, n).map(Some).ok_or_else(|| license_unpinned(ot, n))
+}
+
+pub(super) fn license_permission_next(t: &TableDef, scan: &Scan) -> Result<Option<Row>, StoreError> {
+    if let Some((ot, n)) = license_exact(t, scan.filters)? {
+        let Some(r) = license_known(t, ot, n) else {
+            return Err(license_unpinned(ot, n));
+        };
+        let after_it = scan.after.is_some();
+        return Ok((!after_it && scan.filters.iter().all(|f| f.expr.matches(&r[f.field]))).then_some(r));
+    }
+    // Nothing else is pinned but the first row of the whole table.
+    if scan.filters.is_empty() && scan.ascending && scan.after.is_none() {
+        return Ok(Some(license_row(t, 0, 0, 0)));
+    }
+    Err(refused(
+        "License Permission: only a read that names one object by type and number, or the first row, is pinned",
+    ))
+}
+
+pub(super) fn license_permission_count(t: &TableDef, filters: &[FieldFilter]) -> Result<usize, StoreError> {
+    let Some((ot, n)) = license_exact(t, filters)? else {
+        return Err(refused(
+            "License Permission: only a count that names one object by type and number is pinned",
+        ));
+    };
+    let Some(r) = license_known(t, ot, n) else {
+        return Err(license_unpinned(ot, n));
+    };
+    Ok(usize::from(filters.iter().all(|f| f.expr.matches(&r[f.field]))))
+}

@@ -1479,3 +1479,40 @@ fn upperlimit_of_a_flow_filter_with_one_value_is_that_value() {
     );
     assert_eq!(text(r), "-10/30");
 }
+
+// Record.CalcSums of a Duration is not pinned (only FieldRef.CalcSum is, FieldRefCalcSumTypes; corpus issue 630 item 3): refused.
+#[test]
+fn record_calcsums_of_a_duration_field_is_refused_but_fieldref_calcsum_sums_it() {
+    const T: &str = r#"
+table 60010 "ALT Dur"
+{
+    fields { field(1; "No."; Integer) { } field(2; D; Duration) { } }
+    keys { key(PK; "No.") { Clustered = true; } }
+}
+"#;
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var R: Record \"ALT Dur\";
+        begin
+            R.\"No.\" := 1; R.D := 5; R.Insert();
+            R.CalcSums(D);
+            exit('ran');
+        end;",
+        "F",
+    );
+    assert!(unsupported(r).contains("CalcSums on D"));
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var R: Record \"ALT Dur\"; RR: RecordRef; FR: FieldRef;
+        begin
+            R.\"No.\" := 1; R.D := 5; R.Insert();
+            RR.GetTable(R); FR := RR.Field(2);
+            FR.CalcSum();
+            exit(Format(FR.Value));
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "5 milliseconds");
+}

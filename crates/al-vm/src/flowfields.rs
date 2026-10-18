@@ -621,7 +621,10 @@ impl Session {
 
     /// `CalcSums`: the sum of stored number fields over the record's own
     /// filters (corpus record/TestRecordFlowField.al:109-160).
-    pub(crate) fn calc_sums(&mut self, rec: &Rec, positions: &[usize]) -> Result<(), Signal> {
+    ///
+    /// `duration` allows a Duration field: only `FieldRef.CalcSum` pins it (FieldRefCalcSumTypes), `Record.CalcSums` of
+    /// a Duration is refused until the corpus pins it (issue 630 item 3).
+    pub(crate) fn calc_sums(&mut self, rec: &Rec, positions: &[usize], duration: bool) -> Result<(), Signal> {
         let engine = self.engine.clone();
         let table = rec.borrow().table as usize;
         let t = self.engine.tables[table].clone().expect("table");
@@ -631,8 +634,9 @@ impl Session {
             if !f.stored
                 || !matches!(
                     f.ty,
-                    RtType::Decimal | RtType::Integer | RtType::BigInteger | RtType::Duration
+                    RtType::Decimal | RtType::Integer | RtType::BigInteger
                 )
+                && !(duration && f.ty == RtType::Duration)
             {
                 return unsupported(format!(
                     "CalcSums on {} (only stored number fields are implemented)",
@@ -741,7 +745,7 @@ impl Session {
                 self.calc_fields(rec, &positions)?;
             }
             RecordOp::CalcSums => {
-                self.calc_sums(rec, &positions)?;
+                self.calc_sums(rec, &positions, false)?;
             }
             RecordOp::SetAutoCalcFields => {
                 let table = rec.borrow().table as usize;

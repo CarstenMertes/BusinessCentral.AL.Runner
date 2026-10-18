@@ -1148,7 +1148,7 @@ impl Session {
                 {
                     return unsupported("FieldRef.CalcSum on a field of another type (not pinned)");
                 }
-                self.flow_op(RecordOp::CalcSums, &rec, &[Value::Integer(pos as i32)])?;
+                self.calc_sums(&rec, &[pos], true)?;
                 Ok(Value::Boolean(true))
             }
             "Validate" => {

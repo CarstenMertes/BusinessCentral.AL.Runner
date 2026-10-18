@@ -445,7 +445,9 @@ impl Providers {
             Virtual::Field => fields::field_rows(self, t),
             Virtual::FeatureKey => host_tables::feature_key_rows(t, self.engine().target.as_ref()),
             Virtual::Key => fields::key_rows(self, t),
-            Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage => unreachable!("generated, never listed"),
+            Virtual::Integer | Virtual::Date | Virtual::WindowsLanguage | Virtual::LicensePermission => {
+                unreachable!("generated, never listed")
+            }
         }
     }
 }
@@ -549,6 +551,7 @@ impl VirtualTables for Providers {
             Virtual::Integer => integer::get(t, pk),
             Virtual::Date => date::get(t, pk),
             Virtual::WindowsLanguage => host_tables::windows_language_get(t, pk),
+            Virtual::LicensePermission => host_tables::license_permission_get(t, pk),
             Virtual::EventSubscription => {
                 Ok(self.with_event_stats(t, self.listed(t, Virtual::EventSubscription)?.get(t, pk)?))
             }
@@ -571,6 +574,7 @@ impl VirtualTables for Providers {
             Virtual::Integer => integer::next(t, scan),
             Virtual::Date => date::next(t, scan),
             Virtual::WindowsLanguage => host_tables::windows_language_next(t, scan),
+            Virtual::LicensePermission => host_tables::license_permission_next(t, scan),
             Virtual::EventSubscription => {
                 if let Some(m) = self.event_filtered_listing(t, scan.filters)? {
                     return m.next(t, scan);
@@ -601,6 +605,7 @@ impl VirtualTables for Providers {
             Virtual::Integer => integer::count(t, filters),
             Virtual::Date => date::count(t, filters),
             Virtual::WindowsLanguage => host_tables::windows_language_count(t, filters),
+            Virtual::LicensePermission => host_tables::license_permission_count(t, filters),
             Virtual::EventSubscription => {
                 if let Some(m) = self.event_filtered_listing(t, filters)? {
                     return m.count(t, filters);

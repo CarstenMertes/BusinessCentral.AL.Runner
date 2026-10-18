@@ -219,7 +219,7 @@ An item is **pinned** when it occurs in a corpus file in a routine that static r
 | Platform and system events | 123 | 20 | 17 | 0 | 0 |
 | Statements and expressions | 64 | 60 | 58 | 0 | 0 |
 | Method attributes | 29 | 24 | 13 | 5 | 3 |
-| Runtime error sites (text pinned) | 68 | 64 | - | 4 | - |
+| Runtime error sites (text pinned) | 68 | 63 | - | 5 | - |
 
 Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left out of the property catalog.
 
@@ -633,11 +633,12 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | procedure | `Native` | 25 | no | 0 |
 | procedure | `ServiceEnabled` | 1 | no | 0 |
 
-## Runtime error sites without a corpus test (4 of 68; 0 have too little fixed text to match)
+## Runtime error sites without a corpus test (5 of 68; 0 have too little fixed text to match)
 
 A site is pinned when a corpus string literal holds the message text. Codes are not matched. Sites with a computed message are not listed.
 
 - crates/al-builtins/src/file.rs:117 `File name was not specified.` code `MissingFileName`
+- crates/al-builtins/src/file.rs:305 `The value cannot be an empty string. (Parameter 'path')` code `InvalidPath`
 - crates/al-builtins/src/media.rs:245 `The specified path is invalid.` code `InvalidPath`
 - crates/al-builtins/src/media.rs:248 `Could not find a part of the path '%'.` code `InvalidPath`
 - crates/al-vm/src/usertable.rs:374 `There should be at least one enabled 'SUPER' user.` code `Dialog`

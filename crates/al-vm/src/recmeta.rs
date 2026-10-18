@@ -554,14 +554,28 @@ impl Session {
                     } else {
                         "SetAscending"
                     };
+                    // The field's name, not its caption (record/lt-filters-keys-finds/SetAscendingEdges.al:
+                    // SetAscending_FieldOutsideTheKey_ErrorText, `Qty` for the field captioned 'LT Quantity').
                     return Err(crate::transactions::al_error_code(
                         &format!(
                             "Cannot call {name} on field {} because it is not part of the current sorting.",
-                            self.field_caption(t, pos)
+                            t.fields[pos].name
                         ),
                         "DB:Ok",
                     ));
                 };
+                // A primary key field that only follows the current key can be read but not set
+                // (SetAscendingEdges.al:SetAscending_PrimaryKeyFieldFollowingTheKey).
+                if method == RecordOp::SetAscending && bit >= t.keys[key].len() {
+                    return Err(crate::transactions::al_error_code(
+                        &format!(
+                            "The specified sorting could not be set on field '{}' with the key consisting of '{}'.",
+                            t.fields[pos].name,
+                            t.keys[key].iter().map(|&p| t.fields[p].name.as_str()).collect::<Vec<_>>().join(",")
+                        ),
+                        "InvalidSortingFields",
+                    ));
+                }
                 if bit >= 32 {
                     return unsupported(format!("{method} on the {bit}th field of a sorting"));
                 }
@@ -578,7 +592,11 @@ impl Session {
                 // against ..._ReadByALaterAction); `Ascending` keeps its own, view-borne flag.
                 let mut r = rec.borrow_mut();
                 if !r.ascending {
-                    return unsupported("SetAscending on a record that also has Ascending(false) (not pinned)");
+                    // After Ascending(false) every field of the key reads as descending, and the one field changes
+                    // (SetAscendingEdges.al:SetAscending_AfterAscendingFalse, `then_grp_true_view`).
+                    r.ascending = true;
+                    let fields = t.keys[key].len();
+                    r.field_descending = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
                 }
                 if ascending {
                     r.field_descending &= !(1 << bit);

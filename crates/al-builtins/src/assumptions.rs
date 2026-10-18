@@ -291,9 +291,9 @@ registry! {
     },
     RecordRefIsDirtyAgainstStoredRow => {
         id: "record-ref-is-dirty-against-stored-row",
-        assumed: "RecordRef.IsDirty compares the buffer with the row stored under the buffer's primary key (a buffer with no stored row is compared with a fresh buffer). BC compares with a snapshot taken when the buffer was last read or written; the two differ only when another variable changed the stored row after this one read it.",
+        assumed: "RecordRef.IsDirty of a buffer that did not come from a read or write through the ref (after GetTable, Init or Clear) compares the buffer with the row stored under its primary key (a buffer with no stored row is compared with a fresh buffer). After a read or write through the ref the pinned snapshot is used and this does not apply.",
         tests: "Item Card OnAssistEdit and the other pages that ask whether the record changed: about 345 Microsoft tests (Tests-SCM, Tests-ERM).",
-        probe: "Read a row into RecordRef A and RecordRef B, Modify the row through B, then A.IsDirty(); also a table with a FlowField and a partial load (SetLoadFields).",
+        probe: "IsDirty of a RecordRef right after GetTable of a Record that was read, modified without Modify, or Init: is it compared with what the Record read, or with the stored row.",
     },
     PageRowDeleteEventNotRaised => {
         id: "page-row-delete-event-not-raised",

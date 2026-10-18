@@ -77,6 +77,7 @@ fn fresh(message: String, collectible: bool) -> ErrorInfoState {
         collectible,
         table_id: 0,
         record_id: None,
+        system_id: None,
         field_no: 0,
         page_no: 0,
         custom_dimensions: None,
@@ -204,6 +205,19 @@ fn record_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
         return with_state(r, |s| s.record_id = Some(id)).map(|()| Value::Null);
     }
     Ok(with_state(r, |s| s.record_id.clone())?.unwrap_or_else(|| Value::Library("RecordId".into(), Rc::default())))
+}
+
+/// `Err.SystemId := G` reads back, a null Guid reads as null, and a fresh ErrorInfo holds a null Guid
+/// (errorinfo/lt-errnotif/EnTErrorInfoProps.al:42, :106-115, :259-262).
+fn system_id(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> Out {
+    if let Some(g) = a.first() {
+        let g = match g {
+            Value::Guid(_) => g.clone(),
+            other => return unsupported(format!("SystemId with {}", other.describe())),
+        };
+        return with_state(r, |s| s.system_id = Some(g)).map(|()| Value::Null);
+    }
+    Ok(with_state(r, |s| s.system_id.clone())?.unwrap_or(Value::Guid([0; 16])))
 }
 
 /// A fresh ErrorInfo carries no custom dimensions (errorinfo/TestErrorInfoType.al:423-442). An assigned
@@ -335,6 +349,7 @@ pub fn native_for(sig: &Signature) -> Option<NativeFn> {
         "Collectible" => collectible,
         "ErrorType" => error_type,
         "RecordId" => record_id,
+        "SystemId" => system_id,
         "CustomDimensions" => custom_dimensions,
         "AddAction" => add_action,
         "AddNavigationAction" => add_navigation_action,

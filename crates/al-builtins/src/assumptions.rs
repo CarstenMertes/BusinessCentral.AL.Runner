@@ -73,12 +73,6 @@ registry! {
         tests: "Payment Export Mgt Unit Test.FilterByHasPaymentExportError (Gen. Journal Line.\"Has Payment Export Error\", a FlowField with Editable = false, on the Payment Journal).",
         probe: "A FlowField with Editable = false and a page with a plain field control over it, and one that sets Editable = true itself: Editable() of each control on an open TestPage, and whether SetValue on the first is refused.",
     },
-    UpperLimitOfASingleValue => {
-        id: "upperlimit-of-a-single-value",
-        assumed: "field(upperlimit(F)) of a flow filter that holds one value (SetFilter(F, Format(d))) applies the range ..d, so the single value is its own upper limit; other non-range filters stay refused.",
-        tests: "Customer.\"Balance Due\" and \"Balance Due (LCY)\" (Detailed Cust. Ledg. Entry `Initial Entry Due Date = field(upperlimit(Date Filter))`): Tests-ERM UT_CustBalanceDueCalcOnMaxLimitOfDateFilter and 10 more.",
-        probe: "A flow filter set with SetFilter to a single value, SetFilter('..d') and SetFilter('<=d'), then CalcFields on a Sum with `Date = field(upperlimit(Filter))`: which rows are included.",
-    },
     RenameFollowsFilterConditionArms => {
         id: "rename-follows-filter-condition-arms",
         assumed: "A rename of a primary key rewrites a referencing field through a TableRelation arm whose conditions include `Field = filter(x)`, when the referencing row's field passes the filter, as it does for `const` conditions.",

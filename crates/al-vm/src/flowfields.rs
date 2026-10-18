@@ -518,18 +518,36 @@ impl Session {
                         return unsupported("upperlimit() of a field that is not a flow filter");
                     }
                     // Corpus record/TestCalcFormulaFlowFiltersTests.Codeunit.al:144: only the
-                    // upper bound of the caller's range; none set (or an open end) means none.
+                    // upper bound of the caller's range; none set means none.
                     match flow(*q) {
-                        None | Some(FilterExpr::Range(_, None)) => {}
+                        None => {}
                         Some(FilterExpr::Range(_, Some(hi))) => {
                             parts.push((c.field, FilterExpr::Range(None, Some(hi)), false));
                         }
-                        // A filter of one value is its own upper limit (assumption upperlimit-of-a-single-value).
-                        Some(FilterExpr::Eq(hi)) => {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::UpperLimitOfASingleValue,
-                            );
+                        // A filter of one value is its own upper limit, and so is `<=` a value (UpperLimitSingleValue.al:
+                        // UpperLimit_OneValue `setfilter_format_d`, `setfilter_le_d`).
+                        Some(FilterExpr::Eq(hi) | FilterExpr::Le(hi)) => {
                             parts.push((c.field, FilterExpr::Range(None, Some(hi)), false));
+                        }
+                        // An open end, `<`, `>`, `<>` and several values are more than one range (UpperLimitSingleValue.al:
+                        // UpperLimit_OneValue `setfilter_lt_d`, UpperLimit_OpenAndEmpty). The error has no pinned code.
+                        Some(
+                            e @ (FilterExpr::Range(Some(_), None)
+                            | FilterExpr::Lt(_)
+                            | FilterExpr::Gt(_)
+                            | FilterExpr::Ne(_)
+                            | FilterExpr::Or(_)),
+                        ) => {
+                            let text = self.filter_text(&e)?;
+                            let t = self.table(rec)?;
+                            return Err(crate::transactions::al_error_code(
+                                &format!(
+                                    "The filter expression \"{text}\" applied to the field {} in the {} table results in more than one range.",
+                                    self.field_caption(&t, *q),
+                                    self.caption(&t)
+                                ),
+                                "",
+                            ));
                         }
                         Some(_) => return unsupported("upperlimit() of a filter that is not a range"),
                     }

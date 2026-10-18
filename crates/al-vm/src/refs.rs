@@ -1262,6 +1262,7 @@ impl Session {
     pub(crate) fn members_of_field(&self, t: &TableDef, pos: usize) -> Result<Option<FieldMembers>, Signal> {
         match &t.fields[pos].ty {
             RtType::Enum(id) => {
+                self.note_enum(*id);
                 let o = &self.engine.program.objects[*id as usize];
                 let members = o
                     .enum_values

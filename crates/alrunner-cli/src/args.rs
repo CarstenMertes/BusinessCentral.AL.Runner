@@ -120,6 +120,11 @@ pub struct TestArgs {
     pub disabled_tests_dir: Option<PathBuf>,
     /// `--parity`: skip the tests Microsoft turns off instead of running and marking them.
     pub parity: bool,
+    /// `--recipe microsoft`: run the way Microsoft's CI does: one run per lane (the company each test codeunit gets),
+    /// Microsoft's disabled tests skipped. The files come from BCApps (`--bcapps DIR`, else the cache or a fetch).
+    pub recipe: bool,
+    /// `--bcapps DIR`: a BCApps checkout (or its `src/DisabledTests`, `build/projects`, `build/scripts` parts) for `--recipe`.
+    pub bcapps_dir: Option<PathBuf>,
 }
 
 impl TestArgs {
@@ -339,6 +344,16 @@ TEST DATA
                          app's folder (every *.json below DIR is read). Those tests still run and
                          the summary and the JUnit file mark them (property disabled_by_microsoft).
     --parity             With --disabled-tests: do not run those tests.
+    --recipe microsoft   Run the way Microsoft's CI does. BCApps' settings decide the company of each test
+                         codeunit (a lane): the Legacy test apps get the RapidStart package company, a codeunit
+                         with TestType = UnitTest an empty company, IntegrationTest the Contoso setup company,
+                         the rest the Contoso company with all demo data. One run per lane, each with its own
+                         summary and, with --junit FILE, its own file (FILE.<lane>.xml). Microsoft's disabled
+                         tests are skipped and counted. The BCApps files (MIT) of the release (releases/<major>.<minor>)
+                         are fetched with git, sparse, into <cache dir>/bcapps/<major>.<minor>/ once; --no-download
+                         uses only that cache. Not combinable with the company and disabled-test options.
+    --bcapps DIR         With --recipe: use this BCApps checkout instead of the cache. $ALRUNNER_BCAPPS_URL
+                         replaces the GitHub address the fetch uses.
 
 OTHER
     --server-url URL     The base address of the web client that GetUrl(ClientType::Web) answers with
@@ -685,6 +700,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             }
             "--disabled-tests" => a.disabled_tests_dir = Some(text()?.into()),
             "--parity" => a.parity = true,
+            "--recipe" => {
+                let v = text()?;
+                if v != "microsoft" {
+                    return Err(format!("--recipe takes `microsoft`, not `{v}`"));
+                }
+                a.recipe = true;
+            }
+            "--bcapps" => a.bcapps_dir = Some(text()?.into()),
             "--test-data-normalize-company" => {
                 return Err(format!(
                     "{flag} is not available: AL Runner v2's company normalization rules are not ported (ADR-020)"
@@ -724,6 +747,28 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     }
     if a.company_package && a.no_test_data {
         return Err("--company-data package cannot be combined with --no-test-data".into());
+    }
+    if a.bcapps_dir.is_some() && !a.recipe {
+        return Err("--bcapps needs --recipe microsoft".into());
+    }
+    if a.recipe {
+        for (given, flag) in [
+            (a.company_package, "--company-data package / --package"),
+            (a.test_data_asked_for(), "--test-data"),
+            (a.no_test_data, "--no-test-data"),
+            (a.disabled_tests_dir.is_some(), "--disabled-tests"),
+            (a.parity, "--parity"),
+            (a.test_data_company.is_some(), "--test-data-company"),
+        ] {
+            if given {
+                return Err(format!(
+                    "--recipe microsoft decides the company and the disabled tests itself: {flag} cannot be combined with it"
+                ));
+            }
+        }
+        if a.explain.is_some() {
+            return Err("--explain cannot be combined with --recipe microsoft; explain one test with --codeunit and the lane's company options".into());
+        }
     }
     if a.verbose && a.quiet {
         return Err("--verbose and --quiet cannot be combined".into());
@@ -792,6 +837,26 @@ mod tests {
         assert!(!test_args("test A").rebuild_compile_cache);
         assert!(p("test A --rebuild-compile-cache --no-compile-cache").is_err());
         assert!(p("test A --rebuild-compile-cache --require-compile-cache").is_err());
+    }
+
+    #[test]
+    fn recipe_flags_parse_and_check_each_other() {
+        assert!(!test_args("test A").recipe);
+        let a = test_args("test A --recipe microsoft --bcapps /b");
+        assert!(a.recipe);
+        assert_eq!(a.bcapps_dir.as_deref(), Some(std::path::Path::new("/b")));
+        assert!(p("test A --recipe other").unwrap_err().contains("microsoft"));
+        assert!(p("test A --bcapps /b").unwrap_err().contains("--recipe"));
+        for flag in [
+            "--company-data package",
+            "--no-test-data",
+            "--disabled-tests d",
+            "--test-data-company X",
+        ] {
+            let e = p(&format!("test A --recipe microsoft {flag}")).unwrap_err();
+            assert!(e.contains("decides the company"), "{flag}: {e}");
+        }
+        assert!(p("test A --recipe microsoft --codeunit 5 --junit x.xml").is_ok());
     }
 
     #[test]

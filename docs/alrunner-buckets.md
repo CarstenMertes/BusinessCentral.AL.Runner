@@ -318,3 +318,30 @@ Legacy buckets run on. The two tables the reader used to refuse are now read, an
 so the counts did not change. The largest package-only failure is `The Country/Region does not exist ... Code=''` (40
 tests, first: ERM Report Amount in FCY, `AmountInFCYOnDocumentEntriesReport`); it is a lead for the next round, not
 explained yet.
+
+## Microsoft's recipe: `--recipe microsoft` (2026-10-18, branch `ms-recipe-3`)
+
+`alrunner test <Tests-*.Source.zip> ... --recipe microsoft` runs the buckets the way BCApps' CI does.
+
+1. The BCApps files come from `releases/<major>.<minor>` of github.com/microsoft/BCApps (MIT), fetched with `git`
+   (shallow, no file contents, only `src/DisabledTests`, `build/projects`, `build/scripts`) into
+   `<cache dir>/bcapps/<major>.<minor>/` once. The release is `--bc-version` (major.minor), else the build of the tests.
+   `--bcapps DIR` names a checkout instead. `--no-download` reads only the cache. `ALRUNNER_BCAPPS_URL` replaces the
+   GitHub address (a mirror).
+   Measured 2026-10-18: `releases/27.x` and `releases/28.x` do not have the BaseApp test recipe at all (no `Test Apps W1`
+   project, no `TestConfiguration.json`, no `src/DisabledTests`); `releases/29.0` is the first that does. A release
+   without it uses `releases/29.0`, and the run prints that. Disabled tests are matched by codeunit id and method
+   name, so entries for tests a 27.5 artifact lacks do nothing.
+2. The lane of a test codeunit: a test app in `TestConfiguration.json` (`LegacyTests-Bucket1`, `-Bucket2`) is Legacy,
+   whatever the codeunit says. For any other app the AL property `TestType` of the codeunit decides:
+   `UnitTest`, `IntegrationTest`, none or `Uncategorized`; `AITest` is in no build mode and is left out.
+3. Company per lane: Legacy runs `--company-data package` (company name from the settings, CRONUS International Ltd.);
+   UnitTest runs without demo data (Company-Initialize and the installs only). IntegrationTest and Uncategorized need
+   Microsoft's Contoso Demo Tool (`CreateSetupDemoData`, `CreateAllDemoData`, then the tenant data codeunit 5691, which also
+   creates the Web Service rows). The runner does not run it yet, so those lanes print `NOT RUN` with the reason and the
+   exit code is 7.
+4. Microsoft's disabled tests are skipped (`--parity`) and counted per lane. Each lane has its own summary and, with
+   `--junit FILE`, its own `FILE.<lane>.xml`.
+
+Not done: the company name of a lane other than CRONUS (`Empty Company`, `My Company`) is not applied; `CompanyName()` answers
+CRONUS International Ltd. in every lane.

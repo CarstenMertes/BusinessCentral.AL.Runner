@@ -22,22 +22,6 @@ enum Parsed {
     Rejected,
 }
 
-/// `[-]digits`, or a rejection when there are no digits at all.
-fn whole_number(text: &str, ty: &str) -> Result<Parsed, Signal> {
-    let digits = text.strip_prefix('-').unwrap_or(text);
-    if !text.bytes().any(|b| b.is_ascii_digit()) {
-        // text/TestEvaluate.al Evaluate_InvalidInteger_ReturnsFalse ('notanumber') and
-        // Evaluate_EmptyString_ReturnsFalse ('').
-        return Ok(Parsed::Rejected);
-    }
-    if digits.is_empty() || !digits.bytes().all(|b| b.is_ascii_digit()) {
-        return unsupported(format!(
-            "Evaluate of `{text}` into {ty} (form not pinned by the corpus)"
-        ));
-    }
-    Ok(Parsed::Value(Value::Text(text.to_string().into())))
-}
-
 /// A whole number as `Evaluate` reads it into an Integer. Spaces around it are dropped, one sign is allowed and the
 /// digits are ASCII; number 0 also reads properly grouped thousands (`1,234`), number 9 does not. Everything else is
 /// rejected, an overflow too (types/lt-evaluate-format-lasterror-setview/P86Eval.al, codeunit "LT P86 Eval Integer":
@@ -99,28 +83,62 @@ fn integer(text: &str, number: i64) -> Result<Parsed, Signal> {
     )
 }
 
-fn big_integer(text: &str) -> Result<Parsed, Signal> {
-    // Text with a letter or a percent sign, an embedded blank, or a fraction that is not zero is no whole number
-    // (types/lt-scalars/ScT70055.al:EvaluateBigInteger `dec`, `abc`; the BigInteger cases of P129Evaluate.al: `%PDF-1.4`, `1 3`).
-    // An exponent, commas and a zero fraction are not pinned.
+/// A BigInteger as `Evaluate` reads it: spaces around it, one sign (a `+` may be followed by blanks: `+ 7` is 7, while an Integer
+/// rejects it), digits with commas dropped (`1,000` is 1000, `1,00` is 100), and a fraction of zeros (`12.0`, `110.0`). A letter,
+/// `%`, `_`, an embedded blank, a fraction that is not zero, no digit and a value outside the 64 bit range are rejected
+/// (types/lt-scalars/ScT70055.al:EvaluateBigInteger; errors/lt-ms-refusals-129/P129Evaluate.al:
+/// P129_Evaluate_IntegerAndBigInteger_BlanksAndOddForms; the BigInteger cases of types/TestProbeBigInteger: `%PDF-1.4`).
+/// An exponent, commas in format number 9, a `-` followed by blanks and a point with no fraction are not pinned.
+fn big_integer(text: &str, number: i64) -> Result<Parsed, Signal> {
+    if text.chars().any(|c| c.is_whitespace() && c != ' ') {
+        return unsupported(format!(
+            "Evaluate of `{text}` into BigInteger with white space other than spaces (not pinned)"
+        ));
+    }
     let t = text.trim_matches(' ');
     let exponent_shape = t.bytes().any(|b| b == b'e' || b == b'E')
-        && t.bytes()
-            .all(|b| b.is_ascii_digit() || matches!(b, b'e' | b'E' | b'+' | b'-' | b'.'));
-    if t.contains(' ') || (!exponent_shape && t.bytes().any(|b| b.is_ascii_alphabetic() || b == b'%')) {
+        && t.bytes().all(|b| b.is_ascii_digit() || matches!(b, b'e' | b'E' | b'+' | b'-' | b'.'));
+    if exponent_shape {
+        return unsupported(format!("Evaluate of `{text}` into BigInteger with an exponent (not pinned)"));
+    }
+    if t.bytes().any(|b| b.is_ascii_alphabetic() || matches!(b, b'%' | b'_')) {
         return Ok(Parsed::Rejected);
     }
-    if let Some((_, f)) = t.split_once('.') {
-        if f.bytes().all(|b| b.is_ascii_digit()) && f.bytes().any(|b| b != b'0') {
-            return Ok(Parsed::Rejected);
-        }
+    if !t.is_ascii() || t.bytes().any(|b| !(b.is_ascii_digit() || matches!(b, b',' | b'.' | b'+' | b'-' | b' '))) {
+        return unsupported(format!("Evaluate of `{text}` into BigInteger (form not pinned by the corpus)"));
     }
-    Ok(match whole_number(text, "BigInteger")? {
-        Parsed::Value(_) => match text.parse::<i64>() {
-            Ok(n) => Parsed::Value(Value::BigInteger(n)),
-            Err(_) => return unsupported(format!("Evaluate of `{text}` outside the BigInteger range")),
-        },
-        Parsed::Rejected => Parsed::Rejected,
+    let (negative, rest) = match t.strip_prefix('-') {
+        Some(r) => (true, r),
+        None => (false, t.strip_prefix('+').map_or(t, |r| r.trim_start_matches(' '))),
+    };
+    if negative && rest.starts_with(' ') {
+        return unsupported(format!("Evaluate of `{text}` into BigInteger with blanks after the minus sign (not pinned)"));
+    }
+    if rest.contains(' ') || rest.contains(['+', '-']) {
+        return Ok(Parsed::Rejected);
+    }
+    let (int, frac) = match rest.split_once('.') {
+        Some((i, f)) => (i, Some(f)),
+        None => (rest, None),
+    };
+    if int.contains(',') && number == 9 {
+        return unsupported(format!("Evaluate of `{text}` into BigInteger with commas and format number 9 (not pinned)"));
+    }
+    let int: String = int.chars().filter(|c| *c != ',').collect();
+    match frac {
+        Some(f) if f.is_empty() => {
+            return unsupported(format!("Evaluate of `{text}` into BigInteger with a point and no fraction (not pinned)"));
+        }
+        Some(f) if f.contains([',', '.']) => return Ok(Parsed::Rejected),
+        Some(f) if f.bytes().any(|b| b != b'0') => return Ok(Parsed::Rejected),
+        _ => {}
+    }
+    if int.is_empty() {
+        return Ok(Parsed::Rejected);
+    }
+    Ok(match format!("{}{int}", if negative { "-" } else { "" }).parse::<i64>() {
+        Ok(n) => Parsed::Value(Value::BigInteger(n)),
+        Err(_) => Parsed::Rejected,
     })
 }
 
@@ -159,7 +177,7 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
         // characters are not pinned.
         return if t
             .bytes()
-            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'%' | b'-' | b'.' | b',' | b'+' | b'$'))
+            .all(|b| b.is_ascii_alphanumeric() || matches!(b, b'%' | b'_' | b'-' | b'.' | b',' | b'+' | b'$'))
         {
             Ok(Parsed::Rejected)
         } else {
@@ -702,7 +720,9 @@ fn evaluate_with(c: &mut dyn Ctx, a: &mut [Value], variable_option: bool) -> Res
 /// `false` when the result is used and the length error (with the text as given) when it is not, and the variable keeps
 /// its value. A format number is not pinned.
 fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option<u32>) -> Result<Parsed, Signal> {
-    if number != 0 {
+    // The numbers 0, 1, 2 and 9 read a Text and a Code alike (types/lt-evaluate-text-decimal/EvaluateTextCodeDecimal.al:
+    // Text_FormatNumbers, Code_FormatNumbers); the others are not pinned.
+    if !matches!(number, 0 | 1 | 2 | 9) {
         return unsupported(format!(
             "Evaluate into a Text or Code with format number {number} (not pinned)"
         ));
@@ -711,21 +731,31 @@ fn text_or_code(c: &mut dyn Ctx, a: &Value, text: &str, number: i64, max: Option
     let kept = if code { text.trim() } else { text };
     if let Some(m) = max {
         if Value::text_len(text) > m as usize {
-            // Whether the length of the trimmed text or of the text as given counts for a Code is not pinned.
-            if code && kept.len() != text.len() && Value::text_len(kept) <= m as usize {
-                return unsupported("Evaluate into a Code of a text whose blanks decide whether it fits (not pinned)");
+            // A Code takes the text without its blanks when that fits (`abcde   ` and ` abcde` into Code[5], Code_FormatNumbers
+            // `trailFits`, `leadFull`). A text that does not fit even without its blanks, and has blanks, is not pinned: the length
+            // BC reports for it could be either one.
+            if code && Value::text_len(kept) <= m as usize {
+                return Ok(Parsed::Value(Value::Code(crate::ops::upper_code(kept).into())));
             }
+            if code && kept.len() != text.len() {
+                return unsupported("Evaluate into a Code of a text with blanks that is too long even without them (not pinned)");
+            }
+            let message = format!(
+                "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
+                Value::text_len(text),
+                crate::ops::shown_in_length_error(text)
+            );
+            // With the result used the call answers false and leaves this error as the last one (types/lt-evaluate-text-decimal/
+            // EvaluateTextCodeDecimal.al:Code_FormatNumbers `tooLong0Ok` No with `tooLong0Err`).
             if c.ret_used() {
+                c.set_last_error(crate::native::AlError {
+                    message,
+                    code: "StringLengthExceeded".into(),
+                    ..Default::default()
+                });
                 return Ok(Parsed::Rejected);
             }
-            return crate::native::raise(
-                format!(
-                    "The length of the string is {}, but it must be less than or equal to {m} characters. Value: {}",
-                    Value::text_len(text),
-                    crate::ops::shown_in_length_error(text)
-                ),
-                "StringLengthExceeded",
-            );
+            return crate::native::raise(message, "StringLengthExceeded");
         }
     }
     Ok(Parsed::Value(if code {
@@ -839,7 +869,11 @@ fn evaluate_with_max(
         Some(other) => return unsupported(format!("Evaluate format number {}", other.describe())),
     };
     // Number 2 is read for a DateFormula only, as number 0 (docs/probes-needed.md).
-    if number != 0 && number != 9 && !(number == 2 && matches!(a[0], Value::DateFormula(_))) {
+    if number != 0
+        && number != 9
+        && !(number == 2 && matches!(a[0], Value::DateFormula(_)))
+        && !(matches!(number, 1 | 2) && matches!(a[0], Value::Text(_) | Value::Code(_)))
+    {
         return unsupported(format!(
             "Evaluate with format number {number} (not pinned by the corpus)"
         ));
@@ -853,7 +887,7 @@ fn evaluate_with_max(
     let parsed = match &a[0] {
         Value::Text(_) | Value::Code(_) => text_or_code(c, &a[0], &text, number, max)?,
         Value::Integer(_) => integer(&text, number)?,
-        Value::BigInteger(_) => big_integer(&text)?,
+        Value::BigInteger(_) => big_integer(&text, number)?,
         Value::Decimal(_) => decimal(&text, number)?,
         Value::Boolean(_) => boolean(&text)?,
         Value::Guid(_) => guid(&text)?,

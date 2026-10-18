@@ -240,9 +240,15 @@ fn comma_template(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -
     const COMMA_DROPPED: [(&str, &str); 7] = [
         ("<Integer><Comma,,><Decimals>", "<Integer><Decimals>"),
         ("<Integer Thousand><Comma,,><Decimals>", "<Integer Thousand><Decimals>"),
-        ("<Integer Thousand><Comma,.><Decimals,3>", "<Integer Thousand><Decimals,3>"),
+        (
+            "<Integer Thousand><Comma,.><Decimals,3>",
+            "<Integer Thousand><Decimals,3>",
+        ),
         ("<Integer,10><Comma,.><Decimals,3>", "<Integer,10><Decimals,3>"),
-        ("<Integer Thousand,12><Comma,.><Decimals,3>", "<Integer Thousand,12><Decimals,3>"),
+        (
+            "<Integer Thousand,12><Comma,.><Decimals,3>",
+            "<Integer Thousand,12><Decimals,3>",
+        ),
         (
             "<Sign><Integer Thousand><Comma,.><Decimals,2>",
             "<Sign><Integer Thousand><Decimals,2>",
@@ -262,7 +268,11 @@ fn comma_template(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -
                 "<Comma,.>" => return Ok(crate::format::pad(String::new(), length)),
                 "<Sign><Integer><Decimals><Comma>" => return invalid(),
                 t if COMMA_DROPPED.iter().any(|(k, _)| *k == t) => {
-                    let plain = COMMA_DROPPED.iter().find(|(k, _)| *k == t).map(|(_, p)| *p).unwrap_or(t);
+                    let plain = COMMA_DROPPED
+                        .iter()
+                        .find(|(k, _)| *k == t)
+                        .map(|(_, p)| *p)
+                        .unwrap_or(t);
                     return Ok(crate::format::pad(format_with_string(v, 0, plain, ctx)?, length));
                 }
                 _ => {
@@ -292,12 +302,13 @@ fn comma_template(v: &Value, length: i32, template: &str, ctx: &dyn FormatCtx) -
         // a `<Decimals>` after it is invalid on all three.
         Value::BigInteger(_) | Value::Duration(_) | Value::DateTime(_) => match template {
             "<Comma,.>" => Ok(crate::format::pad(String::new(), length)),
-            "<Integer Thousand><Comma,.>" if matches!(v, Value::BigInteger(_)) => {
-                Ok(crate::format::pad(format_with_string(v, 0, "<Integer Thousand>", ctx)?, length))
-            }
-            "<Integer Thousand><Comma,.>" | "<Integer Thousand><Comma,.><Decimals>" | "<Integer><Comma,,><Decimals>" => {
-                invalid()
-            }
+            "<Integer Thousand><Comma,.>" if matches!(v, Value::BigInteger(_)) => Ok(crate::format::pad(
+                format_with_string(v, 0, "<Integer Thousand>", ctx)?,
+                length,
+            )),
+            "<Integer Thousand><Comma,.>"
+            | "<Integer Thousand><Comma,.><Decimals>"
+            | "<Integer><Comma,,><Decimals>" => invalid(),
             _ => Err(format!(
                 "format string `{template}`: the `<Comma` element is pinned for six strings only"
             )),

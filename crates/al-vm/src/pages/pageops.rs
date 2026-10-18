@@ -547,9 +547,10 @@ impl Session {
                     let blank_rec = {
                         let s = src.borrow();
                         s.fields.len() == initial.len()
-                            && s.fields.iter().zip(&initial).all(|(a, b)| {
-                                al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal)
-                            })
+                            && s.fields
+                                .iter()
+                                .zip(&initial)
+                                .all(|(a, b)| al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal))
                     };
                     // The record may hold the blank-key filter of an earlier call (HiddenPartSelectionFilter.al: `rec-before=Id: 0/0`).
                     let t = self.table(dst)?;

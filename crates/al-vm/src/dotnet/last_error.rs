@@ -86,9 +86,17 @@ fn equals(_: &mut Session, this: Option<&Rc<DotNetObject>>, args: &[Value]) -> R
     }
     Ok(Value::Boolean(match (&this.kind, &other.kind) {
         (
-            DotNetKind::Internal { type_name: a, state: sa },
-            DotNetKind::Internal { type_name: b, state: sb },
-        ) if a == RUNTIME_TYPE && b == RUNTIME_TYPE => matches!((&sa.borrow()[0], &sb.borrow()[0]), (Value::Text(x), Value::Text(y)) if x == y),
+            DotNetKind::Internal {
+                type_name: a,
+                state: sa,
+            },
+            DotNetKind::Internal {
+                type_name: b,
+                state: sb,
+            },
+        ) if a == RUNTIME_TYPE && b == RUNTIME_TYPE => {
+            matches!((&sa.borrow()[0], &sb.borrow()[0]), (Value::Text(x), Value::Text(y)) if x == y)
+        }
         _ => false,
     }))
 }

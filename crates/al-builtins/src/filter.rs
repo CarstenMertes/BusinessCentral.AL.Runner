@@ -609,7 +609,9 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
     // The day-first spellings of the pinned shapes (four, six and eight digits, three two-digit numbers split by dashes) are no
     // dates in an English session either (GetRange_DayAboveTwelve_English).
     if english {
-        let dashed = t.split('-').count() == 3 && t.split('-').all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()));
+        let dashed = t.split('-').count() == 3
+            && t.split('-')
+                .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()));
         // `02-01-26` reads like `02/01/26`: month, day, year (GetRange_DateTextForms_English `separators_short_year`,
         // GetRange_DayAboveTwelve_English `mm_dd_yy_separators`).
         if dashed {

@@ -805,7 +805,8 @@ impl Session {
                                     | al_builtins::value::RtType::Record(..)
                             ) {
                                 return Err(Signal::Unsupported(
-                                    "Clear of a row of a multi-dimensional array of a type the corpus does not pin".into(),
+                                    "Clear of a row of a multi-dimensional array of a type the corpus does not pin"
+                                        .into(),
                                 ));
                             }
                             drop(values);

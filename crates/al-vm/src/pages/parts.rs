@@ -361,7 +361,10 @@ impl Session {
         // The filter `SetSelectionFilter(Rec)` left on the part's own record is gone once the part refreshes with its host
         // (HiddenPartSelectionFilter.al:SelectionFilter_VisiblePart_FilterAndCount `rec-before=/3` after Next).
         if std::mem::take(&mut child.borrow_mut().selection_on_rec) {
-            self.page_rec(child).borrow_mut().filters.retain(|f| f.group == LINK_GROUP);
+            self.page_rec(child)
+                .borrow_mut()
+                .filters
+                .retain(|f| f.group == LINK_GROUP);
         }
         let engine = self.engine();
         let page = page_of(&engine, host);

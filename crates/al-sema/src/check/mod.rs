@@ -632,6 +632,36 @@ fn first_token(node: &SyntaxNode) -> String {
         .unwrap_or_default()
 }
 
+/// A text literal of exactly one character (`'A'`), as written. Next to a Char under `+` or `-` it is read as a Char and
+/// the result is an Integer (corpus types/lt-af-char-literal/AfCharLiteralArithmetic.al:22-58: `Ch - 'A'` is 2, `'A' + Ch` 132;
+/// `Ch + 'AB'` and `Ch + ''` stay texts).
+pub(crate) fn one_char_literal(node: &SyntaxNode) -> bool {
+    if node.kind() != SyntaxKind::Literal {
+        return false;
+    }
+    let Some(tok) = node
+        .children_with_tokens()
+        .filter_map(|e| e.into_token())
+        .find(|t| t.kind() == SyntaxKind::StringLit)
+    else {
+        return false;
+    };
+    let text = tok.text();
+    text.get(1..text.len().saturating_sub(1))
+        .is_some_and(|inner| inner.replace("''", "'").chars().count() == 1)
+}
+
+/// `Ch + 'X'`, `'X' - Ch` and the like: a Char variable and a one-character literal under `+` or `-` ([`one_char_literal`];
+/// AfCharLiteralArithmetic.al:22-43). Only a variable: a character of a text joins a literal as text
+/// (json/TestJsonXmlDeepContracts.al:71, `'a' + Format(10, 0, '<Integer>')[1] + 'b'`), and other Char expressions are not pinned.
+pub(crate) fn char_and_one_char_literal(op: &str, kids: &[SyntaxNode], l: &Ty, r: &Ty) -> bool {
+    let var = |n: &SyntaxNode| n.kind() == SyntaxKind::NameRef;
+    matches!(op, "+" | "-")
+        && kids.len() == 2
+        && ((matches!(l, Ty::Char) && var(&kids[0]) && one_char_literal(&kids[1]))
+            || (matches!(r, Ty::Char) && var(&kids[1]) && one_char_literal(&kids[0])))
+}
+
 fn op_token(node: &SyntaxNode) -> String {
     node.children_with_tokens()
         .filter_map(|e| e.into_token())

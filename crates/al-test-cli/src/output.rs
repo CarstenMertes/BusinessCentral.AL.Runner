@@ -103,6 +103,7 @@ pub fn junit_with(
                     assumptions: marks,
                     stack: String::new(),
                     disabled: false,
+                    properties: Vec::new(),
                 })
                 .collect(),
         })

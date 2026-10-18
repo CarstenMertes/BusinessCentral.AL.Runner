@@ -1123,6 +1123,7 @@ impl Session {
                 }
             }
             RtType::Enum(id) => {
+                self.note_enum(*id);
                 let members = self.engine.program.objects[*id as usize].enum_values.clone();
                 let t = text.trim();
                 match members.iter().find(|(_, n)| n.eq_ignore_ascii_case(t)) {
@@ -1178,6 +1179,7 @@ impl Session {
                 }
             }
             RtType::Enum(id) => {
+                self.note_enum(*id);
                 let t = text.trim();
                 let list = match members {
                     Some(m) => m,
@@ -1310,6 +1312,9 @@ impl Session {
                 ir::XmlNodeKind::Field => {
                     let pos = self.xp_assign_field(inst, schema, child, &ce.text())?;
                     assigned.push(pos);
+                    if !schema.children(child).is_empty() {
+                        self.xp_import_field_children(inst, schema, child, ce, &mut assigned)?;
+                    }
                 }
                 ir::XmlNodeKind::Text if schema.children(child).is_empty() => {
                     self.xp_assign_variable(inst, schema, child, ce.text())?
@@ -1338,6 +1343,46 @@ impl Session {
             self.xp_save_record(inst, schema, node, &assigned)?;
         }
         Ok(())
+    }
+
+    /// The attributes and elements below field element `node`: its own text is the field's value, the attributes and the leaf
+    /// text and field elements after it fill their variables and fields (xmlport/lt-af-xmlport/AfXmlPortAttrChildren.al:247-257,
+    /// 277-288, 306-315: `<Name Lang="de" Kind="K9">Beta</Name>`, `<Name>Gamma<Child>cc</Child></Name>`, `<Name>Delta<Lang>fr</Lang></Name>`).
+    fn xp_import_field_children(
+        &mut self,
+        inst: &Inst,
+        schema: &Schema,
+        node: usize,
+        elem: &Elem,
+        assigned: &mut Vec<usize>,
+    ) -> Result<(), Signal> {
+        // A field attribute of a field element that the document lacks: the table element's "required attribute" error is not
+        // pinned for this place (probe wanted: import a field element without its fieldattribute).
+        for a in schema.children(node) {
+            let n = schema.node(a);
+            if n.kind == ir::XmlNodeKind::FieldAttr && !elem.attrs.iter().any(|(name, _)| *name == n.xml_name) {
+                return unsupported(format!(
+                    "XmlPort import of the field element {} without its field attribute {}: the error is not pinned (probe wanted)",
+                    schema.node(node).xml_name,
+                    n.xml_name
+                ));
+            }
+        }
+        self.xp_import_attrs(inst, schema, node, elem, Some(assigned))?;
+        let mut seq = Sequence::new(schema, node);
+        for ce in elem.elements() {
+            let child = seq.accept(schema, &ce.name)?;
+            match schema.node(child).kind {
+                ir::XmlNodeKind::Field => assigned.push(self.xp_assign_field(inst, schema, child, &ce.text())?),
+                ir::XmlNodeKind::Text => self.xp_assign_variable(inst, schema, child, ce.text())?,
+                _ => {
+                    return unsupported(
+                        "XmlPort import of a node below a field element other than an attribute or a leaf element",
+                    );
+                }
+            }
+        }
+        seq.finish(schema)
     }
 
     /// Stores the buffer of table element `node`: it is inserted with its triggers and events, as
@@ -1753,8 +1798,32 @@ impl Session {
                 }
                 ir::XmlNodeKind::Field => {
                     let v = got!(self.xp_field_text(inst, schema, child));
+                    let empty = v.is_empty();
                     let mut e = Elem::new(&doc_name(schema, child));
                     e.children.push(Node::Text(v));
+                    // The attributes and elements below a field element follow its value (AfXmlPortAttrChildren.al:255, 285, 313:
+                    // `<Name Lang="en" Kind="K1">Alpha</Name>`, `<Name>Alpha<Child>c1</Child></Name>`).
+                    if !schema.children(child).is_empty() {
+                        // How an empty value is written before an element below it is not pinned.
+                        if empty
+                            && schema
+                                .children(child)
+                                .iter()
+                                .any(|&g| matches!(schema.node(g).kind, ir::XmlNodeKind::Text | ir::XmlNodeKind::Field))
+                        {
+                            return unsupported(format!(
+                                "XmlPort export of the field element {} with an empty value and an element below it (not pinned)",
+                                c.xml_name
+                            ));
+                        }
+                        let r = self.xp_export_content(inst, schema, child, &mut e);
+                        out.children.push(Node::Elem(e));
+                        r?;
+                        if Self::xp_quit(inst) {
+                            return Ok(());
+                        }
+                        continue;
+                    }
                     out.children.push(Node::Elem(e));
                 }
                 ir::XmlNodeKind::Text if schema.children(child).is_empty() => {

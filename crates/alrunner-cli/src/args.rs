@@ -27,6 +27,10 @@ pub enum Command {
     /// `alrunner impact-index build APP... [OPTIONS]` (ADR-043 step 2): run the tests of the APPs once and keep, per
     /// test, what it raised and touched, for the impact runs that follow.
     ImpactIndexBuild(Box<TestArgs>),
+    /// `alrunner impact-index check-static APP... [OPTIONS]` (ADR-043 step 5): check that static reach covers every key
+    /// each test recorded in the cached index (a key it misses is a bug in static reach), and say how much more static
+    /// reach selects.
+    ImpactIndexCheckStatic(Box<TestArgs>),
 }
 
 /// `alrunner test`.
@@ -132,8 +136,13 @@ pub struct TestArgs {
     pub bcapps_dir: Option<PathBuf>,
     /// `--impact-of APP` (ADR-043): the partner extensions whose effect on the tests of the APPs is measured. Repeatable.
     pub impact_of: Vec<PathBuf>,
-    /// `--impact MODE`: how an impact run selects tests. Only `all` exists (ADR-043 step 1).
+    /// `--impact MODE`: how an impact run selects tests: `dynamic` (default with an index), `static` (default
+    /// without one) or `all`.
     pub impact: Option<String>,
+    /// `--impact-accept FILE` (ADR-043 step 3): the changes the partner accepts, in the shape `--impact-json` writes.
+    pub impact_accept: Option<PathBuf>,
+    /// `--impact-json FILE` (ADR-043 step 3): write the per-test diff of an impact run as JSON.
+    pub impact_json: Option<PathBuf>,
     /// Not a command line option: only the test codeunits of the first N APPs are selected (the "with" side of an
     /// impact run gives the extensions as further APPs).
     pub test_apps: Option<usize>,
@@ -171,7 +180,7 @@ alrunner: run AL tests without a service tier (AL Runner v3, preview)
 USAGE
     alrunner test [OPTIONS] APP...
     alrunner serve [--protocol 2] [OPTIONS]
-    alrunner impact-index build [OPTIONS] APP...
+    alrunner impact-index build|check-static [OPTIONS] APP...
     alrunner cache clear|prune|info [--cache-dir DIR]
     alrunner --version | --help
 
@@ -291,19 +300,44 @@ IMPACT (ADR-043)
     --impact-of APP      Measure what an extension changes in the tests of the APPs (for example
                          Microsoft's test apps): run the selected tests without the extension, then
                          with it, and list per test what changed and which extension procedures ran.
-                         Repeatable. Exit 1 when a test newly fails, fails differently or is newly
-                         not run. With --disabled-tests, the tests Microsoft turns off are left out.
+                         Repeatable. With --disabled-tests, the tests Microsoft turns off are left out.
+                         --junit FILE writes the run with the extension, each test with the properties
+                         impact_class (its change class), impact_without (its outcome without the
+                         extension) and impact_accepted; --output-json FILE writes that run in AL
+                         Runner v2's shape, with the exit code of the impact run.
     --impact MODE        How the tests are chosen. `dynamic` (the default when an impact index of the
                          same APPs and options is cached): only the test codeunits that reached one of
                          the extension's impact points in the index's run, once, with the extension;
                          the outcomes without it come from the index. `all`: every selected test runs
-                         without and with the extension. With no index cached, the run warns and does
-                         what `all` does. `static` is not built yet.
+                         without and with the extension. `static`: the test codeunits whose tests can
+                         reach an impact point over the call graph, both sides; with no index cached,
+                         the run warns and does what `static` does.
+    --impact-json FILE   Write the per-test diff as JSON: `format` (1), `mode`, `extensions`, `testApps`,
+                         `counts` (per class), `accepted`, `notSelected` ({tests, codeunits}, dynamic
+                         and static selection), `exitCode`, and `tests[]` with `codeunit`, `codeunitName`,
+                         `test`, `class`, `accepted`, `without` and `with` ({outcome: pass, fail, not
+                         run or missing; flagged; message}, or null), `reached` (impact points) and
+                         `ran` ([{routine, calls}]).
+    --impact-accept FILE Changes the extension makes on purpose. FILE has the shape --impact-json
+                         writes (the file of an earlier run works as it is; delete the tests you do
+                         not accept). A test is accepted when its codeunit, name, outcome with the
+                         extension and message equal an entry whose class is a change. An accepted
+                         change is listed, marked (accepted), and does not fail the run; an entry
+                         that no longer matches is listed below the report.
+    Exit codes of an impact run: 0 when no test changed for the worse, or every such change is
+                         accepted; 1 when a test is newly failing, fails differently, is newly refused
+                         or is a selection miss and not accepted; 2 for bad options or an unreadable
+                         accept file; 6 when a side selected no test. Tests not run on a side do not
+                         give 7 or 8: they are the class not verified.
     alrunner impact-index build [OPTIONS] APP...
                          Run the tests of the APPs once (the same options as `test`, without
                          --impact-of) and keep in the cache, per test, the events it raised and the
                          tables, pages and reports it used. An impact run with the same APPs and
                          options reads it. Never built implicitly.
+    alrunner impact-index check-static [OPTIONS] APP...
+                         Check that static reach covers everything each test recorded in the cached
+                         index of the same APPs and options (exit 1 on a miss), and how much more
+                         static reach selects.
 
 ISOLATION
     --isolation MODE     `codeunit` (default): the database is rolled back when a test codeunit ends.
@@ -532,6 +566,7 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         return Ok(Command::Help);
     };
     let mut index_build = false;
+    let mut check_static = false;
     match first.as_str() {
         "--help" | "-h" | "help" => return Ok(Command::Help),
         "--version" | "-V" | "version" => return Ok(Command::Version),
@@ -549,9 +584,13 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         "test" => {}
         "impact-index" => match it.next().as_deref() {
             Some("build") => index_build = true,
+            Some("check-static") => {
+                index_build = true;
+                check_static = true;
+            }
             other => {
                 return Err(format!(
-                    "`alrunner impact-index` needs `build`, got `{}`",
+                    "`alrunner impact-index` needs `build` or `check-static`, got `{}`",
                     other.unwrap_or_default()
                 ));
             }
@@ -670,6 +709,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             "--coverage" => a.coverage = true,
             "--impact-of" => a.impact_of.push(text()?.into()),
             "--impact" => a.impact = Some(text()?),
+            "--impact-accept" => a.impact_accept = Some(text()?.into()),
+            "--impact-json" => a.impact_json = Some(text()?.into()),
             "--coverage-out" => {
                 a.coverage = true;
                 a.coverage_out = Some(text()?.into());
@@ -817,8 +858,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
         return Err("--verbose and --quiet cannot be combined".into());
     }
     if index_build {
-        if !a.impact_of.is_empty() || a.impact.is_some() {
-            return Err("alrunner impact-index build runs the tests without any extension: --impact-of and --impact do not apply".into());
+        if !a.impact_of.is_empty() || a.impact.is_some() || a.impact_accept.is_some() || a.impact_json.is_some() {
+            return Err("alrunner impact-index build runs the tests without any extension: --impact-of, --impact, --impact-accept and --impact-json do not apply".into());
         }
         if a.no_compile_cache {
             return Err("alrunner impact-index build cannot be combined with --no-compile-cache: impact runs compile the dependency apps completely from the compile cache, and so must the index's run (ADR-043 section 2.2)".into());
@@ -833,40 +874,50 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
                 return Err(format!("alrunner impact-index build cannot be combined with {flag}"));
             }
         }
-        return Ok(Command::ImpactIndexBuild(Box::new(a)));
+        return Ok(if check_static {
+            Command::ImpactIndexCheckStatic(Box::new(a))
+        } else {
+            Command::ImpactIndexBuild(Box::new(a))
+        });
     }
     impact_args(&a)?;
     Ok(Command::Test(Box::new(a)))
 }
 
-/// The checks of an impact run's options (ADR-043 step 1: `--impact all` is the only mode).
+/// The checks of an impact run's options (ADR-043).
 fn impact_args(a: &TestArgs) -> Result<(), String> {
     if a.impact_of.is_empty() {
-        if a.impact.is_some() {
-            return Err("--impact needs --impact-of APP: the extension whose impact the run measures".into());
+        for (set, flag) in [
+            (a.impact.is_some(), "--impact"),
+            (a.impact_accept.is_some(), "--impact-accept"),
+            (a.impact_json.is_some(), "--impact-json"),
+        ] {
+            if set {
+                return Err(format!(
+                    "{flag} needs --impact-of APP: the extension whose impact the run measures"
+                ));
+            }
         }
         return Ok(());
     }
     match a.impact.as_deref() {
-        None | Some("all" | "dynamic") => {}
-        Some("static") => {
-            return Err("--impact static is not built yet (ADR-043 step 5: static reach); --impact dynamic (the default) uses the impact index, --impact all runs every selected test without and with the extension".into());
-        }
+        None | Some("all" | "dynamic" | "static") => {}
         Some(other) => return Err(format!("--impact needs all, dynamic or static, got `{other}`")),
     }
     if a.no_compile_cache {
         return Err("--impact-of cannot be combined with --no-compile-cache: both sides must compile the dependency apps completely from the compile cache, never only what the tests reach (ADR-043 section 2.2)".into());
     }
+    if matches!(a.output_json, Some(None)) {
+        return Err("--impact-of needs a FILE for --output-json: the impact report goes to stdout, so the JSON document cannot (`--output-json FILE.json`; --impact-json FILE writes the diff itself)".into());
+    }
     for (set, flag) in [
         (a.explain.is_some(), "--explain"),
         (a.coverage, "--coverage, --coverage-out and --coverage-json"),
-        (a.junit.is_some(), "--junit"),
-        (a.output_json.is_some(), "--output-json"),
         (a.execute, "a scratch run"),
     ] {
         if set {
             return Err(format!(
-                "--impact-of cannot be combined with {flag} yet (ADR-043 step 3 adds the JSON diff and JUnit of an impact run)"
+                "--impact-of cannot be combined with {flag}: an impact run counts the extension's statements for its own report and runs two sides"
             ));
         }
     }
@@ -1077,6 +1128,20 @@ mod tests {
         assert!(a.coverage);
         assert_eq!(a.coverage_out, Some(PathBuf::from("c.xml")));
         assert_eq!(a.coverage_json, Some(PathBuf::from("c.json")));
+    }
+
+    #[test]
+    fn impact_runs_take_junit_and_a_json_file_but_not_the_json_document_on_stdout() {
+        assert!(p("test A --impact-of E --junit x.xml --output-json o.json --impact-json d.json").is_ok());
+        assert!(p("test A --impact-of E --impact-accept a.json").is_ok());
+        assert!(p("test A --impact-of E --output-json").is_err());
+        assert!(p("test A --impact-of E --coverage").is_err());
+        assert!(p("test A --impact-json d.json").is_err());
+        assert!(p("test A --impact-accept a.json").is_err());
+        assert!(p("impact-index build A --impact-json d.json").is_err());
+        let a = test_args("test A --impact-of E --impact-accept a.json --impact-json d.json");
+        assert_eq!(a.impact_accept, Some(PathBuf::from("a.json")));
+        assert_eq!(a.impact_json, Some(PathBuf::from("d.json")));
     }
 
     #[test]

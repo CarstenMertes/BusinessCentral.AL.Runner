@@ -72,9 +72,7 @@
 61269 P110_OutStreamThenInStream
 61270 P110_CreateTempFile_Encoding
 61270 P110_CreateTempFile_ReuseVar
-61270 P110_IsPathTemporary
 61275 Erase_EmptyName_FullErrorText
-61275 IsPathTemporary_Paths
 61290 Database_SID_Shape
 61291 AzureAdGraph_Calls_WithoutDotNetVariables
 61292 SaveAsPdf_ReportWithoutLayoutFile

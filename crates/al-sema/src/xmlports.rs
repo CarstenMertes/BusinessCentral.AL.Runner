@@ -210,6 +210,11 @@ fn visit(section: &ast::Section, parent: Option<usize>, out: &mut Layout) {
                     .push(format!("trigger {tn} of {section_name} {name} is not supported yet"));
             }
         }
+        if kind == K::Field && s.sections().next().is_some() {
+            out.run_reasons.push(format!(
+                "child nodes of the field element {name} are not supported (not pinned)"
+            ));
+        }
         let mut args = args;
         if kind == K::Table {
             if let Some(table) = crate::types::section_object_name(&s, 1) {
@@ -734,6 +739,17 @@ xmlport 50010 X
             );
         }
         assert_eq!(reasons_of(SRC.to_string()), "");
+    }
+
+    #[test]
+    fn a_field_element_with_child_nodes_refuses_the_run() {
+        // No corpus test puts an attribute inside a field element, and the nodes below one are not
+        // visited, so the port would run without them: refused when it runs (hard rule 4).
+        let why = run_reasons_of(SRC.replace(
+            "fieldelement(Number; P.No) { }",
+            "fieldelement(Number; P.No) { textattribute(Utc) { } }",
+        ));
+        assert!(why.contains("child nodes of the field element Number"), "{why}");
     }
 
     #[test]

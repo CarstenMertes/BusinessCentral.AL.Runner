@@ -2,7 +2,7 @@
   "corpus_commit": "4b6435bafae0b4d1096e8ae882445b6926f0a5df",
   "language": {
     "bc": "27-29",
-    "implemented": 1491,
+    "implemented": 1492,
     "methods": [
       {
         "bc": [
@@ -2379,7 +2379,7 @@
         "scope": "",
         "sig": "([Guid])",
         "site": "errorinfo/lt-errnotif/EnTErrorInfoProps.al:42",
-        "state": "refused",
+        "state": "implemented",
         "type": "ErrorInfo"
       },
       {
@@ -27947,7 +27947,7 @@
     ],
     "overloads": 1750,
     "pinned": 1510,
-    "refused": 230,
+    "refused": 229,
     "runtime_only": [
       "ErrorInfo.Create#3",
       "FieldRef.FieldError#2",

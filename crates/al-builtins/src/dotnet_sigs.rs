@@ -48,9 +48,10 @@ pub const AL_INNER_EXCEPTION: &str = "<inner exception of NavALException (type n
 /// unassigned variable. It is not `Value::Null`, because `Format` of an unassigned variable is not 'null'
 /// (TestDotNetValueKindsContracts.al:15).
 pub const NULL_EXCEPTION: &str = "<no last error>";
-/// What `GetType()` answers. The real class is `System.RuntimeType`; a registry type must not be named
-/// `System.Type`, which a `dotnet { }` block also declares for host objects.
-pub const RUNTIME_TYPE: &str = "System.RuntimeType";
+/// What `GetType()` of a last-error exception answers. The name must not be a real CLR type name: the host
+/// reports `System.RuntimeType` for the `System.Type` objects it holds (GetDotNetType), and a registry type of
+/// that name would take their members.
+pub const RUNTIME_TYPE: &str = "<Type of a last-error exception>";
 
 pub const GZIP_STREAM: &str = "System.IO.Compression.GZipStream";
 /// `System.IO.Compression.CompressionMode`.

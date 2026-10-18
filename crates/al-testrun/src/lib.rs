@@ -18,6 +18,7 @@ pub mod events;
 pub mod explain;
 pub mod flagged;
 pub mod host;
+pub mod impact_trace;
 pub mod isolation;
 pub mod junit;
 pub mod observe;

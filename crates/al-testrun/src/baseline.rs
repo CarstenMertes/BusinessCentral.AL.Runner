@@ -34,6 +34,8 @@ pub struct BaselineRun {
     pub total: usize,
     /// Changes the roots made to rows the restored company holds (allowed, ADR-020 amendment).
     pub restored: Vec<al_data::memory::RestoredChange>,
+    /// With [`run_traced`]: what the install code raised and touched (`impact_trace::keys`).
+    pub trace: Option<Vec<String>>,
 }
 
 impl BaselineRun {
@@ -94,6 +96,11 @@ pub fn assumption_ids(notes: &[String]) -> Vec<String> {
 
 /// Runs the baseline on a fresh session of `engine`. `None`: no dependency app has anything to run.
 pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
+    run_traced(engine, lowered, false)
+}
+
+/// [`run`], and with `trace` what the install code raised and touched (`BaselineRun::trace`, ADR-043 step 2).
+pub fn run_traced(engine: &Arc<Engine>, lowered: &Lowered, trace: bool) -> Option<BaselineRun> {
     let objs = &lowered.program.objects;
     // Install codeunits, dependencies first (the apps of the program are in dependency order).
     let mut installs: Vec<usize> = (0..objs.len())
@@ -135,6 +142,9 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
 
     let mut session = Session::with_host(engine.clone(), crate::host::system_host());
     session.set_install_scope(true);
+    if trace {
+        session.enable_impact_trace();
+    }
     // So that a root that stops can say where (fault sites are noted only on an error or a refusal).
     session.trace_faults(true);
     let mut notes = Vec::new();
@@ -199,6 +209,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
     // test codeunit starts from (publishing the app runs them once; they are not re-run for each codeunit).
     let workspace_installs = crate::runtime::run_install_codeunits(lowered, &mut session);
     let restored = session.restored_changes();
+    let trace = trace.then(|| crate::impact_trace::keys(&lowered.program, &session.take_impact_trace()));
     session.set_install_scope(false);
     let mut baseline = session.capture_baseline();
     baseline.workspace_installs = Some(workspace_installs);
@@ -217,6 +228,7 @@ pub fn run(engine: &Arc<Engine>, lowered: &Lowered) -> Option<BaselineRun> {
         ran,
         total: roots.len(),
         restored,
+        trace,
     })
 }
 

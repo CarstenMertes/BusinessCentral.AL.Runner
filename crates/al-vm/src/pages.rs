@@ -304,6 +304,7 @@ impl Session {
     fn page_event(&mut self, st: &St, event: &str, allow: Option<bool>, below: Option<bool>) -> Result<bool, Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
+        self.note_event(object, event, None);
         if !engine.events.is_subscribed(object, event) {
             return Ok(allow.unwrap_or(true));
         }
@@ -361,6 +362,7 @@ impl Session {
     pub(crate) fn page_validate_event(&mut self, st: &St, event: &str, element: &str) -> Result<(), Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
+        self.note_event(object, event, Some(element));
         if !engine.events.is_subscribed(object, event) {
             return Ok(());
         }
@@ -393,6 +395,7 @@ impl Session {
     pub(crate) fn page_action_event(&mut self, st: &St, event: &str, element: &str) -> Result<(), Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
+        self.note_event(object, event, Some(element));
         if engine.events.missing_for(object, event, Some(element)).is_some() {
             return unsupported(format!(
                 "page event {event} of action {element}: a subscriber listens, and its app is not compiled"

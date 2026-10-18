@@ -14,6 +14,7 @@ corpus_commit = "4b6435bafae0b4d1096e8ae882445b6926f0a5df"
 
 [[version]]
 major = 27
+app_runtime = "16.1"
 bc_version = "27.5"
 bc_build = "27.5.46862.56249"
 workflow_run = 39104013858
@@ -39,6 +40,7 @@ baseline = "metrics/27/passing-dotnet.txt"
 
 [[version]]
 major = 28
+app_runtime = "17.1"
 bc_version = "28.5"
 bc_build = "28.5.54151.56267"
 workflow_run = 39104013858
@@ -94,6 +96,7 @@ baseline = "metrics/28/passing-isolation-codeunit.txt"
 
 [[version]]
 major = 29
+app_runtime = "18.0"
 bc_version = "29.0"
 bc_build = "29.0.54011.56262"
 workflow_run = 39104013858

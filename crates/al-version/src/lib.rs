@@ -130,6 +130,18 @@ impl Runtime {
         }
     }
 
+    /// The newest runtime the real service tier of a BC major publishes. It is higher than `for_bc`
+    /// for the majors the corpus has probed: BC 27.5 accepts up to 16.1 and BC 28.5 up to 17.1
+    /// (corpus run 39110861115, refusals in run 39108859837); BC 29.0 accepts 18.0 (same runs).
+    /// A major not probed yet gets `for_bc`.
+    pub fn max_for_bc(major: u16) -> Runtime {
+        match major {
+            27 => Runtime { major: 16, minor: 1 },
+            28 => Runtime { major: 17, minor: 1 },
+            _ => Runtime::for_bc(major),
+        }
+    }
+
     /// The lowest runtime the runtime supports (BC 27's).
     pub fn floor() -> Runtime {
         Runtime::for_bc(MIN_BC_MAJOR)

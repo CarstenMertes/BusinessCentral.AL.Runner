@@ -1741,7 +1741,14 @@ impl Session {
                                 _ => pk[n].clone(),
                             };
                         }
-                        self.fail(&t, &ident, false)
+                        // GetLastErrorObject.al:232-255: the exception of a Get without a row.
+                        self.fail(&t, &ident, false).map_err(|s| match s {
+                            Signal::Error(mut e) if e.code == "DB:RecordNotFound" => {
+                                e.exception = al_builtins::native::ExceptionKind::RecordNotFound;
+                                Signal::Error(e)
+                            }
+                            other => other,
+                        })
                     }
                 }
             }

@@ -264,17 +264,6 @@ impl Session {
                     if opening && self.view_names_link_field(st, *i, child)? {
                         child.borrow_mut().read_backwards = true;
                     }
-                    // A part without a SubPageLink reads its rows when the host opens and not again when the host moves
-                    // (pages/lt-part-reads/PartReadsOpen.al:Next_SixParts_ReadsPerPartAfterHostMove `Plain` and `View`;
-                    // types/lt-conversions-hidden-parts-doctype/P142HiddenPartArea.al:P142_BasicAreaPartKept, P142_NoAreaPart).
-                    if !opening
-                        && page.controls[*i]
-                            .part_link
-                            .as_ref()
-                            .is_none_or(|l| l.entries.is_empty() && l.provider.is_none())
-                    {
-                        continue;
-                    }
                     self.sync_part(st, *i, child)?;
                 }
             }

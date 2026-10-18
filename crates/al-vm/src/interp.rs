@@ -1105,7 +1105,10 @@ impl Session {
         let mut flat = 0usize;
         for (d, e) in dims.iter().zip(idx) {
             let i = int(&Self::index_value(e, f)?)?;
-            if i < 1 || i > i64::from(*d) {
+            // A one-dimensional array is measured by the array the variable holds: a parameter declared `array[3]` takes the caller's
+            // array of any length and indexes within it (types/W7VarArray.al; Tests-Bank, Tests-Cash Flow and Tests-SCM-Manufacturing
+            // index a parameter within the argument's length), so the check against the length follows below.
+            if i < 1 || (dims.len() > 1 && i > i64::from(*d)) {
                 // Index out of bounds.: collections/lt-array-rows/ArrayRows.al, errors/lt-error-handling/ErTRuntimeErrors.al:179-184
                 // (zero, negative and too high), errors/lt-ms-refusals-129/P129ArrayIndex.al.
                 return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
@@ -1118,6 +1121,7 @@ impl Session {
         // A one-dimensional array passed to a parameter declared with more elements: reading or writing past the argument's
         // elements is an index error (misc/lt-probes-needed-5/PnE01Arrays.al:SmallerArray_VarParameter, SmallerArray_ByValue).
         if flat >= arr.borrow().len() && dims.len() == 1 {
+            eprintln!("DBG flat {} len {} dims {:?}", flat, arr.borrow().len(), dims);
             return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
         }
         if flat >= arr.borrow().len() {

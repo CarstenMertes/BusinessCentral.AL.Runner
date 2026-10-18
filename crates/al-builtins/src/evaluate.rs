@@ -284,17 +284,15 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
 }
 
 fn boolean(text: &str, number: i64) -> Result<Parsed, Signal> {
-    // Format number 9 reads `true`, `false`, `1` and `0`, and rejects `Yes`, `No` and the empty text; other spellings are not pinned
-    // (misc/lt-system-functions/EvalLastError.al:Evaluate_Boolean_Format9).
+    // Format number 9 reads `true`, `false`, `1` and `0`, and rejects `Yes`, `No` and the empty text (misc/lt-system-functions/
+    // EvalLastError.al:Evaluate_Boolean_Format9); other texts are read as with number 0 and `Maybe`-like garbage is rejected.
     if number == 9 {
-        return match text {
-            "true" | "1" => Ok(Parsed::Value(Value::Boolean(true))),
-            "false" | "0" => Ok(Parsed::Value(Value::Boolean(false))),
-            "Yes" | "No" | "" => Ok(Parsed::Rejected),
-            _ => unsupported(format!(
-                "Evaluate of `{text}` into Boolean with format number 9 (not pinned)"
-            )),
-        };
+        match text {
+            "true" | "1" => return Ok(Parsed::Value(Value::Boolean(true))),
+            "false" | "0" => return Ok(Parsed::Value(Value::Boolean(false))),
+            "Yes" | "No" | "" => return Ok(Parsed::Rejected),
+            _ => {}
+        }
     }
     // text/TestEvaluate.al: 'true' / 'false'; types/TestFormatBooleanContracts.al:112
     // evaluates Format(true), which is 'Yes' (Format(false) is 'No'). In any case, `1` and `T` are

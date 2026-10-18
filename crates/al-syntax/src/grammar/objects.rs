@@ -136,7 +136,16 @@ fn member(p: &mut Parser) {
 }
 
 fn section(p: &mut Parser) {
-    p.start(Section);
+    section_from(p, None);
+}
+
+/// A section; `cp` is a checkpoint before attributes that belong to it (an attributed control
+/// add-in `event`).
+pub(crate) fn section_from(p: &mut Parser, cp: Option<crate::builder::Checkpoint>) {
+    match cp {
+        Some(cp) => p.start_at(cp, Section),
+        None => p.start(Section),
+    }
     let is_event = p.at_kw("event") && matches!(p.nth(1), Ident | QuotedIdent);
     // `moveafter(A; B)` and its siblings in a layout or actions section.
     let is_move = ["moveafter", "movebefore", "movefirst", "movelast"]
@@ -294,6 +303,12 @@ mod tests {
             f("codeunit 1 A { }\ncodeunit 2 B { }"),
             "(Object codeunit 1 A (ObjectBody { })) (Object codeunit 2 B (ObjectBody { }))"
         );
+    }
+
+    #[test]
+    fn control_add_in_attributed_event() {
+        let src = "controladdin A { [Obsolete('x', '2023-06-28')] event Go(); [Obsolete('x', '2023-06-28')] procedure P(F: Text) }";
+        assert_eq!(errors(src, source_file), 0);
     }
 
     #[test]

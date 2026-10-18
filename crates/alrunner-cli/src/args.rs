@@ -102,6 +102,8 @@ pub struct TestArgs {
     pub environment: Option<al_host::Environment>,
     /// `--server-url URL` (else `$ALRUNNER_SERVER_URL`): the base address `GetUrl` answers with (ADR-042).
     pub server_url: Option<String>,
+    /// Not a command line option: the name `CompanyName()` answers when no company is restored (a lane of the recipe).
+    pub company_name: Option<String>,
     /// `--test-data [PATH]`: restore a CRONUS company from a BC backup (ADR-020).
     pub test_data: bool,
     /// `--no-test-data`: run without company data. Test data is on by default (ADR-020, owner
@@ -120,6 +122,18 @@ pub struct TestArgs {
     pub disabled_tests_dir: Option<PathBuf>,
     /// `--parity`: skip the tests Microsoft turns off instead of running and marking them.
     pub parity: bool,
+    /// `--recipe microsoft`: run the way Microsoft's CI does: one run per lane (the company each test codeunit gets),
+    /// Microsoft's disabled tests skipped. The files come from BCApps (`--bcapps DIR`, else the cache or a fetch).
+    pub recipe: bool,
+    /// `--bcapps DIR`: a BCApps checkout (or its `src/DisabledTests`, `build/projects`, `build/scripts` parts) for `--recipe`.
+    pub bcapps_dir: Option<PathBuf>,
+    /// `--impact-of APP` (ADR-043): the partner extensions whose effect on the tests of the APPs is measured. Repeatable.
+    pub impact_of: Vec<PathBuf>,
+    /// `--impact MODE`: how an impact run selects tests. Only `all` exists (ADR-043 step 1).
+    pub impact: Option<String>,
+    /// Not a command line option: only the test codeunits of the first N APPs are selected (the "with" side of an
+    /// impact run gives the extensions as further APPs).
+    pub test_apps: Option<usize>,
 }
 
 impl TestArgs {
@@ -269,6 +283,15 @@ COVERAGE
                          forward slashes (`archive.zip!/inner/path.al` inside a package). Statements are the
                          ones the lowering marks, one per AL statement.
 
+IMPACT (ADR-043)
+    --impact-of APP      Measure what an extension changes in the tests of the APPs (for example
+                         Microsoft's test apps): run the selected tests without the extension, then
+                         with it, and list per test what changed and which extension procedures ran.
+                         Repeatable. Exit 1 when a test newly fails, fails differently or is newly
+                         not run. With --disabled-tests, the tests Microsoft turns off are left out.
+    --impact all         Run every selected test on both sides. Required for now: the impact index
+                         (`dynamic`) and static selection (`static`) are not built yet.
+
 ISOLATION
     --isolation MODE     `codeunit` (default): the database is rolled back when a test codeunit ends.
                          `test` (also `function`, `method`): it is rolled back to its state after OnRun
@@ -339,6 +362,16 @@ TEST DATA
                          app's folder (every *.json below DIR is read). Those tests still run and
                          the summary and the JUnit file mark them (property disabled_by_microsoft).
     --parity             With --disabled-tests: do not run those tests.
+    --recipe microsoft   Run the way Microsoft's CI does. BCApps' settings decide the company of each test
+                         codeunit (a lane): the Legacy test apps get the RapidStart package company, a codeunit
+                         with TestType = UnitTest an empty company, IntegrationTest the Contoso setup company,
+                         the rest the Contoso company with all demo data. One run per lane, each with its own
+                         summary and, with --junit FILE, its own file (FILE.<lane>.xml). Microsoft's disabled
+                         tests are skipped and counted. The BCApps files (MIT) of the release (releases/<major>.<minor>)
+                         are fetched with git, sparse, into <cache dir>/bcapps/<major>.<minor>/ once; --no-download
+                         uses only that cache. Not combinable with the company and disabled-test options.
+    --bcapps DIR         With --recipe: use this BCApps checkout instead of the cache. $ALRUNNER_BCAPPS_URL
+                         replaces the GitHub address the fetch uses.
 
 OTHER
     --server-url URL     The base address of the web client that GetUrl(ClientType::Web) answers with
@@ -612,6 +645,8 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             }
             "--filter" | "--test" => a.filters.push(text()?),
             "--coverage" => a.coverage = true,
+            "--impact-of" => a.impact_of.push(text()?.into()),
+            "--impact" => a.impact = Some(text()?),
             "--coverage-out" => {
                 a.coverage = true;
                 a.coverage_out = Some(text()?.into());
@@ -685,6 +720,14 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
             }
             "--disabled-tests" => a.disabled_tests_dir = Some(text()?.into()),
             "--parity" => a.parity = true,
+            "--recipe" => {
+                let v = text()?;
+                if v != "microsoft" {
+                    return Err(format!("--recipe takes `microsoft`, not `{v}`"));
+                }
+                a.recipe = true;
+            }
+            "--bcapps" => a.bcapps_dir = Some(text()?.into()),
             "--test-data-normalize-company" => {
                 return Err(format!(
                     "{flag} is not available: AL Runner v2's company normalization rules are not ported (ADR-020)"
@@ -725,10 +768,73 @@ pub fn parse(args: impl IntoIterator<Item = String>) -> Result<Command, String> 
     if a.company_package && a.no_test_data {
         return Err("--company-data package cannot be combined with --no-test-data".into());
     }
+    if a.bcapps_dir.is_some() && !a.recipe {
+        return Err("--bcapps needs --recipe microsoft".into());
+    }
+    if a.recipe {
+        for (given, flag) in [
+            (a.company_package, "--company-data package / --package"),
+            (a.test_data_asked_for(), "--test-data"),
+            (a.no_test_data, "--no-test-data"),
+            (a.disabled_tests_dir.is_some(), "--disabled-tests"),
+            (a.parity, "--parity"),
+            (a.test_data_company.is_some(), "--test-data-company"),
+        ] {
+            if given {
+                return Err(format!(
+                    "--recipe microsoft decides the company and the disabled tests itself: {flag} cannot be combined with it"
+                ));
+            }
+        }
+        if a.explain.is_some() {
+            return Err("--explain cannot be combined with --recipe microsoft; explain one test with --codeunit and the lane's company options".into());
+        }
+    }
     if a.verbose && a.quiet {
         return Err("--verbose and --quiet cannot be combined".into());
     }
+    impact_args(&a)?;
     Ok(Command::Test(Box::new(a)))
+}
+
+/// The checks of an impact run's options (ADR-043 step 1: `--impact all` is the only mode).
+fn impact_args(a: &TestArgs) -> Result<(), String> {
+    if a.impact_of.is_empty() {
+        if a.impact.is_some() {
+            return Err("--impact needs --impact-of APP: the extension whose impact the run measures".into());
+        }
+        return Ok(());
+    }
+    match a.impact.as_deref() {
+        Some("all") => {}
+        Some("dynamic" | "static") => {
+            return Err(format!(
+                "--impact {} is not built yet (ADR-043 steps 2 and 5: the impact index and static reach); --impact all runs every selected test without and with the extension",
+                a.impact.as_deref().unwrap_or_default()
+            ));
+        }
+        Some(other) => return Err(format!("--impact needs all, dynamic or static, got `{other}`")),
+        None => {
+            return Err("an impact run needs --impact all for now: there is no impact index and no static selection yet (ADR-043 steps 2 and 5), so every selected test runs without and with the extension".into());
+        }
+    }
+    if a.no_compile_cache {
+        return Err("--impact-of cannot be combined with --no-compile-cache: both sides must compile the dependency apps completely from the compile cache, never only what the tests reach (ADR-043 section 2.2)".into());
+    }
+    for (set, flag) in [
+        (a.explain.is_some(), "--explain"),
+        (a.coverage, "--coverage, --coverage-out and --coverage-json"),
+        (a.junit.is_some(), "--junit"),
+        (a.output_json.is_some(), "--output-json"),
+        (a.execute, "a scratch run"),
+    ] {
+        if set {
+            return Err(format!(
+                "--impact-of cannot be combined with {flag} yet (ADR-043 step 3 adds the JSON diff and JUnit of an impact run)"
+            ));
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]
@@ -792,6 +898,26 @@ mod tests {
         assert!(!test_args("test A").rebuild_compile_cache);
         assert!(p("test A --rebuild-compile-cache --no-compile-cache").is_err());
         assert!(p("test A --rebuild-compile-cache --require-compile-cache").is_err());
+    }
+
+    #[test]
+    fn recipe_flags_parse_and_check_each_other() {
+        assert!(!test_args("test A").recipe);
+        let a = test_args("test A --recipe microsoft --bcapps /b");
+        assert!(a.recipe);
+        assert_eq!(a.bcapps_dir.as_deref(), Some(std::path::Path::new("/b")));
+        assert!(p("test A --recipe other").unwrap_err().contains("microsoft"));
+        assert!(p("test A --bcapps /b").unwrap_err().contains("--recipe"));
+        for flag in [
+            "--company-data package",
+            "--no-test-data",
+            "--disabled-tests d",
+            "--test-data-company X",
+        ] {
+            let e = p(&format!("test A --recipe microsoft {flag}")).unwrap_err();
+            assert!(e.contains("decides the company"), "{flag}: {e}");
+        }
+        assert!(p("test A --recipe microsoft --codeunit 5 --junit x.xml").is_ok());
     }
 
     #[test]

@@ -2023,6 +2023,35 @@ impl Session {
                 let expr = match parsed {
                     Ok(e) => e,
                     // The German error of a date no Date filter reads (P143Date_DePlain.al, _DeRanges.al, _DeFormulas.al).
+                    Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE) && self.global_language == 1033 => {
+                        // P81DateFilters.al:SetFilter_Date_InvalidTexts.
+                        let bad = &e[al_builtins::filter::INVALID_DATE.len()..];
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. The format of the Date '{bad}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'.",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
+                    Err(e) if e.starts_with(al_builtins::filter::FILTER_SYNTAX) && self.global_language == 1033 => {
+                        let inner = &e[al_builtins::filter::FILTER_SYNTAX.len()..];
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: format!(
+                                "The filter \"{}\" is not valid for the {} field on the {} table. {inner}",
+                                text.trim(),
+                                self.field_caption(&t, pos),
+                                self.caption(&t)
+                            ),
+                            code: "Filter:CSide".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE) => {
                         let bad = &e[al_builtins::filter::INVALID_DATE.len()..];
                         return Err(Signal::Error(Box::new(AlError {

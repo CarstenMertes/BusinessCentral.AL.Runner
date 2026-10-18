@@ -105,6 +105,10 @@ impl Session {
             FilterExpr::Range(None, Some(b)) => format!("..{}", self.filter_value_with(b, iso)?),
             FilterExpr::Range(None, None) => return unsupported("an unbounded range filter"),
             FilterExpr::Eq(v) => self.filter_value_with(v, iso)?,
+            FilterExpr::RangeSame(v) => {
+                let t = self.filter_value_with(v, iso)?;
+                format!("{t}..{t}")
+            }
             FilterExpr::Ne(v) => format!("<>{}", self.filter_value_with(v, iso)?),
             FilterExpr::Lt(v) => format!("<{}", self.filter_value_with(v, iso)?),
             FilterExpr::Le(v) => format!("<={}", self.filter_value_with(v, iso)?),
@@ -145,6 +149,7 @@ impl Session {
         match e {
             FilterExpr::Range(a, b) => FilterExpr::Range(a.as_ref().map(map), b.as_ref().map(map)),
             FilterExpr::Eq(v) => FilterExpr::Eq(map(v)),
+            FilterExpr::RangeSame(v) => FilterExpr::RangeSame(map(v)),
             FilterExpr::Ne(v) => FilterExpr::Ne(map(v)),
             FilterExpr::Lt(v) => FilterExpr::Lt(map(v)),
             FilterExpr::Le(v) => FilterExpr::Le(map(v)),
@@ -520,6 +525,7 @@ fn ordinals(e: &FilterExpr) -> FilterExpr {
     match e {
         FilterExpr::Range(a, b) => FilterExpr::Range(a.as_ref().map(v), b.as_ref().map(v)),
         FilterExpr::Eq(x) => FilterExpr::Eq(v(x)),
+        FilterExpr::RangeSame(x) => FilterExpr::RangeSame(v(x)),
         FilterExpr::Ne(x) => FilterExpr::Ne(v(x)),
         FilterExpr::Lt(x) => FilterExpr::Lt(v(x)),
         FilterExpr::Le(x) => FilterExpr::Le(v(x)),

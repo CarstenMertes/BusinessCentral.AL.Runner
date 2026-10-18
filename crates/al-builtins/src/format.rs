@@ -112,6 +112,9 @@ pub fn try_format(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) ->
 
 /// `Format(Value, Length, Standard)` with BC's own errors kept apart from refusals.
 pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) -> Result<String, FormatFail> {
+    if let Value::Unknown(why) = v {
+        return Err(FormatFail::Unsupported(why.to_string()));
+    }
     if let Some(region) = ctx.region().filter(|r| !r.is_empty()) {
         return format_in_region(v, length, standard, &region, ctx);
     }

@@ -970,3 +970,16 @@ Pinned (types/lt-filter-enum-relation-duration-guid/D_Duration.al:211-218, 349-3
 | `Dec := D1 / 7` straight into a Decimal (assumed the exact quotient, 18 significant digits, no error) | `D1 := 90000; Dec := D1 / 7; Format(Dec)` |
 | `Duration / BigInteger` (assumed like Integer) | `D1 / BigIntVar` into a Decimal and into a Duration |
 | A Decimal beyond the Int64 range into a Duration (refused, no error text pinned) | `D := 1e19` |
+
+## Unknown columns of platform rows (2026-10-18)
+
+A provider can leave one column of a row unknown (`Value::Unknown`) instead of giving it a default. Every read of it is
+refused naming the table and the field (a static or FieldRef read, Format, a filter or an order on it, TransferFields, a
+Sum or a query column over it, a filter or an order on it in a temporary table the row was copied into, a page control or an XmlPort element). The rest of the row, and
+FindSet and Count over the rows, run as usual. Writing the field replaces the unknown value.
+
+| Table | Column left unknown | Probe wanted | Where |
+|---|---|---|---|
+| Report Layout List (BC 29) | "Layout Subtype" (19), HeaderFooterPart (20) and ThemePart (21) of a layout that declares no `Subtype` (report/lt-y-report-props/YReportParts.al pins only layouts that declare one) | Read the three columns through a RecordRef for a layout with no Subtype, for a report with and without DefaultHeaderFooterPart | `platform/reports.rs` `layout_row` |
+| Field | "Type Name" (9) of a field that is not a Text field (record/PZFieldObsoleteRows.al:47 pins `Text30` only) | "Type Name" of an Integer, Code[20], Decimal, Option, Enum, Boolean, Date, Blob and Media field | `platform/fields.rs` `field_row` |
+| Feature Key | Description (3), "Learn More Link" (4) and "Description In English" (10) of every row | The three columns of two feature keys on 27.5, 28.5 and 29.0 | `platform/host_tables.rs` `feature_key_rows` |

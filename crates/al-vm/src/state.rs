@@ -104,6 +104,11 @@ pub(crate) struct CoverageState {
     pub(crate) coverage_counts: Option<(Vec<u32>, Vec<u32>)>,
     /// What recording noted (`platform/coverage.rs`).
     pub(crate) recorder: platform::coverage::Recorder,
+    /// `alrunner impact-index build`: what the code raised and touched (`impact.rs`). `None` when off. A cell, so
+    /// that the readers that take `&self` (a report's schema) can note too.
+    pub(crate) impact: std::cell::RefCell<Option<crate::impact::Touches>>,
+    /// `impact` is on: the one branch a note costs when it is off.
+    pub(crate) impact_on: bool,
 }
 
 /// The report being run: language, trigger flow, dataset.

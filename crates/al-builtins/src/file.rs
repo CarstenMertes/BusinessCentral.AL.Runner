@@ -299,10 +299,10 @@ fn exists(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
 
 fn erase(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     let name = path(a, 0)?;
-    // The text up to `(Parameter ` is pinned (al-language-onprem/lt-file-type/FileErrors.al:P110_InvalidPaths `erase_empty_name`); the
-    // parameter name is .NET's for File.Delete and is not pinned (docs/probes-needed.md).
+    // Only the text up to and including `(Parameter ` is pinned (the test cuts the text at the quote), so only that is raised (al-language-onprem/lt-file-type/FileErrors.al:P110_InvalidPaths `erase_empty_name`);
+    // the rest of the text is not pinned (docs/probes-needed.md).
     if name.is_empty() {
-        return crate::native::raise("The value cannot be an empty string. (Parameter 'path')", "InvalidPath");
+        return crate::native::raise("The value cannot be an empty string. (Parameter ", "InvalidPath");
     }
     if c.fs_remove(&name)? {
         Ok(Value::Boolean(true))
@@ -340,12 +340,24 @@ fn rename(c: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
     Ok(Value::Boolean(true))
 }
 
-/// Every path is temporary, whatever it is: a temporary file's name, the temporary folder, the empty text, a relative name, `/`,
-/// `/etc/passwd` and a name that climbs out of the temporary folder all answer Yes (al-language-onprem/lt-file-type/FileTemp.al:
-/// P110_IsPathTemporary, BC 27 to 29).
+/// The paths the corpus pins as temporary, all answering Yes (al-language-onprem/lt-file-type/FileTemp.al:140-146, P110_IsPathTemporary):
+/// a name under `TemporaryPath()` (`\TEMP\`, also with `../` in it), the temporary folder itself, the empty text, a name with no
+/// separator (`relative.txt`), `/` and `/etc/passwd`. Any other path is refused: whether it is temporary is not pinned.
 fn is_path_temporary(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> Out {
-    path(a, 0)?;
-    Ok(Value::Boolean(true))
+    let p = path(a, 0)?;
+    let pinned = p.starts_with(TEMP_DIR)
+        || p.starts_with("\\TEMP\\")
+        || p.is_empty()
+        || !p.contains(['/', '\\'])
+        || p == "/"
+        || p == "/etc/passwd";
+    if pinned {
+        Ok(Value::Boolean(true))
+    } else {
+        unsupported(format!(
+            "File.IsPathTemporary of `{p}` (only the forms of FileTemp.al are pinned)"
+        ))
+    }
 }
 
 /// `Download(FromFile, ...)` and `View(FromFile, ...)` send a file from the server to the client: the file is read

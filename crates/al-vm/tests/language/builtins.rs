@@ -98,17 +98,17 @@ fn enum_from_integer_takes_a_variant_that_holds_an_enum() {
 
 #[test]
 fn enum_from_integer_takes_a_variant_that_holds_a_whole_decimal_or_a_number_text() {
-    let v = "S: Enum \"ALT Status\"; V: Variant;";
+    let v = "S: Enum \"ALT Status\"; V: Variant; T: Text;";
     assert_eq!(
         int_of(v, "V := 5.0; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").unwrap(),
         5
     );
     assert_eq!(
-        int_of(v, "V := '5'; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").unwrap(),
+        int_of(v, "T := '5'; V := T; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").unwrap(),
         5
     );
     assert!(int_of(v, "V := 1.5; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").is_err());
-    assert!(int_of(v, "V := 'abc'; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").is_err());
+    assert!(int_of(v, "T := 'abc'; V := T; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").is_err());
 }
 
 // foreach over Ordinals into an Enum variable (foreach-integer-into-enum, an assumption): the variable holds the enum value.

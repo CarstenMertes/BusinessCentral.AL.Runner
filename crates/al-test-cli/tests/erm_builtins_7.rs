@@ -98,16 +98,21 @@ fn test_field_of_a_blob_written_through_a_stream_passes() {
     assert_eq!(o[0].1, Outcome::Pass, "{o:?}");
 }
 
-// Still refused: a Blob with stored content read without CalcFields (only the CalcFields case is assumed;
-// see docs/probes-needed.md, TestField of a Blob field).
+// A Blob with stored content read by Get without CalcFields passes TestField
+// (record/lt-testfield-blob-decimal/TestFieldBlobDecimal.al:TestField_Blob_StoredContent `after_get_without_calcfields`).
 #[test]
-fn test_field_of_a_stored_blob_not_fetched_with_calcfields_is_refused_with_its_reason() {
-    let why = why_not_run(
+fn test_field_of_a_stored_blob_not_fetched_with_calcfields_passes() {
+    let (l, oi) = compile(
         "[Test] procedure T6() var R: Record \"B7 Row\"; R2: Record \"B7 Row\"; Out: OutStream; begin \
          R.\"No.\" := 'A'; R.Pic.CreateOutStream(Out); Out.WriteText('x'); R.Insert(); \
          R2.Get('A'); R2.TestField(Pic); end;",
     );
-    for w in ["TestField", "Blob", "CalcFields", "not pinned"] {
-        assert!(why.contains(w), "`{w}` missing from: {why}");
-    }
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
+    let engine = Engine::new(l.program.clone(), blocked);
+    let o = run_codeunit(&engine, &l, oi);
+    assert!(matches!(&o[0].1, Outcome::Pass), "{:?}", o[0].1);
 }

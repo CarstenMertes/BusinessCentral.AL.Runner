@@ -322,6 +322,13 @@ impl Object {
             .find(|(k, _)| k == "extends")
             .and_then(|(_, n)| n.into_iter().next())
     }
+    /// The object a `pagecustomization` customizes, as name parts.
+    pub fn customizes_parts(&self) -> Option<Vec<String>> {
+        self.clause_parts()
+            .into_iter()
+            .find(|(k, _)| k == "customizes")
+            .and_then(|(_, n)| n.into_iter().next())
+    }
     pub fn implements_parts(&self) -> Vec<Vec<String>> {
         self.clause_parts()
             .into_iter()

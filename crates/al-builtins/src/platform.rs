@@ -333,7 +333,7 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Report Layout List: handlers/TestSourceReportLayoutFlags.al, TestPrecompiledReportLayouts.al; Caption (3) and Description (10): record/TestEventSubscriptionColumnsReportLayoutListContracts.al.
     (2_000_000_234, &[1, 2, 3, 7, 10, 11, 16, 17]),
     // Report Metadata, Report Data Items: handlers/TestReportMetadataColumns.al.
-    (2_000_000_139, &[1, 4, 9, 17, 18]),
+    (2_000_000_139, &[1, 4, 9, 17, 18, 30, 31]),
     (2_000_000_203, &[1, 2, 3, 4, 5, 6, 7, 8]),
     // XmlPort Metadata: xmlport/TestXmlPortMetadataVirtualTable.al, and Encoding (7) from
     // xmlport/TestPlatformMetadataDefaultsContracts.al:93. The Inherent* columns are not read.

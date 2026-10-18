@@ -64,6 +64,8 @@ pub enum PlatformPublisher {
     CaptionClass,
     /// `Reporting Triggers`: `CustomDocumentMergerEx`, raised when a report renders with a custom layout.
     ReportingTriggers,
+    /// `Filter Helper Triggers`: `MakeDateFilter`, raised when a Date filter text has a piece that does not read.
+    FilterHelperTriggers,
 }
 
 /// The events of a page the test client raises (`al-vm/src/pages.rs`). A subscriber to any other
@@ -397,6 +399,9 @@ pub struct ReportExtAdd {
 pub struct ReportExtModify {
     /// Index of the base item.
     pub item: usize,
+    /// `RequestFilterFields` as written, from the block's property (report/lt-y-report-props/YReportExt.al:231).
+    #[serde(default)]
+    pub request_filter_fields: Option<String>,
     /// `OnBeforeAfterGetRecord` and `OnAfterAfterGetRecord` as routine indices.
     pub before: Option<usize>,
     pub after: Option<usize>,

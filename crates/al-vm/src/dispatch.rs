@@ -344,6 +344,15 @@ impl Session {
                     continue;
                 }
             }
+            if self.events.skip_dependency_subscribers
+                && engine
+                    .program
+                    .apps
+                    .get(engine.program.objects[s.object].app as usize)
+                    .is_some_and(|a| a.dependency)
+            {
+                continue;
+            }
             if s.manual {
                 for inst in self.bound_instances(s.object) {
                     targets.push((s.clone(), inst));

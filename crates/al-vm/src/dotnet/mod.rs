@@ -289,6 +289,22 @@ impl Session {
             Ok(r) => self.apply_reply(r, &book, &places, &shown, f),
             Err(DotNetFailure::Refused(why)) => unsupported(format!("DotNet {shown}: {why}")),
             Err(DotNetFailure::Exception(e)) => {
+                // Pinned for the MailAddress constructor only, exactly these two exception types:
+                // corpus tests/al-language-onprem-dotnet/lt-af-dotnet/AfMailAddress.al:77 (Format),
+                // :88 and :99 (Argument, Format). Any other exception stays a refusal (not pinned).
+                if kind == MemberKind::Construct && clr_type.eq_ignore_ascii_case("System.Net.Mail.MailAddress") {
+                    let code = match e.clr_type.as_str() {
+                        "System.FormatException" => Some("DotNetInvoke:Format"),
+                        "System.ArgumentException" => Some("DotNetInvoke:Argument"),
+                        _ => None,
+                    };
+                    if let Some(code) = code {
+                        return al_builtins::native::raise(
+                            format!("A call to {clr_type} failed with this message: {}", e.message),
+                            code,
+                        );
+                    }
+                }
                 let inner: String = e.inner.iter().map(|(t, m)| format!(" <- {t}: {m}")).collect();
                 unsupported(format!(
                     "DotNet {shown} raised the .NET exception {}: {}{inner}; the text AL would see is not pinned (ADR-014 section 7)",

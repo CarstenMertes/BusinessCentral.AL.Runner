@@ -12,7 +12,7 @@ The catalog of each area is what the AL language server offers in probe files (`
 |---|---:|---:|---:|---:|---:|---:|---:|---:|
 | attributes | 42 | 25 | 59.5% | 26 | 61.9% | 0 | 16 | 5 |
 | events | 23 | 16 | 69.6% | 22 | 95.7% | 0 | 1 | 0 |
-| properties | 720 | 494 | 68.6% | 518 | 71.9% | 39 | 163 | 78 |
+| properties | 720 | 494 | 68.6% | 526 | 73.1% | 34 | 160 | 78 |
 | syntax | 16 | 16 | 100.0% | 16 | 100.0% | 0 | 0 | 0 |
 | triggers | 128 | 112 | 87.5% | 116 | 90.6% | 3 | 9 | 0 |
 
@@ -86,18 +86,18 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 | QueryColumn | 6 | 3 | 50.0% | 6 | 100.0% | 0 | 0 | 0 |
 | QueryDataItem | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | QueryFilter | 4 | 1 | 25.0% | 4 | 100.0% | 0 | 0 | 0 |
-| Report | 36 | 25 | 69.4% | 23 | 63.9% | 13 | 0 | 7 |
-| ReportColumn | 11 | 10 | 90.9% | 10 | 90.9% | 0 | 1 | 0 |
+| Report | 36 | 25 | 69.4% | 26 | 72.2% | 10 | 0 | 7 |
+| ReportColumn | 11 | 10 | 90.9% | 11 | 100.0% | 0 | 0 | 0 |
 | ReportDataItem | 13 | 10 | 76.9% | 13 | 100.0% | 0 | 0 | 0 |
 | ReportExtension | 3 | 3 | 100.0% | 3 | 100.0% | 0 | 0 | 0 |
 | ReportExtensionModify | 2 | 2 | 100.0% | 2 | 100.0% | 0 | 0 | 0 |
-| ReportLayout | 12 | 9 | 75.0% | 9 | 75.0% | 0 | 3 | 0 |
+| ReportLayout | 12 | 9 | 75.0% | 11 | 91.7% | 0 | 1 | 0 |
 | RequestPage | 22 | 17 | 77.3% | 20 | 90.9% | 2 | 0 | 1 |
 | Table | 24 | 17 | 70.8% | 17 | 70.8% | 0 | 7 | 3 |
 | TableExtension | 4 | 0 | 0.0% | 3 | 75.0% | 0 | 1 | 0 |
 | XmlPort | 26 | 22 | 84.6% | 20 | 76.9% | 6 | 0 | 4 |
-| XmlPortFieldAttribute | 7 | 5 | 71.4% | 3 | 42.9% | 4 | 0 | 1 |
-| XmlPortFieldElement | 8 | 8 | 100.0% | 4 | 50.0% | 4 | 0 | 0 |
+| XmlPortFieldAttribute | 7 | 5 | 71.4% | 4 | 57.1% | 3 | 0 | 1 |
+| XmlPortFieldElement | 8 | 8 | 100.0% | 5 | 62.5% | 3 | 0 | 0 |
 | XmlPortTableElement | 18 | 18 | 100.0% | 15 | 83.3% | 3 | 0 | 0 |
 | XmlPortTextAttribute | 6 | 4 | 66.7% | 4 | 66.7% | 2 | 0 | 2 |
 | XmlPortTextElement | 7 | 7 | 100.0% | 5 | 71.4% | 2 | 0 | 0 |
@@ -140,10 +140,10 @@ Left out: 293 presentation-only properties (Caption, ToolTip, ApplicationArea, .
 - **Query** (11 of 24): `ContextSensitiveHelpPage` implemented; `EntityCaption` implemented; `EntityCaptionML` refused; `EntitySetCaption` implemented; `EntitySetCaptionML` refused; `HelpLink` refused; `InherentEntitlements` implemented, MS 6; `InherentPermissions` implemented, MS 6; `ObsoleteReason` implemented, MS 1; `ObsoleteState` implemented, MS 1; `ObsoleteTag` implemented, MS 1
 - **QueryColumn** (3 of 6): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
 - **QueryFilter** (3 of 4): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
-- **Report** (11 of 36): `DefaultHeaderFooterPart` refused, BC 29; `DefaultThemePart` refused, BC 29; `EnableExternalAssemblies` refused; `ExcelLayout` implemented; `InherentEntitlements` implemented, MS 1; `InherentPermissions` implemented, MS 1; `ObsoleteReason` implemented, MS 18; `ObsoleteState` implemented, MS 18; `ObsoleteTag` implemented, MS 18; `RDLCLayout` implemented, MS 338; `WordLayout` implemented, MS 2
+- **Report** (11 of 36): `DefaultHeaderFooterPart` implemented, BC 29; `DefaultThemePart` implemented, BC 29; `EnableExternalAssemblies` implemented; `ExcelLayout` implemented; `InherentEntitlements` implemented, MS 1; `InherentPermissions` implemented, MS 1; `ObsoleteReason` implemented, MS 18; `ObsoleteState` implemented, MS 18; `ObsoleteTag` implemented, MS 18; `RDLCLayout` implemented, MS 338; `WordLayout` implemented, MS 2
 - **ReportColumn** (1 of 11): `OptionCaptionML` implemented
 - **ReportDataItem** (3 of 13): `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented
-- **ReportLayout** (3 of 12): `HeaderFooterPart` unknown, BC 29; `Subtype` implemented, BC 29; `ThemePart` unknown, BC 29
+- **ReportLayout** (3 of 12): `HeaderFooterPart` implemented, BC 29; `Subtype` implemented, BC 29; `ThemePart` implemented, BC 29
 - **RequestPage** (5 of 22): `ContextSensitiveHelpPage` implemented; `ObsoleteReason` implemented; `ObsoleteState` implemented; `ObsoleteTag` implemented; `Permissions` implemented, MS 1
 - **Table** (7 of 24): `AllowInCustomizations` unknown; `ColumnStoreIndex` unknown; `ExternalSchema` unknown, MS 2; `LinkedInTransaction` unknown; `LinkedObject` unknown; `MovedFrom` unknown, MS 10; `MovedTo` unknown, MS 8
 - **TableExtension** (4 of 4): `AllowInCustomizations` unknown; `DataCaptionFields` implemented; `DrillDownPageId` implemented; `LookupPageId` implemented
@@ -499,6 +499,8 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `CustomDocumentMergerEx` | 0 | yes | 0 |
 | codeunit | `GetDatabaseTableTriggerSetup` | 0 | yes | 0 |
 | codeunit | `GetGlobalTableTriggerMask` | 0 | yes | 0 |
+| codeunit | `GetRoleCenterBannerPartID` | 0 | yes | 0 |
+| codeunit | `MakeDateFilter` | 0 | yes | 0 |
 | codeunit | `OnDatabaseDelete` | 0 | yes | 0 |
 | codeunit | `OnDatabaseInsert` | 0 | yes | 0 |
 | codeunit | `OnDatabaseModify` | 0 | yes | 0 |
@@ -536,13 +538,11 @@ Presentation-only properties (Caption, ToolTip, ApplicationArea, ... ) are left 
 | codeunit | `GetPrivacyNoticeApprovalState` | 0 | no | 0 |
 | codeunit | `GetProfilerSchedulesPageId` | 0 | no | 0 |
 | codeunit | `GetReleaseVersion` | 0 | no | 0 |
-| codeunit | `GetRoleCenterBannerPartID` | 0 | no | 0 |
 | codeunit | `GetSupportInformation` | 0 | no | 0 |
 | codeunit | `GetSystemIndicator` | 0 | no | 0 |
 | codeunit | `HasCustomLayout` | 0 | no | 0 |
 | codeunit | `InvokeExtensionInstallation` | 0 | no | 0 |
 | codeunit | `MakeCodeFilter` | 0 | no | 0 |
-| codeunit | `MakeDateFilter` | 0 | no | 0 |
 | codeunit | `MakeDateTimeFilter` | 0 | no | 0 |
 | codeunit | `MakeIntFilter` | 0 | no | 0 |
 | codeunit | `MakeTextFilter` | 0 | no | 0 |

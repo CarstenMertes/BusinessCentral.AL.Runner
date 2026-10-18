@@ -714,9 +714,13 @@ fn run_dynamic(a: &TestArgs, index: crate::impact_index::Index, path: &std::path
     );
     let index = Arc::new(index);
     let decision: Arc<Mutex<Option<Decision>>> = Arc::new(Mutex::new(None));
-    let (ix, dec) = (index.clone(), decision.clone());
+    let refused: Arc<Mutex<Vec<String>>> = Arc::default();
+    let (ix, dec, refused_out, tests) = (index.clone(), decision.clone(), refused.clone(), a.apps.len());
     let narrow = al_testrun::runtime::Narrow(Arc::new(move |input: &NarrowInput| {
         let d = decide(&ix, input);
+        if !matches!(d.plan, Plan::Stale(_)) {
+            *refused_out.lock().expect("the refused tests") = refused_static(&ix, input, tests);
+        }
         let only = match &d.plan {
             Plan::Select(units) => {
                 println!("selected {} of {} test codeunits", units.len(), d.would.len());
@@ -808,7 +812,73 @@ fn run_dynamic(a: &TestArgs, index: crate::impact_index::Index, path: &std::path
     ) {
         println!("{line}");
     }
+    let refused = std::mem::take(&mut *refused.lock().expect("the refused tests"));
+    let limit = if a.verbose { usize::MAX } else { 31 };
+    for line in refused.iter().take(limit) {
+        println!("{line}");
+    }
+    if refused.len() > limit {
+        println!("  ... {} more (--verbose lists them)", refused.len() - limit);
+    }
     Ok(verdict(&rows))
+}
+
+/// The report lines for the tests the index's run refused (ADR-043 section 2.3): the index holds nothing for them,
+/// so dynamic selection cannot select them; static reach says whether they reach an impact point. Empty when the
+/// index's run refused none.
+fn refused_static(index: &crate::impact_index::Index, input: &NarrowInput, tests: usize) -> Vec<String> {
+    let refused: std::collections::HashSet<(usize, u32, String)> = index
+        .tests
+        .iter()
+        .filter(|t| matches!(t.outcome, Outcome::NotRun(_)))
+        .map(|t| (t.app, t.codeunit, t.test.to_lowercase()))
+        .collect();
+    if refused.is_empty() {
+        return Vec::new();
+    }
+    // The extension: every app of the compile the index's run did not have (as `decide` has it).
+    let known: std::collections::HashSet<&str> = index.apps.iter().map(|(id, _, _)| id.as_str()).collect();
+    let ext: Vec<bool> = input
+        .program
+        .apps
+        .iter()
+        .map(|p| !known.contains(p.id.as_str()))
+        .collect();
+    let d = decide_static(
+        input,
+        tests,
+        &ext,
+        |u, n| refused.contains(&(u.0, u.1, n.to_string())),
+        true,
+    );
+    let (mut reaches, mut cannot, mut lines) = (0, 0, Vec::new());
+    for t in index.tests.iter().filter(|t| matches!(t.outcome, Outcome::NotRun(_))) {
+        let Some(texts) = d.reached.get(&(t.app, t.codeunit, t.test.to_lowercase())) else {
+            continue;
+        };
+        let name = format!("{} {}.{}", t.codeunit, t.codeunit_name, t.test);
+        if texts.iter().any(|x| !x.contains(CANNOT_RULE_OUT)) {
+            reaches += 1;
+        } else {
+            cannot += 1;
+        }
+        for x in texts {
+            lines.push(match x.split_once(CANNOT_RULE_OUT) {
+                Some((what, via)) => format!("  {name}: static: cannot rule out {what} ({via}"),
+                None => format!("  {name}: static: reaches {x}"),
+            });
+        }
+    }
+    let mut out = vec![
+        String::new(),
+        format!(
+            "refused in the index's run ({}): the index holds nothing for them; static reach: {reaches} reaches an impact point, {cannot} cannot rule one out, {} reaches none",
+            refused.len(),
+            refused.len() - reaches - cannot
+        ),
+    ];
+    out.extend(lines);
+    out
 }
 
 /// What static selection decided once the "with" side was compiled (ADR-043 section 2.3).
@@ -899,6 +969,7 @@ fn decide_static(
     tests: usize,
     is_ext_app: &[bool],
     keep: impl Fn(&(usize, u32), &str) -> bool,
+    quiet: bool,
 ) -> StaticDecision {
     use al_testrun::impact_static::{Graph, Install, Verdict, baseline_roots, select};
     use al_testrun::impact_trace::impact_points;
@@ -950,24 +1021,26 @@ fn decide_static(
         selected.insert(*unit);
         reached.insert((unit.0, unit.1, name.to_lowercase()), texts);
     }
-    println!(
-        "static selection: {} impact point(s) of the extension (static graph of {} nodes, {:.1} s)",
-        points.len(),
-        graph.len(),
-        started.elapsed().as_secs_f64()
-    );
-    for ((p, (r, c)), why) in points.iter().zip(&per_point).zip(&sel.everything) {
-        match why {
-            Some(_) => println!(
-                "  {}: reached by {r} of {} tests, {c} more cannot rule it out; static reach cannot select for it",
-                p.what,
-                routines.len()
-            ),
-            None => println!(
-                "  {}: reached by {r} of {} tests, {c} more cannot rule it out",
-                p.what,
-                routines.len()
-            ),
+    if !quiet {
+        println!(
+            "static selection: {} impact point(s) of the extension (static graph of {} nodes, {:.1} s)",
+            points.len(),
+            graph.len(),
+            started.elapsed().as_secs_f64()
+        );
+        for ((p, (r, c)), why) in points.iter().zip(&per_point).zip(&sel.everything) {
+            match why {
+                Some(_) => println!(
+                    "  {}: reached by {r} of {} tests, {c} more cannot rule it out; static reach cannot select for it",
+                    p.what,
+                    routines.len()
+                ),
+                None => println!(
+                    "  {}: reached by {r} of {} tests, {c} more cannot rule it out",
+                    p.what,
+                    routines.len()
+                ),
+            }
         }
     }
     let reasons: Vec<String> = sel.everything.iter().flatten().cloned().collect();
@@ -999,7 +1072,7 @@ fn run_static(a: &TestArgs, no_index: bool) -> Result<u8, String> {
     let dec = decision.clone();
     let narrow = al_testrun::runtime::Narrow(Arc::new(move |input: &NarrowInput| {
         let ext = extension_apps(input, tests, extensions);
-        let d = decide_static(input, tests, &ext, |_, _| true);
+        let d = decide_static(input, tests, &ext, |_, _| true, false);
         let mut by_unit: HashMap<(usize, u32), usize> = HashMap::new();
         for (u, _, _) in test_routines(input, tests) {
             *by_unit.entry(u).or_default() += 1;

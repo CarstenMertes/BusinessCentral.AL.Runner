@@ -287,6 +287,28 @@ fn with_an_index_the_run_selects_the_codeunits_that_reach_the_extension_and_runs
 }
 
 #[test]
+fn tests_the_index_run_refused_get_the_static_verdict() {
+    let (tests, ext, lib) = (fixture("refused-tests"), fixture("ext"), fixture("lib"));
+    let cache = tempfile::tempdir().unwrap();
+    let o = alrunner_in(cache.path(), &["impact-index", "build", &tests, "--dep", &lib]);
+    assert_eq!(code(&o), 0, "{}", text(&o));
+    let o = alrunner_in(cache.path(), &["test", &tests, "--impact-of", &ext, "--dep", &lib]);
+    let t = text(&o);
+    // Neither test recorded anything in the index's run: dynamic selection leaves their codeunit out.
+    assert!(t.contains("selected 0 of 1 test codeunits"), "{t}");
+    let refused = section(&t, "refused in the index's run");
+    assert!(
+        refused.contains("refused in the index's run (2): the index holds nothing for them; static reach: 1 reaches an impact point, 0 cannot rule one out, 1 reaches none"),
+        "{t}"
+    );
+    assert!(
+        refused.contains("50520 Imp Refused Tests.PostsAfterARefusal: static: reaches subscriber"),
+        "{t}"
+    );
+    assert!(!refused.contains("RefusesOnly"), "{t}");
+}
+
+#[test]
 fn static_reach_covers_what_the_index_recorded() {
     let (tests, lib) = (fixture("tests"), fixture("lib"));
     let cache = tempfile::tempdir().unwrap();

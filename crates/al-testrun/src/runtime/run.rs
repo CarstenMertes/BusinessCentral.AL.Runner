@@ -237,11 +237,19 @@ pub(crate) fn run_codeunit_core(
         }
     };
     session.in_test_codeunit = true;
+    // What BC's AL test runner does to the permissions of each test (ADR-027 decision 3). A scratch run has no runner.
+    let permissions = if execute {
+        RunnerPermissions::default()
+    } else {
+        RunnerPermissions::of(lowered)
+    };
     if let Some(on_run) = (0..obj.routines.len())
         .find(|&r| obj.routines[r].is_trigger && obj.routines[r].name.eq_ignore_ascii_case("OnRun"))
         .filter(|_| !execute)
     {
-        if let Some(reason) = blocked_reason(lowered, object, on_run) {
+        if let Some(reason) =
+            blocked_reason(lowered, object, on_run).or_else(|| permissions.lowered(lowered, object, on_run))
+        {
             return all(Outcome::NotRun(format!("OnRun: {reason}")));
         }
         match session.call(object, on_run, instance.clone(), Vec::new()) {
@@ -293,6 +301,8 @@ pub(crate) fn run_codeunit_core(
         let mut began = false;
         let outcome = if let Err(reason) = &handlers {
             Outcome::NotRun(reason.clone())
+        } else if let Some(reason) = permissions.lowered(lowered, object, r) {
+            Outcome::NotRun(reason)
         } else if let Some(b) = blocked_site(lowered, object, r) {
             refused_in = Some((b.object, b.routine));
             Outcome::NotRun(b.text)

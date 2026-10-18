@@ -248,6 +248,190 @@ pub(crate) fn subscribers_reached(
     reached.into_iter().collect()
 }
 
+// ---- Permission lowering (ADR-027 open decision 3, owner 2026-10-18) ---------------------------------------------
+// Permissions are not enforced: every access is granted, as for the SUPER user a BC test session runs as. A test
+// that lowers its permissions could pass or fail for the wrong reason here, so it is not run.
+//
+// The one platform call that lowers is `PermissionTestHelper.AddEffectivePermissionSet`: Microsoft's
+// "Permissions Mock".Assign makes it, under Set, SetExactPermissionSet and every "Library - Lower Permissions"
+// procedure (corpus permissions/TestPermissionsMockEnforcement.al:25-41 pins that the sets are enforced). Start,
+// Stop and ClearAssignments do not lower: with no set assigned the user's own permissions apply
+// (TestPermissionsMockEnforcement.al:64-83). The mock's procedures do nothing while it is not started
+// (TestPermissionsMockLifecycle.al:84-105), and BC's AL test runner starts it before every test method when codeunit
+// "Reset State Before Test Run" exists (Tests-TestLibraries); this runtime does not run that codeunit, so the mock
+// is never started here and a lowering would silently do nothing. The checks below decide statically instead.
+
+/// The platform class whose `AddEffectivePermissionSet` narrows the session's permission sets.
+const PERMISSION_TEST_HELPER: &str = "Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper";
+/// Codeunit "Reset State Before Test Run" (Tests-TestLibraries): run before every test method by BC's AL test runner
+/// ("ALTestRunner Reset Environment", `ClearLegacyLibraries`, in Microsoft's Test Runner app) when it exists.
+const RESET_STATE_BEFORE_TEST_RUN: u32 = 130301;
+/// Codeunit "Set State Test Run" (Tests-TestLibraries): run by the same runner code next, only for a test method
+/// whose TestPermissions is not Disabled. It narrows the session to the "D365 Full Access" sets.
+const SET_STATE_TEST_RUN: u32 = 130302;
+
+/// What BC's AL test runner does to the permissions mock before each test method of this program.
+#[derive(Debug, Default, Clone)]
+pub(crate) struct RunnerPermissions {
+    /// Routines that call `PermissionTestHelper.AddEffectivePermissionSet` directly.
+    lowering: BTreeSet<(usize, usize)>,
+    /// The runner starts the mock before every test: a call that lowers takes effect.
+    starts_mock: bool,
+    /// The routine through which the runner lowers a test whose TestPermissions is not Disabled.
+    lowers_unless_disabled: Option<(usize, usize)>,
+}
+
+fn dotnet_type_is(program: &al_ir::Program, ty: Option<usize>, name: &str) -> bool {
+    ty.and_then(|t| program.dotnet_types.get(t))
+        .is_some_and(|d| d.type_name.eq_ignore_ascii_case(name))
+}
+
+/// Whether the body of a routine has a `PermissionTestHelper` expression that `op` accepts.
+fn calls_permission_helper(
+    program: &al_ir::Program,
+    rt: &al_ir::Routine,
+    op: &dyn Fn(&al_ir::DotNetOp) -> bool,
+) -> bool {
+    let mut hit = false;
+    al_ir::types::for_each_expr_post(&rt.body, &mut |e| {
+        if let al_ir::Expr::DotNet { ty, op: o, .. } = e {
+            hit |= op(o) && dotnet_type_is(program, *ty, PERMISSION_TEST_HELPER);
+        }
+    });
+    hit
+}
+
+/// The first routine of `sites` that anything `routine` of `object` reaches through static calls.
+fn reaches_any(
+    lowered: &Lowered,
+    object: usize,
+    routine: usize,
+    sites: &BTreeSet<(usize, usize)>,
+) -> Option<(usize, usize)> {
+    if sites.is_empty() {
+        return None;
+    }
+    let mut seen = BTreeSet::new();
+    let mut stack = vec![(object, routine)];
+    while let Some(at) = stack.pop() {
+        if !seen.insert(at) {
+            continue;
+        }
+        if sites.contains(&at) {
+            return Some(at);
+        }
+        lowered.calls_into(at.0, at.1, &mut stack);
+    }
+    None
+}
+
+fn on_run_of(lowered: &Lowered, id: u32) -> Option<(usize, usize)> {
+    let objs = &lowered.program.objects;
+    let oi = objs
+        .iter()
+        .position(|o| o.is_kind(al_ir::ObjKind::Codeunit) && o.id == Some(id))?;
+    let ri = objs[oi]
+        .routines
+        .iter()
+        .position(|r| r.is_trigger && r.name.eq_ignore_ascii_case("OnRun"))?;
+    Some((oi, ri))
+}
+
+impl RunnerPermissions {
+    pub(crate) fn of(lowered: &Lowered) -> RunnerPermissions {
+        let program = &lowered.program;
+        let helper = |t: &al_builtins::value::RtType| {
+            matches!(t, al_builtins::value::RtType::DotNet(i)
+                if dotnet_type_is(program, Some(*i as usize), PERMISSION_TEST_HELPER))
+        };
+        let mut lowering = BTreeSet::new();
+        let mut constructs = BTreeSet::new();
+        // Only an object that holds a PermissionTestHelper variable can call it.
+        for (oi, o) in program.objects.iter().enumerate() {
+            let holds = o.globals.iter().any(|g| helper(&g.ty))
+                || o.routines.iter().any(|r| r.locals.iter().any(|l| helper(&l.ty)));
+            if !holds {
+                continue;
+            }
+            for (ri, r) in o.routines.iter().enumerate() {
+                if calls_permission_helper(
+                    program,
+                    r,
+                    &|op| matches!(op, al_ir::DotNetOp::Call(m) if m.eq_ignore_ascii_case("AddEffectivePermissionSet")),
+                ) {
+                    lowering.insert((oi, ri));
+                }
+                if calls_permission_helper(program, r, &|op| matches!(op, al_ir::DotNetOp::Construct)) {
+                    constructs.insert((oi, ri));
+                }
+            }
+        }
+        let starts_mock = on_run_of(lowered, RESET_STATE_BEFORE_TEST_RUN)
+            .is_some_and(|(o, r)| reaches_any(lowered, o, r, &constructs).is_some());
+        let lowers_unless_disabled =
+            on_run_of(lowered, SET_STATE_TEST_RUN).and_then(|(o, r)| reaches_any(lowered, o, r, &lowering));
+        RunnerPermissions {
+            lowering,
+            starts_mock,
+            lowers_unless_disabled,
+        }
+    }
+
+    /// Why `routine` of `object` (a test method, or a test codeunit's OnRun) lowers the session's permissions on BC.
+    pub(crate) fn lowered(&self, lowered: &Lowered, object: usize, routine: usize) -> Option<String> {
+        let objs = &lowered.program.objects;
+        let site = |(o, r): (usize, usize)| format!("{}.{}", objs[o].name, objs[o].routines[r].name);
+        let obj = &objs[object];
+        let rt = &obj.routines[routine];
+        let is_test = rt.attributes.iter().any(|a| a.name.eq_ignore_ascii_case("Test"));
+        if let (true, Some(at)) = (is_test, self.lowers_unless_disabled) {
+            if let Some(value) = test_permissions(obj, rt).filter(|v| !v.eq_ignore_ascii_case("Disabled")) {
+                return Some(format!(
+                    "TestPermissions = {value}: before this test BC's AL test runner runs codeunit {SET_STATE_TEST_RUN} \
+                     \"Set State Test Run\", which lowers the permissions of the test session ({}); {LOWERING_NOT_ENFORCED}",
+                    site(at)
+                ));
+            }
+        }
+        if !self.starts_mock {
+            return None;
+        }
+        reaches_any(lowered, object, routine, &self.lowering).map(|at| {
+            format!(
+                "{}: lowers the permissions of the test session; {LOWERING_NOT_ENFORCED}",
+                site(at)
+            )
+        })
+    }
+}
+
+const LOWERING_NOT_ENFORCED: &str = "permissions are not enforced here (every access is granted, as for a SUPER user \
+     on BC), so a test that lowers them is not run (ADR-027 decision 3)";
+
+/// The TestPermissions BC's runner passes for a test method: the method's `[TestPermissions]` attribute unless it is
+/// InheritFromTestCodeunit, then the codeunit's property. With neither, BC passes Restrictive (AL Runner v2 read it
+/// from the platform's `NavTestExecution`; not pinned by the corpus, and refusing is the side that cannot give a
+/// false result).
+fn test_permissions(obj: &al_ir::Object, routine: &al_ir::Routine) -> Option<String> {
+    routine
+        .attributes
+        .iter()
+        .filter(|a| a.name.eq_ignore_ascii_case("TestPermissions"))
+        .filter_map(|a| {
+            a.text
+                .split_once("::")
+                .map(|(_, v)| v.trim_end_matches([')', ']', ' ']).to_string())
+        })
+        .find(|v| !v.eq_ignore_ascii_case("InheritFromTestCodeunit"))
+        .or_else(|| {
+            obj.properties
+                .iter()
+                .find(|(k, _)| k.eq_ignore_ascii_case("TestPermissions"))
+                .map(|(_, v)| v.trim().to_string())
+        })
+        .or_else(|| Some("Restrictive".into()))
+}
+
 /// Why routine `routine` of `object` cannot run: the first reason found in
 /// anything it can reach through static calls (hard rule 4: decided before running).
 pub fn blocked_reason(lowered: &Lowered, object: usize, routine: usize) -> Option<String> {

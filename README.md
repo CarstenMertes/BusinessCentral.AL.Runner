@@ -239,8 +239,12 @@ on missing setup data. The `Tests:` line says so.
    Windows.
 4. Microsoft's own tests are not compared with real BC test by test. Their pass rate is the
    result of this runtime, not a measured match with BC.
-5. Permissions are not enforced: every access is granted (ADR-027). A test that expects a
-   permission error fails here. Code that BC would stop for a missing permission runs here.
+5. Permissions are not enforced. Permission lowering is refused: a test that lowers its
+   permissions (`Permissions Mock`, `Library - Lower Permissions`, or a `TestPermissions` value
+   other than `Disabled` when Microsoft's test libraries are loaded) is reported "not run".
+   Tests that run, run as a user with all permissions, like SUPER on BC (ADR-027, decision 3).
+   Inherent permissions, entitlements and security filters are not enforced either; with all
+   permissions they do not change a result.
 6. The "not trusted" rule covers failures only. A test that passes after a refused test stays
    a pass, even if the refused test would have changed its data on BC.
 

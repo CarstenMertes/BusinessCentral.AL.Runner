@@ -1867,3 +1867,121 @@ fn a_failure_after_a_test_refused_before_it_started_that_touches_the_same_tables
         }
     }
 }
+
+// ---- permission lowering (ADR-027 open decision 3, owner 2026-10-18) ----------------------------
+// Every access is granted here, as for a SUPER user on BC. A test that lowers its permissions could pass or
+// fail for the wrong reason, so it is not run.
+
+/// A permissions mock shaped like Microsoft's "Permissions Mock" (131006): `Assign` narrows the session's
+/// effective permission sets through the platform's `PermissionTestHelper`; `Start`, `Stop` and `Clear` do not.
+const PERMISSION_MOCK: &str = "dotnet { assembly(\"Microsoft.Dynamics.Nav.PermissionTestHelper\") {
+    type(\"Microsoft.Dynamics.Nav.Runtime.PermissionTestHelper\"; \"PermissionTestHelper\") { } } }
+codeunit 50131 \"Mock\"
+{
+    SingleInstance = true;
+    var
+        Helper: DotNet PermissionTestHelper;
+        Started: Boolean;
+    procedure Start() begin Helper := Helper.PermissionTestHelper(); Started := true; end;
+    procedure ClearAll() begin Helper.Clear(); end;
+    procedure Assign(RoleID: Code[20]) begin if not Started then exit; Helper.AddEffectivePermissionSet(RoleID); end;
+}
+";
+
+/// The runner rule's codeunit: what BC's AL test runner runs before a test whose TestPermissions is not
+/// Disabled (codeunit 130302, through "ALTestRunner Reset Environment").
+const SET_STATE: &str = "codeunit 130302 \"Set State Test Run\"
+{
+    trigger OnRun() var M: Codeunit Mock; begin M.Start(); M.Assign('D365 FULL ACCESS'); end;
+}
+";
+
+/// The runner's reset codeunit: what BC's AL test runner runs before every test method (codeunit 130301); it
+/// starts the mock.
+const RESET_STATE: &str = "codeunit 130301 \"Reset State Before Test Run\"
+{
+    trigger OnRun() var M: Codeunit Mock; begin M.Start(); end;
+}
+";
+
+const LOWERING_TESTS: &str = "codeunit 50132 PermTest
+{
+    Subtype = Test;
+    TestPermissions = Disabled;
+    [Test] procedure Lowers() var M: Codeunit Mock; begin M.Assign('D365 BASIC'); end;
+    [Test] procedure Untouched() begin end;
+    [Test] procedure ClearsOnly() var M: Codeunit Mock; begin M.ClearAll(); end;
+    [Test] procedure StartsThenLowers() var M: Codeunit Mock; begin M.Start(); M.Assign('D365 BASIC'); end;
+}";
+
+#[test]
+fn a_test_that_can_reach_a_permission_lowering_is_not_run_when_the_runner_starts_the_mock() {
+    let o = outcomes_of(&format!("{PERMISSION_MOCK}{RESET_STATE}{LOWERING_TESTS}"), "PermTest");
+    match outcome_of(&o, "Lowers") {
+        Outcome::NotRun(r) => assert!(r.contains("Mock.Assign: lowers the permissions"), "{r}"),
+        other => panic!("{other:?}"),
+    }
+    assert_eq!(outcome_of(&o, "Untouched"), Outcome::Pass);
+    // Clearing the assignments does not lower; it is refused only as the unregistered class it is.
+    match outcome_of(&o, "ClearsOnly") {
+        Outcome::NotRun(r) => assert!(!r.contains("lowers the permissions"), "{r}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn without_the_runner_starting_the_mock_an_assignment_does_nothing_and_starting_it_is_refused() {
+    let o = outcomes_of(&format!("{PERMISSION_MOCK}{LOWERING_TESTS}"), "PermTest");
+    // The mock ignores Assign while it is not started (corpus permissions/TestPermissionsMockLifecycle.al:84-105).
+    assert_eq!(outcome_of(&o, "Lowers"), Outcome::Pass);
+    match outcome_of(&o, "StartsThenLowers") {
+        Outcome::NotRun(r) => assert!(r.contains("PermissionTestHelper"), "{r}"),
+        other => panic!("{other:?}"),
+    }
+}
+
+#[test]
+fn test_permissions_other_than_disabled_are_not_run_when_the_runner_lowers_them() {
+    let test = "codeunit 50132 PermTest
+        {
+            Subtype = Test;
+            TestPermissions = NonRestrictive;
+            [Test] procedure Inherits() begin end;
+            [Test] [TestPermissions(TestPermissions::Disabled)] procedure MethodDisabled() begin end;
+            [Test] [TestPermissions(TestPermissions::InheritFromTestCodeunit)] procedure MethodInherits() begin end;
+        }
+        codeunit 50133 PermTestDisabled
+        {
+            Subtype = Test;
+            TestPermissions = Disabled;
+            [Test] procedure Disabled() begin end;
+            [Test] [TestPermissions(TestPermissions::Restrictive)] procedure MethodRestrictive() begin end;
+        }
+        codeunit 50134 PermTestUndeclared
+        {
+            Subtype = Test;
+            [Test] procedure Undeclared() begin end;
+        }";
+    let src = format!("{PERMISSION_MOCK}{SET_STATE}{test}");
+    let lowered = |name: &str, test: &str| match outcome_of(&outcomes_of(&src, name), test) {
+        Outcome::NotRun(r) => assert!(r.contains("TestPermissions") && r.contains("130302"), "{test}: {r}"),
+        other => panic!("{test}: {other:?}"),
+    };
+    let runs = |name: &str, test: &str| assert_eq!(outcome_of(&outcomes_of(&src, name), test), Outcome::Pass, "{test}");
+    lowered("PermTest", "Inherits");
+    runs("PermTest", "MethodDisabled");
+    lowered("PermTest", "MethodInherits");
+    runs("PermTestDisabled", "Disabled");
+    lowered("PermTestDisabled", "MethodRestrictive");
+    lowered("PermTestUndeclared", "Undeclared");
+
+    // Without codeunit 130302 the runner lowers nothing: every one of them runs.
+    let src = format!("{PERMISSION_MOCK}{test}");
+    for (cu, t) in [
+        ("PermTest", "Inherits"),
+        ("PermTestDisabled", "MethodRestrictive"),
+        ("PermTestUndeclared", "Undeclared"),
+    ] {
+        assert_eq!(outcome_of(&outcomes_of(&src, cu), t), Outcome::Pass, "{t}");
+    }
+}

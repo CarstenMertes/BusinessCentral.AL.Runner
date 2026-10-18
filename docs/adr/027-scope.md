@@ -68,7 +68,7 @@ states where the faithfulness ends.
 | Clock | Wall clock | `Clock` capability. The command line injects the system clock. The deterministic host is frozen at 2024-01-15T12:00:00Z (`docs/probes-needed.md`, "Clock"). `Sleep(n)` does not wait; it moves the session's view of time | No real waiting. A test that needs a real elapsed time sees a jump, not a delay |
 | Client UI | Web client | Handlers: `MessageHandler`, `ConfirmHandler`, `StrMenuHandler`, `ModalPageHandler`, `PageHandler`, `RequestPageHandler`, `TestPage` client. An unhandled dialog fails the test, as on BC | No pixels, no layout. Add-ins and `usercontrol` have no client |
 | Platform tables | Server-side system tables | Providers keyed by table id (ADR-019). Stored tables are seeded with the session's facts | A table with no provider is refused: `platform table 'X' (id) has no provider`. A column with no pinned value is refused |
-| Permissions | Evaluated per user | All access is granted. `Permissions Mock` is accepted and never evaluated. `SetPermissionFilter` filters nothing (`al-builtins/src/native.rs:481`). The session user's effective permission is answered; other users are refused | Any test that expects "access denied" fails here and passes on BC. See open decision 3 |
+| Permissions | Evaluated per user | All access is granted, as for a SUPER user. A test that lowers its permissions is not run (owner decision 2026-10-18 below): one that reaches `Permissions Mock`.Assign when the runner starts the mock, or one whose TestPermissions is not Disabled when codeunit 130302 exists (`al-testrun/src/runtime/blocked.rs`, `RunnerPermissions`). `SetPermissionFilter` filters nothing. The session user's effective permission is answered; other users are refused | None known for a test that runs: it runs as SUPER does on BC. See open decision 3 |
 | Task scheduler | Job queue and task engine | `CanCreateTask` is false (pinned, `native.rs:302`). `CreateTask` returns a new id and never runs the task (`native.rs:306`) | A task never executes. `TaskExists`, `SetTaskReady` and `CancelTask` are refused (`native.rs:308-315`) |
 | `StartSession` | A second server session | During an install: starts nothing, answers false. In a test run under `TestIsolation = Codeunit`: the same error BC raises (`native.rs:887`). Anywhere else: refused | No second session exists. See open decision 4 |
 | Page background tasks | A worker session | The worker runs in the same session, cannot write to a table, and gets the pinned permission text (ADR-018) | Not parallel. A direct `Commit` in a worker is refused |
@@ -137,7 +137,7 @@ Each item: the question, why v3 could differ from v2, and the recommended defaul
 |---|---|---|
 | 1 | **HTTP.** Build `HttpClient` with `[HttpClientHandler]` mocks served in process? v2 does (its docs call this the way to test an HTTP boundary). The corpus app cannot compile the attribute (scope OnPrem). Probes live in the OnPrem app | Yes, handler-served only. The default policy blocks unhandled sends with BC's own error. Never open a socket |
 | 2 | **HTTP to localhost** (a test server in the same CI job)? | No. A socket is outside the process and breaks the "no network" promise. Use handler mocks |
-| 3 | **Permission enforcement.** v2 made "grant everything" a permanent, deliberate divergence. v3 could model `Permissions Mock` and permission sets | Keep "grant everything" for 3.0. Document it. Revisit after Base Application's own permission tests pass, behind an opt-in flag (ADR-009 limits) |
+| 3 | **Permission enforcement.** v2 made "grant everything" a permanent, deliberate divergence. v3 could model `Permissions Mock` and permission sets | Decided (owner, 2026-10-18): keep "grant everything", and refuse every test that lowers permissions. See "Owner decision (2026-10-18): permission lowering" below |
 | 4 | **Background sessions** (`StartSession`, `TaskScheduler.CreateTask`): run the target inline after the test commits? | Not in 3.0. Keep refusal (`StartSession`) and "never runs" (`CreateTask`). A later opt-in `--run-sessions-inline` can be proposed with probes |
 | 5 | **Fake clock.** Offer `--now` or `--freeze-time` on the command line? The deterministic host exists in `al-host` | Yes, as a flag. Default stays the system clock, as v2 |
 | 6 | **Email capture.** Provide a built-in "test mail outbox" so `Email.Send` is recorded, not refused? | No. Needs a connector interface BC does not expose to tests. Keep refusal. Document the interface pattern |
@@ -189,3 +189,71 @@ PDF/Word/Excel rendering in the core, compiled-only dependency apps refused by n
 Windows-only .NET libraries as in v2, no network or file access from DotNet, stable reason
 tokens in refusal texts, no telemetry, `TestIsolation = Disabled` refused until probed,
 effective-permission queries for other users refused, `--now` fake clock flag yes.
+
+## Owner decision (2026-10-18): permission lowering
+
+Permissions stay unenforced. Anything that lowers the permissions of a test makes the test
+"not run", with a reason. With every access granted, such a test can give a false pass (BC
+would deny an access) or a false failure (the test expects an error BC raises). Inherent
+permissions, entitlements and security filtering are not enforced either; security filtering
+may come later.
+
+**Why "all granted" matches BC.** A BC test session runs as a user with SUPER, and SUPER is
+granted every access. Evidence: corpus `session/TestSessionCompanyInfoExperienceClose.al:62-90`
+(the session user's effective permission on table data is full); corpus issue 376 (a Windows
+container answers "not SUPER" during an install trigger, but the test-time check that the user is
+SUPER passed). So a test that does not lower its permissions sees what it would see on BC.
+Inherent permissions and entitlements only add to or cap a user's permission sets; for a SUPER
+user under the developer license of a test container they change nothing a test can observe (the
+corpus probe `permissions/lt-permissions-mock-indirect/RiskyEntitlement.al` found no run-time
+observable). They can matter only once permissions are lowered, and every lowering is refused.
+APIs that read permissions answer what SUPER gets: `ReadPermission` and `WritePermission` are
+true, `SetPermissionFilter` filters nothing (SUPER has no security filter), and the session
+user's effective permission is full. None needs a refusal of its own.
+
+**How a Microsoft test lowers permissions** (BCApps source and the BC 27.5 test framework apps):
+
+1. `Permissions Mock` (codeunit 131006, its own app). `Assign`, `Set` and
+   `SetExactPermissionSet` call `PermissionTestHelper.AddEffectivePermissionSet`, the platform
+   call that narrows the session to the assigned sets (enforced: corpus
+   `permissions/TestPermissionsMockEnforcement.al:25-41`). `Start`, `Stop`, `ClearAssignments`
+   and `IsStarted` do not lower: with no set assigned the user's own permissions apply
+   (`TestPermissionsMockEnforcement.al:64-83`). Every procedure does nothing while the mock is
+   not started (`TestPermissionsMockLifecycle.al:84-105`).
+2. `Library - Lower Permissions` (132217, Tests-TestLibraries): every `Set*`, `Add*`,
+   `Push*`, `SetExactPermissionSet` and `StartLoggingNAVPermissions(RoleID)` goes through the mock.
+   `SetOutsideO365Scope` pushes SUPER; it is refused too, because the static check does not see
+   arguments. `Library - E2E Plan Permissions` (the plan-based E2E tests) lowers through it.
+3. The runner. BC's AL test runner ("ALTestRunner Reset Environment" in the Test Runner app,
+   `ClearLegacyLibraries`) runs codeunit 130301 "Reset State Before Test Run" before every test
+   method when it exists, which starts the mock; then, for a test method whose TestPermissions
+   is not Disabled, codeunit 130302 "Set State Test Run", which narrows the session to
+   "D365 Full Access" plus the test sets. Both are in Tests-TestLibraries. So under Microsoft's
+   recipe a `NonRestrictive` or `Restrictive` test (or one that declares nothing) starts lowered,
+   and any later call to the mock takes effect. The method's `[TestPermissions]` attribute wins
+   over the codeunit's property unless it is `InheritFromTestCodeunit`. With neither, BC passes
+   `Restrictive` (AL Runner v2 read it from the platform; not pinned by the corpus; refusing is
+   the side that cannot give a false result).
+4. Writing `Access Control` rows. `Library - Permissions` writes them for any user, also the
+   session user (`AzureADUserMgtTest` adds SUPER to it). Adding a set to a SUPER user adds
+   nothing. No test in Tests-ERM, -SCM, -Misc, -Permissions, -User or Tests-TestLibraries (BC
+   27.5) removes the session user's SUPER row, so this is not refused; whether BC re-reads the
+   permissions within the session is not pinned.
+
+**What the runtime does** (`al-testrun/src/runtime/blocked.rs`, `RunnerPermissions`):
+
+- The runner starts the mock when codeunit 130301 exists and its OnRun reaches a construction of
+  `PermissionTestHelper`. Then a test (or the test codeunit's OnRun) whose static reach holds a
+  routine that calls `AddEffectivePermissionSet` is not run, before it starts.
+- When codeunit 130302 exists and its OnRun reaches such a routine, a test whose TestPermissions
+  is not Disabled is not run, before it starts.
+- This runtime does not run 130301 or 130302, so without the refusals the mock would never be
+  started and every lowering would silently do nothing. Without codeunit 130301 (the corpus
+  programs) nothing starts the mock: an `Assign` does nothing, as on BC, and a test that calls
+  `Start` is refused at run time (`PermissionTestHelper` is an unregistered server class).
+
+**Not covered:** a lowering reached only through an event subscriber is not seen by the static
+check (the same reach `blocked_site` uses). The runner's codeunit 130301 also seeds
+`Library - Random` with 1 and clears the notification context before every test; this runtime
+does not run it (a separate gap, not about permissions).
+

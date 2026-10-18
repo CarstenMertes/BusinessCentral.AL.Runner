@@ -926,6 +926,23 @@ impl Lowerer<'_> {
                 _ => {}
             }
         }
+        // `case <Variant> of <label>:` raises when the first label is compared, whatever the Variant holds and whatever the label is
+        // (types/lt-variant-unassigned/VariantUnassignedEnum.al: Unassigned_Variant_CaseMatches, EnumZero_, EnumOne_, IntegerZero_,
+        // ClearedVariant_CaseMatches, Unassigned_Variant_CaseMatches_InsideProcedure). The scrutinee is evaluated first. The corpus asserts the text only (GetLastErrorText),
+        // so the error code is left empty.
+        if matches!(self.ty_of(&kids[0]), Ty::Variant) && branches.iter().any(|(labels, _)| !labels.is_empty()) {
+            return Ok(ir::Stmt::Case {
+                scrutinee,
+                branches: vec![(
+                    vec![ir::SetElem::One(ir::Expr::Fail {
+                        message: "Unable to compare operands of type NavVariant with NavVariant.".into(),
+                        code: String::new(),
+                    })],
+                    Vec::new(),
+                )],
+                otherwise: Vec::new(),
+            });
+        }
         Ok(ir::Stmt::Case {
             scrutinee,
             branches,

@@ -565,12 +565,10 @@ fn foreach_runs_over_the_result_of_a_builtin_method() {
     assert_eq!(int(run(&src, "F", vec![])), 3);
 }
 
-/// The corpus pins only the bounds of Database.MinimumActiveRowVersion (0 <= value <= LastUsedRowVersion() + 1),
-/// not the value AL code reads, so the call is refused.
+/// platform/lt-platform-members/PlTRowVersionValue.al:MinimumActiveRowVersion_NoWrite_Committed: without writes it is
+/// LastUsedRowVersion() + 1. After a write the value is not pinned and the call is refused.
 #[test]
-fn minimum_active_row_version_is_refused_because_its_value_is_unpinned() {
-    let src = cu("procedure F() begin MinimumActiveRowVersion(); end;");
-    assert!(
-        matches!(run(&src, "F", vec![]), Err(Signal::Unsupported(r)) if r.contains("MinimumActiveRowVersion") && r.contains("not pinned"))
-    );
+fn minimum_active_row_version_is_last_used_plus_one_without_writes() {
+    let src = cu("procedure F(): Boolean begin exit(MinimumActiveRowVersion() = LastUsedRowVersion() + 1); end;");
+    assert!(matches!(run(&src, "F", vec![]), Ok(Value::Boolean(true))));
 }

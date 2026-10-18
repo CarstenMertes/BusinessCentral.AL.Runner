@@ -3024,7 +3024,7 @@
           "ms_uses": 102,
           "name": "IndentationColumn",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "pageext/lt-page-ext-properties/PageTree.al:36"
         },
         {
@@ -3865,6 +3865,15 @@
           "site": "_fixtures/xmlports/ALTManualXmlPortIntegrationEvent.al:9"
         },
         {
+          "corpus_uses": 3,
+          "group": "page/repeater",
+          "ms_uses": 29,
+          "name": "ShowAsTree",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pageext/lt-page-ext-properties/PageTree.al:37"
+        },
+        {
           "corpus_uses": 1,
           "group": "report/field",
           "ms_uses": 29,
@@ -3872,15 +3881,6 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-page-presentation-properties/P119ReportFields.al:35"
-        },
-        {
-          "corpus_uses": 3,
-          "group": "page/repeater",
-          "ms_uses": 29,
-          "name": "ShowAsTree",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pageext/lt-page-ext-properties/PageTree.al:37"
         },
         {
           "corpus_uses": 1,
@@ -11245,6 +11245,15 @@
           "site": "pages/lt-page-controls-aa/AaControls.al:316"
         },
         {
+          "corpus_uses": 2,
+          "group": "page/field",
+          "ms_uses": 0,
+          "name": "CharAllowed",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-controls-aa/AaFieldProps.al:21"
+        },
+        {
           "corpus_uses": 1,
           "group": "page/field",
           "ms_uses": 0,
@@ -11252,6 +11261,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-page-controls-aa/AaFieldProps.al:32"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/field",
+          "ms_uses": 0,
+          "name": "OptionCaptionML",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-controls-aa/AaFieldProps.al:38"
         },
         {
           "corpus_uses": 1,
@@ -11270,6 +11288,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "pages/lt-page-controls-aa/AaControls.al:110"
+        },
+        {
+          "corpus_uses": 1,
+          "group": "page/group",
+          "ms_uses": 0,
+          "name": "ShowAsTree",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-controls-aa/AaControls.al:401"
         },
         {
           "corpus_uses": 2,
@@ -11488,6 +11515,15 @@
           "site": "ALTModifyCaption.al:84"
         },
         {
+          "corpus_uses": 1,
+          "group": "table/field",
+          "ms_uses": 0,
+          "name": "CharAllowed",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pages/lt-page-controls-aa/AaObjects.al:24"
+        },
+        {
           "corpus_uses": 4,
           "group": "table/field",
           "ms_uses": 0,
@@ -11641,15 +11677,6 @@
           "site": "pages/lt-page-controls-aa/AaControls.al:325"
         },
         {
-          "corpus_uses": 2,
-          "group": "page/field",
-          "ms_uses": 0,
-          "name": "CharAllowed",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-page-controls-aa/AaFieldProps.al:21"
-        },
-        {
           "corpus_uses": 1,
           "group": "page/field",
           "ms_uses": 0,
@@ -11666,15 +11693,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-page-controls-aa/AaControls.al:28"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "page/field",
-          "ms_uses": 0,
-          "name": "OptionCaptionML",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-page-controls-aa/AaFieldProps.al:38"
         },
         {
           "corpus_uses": 3,
@@ -11702,15 +11720,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "pages/lt-page-controls-aa/AaControls.al:304"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "page/group",
-          "ms_uses": 0,
-          "name": "ShowAsTree",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-page-controls-aa/AaControls.al:401"
         },
         {
           "corpus_uses": 3,
@@ -11900,15 +11909,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "report/PZReportLabels.al:67"
-        },
-        {
-          "corpus_uses": 1,
-          "group": "table/field",
-          "ms_uses": 0,
-          "name": "CharAllowed",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pages/lt-page-controls-aa/AaObjects.al:24"
         },
         {
           "corpus_uses": 1,
@@ -13966,7 +13966,7 @@
         "code": "Evaluate",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1272,
+        "line": 1279,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -13975,7 +13975,7 @@
         "code": "",
         "file": "crates/al-builtins/src/evaluate.rs",
         "generic": false,
-        "line": 1275,
+        "line": 1282,
         "pinned": true,
         "site": "codeunit/TestCrossAppDispatch.al:61",
         "template": "Evaluate"
@@ -14092,7 +14092,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 848,
+        "line": 849,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -14101,7 +14101,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 856,
+        "line": 857,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -14110,7 +14110,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 881,
+        "line": 882,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -14119,7 +14119,7 @@
         "code": "AL:DivideByZero",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 906,
+        "line": 907,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:91",
         "template": "Attempted to divide by zero."
@@ -14128,7 +14128,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 935,
+        "line": 936,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -14137,7 +14137,7 @@
         "code": "AL:Overflow",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 940,
+        "line": 941,
         "pinned": true,
         "site": "errors/lt-error-handling/ErTRuntimeErrors.al:97",
         "template": "Arithmetic operation resulted in an overflow."
@@ -14146,7 +14146,7 @@
         "code": "DateInvalid",
         "file": "crates/al-builtins/src/ops.rs",
         "generic": false,
-        "line": 968,
+        "line": 969,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131EvalScalars.al:376",
         "template": "The date is not valid."
@@ -14353,7 +14353,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 940,
+        "line": 942,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -14416,7 +14416,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 163,
+        "line": 169,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -14425,7 +14425,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 290,
+        "line": 296,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -14434,7 +14434,7 @@
         "code": "RecordAlreadyOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 320,
+        "line": 326,
         "pinned": true,
         "site": "recordref/lt-recordref-fieldref-members/P92Open.al:168",
         "template": "The record is already open."
@@ -14443,7 +14443,7 @@
         "code": "RecordNotOpened",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 602,
+        "line": 608,
         "pinned": true,
         "site": "errors/lt-ms-refusals-131/P131RecordRefGet.al:183",
         "template": "The record is not open."
@@ -14452,7 +14452,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 851,
+        "line": 857,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."
@@ -14461,7 +14461,7 @@
         "code": "DB:KeyNotFound",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 871,
+        "line": 877,
         "pinned": true,
         "site": "recordref/TestRecordRefKeyIndexSetRecFilterContracts.al:103",
         "template": "The % table does not have an active key at index %."
@@ -14470,7 +14470,7 @@
         "code": "KeyRef.{other}",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 966,
+        "line": 972,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds"
@@ -14479,7 +14479,7 @@
         "code": "NotInitialized",
         "file": "crates/al-vm/src/refs.rs",
         "generic": false,
-        "line": 986,
+        "line": 992,
         "pinned": true,
         "site": "misc/lt-probes-needed-4/PnD05_UnassignedFieldRef.al:42",
         "template": "Microsoft.Dynamics.Nav.Runtime.NavFieldRef variable not initialized."
@@ -17502,7 +17502,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-page-controls-aa/AaObjects.al:24",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -17877,7 +17877,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -18177,7 +18177,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -19902,7 +19902,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -20127,7 +20127,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -20202,7 +20202,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -20907,7 +20907,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-page-controls-aa/AaFieldProps.al:21",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21312,7 +21312,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-page-controls-aa/AaFieldProps.al:38",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21762,7 +21762,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -21837,7 +21837,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -22002,7 +22002,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -22077,7 +22077,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -22242,7 +22242,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -22317,7 +22317,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-page-controls-aa/AaControls.al:401",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -22947,7 +22947,7 @@
         "pinned": true,
         "scope": "",
         "site": "pageext/lt-page-ext-properties/PageTree.al:36",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -23022,7 +23022,7 @@
         "pinned": true,
         "scope": "",
         "site": "pageext/lt-page-ext-properties/PageTree.al:37",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -24953,7 +24953,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",

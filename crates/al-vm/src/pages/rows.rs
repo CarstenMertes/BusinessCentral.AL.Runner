@@ -1336,6 +1336,12 @@ impl Session {
         if !modal {
             if let Some(trap) = self.take_trap(object) {
                 trap.borrow_mut().trapping = false;
+                // A variable that still holds an open page closes it first, as Close() does: OnQueryClosePage(OK), then OnClosePage
+                // with the old record (pages/lt-f3-pages/F3TrappedAndModal.al:Trap_02_SameVariableTrappedAgain line 36).
+                if trap.borrow().open {
+                    let a = self.close_action(&trap, "Close");
+                    self.close_with(&trap, &a, false, false)?;
+                }
                 // The trapped variable receives the page and keeps it open for the test. A `Page`
                 // variable that was set up first hands its instance over
                 // (handlers/TestPageOnInit_Tests.al:223 POI_SetterBeforeTrappedRun_...).
@@ -1350,7 +1356,6 @@ impl Session {
             if !trapped {
                 return unsupported("running a page that is already open");
             }
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::TrappedPageLeftOpenIsReplaced);
             self.mark_closed(&st);
         }
         if modal {

@@ -193,8 +193,16 @@ impl Session {
         // (event, parameter names, arguments), in the order BC raises them.
         let mut calls: Vec<(&str, Vec<String>, Vec<Value>)> = Vec::new();
         match op {
-            GlobalOp::Insert => calls.push(("ondatabaseinsert", names(&["RecRef"]), vec![handle(rec)])),
-            GlobalOp::Modify => calls.push(("ondatabasemodify", names(&["RecRef"]), vec![handle(rec)])),
+            GlobalOp::Insert => calls.push((
+                "ondatabaseinsert",
+                names(&["RecRef"]),
+                vec![crate::refs::record_ref_shared(rec)],
+            )),
+            GlobalOp::Modify => calls.push((
+                "ondatabasemodify",
+                names(&["RecRef"]),
+                vec![crate::refs::record_ref_shared(rec)],
+            )),
             GlobalOp::Delete => calls.push(("ondatabasedelete", names(&["RecRef"]), vec![handle(rec)])),
             GlobalOp::Rename => {
                 let Some(x) = xrec else {

@@ -709,8 +709,9 @@ fn binary_ty(op: &str, l: &Ty, r: &Ty) -> Ty {
             (Ty::DateTime, Ty::DateTime) if op == "-" => Ty::Duration,
             (Ty::DateTime, _) => Ty::DateTime,
             // Time - Time is a number of milliseconds, not a Duration (types/lt-expression-operators-literals/
-            // ExpressionBinaryDateTimeOperands.al:P195_Binary_TimeAndDateTimeOperands: `Format(T1 - T2, 0, 9)` is `-9000000`).
-            (Ty::Time, Ty::Time) if op == "-" => Ty::BigInteger,
+            // ExpressionBinaryDateTimeOperands.al:P195_Binary_TimeAndDateTimeOperands: `Format(T1 - T2, 0, 9)` is `-9000000`); the result is an Integer
+            // (misc/lt-expressions-statements/PBinaryUnaryExpressions.al:147, TypeOf is Integer; a Time is under 86 400 000 so it always fits).
+            (Ty::Time, Ty::Time) if op == "-" => Ty::Integer,
             (Ty::Time, _) => Ty::Time,
             // Duration +/- Duration is a BigInteger of milliseconds (corpus types/lt-duration-arithmetic/DurationAddDuration.al).
             (Ty::Duration, Ty::Duration) if op == "+" || op == "-" => Ty::BigInteger,

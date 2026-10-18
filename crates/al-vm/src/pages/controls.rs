@@ -218,6 +218,36 @@ impl Session {
                 "Your entry of '{text}' is not an acceptable value for '{caption}'. Only numeric characters are allowed in field."
             )));
         }
+        // CharAllowed on a page field or on the table field it shows: a Text or Code entry may hold only the characters from the first to
+        // the second of the property's two characters, case sensitive (pages/lt-page-controls-aa/AaFieldProps.al:AA_CharAllowed_PageField
+        // line 67 `az` and `09`, AA_CharAllowed_TableField line 100). The error names the first character outside it. The table field's
+        // property restricts the page only: Validate and assignment in code accept anything (same file, `validate-upper`, `assign`).
+        // Pinned on a card with a row and a two-character property only.
+        if matches!(ty, RtType::Text(_) | RtType::Code(_)) {
+            let page_prop = match page_of(&engine, st).controls[idx].prop("charallowed") {
+                Some(ir::PropVal::Lit(v)) => Some(unquote(v)),
+                _ => None,
+            };
+            let field_prop = self.control_field(st, idx).and_then(|f| {
+                f.properties
+                    .iter()
+                    .find(|(k, _)| k.eq_ignore_ascii_case("CharAllowed"))
+                    .map(|(_, v)| unquote(v))
+            });
+            if let Some(allowed) = page_prop.or(field_prop) {
+                let range: Vec<char> = allowed.chars().collect();
+                if range.len() != 2 || no_row || self.is_list(st) {
+                    return unsupported(
+                        "SetValue on a field with CharAllowed that is not two characters, on a list or on a page without a row (not pinned)",
+                    );
+                }
+                if let Some(bad) = text.chars().find(|c| !(range[0]..=range[1]).contains(c)) {
+                    return Err(refuse_bound(format!(
+                        "The character {bad} is not valid in this field. You can specify the following characters: {allowed}."
+                    )));
+                }
+            }
+        }
         let parsed = match al_builtins::pagefmt::parse_control_text(&text, &ty, &fmt, &by_text) {
             Ok(v) => v,
             Err(al_builtins::pagefmt::ParseError::Invalid) => {
@@ -248,12 +278,12 @@ impl Session {
                 return Err(
                     // An Enum control raises TestValidation on a card with a row too (pages/lt-page-enum-control/
                     // PageEnumControlCaptionless.al:P161_EnumControl_SetValueSpellings_Captionless `spaceOrdinal`).
-                    // The empty text on an Option control is refused with TestValidation (pages/lt-testpage-assertequals-option/
-                    // TestPageAssertEqualsOption.al:SetValue_BlankOption_AsEmptyText); another refused option text is not pinned.
+                    // A refused text on an Option control is a TestValidation error on a card with a row: the empty text (pages/lt-testpage-assertequals-option/
+                    // TestPageAssertEqualsOption.al:SetValue_BlankOption_AsEmptyText) and `Nope`, `5`, `2`, `Tw` (handlers/N582TestPageEdges.al:156-186).
                     if rec_bound
                         && !no_row
                         && !matches!(ty, RtType::DateTime | RtType::Enum(_))
-                        && !(matches!(ty, RtType::Option(_)) && text.is_empty())
+                        && !matches!(ty, RtType::Option(_))
                         && !self.is_list(st)
                     {
                         refuse(self, msg)
@@ -445,6 +475,9 @@ impl Session {
         })();
         match result {
             Ok(()) => {
+                // A SetValue that goes through clears the control's refused entries (pages/lt-f3-pages/F3ValidationAddinFilter.al:
+                // GetValidationError_ErrorThenCorrected, line 272: the page answers an empty text afterwards).
+                st.borrow_mut().errors.retain(|(i, _)| *i != idx);
                 self.run_refresh(st)?;
                 Ok(Value::Null)
             }
@@ -675,6 +708,7 @@ impl Session {
             PageMethod::Value if !args.is_empty() => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
+                self.refresh_host_after_part_edit(st)?;
                 Ok(r)
             }
             PageMethod::Value => {
@@ -782,6 +816,7 @@ impl Session {
             PageMethod::SetValue => {
                 let r = self.control_set_value(st, idx, args)?;
                 self.resync_parts_linked_by(st, idx)?;
+                self.refresh_host_after_part_edit(st)?;
                 Ok(r)
             }
             PageMethod::Activate => {

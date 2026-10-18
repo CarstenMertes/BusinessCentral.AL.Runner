@@ -22,6 +22,8 @@ pub(crate) struct TxState {
     pub(crate) lock_timeout_duration: i64,
     /// The highest rowversion handed out when the last `Commit` ran: rows at or below it are durable.
     pub(crate) committed_row_version: i64,
+    /// The last `Commit` made writes durable (the transaction it ended had written): `MinimumActiveRowVersion` is then not pinned.
+    pub(crate) last_commit_wrote: bool,
     /// A duplicate-key Insert into a table without a Blob field does not fail where it is
     /// called: the table (object index) and the error come out at the next access to the table
     /// or at Commit (corpus record/TestRecordRuntimeTextsAndViews.al:

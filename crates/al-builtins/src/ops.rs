@@ -825,7 +825,8 @@ fn arith_general(op: Arith, l: &Value, r: &Value) -> Result<Value, Signal> {
             }
             // Time - Time is a number of milliseconds (`Format(T1 - T2, 0, 9)` is `-9000000`; ExpressionBinaryDateTimeOperands.al:
             // P195_Binary_TimeAndDateTimeOperands), which a Duration variable takes back (`Diff := T2 - T1`).
-            return Ok(V::BigInteger(a - b));
+            // The result is an Integer (misc/lt-expressions-statements/PBinaryUnaryExpressions.al:147: TypeOf is Integer).
+            return Ok(V::Integer((a - b) as i32));
         }
         (V::DateTime(a), V::DateTime(b)) if op == Arith::Sub && *a > 0 && *b > 0 => return Ok(V::Duration(a - b)),
         // An undefined date has no difference, and the whole range is too wide a difference (types/lt-datetime/
@@ -1472,7 +1473,7 @@ mod tests {
         ));
         assert!(matches!(
             arith(Arith::Sub, &Value::Time(46_800_001), &noon),
-            Ok(Value::BigInteger(3_600_000))
+            Ok(Value::Integer(3_600_000))
         ));
         for (op, l, r, text) in [
             (

@@ -136,9 +136,22 @@ impl Session {
         if let Some(b) = lit("blanknumbers").or_else(|| from_field("blanknumbers")) {
             f.blank = Blank::parse(&b).unwrap_or_default();
         }
-        f.option_captions = lit("optioncaption")
-            .or_else(|| from_field("optioncaption"))
-            .map(|c| unquote(&c).split(',').map(str::to_string).collect());
+        f.option_captions = lit("optioncaption").map(|c| unquote(&c).split(',').map(str::to_string).collect());
+        // OptionCaptionML on the control: a TestPage shows and takes the ENU captions in every session language (pages/lt-page-controls-aa/
+        // AaFieldProps.al:AA_OptionCaptionML_PageField line 179: 1033, 1031 and 1036 all show One, Two, Three), over the table field's
+        // captions. An entry without ENU is not pinned.
+        if f.option_captions.is_none() {
+            if let Some(ml) = lit("optioncaptionml") {
+                let Some(enu) = enu_entry(&ml) else {
+                    return unsupported("OptionCaptionML without an ENU entry on a page field (not pinned)");
+                };
+                f.option_captions = Some(enu.split(',').map(str::to_string).collect());
+            }
+        }
+        if f.option_captions.is_none() {
+            f.option_captions =
+                from_field("optioncaption").map(|c| unquote(&c).split(',').map(str::to_string).collect());
+        }
         if f.option_captions.is_none() {
             // Without captions an option shows its member names, a blank member as nothing.
             f.option_captions = from_field("optionmembers").map(|c| {
@@ -361,26 +374,32 @@ impl Session {
                             "AssertEquals of an Enum on a text control (how BC writes it is not pinned)",
                         );
                     }
-                    // A number on a Text or Code control is spelled in plain digits (a Decimal without trailing zeros) and compared
-                    // with the control's text (pages/lt-testpage-assertequals-option/TestPageAssertEqualsOption.al:
-                    // AssertEquals_TextControl_NumbersAndText, AssertEquals_CodeControl_NumbersAndText: Integer 0, 5, 6, BigInteger 5,
-                    // Decimal 5.5 and 5.0 against '5.5', '5', '05'). A value outside 0 to 9.99 is not pinned. A Boolean goes through
-                    // ops::convert (pinned in the same tests).
+                    // A number on a Text or Code control is spelled and compared with the control's text: an Integer in plain digits
+                    // (handlers/N582TestPageEdges.al:195-247: 10, 1234567, -5, -1234; '1,234,567' differs), a Decimal as Format shows it, with
+                    // group separators from 1000 on and no trailing zeros (same file :250-330: 1,000, 1,234.5, -1,234.5, 999.99, 1.5, 0), and
+                    // 0, 5, 6, BigInteger 5, Decimal 5.5 and 5.0 against '5.5', '5', '05' (pages/lt-testpage-assertequals-option/
+                    // TestPageAssertEqualsOption.al:AssertEquals_TextControl_NumbersAndText, AssertEquals_CodeControl_NumbersAndText). A BigInteger
+                    // outside 0 to 9 is not pinned. A Boolean goes through ops::convert (pinned in the same tests).
                     Some(RtType::Text(_) | RtType::Code(_))
                         if matches!(other, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) =>
                     {
-                        let d = match other {
-                            Value::Integer(n) => rust_decimal::Decimal::from(*n),
-                            Value::BigInteger(n) => rust_decimal::Decimal::from(*n),
-                            Value::Decimal(d) => *d,
+                        match other {
+                            Value::Integer(n) => Value::Text(n.to_string().into()),
+                            Value::BigInteger(n) => {
+                                if !(0..10).contains(n) {
+                                    al_builtins::assumptions::assume(
+                                        al_builtins::assumptions::Assumption::TestPageAssertEqualsIntegerOnTextControl,
+                                    );
+                                }
+                                Value::Text(n.to_string().into())
+                            }
+                            Value::Decimal(d) => Value::Text(
+                                al_builtins::format::try_format(&Value::Decimal(d.normalize()), 0, 0, self)
+                                    .map_err(Signal::Unsupported)?
+                                    .into(),
+                            ),
                             _ => unreachable!(),
-                        };
-                        if d < rust_decimal::Decimal::ZERO || d >= rust_decimal::Decimal::TEN {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::TestPageAssertEqualsIntegerOnTextControl,
-                            );
                         }
-                        Value::Text(d.normalize().to_string().into())
                     }
                     Some(rt) => ops::convert(other.clone(), &rt)?,
                     None => other.clone(),
@@ -689,4 +708,14 @@ impl Session {
         }
         Ok(visible)
     }
+}
+
+/// The text of the `ENU = '...'` entry of a `...ML` property value.
+fn enu_entry(ml: &str) -> Option<String> {
+    let low = ml.to_ascii_lowercase();
+    let at = low.find("enu")?;
+    let rest = ml[at + 3..].trim_start().strip_prefix('=')?.trim_start();
+    let rest = rest.strip_prefix('\'')?;
+    let end = rest.find('\'')?;
+    Some(rest[..end].to_string())
 }

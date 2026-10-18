@@ -254,12 +254,19 @@ impl Session {
             // What the database holds committed: a row inserted in the open transaction does not count yet
             // (record/TestProbeRecordRefContracts.al:LastUsedRowVersion_StartsAndGrows, `grows_after_insert` No).
             ids::DATABASE_LASTUSEDROWVERSION_1 => return Ok(Value::BigInteger(self.tx.committed_row_version.max(1))),
-            // Only the bounds are pinned (platform/lt-platform-members/PlTDatabase.al:250-264: 0 <= value <= LastUsedRowVersion() + 1),
-            // not the value AL code reads: refused.
+            // After a Commit that ended a transaction without writes, and with no write since, it is LastUsedRowVersion() + 1
+            // (platform/lt-platform-members/PlTRowVersionValue.al:MinimumActiveRowVersion_NoWrite_Committed line 40 and
+            // _PrefixedCallEqualsBareCall). Inside a write transaction, or after a Commit that made writes durable, the value is not
+            // pinned (the file shows it below LastUsedRowVersion() + 1 after a committed insert, line 108, and unchanged by an open insert,
+            // line 77, but the first read in each test follows a DeleteAll): refused. platform/lt-platform-members/PlTDatabase.al:250-264
+            // pins the bounds 0 <= value <= LastUsedRowVersion() + 1 only.
             ids::DATABASE_MINIMUMACTIVEROWVERSION_1 => {
-                return unsupported(
-                    "Database.MinimumActiveRowVersion: the exact value is not pinned (only 0 <= value <= LastUsedRowVersion() + 1 is)",
-                );
+                if self.tx.tx_phase == crate::transactions::TX_WRITE || self.tx.last_commit_wrote {
+                    return unsupported(
+                        "Database.MinimumActiveRowVersion in a write transaction or after a Commit that made writes durable (the exact value is not pinned; probe wanted)",
+                    );
+                }
+                return Ok(Value::BigInteger(self.tx.committed_row_version.max(1) + 1));
             }
             // Set when given a value, read otherwise; the default is the documented one
             // (docs/probes-needed.md). session/TestSystemExtended.al:608-630 only calls it.

@@ -3,8 +3,8 @@
 //!
 //! 1. `.` `[ ]` `( )` `::`          — postfix, handled in `postfix`
 //! 2. `not` unary `-` unary `+`
-//! 3. `*` `/` `div` `mod` `and` `xor`
-//! 4. `+` `-` `or`
+//! 3. `*` `/` `div` `mod` `and`
+//! 4. `+` `-` `or` `xor`   (xor below and: corpus misc/lt-expressions-statements/PBinaryUnaryExpressions.al:72, `true xor true and false` is true)
 //! 5. `>` `>=` `<` `<=` `=` `<>` `in` `is` `as`
 //! 6. `..`                          — only inside set literals and case labels
 //!
@@ -173,8 +173,8 @@ fn type_name(p: &mut Parser) {
 fn additive(p: &mut Parser) {
     let cp = p.checkpoint();
     multiplicative(p);
-    while matches!(p.current(), Plus | Minus) || p.at_kw("or") {
-        let boolean = p.at_kw("or");
+    while matches!(p.current(), Plus | Minus) || p.at_any_kw(&["or", "xor"]) {
+        let boolean = p.at_any_kw(&["or", "xor"]);
         p.start_at(cp, BinExpr);
         p.bump_any();
         let operand = p.checkpoint();
@@ -201,8 +201,8 @@ fn membership_of_operand(p: &mut Parser, operand: crate::builder::Checkpoint) {
 fn multiplicative(p: &mut Parser) {
     let cp = p.checkpoint();
     unary(p);
-    while matches!(p.current(), Star | Slash) || p.at_any_kw(&["and", "xor", "div", "mod"]) {
-        let boolean = p.at_any_kw(&["and", "xor"]);
+    while matches!(p.current(), Star | Slash) || p.at_any_kw(&["and", "div", "mod"]) {
+        let boolean = p.at_kw("and");
         p.start_at(cp, BinExpr);
         p.bump_any();
         let operand = p.checkpoint();
@@ -396,10 +396,11 @@ mod tests {
     }
 
     #[test]
-    fn xor_is_multiplicative() {
+    fn xor_binds_looser_than_and() {
+        // corpus misc/lt-expressions-statements/PBinaryUnaryExpressions.al:72
         assert_eq!(
-            e("a or b xor c"),
-            "(BinExpr (NameRef a) or (BinExpr (NameRef b) xor (NameRef c)))"
+            e("a xor b and c"),
+            "(BinExpr (NameRef a) xor (BinExpr (NameRef b) and (NameRef c)))"
         );
     }
 

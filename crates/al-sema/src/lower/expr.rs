@@ -357,6 +357,21 @@ impl Lowerer<'_> {
             }
             BinExpr => {
                 let op = sig_tokens(n)[0].text().to_ascii_lowercase();
+                // `xor` below `and` is pinned (PBinaryUnaryExpressions.al:72); how `xor` ranks against `or` is not: an expression that mixes them
+                // without parentheses is refused. (Microsoft's operator table puts `xor` with `and`, which the corpus contradicts.)
+                if matches!(op.as_str(), "or" | "xor") {
+                    let other = if op == "or" { "xor" } else { "or" };
+                    if kids.iter().any(|k| {
+                        k.kind() == BinExpr
+                            && sig_tokens(k)
+                                .first()
+                                .is_some_and(|t| t.text().eq_ignore_ascii_case(other))
+                    }) {
+                        return Err(
+                            "`xor` mixed with `or` without parentheses (their precedence is not pinned)".into(),
+                        );
+                    }
+                }
                 // `a and b in [..]` is `a and (b in [..])` and `a in [..] and b` is `(a in [..]) and b`: `in` binds tighter than
                 // `and`, `or` and `xor` (grammar/expressions.rs; corpus types/lt-in-precedence-date-guid-filters/P143Prec_*.al).
                 // `<Integer> in [..] and|or|xor <Boolean>`: the corpus has BC answer `1 in [1, 2] and false` with Yes

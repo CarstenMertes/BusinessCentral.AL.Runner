@@ -382,12 +382,20 @@ pub fn build(cx: &Context, mut reasons: Vec<String>) -> ir::XmlPort {
                     .property(i, "LinkTable")
                     .map(|v| crate::scan::unquote_xmlport(&v));
                 let link_fields = layout.property(i, "LinkFields");
+                // LinkTable without LinkFields links nothing: an export shows every row under every parent, an import saves the parent
+                // before the elements below it (xmlport/lt-xmlport-linktable/XmlPortLinkTableNoLinkFields.al: BothTemporary_Export,
+                // PersistentChild_Export, BothTemporary_Import_*, PersistentChild_Import_*, PersistentBoth_Import_*). LinkFields without
+                // LinkTable stays refused.
+                let link_fields = link_fields.or_else(|| link_table.as_ref().map(|_| String::new()));
                 match (link_table, link_fields) {
                     (None, None) => {}
                     (Some(t), Some(f)) => match layout.table_named(raw.parent, &t) {
                         Some(ln) => {
                             node.link_node = Some(ln);
-                            for pair in crate::scan::split_double(&f, ',') {
+                            for pair in crate::scan::split_double(&f, ',')
+                                .into_iter()
+                                .filter(|p| !p.trim().is_empty())
+                            {
                                 let parts = crate::scan::split_double(&pair, '=');
                                 let own = parts.first().map(|p| crate::scan::unquote_xmlport(p));
                                 let other = parts.get(1).map(|p| p.trim()).and_then(|p| {
@@ -785,8 +793,10 @@ xmlport 50010 X
                 "{name}: {why}"
             );
         }
-        let why = reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", ""));
+        // LinkFields without LinkTable stays refused; LinkTable alone links nothing (XmlPortLinkTableNoLinkFields.al).
+        let why = reasons_of(SRC.replace("LinkTable = P;", ""));
         assert!(why.contains("LinkTable and LinkFields must be given together"), "{why}");
+        assert_eq!(reasons_of(SRC.replace("LinkFields = ParentNo = FIELD(No);", "")), "");
     }
 
     #[test]

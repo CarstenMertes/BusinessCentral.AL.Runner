@@ -60,6 +60,12 @@ pub(crate) fn record_ref_value(rec: &crate::records::Rec) -> Value {
     handle("RecordRef", LibraryValue::RecordRef(Rc::new(RefCell::new(copy))))
 }
 
+/// A `RecordRef` handle on the record `rec` itself: a change the subscriber makes reaches the row being written and the caller's
+/// variable (events/lt-platform-events-v/PeVTests.al:170 GlobalTriggers_SubscriberChangesTheRecordItIsHanded_RowI: `dbmut` and `dbmod`).
+pub(crate) fn record_ref_shared(rec: &crate::records::Rec) -> Value {
+    handle("RecordRef", LibraryValue::RecordRef(rec.clone()))
+}
+
 fn al_error(message: String) -> Signal {
     Signal::Error(Box::new(AlError {
         message,

@@ -1055,6 +1055,22 @@ mod tests {
         }
     }
 
+    // must-not-compile 0501: a Text literal and a Text variable assigned to a Decimal. AL0122.
+    #[test]
+    fn al0122_text_into_decimal() {
+        let cu = |body: &str| {
+            format!(
+                "codeunit 50001 \"MNC Codeunit\" {{ procedure DoIt() var D: Decimal; T: Text; V: Variant; begin {body} end; }}"
+            )
+        };
+        let want = "AL0122 Cannot implicitly convert type 'Text' to 'Decimal'".to_string();
+        assert_eq!(messages(&cu("D := '100';")), vec![want.clone()]);
+        assert_eq!(messages(&cu("D := T;")), vec![want]);
+        for ok in ["D := V;", "Evaluate(D, T);", "D := 5;"] {
+            assert!(messages(&cu(ok)).is_empty(), "{ok}");
+        }
+    }
+
     #[test]
     fn al0197_every_declaration_of_a_repeated_name_is_reported() {
         let cu = "codeunit 50000 \"Same\" { } codeunit 50001 \"same\" { }";

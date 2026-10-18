@@ -121,7 +121,7 @@ fn enum_from_integer_takes_a_variant_that_holds_a_whole_decimal_or_a_number_text
     );
 }
 
-// foreach over Ordinals into an Enum variable (foreach-integer-into-enum, an assumption): the variable holds the enum value.
+// foreach over Ordinals into an Enum variable (enum/lt-enum-foreach-integer/EnumForeachInteger.al:15): the variable holds the enum value.
 #[test]
 fn foreach_over_ordinals_into_an_enum_variable_gives_enum_values() {
     // Draft (1) and Closed (5) are the ordinals after the blank one: the loop sees the enum value of each.
@@ -130,6 +130,17 @@ fn foreach_over_ordinals_into_an_enum_variable_gives_enum_values() {
         "foreach S in S.Ordinals() do if S = \"ALT Status\"::Closed then N += 10 else if S = \"ALT Status\"::Draft then N += 1; exit(N);",
     );
     assert_eq!(r.unwrap(), 11);
+}
+
+// enum/lt-enum-foreach-integer/EnumForeachInteger.al:32: foreach over a List of Enum into an Integer variable gives the ordinals.
+#[test]
+fn foreach_over_enums_into_an_integer_variable_gives_ordinals() {
+    // Closed is ordinal 5 and Draft 1: 5 * 100 + 1.
+    let r = int_of(
+        "L: List of [Enum \"ALT Status\"]; V: Integer; N: Integer;",
+        "L.Add(\"ALT Status\"::Closed); L.Add(\"ALT Status\"::Draft); foreach V in L do N := N * 100 + V; exit(N);",
+    );
+    assert_eq!(r.unwrap(), 501);
 }
 
 // errors/lt-ms-refusals-128/P128EvalBasic.al:P128_Evaluate_IntoText, _IntoCode, _IntoShortText_ResultUnused: a Text keeps the text as written,

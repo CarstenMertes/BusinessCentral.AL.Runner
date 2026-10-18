@@ -1,6 +1,6 @@
 # ADR-043: Impact test selection: which Microsoft tests a partner extension can change, run with and without it
 
-- Status: Proposed
+- Status: Accepted (owner, 2026-10-18)
 - Date: 2026-10-18
 
 ## Decision in short
@@ -12,8 +12,10 @@
 3. Tests are selected **dynamically by default**: a per-test index of what each test raised and touched, recorded once
    in a baseline run per BC build, country and company-data lane, and cached like the compile cache. The same baseline
    run supplies the "without" outcomes, so an impact run only runs the selected codeunits once, with the extension.
-4. **Static selection** (per-test reach over the call graph) is a fallback for tests the baseline could not run and
-   a cross-check of the index. It is never the default, because it misses dynamic dispatch.
+   The index is never built implicitly; `alrunner impact-index build` builds it (owner, 2026-10-18).
+4. **Static selection** (per-test reach over the call graph) is used when no index is cached, with a warning that
+   says what it misses and the exact command that builds the index. It also covers tests the baseline could not run
+   and cross-checks the index. With an index cached, dynamic selection is the default.
 5. **First step:** no index and no static analysis. Run the given test apps twice, diff the outcomes, and name the
    extension routines each test entered. Selection then only makes this cheaper; the report stays the same.
 
@@ -142,8 +144,15 @@ worse, misses what it cannot see:
 A test whose reach contains such a site gets the verdict "cannot rule out", not "not reached". Because a missed test
 hides a breakage silently, static selection is never the default. Uses:
 
-- `--impact static`: no baseline run and no index; both sides run on the selected and "cannot rule out" codeunits.
-  For a quick look or a build with no cached index.
+- **No cached index (owner, 2026-10-18).** The impact run does not build the index. It falls back to static
+  selection and both sides run on the selected and "cannot rule out" codeunits. It prints a warning before the run
+  and again above the summary, for example:
+  `no impact index for BC 27.5.46862.48827, country us, lane CRONUS: tests were selected by static reach, which
+  misses Codeunit/Page/Report.Run with an id from a variable or a table, RecordRef on a table number from a
+  variable, events raised by the platform and setup-driven dispatch; N selected tests reach such a site
+  ("cannot rule out") and were run. Build the index once with: alrunner impact-index build <the same test apps
+  and flags>`. The command in the warning repeats the run's test apps, `--country` and data flags exactly.
+- `--impact static`: the same fallback on request, even when an index exists.
 - For tests refused in the baseline: the report adds "static: reaches impact point X" or "static: cannot rule out".
 - Cross-check in our own CI: a test the dynamic index selects and static reach does not is a bug in static reach.
 
@@ -202,8 +211,8 @@ alrunner test --impact-of APP [--impact-of APP ...] [MS-TEST-APPS ...]
   (for a CI cache step). `alrunner impact-points APP` lists the impact points and, when an index exists, how many
   tests each selects, without running anything.
 - **Recipe (ms-recipe-3).** The index and baseline outcomes are per company-data lane (Legacy, UnitTest,
-  Integration, Uncategorized). Disabled tests are skipped by default in an impact run: Microsoft does not run them,
-  so they are noise for a partner. (Our own development runs still run them, as decided 2026-10-17.) Until
+  Integration, Uncategorized). Disabled tests are skipped in an impact run (owner, 2026-10-18): Microsoft does not
+  run them, so they are noise for a partner. (Our own development runs still run them, as decided 2026-10-17.) Until
   ms-recipe-3 is built, impact runs use the CRONUS backup lane and `--disabled-tests` as today.
 - **Country.** `--country CC` (flag only, default w1) picks the localized Base App and test apps. It is part of the
   cache key; a partner on the US localization builds a US index once.
@@ -214,7 +223,7 @@ alrunner test --impact-of APP [--impact-of APP ...] [MS-TEST-APPS ...]
 - **Cost.** Index build: one full run of the chosen test apps with recording on (today about 441 s and up to 10 GB for
   all 32 buckets on the owner's machine; recording overhead to be measured, target under 10 %). Impact run with an
   index: the extension's compile layer (seconds, ADR-026) plus the selected codeunits once. Without an index the
-  first impact run builds it.
+  run falls back to static selection and runs both sides on its selection (2.3); it never builds the index itself.
 
 ### 5. What blocks it today
 
@@ -246,6 +255,8 @@ alrunner test --impact-of APP [--impact-of APP ...] [MS-TEST-APPS ...]
 4. **Recipe and country.** Lanes and disabled tests from ms-recipe-3 in the cache key; `--country` index.
 5. **Static reach.** Per-impact-point reverse search, verdicts for refused tests, `--impact static`, and the
    dynamic-vs-static cross-check in our CI.
+   Until this step lands, an impact run with no cached index stops with the warning of 2.3 (what is missing and
+   the exact `impact-index build` command) and offers `--impact all`; it does not build the index.
 
 Steps 1 to 3 need no new seam. Recording is additive `Session` state; the report is in `al-testrun` and
 `alrunner-cli`. Step 2 adds a cache file format, which is internal tooling (ADR-009: free to improve).
@@ -256,7 +267,8 @@ Steps 1 to 3 need no new seam. Recording is additive `Session` state; the report
   change. Kept as `--impact all` and as step 1; not the default once an index exists.
 - **Static selection as the default.** No baseline run. Misses `RecordRef`, ids in variables, platform-raised events
   and data-driven dispatch, which posting code uses. A missed test hides a breakage without any signal, against the
-  spirit of hard rule 4. Rejected as default; kept as fallback and cross-check.
+  spirit of hard rule 4. Rejected as default when an index exists; used, with a warning, when none is cached, and
+  as cross-check.
 - **Select from the "with" run only** (run all with the extension, keep tests that entered extension code, run those
   without). Halves the cost without an index, but misses passive impact points (new enum values, page property
   changes, install-time data) that run no extension code. Used inside step 1 only to name the routines that ran.
@@ -274,16 +286,13 @@ Steps 1 to 3 need no new seam. Recording is additive `Session` state; the report
 - The cache gains a second kind of entry (index and baseline outcomes) per BC build, country and lane.
 - The value of the feature grows with the pass rate: today 30 % of Microsoft's tests are "not verified".
 
-## Open questions for the owner
+## Owner decisions (2026-10-18)
 
-1. Default when no index is cached: build it now (one full run first, about 7 minutes today) or fall back to
-   `--impact static` with a warning? Recommended: build it, because static selection can miss tests silently.
-2. Disabled tests in impact runs: skip by default (recommended) or run and mark?
-3. Partner setup data: many extensions need a setup row their subscriber reads. Add `--impact-setup CODEUNIT` (a
-   partner codeunit run after the company is created, on the "with" side only), or rely on the extension's install
-   code? Recommended: install code first, the flag later if partners ask.
-4. May a prebuilt index be published (for example as a release asset per BC build and country)? It holds Microsoft
-   object and event ids and test names, not code (hard rule 7). Recommended: no for now; local and CI cache only.
+1. **No cached index:** fall back to static selection with a clear warning that says what static selection misses
+   and exactly what to run to build the index. Do not build the index implicitly. (Section 2.3.)
+2. **Disabled tests:** Microsoft's disabled tests are skipped in impact runs.
+3. **Partner setup data:** comes from the extension's install code for now. No `--impact-setup` flag.
+4. **Prebuilt index:** not published for now; local and CI cache only.
 
 ## Conformance
 

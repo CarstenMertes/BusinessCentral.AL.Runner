@@ -645,6 +645,37 @@ impl Session {
             }
             Err(ReadFailure::Unsupported(why)) => return unsupported(format!("XmlPort import of {why}")),
         };
+        if xp.inline_schema {
+            return unsupported(
+                "XmlPort import into a port with InlineSchema = true of a document that parses (not pinned)",
+            );
+        }
+        // Only the prefixes the port declares are pinned (YXmlPortProps.al:NodeProperties_Import_NamesPrefixes).
+        fn foreign_prefix(e: &Elem, declared: &[(String, String)]) -> bool {
+            e.name
+                .split_once(':')
+                .is_some_and(|(p, _)| !declared.iter().any(|(q, _)| q == p))
+                || e.attrs.iter().any(|(n, _)| {
+                    n.strip_prefix("xmlns:")
+                        .is_some_and(|p| !declared.iter().any(|(q, _)| q == p))
+                })
+                || e.elements().any(|c| foreign_prefix(c, declared))
+        }
+        if foreign_prefix(&root, &xp.namespaces) {
+            return unsupported("XmlPort import of a document with namespaces the port does not declare (not pinned)");
+        }
+        // An element that carries a prefix of the port needs the port's declaration on the root; other layouts are not pinned.
+        for (prefix, uri) in &xp.namespaces {
+            fn uses(e: &Elem, p: &str) -> bool {
+                e.name.starts_with(p) || e.elements().any(|c| uses(c, p))
+            }
+            let marker = format!("{prefix}:");
+            if uses(&root, &marker) && root.attr(&format!("xmlns:{prefix}")) != Some(uri.as_str()) {
+                return unsupported(format!(
+                    "XmlPort import of a document that uses the prefix {prefix} without declaring it on the root (not pinned)"
+                ));
+            }
+        }
         if root.name != xp.nodes[top].xml_name {
             return Err(schema_error(format!("The '{}' element is not declared.", root.name)));
         }
@@ -664,7 +695,7 @@ impl Session {
         let bytes = st.drain();
         if let Some(rest) = bytes.strip_prefix(&[0xFF, 0xFE]) {
             let units: Vec<u16> = rest.chunks_exact(2).map(|p| u16::from_le_bytes([p[0], p[1]])).collect();
-            return Ok(String::from_utf16_lossy(&units));
+            return utf16_declared_utf8(String::from_utf16_lossy(&units));
         }
         // A UTF-16 little endian document without a byte order mark that starts with `<` is read as UTF-16 (a TextEncoding::UTF16
         // OutStream writes no byte order mark and the document declares encoding="UTF-16": xmlport/lt-xmlport-linktable/
@@ -674,7 +705,7 @@ impl Session {
                 .chunks_exact(2)
                 .map(|p| u16::from_le_bytes([p[0], p[1]]))
                 .collect();
-            return Ok(String::from_utf16_lossy(&units));
+            return utf16_declared_utf8(String::from_utf16_lossy(&units));
         }
         if bytes.len() >= 2 && bytes[0] == 0 && bytes[1] == b'<' {
             return unsupported(
@@ -869,6 +900,13 @@ impl Session {
             }
         }
         for (name, value) in &elem.attrs {
+            // A declaration of a namespace of the port is no attribute (YXmlPortProps.al:NodeProperties_Import_NamesPrefixes).
+            if name
+                .strip_prefix("xmlns:")
+                .is_some_and(|p| schema.xp().namespaces.iter().any(|(q, u)| q == p && u == value))
+            {
+                continue;
+            }
             let Some(a) = Self::xp_child_named(schema, node, name, true) else {
                 return unsupported(format!(
                     "XmlPort import of an attribute {name} the schema does not have (error not pinned)"
@@ -1573,7 +1611,18 @@ impl Session {
             if xp.utf8 {
                 return unsupported("XmlPort export with TextEncoding = UTF8 (not pinned)");
             }
-            match self.xp_export_container(inst, schema, top) {
+            if xp.inline_schema {
+                let text = self.xp_export_inline(inst, schema, top)?;
+                al_builtins::stream::write_bytes(&blob, &al_builtins::xmlport::utf16_bom_bytes(&text));
+                return Ok(if guarded { Value::Boolean(true) } else { Value::Null });
+            }
+            match self.xp_export_container(inst, schema, top).map(|mut root| {
+                for (i, (prefix, uri)) in xp.namespaces.iter().enumerate() {
+                    root.attrs.insert(i, (format!("xmlns:{prefix}"), uri.clone()));
+                }
+                root
+            }) {
+                Ok(root) if xp.xml_utf8 => al_builtins::xmlport::serialize_as(&root, "UTF-8").into_bytes(),
                 Ok(root) => al_builtins::xmlport::utf16_bom_bytes(&al_builtins::xmlport::serialize(&root)),
                 Err(Signal::Error(_)) if guarded => {
                     return unsupported("an error inside an Export whose result is used (not pinned)");
@@ -1585,6 +1634,72 @@ impl Session {
         };
         al_builtins::stream::write_bytes(&blob, &bytes);
         Ok(if guarded { Value::Boolean(true) } else { Value::Null })
+    }
+
+    /// The export of a port with `InlineSchema = true`: the root, an XSD with a complex type for the table element and one
+    /// for the root, then the rows on one line (xmlport/lt-y-xmlport-props/YXmlPortProps.al:563
+    /// InlineSchema_Export_ContainsSchema). Pinned for a root text element holding one table element whose children are
+    /// Integer and Text field elements, with at least one row; anything else is refused.
+    fn xp_export_inline(&mut self, inst: &Inst, schema: &Schema, top: usize) -> Result<String, Signal> {
+        let xp = schema.xp();
+        let shape = || "XmlPort export with InlineSchema of a shape the corpus does not pin (a root text element with one table element of Integer and Text field elements, no namespaces or Encoding)";
+        let kids = schema.children(top);
+        let [table] = kids[..] else {
+            return unsupported(shape());
+        };
+        if schema.node(table).kind != ir::XmlNodeKind::Table
+            || schema.node(table).link_node.is_some()
+            || !xp.namespaces.is_empty()
+            || xp.xml_utf8
+            || !schema.node(top).triggers.is_empty()
+            || !schema.node(table).triggers.is_empty()
+        {
+            return unsupported(shape());
+        }
+        let rec = self.xp_record(inst, schema.node(table))?;
+        let t = self.table(&rec)?;
+        let mut fields = String::new();
+        for f in schema.children(table) {
+            let n = schema.node(f);
+            let ty = n.field.map(|p| &t.fields[p].ty);
+            let line = match (n.kind, ty) {
+                (ir::XmlNodeKind::Field, Some(RtType::Integer)) if !n.min_zero && n.triggers.is_empty() => format!(
+                    "      <xs:element minOccurs=\"1\" maxOccurs=\"1\" default=\"0\" name=\"{}\" type=\"xs:int\" />\r\n",
+                    n.xml_name
+                ),
+                (ir::XmlNodeKind::Field, Some(RtType::Text(_))) if !n.min_zero && n.triggers.is_empty() => format!(
+                    "      <xs:element minOccurs=\"1\" maxOccurs=\"1\" name=\"{}\" type=\"xs:string\" />\r\n",
+                    n.xml_name
+                ),
+                _ => return unsupported(shape()),
+            };
+            fields.push_str(&line);
+        }
+        if fields.is_empty() {
+            return unsupported(shape());
+        }
+        let root = self.xp_export_container(inst, schema, top)?;
+        let mut rows = String::new();
+        for c in &root.children {
+            let al_builtins::xmlport::Node::Elem(e) = c else {
+                return unsupported(shape());
+            };
+            match al_builtins::xmlport::compact(e) {
+                Some(r) => rows.push_str(&r),
+                None => {
+                    return unsupported(
+                        "XmlPort export with InlineSchema of an empty value (how it is written is not pinned)",
+                    );
+                }
+            }
+        }
+        if rows.is_empty() {
+            return unsupported("XmlPort export with InlineSchema and no rows (not pinned)");
+        }
+        let (root_name, table_name) = (&schema.node(top).xml_name, &schema.node(table).xml_name);
+        Ok(format!(
+            "<?xml version=\"1.0\" encoding=\"UTF-16\" standalone=\"no\"?>\r\n<{root_name}>\r\n<xs:schema xmlns:xs=\"http://www.w3.org/2001/XMLSchema\">\r\n  <xs:complexType name=\"{table_name}\">\r\n    <xs:sequence>\r\n{fields}    </xs:sequence>\r\n  </xs:complexType>\r\n  <xs:complexType name=\"{root_name}\" mixed=\"true\">\r\n    <xs:sequence>\r\n      <xs:element minOccurs=\"1\" maxOccurs=\"unbounded\" name=\"{table_name}\" type=\"{table_name}\" />\r\n    </xs:sequence>\r\n  </xs:complexType>\r\n  <xs:element name=\"{root_name}\" type=\"{root_name}\" />\r\n</xs:schema>{rows}</{root_name}>"
+        ))
     }
 
     /// A text element with content: its attributes, then its children in schema order.
@@ -1621,7 +1736,7 @@ impl Session {
                 }
                 ir::XmlNodeKind::Field => {
                     let v = got!(self.xp_field_text(inst, schema, child));
-                    let mut e = Elem::new(&c.xml_name);
+                    let mut e = Elem::new(&doc_name(schema, child));
                     e.children.push(Node::Text(v));
                     out.children.push(Node::Elem(e));
                 }
@@ -1691,8 +1806,14 @@ impl Session {
         let rec = self.xp_record(inst, schema.node(n.table_node.expect("field nodes have a table node")))?;
         let pos = n.field.expect("field nodes have a field");
         // A FlowField is calculated for the export (assumption xmlport-exports-flowfield-calculated).
-        if !self.table(&rec)?.fields[pos].stored {
-            al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::XmlportExportsFlowfieldCalculated);
+        // AutoCalcField decides it when declared (xmlport/lt-y-xmlport-props/YXmlPortProps.al:
+        // NodeProperties_Export_NamesPrefixesAutoCalc: true calculates, false writes the field as it is).
+        if !self.table(&rec)?.fields[pos].stored && n.auto_calc != Some(false) {
+            if n.auto_calc.is_none() {
+                al_builtins::assumptions::assume(
+                    al_builtins::assumptions::Assumption::XmlportExportsFlowfieldCalculated,
+                );
+            }
             self.ret_used = false;
             self.record_op(RecordOp::CalcFields, &rec, &mut [Value::Integer(pos as i32)])?;
         }
@@ -1913,6 +2034,40 @@ fn for_each_row(
 /// is itself. Other `<...>` names are not pinned.
 /// A declared separator as the getter shows it: `<None>` is empty, `<CR/LF>`, `<LF>`, `<CR>` and `<Tab>` are their escapes, anything
 /// else is as written (P94XpDelim.al:Getters_Declared, Getters_DeclaredTwoTables). Other tokens are not pinned.
+/// The name of node `c` in the document: a field element with a `NamespacePrefix` is `prefix:Name`.
+fn doc_name(schema: &Schema, c: usize) -> String {
+    let n = schema.node(c);
+    match (&n.ns_prefix, n.kind) {
+        (Some(p), ir::XmlNodeKind::Field) => format!("{p}:{}", n.xml_name),
+        _ => n.xml_name.clone(),
+    }
+}
+
+/// A document read as UTF-16 whose declaration says `utf-8`: the reader switches to UTF-8 after the declaration and meets the
+/// zero byte that follows the next `<`: `Name cannot begin with the '.' character, hexadecimal value 0x00. Line 1, position N.`
+/// with N two past the end of the declaration (xmlport/lt-af-xmlport/AfXmlPortEncoding.al:
+/// AF_Encoding_Import_Utf8Property_Utf16DocDeclaredUtf8, a declaration followed at once by the root element). Any other
+/// shape after the declaration is not pinned.
+fn utf16_declared_utf8(text: String) -> Result<String, Signal> {
+    let Some((decl, rest)) = text.strip_prefix('\u{feff}').unwrap_or(&text).split_once("?>") else {
+        return Ok(text);
+    };
+    let lower = decl.to_ascii_lowercase();
+    if !lower.starts_with("<?xml") || !(lower.contains("encoding=\"utf-8\"") || lower.contains("encoding='utf-8'")) {
+        return Ok(text);
+    }
+    if decl.contains('\n') || decl.contains('\r') || !rest.starts_with('<') {
+        return unsupported(
+            "XmlPort import of a UTF-16 document that declares utf-8 with a different layout (error text not pinned)",
+        );
+    }
+    let position = decl.chars().count() + 2 + 2;
+    Err(xerr(
+        format!("Name cannot begin with the '.' character, hexadecimal value 0x00. Line 1, position {position}."),
+        "XmlPortImport:Xml",
+    ))
+}
+
 fn declared_separator(v: &str) -> Result<String, Signal> {
     Ok(match v.to_ascii_uppercase().as_str() {
         "<NONE>" => String::new(),
@@ -2131,7 +2286,10 @@ struct Sequence {
     seen: usize,
     optional: Vec<bool>,
     repeat: Vec<bool>,
+    /// The name an element has in the document: `prefix:Name` for a prefixed field element.
     names: Vec<String>,
+    /// The name as an error lists it, quoted: `'Name'`, or `'Name' in namespace 'uri'` for a prefixed element.
+    shown: Vec<String>,
 }
 
 impl Sequence {
@@ -2155,7 +2313,21 @@ impl Sequence {
                 .iter()
                 .map(|&c| schema.node(c).kind == ir::XmlNodeKind::Table)
                 .collect(),
-            names: decl.iter().map(|&c| schema.node(c).xml_name.clone()).collect(),
+            names: decl.iter().map(|&c| doc_name(schema, c)).collect(),
+            shown: decl
+                .iter()
+                .map(|&c| {
+                    let n = schema.node(c);
+                    match n
+                        .ns_prefix
+                        .as_deref()
+                        .and_then(|p| schema.xp().namespaces.iter().find(|(q, _)| q == p))
+                    {
+                        Some((_, uri)) => format!("'{}' in namespace '{uri}'", n.xml_name),
+                        None => format!("'{}'", n.xml_name),
+                    }
+                })
+                .collect(),
             decl,
         }
     }
@@ -2168,11 +2340,11 @@ impl Sequence {
         }
         let done = self.seen >= 1 || self.optional[self.pos];
         if self.seen == 0 || self.repeat[self.pos] {
-            out.push(self.names[self.pos].clone());
+            out.push(self.shown[self.pos].clone());
         }
         if done {
             for j in self.pos + 1..self.decl.len() {
-                out.push(self.names[j].clone());
+                out.push(self.shown[j].clone());
                 if !self.optional[j] {
                     break;
                 }
@@ -2185,7 +2357,7 @@ impl Sequence {
         let expected = self.expected();
         match expected.len() {
             0 => Ok(head),
-            1 => Ok(format!("{head} List of possible elements expected: '{}'.", expected[0])),
+            1 => Ok(format!("{head} List of possible elements expected: {}.", expected[0])),
             _ => unsupported("a schema error that lists several possible elements (the list form is not pinned)"),
         }
     }

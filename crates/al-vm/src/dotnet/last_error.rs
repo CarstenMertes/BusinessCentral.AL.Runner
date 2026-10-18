@@ -77,6 +77,8 @@ pub(crate) fn exception_text(this: &Rc<DotNetObject>) -> Result<String, Signal> 
     let (Value::Text(msg), Value::Text(stack)) = (msg, stack) else {
         return unsupported("a last-error exception without its message");
     };
+    // Not pinned past the first line and the `   at ` marker: registered assumption.
+    al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ExceptionToStringStackFrames);
     let mut out = format!("{type_name}: {msg}");
     let frames: Vec<&str> = stack
         .split('\n')

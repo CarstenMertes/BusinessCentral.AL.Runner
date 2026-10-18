@@ -177,3 +177,41 @@ fn an_error_kind_the_corpus_does_not_pin_is_refused() {
 fn error_with_a_label_is_assumed_to_be_a_dialog_exception() {
     assert_eq!(text(after_run(5)), format!("No|boom from label|Yes|{DIALOG}|Yes"));
 }
+
+/// Not pinned: GetLastErrorObject before any error happened in the session is refused. After ClearLastError it is
+/// null (GetLastErrorObject.al:283-301).
+#[test]
+fn before_any_error_is_refused_but_after_clear_is_null() {
+    let fresh = run(
+        "procedure F(): Text var Exc: DotNet LeoExc; begin Exc := GetLastErrorObject(); exit(Format(IsNull(Exc))); end;",
+    );
+    match fresh {
+        Err(Signal::Unsupported(why)) => assert!(why.contains("before any error"), "{why}"),
+        other => panic!("{other:?}"),
+    }
+    let cleared = text(run(
+        "procedure F(): Text var Exc: DotNet LeoExc; begin ClearLastError(); Exc := GetLastErrorObject(); exit(Format(IsNull(Exc))); end;",
+    ));
+    assert_eq!(cleared, "Yes");
+}
+
+/// ToString and Format after the first line are not pinned (only the `   at ` marker): both mark the assumption.
+#[test]
+fn to_string_and_format_mark_the_stack_frame_assumption() {
+    use al_builtins::assumptions::{Assumption, take_hits};
+    for body in ["exit(Exc.ToString());", "exit(Format(Exc));"] {
+        take_hits();
+        let r = text(run(&format!(
+            "procedure F(): Text var T: Codeunit \"LEO Thrower\"; Exc: DotNet LeoExc; begin T.SetMode(1); if T.Run() then exit('ran'); Exc := GetLastErrorObject(); {body} end;"
+        )));
+        assert!(r.starts_with(DIALOG), "{r}");
+        assert!(
+            take_hits().contains(&Assumption::ExceptionToStringStackFrames),
+            "{body}"
+        );
+    }
+    // The members whose text is pinned do not mark it.
+    take_hits();
+    let _ = after_run(1);
+    assert!(!take_hits().contains(&Assumption::ExceptionToStringStackFrames));
+}

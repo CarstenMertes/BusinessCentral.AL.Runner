@@ -33,6 +33,8 @@ pub enum ExceptionKind {
     RecordNotFound,
     /// A division by zero: NavALException with an inner exception, code `AL:DivideByZero` (GetLastErrorObject.al:257-280).
     DivideByZero,
+    /// Set by `ClearLastError`: no error, as opposed to the default of a session where no error has happened yet.
+    Cleared,
 }
 
 /// How an error was raised, for the text `GetLastErrorText(true)` answers (corpus
@@ -1130,6 +1132,11 @@ fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Valu
     use crate::dotnet_sigs::{AL_EXCEPTION, NCL_DIALOG_EXCEPTION, RECORD_NOT_FOUND_EXCEPTION};
     let e = ctx.last_error();
     if e.message.is_empty() && e.code.is_empty() {
+        if e.exception != ExceptionKind::Cleared {
+            return unsupported(
+                "GetLastErrorObject before any error happened in the session (what BC answers is not pinned; only the answer after ClearLastError is)",
+            );
+        }
         return Ok(Value::DotNet(Rc::new(crate::value::DotNetObject::new(
             crate::value::DotNetKind::Internal {
                 type_name: crate::dotnet_sigs::NULL_EXCEPTION.into(),
@@ -1145,7 +1152,7 @@ fn get_last_error_object(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Valu
         }
         ExceptionKind::RecordNotFound => RECORD_NOT_FOUND_EXCEPTION,
         ExceptionKind::DivideByZero => AL_EXCEPTION,
-        ExceptionKind::Unknown => {
+        ExceptionKind::Unknown | ExceptionKind::Cleared => {
             return unsupported(&format!(
                 "GetLastErrorObject after an error of code '{}' (the .NET exception BC holds for it is not pinned; only Error() with a text, Get without a row and a division by zero are)",
                 if e.code == UNPINNED_ERROR {
@@ -1198,7 +1205,10 @@ fn code_coverage_refresh(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Valu
 }
 
 fn clear_last_error(ctx: &mut dyn Ctx, _: Option<&mut Value>, _: &mut [Value]) -> Result<Value, Signal> {
-    ctx.set_last_error(AlError::default());
+    ctx.set_last_error(AlError {
+        exception: ExceptionKind::Cleared,
+        ..Default::default()
+    });
     Ok(Value::Null)
 }
 
@@ -2354,7 +2364,8 @@ pub(crate) mod tests {
         let code = lookup("System.GetLastErrorCode#1").unwrap();
         assert!(matches!(code(&mut ctx, None, &mut []), Ok(Value::Text(ref s)) if s == "Dialog"));
         lookup("System.ClearLastError#1").unwrap()(&mut ctx, None, &mut []).unwrap();
-        assert_eq!(ctx.last_error(), AlError::default());
+        assert_eq!(ctx.last_error().message, "");
+        assert_eq!(ctx.last_error().exception, ExceptionKind::Cleared);
     }
 
     #[test]

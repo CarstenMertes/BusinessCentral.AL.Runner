@@ -583,6 +583,12 @@ registry! {
         tests: "Microsoft tests that read the exception of a failed codeunit run (DotNet Exception Handler.Collect and the 1,999 tests that reach it) after an Error(Label).",
         probe: "Error(MyLabel) and Error(TextVariable) caught by Codeunit.Run, then GetLastErrorObject().GetType().FullName and Message.",
     },
+    ExceptionToStringStackFrames => {
+        id: "exception-tostring-stack-frames",
+        assumed: "ToString and Format of the exception GetLastErrorObject answers: the lines after the first are the AL frames of the error (or one line saying they are not tracked); BC writes .NET server frames. Only the first line `<class>: <message>` and the `   at ` marker are pinned.",
+        tests: "Microsoft tests that read ToString or Format of a last-error exception.",
+        probe: "Format(GetLastErrorObject()) after Error('x') in a codeunit run from a test: every line,.",
+    },
 }
 
 thread_local! {

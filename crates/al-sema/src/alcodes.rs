@@ -16,7 +16,7 @@
 //!   these checks.
 //!
 //! The codes the checker itself reports (`check/`, where types are known) are AL0118, AL0122,
-//! AL0132 and AL0161; they are listed in [`IMPLEMENTED`] too.
+//! AL0132 and AL0161 (and AL0175 for Char - Text); they are listed in [`IMPLEMENTED`] too.
 
 use crate::workspace::{AppKind, Diagnostic, ObjKind, Workspace};
 use al_syntax::{SyntaxKind, SyntaxNode, ast};
@@ -67,10 +67,11 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ),
 ];
 
-/// Codes the must-not-compile corpus expects and this front end cannot decide, with the reason.
+/// Codes the must-not-compile corpus expects and this front end cannot decide, with the reason. AL0175 is reported
+/// for `Char - Text` and `Text - Char` on two variables only (case 0500); a case that finds its code matches.
 pub const NOT_CHECKED: &[(&str, &str)] = &[(
     "AL0175",
-    "needs the .NET type behind the alias (an enum is comparable with `=`, a class object is not); the front end has no assembly metadata",
+    "needs the .NET type behind the alias (an enum is comparable with `=`, a class object is not); the front end has no assembly metadata.",
 )];
 
 /// Why `code` is not checked, if it is listed in [`NOT_CHECKED`]; `Some("not implemented")` for a
@@ -1052,6 +1053,36 @@ mod tests {
             "I := T.IndexOf('x');",
         ] {
             assert!(messages(&cu(ok)).is_empty(), "{ok}");
+        }
+    }
+
+    // must-not-compile 0500 (corpus tests/must-not-compile/cases/0500-char-minus-text.al:1-2): `C - T` and `T - C`
+    // with a Char variable and an unbounded Text variable. AL0175. A Text literal with a Char compiles (an
+    // Integer); Text[30], Code and other shapes are not pinned and not judged.
+    #[test]
+    fn al0175_char_minus_text_variable() {
+        let cu = |body: &str| {
+            format!(
+                "codeunit 50001 \"MNC Codeunit\" {{ procedure DoIt() var C: Char; T: Text; L: Text[30]; I: Integer; begin {body} end; }}"
+            )
+        };
+        assert_eq!(
+            messages(&cu("I := C - T;")),
+            vec!["AL0175 Operator '-' cannot be applied to operands of type 'Char' and 'Text'".to_string()]
+        );
+        assert_eq!(
+            messages(&cu("I := T - C;")),
+            vec!["AL0175 Operator '-' cannot be applied to operands of type 'Text' and 'Char'".to_string()]
+        );
+        for ok in [
+            "I := C - 'a';",
+            "I := 'a' - C;",
+            "I := C - I;",
+            "I := C - C;",
+            "I := C - L;",
+            "T := T + T;",
+        ] {
+            assert!(messages(&cu(ok)).iter().all(|m| !m.starts_with("AL0175")), "{ok}");
         }
     }
 

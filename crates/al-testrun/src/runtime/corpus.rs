@@ -114,7 +114,19 @@ impl CorpusRuntime {
         opts: &RunOptions,
     ) -> Result<CorpusRuntime, String> {
         let compiled = Self::compile_suites(apps, kinds, manifests, symbols, target, suites, opts)?;
-        let rt = Self::run_compiled(&compiled, target, dotnet, opts);
+        // The run phase selects by `RunOptions::only` (the caller's numbering of the apps).
+        let narrowed = opts.narrow.as_ref().and_then(|narrow| {
+            let input = NarrowInput {
+                program: &compiled.lowered.program,
+                order: &compiled.order,
+                only: opts.only.as_deref(),
+            };
+            (narrow.0)(&input).map(|only| RunOptions {
+                only: Some(only),
+                ..opts.clone()
+            })
+        });
+        let rt = Self::run_compiled(&compiled, target, dotnet, narrowed.as_ref().unwrap_or(opts));
         // The workspace and the lowered program are big: dropping them takes as long as lowering
         // a tenth of the corpus, and nothing waits for it.
         retire(compiled);
@@ -534,6 +546,8 @@ impl CorpusRuntime {
             .zip(opts.compile_cache.as_ref())
             // `--rebuild-compile-cache`: the file is not read, and the run writes a new one.
             .filter(|(_, cc)| !cc.rebuild)
+            // The impact index needs what the install code raised and touched: the baseline runs.
+            .filter(|_| !opts.impact_trace)
             .and_then(|(key, cc)| crate::baseline_cache::read(&cc.dir, key))
             .filter(|(_, at)| {
                 crate::host::SystemClock::begin_at(*at)
@@ -555,7 +569,7 @@ impl CorpusRuntime {
                 })
                 .flatten();
             let run = if baseline {
-                kept.or_else(|| crate::baseline::run(&engine, lowered))
+                kept.or_else(|| crate::baseline::run_traced(&engine, lowered, opts.impact_trace))
             } else {
                 None
             };
@@ -611,6 +625,8 @@ impl CorpusRuntime {
             }
         }
         let baseline_time = started.elapsed();
+        let mut baseline_run = baseline_run;
+        let baseline_trace = baseline_run.as_mut().and_then(|b| b.trace.take());
         let baseline = baseline_run.map(|b| b.baseline);
         let tests_started = std::time::Instant::now();
         let mut outcomes = std::collections::HashMap::new();
@@ -625,6 +641,14 @@ impl CorpusRuntime {
         let mut units: Vec<Unit> = Vec::new();
         let order_arc: Arc<Vec<usize>> = Arc::new(order.clone());
         let mut list: Vec<TestResult> = Vec::new();
+        let mut impact_keys = crate::impact_trace::Interner::default();
+        let impact_baseline: Option<Vec<u32>> = baseline_trace.map(|keys| impact_keys.ids(keys));
+        let program_apps: Vec<(String, String, String)> = lowered
+            .program
+            .apps
+            .iter()
+            .map(|a| (a.id.clone(), a.name.clone(), a.version.clone()))
+            .collect();
         for (si, suite) in suites.iter().enumerate() {
             if opts.execute {
                 // A scratch run: the `OnRun` trigger of one codeunit of the suite's app.
@@ -641,6 +665,7 @@ impl CorpusRuntime {
                         order: order_arc.clone(),
                         hooks: opts.hooks.clone(),
                         clock_start: None,
+                        impact: opts.impact_trace,
                     });
                 }
                 continue;
@@ -665,6 +690,7 @@ impl CorpusRuntime {
                         order: order_arc.clone(),
                         hooks: opts.hooks.clone(),
                         clock_start: opts.clock_starts.as_ref().and_then(|m| m.get(&id).copied()),
+                        impact: opts.impact_trace,
                     }),
                     Err(why) => {
                         for r in test_routines(o) {
@@ -682,6 +708,7 @@ impl CorpusRuntime {
                                 coverage: Vec::new(),
                                 messages: Vec::new(),
                                 captured: None,
+                                impact: Vec::new(),
                             });
                         }
                     }
@@ -801,7 +828,8 @@ impl CorpusRuntime {
                         time: std::time::Duration,
                         coverage: Vec<(u32, u32)>,
                         messages: Vec<String>,
-                        captured: Option<crate::events::CapturedAt>| {
+                        captured: Option<crate::events::CapturedAt>,
+                        impact: Vec<u32>| {
                 list.push(TestResult {
                     suite: r.si,
                     app: order[o.app as usize],
@@ -815,6 +843,7 @@ impl CorpusRuntime {
                     coverage,
                     messages,
                     captured,
+                    impact,
                 })
             };
             match r.result {
@@ -846,6 +875,12 @@ impl CorpusRuntime {
                             .iter()
                             .position(|(n, _)| *n == name)
                             .map(|i| std::mem::take(&mut scratch.captured[i].1));
+                        let touched = scratch
+                            .traces
+                            .iter()
+                            .position(|(n, _)| *n == name)
+                            .map(|i| impact_keys.ids(std::mem::take(&mut scratch.traces[i].1)))
+                            .unwrap_or_default();
                         push(
                             &mut list,
                             &name,
@@ -856,6 +891,7 @@ impl CorpusRuntime {
                             cov,
                             said,
                             seen,
+                            touched,
                         );
                         times_by_case.insert((r.si, r.id, name.to_lowercase()), time);
                         outcomes.insert((r.si, r.id, name.to_lowercase()), outcome);
@@ -884,6 +920,7 @@ impl CorpusRuntime {
                             Vec::new(),
                             Vec::new(),
                             None,
+                            Vec::new(),
                         );
                         outcomes.insert((r.si, r.id, t.name.to_lowercase()), outcome);
                     }
@@ -941,11 +978,29 @@ impl CorpusRuntime {
             results: list,
             marks: marks_by_test,
             coverage_statements,
+            impact_keys: impact_keys.keys,
+            impact_baseline,
+            program_apps,
         }
     }
 }
 
 impl CorpusRuntime {
+    /// With `RunOptions::impact_trace`: the keys that `TestResult::impact` numbers.
+    pub fn impact_keys(&self) -> &[String] {
+        &self.impact_keys
+    }
+
+    /// With `RunOptions::impact_trace`: what the install baseline raised and touched; `None` when none ran.
+    pub fn impact_baseline(&self) -> Option<&[u32]> {
+        self.impact_baseline.as_deref()
+    }
+
+    /// The apps of the compiled program: (id, name, version), in program order.
+    pub fn program_apps(&self) -> &[(String, String, String)] {
+        &self.program_apps
+    }
+
     /// Every test the run decided, with its codeunit's name and app, codeunit by codeunit.
     pub fn results(&self) -> &[TestResult] {
         &self.results

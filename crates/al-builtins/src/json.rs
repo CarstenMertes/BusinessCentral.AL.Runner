@@ -857,6 +857,16 @@ fn as_decimal(s: &Scalar) -> Result<Value, Signal> {
         Scalar::Raw(t) if t.parse::<Decimal>().is_ok() && t.bytes().all(|b| b.is_ascii_digit() || b == b'-') => {
             Ok(Value::Decimal(t.parse::<Decimal>().expect("checked")))
         }
+        // A text of digits reads as the number (`"42"`), a text of letters raises the conversion error
+        // (json/JsonValueGetters.al:NumericTextGetters `numtext_asdecimal`, TextGetters `text_asdecimal`). A point, a sign or
+        // blanks in the text are not pinned.
+        Scalar::Val(Value::Text(t) | Value::Code(t)) if !t.is_empty() && t.bytes().all(|b| b.is_ascii_digit()) => t
+            .parse::<Decimal>()
+            .map(Value::Decimal)
+            .or_else(|_| unsupported("a text of digits beyond the Decimal range read as Decimal")),
+        Scalar::Val(Value::Text(t) | Value::Code(t)) if !t.is_empty() && t.bytes().all(|b| b.is_ascii_alphabetic()) => {
+            Err(conversion(NAV_JSON_VALUE, "Microsoft.Dynamics.Nav.Runtime.Decimal18"))
+        }
         other => unsupported(format!(
             "reading {} as Decimal (conversion not pinned yet)",
             other.describe()

@@ -194,6 +194,13 @@ pub struct CorpusRuntime {
     marks: std::collections::HashMap<(usize, u32, String), Vec<Assumption>>,
     /// With `RunOptions::coverage`: every statement of the workspace's apps.
     coverage_statements: Vec<crate::coverage::CoverageStatement>,
+    /// With `RunOptions::impact_trace`: the keys `TestResult::impact` numbers (`impact_trace::keys`).
+    impact_keys: Vec<String>,
+    /// With `RunOptions::impact_trace`: what the install baseline raised and touched (numbers of `impact_keys`);
+    /// `None` when no baseline ran.
+    impact_baseline: Option<Vec<u32>>,
+    /// The apps of the compiled program: (id, name, version), in program order.
+    program_apps: Vec<(String, String, String)>,
 }
 
 /// One test as the run left it, in the order the test codeunits were scheduled.
@@ -222,6 +229,9 @@ pub struct TestResult {
     pub messages: Vec<String>,
     /// With `RunOptions::capture`: what the capture saw while the test ran.
     pub captured: Option<crate::events::CapturedAt>,
+    /// With `RunOptions::impact_trace`: what the test raised and touched, as numbers of
+    /// `CorpusRuntime::impact_keys`, sorted. The first test of a codeunit also holds what ran before it.
+    pub impact: Vec<u32>,
 }
 
 /// Wall time of the phases of a run (`--timings`).
@@ -317,6 +327,8 @@ pub(crate) struct Unit {
     hooks: crate::events::Hooks,
     /// See `Scratch::clock_start`.
     clock_start: Option<i64>,
+    /// Note what each test raised and touched (`RunOptions::impact_trace`).
+    impact: bool,
 }
 
 /// What a scratch run or a capture leaves besides outcomes, per test.
@@ -332,6 +344,10 @@ pub(crate) struct Scratch {
     captured: Vec<(String, crate::events::CapturedAt)>,
     /// Where the run clock of the codeunit starts, in Unix milliseconds (`RunOptions::clock_starts`); `None`: now.
     clock_start: Option<i64>,
+    /// Note what each test raised and touched (`RunOptions::impact_trace`).
+    trace: bool,
+    /// What each test raised and touched, as keys (`impact_trace::keys`).
+    traces: Vec<(String, Vec<String>)>,
 }
 
 /// What a test codeunit left: each test's outcome, the call stack of each AL error that failed one, how long
@@ -403,6 +419,7 @@ fn run_unit(
             capture: u.capture,
             order: u.order.clone(),
             clock_start,
+            trace: u.impact,
             ..Default::default()
         };
         if u.coverage {

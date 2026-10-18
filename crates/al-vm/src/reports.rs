@@ -421,6 +421,7 @@ impl Session {
     /// The schema of `inst`'s object; refuses a report the runtime cannot run.
     fn report_schema(&self, inst: &Inst) -> Result<Schema, Signal> {
         let object = inst.borrow().object as usize;
+        self.note_report(object);
         let schema = Schema {
             engine: self.engine.clone(),
             object,

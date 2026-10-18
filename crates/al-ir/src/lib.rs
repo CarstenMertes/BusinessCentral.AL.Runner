@@ -64,6 +64,8 @@ pub enum PlatformPublisher {
     CaptionClass,
     /// `Reporting Triggers`: `CustomDocumentMergerEx`, raised when a report renders with a custom layout.
     ReportingTriggers,
+    /// `Filter Helper Triggers`: `MakeDateFilter`, raised when a Date filter text has a piece that does not read.
+    FilterHelperTriggers,
 }
 
 /// The events of a page the test client raises (`al-vm/src/pages.rs`). A subscriber to any other

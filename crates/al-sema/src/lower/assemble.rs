@@ -970,6 +970,9 @@ pub(crate) fn lower_core(
                     (Some(p), _) => al_ir::sym::SubscriberTarget::Object(piece_keys[p].clone()),
                     (None, ir::PlatformPublisher::CaptionClass) => al_ir::sym::SubscriberTarget::CaptionClass,
                     (None, ir::PlatformPublisher::ReportingTriggers) => al_ir::sym::SubscriberTarget::ReportingTriggers,
+                    (None, ir::PlatformPublisher::FilterHelperTriggers) => {
+                        al_ir::sym::SubscriberTarget::FilterHelperTriggers
+                    }
                     (None, _) => al_ir::sym::SubscriberTarget::GlobalTriggers,
                 },
                 index: site.index as u32,

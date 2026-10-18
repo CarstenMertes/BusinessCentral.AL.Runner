@@ -111,6 +111,10 @@ pub const GLOBAL_TRIGGERS: usize = usize::MAX - 1;
 /// raises its `CustomDocumentMergerEx` when a report renders with a custom layout.
 pub const REPORTING_TRIGGERS: usize = usize::MAX - 2;
 
+/// The object key under which subscribers to the platform codeunit `Filter Helper Triggers` are registered: the runtime
+/// raises its `MakeDateFilter` when a Date filter text has a piece it cannot read (events/lt-platform-triggers/PtObserve.al:157).
+pub const FILTER_HELPER_TRIGGERS: usize = usize::MAX - 3;
+
 fn is_global_triggers(target: &str) -> bool {
     target.eq_ignore_ascii_case("Global Triggers") || target == "2000000002"
 }
@@ -249,6 +253,20 @@ impl Registry {
                                         element: String::new(),
                                     });
                             }
+                            if kind == ObjKind::Codeunit
+                                && target.eq_ignore_ascii_case("Filter Helper Triggers")
+                                && event == "makedatefilter"
+                            {
+                                reg.subscribers
+                                    .entry((FILTER_HELPER_TRIGGERS, event.clone()))
+                                    .or_default()
+                                    .push(Subscriber {
+                                        object: oi,
+                                        routine: ri,
+                                        manual: is_manual(o),
+                                        element: String::new(),
+                                    });
+                            }
                             match found {
                                 Some(t) => {
                                     if kind == ObjKind::Codeunit && is_global_triggers(&target) {
@@ -308,6 +326,7 @@ impl Registry {
                 }
                 ir::PlatformPublisher::CaptionClass => CAPTION_CLASS,
                 ir::PlatformPublisher::ReportingTriggers => REPORTING_TRIGGERS,
+                ir::PlatformPublisher::FilterHelperTriggers => FILTER_HELPER_TRIGGERS,
             };
             reg.missing.entry((key, u.event.clone())).or_default().push(Missing {
                 element: u.element.clone(),

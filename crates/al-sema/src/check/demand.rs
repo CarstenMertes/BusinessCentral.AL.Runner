@@ -84,6 +84,8 @@ pub(super) struct State {
     caption_class: bool,
     /// The `CustomDocumentMergerEx` subscribers are reached (a report with a custom layout is compiled).
     reporting_triggers: bool,
+    /// The `MakeDateFilter` subscribers are reached (code that sets filters is compiled).
+    filter_helper: bool,
     /// Bits per object kind: the catalog tables that list the objects of that kind are used, and
     /// every object of the kind is compiled to its shape (`touch_object_catalog`).
     catalogs: u8,
@@ -106,6 +108,7 @@ impl State {
             routines: HashMap::default(),
             caption_class: false,
             reporting_triggers: false,
+            filter_helper: false,
             catalogs: 0,
         }
     }
@@ -723,6 +726,32 @@ impl Checker<'_> {
                 if self.ws.objects[o].subscribers[k]
                     .event
                     .eq_ignore_ascii_case("CustomDocumentMergerEx")
+                {
+                    self.reach_subscriber(o, k);
+                }
+            }
+        }
+    }
+
+    /// Object `i` sets filters from text: a Date text with a piece that does not read raises the platform's
+    /// `MakeDateFilter`, so its subscribers are reached (events/lt-platform-triggers/PtObserve.al:157).
+    pub(super) fn reach_filter_helper_if_used(&self, i: usize) {
+        if self.demand.borrow().is_none() {
+            return;
+        }
+        if !ast::text_contains_ignore_case(self.ws.object_ast(i).syntax(), "setfilter") {
+            return;
+        }
+        let first = self.demand.borrow_mut().as_mut().is_some_and(|st| {
+            let first = !st.filter_helper;
+            st.filter_helper = true;
+            first
+        });
+        if first {
+            for (o, k) in self.ws.filter_helper_triggers_subscribers() {
+                if self.ws.objects[o].subscribers[k]
+                    .event
+                    .eq_ignore_ascii_case("MakeDateFilter")
                 {
                     self.reach_subscriber(o, k);
                 }
@@ -1349,6 +1378,11 @@ pub fn uncompiled_subscriber_sites(ws: &Workspace, active: &dyn Fn(usize) -> boo
             .eq_ignore_ascii_case("CustomDocumentMergerEx")
         {
             add(None, ir::PlatformPublisher::ReportingTriggers, so, si);
+        }
+    }
+    for (so, si) in ws.filter_helper_triggers_subscribers() {
+        if ws.objects[so].subscribers[si].event.eq_ignore_ascii_case("MakeDateFilter") {
+            add(None, ir::PlatformPublisher::FilterHelperTriggers, so, si);
         }
     }
     out

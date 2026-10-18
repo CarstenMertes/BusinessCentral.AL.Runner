@@ -2086,9 +2086,26 @@ impl Session {
                     work_date: self.work_date_day().unwrap_or_else(|| self.today_day_number()),
                     language: self.global_language,
                 };
-                let parsed = al_builtins::filter::with_date_context(date_ctx, || {
-                    al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
-                });
+                let parse = |text: &str| {
+                    al_builtins::filter::with_date_context(date_ctx, || {
+                        al_builtins::filter::parse_filter_with(text, &args[2..], &ty, &enums)
+                    })
+                };
+                let mut parsed = parse(&text);
+                // A Date text with a piece no filter reads asks `MakeDateFilter` subscribers first.
+                if matches!(&parsed, Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE))
+                    && matches!(ty, RtType::Date)
+                    && self.engine.events.is_subscribed(crate::events::FILTER_HELPER_TRIGGERS, "makedatefilter")
+                {
+                    if self.global_language != 1033 || args.len() > 2 {
+                        return Err(Signal::Unsupported(
+                            "SetFilter: MakeDateFilter subscribers on a Date text outside an English session or with placeholders (not pinned)".into(),
+                        ));
+                    }
+                    if let Some(fixed) = self.repair_date_filter_text(&text, &|t| parse(t).is_ok())? {
+                        parsed = parse(&fixed);
+                    }
+                }
                 let expr = match parsed {
                     Ok(e) => e,
                     // The German error of a date no Date filter reads (P143Date_DePlain.al, _DeRanges.al, _DeFormulas.al).

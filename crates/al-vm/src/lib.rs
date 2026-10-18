@@ -33,6 +33,7 @@ pub mod dotnet;
 mod errorcollect;
 pub mod events;
 mod faultsite;
+mod filterevents;
 mod filterpage;
 mod flowfields;
 mod geturl;

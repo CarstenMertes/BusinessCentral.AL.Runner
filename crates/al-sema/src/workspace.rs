@@ -599,6 +599,12 @@ impl Workspace {
         self.codeunit_subscribers(&["reporting triggers"])
     }
 
+    /// Subscribers to the platform's `Filter Helper Triggers` codeunit, whose `MakeDateFilter` the runtime raises
+    /// for a Date filter text with a piece that does not read.
+    pub fn filter_helper_triggers_subscribers(&self) -> Vec<(usize, usize)> {
+        self.codeunit_subscribers(&["filter helper triggers"])
+    }
+
     fn codeunit_subscribers(&self, keys: &[&str]) -> Vec<(usize, usize)> {
         keys.iter()
             .flat_map(|k| {

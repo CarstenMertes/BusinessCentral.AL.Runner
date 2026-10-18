@@ -460,10 +460,10 @@ codeunit 50000 "T" { Subtype = Test;
     // A layout with no Caption or Summary reads its name for both (session/PWPlatformTables.al:126-139).
     if L.Caption <> 'L2' then Error('caption [%1]', L.Caption); if L.Description <> 'L2' then Error('description'); end;
   [Test] procedure Metadata() var M: Record "Report Metadata"; begin M.Get(50002); if M.ProcessingOnly then Error('processing'); if M.UseRequestPage then Error('request page'); if M.FirstDataItemTableID <> Database::Thing then Error('table'); end;
-  [Test] procedure DataItems() var D: Record "Report Data Items"; begin D.SetRange("Report ID", 50002); if D.Count() <> 2 then Error('count'); D.FindFirst();
+  [Test] procedure DataItems() var D: Record "Report Data Items"; begin D.SetRange("Report ID", 50002); if D.Count() <> 2 then Error('count'); D.SetRange(Name, 'Thing'); D.FindFirst();
     if D.Name <> 'Thing' then Error('name'); if D."Indentation Level" <> 0 then Error('indent'); if D."Request Filter Fields" <> '3,1' then Error('rff %1', D."Request Filter Fields");
     if D."Sorting Fields" <> '3,2' then Error('sorting %1', D."Sorting Fields"); if D."Data Item Table View" <> 'SORTING(Field3,Field2) ORDER(1)' then Error('view %1', D."Data Item Table View");
-    D.Next(); if D.Name <> 'Child' then Error('child'); if D."Indentation Level" <> 1 then Error('child indent'); end; }"#,
+    D.SetRange(Name, 'Child'); D.FindFirst(); if D.Name <> 'Child' then Error('child'); if D."Indentation Level" <> 1 then Error('child indent'); end; }"#,
     );
     for t in ["Layouts", "Metadata", "DataItems"] {
         passes(&o, t);

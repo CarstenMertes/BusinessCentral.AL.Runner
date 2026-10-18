@@ -2376,7 +2376,7 @@ impl Session {
             _ if auto_format_1 => Ok(dataset::DECIMAL_FORMATTER.to_string()),
             3 if c.field.is_none() => Ok("#,##0.00###".to_string()),
             _ => unsupported(format!(
-                "the decimalformatter of Decimal column {} holding {d} without DecimalPlaces (BC 28 and later: not pinned)",
+                "the decimalformatter of Decimal column {} holding {d} without DecimalPlaces (not pinned in this version)",
                 c.name
             )),
         }

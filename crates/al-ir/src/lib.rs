@@ -68,6 +68,15 @@ pub enum PlatformPublisher {
     FilterHelperTriggers,
 }
 
+/// The events of `Filter Helper Triggers` the runtime raises (MakeDateFilter, MakeIntFilter and MakeTimeFilter:
+/// events/lt-platform-triggers/PtObserve.al) or refuses to raise (MakeDateTimeFilter).
+pub const RAISED_FILTER_EVENTS: [&str; 4] = [
+    "MakeDateFilter",
+    "MakeIntFilter",
+    "MakeTimeFilter",
+    "MakeDateTimeFilter",
+];
+
 /// The events of a page the test client raises (`al-vm/src/pages.rs`). A subscriber to any other
 /// event of a page is refused when the page opens.
 pub const RAISED_PAGE_EVENTS: [&str; 9] = [

@@ -12,7 +12,7 @@
 //! The data items exist only for a report that compiled; the rows of another are poisoned.
 
 use super::mat::Entry;
-use super::objects::{Catalog, ident, prop, string_lit, truthy};
+use super::objects::{Catalog, al_sema_platform_app_id, ident, prop, string_lit, truthy};
 use super::{Providers, blank, ids, option, pos};
 use al_builtins::describe::Describe;
 use al_builtins::value::{RtType, Value};
@@ -55,7 +55,7 @@ pub(super) fn layout_list_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 5)] = Value::Guid(pkg);
             // The app that owns the report (the layout is published with it; probe batch 5).
             r[pos(t, 11)] = Value::Guid(c.owner(o));
-            match layout_row(o, l, t, &mut r) {
+            match layout_row(&c, o, l, t, &mut r) {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => {
                     let mut k = blank(t);
@@ -70,8 +70,38 @@ pub(super) fn layout_list_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     out
 }
 
-fn layout_row(o: &Object, l: &al_ir::LayoutDecl, t: &TableDef, r: &mut al_data::Row) -> Result<(), String> {
+fn layout_row(c: &Catalog, o: &Object, l: &al_ir::LayoutDecl, t: &TableDef, r: &mut al_data::Row) -> Result<(), String> {
     let what = || format!("layout '{}' of report '{}'", l.name, o.name);
+    // BC 29: "Layout Subtype" (19), HeaderFooterPart (20), ThemePart (21)
+    // (report/lt-y-report-props/YReportParts.al:75). The enum is Default 0, HeaderFooter 1, Theme 2, Body 3. A layout that
+    // declares none reads the column defaults (Default and blank); the corpus pins only layouts that declare them.
+    if t.fields.iter().any(|f| f.id == 19) {
+        let subtype = match lprop(l, "Subtype").map(ident) {
+            None => 0,
+            Some(s) if s.eq_ignore_ascii_case("HeaderFooter") => 1,
+            Some(s) if s.eq_ignore_ascii_case("Theme") => 2,
+            Some(s) if s.eq_ignore_ascii_case("Body") => 3,
+            Some(s) => return Err(format!("{}: Subtype `{s}` is not pinned", what())),
+        };
+        r[pos(t, 19)] = match &t.fields[pos(t, 19)].ty {
+            RtType::Enum(e) => Value::Enum(*e, subtype),
+            other => return Err(format!("field 19 is a {}, not an enum", other.describe())),
+        };
+        for (id, name) in [(20, "HeaderFooterPart"), (21, "ThemePart")] {
+            let Some(v) = lprop(l, name) else { continue };
+            let part = ident(v);
+            // The value is the id of the declaring app, `::` and the layout's name; only a layout of the same object is pinned.
+            if !o.layouts.iter().any(|x| x.name.eq_ignore_ascii_case(&part)) {
+                return Err(format!("{}: {name} `{part}` is not a layout of the same object (not pinned)", what()));
+            }
+            let app = c
+                .apps
+                .get(o.app as usize)
+                .filter(|a| !a.id.eq_ignore_ascii_case(al_sema_platform_app_id()))
+                .ok_or_else(|| format!("{}: the app that declares it is not known", what()))?;
+            r[pos(t, id)] = Value::Text(format!("{}::{part}", app.id.to_ascii_lowercase()).into());
+        }
+    }
     let format = lprop(l, "Type").ok_or_else(|| format!("{}: no Type", what()))?;
     let format = FORMATS
         .iter()
@@ -180,6 +210,13 @@ pub(super) fn report_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                 })
                 .unwrap_or_default();
             r[col] = Value::Text(name.into());
+        }
+        // BC 29: DefaultHeaderFooterPartName (30) and DefaultThemePartName (31) are the layout names the properties give
+        // (report/lt-y-report-props/YReportParts.al:65); blank when the report declares none.
+        for (col, name) in [(30, "DefaultHeaderFooterPart"), (31, "DefaultThemePart")] {
+            if t.fields.iter().any(|f| f.id == col) {
+                r[pos(t, col)] = Value::Text(prop(o, name).map(ident).unwrap_or_default().into());
+            }
         }
         let first = rep
             .items

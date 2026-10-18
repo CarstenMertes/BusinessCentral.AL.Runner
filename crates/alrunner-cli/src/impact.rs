@@ -84,6 +84,10 @@ impl Class {
 /// side, which counts as not run) and whether it entered extension code.
 pub fn classify(without: Option<&Outcome>, with: Option<&Outcome>, reached: bool) -> Class {
     use Outcome::*;
+    // A failure the runner does not trust is a failure here when the test ran on the "without" side: the earlier refused
+    // tests of its codeunit are the same on both sides, so what they did not write cannot be what differs (see `run_failure`).
+    let unwrapped = run_failure(without, with).map(Fail);
+    let with = unwrapped.as_ref().or(with);
     let same = if reached {
         Class::SameReached
     } else {
@@ -103,6 +107,19 @@ pub fn classify(without: Option<&Outcome>, with: Option<&Outcome>, reached: bool
         (Some(Pass | Fail(_)), Some(NotRun(_)) | None) => Class::NewlyRefused,
         (Some(NotRun(_)) | None, Some(Pass | Fail(_))) => Class::NewlyRuns,
         (Some(NotRun(_)) | None, Some(NotRun(_)) | None) => Class::NotVerified,
+    }
+}
+
+/// The text of a failure the runner does not trust on the "with" side, when the same test ran (passed or failed) on the
+/// "without" side. The runner reports such a failure as not run, because an earlier test of the codeunit was refused and
+/// might have written what this test reads. An impact run refuses the same earlier tests on both sides, so a test that
+/// passes without the extension and fails with it did not fail because of them (ADR-043, "Step 1 as built").
+pub fn run_failure(without: Option<&Outcome>, with: Option<&Outcome>) -> Option<String> {
+    match (without, with) {
+        (Some(Outcome::Pass | Outcome::Fail(_)), Some(Outcome::NotRun(m))) => {
+            m.split_once(UNTRUSTED).map(|(_, failure)| failure.to_string())
+        }
+        _ => None,
     }
 }
 
@@ -230,20 +247,31 @@ fn message(r: Option<&TestResult>) -> Option<&str> {
 /// The lines of one test in its class's list.
 fn row_lines(row: &Row, routines: &Routines) -> Vec<String> {
     let any = row.with.or(row.without).expect("a row has a side");
-    let (before, after) = (outcome_word(row.without), outcome_word(row.with));
+    let (before, mut after) = (outcome_word(row.without), outcome_word(row.with));
+    // A failure the runner does not trust, where the test ran without the extension, counts as a failure: show it as one.
+    let counted = run_failure(row.without.map(|r| &r.outcome), row.with.map(|r| &r.outcome));
+    if counted.is_some() {
+        after = "fail".into();
+    }
     let mut head = format!("  {} {}.{}: ", any.codeunit, any.codeunit_name, any.test);
     if before == after {
         head.push_str(&after);
     } else {
         head.push_str(&format!("{before} -> {after}"));
     }
-    if let Some(m) = message(row.with) {
-        head.push_str(&format!(": {}", output::first_line(m, 300)));
+    match &counted {
+        Some(failure) => head.push_str(&format!(": {}", output::first_line(failure, 300))),
+        None => {
+            if let Some(m) = message(row.with) {
+                head.push_str(&format!(": {}", output::first_line(m, 300)));
+            }
+        }
     }
     let mut lines = vec![head];
-    // A failure the runner does not trust (an earlier test of the codeunit did not run) is reported as not run, with
-    // the failure at the end of the reason: show it, it is what the extension changed.
-    if let Some(m) = message(row.with)
+    // A failure the runner does not trust and that did not run on the "without" side either stays "not run" with the
+    // failure at the end of the reason: show it, it is what the extension changed.
+    if counted.is_none()
+        && let Some(m) = message(row.with)
         && matches!(row.with.map(|r| &r.outcome), Some(Outcome::NotRun(_)))
         && let Some((_, failure)) = m.split_once(UNTRUSTED)
     {
@@ -490,21 +518,32 @@ mod tests {
     }
 
     #[test]
-    fn a_failure_the_runner_does_not_trust_shows_its_text_under_newly_refused() {
+    fn an_untrusted_failure_is_newly_failing_when_the_test_ran_without_the_extension() {
         let statements = vec![stmt(4, 1, "Handler", 10)];
         let routines = Routines::of(&statements, |app| app >= 1);
+        let untrusted = not_run(&format!(
+            "an earlier test of this codeunit was refused before it started (X) and can write a table this test reads; {UNTRUSTED}Assert.AreEqual failed"
+        ));
         let without = vec![result("T", pass(), vec![])];
-        let with = vec![result(
-            "T",
-            not_run(&format!(
-                "a test before this one did not pass (X) and this test draws random numbers; {UNTRUSTED}Assert.AreEqual failed"
-            )),
-            vec![(4, 2)],
-        )];
+        let with = vec![result("T", untrusted.clone(), vec![(4, 2)])];
         let rows = diff(&without, &with, &routines);
-        assert_eq!(rows[0].class, Class::NewlyRefused);
+        assert_eq!(rows[0].class, Class::NewlyFailing);
         let lines = report(&rows, &routines, false).join("\n");
-        assert!(lines.contains("    failure: Assert.AreEqual failed"), "{lines}");
+        assert!(lines.contains("T: pass -> fail: Assert.AreEqual failed"), "{lines}");
         assert!(lines.contains("    ran: Sub.Handler (2 calls)"), "{lines}");
+        // The same failure on both sides is the same result, not a new one.
+        let without = vec![result("T", fail("Assert.AreEqual failed"), vec![])];
+        let rows = diff(&without, &with, &routines);
+        assert_eq!(rows[0].class, Class::SameReached);
+    }
+
+    #[test]
+    fn an_untrusted_failure_stays_not_run_when_the_test_did_not_run_without_the_extension() {
+        let routines = Routines::of(&[], |_| false);
+        let untrusted = not_run(&format!("x; {UNTRUSTED}boom"));
+        let without = vec![result("T", not_run("r"), vec![])];
+        let with = vec![result("T", untrusted, vec![])];
+        let rows = diff(&without, &with, &routines);
+        assert_eq!(rows[0].class, Class::NotVerified);
     }
 }

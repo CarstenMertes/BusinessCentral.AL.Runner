@@ -794,6 +794,16 @@ impl Session {
                 && matches!(self.read(p, f), Ok(Value::Record(d)) if d.borrow().table != src.borrow().table);
             if !matches!(p, ir::Place::Field(..)) && !replaces_variant {
                 if let Ok(Value::Record(dst)) = self.read(p, f) {
+                    // A record variable takes no record of another table; that only happens through a Variant
+                    // (types/lt-variant-record-reassign/VariantRecordReassign.al:130 Variant_Reassign_ReadBack).
+                    if dst.borrow().table != src.borrow().table && !matches!(self.place_type(p, f), RtType::Variant) {
+                        return Err(Signal::Error(Box::new(AlError {
+                            message: "The requested operation is not supported.".into(),
+                            code: "NotSupportedOperation".into(),
+                            call_stack: String::new(),
+                            ..Default::default()
+                        })));
+                    }
                     if !Rc::ptr_eq(src, &dst) {
                         // A copied record holds copies of its Blobs (value semantics). The corpus
                         // does not tell a copy from a shared Blob (record/TestFormatRecordContracts.al

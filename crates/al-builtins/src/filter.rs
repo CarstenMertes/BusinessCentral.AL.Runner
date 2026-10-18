@@ -549,7 +549,8 @@ pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
     a.len().cmp(&b.len())
 }
 
-/// The value of one Date filter text, or the error: `INVALID_DATE` and the text for a German session, a refusal otherwise.
+/// The value of one Date filter text, or the error: `INVALID_DATE` and the text for a German session and for the English shapes
+/// pinned as invalid, a refusal otherwise.
 fn date_filter_value(t: &str) -> Result<Value, String> {
     let ctx = DATE_CONTEXT.with(std::cell::Cell::get);
     let german = ctx.is_some_and(|c| c.language == 1031);
@@ -576,10 +577,48 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
     }
     // Six digits read as month, day, year in an English session: `020126` is 2026-02-01 and `040126` is 2026-04-01
     // (fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:389-565, filters of a Date field). Other digit counts are not pinned.
-    if english && text.len() == 6 && text.bytes().all(|b| b.is_ascii_digit()) {
+    let digits_only = text.bytes().all(|b| b.is_ascii_digit());
+    if (english || german) && text.len() == 6 && digits_only {
         let spelled = format!("{}/{}/{}", &text[0..2], &text[2..4], &text[4..6]);
         if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &spelled) {
             return Ok(v);
+        }
+    }
+    // Eight digits are month, day and year in an English and a German session (DateFilterTextForms.al:GetRange_SixDigits_German `eight_digits`,
+    // GetRange_DayAboveTwelve_German_EightDigits `mm_dd_yyyy_eight`).
+    if (english || german) && text.len() == 8 && digits_only {
+        let spelled = format!("{}/{}/{}", &text[0..2], &text[2..4], &text[4..8]);
+        if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &spelled) {
+            return Ok(v);
+        }
+    }
+    // Four digits are month and day, the year is the work date's (record/lt-date-text-forms/DateFilterTextForms.al:
+    // GetRange_DateTextForms_English `four_digits` 0201 with work date 2031 gives 2031-02-01, GetRange_FourDigits_OtherWorkDate
+    // with 2038 gives 2038; German :GetRange_SixDigits_German `four_digits`; `0113` reads, `1301` does not).
+    if (english || german) && text.len() == 4 && digits_only {
+        if let Some(c) = ctx {
+            let year = crate::format::civil_from_day(c.work_date).0;
+            let spelled = format!("{}/{}/{year:04}", &text[0..2], &text[2..4]);
+            if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &spelled) {
+                return Ok(v);
+            }
+        } else {
+            return Err(needs_session());
+        }
+    }
+    // The day-first spellings of the pinned shapes (four, six and eight digits, three two-digit numbers split by dashes) are no
+    // dates in an English session either (GetRange_DayAboveTwelve_English).
+    if english {
+        let dashed = t.split('-').count() == 3 && t.split('-').all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()));
+        // `02-01-26` reads like `02/01/26`: month, day, year (GetRange_DateTextForms_English `separators_short_year`,
+        // GetRange_DayAboveTwelve_English `mm_dd_yy_separators`).
+        if dashed {
+            if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &t.replace('-', "/")) {
+                return Ok(v);
+            }
+        }
+        if (digits_only && matches!(t.len(), 4 | 6 | 8)) || dashed {
+            return Err(format!("{INVALID_DATE}{t}"));
         }
     }
     if german {

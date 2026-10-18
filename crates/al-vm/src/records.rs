@@ -2027,6 +2027,20 @@ impl Session {
                     // The German error of a date no Date filter reads (P143Date_DePlain.al, _DeRanges.al, _DeFormulas.al).
                     Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE) => {
                         let bad = &e[al_builtins::filter::INVALID_DATE.len()..];
+                        if self.global_language != 1031 {
+                            // record/lt-date-text-forms/DateFilterTextForms.al:GetRange_DayAboveTwelve_English.
+                            return Err(Signal::Error(Box::new(AlError {
+                                message: format!(
+                                    "The filter \"{}\" is not valid for the {} field on the {} table. The format of the Date '{bad}' does not match your device's date settings.\\\\Make sure that the day, month, and year are in the correct order and use the correct separator (such as - or /). Alternatively, you can always use the format 'yyyy-mm-dd'.",
+                                    text.trim(),
+                                    self.field_caption(&t, pos),
+                                    self.caption(&t)
+                                ),
+                                code: "Filter:CSide".into(),
+                                call_stack: String::new(),
+                                ..Default::default()
+                            })));
+                        }
                         return Err(Signal::Error(Box::new(AlError {
                             message: format!(
                                 "Der Filter '{}' ist für das Feld '{}' der Tabelle '{}' nicht gültig. Das Format Date „{bad}“ stimmt nicht mit den Datumseinstellungen Ihres Geräts überein.\\\\Stellen Sie sicher, dass Tag, Monat und Jahr die richtige Reihenfolge aufweisen und das richtige Trennzeichen verwendet wird (z. b. - oder /). Alternativ können Sie das Format „jjjj-mm-tt“ verwenden.",

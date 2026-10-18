@@ -122,9 +122,28 @@ pub(crate) fn exception_text(this: &Rc<DotNetObject>) -> Result<String, Signal> 
     let (Value::Text(msg), Value::Text(stack)) = (msg, stack) else {
         return unsupported("a last-error exception without its message");
     };
+    let mut out = format!("{type_name}: {msg}");
+    // A dialog exception raised by Error() directly in the OnRun of a codeunit that Codeunit.Run started (the exception's trace ends
+    // at that run, whatever calls it) has the three .NET frames the corpus shows (GetLastErrorObjectKinds.al:ToString_DialogException_Lines). Other shapes are not pinned.
+    if type_name == NCL_DIALOG_EXCEPTION {
+        let one: Vec<&str> = stack.split('\n').filter(|f| !f.is_empty()).collect();
+        if let Some(frame) = one.first() {
+            if let Some(id) = frame
+                .split_once("(CodeUnit ")
+                .and_then(|(_, r)| r.split_once(").OnRun"))
+                .and_then(|(n, _)| n.parse::<u32>().ok())
+            {
+                out.push_str("\n   at Microsoft.Dynamics.Nav.Runtime.NavDialog.ALError(NavSession session, Guid automationId, String message, NavValue[] values)");
+                out.push_str(&format!(
+                    "\n   at Microsoft.Dynamics.Nav.BusinessApplication.Codeunit{id}.OnRunAsync(INavRecordHandle \u{3b5}rec)"
+                ));
+                out.push_str("\n   at Microsoft.Dynamics.Nav.Runtime.NavCodeunit.DoRunAsync(DataError errorLevel, NavRecord record)");
+                return Ok(out);
+            }
+        }
+    }
     // Not pinned past the first line and the `   at ` marker: registered assumption.
     al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::ExceptionToStringStackFrames);
-    let mut out = format!("{type_name}: {msg}");
     let frames: Vec<&str> = stack
         .split('\n')
         .filter(|f| !f.is_empty() && *f != UNTRACKED_CALL_STACK)

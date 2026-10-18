@@ -219,13 +219,18 @@ impl Session {
             // (handlers/TestReportCurrReportLanguage.al:12-18, :76-83). In a report started by `Run` the region is kept,
             // reads back, and `Format` of a date and a decimal follows it (misc/lt-probes-needed-3/PnC06ReportLanguage.al:
             // Language_SetAndRead, `region0:|region1:de-DE|date2:05.03.24|num2:1.234,5`).
+            // A report whose FormatRegion property is set: neither the getter nor the setter is measured there.
+            ids::REPORT_FORMATREGION_1 if self.report.region_property => {
+                unsupported("CurrReport.FormatRegion in a report whose FormatRegion property is set (not pinned)")
+            }
+            // `en-US`, the session's own region, reads back empty and leaves Format as it was while the report keeps the
+            // session's language (misc/lt-probes-needed-8/PnH4CurrReport.al:244 `region=[]`); after `CurrReport.Language :=` another
+            // language it is kept as text, as before (not pinned, docs/probes-needed.md).
             ids::REPORT_FORMATREGION_1 => match args.first() {
-                Some(Value::Text(t)) if self.report.report_preview_pinned.last() == Some(&true) => {
-                    self.report.format_region = Some(t.to_string());
-                    Ok(Value::Null)
-                }
-                Some(Value::Code(t)) if self.report.report_preview_pinned.last() == Some(&true) => {
-                    self.report.format_region = Some(t.to_string());
+                Some(Value::Text(t) | Value::Code(t)) if self.report.report_preview_pinned.last() == Some(&true) => {
+                    let t = t.to_string();
+                    let own_language = matches!(self.report.curr_report_language, None | Some(1033));
+                    self.report.format_region = (t != "en-US" || !own_language).then_some(t);
                     Ok(Value::Null)
                 }
                 Some(Value::Text(_) | Value::Code(_)) => Ok(Value::Null),
@@ -944,9 +949,11 @@ impl Session {
         // The language and region a trigger sets belong to this run (PnC06ReportLanguage.al:Language_Invalid starts three
         // runs with no language set after Language_SetAndRead set one).
         let outer_region = self.report.format_region.take();
+        let outer_property = std::mem::take(&mut self.report.region_property);
         let outer_language = self.report.curr_report_language.take();
         let ran = self.report_in_world(enters, |s| s.report_body(inst, schema, shows_page, None));
         self.report.format_region = outer_region;
+        self.report.region_property = outer_property;
         self.report.curr_report_language = outer_language;
         self.report.report_preview_pinned.pop();
         ran.map(|_| ())
@@ -1218,6 +1225,17 @@ impl Session {
         }
         // A report that renders output runs up to its request page and no further: there is no
         // renderer (docs/probes-needed.md). The dataset a `SaveAs` writes is not rendered output.
+        // Only the SaveAs Xml dataset of a report with the FormatRegion property is measured (YReportPropsTests.al:34-148).
+        if let Some(r) = report
+            .format_region
+            .as_deref()
+            .filter(|_| !run.dataset || !self.report.region_property)
+        {
+            return unsupported(format!(
+                "a run of report \"{}\" with FormatRegion = '{r}' that is not a SaveAs Xml (not pinned)",
+                schema.name()
+            ));
+        }
         if let Some(why) = report.output.first().filter(|_| !run.dataset) {
             return unsupported(format!(
                 "report \"{}\" renders output, which the runtime does not produce: {why}",
@@ -1853,6 +1871,21 @@ impl Session {
         if self.global_language != 1033 {
             return unsupported("Report.SaveAs with a session language other than en-US (only en-US is pinned)");
         }
+        // The FormatRegion property sets the culture of the Xml dataset and of Format in the triggers that write it, for the
+        // five regions report/lt-y-report-props/YReportPropsTests.al:34-148 measures; any other region is refused.
+        let region = match schema.report().format_region.as_deref() {
+            None => None,
+            Some(r) if format == "Xml" && ["de-DE", "en-GB", "fr-FR", "ja-JP", "zz-ZZ"].contains(&r) => Some((
+                r.to_string(),
+                al_builtins::format::Region::parse(r).expect("a listed region"),
+            )),
+            Some(r) => {
+                return unsupported(format!(
+                    "Report.SaveAs of \"{}\" as {format} with FormatRegion = '{r}' (only the Xml dataset of de-DE, en-GB, fr-FR, ja-JP and zz-ZZ is pinned)",
+                    schema.name()
+                ));
+            }
+        };
         let quit = if at == 0 { quit } else { self.report_init(&inst)? };
         if quit {
             return unsupported("CurrReport.Quit in OnInitReport of a SaveAs (what the dataset holds is not pinned)");
@@ -1875,13 +1908,19 @@ impl Session {
             self.report_set_view(&inst, &schema, Some(rr))?;
         }
         let enters = self.report_enter_world(&schema, false)?;
-        let outer = self.report.dataset.replace(Dataset::default());
+        let mut fresh = Dataset::default();
+        fresh.region = region.clone();
+        let outer = self.report.dataset.replace(fresh);
         if let Err(e) = self.dataset_labels(&schema) {
             self.report.dataset = outer;
             return Err(e);
         }
         self.report.report_preview_pinned.push(false);
+        let outer_region = std::mem::replace(&mut self.report.format_region, region.as_ref().map(|(r, _)| r.clone()));
+        let outer_property = std::mem::replace(&mut self.report.region_property, region.is_some());
         let ran = self.report_in_world(enters, |s| s.report_body(&inst, &schema, false, Some(&parameters)));
+        self.report.format_region = outer_region;
+        self.report.region_property = outer_property;
         self.report.report_preview_pinned.pop();
         let written = std::mem::replace(&mut self.report.dataset, outer);
         match ran {
@@ -2302,6 +2341,47 @@ impl Session {
     /// as their captions, a Duration as words, a Guid without braces, and a Decimal in full with a
     /// `decimalformatter` attribute from `DecimalPlaces` of the column, else of the field. Every other
     /// type is refused. A column that asks for its caption adds to the Labels block.
+    /// The `decimalformatter` of a Decimal column: from `DecimalPlaces` of the column, else of the field (`dataset::decimal_formatter`).
+    /// Without either, BC 27 writes `#,##0.00`; from BC 28 (`Gate::ReportXmlDecimalFormatterFrom28`) a value with up to two decimals
+    /// still gets `#,##0.00` (report/W3ReportObjectIdPreviewLanguage.al:448, handlers/TestReportSaveAsDatasetContracts.al:336), as does
+    /// a field with `AutoFormatType = 1` (handlers/TestReportSaveAsColumnTypesContracts.al:297, 12.345678), but a Decimal variable
+    /// holding three decimals gets `#,##0.00###` (report/lt-y-report-props/YReportPropsTests.al:40, 1234567.891). Every other shape
+    /// from BC 28 is refused (docs/probes-needed.md).
+    fn decimal_column_formatter(
+        &self,
+        t: &Option<Arc<al_data::TableDef>>,
+        c: &ir::ReportColumn,
+        value: &Value,
+    ) -> Result<String, Signal> {
+        let from_field = match (t, c.field) {
+            (Some(t), Some(pos)) => self.field_property(t, pos, "DecimalPlaces"),
+            _ => None,
+        };
+        let places = c.decimal_places.clone().or(from_field);
+        if places.is_some() || !self.has(al_version::Gate::ReportXmlDecimalFormatterFrom28) {
+            return dataset::decimal_formatter(places.as_deref());
+        }
+        let Value::Decimal(d) = value else {
+            unreachable!("a Decimal column")
+        };
+        let scale = d.normalize().scale();
+        let auto_format_1 = match (t, c.field) {
+            (Some(t), Some(pos)) => self
+                .field_property(t, pos, "AutoFormatType")
+                .is_some_and(|v| v.trim() == "1"),
+            _ => false,
+        };
+        match scale {
+            0..=2 => Ok(dataset::DECIMAL_FORMATTER.to_string()),
+            _ if auto_format_1 => Ok(dataset::DECIMAL_FORMATTER.to_string()),
+            3 if c.field.is_none() => Ok("#,##0.00###".to_string()),
+            _ => unsupported(format!(
+                "the decimalformatter of Decimal column {} holding {d} without DecimalPlaces (BC 28 and later: not pinned)",
+                c.name
+            )),
+        }
+    }
+
     fn dataset_column(
         &mut self,
         c: &ir::ReportColumn,
@@ -2332,7 +2412,25 @@ impl Session {
         }
         let mut attribute = None;
         let mut schema_type = None;
+        let region = self.report.dataset.as_ref().and_then(|d| d.region.clone());
         let text = match &value {
+            // A Date, DateTime or Decimal column in the report's FormatRegion (YReportPropsTests.al:34-148); other shapes are refused.
+            Value::Date(..) | Value::DateTime(_) | Value::Decimal(_) | Value::Time(_) if region.is_some() => {
+                let (name_of_region, r) = region.expect("checked");
+                if let Value::Decimal(_) = &value {
+                    attribute = Some(("decimalformatter", self.decimal_column_formatter(&t, c, &value)?));
+                }
+                match al_builtins::format::region_column(r, &value) {
+                    Some(text) => text,
+                    None => {
+                        return unsupported(format!(
+                            "report column {} holds {}, whose text under FormatRegion = '{name_of_region}' is not pinned",
+                            c.name,
+                            value.describe()
+                        ));
+                    }
+                }
+            }
             Value::Integer(n) => {
                 schema_type = Some("xs:int");
                 n.to_string()
@@ -2358,12 +2456,7 @@ impl Session {
                 )
             }
             Value::Decimal(_) => {
-                let from_field = match (&t, c.field) {
-                    (Some(t), Some(pos)) => self.field_property(t, pos, "DecimalPlaces"),
-                    _ => None,
-                };
-                let places = c.decimal_places.clone().or(from_field);
-                attribute = Some(("decimalformatter", dataset::decimal_formatter(places.as_deref())?));
+                attribute = Some(("decimalformatter", self.decimal_column_formatter(&t, c, &value)?));
                 // The decimal as it is, scale and all: `12.345678 * 1.5` is `18.5185170`
                 // (handlers/TestReportSaveAsColumnTypesContracts.al:174-180); Format would trim the zero.
                 let Value::Decimal(d) = &value else {
@@ -2469,6 +2562,10 @@ impl Session {
             user_name: self.host.identity.user_id(),
             now: (y, mo, d, (in_day / 3_600_000) as u32, (in_day / 60_000 % 60) as u32),
             company_block: self.has(al_version::Gate::ReportSaveAsXmlHeaderHasCompanyBlock),
+            format_region: report
+                .format_region
+                .clone()
+                .unwrap_or_else(|| dataset::LANGUAGE.to_string()),
         })
     }
 }

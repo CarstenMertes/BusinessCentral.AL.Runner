@@ -55,7 +55,7 @@ pub(super) fn layout_list_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             r[pos(t, 5)] = Value::Guid(pkg);
             // The app that owns the report (the layout is published with it; probe batch 5).
             r[pos(t, 11)] = Value::Guid(c.owner(o));
-            match layout_row(&c, o, l, t, &mut r) {
+            match layout_row(&c, o, l, t, &mut r, p.language()) {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => {
                     let mut k = blank(t);
@@ -76,6 +76,7 @@ fn layout_row(
     l: &al_ir::LayoutDecl,
     t: &TableDef,
     r: &mut al_data::Row,
+    language: i32,
 ) -> Result<(), String> {
     let what = || format!("layout '{}' of report '{}'", l.name, o.name);
     // Dynamic reads (RecordRef) of a layout without Subtype get Default and blank, which no case pins; static reads of the columns are refused (not in PINNED_COLUMNS).
@@ -132,8 +133,40 @@ fn layout_row(
             .take(250)
             .collect(),
     );
+    // `SummaryML`: the entry of the session's language, ENU when it has none (report/lt-y-report-props/YReportPropsTests.al:
+    // SummaryML_English, SummaryML_German, SummaryML_FrenchFallsBack); other languages are not pinned.
+    let summary_ml = match lprop(l, "SummaryML") {
+        None => None,
+        Some(ml) => {
+            let code = match language {
+                1033 => "ENU",
+                1031 => "DEU",
+                1036 => "FRA",
+                n => {
+                    return Err(format!(
+                        "{}: SummaryML in language {n} (only 1033, 1031 and 1036 are pinned)",
+                        what()
+                    ));
+                }
+            };
+            let entry = super::objects::ml_entry(ml, code).map_err(|e| format!("{}: SummaryML {e}", what()))?;
+            match entry {
+                Some(e) => Some(e),
+                None if code == "FRA" => {
+                    super::objects::ml_entry(ml, "ENU").map_err(|e| format!("{}: SummaryML {e}", what()))?
+                }
+                None => {
+                    return Err(format!(
+                        "{}: SummaryML without a {code} entry (the fallback is not pinned)",
+                        what()
+                    ));
+                }
+            }
+        }
+    };
     r[pos(t, 10)] = Value::Text(
         literal("Summary")?
+            .or(summary_ml)
             .unwrap_or_else(|| l.name.clone())
             .chars()
             .take(250)
@@ -220,6 +253,57 @@ pub(super) fn report_metadata_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
                 })
                 .unwrap_or_default();
             r[col] = Value::Text(name.into());
+        }
+        // EnableExternalImages (6), the paper sources (12-14), FormatRegion (24) and ExcelLayoutMultipleDataSheets (25) are the
+        // properties as declared (report/lt-y-report-props/YReportPropsTests.al:34-160: `EnableExternalImages=Yes`, `PaperSourceFirstPage=1`
+        // for Upper, 2 for Lower, 3 for Middle, `FormatRegion=de-DE`, `ExcelLayoutMultipleDataSheets=Yes`; 0, No and blank when not declared).
+        // Another paper source is not pinned: the row is refused.
+        let mut unpinned = None;
+        for (col, name) in [(6, "EnableExternalImages"), (25, "ExcelLayoutMultipleDataSheets")] {
+            if t.fields.iter().any(|f| f.id == col) {
+                if let Value::Boolean(_) = r[pos(t, col)] {
+                    r[pos(t, col)] = Value::Boolean(prop(o, name).is_some_and(truthy));
+                }
+            }
+        }
+        for (col, name) in [
+            (12, "PaperSourceFirstPage"),
+            (13, "PaperSourceDefaultPage"),
+            (14, "PaperSourceLastPage"),
+        ] {
+            let Some(v) = prop(o, name) else { continue };
+            let n = match ident(v).to_ascii_lowercase().as_str() {
+                "upper" => 1,
+                "lower" => 2,
+                "middle" => 3,
+                other => {
+                    unpinned = Some(format!(
+                        "report '{}': {name} = {other} (only Upper, Lower and Middle are pinned)",
+                        o.name
+                    ));
+                    continue;
+                }
+            };
+            if t.fields.iter().any(|f| f.id == col) {
+                match &r[pos(t, col)] {
+                    Value::Integer(_) => r[pos(t, col)] = Value::Integer(n),
+                    Value::Option(_, m) => r[pos(t, col)] = Value::Option(n, m.clone()),
+                    Value::Enum(e, _) => r[pos(t, col)] = Value::Enum(*e, n),
+                    other => unpinned = Some(format!("report '{}': column {col} is a {}", o.name, other.describe())),
+                }
+            }
+        }
+        if t.fields.iter().any(|f| f.id == 24) {
+            if let Some(v) = prop(o, "FormatRegion") {
+                match string_lit(v) {
+                    Some(region) => r[pos(t, 24)] = Value::Text(region.into()),
+                    None => unpinned = Some(format!("report '{}': FormatRegion = {v}", o.name)),
+                }
+            }
+        }
+        if let Some(why) = unpinned {
+            out.push(Entry::poisoned(key, why));
+            continue;
         }
         // BC 29: DefaultHeaderFooterPartName (30) and DefaultThemePartName (31) are the layout names the properties give
         // (report/lt-y-report-props/YReportParts.al:65); blank when the report declares none.

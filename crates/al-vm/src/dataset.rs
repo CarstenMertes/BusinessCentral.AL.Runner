@@ -143,6 +143,9 @@ pub(crate) struct Header {
     pub company_block: bool,
     /// The first company address line: the name of the Company Information record.
     pub company_line1: String,
+    /// The report's `FormatRegion` property, else the session's en-US. The header of a report with the property is not
+    /// measured (YReportPropsTests.al reads the data items only): it names the report's region (docs/probes-needed.md).
+    pub format_region: String,
 }
 
 /// The language and format region of the session. Only en-US is pinned.
@@ -165,9 +168,10 @@ impl Header {
     fn write(&self, out: &mut String) -> Result<(), Signal> {
         out.push_str("<?xml version=\"1.0\" standalone=\"yes\"?>\r\n");
         out.push_str(&format!(
-            "<ReportDataSet name=\"{}\" id=\"{}\" language=\"{LANGUAGE}\" formatRegion=\"{LANGUAGE}\">\r\n",
+            "<ReportDataSet name=\"{}\" id=\"{}\" language=\"{LANGUAGE}\" formatRegion=\"{}\">\r\n",
             escape_as(&self.report_name, true)?,
-            escape_as(&self.report_id, true)?
+            escape_as(&self.report_id, true)?,
+            escape_as(&self.format_region, true)?
         ));
         out.push_str("  <BCReportInformation>\r\n");
         out.push_str("    <ReportMetadata>\r\n");
@@ -203,7 +207,7 @@ impl Header {
             &format!("{y:04}-{mo:02}-{d:02}T{h:02}:{mi:02}:00"),
         )?;
         element(out, 6, "Language", LANGUAGE)?;
-        element(out, 6, "FormatRegion", LANGUAGE)?;
+        element(out, 6, "FormatRegion", &self.format_region)?;
         element(out, 6, "Year", &y.to_string())?;
         element(out, 6, "MonthNumber", &mo.to_string())?;
         element(out, 6, "DayNumber", &d.to_string())?;
@@ -325,6 +329,9 @@ pub(crate) struct Dataset {
     /// For every open `DataItem`: whether its data item declares nested items (an empty `DataItems` is written).
     declares: Vec<bool>,
     root: bool,
+    /// The report's `FormatRegion` property: the `formatRegion` of the top data items and the culture of the columns
+    /// (report/lt-y-report-props/YReportPropsTests.al:34-148). `None`: the session's en-US.
+    pub region: Option<(String, al_builtins::format::Region)>,
     /// An element written, whatever its kind.
     pub rows: usize,
     /// The `Labels` block: (column name + `Caption`, text), in the order the columns come.
@@ -417,8 +424,9 @@ impl Dataset {
         self.pad(at);
         self.body.push_str("<DataItem");
         if depth == 0 {
+            let region = self.region.as_ref().map_or(LANGUAGE, |(r, _)| r.as_str());
             self.body
-                .push_str(&format!(" language=\"{LANGUAGE}\" formatRegion=\"{LANGUAGE}\""));
+                .push_str(&format!(" language=\"{LANGUAGE}\" formatRegion=\"{region}\""));
         }
         self.body.push_str(&format!(" name=\"{name}\""));
         // From BC 28 (`Gate::ReportSaveAsDataItemIdentity`): the data item's table id and a GUID.

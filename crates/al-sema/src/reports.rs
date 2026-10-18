@@ -674,6 +674,11 @@ pub fn ext_layout(obj: &ast::Object) -> ExtLayout {
                     match kind.as_str() {
                         "modify" => {
                             for p in s.properties() {
+                                // Pinned: report/lt-y-report-props/YReportExt.al:231 (the field joins the data item's
+                                // request filter fields, which the Report Data Items table shows).
+                                if p.name().eq_ignore_ascii_case("RequestFilterFields") {
+                                    continue;
+                                }
                                 out.reasons.push(format!(
                                     "property {} of modify({target}) is not supported yet",
                                     p.name().to_ascii_lowercase()
@@ -1144,6 +1149,10 @@ pub fn build_ext(cx: &ExtContext, obj: &ast::Object) -> (ir::ReportExt, Vec<Stri
         match base_index(name) {
             Some(item) => modifies.push(ir::ReportExtModify {
                 item,
+                request_filter_fields: sec
+                    .properties()
+                    .find(|p| p.name().eq_ignore_ascii_case("RequestFilterFields"))
+                    .map(|p| p.value_text().trim().to_string()),
                 before: trigger("OnBeforeAfterGetRecord"),
                 after: trigger("OnAfterAfterGetRecord"),
                 before_pre: trigger("OnBeforePreDataItem"),

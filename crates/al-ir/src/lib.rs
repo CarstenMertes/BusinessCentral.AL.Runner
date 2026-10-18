@@ -399,6 +399,9 @@ pub struct ReportExtAdd {
 pub struct ReportExtModify {
     /// Index of the base item.
     pub item: usize,
+    /// `RequestFilterFields` as written, from the block's property (report/lt-y-report-props/YReportExt.al:231).
+    #[serde(default)]
+    pub request_filter_fields: Option<String>,
     /// `OnBeforeAfterGetRecord` and `OnAfterAfterGetRecord` as routine indices.
     pub before: Option<usize>,
     pub after: Option<usize>,

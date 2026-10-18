@@ -276,7 +276,7 @@ pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
     let mut out = Vec::new();
-    for o in c.objects.iter().filter(|o| o.kind == al_ir::ObjKind::Report) {
+    for (oi, o) in c.objects.iter().enumerate().filter(|(_, o)| o.kind == al_ir::ObjKind::Report) {
         let Some(id) = o.id else { continue };
         let Some(rep) = &o.report else {
             let mut k = blank(t);
@@ -294,7 +294,35 @@ pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             key[pos(t, 1)] = Value::Integer(id as i32);
             key[pos(t, 2)] = Value::Integer(item_id);
             let mut r = key.clone();
-            match data_item_row(&c, o, rep, item, t, &mut r) {
+            // `modify(Item) { RequestFilterFields = ...; }` of a reportextension adds to the item's list
+            // (report/lt-y-report-props/YReportExt.al:231). Two extensions that do so is not pinned.
+            let ext_fields: Vec<&String> = c
+                .objects
+                .iter()
+                .filter_map(|e| e.report_ext.as_ref().filter(|x| x.base == oi))
+                .flat_map(|x| x.modifies.iter().filter(|m| m.item == n))
+                .filter_map(|m| m.request_filter_fields.as_ref())
+                .collect();
+            let result = if ext_fields.len() > 1 {
+                Err(format!(
+                    "data item '{}' of report '{}': two reportextensions set RequestFilterFields (the merge is not pinned)",
+                    item.name, o.name
+                ))
+            } else {
+                match ext_fields.first() {
+                    Some(list) if item.request_filter_fields.is_none() => {
+                        let mut with = item.clone();
+                        with.request_filter_fields = Some((*list).clone());
+                        data_item_row(&c, o, rep, &with, t, &mut r)
+                    }
+                    Some(_) => Err(format!(
+                        "data item '{}' of report '{}': a reportextension sets RequestFilterFields on an item that has them (the merge is not pinned)",
+                        item.name, o.name
+                    )),
+                    None => data_item_row(&c, o, rep, item, t, &mut r),
+                }
+            };
+            match result {
                 Ok(()) => out.push(Entry::ok(r)),
                 Err(why) => out.push(Entry::poisoned(key, why)),
             }
@@ -370,8 +398,11 @@ fn data_item_row(
     Ok(())
 }
 
-/// `WHERE(Field6=CONST(2))` for the single `field = const(value)` condition; others are not pinned.
-fn where_const(table: &Table, objects: &[Object], inner: &str) -> Result<String, String> {
+/// `WHERE(Field1=0(1))` for the single `field = const(value)` condition of an Integer field: the Report Data Items
+/// table writes the filter type number (0 for a const) in front of the value, unlike a page's source table view
+/// (report/lt-y-report-props/YReportExt.al:231, misc/lt-probes-needed-3/PnC21Metadata.al:206, :218). Other field
+/// types are not pinned for this table (an option member's ordinal or name, an enum, text).
+fn where_const(table: &Table, _objects: &[Object], inner: &str) -> Result<String, String> {
     let (field, rest) = inner.split_once('=').ok_or("not a field = const(value)")?;
     let rest = rest.trim();
     let lower = rest.to_ascii_lowercase();
@@ -380,31 +411,18 @@ fn where_const(table: &Table, objects: &[Object], inner: &str) -> Result<String,
         .and_then(|_| rest[6..].strip_suffix(')'))
         .ok_or("only const(value) is pinned")?
         .trim();
-    if value.is_empty() || !value.chars().all(|c| c.is_ascii_alphanumeric() || "._-".contains(c)) {
-        return Err("the value is not pinned".into());
-    }
     let name = ident(field);
     let f = table
         .fields
         .iter()
         .find(|f| f.name.eq_ignore_ascii_case(&name))
         .ok_or("no such field")?;
-    let shown = match &f.ty {
-        RtType::Option(m) => m
-            .iter()
-            .position(|x| x.eq_ignore_ascii_case(value))
-            .ok_or("not an option member")?
-            .to_string(),
-        RtType::Enum(e) => objects[*e as usize]
-            .enum_values
-            .iter()
-            .find(|(_, n)| n.eq_ignore_ascii_case(value))
-            .map(|(v, _)| v.to_string())
-            .ok_or("not an enum member")?,
-        RtType::Integer | RtType::BigInteger if value.parse::<i64>().is_ok() => value.to_string(),
-        _ => return Err("only numbers and option members are pinned".into()),
-    };
-    Ok(format!("WHERE(Field{}=CONST({shown}))", f.id))
+    match &f.ty {
+        RtType::Integer | RtType::BigInteger if value.parse::<i64>().is_ok() => {
+            Ok(format!("WHERE(Field{}=0({value}))", f.id))
+        }
+        _ => Err("only a number on an Integer field is pinned".into()),
+    }
 }
 
 #[cfg(test)]

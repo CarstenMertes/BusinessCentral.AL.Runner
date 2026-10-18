@@ -1529,6 +1529,14 @@ impl Session {
                 // same for the events). A row a page saves carries the page's own previous row
                 // (record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
                 let stored_row = stored.clone();
+                // A Modify loads every field of a partially loaded record: the subscribers' Rec and xRec and the caller's record
+                // report all fields loaded afterwards, for Modify(true) and Modify(false)
+                // (record/lt-af-record-events/AfModifyLoadFields.al:92, :112, :130). A record nothing was fetched into is not pinned
+                // and stays as it is.
+                if let Some(b) = &mut rec.borrow_mut().load.buffer {
+                    b.have = al_builtins::value::FieldSet::All;
+                    b.unsure = al_builtins::value::FieldSet::Of(Vec::new());
+                }
                 let before_image = self
                     .pages
                     .page_xrec

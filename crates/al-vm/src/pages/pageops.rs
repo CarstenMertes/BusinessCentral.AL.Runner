@@ -817,6 +817,7 @@ impl Session {
                     // The refresh lands after the trigger that asked for it returns (corpus
                     // pageupdate/TestPageUpdate.al: ValidateBegin;ValidateEnd;HostAGCR).
                     st.borrow_mut().refresh = true;
+                    self.note_view_left(st)?;
                 }
                 if !save {
                     return Ok(Value::Null);

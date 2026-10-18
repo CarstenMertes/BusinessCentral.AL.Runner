@@ -350,6 +350,8 @@ pub struct PageState {
     pub refresh: bool,
     /// `CurrPage.SaveRecord` ran in the action being invoked.
     pub save_record_called: bool,
+    /// CurrPage.Update ran while the page's row was stored but outside the view the action had just set (list refresh).
+    pub view_left: bool,
     /// The caption was assigned while the page was not open: it stays for every later run of the variable.
     pub caption_assigned_closed: bool,
     /// A row with the new record's starting key was already stored when the draft started.
@@ -458,6 +460,7 @@ impl PageState {
             trapping: false,
             refresh: false,
             save_record_called: false,
+            view_left: false,
             caption_assigned_closed: false,
             draft_stored: false,
             after_new: None,

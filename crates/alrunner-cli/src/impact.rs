@@ -900,7 +900,7 @@ fn decide_static(
     is_ext_app: &[bool],
     keep: impl Fn(&(usize, u32), &str) -> bool,
 ) -> StaticDecision {
-    use al_testrun::impact_static::{Graph, Verdict, baseline_roots, select};
+    use al_testrun::impact_static::{Graph, Install, Verdict, baseline_roots, select};
     use al_testrun::impact_trace::impact_points;
     let program = input.program;
     let is_ext = |oi: usize| {
@@ -922,7 +922,11 @@ fn decide_static(
     let units: Vec<(usize, usize)> = routines.iter().map(|(_, t, _)| *t).collect();
     // The install baseline: Company-Initialize and the install codeunits of every app that is not the extension.
     let roots = baseline_roots(program, |oi| !is_ext(oi));
-    let sel = select(input.lowered, &graph, &points, &units, &roots);
+    let install = match input.baseline {
+        Some(keys) => Install::Traced { keys, roots: &roots },
+        None => Install::NotRun,
+    };
+    let sel = select(input.lowered, &graph, &points, &units, install);
     let mut reached: HashMap<(usize, u32, String), Vec<String>> = HashMap::new();
     let mut per_point = vec![(0usize, 0usize); points.len()];
     let mut selected = std::collections::BTreeSet::new();

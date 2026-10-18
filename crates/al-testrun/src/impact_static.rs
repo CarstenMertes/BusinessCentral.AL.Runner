@@ -33,7 +33,7 @@
 //! misses only what no node stands for: events the platform raises with no static raiser, and setup rows that name an
 //! object to run.
 
-use crate::impact_trace::{ImpactPoint, Site};
+use crate::impact_trace::{ImpactPoint, Matcher, Site};
 use al_builtins::value::RtType;
 use al_ir::{ObjKind, Program};
 use al_sema::lower::Lowered;
@@ -207,7 +207,7 @@ impl Graph {
                     out.push(g.unnamed_node(Unnamed::NotCompiled) as u32);
                 }
                 for s in r.locals.iter().chain(&o.globals) {
-                    if let Some(t) = slot_object(&s.ty) {
+                    if let Some(t) = slot_object(objs, &s.ty) {
                         out.push((routines + t) as u32);
                     }
                 }
@@ -337,7 +337,7 @@ impl Graph {
             // The tables of the object's record variables: their object nodes, or with `write` their written nodes.
             let record_globals = |q: usize, write: bool, out: &mut Vec<u32>| {
                 for s in &objs[q].globals {
-                    if let Some(t) = slot_object(&s.ty)
+                    if let Some(t) = slot_object(objs, &s.ty)
                         && objs[t].kind == ObjKind::Table
                     {
                         out.push((if write { g.written } else { routines } + t) as u32);
@@ -358,7 +358,7 @@ impl Graph {
                                     out.push((routines + r) as u32);
                                 }
                             }
-                            if let Some(e) = slot_object(&f.ty) {
+                            if let Some(e) = slot_object(objs, &f.ty) {
                                 out.push((routines + e) as u32);
                             }
                         }
@@ -555,6 +555,70 @@ impl Graph {
         seen
     }
 
+    /// A shortest path from one of `from` to `to`, with `through_unnamed` also through the nodes for what the program
+    /// does not name (a diagnostic: why static reach selects).
+    pub fn path(&self, from: &[usize], to: usize, through_unnamed: bool) -> Option<Vec<usize>> {
+        let mut parent = vec![usize::MAX; self.edges.len()];
+        let mut queue = std::collections::VecDeque::new();
+        for &f in from {
+            if parent[f] == usize::MAX {
+                parent[f] = f;
+                queue.push_back(f);
+            }
+        }
+        while let Some(n) = queue.pop_front() {
+            if n == to {
+                let mut out = vec![n];
+                let mut m = n;
+                while parent[m] != m {
+                    m = parent[m];
+                    out.push(m);
+                }
+                out.reverse();
+                return Some(out);
+            }
+            for &m in &self.edges[n] {
+                let m = m as usize;
+                if parent[m] == usize::MAX && (through_unnamed || !self.is_unnamed(m)) {
+                    parent[m] = n;
+                    queue.push_back(m);
+                }
+            }
+        }
+        None
+    }
+
+    /// A node as text, for `path`.
+    pub fn describe(&self, program: &Program, node: usize) -> String {
+        let object = |o: usize| {
+            let x = &program.objects[o];
+            format!("{} {} \"{}\"", x.kind.label(), x.id.unwrap_or_default(), x.name)
+        };
+        if node < self.routines {
+            let o = self.base.partition_point(|&b| b <= node) - 1;
+            let x = &program.objects[o];
+            return format!("{}.{}", object(o), x.routines[node - self.base[o]].name);
+        }
+        if node < self.routines + program.objects.len() {
+            return object(node - self.routines);
+        }
+        if node >= self.written {
+            return format!("writes of {}", object(node - self.written));
+        }
+        if self.is_unnamed(node) {
+            return UNNAMED[node - self.unnamed].label().to_string();
+        }
+        if let Some(((o, e), _)) = self.events.iter().find(|(_, n)| **n == node) {
+            let publisher = if *o < program.objects.len() {
+                object(*o)
+            } else {
+                format!("platform publisher {o}")
+            };
+            return format!("event {publisher} {e}");
+        }
+        "Global Triggers write events".into()
+    }
+
     /// The unnamed nodes `reach` holds, as text for a verdict.
     pub fn unnamed_in(&self, reach: &[bool]) -> Vec<&'static str> {
         UNNAMED
@@ -607,15 +671,22 @@ pub fn key_node(graph: &Graph, program: &Program, key: &str) -> Option<usize> {
     }
 }
 
-/// The object a variable of this type uses: a table, page, test page or enum. A codeunit variable runs nothing by
-/// itself: its procedures are calls (`Lowered::calls_of`) and `Codeunit.Run` on it is handled where it is written.
-fn slot_object(ty: &RtType) -> Option<usize> {
+/// The object a variable of this type uses: a table, page, test page, enum, query, report or xmlport (report and
+/// xmlport variables are typed `RtType::Codeunit`). A codeunit variable runs nothing by itself: its procedures are
+/// calls (`Lowered::calls_of`) and `Codeunit.Run` on it is handled where it is written.
+fn slot_object(objs: &[al_ir::Object], ty: &RtType) -> Option<usize> {
     let mut ty = ty;
     while let RtType::Array(_, inner) = ty {
         ty = inner;
     }
     match ty {
-        RtType::Record(t, _) | RtType::Page(t) | RtType::TestPage(t) | RtType::Enum(t) => Some(*t as usize),
+        RtType::Record(t, _) | RtType::Page(t) | RtType::TestPage(t) | RtType::Enum(t) | RtType::Query(t) => {
+            Some(*t as usize)
+        }
+        RtType::Codeunit(t) => objs
+            .get(*t as usize)
+            .is_some_and(|o| o.kind != ObjKind::Codeunit)
+            .then_some(*t as usize),
         _ => None,
     }
 }
@@ -686,15 +757,27 @@ impl Selection {
     }
 }
 
+/// What the install baseline of the run did, for the impact points that run code: one it reached changes the data
+/// every test starts from, so every test runs.
+pub enum Install<'a> {
+    /// It ran with the trace on: what it raised and touched (`impact_trace::keys`). A point the trace can answer for
+    /// (its matcher is a key) is decided by it; another by static reach from `roots` (`baseline_roots`).
+    Traced {
+        keys: &'a [String],
+        roots: &'a [(usize, usize)],
+    },
+    /// It did not run: no test starts from data it wrote.
+    NotRun,
+}
+
 /// Static selection (ADR-043 section 2.3): per impact point one search backwards from what stands for it, then each
-/// test's roots looked up. `tests` are (object, routine) of test routines; `baseline_roots` the routines the install
-/// baseline runs (an impact point that runs code and that they reach changes the data every test starts from).
+/// test's roots looked up. `tests` are (object, routine) of test routines.
 pub fn select(
     lowered: &Lowered,
     graph: &Graph,
     points: &[ImpactPoint],
     tests: &[(usize, usize)],
-    baseline_roots: &[(usize, usize)],
+    install: Install,
 ) -> Selection {
     let program = &lowered.program;
     let mut sel = Selection {
@@ -714,7 +797,17 @@ pub fn select(
             )
         })
         .collect();
-    let baseline: Vec<usize> = baseline_roots.iter().map(|&(o, r)| graph.routine_node(o, r)).collect();
+    let (trace, baseline): (Option<std::collections::HashSet<&str>>, Vec<usize>) = match &install {
+        Install::Traced { keys, roots } => (
+            Some(keys.iter().map(String::as_str).collect()),
+            roots.iter().map(|&(o, r)| graph.routine_node(o, r)).collect(),
+        ),
+        Install::NotRun => (None, Vec::new()),
+    };
+    let traced_keys: &[String] = match &install {
+        Install::Traced { keys, .. } => keys,
+        Install::NotRun => &[],
+    };
     // Per unnamed node: the nodes that reach it through named code (to say why a test cannot rule a point out).
     let to_unnamed: Vec<Vec<bool>> = UNNAMED
         .iter()
@@ -732,11 +825,21 @@ pub fn select(
         let reach = graph.reaching(&targets);
         // Still decide per test: the report names what each test reaches, and a changed test that reaches nothing is
         // a selection miss even when every codeunit ran.
-        if p.runs_code && baseline.iter().any(|&b| reach.precise[b]) {
-            sel.everything[pi] = Some(format!(
-                "{}: the install code can reach it, so it can change the data every test starts from",
-                p.what
-            ));
+        if p.runs_code
+            && let Some(trace) = &trace
+        {
+            // The trace answers for a point the index can select for; static reach from the install code for the
+            // rest. Static reach alone would decide for nearly every point: it passes code that data decides on.
+            let reached = match &p.matcher {
+                Matcher::Unsupported(_) => baseline.iter().any(|&b| reach.precise[b]),
+                _ => p.reached_by(traced_keys, |k| trace.contains(k)),
+            };
+            if reached {
+                sel.everything[pi] = Some(format!(
+                    "{}: the install code reached it, so it changes the data every test starts from",
+                    p.what
+                ));
+            }
         }
         for (i, nodes) in &roots {
             let verdict = if nodes.iter().any(|&n| reach.precise[n]) {

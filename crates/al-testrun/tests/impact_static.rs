@@ -2,10 +2,11 @@
 //! extension, from the compiled program, and that it covers what a traced run of the same tests recorded.
 
 use al_sema::workspace::AppSource;
-use al_testrun::impact_static::{Graph, Verdict, baseline_roots, key_node, select};
+use al_testrun::impact_static::{Graph, Install, Verdict, baseline_roots, key_node, select};
 use al_testrun::impact_trace::{Matcher, impact_points};
-use al_testrun::runtime::{CorpusRuntime, Manifest, RunOptions, SuiteRun};
+use al_testrun::runtime::{CorpusRuntime, Manifest, Narrow, NarrowInput, RunOptions, SuiteRun};
 use std::collections::BTreeMap;
+use std::sync::{Arc, Mutex};
 
 const BASE: &str = r#"
 table 50980 "SX Row"
@@ -286,13 +287,11 @@ fn verdicts(base: &str) -> (Vec<Option<String>>, BTreeMap<String, BTreeMap<Strin
     let lowered = compile(base, true);
     let program = &lowered.program;
     let ext = program.apps.iter().position(|a| a.id == "ext").unwrap() as u32;
-    let base_app = program.apps.iter().position(|a| a.id == "base").unwrap() as u32;
     let points = impact_points(&lowered, |oi| program.objects[oi].app == ext);
     let tests = tests_of(&lowered);
     let units: Vec<(usize, usize)> = tests.iter().map(|(t, _)| *t).collect();
     let graph = Graph::build(&lowered);
-    let roots = baseline_roots(program, |oi| program.objects[oi].app == base_app);
-    let sel = select(&lowered, &graph, &points, &units, &roots);
+    let sel = select(&lowered, &graph, &points, &units, Install::NotRun);
     let mut out: BTreeMap<String, BTreeMap<String, Verdict>> = BTreeMap::new();
     for (t, name) in &tests {
         for (pi, v) in sel.verdicts.get(t).into_iter().flatten() {
@@ -439,16 +438,89 @@ fn install_code_selects_the_tests_that_use_a_table_it_writes() {
     assert_eq!(kind.matcher, Matcher::Key("enum 50982".into()));
 }
 
+/// An impact run's "with" side (the tests, the base app and the extension), with a selection callback that decides
+/// statically over the trace of the install baseline it is given: why every test runs, and the baseline's keys.
+fn select_in_run(base: &str) -> (Vec<Option<String>>, Option<Vec<String>>) {
+    let manifest = |p: &str| Manifest {
+        publisher: p.into(),
+        version: "1.0.0.0".into(),
+        resources: vec![],
+        include_source: false,
+        layout_files: Vec::new(),
+        symbols: vec![],
+    };
+    type Seen = Option<(Vec<Option<String>>, Option<Vec<String>>)>;
+    let seen: Arc<Mutex<Seen>> = Arc::default();
+    let out = seen.clone();
+    let narrow = Narrow(Arc::new(move |input: &NarrowInput| {
+        let program = input.program;
+        let ext = program.apps.iter().position(|a| a.id == "ext").unwrap() as u32;
+        let points = impact_points(input.lowered, |oi| program.objects[oi].app == ext);
+        let graph = Graph::build(input.lowered);
+        let roots = baseline_roots(program, |oi| program.objects[oi].app != ext);
+        let install = match input.baseline {
+            Some(keys) => Install::Traced { keys, roots: &roots },
+            None => Install::NotRun,
+        };
+        let sel = select(input.lowered, &graph, &points, &[], install);
+        *out.lock().unwrap() = Some((sel.everything, input.baseline.map(<[String]>::to_vec)));
+        None
+    }));
+    CorpusRuntime::try_run_suites_with(
+        vec![
+            app("tests", &["base"], TESTS),
+            app("base", &[], base),
+            app("ext", &["base"], EXT),
+        ],
+        vec![
+            al_sema::AppKind::Workspace,
+            al_sema::AppKind::Dependency,
+            al_sema::AppKind::Workspace,
+        ],
+        &[manifest("Microsoft"), manifest("Microsoft"), manifest("Partner")],
+        &Default::default(),
+        None,
+        Default::default(),
+        &[SuiteRun::everything()],
+        &RunOptions {
+            narrow: Some(narrow),
+            ..Default::default()
+        },
+    )
+    .expect("the run starts");
+    let seen = seen.lock().unwrap().take();
+    seen.expect("the selection callback ran")
+}
+
 #[test]
-fn a_subscriber_the_install_baseline_can_reach_takes_every_test() {
+fn a_subscriber_the_install_baseline_ran_takes_every_test() {
     let base = format!(
         "{BASE}\ncodeunit 50989 \"SX Base Install\" {{ Subtype = Install; trigger OnInstallAppPerCompany() var P: Codeunit \"SX Posting\"; begin P.Post(); end; }}"
     );
-    let (everything, _) = verdicts(&base);
+    let (everything, trace) = select_in_run(&base);
+    let trace = trace.expect("the baseline ran with the trace on");
+    assert!(
+        trace.iter().any(|k| k == "event codeunit 50983 onbeforepost"),
+        "{trace:?}"
+    );
     let why: Vec<&String> = everything.iter().flatten().collect();
     assert_eq!(why.len(), 1, "{everything:?}");
     assert!(why[0].starts_with("subscriber \"SX Sub\".Check"), "{why:?}");
     assert!(why[0].contains("install code"), "{why:?}");
+}
+
+/// Static reach from the install code passes code that data decides on (in Microsoft's Base Application the
+/// workflow engine, which a write of almost any table enters). The trace of the run's own install baseline says
+/// whether the install code reached the point.
+#[test]
+fn a_subscriber_the_install_code_can_reach_but_did_not_reach_selects_as_usual() {
+    let base = format!(
+        "{BASE}\ncodeunit 50989 \"SX Base Install\" {{ Subtype = Install; trigger OnInstallAppPerCompany() var P: Codeunit \"SX Posting\"; O: Record \"SX Other\"; begin if O.Get(12345) then P.Post(); end; }}"
+    );
+    let (everything, trace) = select_in_run(&base);
+    let trace = trace.expect("the baseline ran with the trace on");
+    assert!(trace.iter().any(|k| k == "table 50981"), "{trace:?}");
+    assert!(everything.iter().all(Option::is_none), "{everything:?}");
 }
 
 /// The run of the tests with the impact trace on, without the extension (what `impact-index build` records).

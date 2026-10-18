@@ -114,20 +114,7 @@ impl CorpusRuntime {
         opts: &RunOptions,
     ) -> Result<CorpusRuntime, String> {
         let compiled = Self::compile_suites(apps, kinds, manifests, symbols, target, suites, opts)?;
-        // The run phase selects by `RunOptions::only` (the caller's numbering of the apps).
-        let narrowed = opts.narrow.as_ref().and_then(|narrow| {
-            let input = NarrowInput {
-                program: &compiled.lowered.program,
-                lowered: &compiled.lowered,
-                order: &compiled.order,
-                only: opts.only.as_deref(),
-            };
-            (narrow.0)(&input).map(|only| RunOptions {
-                only: Some(only),
-                ..opts.clone()
-            })
-        });
-        let rt = Self::run_compiled(&compiled, target, dotnet, narrowed.as_ref().unwrap_or(opts));
+        let rt = Self::run_compiled(&compiled, target, dotnet, opts);
         // The workspace and the lowered program are big: dropping them takes as long as lowering
         // a tenth of the corpus, and nothing waits for it.
         retire(compiled);
@@ -484,14 +471,15 @@ impl CorpusRuntime {
             (*baseline_wanted, *baseline, *compile_cache_skipped, *source_index);
         let baseline_note = baseline_note.clone();
         // The selection of this request, in program order: a warm compile may reach more than the request asks for.
-        let opts_only = match &opts.only {
-            Some(v) => {
-                let mut new_of = vec![0; order.len()];
-                for (new, &old) in order.iter().enumerate() {
-                    new_of[old] = new;
-                }
-                Some(v.iter().map(|&(a, id)| (new_of[a], id)).collect::<Vec<_>>())
+        let in_program_order = |v: &[(usize, u32)]| {
+            let mut new_of = vec![0; order.len()];
+            for (new, &old) in order.iter().enumerate() {
+                new_of[old] = new;
             }
+            v.iter().map(|&(a, id)| (new_of[a], id)).collect::<Vec<_>>()
+        };
+        let mut opts_only = match &opts.only {
+            Some(v) => Some(in_program_order(v)),
             None => opts_only.clone(),
         };
         let suites = &suites[..];
@@ -547,8 +535,9 @@ impl CorpusRuntime {
             .zip(opts.compile_cache.as_ref())
             // `--rebuild-compile-cache`: the file is not read, and the run writes a new one.
             .filter(|(_, cc)| !cc.rebuild)
-            // The impact index needs what the install code raised and touched: the baseline runs.
-            .filter(|_| !opts.impact_trace)
+            // The impact index and an impact run's selection need what the install code raised and touched: the
+            // baseline runs.
+            .filter(|_| !opts.impact_trace && opts.narrow.is_none())
             .and_then(|(key, cc)| crate::baseline_cache::read(&cc.dir, key))
             .filter(|(_, at)| {
                 crate::host::SystemClock::begin_at(*at)
@@ -570,7 +559,9 @@ impl CorpusRuntime {
                 })
                 .flatten();
             let run = if baseline {
-                kept.or_else(|| crate::baseline::run_traced(&engine, lowered, opts.impact_trace))
+                kept.or_else(|| {
+                    crate::baseline::run_traced(&engine, lowered, opts.impact_trace || opts.narrow.is_some())
+                })
             } else {
                 None
             };
@@ -629,6 +620,20 @@ impl CorpusRuntime {
         let mut baseline_run = baseline_run;
         let baseline_trace = baseline_run.as_mut().and_then(|b| b.trace.take());
         let baseline = baseline_run.map(|b| b.baseline);
+        // An impact run selects its test codeunits here: after the compile and the install baseline, whose trace says
+        // whether the install code reached an impact point (`RunOptions::narrow`).
+        if let Some(narrow) = &opts.narrow {
+            let input = NarrowInput {
+                program: &lowered.program,
+                lowered,
+                order,
+                only: opts.only.as_deref(),
+                baseline: baseline_trace.as_deref(),
+            };
+            if let Some(only) = (narrow.0)(&input) {
+                opts_only = Some(in_program_order(&only));
+            }
+        }
         let tests_started = std::time::Instant::now();
         let mut outcomes = std::collections::HashMap::new();
         let mut marks_by_test: std::collections::HashMap<(usize, u32, String), Vec<Assumption>> =

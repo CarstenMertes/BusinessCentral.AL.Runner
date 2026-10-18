@@ -48,8 +48,10 @@ pub struct RunOptions {
     /// The baseline then runs instead of being read from the compile cache. Off, a run pays one branch per raise and
     /// record operation.
     pub impact_trace: bool,
-    /// Called once the compile is done and before anything runs: it may narrow the test codeunits to run (an impact
-    /// run that selects the codeunits that reach the extension's impact points). `None`: the selection stays.
+    /// Called once the compile is done and the install baseline has run, before any test runs: it may narrow the test
+    /// codeunits to run (an impact run that selects the codeunits that reach the extension's impact points). The
+    /// baseline then runs with the trace on (`NarrowInput::baseline`) instead of being read from the compile cache.
+    /// `None`: the selection stays.
     pub narrow: Option<Narrow>,
 }
 
@@ -62,6 +64,8 @@ pub struct NarrowInput<'a> {
     pub order: &'a [usize],
     /// The test codeunits the run would run (caller's app index, codeunit id); `None`: all.
     pub only: Option<&'a [(usize, u32)]>,
+    /// What the install baseline raised and touched (`impact_trace::keys`); `None`: it did not run.
+    pub baseline: Option<&'a [String]>,
 }
 
 /// The test codeunits to run instead, as (caller's app index, codeunit id); `None` keeps the selection.

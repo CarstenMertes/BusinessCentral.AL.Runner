@@ -449,6 +449,10 @@ fn cross_check(index: &Index, input: &al_testrun::runtime::NarrowInput, tests: u
             }
         }
     }
+    // `AL_IMPACT_WHY=<key>`: why the install baseline and a test that did not record the key reach it statically.
+    if let Ok(key) = std::env::var("AL_IMPACT_WHY") {
+        why(index, input, &graph, &routine_of, &key);
+    }
     if missed.is_empty() {
         println!("static reach covers every key of {checked} tests: missed: 0");
     } else {
@@ -523,6 +527,93 @@ fn cross_check(index: &Index, input: &al_testrun::runtime::NarrowInput, tests: u
         started.elapsed().as_secs_f64()
     );
     u8::from(!missed.is_empty())
+}
+
+/// Prints a shortest static path to the node of `key` from the install baseline and from the first test that did not
+/// record the key (`AL_IMPACT_WHY`, a diagnostic of over-selection).
+fn why(
+    index: &Index,
+    input: &al_testrun::runtime::NarrowInput,
+    graph: &al_testrun::impact_static::Graph,
+    routine_of: &std::collections::HashMap<(usize, u32, String), (usize, usize)>,
+    key: &str,
+) {
+    use al_testrun::impact_static::{baseline_roots, key_node, test_roots};
+    let program = input.program;
+    let Some(node) = key_node(graph, program, key) else {
+        println!("AL_IMPACT_WHY: {key} has no node in the static graph");
+        return;
+    };
+    let show = |label: &str, roots: Vec<(usize, usize)>| {
+        let from: Vec<usize> = roots.into_iter().map(|(o, r)| graph.routine_node(o, r)).collect();
+        let path = graph
+            .path(&from, node, false)
+            .map(|p| (p, "reaches"))
+            .or_else(|| graph.path(&from, node, true).map(|p| (p, "cannot rule out")));
+        match path {
+            Some((p, how)) => {
+                println!("AL_IMPACT_WHY {key}: {label} {how}");
+                for n in p {
+                    println!("    {}", graph.describe(program, n));
+                }
+            }
+            None => println!("AL_IMPACT_WHY {key}: {label} does not reach it"),
+        }
+    };
+    show("the install baseline", baseline_roots(program, |_| true));
+    let k = index.keys.iter().position(|k| k == key);
+    // Tests and codeunits: recorded in the index / reached statically / with "cannot rule out".
+    let mut counts = [0usize; 3];
+    let mut units: [std::collections::HashSet<(usize, u32)>; 3] = Default::default();
+    for t in &index.tests {
+        let Some(&(o, r)) = routine_of.get(&(t.app, t.codeunit, t.test.to_lowercase())) else {
+            continue;
+        };
+        let from: Vec<usize> = test_roots(program, o, r)
+            .iter()
+            .map(|&(o, r)| graph.routine_node(o, r))
+            .collect();
+        let reach = graph.reached_from(&from);
+        for (i, hit) in [
+            k.is_some_and(|k| t.keys.contains(&(k as u32))),
+            reach.precise[node],
+            reach.possible[node],
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            if hit {
+                counts[i] += 1;
+                units[i].insert((t.app, t.codeunit));
+            }
+        }
+    }
+    println!(
+        "AL_IMPACT_WHY {key}: tests {} / {} / {}, codeunits {} / {} / {} (the index / static reach / with \"cannot rule out\")",
+        counts[0],
+        counts[1],
+        counts[2],
+        units[0].len(),
+        units[1].len(),
+        units[2].len()
+    );
+    for t in &index.tests {
+        if k.is_some_and(|k| t.keys.contains(&(k as u32))) {
+            continue;
+        }
+        let Some(&(o, r)) = routine_of.get(&(t.app, t.codeunit, t.test.to_lowercase())) else {
+            continue;
+        };
+        let roots = test_roots(program, o, r);
+        let from: Vec<usize> = roots.iter().map(|&(o, r)| graph.routine_node(o, r)).collect();
+        if graph.path(&from, node, false).is_some() {
+            show(
+                &format!("test {}.{} (it did not record the key)", t.codeunit_name, t.test),
+                roots,
+            );
+            return;
+        }
+    }
 }
 
 #[cfg(test)]

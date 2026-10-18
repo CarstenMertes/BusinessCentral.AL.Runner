@@ -843,6 +843,41 @@ fn set_current_key_on_fields_no_key_starts_with_orders_by_them_then_the_primary_
 }
 
 #[test]
+fn set_ascending_true_after_ascending_false_keeps_ties_in_descending_primary_key_order() {
+    // record/lt-record-sort-ascending/RecordSortAscendingViews.al:P161_SetAscending_Single_AscendingMethodAndTies `back.walk`.
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; s: Text; begin
+            R.\"No.\" := 'A'; R.Descr := 'k'; R.Insert();
+            R.\"No.\" := 'B'; R.Descr := ''; R.Insert();
+            R.\"No.\" := 'C'; R.Descr := ''; R.Insert();
+            R.Reset();
+            R.SetCurrentKey(Descr);
+            R.Ascending(false);
+            R.SetAscending(Descr, true);
+            if R.FindSet() then repeat s += R.\"No.\"; until R.Next() = 0;
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "CBA");
+}
+
+#[test]
+fn view_and_ascending_after_set_ascending_true_following_ascending_false_ignore_the_tie_order() {
+    // record/lt-record-sort-ascending/RecordSortAscendingViews.al:P161_SetAscending_Single_AscendingMethodAndTies `back.asc`, `back.view`.
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; begin
+            R.SetCurrentKey(Descr);
+            R.Ascending(false);
+            R.SetAscending(Descr, true);
+            exit(Format(R.Ascending()) + '|' + R.GetView());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes|VERSION(1) SORTING(Descr)");
+}
+
+#[test]
 fn set_current_key_on_a_field_that_is_not_stored_is_refused() {
     let r = run(
         "procedure F() var R: Record \"ALT T\"; begin R.SetCurrentKey(Total); end;",

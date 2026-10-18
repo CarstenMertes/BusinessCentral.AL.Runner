@@ -395,9 +395,24 @@ fn parse_formula(text: &str) -> Result<Vec<Term>, Signal> {
         Some(b'Y') => Some(Unit::Year),
         _ => None,
     };
+    // A formula opened with one `<` and never closed shows the bracket in the message; with a closing bracket it shows the
+    // body alone (errors/lt-ms-refusals-136/P136Text.al:P136_CalcDate_OneAngleBracket `noNumber`, `noNumberOpen`). More than
+    // one opening bracket without a closing one is not pinned.
     let err_number = || {
+        let compact: String = text.chars().filter(|c| !c.is_whitespace()).collect();
+        let opens = compact.chars().take_while(|c| *c == '<').count();
+        if !compact.contains('>') && opens > 1 {
+            return unsupported(format!(
+                "the number error of date formula `{text}`: several opening brackets and no closing one are not pinned"
+            ));
+        }
+        let shown = if !compact.contains('>') && opens == 1 {
+            format!("<{body}")
+        } else {
+            body.to_string()
+        };
         raise(
-            format!("The date formula '{body}' should include a number."),
+            format!("The date formula '{shown}' should include a number."),
             "Evaluate",
         )
     };
@@ -1135,6 +1150,9 @@ mod tests {
             ("<++1D>", "The date formula '++1D' should include a number."),
             ("<+%D>", "The date formula '+%D' should include a number."),
             ("<WD>", "The date formula 'WD' should include a number."),
+            // With the opening bracket and no closing one, the text keeps the bracket
+            // (errors/lt-ms-refusals-136/P136Text.al:P136_CalcDate_OneAngleBracket `noNumberOpen`).
+            ("<W", "The date formula '<W' should include a number."),
             ("<+5>", "The date formula '+5' should include a time unit."),
             ("01/01/26", "The date formula '01/01/26' should include a time unit."),
         ] {

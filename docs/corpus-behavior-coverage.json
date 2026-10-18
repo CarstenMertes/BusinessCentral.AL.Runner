@@ -14011,7 +14011,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 939,
+        "line": 940,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -14047,7 +14047,7 @@
         "code": "DB:NoFilter",
         "file": "crates/al-vm/src/recmeta.rs",
         "generic": false,
-        "line": 354,
+        "line": 361,
         "pinned": true,
         "site": "fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:204",
         "template": "Specify a filter for the % field in the % table."
@@ -14065,7 +14065,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2347,
+        "line": 2353,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -14182,7 +14182,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/views.rs",
         "generic": false,
-        "line": 524,
+        "line": 527,
         "pinned": true,
         "site": "record/TestRecordViewCopyMarkContracts.al:145",
         "template": "Invalid expression of type: table view.%%"

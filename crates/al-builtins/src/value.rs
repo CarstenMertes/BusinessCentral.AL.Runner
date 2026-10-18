@@ -586,6 +586,9 @@ pub struct RecordState {
     /// AL code assigned a field since the last `Init` or `Clear`, even to its own default value; `AreFieldsLoaded` on a
     /// record nothing was fetched into reads it (record/lt-arefieldsloaded-default).
     pub assigned: bool,
+    /// This variable inserted its row since the last `Init` or `Clear`: a `CalcFields` of a Blob that finds the row gone
+    /// (rolled back) empties the Blob (misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob).
+    pub inserted: bool,
     /// What a RecordRef last read or wrote into the buffer: `RecordRef.IsDirty` compares with it, not with the stored row
     /// (recordref/lt-recordref-fieldref-members/RecordRefIsDirtyEdges.al:IsDirty_TwoRefs_OtherModifies). `None` when the
     /// buffer came from elsewhere (GetTable, Init).

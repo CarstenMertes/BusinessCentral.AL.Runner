@@ -285,6 +285,7 @@ mod tests {
             load: Default::default(),
             touched: false,
             assigned: false,
+            inserted: false,
             dirty_base: None,
             globals: Default::default(),
         })))

@@ -574,6 +574,14 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
     if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, text) {
         return Ok(v);
     }
+    // Six digits read as month, day, year in an English session: `020126` is 2026-02-01 and `040126` is 2026-04-01
+    // (fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:389-565, filters of a Date field). Other digit counts are not pinned.
+    if english && text.len() == 6 && text.bytes().all(|b| b.is_ascii_digit()) {
+        let spelled = format!("{}/{}/{}", &text[0..2], &text[2..4], &text[4..6]);
+        if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &spelled) {
+            return Ok(v);
+        }
+    }
     if german {
         return Err(format!("{INVALID_DATE}{t}"));
     }

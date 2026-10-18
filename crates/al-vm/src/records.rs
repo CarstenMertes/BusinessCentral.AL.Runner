@@ -942,7 +942,9 @@ impl Session {
         // A full load (the default) needs no bookkeeping beyond the flag; a partial one is worked
         // out in partial.rs.
         let via_get = std::mem::take(&mut self.get_load);
-        if rec.borrow().load.request.is_some() {
+        // A temporary record loads every field whatever SetLoadFields asked for (record/lt-are-fields-loaded-unfetched/
+        // AreFieldsLoadedUnfetched.al:174-221, partial_name and partial_qty after FindFirst and Get).
+        if rec.borrow().load.request.is_some() && !rec.borrow().temporary {
             self.note_partial_fetch(rec, &row, via_get)?;
         } else {
             let mut r = rec.borrow_mut();

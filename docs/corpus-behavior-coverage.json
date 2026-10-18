@@ -245,7 +245,7 @@
           "ms_uses": 137,
           "name": "OnDeleteRecord",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "events/lt-global-triggers-statements/P114PageActionEvents.al:346"
         },
         {
@@ -1203,6 +1203,15 @@
           "site": "handlers/TestPageCloseTriggersSelectionCardPageContracts.al:120"
         },
         {
+          "corpus_uses": 2,
+          "group": "pageextension",
+          "ms_uses": 0,
+          "name": "OnDeleteRecord",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "pageext/POPageExtTriggers.al:61"
+        },
+        {
           "corpus_uses": 1,
           "group": "pageextension",
           "ms_uses": 0,
@@ -1489,15 +1498,6 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "_fixtures/xmlports/ALTUniversalManualXmlPort.al:54"
-        },
-        {
-          "corpus_uses": 2,
-          "group": "pageextension",
-          "ms_uses": 0,
-          "name": "OnDeleteRecord",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "pageext/POPageExtTriggers.al:61"
         },
         {
           "corpus_uses": 1,
@@ -13671,7 +13671,7 @@
         "code": "DB:Ok",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 1585,
+        "line": 1587,
         "pinned": true,
         "site": "record/TestPlatformTablesWritableContracts.al:107",
         "template": "It is not possible to delete any record in the Tenant License State table."
@@ -13680,7 +13680,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2232,
+        "line": 2234,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."

@@ -104,6 +104,10 @@ pub enum Gate {
     /// '{1111...}'`); BC 27 writes it without braces. A Byte value is written as a number on BC 27. The corpus guards the
     /// typed-value tests with `#if BC28PLUS` (record/lt-testfield-typed-values/, corpus bump 17). Not consumed yet.
     TestFieldTypedValueTexts,
+    /// `File.Download` with no client to receive the file (an OnPrem test run) is probed only from BC 28: the guarded test
+    /// compiles on 28 and later and has no BC 27 counterpart (al-language-onprem/lt-file-type/FileQProbes.al:92, corpus bump 24).
+    /// Not consumed yet; the test is refused by the runtime today.
+    FileDownloadWithoutClientFrom28,
 }
 
 impl Gate {
@@ -132,6 +136,7 @@ impl Gate {
         Gate::ProbedValuesDifferFrom29,
         Gate::Base64TextIsWindows1252From28,
         Gate::TestFieldTypedValueTexts,
+        Gate::FileDownloadWithoutClientFrom28,
     ];
 
     /// The first BC major with the new behaviour.
@@ -158,6 +163,7 @@ impl Gate {
             | Gate::ProbedValuesDifferFrom28
             | Gate::Base64TextIsWindows1252From28
             | Gate::TestFieldTypedValueTexts
+            | Gate::FileDownloadWithoutClientFrom28
             | Gate::GetTextArgumentEvaluateErrorFrom28
             | Gate::RecordRefIsDirtyFrom28
             | Gate::PartLineBeforeHostKeyFrom28 => 28,
@@ -398,7 +404,24 @@ impl Gate {
                     file: "record/lt-testfield-typed-values/RecordTestFieldWrongTypeGuidOnText.al",
                     lines: "8,53,60,67,75",
                 },
+                // Corpus bump 24: the Guid and Byte texts again, per value type (a Guid field against a Guid, a Byte on a Number field).
+                Evidence {
+                    file: "record/lt-testfield-value-types/RecordTestFieldGroupB.al",
+                    lines: "30,72,78,84",
+                },
+                Evidence {
+                    file: "fieldref/lt-testfield-value-types/FieldRefTestFieldGroupA.al",
+                    lines: "260,306,312,318",
+                },
+                Evidence {
+                    file: "fieldref/lt-testfield-value-types/FieldRefTestFieldGroupB.al",
+                    lines: "486,532,538,544",
+                },
             ],
+            Gate::FileDownloadWithoutClientFrom28 => &[Evidence {
+                file: "../al-language-onprem/lt-file-type/FileQProbes.al",
+                lines: "92",
+            }],
             Gate::MediaExportKeepsTheImportedBytes => &[Evidence {
                 file: "types/W7Media.al",
                 lines: "134,141,146",

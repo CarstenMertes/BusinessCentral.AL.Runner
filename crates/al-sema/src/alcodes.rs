@@ -33,7 +33,7 @@ pub const IMPLEMENTED: &[(&str, &str)] = &[
     ),
     (
         "AL0124",
-        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1 and 17.0; the property OrderBy on a query data item",
+        "app.json key `assemblyProbingPaths` of a Cloud app at runtime 15.0, 16.0, 16.1, 17.0, 17.1 and 18.0; the property OrderBy on a query data item",
     ),
     (
         "AL0132",
@@ -97,7 +97,10 @@ pub enum AppTarget {
 }
 
 /// The app runtimes (major, minor) at which the compiler refuses `assemblyProbingPaths` (corpus 0007, 0071 to 0073).
-const ASSEMBLY_PROBING_REFUSED: &[(u32, u32)] = &[(15, 0), (16, 0), (16, 1), (17, 0)];
+///
+/// 17.1 and 18.0 are the runtimes of the corpus apps on BC 28 and BC 29 (`oracle.toml` `app_runtime`); corpus
+/// case 0007 (default runtime of its leg) gets AL0124 on them when the corpus checker runs with AL 30.0.42.60748-beta.
+const ASSEMBLY_PROBING_REFUSED: &[(u32, u32)] = &[(15, 0), (16, 0), (16, 1), (17, 0), (17, 1), (18, 0)];
 
 /// What the compiler knows of an app besides its source.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -596,8 +599,8 @@ fn report_columns(
 /// The checks that need the facts of app `app` (`AppContext`).
 pub fn check_context(ws: &Workspace, app: usize, ctx: &AppContext) -> Vec<Diagnostic> {
     let mut out = Vec::new();
-    // AL0124 (corpus 0007, 0071 to 0073): a Cloud app's app.json at runtime 15.0, 16.0, 16.1 or 17.0 does not
-    // take `assemblyProbingPaths`. Those four runtimes are pinned, and only for the default target (Cloud).
+    // AL0124 (corpus 0007, 0071 to 0073): a Cloud app's app.json at runtime 15.0, 16.0, 16.1, 17.0, 17.1 or 18.0 does not
+    // take `assemblyProbingPaths`. Those six runtimes are pinned, and only for the default target (Cloud).
     if ctx.target == AppTarget::Cloud
         && ctx.runtime.is_some_and(|r| ASSEMBLY_PROBING_REFUSED.contains(&r))
         && ctx.app_json_keys.iter().any(|k| k == "assemblyProbingPaths")
@@ -1144,7 +1147,7 @@ mod tests {
             ctx_codes(cu, &ctx(AppTarget::Cloud, Some((16, 0)), &keys)),
             vec!["AL0124"]
         );
-        for r in [(15, 0), (16, 1), (17, 0)] {
+        for r in [(15, 0), (16, 1), (17, 0), (17, 1), (18, 0)] {
             assert_eq!(
                 ctx_codes(cu, &ctx(AppTarget::Cloud, Some(r), &keys)),
                 vec!["AL0124"],
@@ -1152,7 +1155,7 @@ mod tests {
             );
         }
         // Another runtime, another target and no key are not judged.
-        assert!(ctx_codes(cu, &ctx(AppTarget::Cloud, Some((18, 0)), &keys)).is_empty());
+        assert!(ctx_codes(cu, &ctx(AppTarget::Cloud, Some((19, 0)), &keys)).is_empty());
         assert!(ctx_codes(cu, &ctx(AppTarget::OnPrem, Some((16, 0)), &keys)).is_empty());
         assert!(ctx_codes(cu, &ctx(AppTarget::Cloud, Some((16, 0)), &[])).is_empty());
         assert!(ctx_codes(cu, &ctx(AppTarget::Cloud, None, &keys)).is_empty());

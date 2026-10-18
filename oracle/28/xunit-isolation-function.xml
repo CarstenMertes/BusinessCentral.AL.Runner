@@ -1,14 +1,14 @@
 ﻿<?xml version="1.0" encoding="UTF-8"?>
 <assemblies>
-  <assembly name="61302 Isol Probe Fixture" test-framework="PS Test Runner" run-date="2026-10-13" run-time="04:10:42" total="7" passed="7" failed="0" skipped="0" time="0.08">
-    <collection name="Isol Probe Fixture" total="7" passed="7" failed="0" skipped="0" time="0.08">
+  <assembly name="61302 Isol Probe Fixture" test-framework="PS Test Runner" run-date="2026-10-18" run-time="13:06:56" total="7" passed="7" failed="0" skipped="0" time="0.087">
+    <collection name="Isol Probe Fixture" total="7" passed="7" failed="0" skipped="0" time="0.087">
       <test name="Isol Probe Fixture:T1_SetsGlobalCounterSingleInstanceAndRow" method="T1_SetsGlobalCounterSingleInstanceAndRow" time="0.02" result="Pass" />
       <test name="Isol Probe Fixture:T2_GlobalSetByT1IsStillSet" method="T2_GlobalSetByT1IsStillSet" time="0.01" result="Pass" />
       <test name="Isol Probe Fixture:T3_CallCounterCountsEveryEarlierTest" method="T3_CallCounterCountsEveryEarlierTest" time="0.01" result="Pass" />
-      <test name="Isol Probe Fixture:T4_SingleInstanceSetByT1IsStillSet" method="T4_SingleInstanceSetByT1IsStillSet" time="0.01" result="Pass" />
+      <test name="Isol Probe Fixture:T4_SingleInstanceSetByT1IsStillSet" method="T4_SingleInstanceSetByT1IsStillSet" time="0.013" result="Pass" />
       <test name="Isol Probe Fixture:T5_RowInsertedByT1IsRolledBack" method="T5_RowInsertedByT1IsRolledBack" time="0.01" result="Pass" />
       <test name="Isol Probe Fixture:T6_RowInsertedByOnRunIsStillThere" method="T6_RowInsertedByOnRunIsStillThere" time="0.01" result="Pass" />
-      <test name="Isol Probe Fixture:T7_OnRunRanOnceOnThisInstance" method="T7_OnRunRanOnceOnThisInstance" time="0.01" result="Pass" />
+      <test name="Isol Probe Fixture:T7_OnRunRanOnceOnThisInstance" method="T7_OnRunRanOnceOnThisInstance" time="0.014" result="Pass" />
     </collection>
   </assembly>
 </assemblies>

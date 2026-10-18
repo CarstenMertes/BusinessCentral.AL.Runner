@@ -226,6 +226,16 @@ impl Lexer<'_> {
         let suffix_start = self.pos;
         self.eat_ident_rest();
         let suffix = &self.text[suffix_start..self.pos];
+        // An exponent (`e3`) is not a suffix: the number ends before it and the `e3` is an identifier
+        // (corpus must-not-compile/cases/0582-decimal-literal-scientific.al pins AL0111 "Semicolon expected").
+        if suffix.len() > 1
+            && suffix.as_bytes()[0].eq_ignore_ascii_case(&b'e')
+            && suffix[1..].bytes().all(|b| b.is_ascii_digit())
+        {
+            self.pos = suffix_start;
+            self.push(kind, start);
+            return;
+        }
         kind = if suffix.is_empty() {
             kind
         } else if suffix.eq_ignore_ascii_case("D") && kind == Integer {
@@ -373,6 +383,16 @@ mod tests {
                 (BigIntLit, "1L"),
                 (TimeLit, "120000.5T"),
             ]
+        );
+    }
+
+    #[test]
+    fn an_exponent_is_not_part_of_a_number() {
+        // AL has no scientific notation: `1.5e3` is the decimal `1.5` followed by the identifier `e3`, which the parser
+        // then reports as "Semicolon expected" (corpus must-not-compile/cases/0582-decimal-literal-scientific.al, AL0111).
+        assert_eq!(
+            significant("1.5e3 2E10"),
+            vec![(Decimal, "1.5"), (Ident, "e3"), (Integer, "2"), (Ident, "E10")]
         );
     }
 

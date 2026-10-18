@@ -368,7 +368,7 @@ fn run_version(
             leg.build = asked.build;
         }
     }
-    let app_versions = target::read_app_versions(&root.join(&cfg.corpus_app))?;
+    let app_versions = version.app_versions_for_leg(target::read_app_versions(&root.join(&cfg.corpus_app))?)?;
     let mut chosen = al_version::choose_target(Some(&leg), &app_versions, &leg).map_err(|e| e.to_string())?;
     println!("target: BC {}, runtime {}", chosen.target.bc, chosen.target.runtime);
     for note in &chosen.notes {

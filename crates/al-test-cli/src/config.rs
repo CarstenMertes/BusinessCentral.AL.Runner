@@ -25,6 +25,11 @@ pub struct VersionEntry {
     pub bc_build: Option<String>,
     pub workflow_run: Option<u64>,
     pub artifact_id: Option<u64>,
+    /// The `runtime` the corpus apps were compiled and published with on this leg. The apps in the
+    /// corpus declare the newest runtime; the CI patches it per leg to the newest the service tier
+    /// accepts (27.5: 16.1, 28.5: 17.1, 29.0: 18.0, corpus run 39110861115). The corpus job compiles with this
+    /// value, so what the runtime sees is what real BC ran. Absent: the app.json's own runtime.
+    pub app_runtime: Option<String>,
     /// JUnit path, relative to the directory of `oracle.toml`.
     pub junit: String,
     /// Ratchet path, relative to the repository root.
@@ -77,6 +82,16 @@ impl VersionEntry {
     /// The corpus commit this version's oracle belongs to.
     pub fn oracle_commit<'a>(&'a self, pin: &'a str) -> &'a str {
         self.corpus_commit.as_deref().unwrap_or(pin)
+    }
+
+    /// The app versions of the corpus app for this leg: its own, with `runtime` replaced by `app_runtime`.
+    pub fn app_versions_for_leg(&self, mut app: al_version::AppVersions) -> Result<al_version::AppVersions, String> {
+        if let Some(r) = &self.app_runtime {
+            app.runtime = Some(
+                al_version::Runtime::parse(r).map_err(|e| format!("version {}: app_runtime `{r}`: {e}", self.major))?,
+            );
+        }
+        Ok(app)
     }
 
     /// The BC version of the oracle leg, with the build when it is known.
@@ -309,5 +324,40 @@ baseline = "metrics/28/passing-isolation-function.txt"
         assert!(OracleFile::parse(&bad).unwrap_err().contains("28"));
         let none = "corpus_repo=\"c\"\ncorpus_app=\"a\"\ncorpus_commit=\"x\"\n";
         assert!(OracleFile::parse(none).is_err());
+    }
+
+    #[test]
+    fn app_runtime_replaces_the_runtime_of_the_corpus_app() {
+        let t = TOML.replace("bc_version = \"27.5\"", "bc_version = \"27.5\"\napp_runtime = \"16.1\"");
+        let f = OracleFile::parse(&t).unwrap();
+        let v = f.select(Some("27")).unwrap();
+        // The corpus app.json declares 18.0; BC 27.5 refuses that, so the leg's runtime wins.
+        let declared = al_version::AppVersions::parse(Some("18.0"), None, None).unwrap();
+        let app = v.app_versions_for_leg(declared.clone()).unwrap();
+        assert_eq!(app.runtime, Some(al_version::Runtime { major: 16, minor: 1 }));
+        let c = al_version::choose_target(Some(&v.bc()), &app, &v.bc()).unwrap();
+        assert_eq!(c.target.runtime.to_string(), "16.1");
+        // Without app_runtime the app's own runtime stays (and BC 28 refuses nothing at 17.0).
+        let v28 = f.select(Some("28")).unwrap();
+        assert_eq!(v28.app_versions_for_leg(declared.clone()).unwrap(), declared);
+        assert!(
+            OracleFile::parse(&TOML.replace("bc_version = \"27.5\"", "bc_version = \"27.5\"\napp_runtime = \"x\""))
+                .unwrap()
+                .select(Some("27"))
+                .unwrap()
+                .app_versions_for_leg(declared)
+                .is_err()
+        );
+    }
+
+    /// Run 39110861115 published the corpus apps with these runtimes on the three legs.
+    #[test]
+    fn the_real_oracle_toml_records_the_runtime_per_major() {
+        let text = std::fs::read_to_string(concat!(env!("CARGO_MANIFEST_DIR"), "/../../oracle/oracle.toml")).unwrap();
+        let f = OracleFile::parse(&text).unwrap();
+        let got: Vec<(u16, Option<&str>)> = f.versions.iter().map(|v| (v.major, v.app_runtime.as_deref())).collect();
+        for (major, want) in [(27, "16.1"), (28, "17.1"), (29, "18.0")] {
+            assert!(got.contains(&(major, Some(want))), "{got:?}");
+        }
     }
 }

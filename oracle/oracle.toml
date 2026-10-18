@@ -10,71 +10,73 @@
 # The artifact cache key of CI follows the pin (`--print-builds`).
 corpus_repo = "corpus"
 corpus_app = "corpus/tests/al-language"
-corpus_commit = "4b6435bafae0b4d1096e8ae882445b6926f0a5df"
+corpus_commit = "92aeaa757c2e510d2f9d75359b4b97763869fda6"
 
 [[version]]
 major = 27
+app_runtime = "16.1"
 bc_version = "27.5"
 bc_build = "27.5.46862.56249"
-workflow_run = 39104013858
-artifact_id = 12128653318
+workflow_run = 39123774268
+artifact_id = 12136655811
 junit = "27/junit.xml"
 baseline = "metrics/27/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 39104013858
-artifact_id = 12127419843
+workflow_run = 39123774268
+artifact_id = 12135144279
 oracle = "27/junit-onprem.xml"
 baseline = "metrics/27/passing-onprem.txt"
 
 [[version.suite]]
 name = "onprem-dotnet"
 app = "corpus/tests/al-language-onprem-dotnet"
-workflow_run = 39104013858
-artifact_id = 12127504486
+workflow_run = 39123774268
+artifact_id = 12135416809
 oracle = "27/junit-dotnet.xml"
 baseline = "metrics/27/passing-dotnet.txt"
 
 [[version]]
 major = 28
+app_runtime = "17.1"
 bc_version = "28.5"
 bc_build = "28.5.54151.56267"
-workflow_run = 39104013858
-artifact_id = 12127918138
+workflow_run = 39123774268
+artifact_id = 12136046713
 junit = "28/junit.xml"
 baseline = "metrics/28/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 39104013858
-artifact_id = 12127464935
+workflow_run = 39123774268
+artifact_id = 12135341693
 oracle = "28/junit-onprem.xml"
 baseline = "metrics/28/passing-onprem.txt"
 
 [[version.suite]]
 name = "onprem-dotnet"
 app = "corpus/tests/al-language-onprem-dotnet"
-workflow_run = 39104013858
-artifact_id = 12127956159
+workflow_run = 39123774268
+artifact_id = 12135800270
 oracle = "28/junit-dotnet.xml"
 baseline = "metrics/28/passing-dotnet.txt"
 
 # The isolation probe runs only in the corpus's Windows nightly (workflow "Nightly Windows", never
 # in the Linux legs), under two custom test runners. The one nightly artifact that holds it is
-# run 38341042967 (2026-10-13, BC 28.4, corpus master cf6e546, whose probe app is identical to the
-# pin's). There is no oracle for BC 27 and 29.
+# run 39127745894 (2026-10-18, BC 28.5, corpus staging 92aeaa7, whose tests/ are identical to the
+# pin's; only nightly-windows.yml differs: it sets the app runtime per BC version). There is no oracle for BC 27 and 29.
 [[version.suite]]
 name = "isolation-function"
 app = "corpus/tests/al-language-isolation-probe"
 format = "xunit"
 runner = 61300
-bc_version = "28.4"
-corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
-workflow_run = 38341042967
-artifact_id = 11788517730
+bc_version = "28.5"
+corpus_commit = "92aeaa757c2e510d2f9d75359b4b97763869fda6"
+workflow_run = 39127745894
+artifact_id = 12137159749
 oracle = "28/xunit-isolation-function.xml"
 baseline = "metrics/28/passing-isolation-function.txt"
 
@@ -85,34 +87,35 @@ name = "isolation-codeunit"
 app = "corpus/tests/al-language-isolation-probe"
 format = "xunit"
 runner = 61301
-bc_version = "28.4"
-corpus_commit = "cf6e546793a92c482499ce86eadf0a0b13d2a742"
-workflow_run = 38341042967
-artifact_id = 11788517730
+bc_version = "28.5"
+corpus_commit = "92aeaa757c2e510d2f9d75359b4b97763869fda6"
+workflow_run = 39127745894
+artifact_id = 12137159749
 oracle = "28/xunit-isolation-codeunit.xml"
 baseline = "metrics/28/passing-isolation-codeunit.txt"
 
 [[version]]
 major = 29
+app_runtime = "18.0"
 bc_version = "29.0"
 bc_build = "29.0.54011.56262"
-workflow_run = 39104013858
-artifact_id = 12128740776
+workflow_run = 39123774268
+artifact_id = 12135808847
 junit = "29/junit.xml"
 baseline = "metrics/29/passing.txt"
 
 [[version.suite]]
 name = "onprem"
 app = "corpus/tests/al-language-onprem"
-workflow_run = 39104013858
-artifact_id = 12127658768
+workflow_run = 39123774268
+artifact_id = 12134994554
 oracle = "29/junit-onprem.xml"
 baseline = "metrics/29/passing-onprem.txt"
 
 [[version.suite]]
 name = "onprem-dotnet"
 app = "corpus/tests/al-language-onprem-dotnet"
-workflow_run = 39104013858
-artifact_id = 12128410039
+workflow_run = 39123774268
+artifact_id = 12135421951
 oracle = "29/junit-dotnet.xml"
 baseline = "metrics/29/passing-dotnet.txt"

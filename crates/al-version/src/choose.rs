@@ -71,7 +71,7 @@ impl fmt::Display for TargetError {
             TargetError::RuntimeAboveTarget { runtime, target } => write!(
                 f,
                 "the app's runtime {runtime} is newer than BC {target} supports (runtime {})",
-                Runtime::for_bc(target.major)
+                Runtime::max_for_bc(target.major)
             ),
         }
     }
@@ -116,7 +116,7 @@ pub fn choose_target(
     };
     let mut target = Target::for_bc(bc);
     if let Some(runtime) = app.runtime {
-        if runtime > target.runtime {
+        if runtime > Runtime::max_for_bc(target.bc.major) {
             return Err(TargetError::RuntimeAboveTarget {
                 runtime,
                 target: target.bc,
@@ -233,5 +233,24 @@ mod tests {
     fn the_build_of_a_requested_version_is_kept() {
         let c = choose_target(Some(&bc("29.0.54011.55816")), &AppVersions::default(), &bc("27")).unwrap();
         assert_eq!(c.target.bc.build.as_deref(), Some("29.0.54011.55816"));
+    }
+
+    /// Corpus runs 39108859837 and 39110861115: the real service tier publishes runtime 16.1 on BC 27.5
+    /// and 17.1 on BC 28.5, and refuses 18.0 there ("must be set to '16.1' or earlier", "'17.1' or earlier");
+    /// BC 29.0 publishes 18.0.
+    #[test]
+    fn the_newest_runtime_each_major_publishes_is_accepted() {
+        for (bc_v, ok, refused) in [
+            ("27.5", "16.1", "16.2"),
+            ("28.5", "17.1", "17.2"),
+            ("29.0", "18.0", "18.1"),
+        ] {
+            let c = choose_target(Some(&bc(bc_v)), &app(Some(ok), None, None), &bc("29")).unwrap();
+            assert_eq!(c.target.runtime, rt(ok), "BC {bc_v}");
+            let e = choose_target(Some(&bc(bc_v)), &app(Some(refused), None, None), &bc("29")).unwrap_err();
+            assert!(matches!(e, TargetError::RuntimeAboveTarget { .. }), "BC {bc_v}: {e}");
+        }
+        assert!(choose_target(Some(&bc("27.5")), &app(Some("18.0"), None, None), &bc("29")).is_err());
+        assert!(choose_target(Some(&bc("28.5")), &app(Some("18.0"), None, None), &bc("29")).is_err());
     }
 }

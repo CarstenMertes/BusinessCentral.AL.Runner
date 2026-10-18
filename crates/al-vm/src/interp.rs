@@ -766,6 +766,9 @@ impl Session {
                     }
                 }
                 let v = r.fields[*pos].clone();
+                if let Value::Unknown(why) = &v {
+                    return Err(Signal::Unsupported(why.to_string()));
+                }
                 if r.load.partial {
                     drop(r);
                     rc.borrow_mut().load.touch(*pos);
@@ -777,6 +780,11 @@ impl Session {
     }
 
     pub(crate) fn write(&mut self, p: &ir::Place, v: Value, f: &mut Frame) -> Result<(), Signal> {
+        // A column a platform row leaves unknown never reaches a variable: every read of one is refused where it happens; this
+        // catches a reader that missed it.
+        if let Value::Unknown(why) = &v {
+            return Err(Signal::Unsupported(why.to_string()));
+        }
         // `:=` between FilterPageBuilders copies the control collection and shares the records
         // (corpus filterpage/TestFilterPageBuilder.al:FilterPageBuilder_Assignment_*).
         let v = match v {

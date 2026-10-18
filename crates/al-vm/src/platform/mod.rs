@@ -145,7 +145,7 @@ impl SharedListings {
             engines.swap(at, last);
             engines[last].tables.entry(kind).or_default().clone()
         };
-        slot.get_or_init(|| mat::SharedMat::try_new(build()).ok().map(Arc::new))
+        slot.get_or_init(|| mat::SharedMat::try_new(build()).map(Arc::new))
             .clone()
     }
 }
@@ -422,7 +422,7 @@ impl Providers {
         let shared = if Self::shares(kind) {
             SHARED.listing(self.engine_uid, kind, build)
         } else {
-            mat::SharedMat::try_new(build()).ok().map(Arc::new)
+            mat::SharedMat::try_new(build()).map(Arc::new)
         };
         let m = match shared {
             Some(m) => Listed::Shared(m),
@@ -489,6 +489,23 @@ pub(crate) fn blank(t: &TableDef) -> Row {
     t.fields.iter().map(|f| Value::default_for(&f.ty)).collect()
 }
 
+/// The value of column `id` of a row whose value there no corpus test pins: a read of it is refused, naming the table,
+/// the field and `whose` (the row, or the kind of rows), while the other columns of the row read as usual
+/// (`Value::Unknown`). Writing the field replaces it.
+pub(crate) fn unknown(t: &TableDef, id: u32, whose: &str) -> Value {
+    Value::Unknown(unknown_why(t, id, whose))
+}
+
+/// The reason [`unknown`] holds, for a provider that shares one among many rows.
+pub(crate) fn unknown_why(t: &TableDef, id: u32, whose: &str) -> Arc<str> {
+    format!(
+        "the value of field '{}' of platform table '{}' is not known for {whose}: no corpus test pins it (docs/probes-needed.md)",
+        t.fields[pos(t, id)].name,
+        t.name
+    )
+    .into()
+}
+
 /// A row of default values made once, for a listing that starts every row from one: copying it
 /// shares the member lists of the option columns instead of building each again.
 pub(crate) struct Blank {
@@ -508,6 +525,8 @@ impl Blank {
     pub(crate) fn option(&self, t: &TableDef, id: u32, n: i32) -> Value {
         match &self.row[pos(t, id)] {
             Value::Option(_, m) => Value::Option(n, m.clone()),
+            // A column the row starts unknown in: its members come from the type.
+            Value::Unknown(_) => option(t, id, n),
             other => panic!("field {id} of '{}' is not an option: {}", t.name, other.describe()),
         }
     }

@@ -28,6 +28,7 @@ impl Describe for Value {
     fn describe(&self) -> String {
         match self {
             Value::Null => "an unassigned Variant".into(),
+            Value::Unknown(why) => format!("an unknown value ({why})"),
             Value::Boolean(b) => format!("Boolean {b}"),
             Value::Integer(i) => format!("Integer {i}"),
             Value::BigInteger(i) => format!("BigInteger {i}"),

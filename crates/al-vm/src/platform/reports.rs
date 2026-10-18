@@ -13,7 +13,7 @@
 
 use super::mat::Entry;
 use super::objects::{Catalog, al_sema_platform_app_id, ident, prop, string_lit, truthy};
-use super::{Providers, blank, ids, option, pos};
+use super::{Providers, blank, ids, option, pos, unknown};
 use al_builtins::describe::Describe;
 use al_builtins::value::{RtType, Value};
 use al_data::TableDef;
@@ -79,38 +79,48 @@ fn layout_row(
     language: i32,
 ) -> Result<(), String> {
     let what = || format!("layout '{}' of report '{}'", l.name, o.name);
-    // Dynamic reads (RecordRef) of a layout without Subtype get Default and blank, which no case pins; static reads of the columns are refused (not in PINNED_COLUMNS).
     // BC 29: "Layout Subtype" (19), HeaderFooterPart (20), ThemePart (21)
-    // (report/lt-y-report-props/YReportParts.al:75). The enum is Default 0, HeaderFooter 1, Theme 2, Body 3. A layout that
-    // declares none reads the column defaults (Default and blank); the corpus pins only layouts that declare them.
+    // (report/lt-y-report-props/YReportParts.al:75-80). The enum is HeaderFooter 1, Theme 2, Body 3; the parts a layout
+    // does not declare are blank. The corpus pins only layouts that declare a Subtype: for one that declares none the
+    // three columns stay unknown (a read through a RecordRef is refused, the rest of the row reads), and static reads of
+    // them are refused where they are lowered (not in PINNED_COLUMNS).
     if t.fields.iter().any(|f| f.id == 19) {
-        let subtype = match lprop(l, "Subtype").map(ident) {
-            None => 0,
-            Some(s) if s.eq_ignore_ascii_case("HeaderFooter") => 1,
-            Some(s) if s.eq_ignore_ascii_case("Theme") => 2,
-            Some(s) if s.eq_ignore_ascii_case("Body") => 3,
-            Some(s) => return Err(format!("{}: Subtype `{s}` is not pinned", what())),
-        };
-        r[pos(t, 19)] = match &t.fields[pos(t, 19)].ty {
-            RtType::Enum(e) => Value::Enum(*e, subtype),
-            other => return Err(format!("field 19 is a {}, not an enum", other.describe())),
-        };
-        for (id, name) in [(20, "HeaderFooterPart"), (21, "ThemePart")] {
-            let Some(v) = lprop(l, name) else { continue };
-            let part = ident(v);
-            // The value is the id of the declaring app, `::` and the layout's name; only a layout of the same object is pinned.
-            if !o.layouts.iter().any(|x| x.name.eq_ignore_ascii_case(&part)) {
-                return Err(format!(
-                    "{}: {name} `{part}` is not a layout of the same object (not pinned)",
-                    what()
-                ));
+        'subtype: {
+            let subtype = match lprop(l, "Subtype").map(ident) {
+                None => {
+                    for id in [19, 20, 21] {
+                        r[pos(t, id)] = unknown(t, id, &format!("{}, which declares no Subtype", what()));
+                    }
+                    break 'subtype;
+                }
+                Some(s) if s.eq_ignore_ascii_case("HeaderFooter") => 1,
+                Some(s) if s.eq_ignore_ascii_case("Theme") => 2,
+                Some(s) if s.eq_ignore_ascii_case("Body") => 3,
+                Some(s) => return Err(format!("{}: Subtype `{s}` is not pinned", what())),
+            };
+            r[pos(t, 19)] = match &t.fields[pos(t, 19)].ty {
+                RtType::Enum(e) => Value::Enum(*e, subtype),
+                other => return Err(format!("field 19 is a {}, not an enum", other.describe())),
+            };
+            for (id, name) in [(20, "HeaderFooterPart"), (21, "ThemePart")] {
+                // A part the layout does not declare is blank (YReportParts.al:80).
+                r[pos(t, id)] = Value::default_for(&t.fields[pos(t, id)].ty);
+                let Some(v) = lprop(l, name) else { continue };
+                let part = ident(v);
+                // The value is the id of the declaring app, `::` and the layout's name; only a layout of the same object is pinned.
+                if !o.layouts.iter().any(|x| x.name.eq_ignore_ascii_case(&part)) {
+                    return Err(format!(
+                        "{}: {name} `{part}` is not a layout of the same object (not pinned)",
+                        what()
+                    ));
+                }
+                let app = c
+                    .apps
+                    .get(o.app as usize)
+                    .filter(|a| !a.id.eq_ignore_ascii_case(al_sema_platform_app_id()))
+                    .ok_or_else(|| format!("{}: the app that declares it is not known", what()))?;
+                r[pos(t, id)] = Value::Text(format!("{}::{part}", app.id.to_ascii_lowercase()).into());
             }
-            let app = c
-                .apps
-                .get(o.app as usize)
-                .filter(|a| !a.id.eq_ignore_ascii_case(al_sema_platform_app_id()))
-                .ok_or_else(|| format!("{}: the app that declares it is not known", what()))?;
-            r[pos(t, id)] = Value::Text(format!("{}::{part}", app.id.to_ascii_lowercase()).into());
         }
     }
     let format = lprop(l, "Type").ok_or_else(|| format!("{}: no Type", what()))?;

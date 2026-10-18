@@ -1206,7 +1206,18 @@ impl Session {
             _ => None,
         };
         let Some(g) = &parsed else {
-            return unsupported(format!("GetBySystemId of {}", args.first().describe()));
+            return match args.first() {
+                // GetWithTextArgument.al:GetBySystemId_TextAndGuid, `empty_text`, `text_not_a_guid`, `integer`.
+                Some(Value::Text(_) | Value::Code(_)) => Err(crate::transactions::al_error_code(
+                    "Invalid format of GUID string. The correct format of the GUID string is: CDEF7890-ABCD-0123-1234-567890ABCDEF where 0-9, A-F symbolizes hexadecimal digits.",
+                    "InvalidGuidFormat",
+                )),
+                Some(Value::Integer(_)) => Err(crate::transactions::al_error_code(
+                    "The expression Variant cannot be type-converted to a GUID value.",
+                    "TypeConversion",
+                )),
+                other => unsupported(format!("GetBySystemId of {}", other.describe())),
+            };
         };
         let found = if *g == [0; 16] {
             None

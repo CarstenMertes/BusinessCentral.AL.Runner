@@ -225,6 +225,11 @@ pub(crate) fn at_routine_start(p: &Parser) -> bool {
 pub(crate) fn routine(p: &mut Parser) {
     let cp = p.checkpoint();
     attributes(p);
+    if p.at_kw("event") && matches!(p.nth(1), Ident | QuotedIdent) && p.nth(2) == LParen {
+        // `[Obsolete(...)] event Name(...)` of a control add-in.
+        super::objects::section_from(p, Some(cp));
+        return;
+    }
     let mut n = 0;
     while ["local", "internal", "protected"].iter().any(|m| p.nth_kw(n, m)) {
         n += 1;

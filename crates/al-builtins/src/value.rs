@@ -991,6 +991,7 @@ pub struct ErrorInfoState {
     pub table_id: i32,
     /// The `RecordId` value of the record `Create` was given.
     pub record_id: Option<Value>,
+    pub system_id: Option<Value>,
     pub field_no: i32,
     pub page_no: i32,
     /// The dictionary the test assigned, held by reference.

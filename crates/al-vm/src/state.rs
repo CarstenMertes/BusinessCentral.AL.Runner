@@ -88,6 +88,8 @@ pub(crate) struct EventState {
     /// events): BC puts frames between the subscriber and its caller that are not pinned, so the
     /// live call stack is not answered while one runs.
     pub(crate) unpinned_event_depth: usize,
+    /// Set while `MakeDateFilter` is raised: subscribers of dependency apps (Microsoft's Filter Tokens) are left out (filterevents.rs).
+    pub(crate) skip_dependency_subscribers: bool,
     /// What the subscribers of `Global Triggers` answered, per table object (globaltriggers.rs).
     pub(crate) global_setups: std::collections::HashMap<usize, globaltriggers::GlobalSetup>,
 }

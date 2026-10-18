@@ -4,6 +4,7 @@
 # and blank lines are ignored. Names are compared ignoring ASCII case.
 #
 #   deny-assembly <prefix>          assembly whose simple name starts with <prefix>
+#   allow-type <Type>               this exact CLR type is exempt from deny-type (never a prefix)
 #   deny-type <name>                this CLR type; a name ending in `.` is a namespace prefix
 #   deny-member <Type.Member>       this member of this CLR type
 #   deny-new-without-args <Type>    construction with no arguments
@@ -45,6 +46,8 @@ deny-member System.IO.Path.GetTempPath | reads the temp folder
 deny-member System.IO.Path.GetTempFileName | creates a temp file
 deny-member System.IO.Path.GetFullPath | reads the current directory
 deny-member System.IO.Path.GetRandomFileName | randomness that bypasses the host
+# Owner decision 2026-10-18 (ADR-024): exactly this type, pinned by AfMailAddress.al. It only parses text.
+allow-type System.Net.Mail.MailAddress | owner decision 2026-10-18: parses text, no network
 deny-type System.Net. | touches the network
 deny-type System.Diagnostics.Process | starts processes
 deny-type System.Environment | reads the environment

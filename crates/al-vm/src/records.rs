@@ -1531,6 +1531,14 @@ impl Session {
                 // same for the events). A row a page saves carries the page's own previous row
                 // (record/TestXRecDriverContracts.al:32-51 Record_Modify_FromPage_xRecHoldsPreviousValue).
                 let stored_row = stored.clone();
+                // A Modify loads every field of a partially loaded record: the subscribers' Rec and xRec and the caller's record
+                // report all fields loaded afterwards, for Modify(true) and Modify(false)
+                // (record/lt-af-record-events/AfModifyLoadFields.al:92, :112, :130). A record nothing was fetched into is not pinned
+                // and stays as it is.
+                if let Some(b) = &mut rec.borrow_mut().load.buffer {
+                    b.have = al_builtins::value::FieldSet::All;
+                    b.unsure = al_builtins::value::FieldSet::Of(Vec::new());
+                }
                 let before_image = self
                     .pages
                     .page_xrec
@@ -2088,9 +2096,27 @@ impl Session {
                     work_date: self.work_date_day().unwrap_or_else(|| self.today_day_number()),
                     language: self.global_language,
                 };
-                let parsed = al_builtins::filter::with_date_context(date_ctx, || {
-                    al_builtins::filter::parse_filter_with(&text, &args[2..], &ty, &enums)
-                });
+                let parse = |text: &str| {
+                    al_builtins::filter::with_date_context(date_ctx, || {
+                        al_builtins::filter::parse_filter_with(text, &args[2..], &ty, &enums)
+                    })
+                };
+                let mut parsed = parse(&text);
+                // A Date text with a piece no filter reads asks `MakeDateFilter` subscribers first.
+                if matches!(&parsed, Err(e) if e.starts_with(al_builtins::filter::INVALID_DATE))
+                    && matches!(ty, RtType::Date)
+                    && self
+                        .engine
+                        .events
+                        .is_subscribed(crate::events::FILTER_HELPER_TRIGGERS, "makedatefilter")
+                {
+                    // Outside the pinned shape (an English session, no placeholders) the event is not raised, as before.
+                    if self.global_language == 1033 && args.len() <= 2 {
+                        if let Some(fixed) = self.repair_date_filter_text(&text, &|t| parse(t).is_ok())? {
+                            parsed = parse(&fixed);
+                        }
+                    }
+                }
                 let expr = match parsed {
                     Ok(e) => e,
                     // The German error of a date no Date filter reads (P143Date_DePlain.al, _DeRanges.al, _DeFormulas.al).

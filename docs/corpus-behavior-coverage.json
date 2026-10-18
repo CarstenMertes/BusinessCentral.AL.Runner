@@ -2781,7 +2781,7 @@
           "ms_uses": 134,
           "name": "AutoCalcField",
           "pinned": true,
-          "runtime_reads": false,
+          "runtime_reads": true,
           "site": "pages/lt-report-page-properties/03-report-autocalc.al:22"
         },
         {
@@ -11965,6 +11965,15 @@
           "site": "_fixtures/xmlports/ALTXpmProbeXmlPort.al:14"
         },
         {
+          "corpus_uses": 2,
+          "group": "xmlport/fieldattribute",
+          "ms_uses": 0,
+          "name": "AutoCalcField",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:229"
+        },
+        {
           "corpus_uses": 1,
           "group": "xmlport/fieldattribute",
           "ms_uses": 0,
@@ -11981,6 +11990,15 @@
           "pinned": true,
           "runtime_reads": true,
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:224"
+        },
+        {
+          "corpus_uses": 2,
+          "group": "xmlport/fieldelement",
+          "ms_uses": 0,
+          "name": "AutoCalcField",
+          "pinned": true,
+          "runtime_reads": true,
+          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:245"
         },
         {
           "corpus_uses": 1,
@@ -12649,15 +12667,6 @@
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:112"
         },
         {
-          "corpus_uses": 2,
-          "group": "xmlport/fieldattribute",
-          "ms_uses": 0,
-          "name": "AutoCalcField",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:229"
-        },
-        {
           "corpus_uses": 1,
           "group": "xmlport/fieldattribute",
           "ms_uses": 0,
@@ -12665,15 +12674,6 @@
           "pinned": true,
           "runtime_reads": false,
           "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:294"
-        },
-        {
-          "corpus_uses": 2,
-          "group": "xmlport/fieldelement",
-          "ms_uses": 0,
-          "name": "AutoCalcField",
-          "pinned": true,
-          "runtime_reads": false,
-          "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:245"
         },
         {
           "corpus_uses": 1,
@@ -12894,6 +12894,24 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "GetGlobalTableTriggerMask",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "GetRoleCenterBannerPartID",
+          "pinned": false,
+          "runtime_reads": true,
+          "site": null
+        },
+        {
+          "corpus_uses": 0,
+          "group": "codeunit",
+          "ms_uses": 0,
+          "name": "MakeDateFilter",
           "pinned": false,
           "runtime_reads": true,
           "site": null
@@ -13244,15 +13262,6 @@
           "corpus_uses": 0,
           "group": "codeunit",
           "ms_uses": 0,
-          "name": "GetRoleCenterBannerPartID",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
           "name": "GetSupportInformation",
           "pinned": false,
           "runtime_reads": false,
@@ -13290,15 +13299,6 @@
           "group": "codeunit",
           "ms_uses": 0,
           "name": "MakeCodeFilter",
-          "pinned": false,
-          "runtime_reads": false,
-          "site": null
-        },
-        {
-          "corpus_uses": 0,
-          "group": "codeunit",
-          "ms_uses": 0,
-          "name": "MakeDateFilter",
           "pinned": false,
           "runtime_reads": false,
           "site": null
@@ -15127,7 +15127,7 @@
         "code": "StackOverflow",
         "file": "crates/al-vm/src/lib.rs",
         "generic": false,
-        "line": 945,
+        "line": 947,
         "pinned": true,
         "site": "record/TestCalcFieldsTruncateUniqueContracts.al:179",
         "template": "There is insufficient memory to execute this function. This can be caused by recursive function calls. Contact your system administrator."
@@ -15181,7 +15181,7 @@
         "code": "RenameArgument",
         "file": "crates/al-vm/src/records.rs",
         "generic": false,
-        "line": 2355,
+        "line": 2381,
         "pinned": true,
         "site": "recordref/lt-refs/RfTWrite.al:223",
         "template": "The number of field arguments does not match the primary key size."
@@ -25114,7 +25114,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25157,7 +25157,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25172,7 +25172,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -25592,7 +25592,7 @@
         "pinned": true,
         "scope": "",
         "site": "pages/lt-report-page-properties/03-report-autocalc.al:22",
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -26040,7 +26040,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -26171,7 +26171,7 @@
         "pinned": false,
         "scope": "",
         "site": null,
-        "state": "unknown"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27341,7 +27341,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:229",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",
@@ -27446,7 +27446,7 @@
         "pinned": true,
         "scope": "",
         "site": "xmlport/lt-y-xmlport-props/YXmlPortProps.al:245",
-        "state": "refused"
+        "state": "implemented"
       },
       {
         "area": "properties",

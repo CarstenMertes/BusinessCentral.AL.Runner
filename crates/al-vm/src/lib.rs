@@ -33,6 +33,7 @@ pub mod dotnet;
 mod errorcollect;
 pub mod events;
 mod faultsite;
+mod filterevents;
 mod filterpage;
 mod flowfields;
 mod geturl;
@@ -627,6 +628,7 @@ impl Session {
                 var_origins: Vec::new(),
                 next_aliases: Vec::new(),
                 unpinned_event_depth: 0,
+                skip_dependency_subscribers: false,
                 global_setups: Default::default(),
             },
             coverage: CoverageState {

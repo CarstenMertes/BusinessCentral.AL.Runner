@@ -6343,6 +6343,7 @@
 69852 InSession_NothingRaisesTheOtherEvents
 69852 StartSession_IsRefusedInATestSession
 69886 Captions
+69886 Filter_Date
 69886 GetUrl_Copilot
 69886 LegacyBar
 69886 Notifications
@@ -12184,6 +12185,7 @@
 74999 P146_GetView_Temporary
 74999 P146_PageRunModal_SortedFiltered_Real
 74999 P146_SetView_OnTemporary_AfterMarks
+75511 ReportExtension_ModifyRequestFilterFields_AddsTheFieldToTheDataItem
 75512 RequestPageReports_MetadataRows
 76020 ZApiEntityCaptions_MetadataAndTestPage
 76020 ZPromotedActionCategoriesML_ActionUnchanged
@@ -12225,6 +12227,9 @@
 76512 AA_UpdatePropagation_SubPart
 76513 AA_SystemAction_EnabledExpression
 76513 AA_SystemAction_EnabledLiteral
+78307 AF_Modify_False_After_SetLoadFields_A
+78307 AF_Modify_True_After_SetLoadFields_A
+78307 AF_Modify_True_After_SetLoadFields_A_B
 78307 AF_Modify_True_Without_SetLoadFields
 78310 AF_SystemId_In_OnBeforeInsert_Insert
 78310 AF_SystemId_In_OnBeforeInsert_InsertTrue

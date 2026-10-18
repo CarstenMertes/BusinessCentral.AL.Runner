@@ -533,6 +533,20 @@ impl Session {
             Some(Value::Guid(g)) => Some(al_builtins::format::format_guid(g)),
             other => other.and_then(al_builtins::native::text_of).map(String::from),
         };
+        // A Variant key that holds an Integer, Decimal, Boolean or Date raises a type-conversion error from every
+        // method in every scope; nothing is stored (session/lt-isolated-storage-variant-key/IsolatedStorageVariantKey.al:
+        // 125-136 Integer, 160-171 Decimal, 175-186 Boolean, 190-201 Date). Other types are not pinned.
+        if key.is_none()
+            && matches!(
+                args.first(),
+                Some(Value::Integer(_) | Value::Decimal(_) | Value::Boolean(_) | Value::Date(..))
+            )
+        {
+            return al_builtins::native::raise(
+                "The expression Microsoft.Dynamics.Nav.Runtime.NavIndirectValue cannot be type-converted to a Microsoft.Dynamics.Nav.Runtime.NavText value.",
+                "TypeConversion",
+            );
+        }
         let Some(key) = key else {
             return unsupported("an IsolatedStorage key that is neither text nor a Guid");
         };

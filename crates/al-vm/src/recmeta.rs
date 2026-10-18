@@ -392,6 +392,11 @@ impl Session {
                         F::Lt(v) | F::Le(v) if want_max => return Ok(v.clone()),
                         F::Lt(_) | F::Le(_) => return no_bound("lower"),
                         F::Like(..) => return no_bound(if want_max { "upper" } else { "lower" }),
+                        // An open range `..b` or `a..` (fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:167-208
+                        // Integer, :301-386 Code, :479-565 Date, :657-743 Option, :835-921 Enum): the missing side
+                        // raises the no-bound error, the other side answers.
+                        F::Range(None, _) if !want_max => return no_bound("lower"),
+                        F::Range(_, None) if want_max => return no_bound("upper"),
                         F::Ne(_) | F::Or(_) => {
                             return Err(Signal::Error(Box::new(AlError {
                                 message: format!(

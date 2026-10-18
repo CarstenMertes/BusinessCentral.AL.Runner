@@ -1344,6 +1344,18 @@ impl Session {
         elem: &Elem,
         assigned: &mut Vec<usize>,
     ) -> Result<(), Signal> {
+        // A field attribute of a field element that the document lacks: the table element's "required attribute" error is not
+        // pinned for this place (probe wanted: import a field element without its fieldattribute).
+        for a in schema.children(node) {
+            let n = schema.node(a);
+            if n.kind == ir::XmlNodeKind::FieldAttr && !elem.attrs.iter().any(|(name, _)| *name == n.xml_name) {
+                return unsupported(format!(
+                    "XmlPort import of the field element {} without its field attribute {}: the error is not pinned (probe wanted)",
+                    schema.node(node).xml_name,
+                    n.xml_name
+                ));
+            }
+        }
         self.xp_import_attrs(inst, schema, node, elem, Some(assigned))?;
         let mut seq = Sequence::new(schema, node);
         for ce in elem.elements() {

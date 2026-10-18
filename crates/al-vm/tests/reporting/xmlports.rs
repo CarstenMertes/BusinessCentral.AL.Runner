@@ -1497,3 +1497,13 @@ fn a_field_element_holds_a_field_element_after_its_value() {
         "<Root>  <Row>    <Id>1</Id>    <Name>Alpha<Lang>en</Lang></Name>  </Row></Root>|Delta|fr"
     );
 }
+
+// Not pinned: a field element whose field attribute is missing in the document is refused.
+#[test]
+fn a_field_element_without_its_field_attribute_is_refused_on_import() {
+    let why = refusal(
+        &format!("{AF_VARS} Q: XmlPort \"ALT AF XP Attr\";"),
+        "H.Stage(T, InStr, '<Root><Row><Id>2</Id><Name Kind=\"K9\">Beta</Name></Row></Root>'); Q.SetSource(InStr); Q.Import(); exit('');",
+    );
+    assert!(why.contains("without its field attribute Lang"), "{why}");
+}

@@ -713,12 +713,26 @@ fn tb_append(_: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult
     Ok(Value::Boolean(true))
 }
 
-/// `Append` of a Variant variable (lowering picks this for an argument that is a Variant variable or parameter): a number in it
-/// raises the Variant-to-Text conversion error and appends nothing (types/lt-number-to-text/NumberToTextIsFormat.al:193-216,
-/// TextBuilderAppend_VariantNumber_Result). A `FieldRef.Value()` argument keeps `tb_append`, which refuses a number.
+/// `Append` of a Variant (lowering picks this for an argument that is a Variant variable or parameter): a Variant holding an Integer, BigInteger, Decimal, Boolean, Date, Time or DateTime raises the
+/// Variant-to-Text conversion error and appends nothing; a Text or Code appends. Pinned for Date (also blank), DateTime (also blank),
+/// Time, Decimal, Boolean and Integer, and for the fields of every such type through `RecordRef.FieldIndex(i).Value()`
+/// (text/lt-textbuilder-variant/TextBuilderAppendVariant.al:Variant_Dates, Variant_Decimals, Variant_OtherTypes, RecordRef_FieldIndexValue;
+/// types/lt-number-to-text/NumberToTextIsFormat.al:193-216, TextBuilderAppend_VariantNumber_Result). Other kinds keep the plain
+/// `Append`. A `FieldRef.Value()` written directly as the argument stays on `tb_append`, which refuses a number (only the form through
+/// a Variant parameter is pinned).
 pub fn tb_append_variant(c: &mut dyn Ctx, r: Option<&mut Value>, a: &mut [Value]) -> NResult {
-    if let Some(n @ (Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_))) = a.first() {
-        crate::ops::convert(n.clone(), &crate::value::RtType::Text(None))?;
+    if let Some(
+        Value::Integer(_)
+        | Value::BigInteger(_)
+        | Value::Decimal(_)
+        | Value::Boolean(_)
+        | Value::Date(..)
+        | Value::Time(_)
+        | Value::DateTime(_),
+    ) = a.first()
+    {
+        // Any value of the Variant-to-Text conversion that raises gives the pinned error text.
+        crate::ops::convert(Value::Integer(0), &crate::value::RtType::Text(None))?;
     }
     tb_append(c, r, a)
 }

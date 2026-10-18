@@ -856,3 +856,20 @@ fn secret_str_subst_no_takes_a_text_variable() {
     );
     assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
 }
+
+// GetUrlBookmarkFilter.al:`report`, `query` pin only that the result has no '?'; an empty text is a guess, so a Report,
+// Query or Codeunit with a record is refused.
+#[test]
+fn geturl_of_report_query_or_codeunit_with_a_record_is_refused() {
+    for obj in ["Report, 6", "Query, 9150", "Codeunit, 80"] {
+        let body = format!(
+            "var R: Record \"ALT T\"; begin exit(GetUrl(ClientType::Web, 'C', ObjectType::{obj}, R, false)); end;"
+        );
+        let (engine, oi) = compile(&format!("procedure F(): Text {body}"));
+        let r = call(&mut Session::with_host(engine, al_host::Host::deterministic()), oi, "F");
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(w)) if w.contains("no query part")),
+            "{obj}: {r:?}"
+        );
+    }
+}

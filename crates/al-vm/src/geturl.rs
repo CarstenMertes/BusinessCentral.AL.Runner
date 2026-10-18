@@ -100,7 +100,7 @@ impl Session {
                 }
                 other => {
                     return unsupported(format!(
-                        "GetUrl of object type {} with a record (only Page, Report, Table and Query are pinned)",
+                        "GetUrl of object type {} with a record (only Page and Table are pinned; Report and Query pin only \"no query part\")",
                         other.unwrap_or("?")
                     ));
                 }
@@ -128,6 +128,13 @@ impl Session {
                     },
                     other => return unsupported(format!("GetUrl with record {}", other.describe())),
                 };
+                if key == "report" || key == "query" {
+                    // GetUrlBookmarkFilter.al:`report`, `query` pin only that the result has no query part
+                    // ('?'); the value itself (empty text or the bare address) is not pinned.
+                    return unsupported(format!(
+                        "GetUrl of a {key} with a record: only \"no query part\" is pinned, not the value"
+                    ));
+                }
                 if key != "page" {
                     return Ok(Value::Text("".into()));
                 }

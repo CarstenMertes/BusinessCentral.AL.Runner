@@ -230,6 +230,11 @@ impl Session {
                     if k.is_empty() {
                         return unsupported("Evaluate into a RecordId with an empty key text (not pinned)");
                     }
+                    // A quoted key (an empty Code key formats as `""`): the corpus pins single keys `A-1` and `42` only
+                    // (errors/lt-ms-refusals-128/P128EvalRecordId.al:56-84), so reading the quotes as text would be a guess.
+                    if k.contains('"') && matches!(ty, RtType::Text(_) | RtType::Code(_)) {
+                        return unsupported("Evaluate into a RecordId of a quoted single key (quoted not pinned)");
+                    }
                     match al_builtins::evaluate::evaluate_typed(self, &ty, k, number)? {
                         Some(v) => vec![v],
                         None => return Ok(None),

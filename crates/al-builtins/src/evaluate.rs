@@ -256,6 +256,17 @@ fn decimal(text: &str, number: i64) -> Result<Parsed, Signal> {
     if int_digits >= 18 {
         return Ok(Parsed::Rejected);
     }
+    // 16 and 17 digits before the point do not evaluate either, with or without a fraction, a plus sign or format number 9;
+    // 15 do (types/lt-evaluate-wide-decimal/EvaluateWideDecimal.al:Evaluate_Decimal_IntegerDigits d15 against d16, _Fraction, _Negative).
+    // The same size written with an exponent is not pinned.
+    if int_digits >= 16 {
+        if exp != 0 {
+            return unsupported(format!(
+                "Evaluate of `{text}` into Decimal with an exponent and 16 or 17 digits before the point (not pinned)"
+            ));
+        }
+        return Ok(Parsed::Rejected);
+    }
     // With an integer part of zero, up to 29 fractional digits read (types/lt-decimal-digits/DecimalDigits.al:
     // P163_Decimal_Operands_RoundTrip `19_decimals`, `28_decimals`, `29_decimals`; Format shows 18 of them).
     // With a nonzero integer part, only 18 significant digits are pinned: more is refused.

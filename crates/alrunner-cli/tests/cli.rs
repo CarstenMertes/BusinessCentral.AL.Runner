@@ -1149,7 +1149,7 @@ fn server_url_is_checked_printed_and_taken_from_the_variable() {
     );
     let o = alrunner(&["test", a, "--no-download", "--verbose"]);
     assert!(
-        text(&o).contains("server address: http://localhost:8080/BC/ (default)"),
+        text(&o).contains("server address: http://localhost:8080/BC (default)"),
         "{}",
         text(&o)
     );

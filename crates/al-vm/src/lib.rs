@@ -35,6 +35,7 @@ pub mod events;
 mod faultsite;
 mod filterpage;
 mod flowfields;
+mod geturl;
 mod globaltriggers;
 mod hostvalues;
 mod http;

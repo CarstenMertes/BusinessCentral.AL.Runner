@@ -111,9 +111,9 @@ registry! {
     },
     GetUrlWebBaseAddress => {
         id: "geturl-web-base-address",
-        assumed: "GetUrl(ClientType::Web) without company and object returns the host's server base address as set (--server-url, default http://localhost:8080/BC/), unchanged (ADR-042).",
+        assumed: "The host part of every GetUrl(ClientType::Web) answer is the host's server base address as set (--server-url, default http://localhost:8080/BC); GetUrl(ClientType::Web) alone returns it unchanged (ADR-042). The query after it (company, page, report, table, query, bookmark, filter) is pinned by the corpus (session/lt-geturl-shape, platform/lt-system-database-members/GetUrl*.al) and is not part of the assumption.",
         tests: "Company-Initialize (Doc. Exch. Service Setup.SetURLsToDefault -> OAuth2Impl.GetDefaultRedirectUrl), so the install baseline of a company built from the RapidStart package; every Microsoft test that reads Application Area Setup or Workflow after it.",
-        probe: "GetUrl(ClientType::Web) asserted for scheme, path and query, with and without a company, and inside a per-database install trigger (docs/probes-needed.md).",
+        probe: "GetUrl(ClientType::Web) with no argument asserted whole (scheme, host, path) on a known server, and inside a per-database install trigger (docs/probes-needed.md).",
     },
     PageOnInsertRecordFalseAfterCodeInsert => {
         id: "page-oninsertrecord-false-after-code-insert",

@@ -354,6 +354,9 @@ impl Session {
                     *lib.borrow_mut() = LibraryValue::SystemTable(no);
                     Ok(Value::Null)
                 }
+                // recordref/lt-recordref-open-system-tables/RecordRefOpenSystemTables.al:RecordRef_Open_SystemTables_ByNumber: no
+                // table has these numbers (t2000000999, t2000000000); other numbers in the system range are not pinned.
+                2_000_000_999 | 2_000_000_000 => Err(self.missing_object("Table", no)),
                 n if n >= i64::from(SYSTEM_FIELD_BASE) => unsupported(format!(
                     "RecordRef.Open on system table {n} (whether a Cloud target may open it is not pinned)"
                 )),

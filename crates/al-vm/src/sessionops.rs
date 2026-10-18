@@ -646,11 +646,10 @@ impl Session {
     fn encryption_op(&mut self, id: al_ir::BuiltinId, args: &mut [Value]) -> Option<Result<Value, Signal>> {
         Some(match id {
             ids::SYSTEM_ENCRYPTIONENABLED_1 => match self.encryption_key {
-                crate::EncryptionKey::Present => Ok(Value::Boolean(true)),
+                // A key made after a delete counts as a key (session/lt-encryption-key-lifecycle/EncryptionKeyLifecycle.al:
+                // EncryptionKey_Lifecycle_StateAfterEachCall `after_create_enabled`).
+                crate::EncryptionKey::Present | crate::EncryptionKey::Recreated => Ok(Value::Boolean(true)),
                 crate::EncryptionKey::Deleted => Ok(Value::Boolean(false)),
-                crate::EncryptionKey::Recreated => {
-                    unsupported("EncryptionEnabled after CreateEncryptionKey (not pinned)")
-                }
             },
             ids::SYSTEM_ENCRYPTIONKEYEXISTS_1 => {
                 Ok(Value::Boolean(self.encryption_key != crate::EncryptionKey::Deleted))
@@ -664,8 +663,12 @@ impl Session {
                 Ok(Value::Null)
             }
             ids::SYSTEM_CREATEENCRYPTIONKEY_1 => {
+                // With a key in place the call raises, and the key stays (EncryptionKeyLifecycle.al `create_when_present`, `create_again`).
                 if self.encryption_key != crate::EncryptionKey::Deleted {
-                    return Some(unsupported("CreateEncryptionKey while a key exists (not pinned)"));
+                    return Some(Err(crate::transactions::al_error_code(
+                        "Unable to create a new encryption key. An encryption key already exists.",
+                        "EncryptionCreated",
+                    )));
                 }
                 if self.ret_used {
                     return Some(unsupported("the result of CreateEncryptionKey (not pinned)"));
@@ -673,8 +676,16 @@ impl Session {
                 self.encryption_key = crate::EncryptionKey::Recreated;
                 Ok(Value::Null)
             }
-            ids::SYSTEM_ENCRYPT_1 | ids::SYSTEM_DECRYPT_1 if self.encryption_key != crate::EncryptionKey::Present => {
-                unsupported("Encrypt or Decrypt after the encryption key was deleted (not pinned)")
+            // Encrypt with no key raises; with a key made after a delete it works (EncryptionKeyLifecycle.al `after_delete_encrypt`,
+            // `after_create_encrypt`). Decrypt after a delete is not pinned.
+            ids::SYSTEM_ENCRYPT_1 if self.encryption_key == crate::EncryptionKey::Deleted => {
+                Err(crate::transactions::al_error_code(
+                    "An encryption key is required to complete the request.",
+                    "EncryptionNotCreated",
+                ))
+            }
+            ids::SYSTEM_DECRYPT_1 if self.encryption_key != crate::EncryptionKey::Present => {
+                unsupported("Decrypt after the encryption key was deleted or made again (not pinned)")
             }
             ids::SYSTEM_ENCRYPT_1 => {
                 let Some(plain) = args.first().and_then(al_builtins::native::text_of) else {

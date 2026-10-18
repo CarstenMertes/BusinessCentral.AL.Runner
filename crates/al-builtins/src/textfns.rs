@@ -477,13 +477,13 @@ fn del_chr(_: &mut dyn Ctx, _: Option<&mut Value>, a: &mut [Value]) -> NResult {
     // Where is up to three of `=`, `<`, `>` in any order: an `=` deletes everywhere, else `<` and `>` trim that end
     // (errors/lt-ms-refusals-136/P136Text.al:P136_DelChr_ThreeCharWhere and P136_DelChr_DoubledAndOddWhere: `=<>`, `<=>`,
     // `=>`, `<<`, `>>`, `==`, `<>>`, `<<>`, `><`). An empty Where changes nothing; any other character is an error.
-    // Longer texts of the three characters are not pinned.
+    // Four and five characters read the same way (EvaluateDelChrEdges.al:DelChr_WhereLongerThanOne `=<>=`, `<<<<`, `<>=<`, `=<>=<`); longer texts are not pinned.
     if wh.chars().any(|c| !matches!(c, '=' | '<' | '>')) {
         return raise("Incorrect use of the where parameter.", "ALSystemString");
     }
-    if wh.chars().count() > 3 {
+    if wh.chars().count() > 5 {
         return unsupported(format!(
-            "DelChr with Where `{wh}` (more than three characters is not pinned)"
+            "DelChr with Where `{wh}` (more than five characters is not pinned)"
         ));
     }
     let (all, lead, trail) = (wh.contains('='), wh.contains('<'), wh.contains('>'));

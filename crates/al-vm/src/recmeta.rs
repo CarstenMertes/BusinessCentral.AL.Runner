@@ -1406,6 +1406,16 @@ impl Session {
             match ty {
                 RtType::Code(_) | RtType::Integer | RtType::Enum(..) | RtType::Date => {
                     // The error of a value that is none is raised whether the result is used or not; the caller decides.
+                    // A Code value with blanks around it is read trimmed. Not pinned: assumption evaluate-recordid-composite-key
+                    // (Tests-Rapid Start Config. Package Record IDs).
+                    let v = if matches!(ty, RtType::Code(_)) && v.trim() != v.as_str() {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::EvaluateRecordIdCompositeKey,
+                        );
+                        v.trim()
+                    } else {
+                        v.as_str()
+                    };
                     let used = std::mem::replace(&mut self.ret_used, false);
                     let r = al_builtins::evaluate::evaluate_key_part(self, ty, v, number);
                     self.ret_used = used;

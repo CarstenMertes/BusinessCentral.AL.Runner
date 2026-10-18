@@ -749,6 +749,12 @@ pub fn evaluate_key_part(c: &mut dyn Ctx, ty: &crate::value::RtType, text: &str,
         crate::value::RtType::Text(m) | crate::value::RtType::Code(m) => *m,
         _ => None,
     };
+    // A Text or Code reads the same text with either format number (the key text of Format(RecordId, 0, 9) holds it as it is).
+    let number = if matches!(ty, crate::value::RtType::Text(_) | crate::value::RtType::Code(_)) {
+        0
+    } else {
+        number
+    };
     let mut tmp = vec![
         Value::default_for(ty),
         Value::Text(text.to_string().into()),

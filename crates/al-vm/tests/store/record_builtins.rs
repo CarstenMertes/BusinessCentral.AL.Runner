@@ -1035,3 +1035,58 @@ fn find_first_last_and_set_on_an_empty_unfiltered_table_say_the_table_is_empty()
     let one = "The The Table table is empty.|DB:TableIsEmpty"; // the test table has no caption of its own
     assert_eq!(text(r), format!("{one}#{one}#{one}"));
 }
+
+// record/lt-find-empty-table/FindEmptyTable.al:Find_EmptyTable: Find with the result unused on an empty, unfiltered table.
+#[test]
+fn find_on_an_empty_unfiltered_table_with_an_unused_result_raises_the_pinned_errors() {
+    let one = |call: &str| {
+        format!("R.DeleteAll(); asserterror {call}; s += GetLastErrorText() + '|' + GetLastErrorCode() + '#';")
+    };
+    let body = format!(
+        "procedure F(): Text var R: Record \"ALT T\"; s: Text; begin {} {} {} {} {} {} {} exit(s); end;",
+        one("R.Find()"),
+        one("R.Find('=')"),
+        one("R.Find('-')"),
+        one("R.Find('+')"),
+        one("R.Find('>')"),
+        one("R.Find('<')"),
+        one("R.Find('=><')"),
+    );
+    let r = run(&body, "F");
+    let id = "Identification fields and values:";
+    let nf = |w: &str| format!("The The Table does not exist. {w}\\\\{id}\\\\No.=''|DB:RecordNotFound#");
+    let eq = format!("The The Table does not exist. {id} No.=''|DB:RecordNotFound#");
+    let empty = "The The Table table is empty.|DB:TableIsEmpty#";
+    assert_eq!(
+        text(r),
+        format!("{eq}{eq}{empty}{empty}{}{}{}", nf(">"), nf("<"), nf("=><"))
+    );
+}
+
+// Find('=') of a missing key in a table that has rows is not pinned: refused.
+#[test]
+fn find_equals_of_a_missing_key_in_a_table_with_rows_is_refused() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; begin
+            R.DeleteAll(); R.\"No.\" := 'B'; R.Insert(); R.\"No.\" := 'A'; R.Find();
+            exit('x');
+        end;",
+        "F",
+    );
+    assert!(matches!(r, Err(Signal::Unsupported(_))), "{r:?}");
+}
+
+// Only default key values are pinned (FindEmptyTable.al: Id=0): another key value on an empty table is refused.
+#[test]
+fn find_on_an_empty_table_with_a_non_default_key_is_refused() {
+    let r = run(
+        "procedure F(): Text var R: Record \"ALT T\"; begin
+            R.DeleteAll(); R.\"No.\" := 'A'; asserterror R.Find(); exit('x');
+        end;",
+        "F",
+    );
+    assert!(
+        matches!(&r, Err(Signal::Unsupported(m)) if m.contains("default")),
+        "{r:?}"
+    );
+}

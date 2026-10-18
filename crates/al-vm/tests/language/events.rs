@@ -1573,24 +1573,22 @@ codeunit 50100 C
     assert_eq!(int(run(&src, "F")), 5);
 }
 
+// corpus events/lt-report-extension-sender/ReportExtensionSender.al: the Sender is the report variable that raised the event.
 #[test]
-fn a_reportextension_event_with_include_sender_refuses_a_subscriber_that_takes_the_sender() {
+fn a_reportextension_event_with_include_sender_hands_a_subscriber_the_report_variable() {
     let src = format!(
         r#"{REPORT_EXT_SENDER}
 codeunit 50303 Sub
 {{
     [EventSubscriber(ObjectType::Report, Report::Base, 'OnPing', '', false, false)]
-    local procedure H(Value: Integer; Sender: Report Base) begin end;
+    local procedure H(Value: Integer; Sender: Report Base) var S: Codeunit Sink; begin S.Note(Value + 1); end;
 }}
 codeunit 50100 C
 {{
-    procedure F() var R: Report Base; begin R.Raise(); end;
+    procedure F(): Integer var R: Report Base; S: Codeunit Sink; begin R.Raise(); exit(S.Get()); end;
 }}"#
     );
-    match run(&src, "F") {
-        Err(Signal::Unsupported(m)) => assert!(m.contains("IncludeSender on a reportextension"), "{m}"),
-        other => panic!("expected a refusal, got {other:?}"),
-    }
+    assert_eq!(int(run(&src, "F")), 6);
 }
 
 // A `var` parameter of an event is a reference to the publisher's variable. A subscriber that changes that variable through

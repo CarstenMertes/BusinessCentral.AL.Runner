@@ -735,6 +735,7 @@ impl Session {
                     load: Default::default(),
                     touched: false,
                     assigned: false,
+                    dirty_base: None,
                     globals: Default::default(),
                 })))
             }

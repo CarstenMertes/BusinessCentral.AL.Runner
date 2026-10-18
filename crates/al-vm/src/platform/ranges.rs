@@ -66,7 +66,7 @@ pub(crate) fn of_expr(e: &FilterExpr, num: &dyn Fn(&Value) -> Option<i64>, lo: i
             let b = b.as_ref().map(n).transpose()?.unwrap_or(hi).min(hi);
             normalize(vec![(a, b)])
         }
-        FilterExpr::Eq(v) => normalize(vec![(n(v)?.max(lo), n(v)?.min(hi))]),
+        FilterExpr::Eq(v) | FilterExpr::RangeSame(v) => normalize(vec![(n(v)?.max(lo), n(v)?.min(hi))]),
         FilterExpr::Ne(v) => {
             let x = n(v)?;
             complement(&normalize(vec![(x, x)]), lo, hi)

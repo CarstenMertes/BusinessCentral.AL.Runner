@@ -224,6 +224,10 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     // holds rows in them that nothing pins: see `UNSEEDED_ROWS`.
     (2_000_000_076, "Web Service", Provider::Stored),
     (2_000_000_168, "Tenant Web Service", Provider::Stored),
+    // Empty on a fresh tenant and ordinary to Insert, Modify and Delete (platform/lt-platform-tables/PtCloudTables.al:
+    // EntityText_InsertModifyDelete, ObjectAccessIntentOverride_InsertModifyDelete: `has_rows` No, `first_row` none).
+    (2_000_000_132, "Entity Text", Provider::Stored),
+    (2_000_000_205, "Object Access Intent Override", Provider::Stored),
 ];
 
 /// Stored platform tables that a fresh tenant fills with rows no corpus test pins (Web Service and

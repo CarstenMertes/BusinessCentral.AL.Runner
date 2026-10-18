@@ -389,7 +389,7 @@ impl Session {
     /// the action's OnAction trigger and after it when it did not fail (corpus
     /// events/lt-global-triggers-statements/P114PageActionEvents.al: P114_ActionOrder, P114_ActionRaisesError,
     /// P114_BeforeEventChangesRecord). The subscribers take `Rec` or nothing. A page without a source table,
-    /// a subscriber that is declared and not compiled, and an error a subscriber raises are refused: none is pinned.
+    /// and a subscriber that is declared and not compiled are refused: none is pinned.
     pub(crate) fn page_action_event(&mut self, st: &St, event: &str, element: &str) -> Result<(), Signal> {
         let engine = self.engine();
         let object = st.borrow().object as usize;
@@ -414,12 +414,10 @@ impl Session {
             names: &names,
             sender: None,
         };
-        match self.raise(&call, &mut args) {
-            Err(Signal::Error(_)) => unsupported(format!(
-                "an error raised by a subscriber of page event {event} (what the test client reports is not pinned)"
-            )),
-            other => other,
-        }
+        // An error a subscriber raises stops the action (before) or comes after its OnAction (after) and reaches Invoke
+        // with its own text (events/lt-page-action-subscriber-errors/PageActionSubscriberErrors.al: Act_BeforeSubscriberRaises,
+        // Act_AfterSubscriberRaises, Act_BothSubscribersRaise).
+        self.raise(&call, &mut args)
     }
 
     /// Refuses a page some subscriber listens to for an event the client does not raise yet.

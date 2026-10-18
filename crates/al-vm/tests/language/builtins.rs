@@ -81,7 +81,8 @@ fn enum_as_integer_returns_the_ordinal() {
 }
 
 // types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer pins an Enum in a Variant read as an
-// Integer by assignment; FromInteger taking such a Variant is the same conversion, on an assumption (enum-from-integer-variant-enum).
+// Integer by assignment; FromInteger taking such a Variant is the same conversion (enum/lt-enum-fromint-variant/EnumFromIntegerVariant.al:
+// FromInteger_VariantHolding `enum`, `decimal` 1 and `text` '1' all give Green; a fraction or a non-number text is not pinned: refused).
 #[test]
 fn enum_from_integer_takes_a_variant_that_holds_an_enum() {
     let v = "S: Enum \"ALT Status\"; T: Enum \"ALT Status\"; V: Variant;";
@@ -92,6 +93,31 @@ fn enum_from_integer_takes_a_variant_that_holds_an_enum() {
         )
         .unwrap(),
         5
+    );
+}
+
+#[test]
+fn enum_from_integer_takes_a_variant_that_holds_a_whole_decimal_or_a_number_text() {
+    let v = "S: Enum \"ALT Status\"; V: Variant; T: Text;";
+    assert_eq!(
+        int_of(v, "V := 5.0; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").unwrap(),
+        5
+    );
+    assert_eq!(
+        int_of(
+            v,
+            "T := '5'; V := T; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());"
+        )
+        .unwrap(),
+        5
+    );
+    assert!(int_of(v, "V := 1.5; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").is_err());
+    assert!(
+        int_of(
+            v,
+            "T := 'abc'; V := T; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());"
+        )
+        .is_err()
     );
 }
 
@@ -1292,21 +1318,12 @@ fn calcdate_reads_a_percent_sign_after_a_plus_as_the_number_that_follows() {
         "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<+%1D>', D), 0, 9) + '|' + Format(CalcDate(Format('<+%1D>', 5), D), 0, 9));",
     );
     assert_eq!(r.unwrap(), "2024-01-16|2024-01-16");
-    // A minus or no sign in front of the percent sign is not pinned.
-    assert!(
-        text_of(
-            "D: Date;",
-            "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<-%1D>', D), 0, 9));"
-        )
-        .is_err()
+    // A minus or no sign in front of the percent sign reads the same (types/lt-date-formula-edges/DateFormulaEdges.al:Placeholders_PercentN).
+    let r = text_of(
+        "D: Date;",
+        "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<-%1D>', D), 0, 9) + '|' + Format(CalcDate('<%1D>', D), 0, 9));",
     );
-    assert!(
-        text_of(
-            "D: Date;",
-            "D := DMY2Date(15, 1, 2024); exit(Format(CalcDate('<%1D>', D), 0, 9));"
-        )
-        .is_err()
-    );
+    assert_eq!(r.unwrap(), "2024-01-14|2024-01-16");
 }
 
 // session/TestEnvironmentUserTenantContracts.al:195-201 and session/TestNavAppExtended.al:116-117:

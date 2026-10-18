@@ -10,6 +10,10 @@ pub enum FilterExpr {
     /// `SetRange(F, A, B)` and `SetRange(F, A)` (as A..A); open ends are None.
     Range(Option<Value>, Option<Value>),
     Eq(Value),
+    /// A range typed as text whose two ends are the same value (`SetFilter(D, '010126..010126')`): it finds what `Eq` finds, and
+    /// `GetFilter` writes it back as `a..a`, where `SetRange(D, a, a)` gives `a` (record/lt-loadfields-pagesource-validate/
+    /// P81DateFilters.al:SetFilter_Date_RangeForms `r15`, SetFilter_Date_Placeholders_TwoDates `range_same`).
+    RangeSame(Value),
     Ne(Value),
     Lt(Value),
     Le(Value),
@@ -40,7 +44,7 @@ impl FilterExpr {
                         .as_ref()
                         .is_none_or(|h| matches!(cmp(h), Some(Ordering::Equal | Ordering::Less)))
             }
-            FilterExpr::Eq(x) => cmp(x) == Some(Ordering::Equal),
+            FilterExpr::Eq(x) | FilterExpr::RangeSame(x) => cmp(x) == Some(Ordering::Equal),
             FilterExpr::Ne(x) => matches!(cmp(x), Some(Ordering::Less | Ordering::Greater)),
             FilterExpr::Lt(x) => cmp(x) == Some(Ordering::Less),
             FilterExpr::Le(x) => matches!(cmp(x), Some(Ordering::Less | Ordering::Equal)),
@@ -106,6 +110,9 @@ pub const INVALID_GUID: &str = "invalid Guid filter value: ";
 /// The prefix of the error for a date text no Date filter reads; the failing value follows (types/lt-in-precedence-date-guid-filters/
 /// P143Date_DePlain.al: `Das Format Date „17.01.27“ ...`).
 pub const INVALID_DATE: &str = "invalid Date filter value: ";
+/// The prefix of the error for a Date filter text with an empty side; the English message follows (record/lt-loadfields-pagesource-validate/
+/// P81DateFilters.al:SetFilter_Date_RangeForms `..`, SetFilter_Date_InvalidTexts `|`, `&`, `||`).
+pub const FILTER_SYNTAX: &str = "invalid Date filter syntax: ";
 
 /// What the text of a Date filter needs from the session: today, the work date and the language of the messages.
 #[derive(Debug, Clone, Copy)]
@@ -133,6 +140,21 @@ pub fn parse_filter_with(
     ty: &crate::value::RtType,
     enums: &dyn Fn(u32) -> Vec<(i32, String)>,
 ) -> Result<FilterExpr, String> {
+    // Three dots in a Date filter read as two (P81DateFilters.al:SetFilter_Date_InvalidTexts, `010126...020126`).
+    let dots;
+    let text = if matches!(ty, crate::value::RtType::Date)
+        && DATE_CONTEXT
+            .with(std::cell::Cell::get)
+            .is_some_and(|c| c.language == 1033)
+        && text.contains("...")
+        && !text.contains('\'')
+        && !text.contains("....")
+    {
+        dots = text.replace("...", "..");
+        dots.as_str()
+    } else {
+        text
+    };
     let toks = tokenize(text, args)?;
     let mut p = Parser { toks, i: 0, ty, enums };
     let e = p.or()?;
@@ -303,10 +325,24 @@ impl Parser<'_> {
         }
     }
 
+    fn date(&self) -> bool {
+        matches!(self.ty, crate::value::RtType::Date)
+    }
+
     fn or(&mut self) -> Result<FilterExpr, String> {
+        if self.date() && self.peek_op() == Some("|") {
+            return Err(format!(
+                "{FILTER_SYNTAX}The left side of '|' operators cannot be empty."
+            ));
+        }
         let mut xs = vec![self.and()?];
         while self.peek_op() == Some("|") {
             self.i += 1;
+            if self.date() && self.peek_op() == Some("|") {
+                return Err(format!(
+                    "{FILTER_SYNTAX}The right side of '|' operators cannot be empty."
+                ));
+            }
             xs.push(self.and()?);
         }
         Ok(if xs.len() == 1 {
@@ -317,6 +353,11 @@ impl Parser<'_> {
     }
 
     fn and(&mut self) -> Result<FilterExpr, String> {
+        if self.date() && self.peek_op() == Some("&") {
+            return Err(format!(
+                "{FILTER_SYNTAX}The left side of '&' operators cannot be empty."
+            ));
+        }
         let mut xs = vec![self.term()?];
         while self.peek_op() == Some("&") {
             self.i += 1;
@@ -485,6 +526,11 @@ impl Parser<'_> {
             }
             Some("..") => {
                 self.i += 1;
+                if self.date() && self.i == self.toks.len() && self.i == 1 {
+                    return Err(format!(
+                        "{FILTER_SYNTAX}Both sides of the range ('..') cannot be empty."
+                    ));
+                }
                 let hi = self.value().ok_or("value expected after ..")?;
                 Ok(FilterExpr::Range(None, Some(self.typed(hi)?)))
             }
@@ -500,6 +546,13 @@ impl Parser<'_> {
                         Some(h) => Some(self.typed(h)?),
                         None => None,
                     };
+                    if self.date()
+                        && hi
+                            .as_ref()
+                            .is_some_and(|h| compare(h, &lo).ok() == Some(Ordering::Equal))
+                    {
+                        return Ok(FilterExpr::RangeSame(lo));
+                    }
                     return Ok(FilterExpr::Range(Some(lo), hi));
                 }
                 self.single(lo, false)
@@ -549,8 +602,8 @@ pub fn key_cmp(a: &[Value], b: &[Value]) -> Ordering {
     a.len().cmp(&b.len())
 }
 
-/// The value of one Date filter text, or the error: `INVALID_DATE` and the text for a German session and for the English shapes
-/// pinned as invalid, a refusal otherwise.
+/// The value of one Date filter text, or the error: `INVALID_DATE` and the text for a German session or an English text of a
+/// shape the corpus pins as invalid, a refusal otherwise.
 fn date_filter_value(t: &str) -> Result<Value, String> {
     let ctx = DATE_CONTEXT.with(std::cell::Cell::get);
     let german = ctx.is_some_and(|c| c.language == 1031);
@@ -564,6 +617,16 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
         "cd" | "0D" if english => return ctx.map(|c| Value::Date(c.today, false)).ok_or_else(needs_session),
         _ => {}
     }
+    // The words for today and the work date, in any case, and `*` (P81DateFilters.al:SetFilter_Date_OtherKeywordLetters
+    // `TODAY`, `Today`, `WORKDATE`; SetFilter_Date_InvalidTexts `*`).
+    if english {
+        if t.eq_ignore_ascii_case("today") || t == "*" {
+            return ctx.map(|c| Value::Date(c.today, false)).ok_or_else(needs_session);
+        }
+        if t.eq_ignore_ascii_case("workdate") {
+            return ctx.map(|c| Value::Date(c.work_date, false)).ok_or_else(needs_session);
+        }
+    }
     // The dotted spelling reads like the slashed one in German: `1.1.2027` is the first of January, `17.01.27` has no month 17.
     let slashed;
     let text = if german && !t.contains('/') && t.matches('.').count() == 2 {
@@ -575,26 +638,57 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
     if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, text) {
         return Ok(v);
     }
-    // Six digits read as month, day, year in an English session: `020126` is 2026-02-01 and `040126` is 2026-04-01
-    // (fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:389-565, filters of a Date field). Other digit counts are not pinned.
+    // Dashes read like slashes in an English session when the year has four digits (P81DateFilters.al:SetFilter_Date_InvalidTexts
+    // `01-01-2026`), and with two-digit numbers throughout (record/lt-date-text-forms/DateFilterTextForms.al:
+    // GetRange_DateTextForms_English `separators_short_year` `02-01-26`, GetRange_DayAboveTwelve_English `mm_dd_yy_separators`).
+    let dashed_short = t.split('-').count() == 3
+        && t.split('-')
+            .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()));
+    if english {
+        let b = text.as_bytes();
+        if (b.len() == 10
+            && b[2] == b'-'
+            && b[5] == b'-'
+            && b.iter()
+                .enumerate()
+                .all(|(i, c)| i == 2 || i == 5 || c.is_ascii_digit()))
+            || dashed_short
+        {
+            if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &text.replace('-', "/")) {
+                return Ok(v);
+            }
+        }
+    }
+    // Six digits read as month, day, year in an English or a German session: `020126` is 2026-02-01 and `040126` is 2026-04-01
+    // (fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:389-565, filters of a Date field; DateFilterTextForms.al:
+    // GetRange_SixDigits_German). Eight digits read the same way with a four-digit year in both (DateFilterTextForms.al:
+    // GetRange_SixDigits_German `eight_digits`); seven digits in an English session (P81DateFilters.al:SetFilter_Date_RangeForms
+    // `01012026`, SetFilter_Date_InvalidTexts `0101202`).
     let digits_only = text.bytes().all(|b| b.is_ascii_digit());
-    if (english || german) && text.len() == 6 && digits_only {
-        let spelled = format!("{}/{}/{}", &text[0..2], &text[2..4], &text[4..6]);
-        if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &spelled) {
-            return Ok(v);
+    if (english || german) && digits_only {
+        match text.len() {
+            6 => {
+                let spelled = format!("{}/{}/{}", &text[0..2], &text[2..4], &text[4..6]);
+                if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &spelled) {
+                    return Ok(v);
+                }
+            }
+            7 | 8 if english || text.len() == 8 => {
+                let (m, d, y): (u32, u32, i32) = (
+                    text[0..2].parse().unwrap_or(0),
+                    text[2..4].parse().unwrap_or(0),
+                    text[4..].parse().unwrap_or(0),
+                );
+                if (1..=12).contains(&m) && y >= 1 && d >= 1 && d <= crate::iso::days_in_month(y, m) {
+                    return Ok(Value::Date(crate::format::day_from_civil(y, m, d), false));
+                }
+            }
+            _ => {}
         }
     }
-    // Eight digits are month, day and year in an English and a German session (DateFilterTextForms.al:GetRange_SixDigits_German `eight_digits`,
-    // GetRange_DayAboveTwelve_German_EightDigits `mm_dd_yyyy_eight`).
-    if (english || german) && text.len() == 8 && digits_only {
-        let spelled = format!("{}/{}/{}", &text[0..2], &text[2..4], &text[4..8]);
-        if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &spelled) {
-            return Ok(v);
-        }
-    }
-    // Four digits are month and day, the year is the work date's (record/lt-date-text-forms/DateFilterTextForms.al:
-    // GetRange_DateTextForms_English `four_digits` 0201 with work date 2031 gives 2031-02-01, GetRange_FourDigits_OtherWorkDate
-    // with 2038 gives 2038; German :GetRange_SixDigits_German `four_digits`; `0113` reads, `1301` does not).
+    // Four digits are month and day, the year is the work date's (DateFilterTextForms.al:GetRange_DateTextForms_English
+    // `four_digits` 0201 with work date 2031 gives 2031-02-01, GetRange_FourDigits_OtherWorkDate with 2038 gives 2038; German
+    // :GetRange_SixDigits_German `four_digits`; `0113` reads, `1301` does not).
     if (english || german) && text.len() == 4 && digits_only {
         if let Some(c) = ctx {
             let year = crate::format::civil_from_day(c.work_date).0;
@@ -606,24 +700,16 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
             return Err(needs_session());
         }
     }
-    // The day-first spellings of the pinned shapes (four, six and eight digits, three two-digit numbers split by dashes) are no
-    // dates in an English session either (GetRange_DayAboveTwelve_English).
-    if english {
-        let dashed = t.split('-').count() == 3
-            && t.split('-')
-                .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()));
-        // `02-01-26` reads like `02/01/26`: month, day, year (GetRange_DateTextForms_English `separators_short_year`,
-        // GetRange_DayAboveTwelve_English `mm_dd_yy_separators`).
-        if dashed {
-            if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &t.replace('-', "/")) {
-                return Ok(v);
-            }
-        }
-        if (digits_only && matches!(t.len(), 4 | 6 | 8)) || dashed {
-            return Err(format!("{INVALID_DATE}{t}"));
-        }
-    }
-    if german {
+    // The texts the corpus pins as invalid: a number of 4 to 8 digits that is no date, `0`, a text with a letter no
+    // date formula uses (P81DateFilters.al:SetFilter_Date_InvalidTexts, EmptyAndZeroForms `0`, `000000`), and three two-digit
+    // numbers split by dashes (DateFilterTextForms.al:GetRange_DayAboveTwelve_English `dd_mm_yy_separators`).
+    let invalid_shape = (digits_only && matches!(text.len(), 4..=8))
+        || dashed_short
+        || text == "0"
+        || text
+            .chars()
+            .any(|c| c.is_ascii_alphabetic() && !"CDMQTWY".contains(c.to_ascii_uppercase()));
+    if german || (english && invalid_shape) {
         return Err(format!("{INVALID_DATE}{t}"));
     }
     Err(format!(

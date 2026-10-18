@@ -1207,6 +1207,28 @@ fn table_relation_condition_on_the_blank_enum_member_resolves() {
 }
 
 #[test]
+fn table_relation_const_blank_on_an_option_resolves_only_when_the_blank_member_is_first() {
+    // record/lt-table-relation-arms/TableRelationArms.al (OptionMembers = " ",A, const(" ") selects the first arm) pins the blank
+    // member at ordinal 0; a blank member elsewhere is not pinned and the relation is not understood.
+    let src = |members: &str| {
+        format!(
+            "table 50930 \"ALT One\" {{ fields {{ field(1; Code; Code[20]) {{ }} }} }}
+             table 50931 \"ALT Two\" {{ fields {{ field(1; Code; Code[20]) {{ }} }} }}
+             table 50932 \"ALT Opt Line\" {{ fields {{
+                field(1; Opt; Option) {{ OptionMembers = {members}; }}
+                field(2; \"No.\"; Code[20]) {{ TableRelation = if (Opt = const(\" \")) \"ALT One\" else if (Opt = const(A)) \"ALT Two\"; }}
+             }} }}"
+        )
+    };
+    let (_, l) = lower_src(&src("\" \",A"));
+    let f = flow(&l, "ALT Opt Line", "No.");
+    assert_eq!(f.relation_arms.len(), 2, "{:?}", f.relation_arms);
+    let (_, l) = lower_src(&src("A,\" \""));
+    let f = flow(&l, "ALT Opt Line", "No.");
+    assert!(f.relation_arms.is_empty(), "{:?}", f.relation_arms);
+}
+
+#[test]
 fn table_relation_where_filter_rewrites_double_quoted_names() {
     // Base Application's `TableRelation = Item where(Type = filter(Inventory | "Non-Inventory"))`
     // (Prod. Order Component): the filter grammar quotes with `'`, so the AL quoting is rewritten

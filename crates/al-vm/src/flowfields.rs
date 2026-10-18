@@ -518,18 +518,36 @@ impl Session {
                         return unsupported("upperlimit() of a field that is not a flow filter");
                     }
                     // Corpus record/TestCalcFormulaFlowFiltersTests.Codeunit.al:144: only the
-                    // upper bound of the caller's range; none set (or an open end) means none.
+                    // upper bound of the caller's range; none set means none.
                     match flow(*q) {
-                        None | Some(FilterExpr::Range(_, None)) => {}
+                        None => {}
                         Some(FilterExpr::Range(_, Some(hi))) => {
                             parts.push((c.field, FilterExpr::Range(None, Some(hi)), false));
                         }
-                        // A filter of one value is its own upper limit (assumption upperlimit-of-a-single-value).
-                        Some(FilterExpr::Eq(hi)) => {
-                            al_builtins::assumptions::assume(
-                                al_builtins::assumptions::Assumption::UpperLimitOfASingleValue,
-                            );
+                        // A filter of one value is its own upper limit, and so is `<=` a value (UpperLimitSingleValue.al:
+                        // UpperLimit_OneValue `setfilter_format_d`, `setfilter_le_d`).
+                        Some(FilterExpr::Eq(hi) | FilterExpr::Le(hi)) => {
                             parts.push((c.field, FilterExpr::Range(None, Some(hi)), false));
+                        }
+                        // An open end, `<`, `>`, `<>` and several values are more than one range (UpperLimitSingleValue.al:
+                        // UpperLimit_OneValue `setfilter_lt_d`, UpperLimit_OpenAndEmpty). The error has no pinned code.
+                        Some(
+                            e @ (FilterExpr::Range(Some(_), None)
+                            | FilterExpr::Lt(_)
+                            | FilterExpr::Gt(_)
+                            | FilterExpr::Ne(_)
+                            | FilterExpr::Or(_)),
+                        ) => {
+                            let text = self.filter_text(&e)?;
+                            let t = self.table(rec)?;
+                            return Err(crate::transactions::al_error_code(
+                                &format!(
+                                    "The filter expression \"{text}\" applied to the field {} in the {} table results in more than one range.",
+                                    self.field_caption(&t, *q),
+                                    self.caption(&t)
+                                ),
+                                "",
+                            ));
                         }
                         Some(_) => return unsupported("upperlimit() of a filter that is not a range"),
                     }
@@ -603,14 +621,20 @@ impl Session {
 
     /// `CalcSums`: the sum of stored number fields over the record's own
     /// filters (corpus record/TestRecordFlowField.al:109-160).
-    pub(crate) fn calc_sums(&mut self, rec: &Rec, positions: &[usize]) -> Result<(), Signal> {
+    ///
+    /// `duration` allows a Duration field: only `FieldRef.CalcSum` pins it (FieldRefCalcSumTypes), `Record.CalcSums` of
+    /// a Duration is refused until the corpus pins it (issue 630 item 3).
+    pub(crate) fn calc_sums(&mut self, rec: &Rec, positions: &[usize], duration: bool) -> Result<(), Signal> {
         let engine = self.engine.clone();
         let table = rec.borrow().table as usize;
         let t = self.engine.tables[table].clone().expect("table");
         let fields = &engine.program.objects[table].table.as_ref().expect("table").fields;
         for &p in positions {
             let f = &fields[p];
-            if !f.stored || !matches!(f.ty, RtType::Decimal | RtType::Integer | RtType::BigInteger) {
+            if !f.stored
+                || !matches!(f.ty, RtType::Decimal | RtType::Integer | RtType::BigInteger)
+                    && !(duration && f.ty == RtType::Duration)
+            {
                 return unsupported(format!(
                     "CalcSums on {} (only stored number fields are implemented)",
                     f.name
@@ -718,7 +742,7 @@ impl Session {
                 self.calc_fields(rec, &positions)?;
             }
             RecordOp::CalcSums => {
-                self.calc_sums(rec, &positions)?;
+                self.calc_sums(rec, &positions, false)?;
             }
             RecordOp::SetAutoCalcFields => {
                 let table = rec.borrow().table as usize;
@@ -755,13 +779,8 @@ impl Session {
         if auto.is_empty() {
             return Ok(());
         }
-        // A temporary record's auto-calculated Blob is not pinned (the corpus pins a stored row only).
-        if rec.borrow().temporary {
-            let table = rec.borrow().table as usize;
-            if auto.iter().any(|&p| self.is_blob_field(table, p)) {
-                return unsupported("SetAutoCalcFields of a Blob field on a temporary record (not pinned)");
-            }
-        }
+        // A temporary record loads an auto-calculated Blob like a stored row (record/lt-temporary-blob/TemporaryBlobAutoCalc.al:
+        // Temporary_SetAutoCalcFields_ThenFind).
         self.calc_fields(rec, &auto)
     }
 }

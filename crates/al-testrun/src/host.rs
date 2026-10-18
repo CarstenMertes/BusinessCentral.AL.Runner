@@ -220,7 +220,10 @@ mod tests {
 
     #[test]
     fn a_named_company_is_what_company_name_answers() {
-        assert_eq!(host_in_company(None, None).identity.company_name(), "CRONUS International Ltd.");
+        assert_eq!(
+            host_in_company(None, None).identity.company_name(),
+            "CRONUS International Ltd."
+        );
         assert_eq!(
             host_in_company(None, Some("Empty Company")).identity.company_name(),
             "Empty Company"

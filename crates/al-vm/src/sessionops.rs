@@ -254,6 +254,13 @@ impl Session {
             // What the database holds committed: a row inserted in the open transaction does not count yet
             // (record/TestProbeRecordRefContracts.al:LastUsedRowVersion_StartsAndGrows, `grows_after_insert` No).
             ids::DATABASE_LASTUSEDROWVERSION_1 => return Ok(Value::BigInteger(self.tx.committed_row_version.max(1))),
+            // Only the bounds are pinned (platform/lt-platform-members/PlTDatabase.al:250-264: 0 <= value <= LastUsedRowVersion() + 1),
+            // not the value AL code reads: refused.
+            ids::DATABASE_MINIMUMACTIVEROWVERSION_1 => {
+                return unsupported(
+                    "Database.MinimumActiveRowVersion: the exact value is not pinned (only 0 <= value <= LastUsedRowVersion() + 1 is)",
+                );
+            }
             // Set when given a value, read otherwise; the default is the documented one
             // (docs/probes-needed.md). session/TestSystemExtended.al:608-630 only calls it.
             ids::DATABASE_LOCKTIMEOUT_1 => {

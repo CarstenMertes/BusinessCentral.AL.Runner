@@ -220,7 +220,18 @@ pub const REGISTRY: &[(u32, &str, Provider)] = &[
     (2_000_000_175, "Scheduled Task", Provider::Stored),
     (2_000_000_096, "API Webhook Notification", Provider::Stored),
     (2_000_000_098, "API Webhook Notification Aggr", Provider::Stored),
+    // Take Insert, Modify and Delete (tests/al-language-onprem/session/PZPlatformSurvey.al:178-187). A fresh tenant
+    // holds rows in them that nothing pins: see `UNSEEDED_ROWS`.
+    (2_000_000_076, "Web Service", Provider::Stored),
+    (2_000_000_168, "Tenant Web Service", Provider::Stored),
 ];
+
+/// Stored platform tables that a fresh tenant fills with rows no corpus test pins (Web Service and
+/// Tenant Web Service: not empty, PZPlatformSurvey.al:178-187; 64 rows in W4PlatformAndMeta.al:93,
+/// depending on the apps). The runtime starts them empty, so it treats them as unseeded
+/// (`Engine::unseeded`): writes work, and a read of rows that were not written, or a `Get` that
+/// finds nothing, is refused.
+pub const UNSEEDED_ROWS: &[u32] = &[2_000_000_076, 2_000_000_168];
 
 /// Platform tables that only the System app of a later major declares (the registry above is checked against the System app
 /// of the first major the corpus pins, `tests/platform_tables.rs`). Ordinary stored tables here, written by install code:
@@ -262,8 +273,8 @@ pub const PINNED_COLUMNS: &[(u32, &[u32])] = &[
     // Table Metadata: record/TestTableMetadataVirtualTable.al.
     (2_000_000_136, &[1, 2, 3, 4, 5, 6, 11, 12, 13, 15]),
     // Field: record/TestField*VirtualTable.al, TestFieldDataClassificationInheritance.al. TableName, Class, Enabled and "Field Caption"
-    // are read from the declaration (probe batch 5); Len (6) from the type (record/TestFieldLenAndFeatureKeyContracts.al); Type Name (9), ExternalName (10) and the rest are not.
-    (2_000_000_041, &[1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 24, 25, 26, 27]),
+    // are read from the declaration (probe batch 5); IsPartOfPrimaryKey (28): metadata/lt-platform-metadata-columns/PlatformMetadataColumnValues.al:237-268; Len (6) from the type (record/TestFieldLenAndFeatureKeyContracts.al); Type Name (9), ExternalName (10) and the rest are not.
+    (2_000_000_041, &[1, 2, 3, 4, 5, 6, 7, 8, 20, 21, 22, 24, 25, 26, 27, 28]),
     // Feature Key: ID (1), Enabled (2), Mandatory By (5), Can Try (6), Is One Way (7), Data Update Required (8) and Mandatory By Version (9),
     // record/PFFeatureKeyColumns.al, TestFieldLenAndFeatureKeyContracts.al, TestFeatureKeyEnabledContracts.al.
     (2_000_000_211, &[1, 2, 5, 6, 7, 8, 9]),

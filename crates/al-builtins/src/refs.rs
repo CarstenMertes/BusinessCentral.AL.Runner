@@ -70,6 +70,7 @@ pub const REGISTRY: &[(&str, NativeFn)] = forward![
     "RecordRef.SetLoadFields#1",
     "RecordRef.AddLoadFields#1",
     "RecordRef.AreFieldsLoaded#1",
+    "RecordRef.SetAutoCalcFields#1",
     "RecordRef.SecurityFiltering#1",
     "RecordRef.Ascending#1",
     "RecordRef.SetRecFilter#1",

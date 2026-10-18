@@ -39,9 +39,9 @@ codeunit 63100 T
     [Test]
     procedure NeedsAnUnimplementedBuiltin()
     var
-        v: BigInteger;
+        v: Text;
     begin
-        v := Database.MinimumActiveRowVersion();
+        v := Database.SerialNumber();
     end;
 
     [Test]
@@ -186,7 +186,7 @@ fn a_reason_found_before_the_run_names_its_routine_header() {
     let (_, rows) = run();
     let (_, outcome, d) = of(&rows, "NeedsAnUnimplementedBuiltin");
     assert!(
-        matches!(outcome, Outcome::NotRun(r) if r.contains("MinimumActiveRowVersion")),
+        matches!(outcome, Outcome::NotRun(r) if r.contains("SerialNumber")),
         "{outcome:?}"
     );
     let site = d.refused_in.as_ref().expect("a lowering reason has a routine");
@@ -217,7 +217,7 @@ fn blocked_site_finds_the_routine_a_reason_sits_in_through_the_call_graph() {
             dependencies: vec![],
             files: vec![(
                 "f.al".into(),
-                "codeunit 1 C { [Test] procedure T() begin Helper(); end; local procedure Helper() var v: BigInteger; begin v := Database.MinimumActiveRowVersion(); end; }".into(),
+                "codeunit 1 C { [Test] procedure T() begin Helper(); end; local procedure Helper() var v: Text; begin v := Database.SerialNumber(); end; }".into(),
             )],
         }],
         &Default::default(),

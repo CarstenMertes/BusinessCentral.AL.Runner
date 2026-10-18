@@ -239,7 +239,8 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `runtime/compiled.rs` (418): What a compile produces and keeps (`Compiled`), the warm slot (`Warm`), and what a run asks for. Entry: `RunOptions` 6, `Compiled` 42, `Warm` 228, `SuiteRun` 398.
 - `runtime/corpus.rs` (927): `CorpusRuntime`: compiling suites of apps and running them. Entry: `run_suites_with` 89, `compile_suites` 127, `run_compiled` 448.
 - `runtime/cache.rs` (226): Compiling through the compile cache. Entry: `compile_with_cache` 70, `lazy_index` 7.
-- `runtime/run.rs` (597): Running the test codeunits of one compiled program, each test on a session of its own. Entry: `run_codeunit` 5, `run_codeunit_isolated` 21, `run_codeunit_observed` 46, `run_codeunit_core` 156.
+- `runtime/run.rs` (741): Running the test codeunits of one compiled program, each test on a session of its own. Entry: `run_codeunit` 5, `run_codeunit_isolated` 21, `run_codeunit_observed` 46, `run_codeunit_core` 156.
+- `runtime/written.rs` (824): What a test that did not run to its end can change that a later test of the codeunit reads (static reach: tables, codeunit globals, session state; `unknown` for a refused construct or a run by a run-time id), for the trust of later failures. Entry: `ReachFacts`, `changes_read_by`, `ReachIndex`, `reach_facts`, `settled_flags`.
 - `runtime/runner_reset.rs` (130): What BC's AL test runner does around each test method: runs codeunits 131006, 130301, 130302 (TestPermissions not Disabled) and 132553 when loaded, in Microsoft's order. Entry: `RunnerReset::of`, `before`, `after`, `test_permissions`.
 - `runtime/handlers.rs` (92): The handler functions a test declares, bound for the length of the test. Entry: `resolve_handlers` 8, `bind_handlers` 77.
 - `runtime/blocked.rs` (201): What a test cannot run for: install codeunits, tables a test touches, blocked routines. Entry: `blocked_site` 161, `run_install_codeunits` 8.

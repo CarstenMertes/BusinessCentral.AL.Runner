@@ -135,14 +135,15 @@ const ROWS: &str = "table 60900 S { fields { field(1; K; Code[10]) { } } }
 #[test]
 fn a_failure_after_a_test_that_was_refused_mid_run_is_not_trusted() {
     // A refused test stops half way: it may have set globals the next tests rely on (an
-    // "initialized" flag whose setup was rolled back). A failure that follows is then
-    // not BC's answer, and is reported as not run; passes are kept, and a refusal before
-    // the test body starts (a static block) leaves the state alone.
+    // "initialized" flag whose setup was rolled back). A failure that reads what it can change
+    // is then not BC's answer, and is reported as not run; passes are kept, and a failure that
+    // reads nothing the refused test can change stays a failure.
     let src = "table 60901 T9 { fields { field(1; K; Code[10]) { } } }
-            codeunit 60103 T { Subtype = Test; var Flag: Boolean;
-                [Test] procedure T1() var R: Record T9; begin Flag := true; R.LockTable(false); end;
+            codeunit 60103 T { Subtype = Test; var Flag: Boolean; Count: Integer;
+                [Test] procedure T1() var R: Record T9; begin Flag := true; R.LockTable(false); Count += 1; end;
                 [Test] procedure T2() begin if not Flag then Error('flag lost'); end;
-                [Test] procedure T3() begin Error('real failure'); end; }
+                [Test] procedure T3() begin if Count = 0 then Error('real failure'); end;
+                [Test] procedure T4() begin Error('real failure'); end; }
             codeunit 60104 U { Subtype = Test;
                 [Test] procedure U1() begin Error('real failure'); end; }";
     let o = outcomes_of(src, "T");
@@ -150,10 +151,11 @@ fn a_failure_after_a_test_that_was_refused_mid_run_is_not_trusted() {
     assert!(matches!(by("T1"), Outcome::NotRun(_)), "{:?}", by("T1"));
     assert_eq!(by("T2"), Outcome::Pass);
     assert!(
-        matches!(by("T3"), Outcome::NotRun(r) if r.contains("earlier test") && r.contains("LockTable")),
+        matches!(by("T3"), Outcome::NotRun(r) if r.contains("earlier test") && r.contains("LockTable") && r.contains("Count")),
         "{:?}",
         by("T3")
     );
+    assert_eq!(by("T4"), Outcome::Fail("real failure".into()));
     let u = outcomes_of(src, "U");
     assert_eq!(u[0].1, Outcome::Fail("real failure".into()));
 }
@@ -1534,8 +1536,8 @@ fn retiring_derefs_to_the_value_and_drops_it_on_another_thread_when_it_goes() {
 }
 
 /// A test that never ends is stopped at its time limit and reported as not run, with the limit
-/// in the reason. The tests after it still run; a failure after it is not trusted, because the
-/// stopped test left the codeunit's state half way.
+/// in the reason. The tests after it still run; a failure after it stays a failure when the
+/// stopped test can change nothing the failing test reads (it only counts in a local).
 #[test]
 fn a_test_over_its_time_limit_is_stopped_and_not_run() {
     let src = "codeunit 61400 Endless { Subtype = Test;
@@ -1580,7 +1582,7 @@ fn a_test_over_its_time_limit_is_stopped_and_not_run() {
         }
     }
     assert!(matches!(get("After"), Outcome::Pass));
-    assert!(matches!(get("AfterFails"), Outcome::NotRun(_)));
+    assert!(matches!(get("AfterFails"), Outcome::Fail(_)), "{:?}", get("AfterFails"));
 }
 
 /// The limit counts the CPU time of the test thread: a thread that waits is not stopped at the
@@ -1826,12 +1828,13 @@ fn the_marks_of_a_test_do_not_depend_on_what_ran_before_it_or_on_the_run() {
 }
 
 /// A test refused before it starts also leaves out what BC would have committed (a cleanup, a setup the later tests
-/// rely on): under TestIsolation = Codeunit a failure after it is not trusted. Under Function isolation every test
-/// starts from the same state, so the failure stays a failure (Tests-ERM "Discount Setup Notifications": a refused
-/// test that would have reset the posting setups, then a test that failed on the rows the test before it left).
+/// rely on; Tests-ERM "Discount Setup Notifications": a refused test that would have reset the posting setups, then a
+/// test that failed on the rows the test before it left). Here the refused test's reach holds the construct it is refused
+/// for (`XmlPort.Run`), so what it would have done is not known: it may change anything, the shared globals and session
+/// state included, so every later failure is not trusted, under Codeunit and Function isolation alike (coordinator's
+/// decision 2026-10-19, owner's priority: no false results).
 #[test]
-fn a_failure_after_a_test_refused_before_it_started_that_touches_the_same_tables_is_not_trusted_under_codeunit_isolation()
- {
+fn a_failure_after_a_test_refused_before_it_started_for_a_construct_in_its_reach_is_not_trusted() {
     let src = "xmlport 61410 X { schema { textelement(Root) { } } }
         table 61412 Row { fields { field(1; Id; Integer) { } } keys { key(PK; Id) { } } }
         codeunit 61411 Shared { Subtype = Test;
@@ -1855,15 +1858,18 @@ fn a_failure_after_a_test_refused_before_it_started_that_touches_the_same_tables
         .collect();
     let engine = Engine::new(l.program.clone(), blocked);
     let oi = l.program.objects.iter().position(|o| o.name == "Shared").unwrap();
-    for (isolation, trusted) in [(TestIsolation::Codeunit, false), (TestIsolation::Function, true)] {
+    for isolation in [TestIsolation::Codeunit, TestIsolation::Function] {
         let out = run_codeunit_limited(&engine, &l, oi, None, isolation, None);
         let get = |n: &str| out.iter().find(|(name, _)| name == n).unwrap().1.clone();
         assert!(matches!(get("Refused"), Outcome::NotRun(_)), "{:?}", get("Refused"));
-        assert!(matches!(get("FailsOther"), Outcome::Fail(_)), "{:?}", get("FailsOther"));
-        match get("Fails") {
-            Outcome::Fail(_) => assert!(trusted, "{isolation:?}"),
-            Outcome::NotRun(r) => assert!(!trusted && r.contains("not trusted"), "{isolation:?}: {r}"),
-            o => panic!("{o:?}"),
+        for later in ["Fails", "FailsOther"] {
+            match get(later) {
+                Outcome::NotRun(r) => assert!(
+                    r.contains("not trusted") && r.contains("not known"),
+                    "{isolation:?} {later}: {r}"
+                ),
+                o => panic!("{isolation:?} {later}: {o:?}"),
+            }
         }
     }
 }

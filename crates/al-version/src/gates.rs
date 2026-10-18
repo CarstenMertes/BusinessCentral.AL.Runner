@@ -49,6 +49,17 @@ pub enum Gate {
     /// A query aggregate (Sum, Average, Min, Max) over a BigInteger column is accepted from BC 29
     /// (query/W7QueryAggregates.al, corpus bump 9). Not consumed yet.
     QueryAggregateOverBigInteger,
+    /// `RecordRef.IsDirty` exists from BC 28; the corpus probe is compiled only from BC 28
+    /// (recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al, corpus bump 22). Not consumed yet.
+    RecordRefIsDirtyFrom28,
+    /// The platform table "Custom Report Layout" (table 2000000233) has two more columns from BC 29,
+    /// "Header Part Name" and "Theme Part Name" (Text[300]); before, it ends at "App ID"
+    /// (platform/lt-platform-tables/PtCloudTables.al, corpus bump 22). Not consumed yet.
+    ReportLayoutSelectionPartNamesFrom29,
+    /// `Get` with a Text argument for an Integer key: the Evaluate error `The value "..." can't be evaluated into type Integer.`
+    /// (code `Evaluate:Format`) from BC 28; before, `The type NavInteger is unknown.` (record/lt-get-text-argument/GetWithTextArgument.al,
+    /// corpus bump 22). Not consumed yet.
+    GetTextArgumentEvaluateErrorFrom28,
     /// A BigInteger can be assigned to an Enum variable from BC 29 (an Option variable accepts it in every version).
     /// Before, it is refused with AL0122 (types/lt-bigint-enum-option/BigIntToEnumOption.al, corpus bump 20; must-not-compile
     /// case 0451). Not consumed yet.
@@ -102,6 +113,9 @@ impl Gate {
         Gate::FeatureKeyListChangedFrom28,
         Gate::PermissionObjectNameLongerFrom29,
         Gate::QueryAggregateOverBigInteger,
+        Gate::RecordRefIsDirtyFrom28,
+        Gate::ReportLayoutSelectionPartNamesFrom29,
+        Gate::GetTextArgumentEvaluateErrorFrom28,
         Gate::BigIntegerToEnumVariableFrom29,
         Gate::FromBase64InvalidTextRaises,
         Gate::MediaExportKeepsTheImportedBytes,
@@ -125,6 +139,7 @@ impl Gate {
             | Gate::ReportSaveAsXmlHeaderHasCompanyBlock
             | Gate::PermissionObjectNameLongerFrom29
             | Gate::QueryAggregateOverBigInteger
+            | Gate::ReportLayoutSelectionPartNamesFrom29
             | Gate::BigIntegerToEnumVariableFrom29
             | Gate::MediaExportKeepsTheImportedBytes
             | Gate::PlatformMetadataColumnsFrom29
@@ -137,7 +152,9 @@ impl Gate {
             | Gate::ConversionErrorTextsFrom28
             | Gate::ProbedValuesDifferFrom28
             | Gate::Base64TextIsWindows1252From28
-            | Gate::TestFieldTypedValueTexts => 28,
+            | Gate::TestFieldTypedValueTexts
+            | Gate::GetTextArgumentEvaluateErrorFrom28
+            | Gate::RecordRefIsDirtyFrom28 => 28,
         }
     }
 
@@ -193,6 +210,18 @@ impl Gate {
             Gate::BigIntegerToEnumVariableFrom29 => &[Evidence {
                 file: "types/lt-bigint-enum-option/BigIntToEnumOption.al",
                 lines: "8,28,39,145",
+            }],
+            Gate::ReportLayoutSelectionPartNamesFrom29 => &[Evidence {
+                file: "platform/lt-platform-tables/PtCloudTables.al",
+                lines: "109,115,121,129",
+            }],
+            Gate::GetTextArgumentEvaluateErrorFrom28 => &[Evidence {
+                file: "record/lt-get-text-argument/GetWithTextArgument.al",
+                lines: "103,109,115,150,155",
+            }],
+            Gate::RecordRefIsDirtyFrom28 => &[Evidence {
+                file: "recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al",
+                lines: "12",
             }],
             Gate::QueryAggregateOverBigInteger => &[Evidence {
                 file: "query/W7QueryAggregates.al",

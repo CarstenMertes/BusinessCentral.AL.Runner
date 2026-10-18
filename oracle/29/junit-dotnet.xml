@@ -1,107 +1,107 @@
 <?xml version='1.0' encoding='utf-8'?>
-<testsuites name="hybrid" tests="51" failures="0" errors="0" skipped="0" time="5.743" timestamp="2026-10-17T21:01:08Z"><testsuite name="Codeunit 61400" tests="9" failures="0" errors="0" skipped="0" time="0.169" timestamp="2026-10-17T21:01:06Z">
-    <testcase classname="Codeunit 61400" name="ClrResults_ReadAsTheirAlKind" time="0.073" />
-    <testcase classname="Codeunit 61400" name="IntegerProperties_TakePartInIntegerExpressions_AndStringCompareIsCaseSensitive" time="0.012" />
-    <testcase classname="Codeunit 61400" name="NullStringResult_IsEmptyInExpressions" time="0.004" />
-    <testcase classname="Codeunit 61400" name="FormatOfDotNetObjects_IsToString" time="0.006" />
-    <testcase classname="Codeunit 61400" name="EnumOperators" time="0.005" />
-    <testcase classname="Codeunit 61400" name="Foreach_OverClrCollections" time="0.016" />
-    <testcase classname="Codeunit 61400" name="Foreach_Failures_HaveTheirTextsAndCodes" time="0.022" />
-    <testcase classname="Codeunit 61400" name="CopyStream_WithAMemoryStream" time="0.025" />
-    <testcase classname="Codeunit 61400" name="DateTimeOffset_LocalDateTimeAndOffset" time="0.006" />
+<testsuites name="hybrid" tests="51" failures="0" errors="0" skipped="0" time="9.005" timestamp="2026-10-18T02:38:21Z"><testsuite name="Codeunit 61400" tests="9" failures="0" errors="0" skipped="0" time="0.259" timestamp="2026-10-18T02:38:17Z">
+    <testcase classname="Codeunit 61400" name="ClrResults_ReadAsTheirAlKind" time="0.104" />
+    <testcase classname="Codeunit 61400" name="IntegerProperties_TakePartInIntegerExpressions_AndStringCompareIsCaseSensitive" time="0.019" />
+    <testcase classname="Codeunit 61400" name="NullStringResult_IsEmptyInExpressions" time="0.008" />
+    <testcase classname="Codeunit 61400" name="FormatOfDotNetObjects_IsToString" time="0.011" />
+    <testcase classname="Codeunit 61400" name="EnumOperators" time="0.008" />
+    <testcase classname="Codeunit 61400" name="Foreach_OverClrCollections" time="0.026" />
+    <testcase classname="Codeunit 61400" name="Foreach_Failures_HaveTheirTextsAndCodes" time="0.033" />
+    <testcase classname="Codeunit 61400" name="CopyStream_WithAMemoryStream" time="0.040" />
+    <testcase classname="Codeunit 61400" name="DateTimeOffset_LocalDateTimeAndOffset" time="0.010" />
   </testsuite>
-  <testsuite name="Codeunit 61401" tests="2" failures="0" errors="0" skipped="0" time="0.139" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61401" name="Equal_TextShapes" time="0.102" />
-    <testcase classname="Codeunit 61401" name="Plus_TextShapes" time="0.037" />
+  <testsuite name="Codeunit 61401" tests="2" failures="0" errors="0" skipped="0" time="0.208" timestamp="2026-10-18T02:38:18Z">
+    <testcase classname="Codeunit 61401" name="Equal_TextShapes" time="0.155" />
+    <testcase classname="Codeunit 61401" name="Plus_TextShapes" time="0.053" />
   </testsuite>
-  <testsuite name="Codeunit 61402" tests="1" failures="0" errors="0" skipped="0" time="0.056" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61402" name="Compare_Order" time="0.056" />
+  <testsuite name="Codeunit 61402" tests="1" failures="0" errors="0" skipped="0" time="0.080" timestamp="2026-10-18T02:38:18Z">
+    <testcase classname="Codeunit 61402" name="Compare_Order" time="0.080" />
   </testsuite>
-  <testsuite name="Codeunit 61403" tests="1" failures="0" errors="0" skipped="0" time="0.042" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61403" name="In_Sets" time="0.042" />
+  <testsuite name="Codeunit 61403" tests="1" failures="0" errors="0" skipped="0" time="0.079" timestamp="2026-10-18T02:38:18Z">
+    <testcase classname="Codeunit 61403" name="In_Sets" time="0.079" />
   </testsuite>
-  <testsuite name="Codeunit 61405" tests="1" failures="0" errors="0" skipped="0" time="0.036" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61405" name="Pair_DotNetOperands" time="0.036" />
+  <testsuite name="Codeunit 61405" tests="1" failures="0" errors="0" skipped="0" time="0.054" timestamp="2026-10-18T02:38:18Z">
+    <testcase classname="Codeunit 61405" name="Pair_DotNetOperands" time="0.054" />
   </testsuite>
-  <testsuite name="Codeunit 61406" tests="2" failures="0" errors="0" skipped="0" time="0.121" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61406" name="Equal_IntegerShapes" time="0.054" />
-    <testcase classname="Codeunit 61406" name="Arithmetic_IntegerShapes" time="0.067" />
+  <testsuite name="Codeunit 61406" tests="2" failures="0" errors="0" skipped="0" time="0.196" timestamp="2026-10-18T02:38:18Z">
+    <testcase classname="Codeunit 61406" name="Equal_IntegerShapes" time="0.086" />
+    <testcase classname="Codeunit 61406" name="Arithmetic_IntegerShapes" time="0.110" />
   </testsuite>
-  <testsuite name="Codeunit 61407" tests="1" failures="0" errors="0" skipped="0" time="0.053" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61407" name="Compare_Order" time="0.053" />
+  <testsuite name="Codeunit 61407" tests="1" failures="0" errors="0" skipped="0" time="0.081" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61407" name="Compare_Order" time="0.081" />
   </testsuite>
-  <testsuite name="Codeunit 61408" tests="1" failures="0" errors="0" skipped="0" time="0.044" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61408" name="In_Sets" time="0.044" />
+  <testsuite name="Codeunit 61408" tests="1" failures="0" errors="0" skipped="0" time="0.065" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61408" name="In_Sets" time="0.065" />
   </testsuite>
-  <testsuite name="Codeunit 61410" tests="1" failures="0" errors="0" skipped="0" time="0.036" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61410" name="Pair_DotNetOperands" time="0.036" />
+  <testsuite name="Codeunit 61410" tests="1" failures="0" errors="0" skipped="0" time="0.054" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61410" name="Pair_DotNetOperands" time="0.054" />
   </testsuite>
-  <testsuite name="Codeunit 61411" tests="2" failures="0" errors="0" skipped="0" time="0.095" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61411" name="Equal_DecimalShapes" time="0.048" />
-    <testcase classname="Codeunit 61411" name="Arithmetic_DecimalShapes" time="0.047" />
+  <testsuite name="Codeunit 61411" tests="2" failures="0" errors="0" skipped="0" time="0.149" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61411" name="Equal_DecimalShapes" time="0.076" />
+    <testcase classname="Codeunit 61411" name="Arithmetic_DecimalShapes" time="0.073" />
   </testsuite>
-  <testsuite name="Codeunit 61412" tests="1" failures="0" errors="0" skipped="0" time="0.056" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61412" name="Compare_Order" time="0.056" />
+  <testsuite name="Codeunit 61412" tests="1" failures="0" errors="0" skipped="0" time="0.086" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61412" name="Compare_Order" time="0.086" />
   </testsuite>
-  <testsuite name="Codeunit 61413" tests="1" failures="0" errors="0" skipped="0" time="0.037" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61413" name="In_Sets" time="0.037" />
+  <testsuite name="Codeunit 61413" tests="1" failures="0" errors="0" skipped="0" time="0.057" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61413" name="In_Sets" time="0.057" />
   </testsuite>
-  <testsuite name="Codeunit 61415" tests="1" failures="0" errors="0" skipped="0" time="0.038" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61415" name="Pair_DotNetOperands" time="0.038" />
+  <testsuite name="Codeunit 61415" tests="1" failures="0" errors="0" skipped="0" time="0.058" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61415" name="Pair_DotNetOperands" time="0.058" />
   </testsuite>
-  <testsuite name="Codeunit 61417" tests="1" failures="0" errors="0" skipped="0" time="0.055" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61417" name="Compare_Order" time="0.055" />
+  <testsuite name="Codeunit 61417" tests="1" failures="0" errors="0" skipped="0" time="0.083" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61417" name="Compare_Order" time="0.083" />
   </testsuite>
-  <testsuite name="Codeunit 61418" tests="1" failures="0" errors="0" skipped="0" time="0.027" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61418" name="In_Sets" time="0.027" />
+  <testsuite name="Codeunit 61418" tests="1" failures="0" errors="0" skipped="0" time="0.044" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61418" name="In_Sets" time="0.044" />
   </testsuite>
-  <testsuite name="Codeunit 61420" tests="1" failures="0" errors="0" skipped="0" time="0.036" timestamp="2026-10-17T21:01:07Z">
-    <testcase classname="Codeunit 61420" name="Pair_DotNetOperands" time="0.036" />
+  <testsuite name="Codeunit 61420" tests="1" failures="0" errors="0" skipped="0" time="0.058" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61420" name="Pair_DotNetOperands" time="0.058" />
   </testsuite>
-  <testsuite name="Codeunit 61437" tests="3" failures="0" errors="0" skipped="0" time="0.141" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61437" name="GetDotNetType_NumericAndBoolean_FullNameNameFormat" time="0.059" />
-    <testcase classname="Codeunit 61437" name="GetDotNetType_TextAndTemporal_FullNameNameFormat" time="0.052" />
-    <testcase classname="Codeunit 61437" name="GetDotNetType_DefaultValues_FullName" time="0.030" />
+  <testsuite name="Codeunit 61437" tests="3" failures="0" errors="0" skipped="0" time="0.223" timestamp="2026-10-18T02:38:19Z">
+    <testcase classname="Codeunit 61437" name="GetDotNetType_NumericAndBoolean_FullNameNameFormat" time="0.094" />
+    <testcase classname="Codeunit 61437" name="GetDotNetType_TextAndTemporal_FullNameNameFormat" time="0.082" />
+    <testcase classname="Codeunit 61437" name="GetDotNetType_DefaultValues_FullName" time="0.047" />
   </testsuite>
-  <testsuite name="Codeunit 61438" tests="1" failures="0" errors="0" skipped="0" time="0.052" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61438" name="GetDotNetType_VariantHoldingAlValue_FullNameAndFormat" time="0.052" />
+  <testsuite name="Codeunit 61438" tests="1" failures="0" errors="0" skipped="0" time="0.078" timestamp="2026-10-18T02:38:20Z">
+    <testcase classname="Codeunit 61438" name="GetDotNetType_VariantHoldingAlValue_FullNameAndFormat" time="0.078" />
   </testsuite>
-  <testsuite name="Codeunit 61440" tests="3" failures="0" errors="0" skipped="0" time="0.052" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61440" name="GetDotNetType_Record_FullNameNameFormat" time="0.029" />
-    <testcase classname="Codeunit 61440" name="GetDotNetType_VariantAndRecordRef_FullNameAndFormat" time="0.015" />
-    <testcase classname="Codeunit 61440" name="GetDotNetType_TwoRecordVariablesOfOneTable_EqualsResult" time="0.008" />
+  <testsuite name="Codeunit 61440" tests="3" failures="0" errors="0" skipped="0" time="0.084" timestamp="2026-10-18T02:38:20Z">
+    <testcase classname="Codeunit 61440" name="GetDotNetType_Record_FullNameNameFormat" time="0.048" />
+    <testcase classname="Codeunit 61440" name="GetDotNetType_VariantAndRecordRef_FullNameAndFormat" time="0.023" />
+    <testcase classname="Codeunit 61440" name="GetDotNetType_TwoRecordVariablesOfOneTable_EqualsResult" time="0.013" />
   </testsuite>
-  <testsuite name="Codeunit 61441" tests="2" failures="0" errors="0" skipped="0" time="0.058" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61441" name="GetDotNetType_DotNetVariable_FullNameNameFormatEqualsGetType" time="0.045" />
-    <testcase classname="Codeunit 61441" name="GetDotNetType_ClrResultAndVariantHoldingDotNet_FullName" time="0.013" />
+  <testsuite name="Codeunit 61441" tests="2" failures="0" errors="0" skipped="0" time="0.092" timestamp="2026-10-18T02:38:20Z">
+    <testcase classname="Codeunit 61441" name="GetDotNetType_DotNetVariable_FullNameNameFormatEqualsGetType" time="0.072" />
+    <testcase classname="Codeunit 61441" name="GetDotNetType_ClrResultAndVariantHoldingDotNet_FullName" time="0.020" />
   </testsuite>
-  <testsuite name="Codeunit 61442" tests="2" failures="0" errors="0" skipped="0" time="0.081" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61442" name="TypeEquals_AlValuePairs_ResultBothWays" time="0.072" />
-    <testcase classname="Codeunit 61442" name="TypeEquals_VariantAndClrString_Result" time="0.009" />
+  <testsuite name="Codeunit 61442" tests="2" failures="0" errors="0" skipped="0" time="0.120" timestamp="2026-10-18T02:38:20Z">
+    <testcase classname="Codeunit 61442" name="TypeEquals_AlValuePairs_ResultBothWays" time="0.106" />
+    <testcase classname="Codeunit 61442" name="TypeEquals_VariantAndClrString_Result" time="0.014" />
   </testsuite>
-  <testsuite name="Codeunit 61447" tests="1" failures="0" errors="0" skipped="0" time="0.048" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61447" name="XmlNodeType_Equals_EnumMembers" time="0.048" />
+  <testsuite name="Codeunit 61447" tests="1" failures="0" errors="0" skipped="0" time="0.074" timestamp="2026-10-18T02:38:20Z">
+    <testcase classname="Codeunit 61447" name="XmlNodeType_Equals_EnumMembers" time="0.074" />
   </testsuite>
-  <testsuite name="Codeunit 61448" tests="1" failures="0" errors="0" skipped="0" time="0.035" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61448" name="XmlNodeType_Equals_AlValues" time="0.035" />
+  <testsuite name="Codeunit 61448" tests="1" failures="0" errors="0" skipped="0" time="0.054" timestamp="2026-10-18T02:38:20Z">
+    <testcase classname="Codeunit 61448" name="XmlNodeType_Equals_AlValues" time="0.054" />
   </testsuite>
-  <testsuite name="Codeunit 61449" tests="1" failures="0" errors="0" skipped="0" time="0.051" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61449" name="XmlNodeType_Operators_EnumMembers" time="0.051" />
+  <testsuite name="Codeunit 61449" tests="1" failures="0" errors="0" skipped="0" time="0.076" timestamp="2026-10-18T02:38:20Z">
+    <testcase classname="Codeunit 61449" name="XmlNodeType_Operators_EnumMembers" time="0.076" />
   </testsuite>
-  <testsuite name="Codeunit 61450" tests="1" failures="0" errors="0" skipped="0" time="0.030" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61450" name="XmlNodeType_Order_EnumMembers" time="0.030" />
+  <testsuite name="Codeunit 61450" tests="1" failures="0" errors="0" skipped="0" time="0.046" timestamp="2026-10-18T02:38:20Z">
+    <testcase classname="Codeunit 61450" name="XmlNodeType_Order_EnumMembers" time="0.046" />
   </testsuite>
-  <testsuite name="Codeunit 61451" tests="1" failures="0" errors="0" skipped="0" time="0.045" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61451" name="XmlNodeType_Members_FormatToStringAndNumber" time="0.045" />
+  <testsuite name="Codeunit 61451" tests="1" failures="0" errors="0" skipped="0" time="0.082" timestamp="2026-10-18T02:38:21Z">
+    <testcase classname="Codeunit 61451" name="XmlNodeType_Members_FormatToStringAndNumber" time="0.082" />
   </testsuite>
-  <testsuite name="Codeunit 61471" tests="8" failures="0" errors="0" skipped="0" time="0.114" timestamp="2026-10-17T21:01:08Z">
-    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterErrorInCodeunitRun" time="0.030" />
-    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterErrorWithSubstitutionsInCodeunitRun" time="0.009" />
-    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterErrorInTryFunction" time="0.011" />
-    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterErrorInAsserterror" time="0.008" />
-    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterGetWithoutRow" time="0.020" />
-    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterDivisionByZero" time="0.010" />
-    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterClearLastError_EachFieldGuarded" time="0.015" />
-    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterSuccessfulRunFollowingAnError_EachFieldGuarded" time="0.011" />
+  <testsuite name="Codeunit 61471" tests="8" failures="0" errors="0" skipped="0" time="0.175" timestamp="2026-10-18T02:38:21Z">
+    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterErrorInCodeunitRun" time="0.049" />
+    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterErrorWithSubstitutionsInCodeunitRun" time="0.014" />
+    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterErrorInTryFunction" time="0.018" />
+    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterErrorInAsserterror" time="0.014" />
+    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterGetWithoutRow" time="0.028" />
+    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterDivisionByZero" time="0.014" />
+    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterClearLastError_EachFieldGuarded" time="0.024" />
+    <testcase classname="Codeunit 61471" name="GetLastErrorObject_AfterSuccessfulRunFollowingAnError_EachFieldGuarded" time="0.014" />
   </testsuite>
 </testsuites>

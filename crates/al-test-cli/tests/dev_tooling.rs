@@ -393,7 +393,18 @@ fn top_refusals_area_ranks_one_area_and_selects_it() {
     let a = cli(&["--no-ratchet", "--top-refusals-area", "types"]);
     let b = cli(&["--no-ratchet", "--area", "types", "--top-refusals"]);
     assert_eq!(a.code, 0, "{}", a.err);
-    let ranking = |o: &Out| o.out[o.out.find("Top refusals").unwrap()..].to_string();
+    // The ranking of the main app: the first "Top refusals" section whose header does not name an extra suite
+    // (the OnPrem suite has cases in the types folder since corpus bump 22 and prints its own section).
+    let ranking = |o: &Out| {
+        let start = o
+            .out
+            .match_indices("Top refusals")
+            .map(|(i, _)| i)
+            .find(|&i| !o.out[i..].lines().next().unwrap().contains("onprem"))
+            .unwrap();
+        // The section ends at the first blank line.
+        o.out[start..].split("\n\n").next().unwrap().to_string()
+    };
     assert!(
         ranking(&a).lines().next().unwrap().contains("area types"),
         "{}",

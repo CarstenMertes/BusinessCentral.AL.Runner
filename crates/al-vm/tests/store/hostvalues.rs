@@ -761,7 +761,7 @@ fn get_url(body: &str, url: Option<&str>) -> Result<Value, Signal> {
 fn geturl_web_is_the_host_server_address_and_marks_its_assumption() {
     let r = get_url("exit(GetUrl(ClientType::Web));", None);
     assert!(
-        matches!(&r, Ok(Value::Text(t)) if &**t == "http://localhost:8080/BC/"),
+        matches!(&r, Ok(Value::Text(t)) if &**t == "http://localhost:8080/BC"),
         "{r:?}"
     );
     assert_eq!(
@@ -775,12 +775,43 @@ fn geturl_web_is_the_host_server_address_and_marks_its_assumption() {
     );
 }
 
+// platform/lt-system-database-members/GetUrlCompany.al:67-77, session/lt-geturl-shape/GetUrlShape.al:121-130: the query after
+// the host's address, with the company encoded.
 #[test]
-fn geturl_with_a_company_or_another_client_type_is_refused() {
+fn geturl_with_a_company_or_an_object_builds_the_pinned_query() {
+    for (body, want) in [
+        (
+            "exit(GetUrl(ClientType::Web, 'My Company'));",
+            "http://localhost:8080/BC/?company=My%20Company",
+        ),
+        (
+            "exit(GetUrl(ClientType::Web, 'A&B'));",
+            "http://localhost:8080/BC/?company=A%26B",
+        ),
+        ("exit(GetUrl(ClientType::Web, ''));", "http://localhost:8080/BC"),
+        (
+            "exit(GetUrl(ClientType::Web, 'C', ObjectType::Page, 21));",
+            "http://localhost:8080/BC/?company=C&page=21",
+        ),
+        (
+            "exit(GetUrl(ClientType::Web, '', ObjectType::Report, 6));",
+            "http://localhost:8080/BC/?report=6",
+        ),
+        ("exit(GetUrl(ClientType::Web, 'C', ObjectType::Codeunit, 80));", ""),
+        ("exit(GetUrl(ClientType::Web, 'C', ObjectType::Page, 0));", ""),
+    ] {
+        let r = get_url(body, None);
+        assert!(matches!(&r, Ok(Value::Text(t)) if &**t == want), "{body}: {r:?}");
+    }
+}
+
+// The host part of the other client types, and a character the corpus does not pin in a company, are refused.
+#[test]
+fn geturl_of_another_client_type_or_an_unpinned_character_is_refused() {
     for body in [
-        "exit(GetUrl(ClientType::Web, 'CRONUS'));",
         "exit(GetUrl(ClientType::Phone));",
-        "exit(GetUrl(ClientType::Web, CompanyName(), ObjectType::Page, 21));",
+        "exit(GetUrl(ClientType::Tablet, 'C', ObjectType::Page, 21));",
+        "exit(GetUrl(ClientType::Web, 'A,B'));",
     ] {
         let r = get_url(body, None);
         assert!(
@@ -790,24 +821,55 @@ fn geturl_with_a_company_or_another_client_type_is_refused() {
     }
 }
 
+// text/lt-foreach-text/ForeachText.al:Foreach_Text_Char_Order: a Text visits its characters in order, a Code in upper case.
 #[test]
-fn geturl_refusal_says_which_form_is_built_and_how_many_arguments_the_call_had() {
-    let r = get_url(
-        "exit(GetUrl(ClientType::Web, CompanyName(), ObjectType::Page, 21));",
-        None,
+fn foreach_over_a_text_visits_each_character() {
+    let r = run(
+        "procedure F(): Text var T: Text; Ch: Char; V: Text; begin T := 'a+b'; foreach Ch in T do V += Format(Ch) + ','; exit(V); end;",
     );
-    let Err(Signal::Unsupported(w)) = &r else {
-        panic!("{r:?}")
-    };
-    assert!(w.contains("4 arguments"), "{w}");
-    assert!(
-        w.contains("only GetUrl(ClientType::Web) with no further arguments is built"),
-        "{w}"
+    assert!(matches!(&r, Ok(Value::Text(t)) if &**t == "a,+,b,"), "{r:?}");
+}
+
+// types/lt-evaluate-wide-decimal/EvaluateWideDecimal.al:Evaluate_Decimal_IntegerDigits: 15 digits before the point read, 16 do not.
+#[test]
+fn evaluate_decimal_takes_fifteen_integer_digits_and_not_sixteen() {
+    let r = run(
+        "procedure F(): Text var D: Decimal; A: Boolean; B: Boolean; begin A := Evaluate(D, '999999999999999'); B := Evaluate(D, '1000000000000000'); exit(Format(A) + Format(B)); end;",
     );
-    assert!(w.contains("ADR-042"), "{w}");
-    let r = get_url("exit(GetUrl(ClientType::Phone));", None);
-    let Err(Signal::Unsupported(w)) = &r else {
-        panic!("{r:?}")
-    };
-    assert!(w.contains("1 argument,") || w.contains("1 argument)"), "{w}");
+    assert!(matches!(&r, Ok(Value::Text(t)) if &**t == "YesNo"), "{r:?}");
+}
+
+// types/lt-page-style/PageStyle.al: the members have the ordinals 1 to 11 and a fresh variable is 0.
+#[test]
+fn page_style_members_and_default() {
+    let r = run(
+        "procedure F(): Text var S: PageStyle; begin exit(Format(PageStyle::Subordinate, 0, 2) + Format(PageStyle::None) + Format(S)); end;",
+    );
+    assert!(matches!(&r, Ok(Value::Text(t)) if &**t == "11None0"), "{r:?}");
+}
+
+// types/lt-secret-text-from-text/SecretTextFromText.al:SecretStrSubstNo_TextArgument `text_var_in_template`.
+#[test]
+fn secret_str_subst_no_takes_a_text_variable() {
+    let r = run(
+        "procedure F(): Boolean var P: Text; S: SecretText; begin P := 'v'; S := SecretStrSubstNo('x=%1', P); exit(S.IsEmpty()); end;",
+    );
+    assert!(matches!(r, Ok(Value::Boolean(false))), "{r:?}");
+}
+
+// GetUrlBookmarkFilter.al:`report`, `query` pin only that the result has no '?'; an empty text is a guess, so a Report,
+// Query or Codeunit with a record is refused.
+#[test]
+fn geturl_of_report_query_or_codeunit_with_a_record_is_refused() {
+    for obj in ["Report, 6", "Query, 9150", "Codeunit, 80"] {
+        let body = format!(
+            "var R: Record \"ALT T\"; begin exit(GetUrl(ClientType::Web, 'C', ObjectType::{obj}, R, false)); end;"
+        );
+        let (engine, oi) = compile(&format!("procedure F(): Text {body}"));
+        let r = call(&mut Session::with_host(engine, al_host::Host::deterministic()), oi, "F");
+        assert!(
+            matches!(&r, Err(Signal::Unsupported(w)) if w.contains("no query part")),
+            "{obj}: {r:?}"
+        );
+    }
 }

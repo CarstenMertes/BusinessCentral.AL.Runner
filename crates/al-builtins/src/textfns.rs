@@ -627,6 +627,9 @@ fn secret_content(v: &Value) -> Result<String, Signal> {
             LibraryValue::Text(s) => Ok(s.clone()),
             _ => unsupported("SecretText holding something else"),
         },
+        // A Text or Code variable is taken as its content where a SecretText is expected
+        // (types/lt-secret-text-from-text/SecretTextFromText.al:SecretStrSubstNo_TextArgument, SecretText_TextToParameter).
+        Value::Text(t) | Value::Code(t) if !t.has_marker() => Ok(t.to_string()),
         other => unsupported(format!("{} used as a SecretText", other.describe())),
     }
 }

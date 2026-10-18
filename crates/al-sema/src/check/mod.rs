@@ -461,6 +461,7 @@ fn system_enums(catalog: &Catalog) -> HashSet<String> {
         "transactionmodel",
         "commitbehavior",
         "errorbehavior",
+        "pagestyle",
         "tableconnectiontype",
     ] {
         out.insert(extra.to_string());

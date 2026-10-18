@@ -73,7 +73,7 @@ artifact's RapidStart package, instead of restoring the backup (opt-in; see the 
 for the rest of Microsoft's recipe). For a parity report, `--disabled-tests DIR` reads Microsoft's
 `src/DisabledTests` folder from BCApps. A normal run still runs those tests and marks them in
 the summary and the JUnit file. `--parity` also skips them.
-`--server-url URL` (default `http://localhost:8080/BC/`) sets the address `GetUrl(ClientType::Web)` answers with; a company built from the package needs it for Company-Initialize.
+`--server-url URL` (default `http://localhost:8080/BC`) sets the address `GetUrl(ClientType::Web)` answers with; a company built from the package needs it for Company-Initialize.
 
 **6. .NET is optional.** Nothing in the core needs .NET. AL code that uses the `DotNet` type
 is served by a .NET 8 helper process. A few common types (for example `StringBuilder`,

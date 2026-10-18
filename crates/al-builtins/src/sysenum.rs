@@ -125,6 +125,23 @@ pub fn members(name: &str) -> Option<&'static [&'static str]> {
         // Only `LocalScope` is named by the corpus; the ordinals are not pinned.
         "notificationscope" => Some(&["LocalScope", "GlobalScope"]),
         "webserviceactionresultcode" => Some(&["None", "Get", "Created", "Updated", "Deleted"]),
+        // The StyleExpr member type. The ordinals (None 1 to Subordinate 11) and the value 0 of a variable never assigned or cleared,
+        // which has no member and formats as `0`, are read with Format(x, 0, 2) and Format(x) (types/lt-page-style/PageStyle.al:
+        // PageStyle_FormatNumber2_AllMembers, PageStyle_Variable_Clear). The empty name at 0 formats as its number.
+        "pagestyle" => Some(&[
+            "",
+            "None",
+            "Standard",
+            "StandardAccent",
+            "Strong",
+            "StrongAccent",
+            "Attention",
+            "AttentionAccent",
+            "Favorable",
+            "Unfavorable",
+            "Ambiguous",
+            "Subordinate",
+        ]),
         "fieldtype" => Some(&[
             "TableFilter",
             "RecordID",
@@ -274,6 +291,7 @@ pub fn is_platform(members: &[String]) -> bool {
         "notificationscope",
         "webserviceactionresultcode",
         "fieldtype",
+        "pagestyle",
     ];
     kind_of(members).is_some()
         || is_field_table_type(members)

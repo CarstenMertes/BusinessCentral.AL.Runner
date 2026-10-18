@@ -72,7 +72,7 @@ impl ClientType {
 }
 
 /// The server base address when nothing sets one (ADR-042).
-pub const DEFAULT_SERVER_URL: &str = "http://localhost:8080/BC/";
+pub const DEFAULT_SERVER_URL: &str = "http://localhost:8080/BC";
 
 /// Checks a `--server-url` value: an absolute `http` or `https` URL with a host.
 pub fn check_server_url(url: &str) -> Result<String, String> {
@@ -589,7 +589,7 @@ mod tests {
     #[test]
     fn the_server_base_url_has_a_default_and_can_be_set_through_every_wrapper() {
         let h = Host::default();
-        assert_eq!(h.identity.server_base_url(), "http://localhost:8080/BC/");
+        assert_eq!(h.identity.server_base_url(), "http://localhost:8080/BC");
         let h = h
             .with_server_url("https://bc.example/BC/")
             .in_company("X")

@@ -301,6 +301,10 @@ impl Session {
     pub(crate) fn foreach_items(coll: Value) -> Result<Vec<Value>, Signal> {
         Ok(match coll {
             Value::List(l) => l.borrow().to_vec(),
+            // A Text or Code visits its UTF-16 code units, one Char each, in order; the text is read once, so an assignment
+            // inside the loop changes nothing about the visits (text/lt-foreach-text/ForeachText.al:Foreach_Text_Char_Order,
+            // Foreach_Text_Char_Sources, Foreach_Text_ModifyDuringLoop; a Text[1] variable: Foreach_Text_Text1_Variable).
+            Value::Text(t) | Value::Code(t) if !t.has_marker() => t.encode_utf16().map(Value::Char).collect(),
             // The nodes an XPath query found (corpus handlers/TestReportFlowFieldColumnAutoCalc.al).
             other => match al_builtins::json::array_items(&other).or_else(|| al_builtins::xml::node_list_items(&other))
             {

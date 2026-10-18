@@ -67,3 +67,11 @@ Owner decision 2026-10-17: "host setting + probe".
 `al-test-cli` has no flag (it is the corpus tool; it uses the default). The summary prints `server address: <url> (default|--server-url|ALRUNNER_SERVER_URL)`.
 The baseline cache key holds the address. `GetUrl#1` with `ClientType::Web` and one argument is built; every other form is refused.
 Tests: `al-host` (default, wrappers, check), `al-vm/tests/store/hostvalues.rs` (the value, the mark, the refusals), `alrunner-cli` (arguments, summary, serve request).
+
+## Decided without owner review (2026-10-18)
+
+Corpus bump 22 pins the forms with a company, an object, a record and its filters (session/lt-geturl-shape/GetUrlShape.al,
+platform/lt-system-database-members/GetUrl*.al). They build `<base>/?query`, where `<base>` is `GetUrl(ClientType::Web)` cut at
+its first `?` and has no trailing slash. So the default is now `http://localhost:8080/BC` (no trailing slash), and the forms
+with arguments cut a trailing slash of a user-set address before adding `/?`. `GetUrl(ClientType::Web)` alone still returns the
+address as set. Other client types stay refused: their host part is not pinned (only the scheme and the query are).

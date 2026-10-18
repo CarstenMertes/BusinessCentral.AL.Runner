@@ -342,7 +342,7 @@ TEST DATA
 
 OTHER
     --server-url URL     The base address of the web client that GetUrl(ClientType::Web) answers with
-                         (default http://localhost:8080/BC/, else $ALRUNNER_SERVER_URL). Absolute http or
+                         (default http://localhost:8080/BC, else $ALRUNNER_SERVER_URL). Absolute http or
                          https URL without a query. The summary prints the address. Other GetUrl forms are refused.
     --environment ENV    The server Environment Information describes: `saas` (default; the probed
                          sandbox: IsSaaS and IsSandbox Yes) or `onprem` (IsSaaS and IsSandbox No

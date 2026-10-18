@@ -275,6 +275,7 @@ al-deps        dependency apps: .alpackages, Microsoft artifact feed, cache, pac
 - `faultsite.rs` (57): Where a refusal or a failure was raised, for `al-test-cli --explain`. Entry: `FaultFrame` 14, `trace_faults` 23, `fault_site` 30, `note_fault` 40.
 - `filterpage.rs` (268): FilterPageBuilder. Entry: `filter_page_builder_op` 64.
 - `flowfields.rs` (623): FlowFields (`CalcFormula`), FlowFilters, `CalcFields`, `CalcSums` and `SetAutoCalcFields`.
+- `geturl.rs` (230): `GetUrl` for `ClientType::Web` with a company, an object, a record bookmark or filters (ADR-042). Entry: `Session::get_url`.
 - `globaltriggers.rs` (225): The events of the platform codeunit `Global Triggers` (2000000002, in the platform `System.app`). Entry: `global_setup` 63, `global_enabled` 142, `global_trigger` 157.
 - `hostvalues.rs` (259): Builtins that answer from the host (ADR-006). Entry: `datetime_of_unix_millis` 26, `Replaced` 142.
 - `interfaces.rs` (106): Interface variables: dispatch through the implementing codeunit. Entry: `interface_test` 32, `interface_target` 54, `enum_implementation` 81.

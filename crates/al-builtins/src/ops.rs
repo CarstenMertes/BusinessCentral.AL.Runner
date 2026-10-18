@@ -161,7 +161,18 @@ pub fn convert(v: Value, t: &RtType) -> Result<Value, Signal> {
             let d = as_decimal(&v).expect("numeric");
             match i64::try_from(d.mantissa() / 10i128.pow(d.scale())) {
                 Ok(ms) if d.fract() == Decimal::ZERO => Value::Duration(ms),
-                _ => return unsupported(format!("{d} as a Duration (rounding not pinned by the corpus yet)")),
+                // A fraction raises and leaves the target unchanged (types/lt-filter-enum-relation-duration-guid/D_Duration.al:211-212,
+                // 217-218). A value beyond Int64 is not pinned.
+                Ok(_) => {
+                    return raise(
+                        format!(
+                            "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {} to System.Int64.",
+                            d.normalize()
+                        ),
+                        "ConversionCast",
+                    );
+                }
+                Err(_) => return unsupported(format!("{d} as a Duration (beyond Int64, not pinned)")),
             }
         }
         // Numbers.
@@ -614,7 +625,7 @@ fn duration_with_number(op: Arith, duration_first: bool, d: i64, k: i64) -> Resu
 
 /// Duration `/`, `div` and `mod` by a whole number, and Duration / Duration (pinned by corpus
 /// types/lt-filter-enum-relation-duration-guid/D_Duration.al:354-370 with 90000 ms: `/ 4` is 22500 ms, `div 7` is 12,857, `mod 7` is 1,
-/// Duration / Duration is the Decimal 3, `/ 7` raises ConversionCast because the quotient is no whole number of milliseconds).
+/// Duration / Duration is the Decimal 3, `/ 7` is the Decimal 12857.1428571428571; only assigning it to a Duration raises).
 #[cold]
 #[inline(never)]
 fn duration_divide(op: Arith, a: i64, r: &Value) -> Result<Value, Signal> {
@@ -646,19 +657,13 @@ fn duration_divide(op: Arith, a: i64, r: &Value) -> Result<Value, Signal> {
             })))
         }
         // The quotient is a number too (`slash-int` is `22500`, ExpressionBinaryDateTimeOperands.al:P195_Binary_DurationOperands).
-        Arith::Div if a % b == 0 => Ok(Value::Decimal(Decimal::from(a / b))),
-        Arith::Div => {
-            let q = Decimal::from(a)
-                .checked_div(Decimal::from(b))
-                .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
-                .ok_or_else(|| Signal::Unsupported("decimal overflow".into()))?;
-            raise(
-                format!(
-                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {q} to System.Int64."
-                ),
-                "ConversionCast",
-            )
-        }
+        // The quotient is a Decimal and never raises; only an assignment into a Duration does when it has a fraction
+        // (D_Duration.al:358-362 `asserterror D := D1 / 7`, `Dec := D1 / D2`).
+        Arith::Div => Decimal::from(a)
+            .checked_div(Decimal::from(b))
+            .and_then(|q| q.round_sf_with_strategy(18, rust_decimal::RoundingStrategy::MidpointAwayFromZero))
+            .map(Value::Decimal)
+            .ok_or_else(|| Signal::Unsupported("decimal overflow".into())),
         _ => unsupported("Duration arithmetic (not pinned)".to_string()),
     }
 }
@@ -1674,7 +1679,7 @@ mod tests {
         ));
         assert!(matches!(
             convert(d("1.5"), &RtType::Duration),
-            Err(Signal::Unsupported(_))
+            Err(Signal::Error(e)) if e.code == "ConversionCast"
         ));
     }
 
@@ -1743,14 +1748,50 @@ mod tests {
             arith(Arith::Div, &d1, &Value::Duration(30_000)),
             Ok(Value::Decimal(x)) if x == Decimal::from(3)
         ));
-        let Err(Signal::Error(e)) = arith(Arith::Div, &d1, &Value::Integer(7)) else {
-            panic!("a fraction of a millisecond raises");
+        // The division never raises; only the assignment into a Duration does (D_Duration.al:358-362, af291).
+        let q = arith(Arith::Div, &d1, &Value::Integer(7));
+        assert!(
+            matches!(&q, Ok(Value::Decimal(x)) if x.to_string() == "12857.1428571428571"),
+            "{q:?}"
+        );
+        let q = arith(Arith::Div, &d1, &Value::BigInteger(4));
+        assert!(matches!(q, Ok(Value::Decimal(x)) if x == Decimal::from(22_500)));
+        let Err(Signal::Error(e)) = convert(q_of(&d1, 7), &RtType::Duration) else {
+            panic!("a fraction of a millisecond raises on assignment into a Duration");
         };
         assert_eq!(e.code, "ConversionCast");
         assert_eq!(
             e.message,
             "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value 12857.1428571428571 to System.Int64."
         );
+    }
+
+    fn q_of(d: &Value, k: i32) -> Value {
+        match arith(Arith::Div, d, &Value::Integer(k)) {
+            Ok(v) => v,
+            Err(e) => panic!("{e:?}"),
+        }
+    }
+
+    #[test]
+    fn a_decimal_with_a_fraction_into_a_duration_raises() {
+        // types/lt-filter-enum-relation-duration-guid/D_Duration.al:211-212, 217-218 (af186, af191).
+        for (d, text) in [(Decimal::new(25007, 1), "2500.7"), (Decimal::new(-25007, 1), "-2500.7")] {
+            let Err(Signal::Error(e)) = convert(Value::Decimal(d), &RtType::Duration) else {
+                panic!("{text} into a Duration raises");
+            };
+            assert_eq!(e.code, "ConversionCast");
+            assert_eq!(
+                e.message,
+                format!(
+                    "Overflow under conversion of Microsoft.Dynamics.Nav.Runtime.Decimal18 value {text} to System.Int64."
+                )
+            );
+        }
+        assert!(matches!(
+            convert(Value::Decimal(Decimal::new(225000, 1)), &RtType::Duration),
+            Ok(Value::Duration(22_500))
+        ));
     }
 
     #[test]

@@ -315,6 +315,9 @@ pub struct PageState {
     pub window_whole: bool,
     /// The page is landing on its first row as it opens (the reads of a view that ends inside the window differ there).
     pub landing_first: bool,
+    /// The page opened for edit over an empty view and ran its new-record triggers on a blank record; it shows no row and its
+    /// field controls are not editable.
+    pub blank_on_open: bool,
     /// The part opens with its host and reads its rows last to first, once each (see `view_names_link_field`).
     pub read_backwards: bool,
     /// The control that has the client's focus, and whether it is on the current row. Moving
@@ -436,6 +439,7 @@ impl PageState {
             window_eof: false,
             window_whole: false,
             landing_first: false,
+            blank_on_open: false,
             read_backwards: false,
             focus: None,
             focus_in_row: false,

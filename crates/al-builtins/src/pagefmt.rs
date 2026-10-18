@@ -317,20 +317,20 @@ fn parse_typed(
                 .as_ref()
                 .and_then(|c| c.iter().position(|x| x.eq_ignore_ascii_case(t)));
             let i = by_caption.or_else(|| members.iter().position(|x| x.eq_ignore_ascii_case(t)));
-            // A blank text (the blank caption `' '` is trimmed to it) selects the first member whose caption or name
-            // is blank. Not pinned by the corpus; Microsoft's Tasks Matrix tests reset `StatusFilter.SetValue(StatusFilter::" ")`.
-            // Assumption testpage-setvalue-blank-option-member.
+            // A blank text of spaces selects the first member whose caption is blank; the empty text does not, it is refused
+            // (pages/lt-testpage-assertequals-option/TestPageAssertEqualsOption.al:SetValue_BlankOption_AsSpaceText,
+            // SetValue_BlankOption_AsEmptyText). Only a control with an OptionCaption is pinned; a control whose blank member
+            // has no caption stays an assumption (testpage-setvalue-blank-option-member).
             let i = match i {
                 Some(i) => i,
-                None if t.is_empty() => {
-                    let blank = |x: &String| x.trim().is_empty();
-                    let i = match &f.option_captions {
-                        Some(c) => c.iter().position(blank),
-                        None => members.iter().position(blank),
-                    }?;
-                    crate::assumptions::assume(crate::assumptions::Assumption::TestPageSetValueBlankOptionMember);
-                    i
-                }
+                None if t.is_empty() && !text.is_empty() => match &f.option_captions {
+                    Some(c) => c.iter().position(|x| x.trim().is_empty())?,
+                    None => {
+                        let i = members.iter().position(|x| x.trim().is_empty())?;
+                        crate::assumptions::assume(crate::assumptions::Assumption::TestPageSetValueBlankOptionMember);
+                        i
+                    }
+                },
                 None => return None,
             };
             Value::Option(i as i32, members.clone().into())

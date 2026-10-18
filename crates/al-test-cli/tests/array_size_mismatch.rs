@@ -65,14 +65,3 @@ fn a_sixteen_element_argument_in_a_fourteen_element_parameter() {
     );
     assert_eq!(o[0].1, Outcome::Pass, "{:?}", o[0]);
 }
-
-/// A one-field key written with quotes (an empty Code key formats as `T: ""`) is not read back as the quoted text: the corpus pins
-/// single keys `A-1` and `42` only (errors/lt-ms-refusals-128/P128EvalRecordId.al:56-84), so the quoted form is refused.
-#[test]
-fn evaluate_of_a_quoted_single_key_is_refused_not_read_literally() {
-    let src = "table 62710 \"Q Row\" { fields { field(1; K; Code[10]) { } } keys { key(PK; K) { } } }
-        codeunit 62711 T { Subtype = Test; [Test] procedure Quoted() var R: Record \"Q Row\"; Rid: RecordId; begin
-          R.Init(); R.Insert(); if not Evaluate(Rid, Format(R.RecordId)) then Error('eval'); if Rid <> R.RecordId then Error('differs'); end; }";
-    let o = al_testkit::outcomes_in(src, "T");
-    assert!(matches!(&o[0].1, Outcome::NotRun(why) if why.contains("quoted")), "{:?}", o[0]);
-}

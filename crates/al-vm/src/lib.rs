@@ -1024,19 +1024,12 @@ impl Session {
                         .collect();
                     Value::Array(Rc::new(RefCell::new(items)))
                 }
-                // A Notification passed by value is still the caller's own notification: Microsoft's page "Check Credit Limit"
-                // fills its data in `PopulateDataOnNotification(CreditLimitNotification: Notification)` (CheckCreditLimit.Page.al:543)
-                // and the Tests-ERM SendNotificationHandler reads it back (ERMSalesDocumentsII.Codeunit.al:6705, in
-                // OrderOutstandingAmountOnCreditLimitDetails). An assignment copies (errorinfo/lt-errnotif/EnTNotification.al:
-                // Copy_Semantics); no corpus case passes one by value, so this rests on the Microsoft test only.
-                (a @ Value::Library(al_builtins::library_kind::LibraryKind::Notification, _), by_var) => {
-                    if !by_var {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::NotificationByValueShares,
-                        );
-                    }
-                    a
-                }
+                // A Notification passed by value is the caller's own notification: the callee's SetData and Message reach the caller
+                // (events/lt-notification-by-value/NotificationByValue.al:ByValue_CalleeSetsDataAndMessage, ByValue_CalleeSetsData_CallerHadData,
+                // ByValue_CalleeReads; an event argument: Event_ByValueArgument_SubscriberChanges). An assignment copies
+                // (:Assignment_Copies, errorinfo/lt-errnotif/EnTNotification.al:Copy_Semantics). Microsoft's page "Check Credit Limit"
+                // relies on it (CheckCreditLimit.Page.al:543).
+                (a @ Value::Library(al_builtins::library_kind::LibraryKind::Notification, _), _) => a,
                 // An HttpContent passed by reference is the caller's own object; only a by-value one is a copy (see `ops::convert`).
                 (a @ Value::Library(..), true) if matches!(&a, Value::Library(n, _) if n == "HttpContent") => a,
                 // A Variant holding an Integer handed to a `var` Text parameter is passed as it is: no conversion, the callee's

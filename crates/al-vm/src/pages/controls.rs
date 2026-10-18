@@ -248,7 +248,14 @@ impl Session {
                 return Err(
                     // An Enum control raises TestValidation on a card with a row too (pages/lt-page-enum-control/
                     // PageEnumControlCaptionless.al:P161_EnumControl_SetValueSpellings_Captionless `spaceOrdinal`).
-                    if rec_bound && !no_row && !matches!(ty, RtType::DateTime | RtType::Enum(_)) && !self.is_list(st) {
+                    // The empty text on an Option control is refused with TestValidation (pages/lt-testpage-assertequals-option/
+                    // TestPageAssertEqualsOption.al:SetValue_BlankOption_AsEmptyText); another refused option text is not pinned.
+                    if rec_bound
+                        && !no_row
+                        && !matches!(ty, RtType::DateTime | RtType::Enum(_))
+                        && !(matches!(ty, RtType::Option(_)) && text.is_empty())
+                        && !self.is_list(st)
+                    {
                         refuse(self, msg)
                     } else {
                         refuse_bound(msg)
@@ -677,7 +684,9 @@ impl Session {
                 let v = self.control_value(st, idx)?;
                 // An Enum control that refused an entry shows the ordinal, not the caption (controls/W2ValueControls.al:
                 // Enum_VariableControl_*, `value` 0 after a refused `Alpha`, BC 27.5 and 29.0).
-                if let Value::Enum(_, ordinal) = &v {
+                // An Option control does the same after the empty text was refused (pages/lt-testpage-assertequals-option/
+                // TestPageAssertEqualsOption.al:SetValue_BlankOption_AsEmptyText, `afterEmpty` [1]); other refused option texts are not pinned.
+                if let Value::Enum(_, ordinal) | Value::Option(ordinal, _) = &v {
                     if st.borrow().errors.iter().any(|(i, _)| *i == idx) {
                         return Ok(Value::Text(ordinal.to_string().into()));
                     }

@@ -48,6 +48,16 @@ page 62011 "PM Persist"
     end;
     procedure SetTarget(var Row: Record "PM Row") begin Target := Row; end;
 }
+table 62090 "PM Opt Row"
+{
+    fields { field(1; Id; Integer) { } field(2; Opt; Option) { OptionMembers = " ",A,B; OptionCaption = ' ,A,B'; } }
+    keys { key(PK; Id) { } }
+}
+page 62092 "PM Opt Card"
+{
+    PageType = Card; SourceTable = "PM Opt Row";
+    layout { area(Content) { field(Id; Rec.Id) { } field(Opt; Rec.Opt) { } } }
+}
 page 62012 "PM Card"
 {
     PageType = Card; SourceTable = "PM Row";
@@ -1201,5 +1211,51 @@ fn open_new_on_a_page_with_on_find_record_gets_to_the_new_row() {
             R.DeleteAll(); R.\"No.\" := 'F1'; R.Insert();
             C.OpenNew(); C.\"No.\".SetValue('F2'); C.Close();
             if not R.Get('F2') then Error('new row not stored'); end;"
+    ));
+}
+
+// pages/lt-testpage-assertequals-option/TestPageAssertEqualsOption.al:AssertEquals_TextControl_NumbersAndText,
+// AssertEquals_CodeControl_NumbersAndText: an Integer, a BigInteger and a Decimal compare with the control's text.
+#[test]
+fn assert_equals_of_numbers_on_a_code_control() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure Numbers() var C: TestPage \"PM Card\"; B: BigInteger; D: Decimal; begin
+            B := 5; D := 5.5; C.OpenNew(); C.NoCtl.SetValue('5');
+            C.NoCtl.AssertEquals(5); C.NoCtl.AssertEquals(B);
+            asserterror C.NoCtl.AssertEquals(6);
+            Check('AssertEquals for Field: NoCtl Expected = ''6'', Actual = ''5''', GetLastErrorText());
+            C.NoCtl.SetValue('5.5'); C.NoCtl.AssertEquals(D); end;"
+    ));
+}
+
+// pages/lt-testpage-assertequals-option/TestPageAssertEqualsOption.al:SetValue_BlankOption_AsSpaceText: a text of spaces selects the
+// blank member of an option control with an OptionCaption.
+#[test]
+fn set_value_of_a_space_on_an_option_control_selects_the_blank_member() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure SpaceText() var C: TestPage \"PM Opt Card\"; R: Record \"PM Opt Row\"; N: Integer; begin
+            R.DeleteAll(); R.Id := 1; R.Opt := R.Opt::A; R.Insert();
+            C.OpenEdit(); C.Opt.SetValue(' '); Check('[ ]', '[' + C.Opt.Value() + ']'); C.Close();
+            R.Get(1); N := R.Opt; Check('0', Format(N)); end;"
+    ));
+}
+
+// SetValue_BlankOption_AsEmptyText: the empty text is refused with TestValidation and the control then shows the ordinal.
+#[test]
+fn set_value_of_the_empty_text_on_an_option_control_is_refused() {
+    passes(&format!(
+        "{HELPERS}
+        [Test]
+        procedure EmptyText() var C: TestPage \"PM Opt Card\"; R: Record \"PM Opt Row\"; begin
+            R.DeleteAll(); R.Id := 1; R.Opt := R.Opt::A; R.Insert();
+            C.OpenEdit();
+            asserterror C.Opt.SetValue('');
+            Check('TestValidation', GetLastErrorCode());
+            Check('Validation error for Field: Opt,  Message = ''Your entry of '''' is not an acceptable value for ''Opt''. (Select Refresh to discard errors)''', GetLastErrorText());
+            Check('[1]', '[' + C.Opt.Value() + ']'); end;"
     ));
 }

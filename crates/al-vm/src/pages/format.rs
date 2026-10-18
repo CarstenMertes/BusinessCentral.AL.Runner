@@ -361,15 +361,26 @@ impl Session {
                             "AssertEquals of an Enum on a text control (how BC writes it is not pinned)",
                         );
                     }
-                    // An Integer on a Text or Code control is spelled as plain digits (Tests-Marketing Tasks Matrix
-                    // TasksMatrixHandlerWithValue: `Field1.AssertEquals(1)` on a Text[1024] cell). Not pinned by the corpus; other numbers
-                    // keep ops::convert's TypeConversion refusal path. Assumption testpage-assertequals-integer-on-text-control.
-                    Some(RtType::Text(_) | RtType::Code(_)) if matches!(other, Value::Integer(_)) => {
-                        al_builtins::assumptions::assume(
-                            al_builtins::assumptions::Assumption::TestPageAssertEqualsIntegerOnTextControl,
-                        );
-                        let Value::Integer(n) = other else { unreachable!() };
-                        Value::Text(n.to_string().into())
+                    // A number on a Text or Code control is spelled in plain digits (a Decimal without trailing zeros) and compared
+                    // with the control's text (pages/lt-testpage-assertequals-option/TestPageAssertEqualsOption.al:
+                    // AssertEquals_TextControl_NumbersAndText, AssertEquals_CodeControl_NumbersAndText: Integer 0, 5, 6, BigInteger 5,
+                    // Decimal 5.5 and 5.0 against '5.5', '5', '05'). A value outside 0 to 9.99 is not pinned. A Boolean goes through
+                    // ops::convert (pinned in the same tests).
+                    Some(RtType::Text(_) | RtType::Code(_))
+                        if matches!(other, Value::Integer(_) | Value::BigInteger(_) | Value::Decimal(_)) =>
+                    {
+                        let d = match other {
+                            Value::Integer(n) => rust_decimal::Decimal::from(*n),
+                            Value::BigInteger(n) => rust_decimal::Decimal::from(*n),
+                            Value::Decimal(d) => *d,
+                            _ => unreachable!(),
+                        };
+                        if d < rust_decimal::Decimal::ZERO || d >= rust_decimal::Decimal::TEN {
+                            al_builtins::assumptions::assume(
+                                al_builtins::assumptions::Assumption::TestPageAssertEqualsIntegerOnTextControl,
+                            );
+                        }
+                        Value::Text(d.normalize().to_string().into())
                     }
                     Some(rt) => ops::convert(other.clone(), &rt)?,
                     None => other.clone(),
@@ -581,6 +592,14 @@ impl Session {
             }
             cue = page_of(&engine, st).controls[p].parent;
         }
+        // A page that opened for edit over an empty view shows no row, and its fields read No (pages/lt-page-types-empty-table/
+        // PageTypesEmptyTable.al:Card_OpenEdit_EmptyTable `codeEditable`).
+        if st.borrow().blank_on_open
+            && st.borrow().cursor == Cursor::None
+            && matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Field(_))
+        {
+            return Ok(false);
+        }
         // ModifyAllowed = false makes the fields of a stored row read-only (pages/lt-page-autoformat-lookups/P113ModifyAllowed.al:
         // P113_MA_CardEditable: the page is editable, its controls are not; a new row, which can be inserted, is).
         if matches!(page_of(&engine, st).controls[idx].binding, ir::Binding::Field(_))
@@ -594,19 +613,24 @@ impl Session {
             return Ok(false);
         }
         // A field whose source table field says `Editable = false` and whose control declares no Editable of its
-        // own is not editable. Not pinned by the corpus; Microsoft's Payment Export Mgt Unit Test
+        // own is not editable (pinned for a stored field: pages/lt-page-field-editable-source/PageFieldEditableSource.al:
+        // Card_OpenEdit_FieldEditable `lockedNoProp`; a control with its own Editable = true is editable there
+        // `lockedEditableTrue`). A FlowField is not pinned; Microsoft's Payment Export Mgt Unit Test
         // FilterByHasPaymentExportError needs it (assumption page-field-follows-source-field-editable-false).
-        if page_of(&engine, st).controls[idx].prop("editable").is_none()
-            && self.control_field(st, idx).is_some_and(|f| {
-                f.properties
+        if page_of(&engine, st).controls[idx].prop("editable").is_none() {
+            if let Some(f) = self.control_field(st, idx) {
+                if f.properties
                     .iter()
                     .any(|(k, v)| k.eq_ignore_ascii_case("Editable") && v.trim().eq_ignore_ascii_case("false"))
-            })
-        {
-            al_builtins::assumptions::assume(
-                al_builtins::assumptions::Assumption::PageFieldFollowsSourceFieldEditableFalse,
-            );
-            return Ok(false);
+                {
+                    if !f.stored {
+                        al_builtins::assumptions::assume(
+                            al_builtins::assumptions::Assumption::PageFieldFollowsSourceFieldEditableFalse,
+                        );
+                    }
+                    return Ok(false);
+                }
+            }
         }
         Ok((!rec_bound || self.page_editable(st)) && self.prop_bool_now(st, idx, "editable", true)?)
     }

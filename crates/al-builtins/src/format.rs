@@ -337,8 +337,14 @@ pub fn format_value(v: &Value, length: i32, standard: i32, ctx: &dyn FormatCtx) 
                     .iter()
                     .map(|k| {
                         format_value(k, 0, key_standard, ctx).map(|t| {
-                            if t.is_empty() || (matches!(k, Value::Text(_) | Value::Code(_)) && t.contains(',')) {
-                                format!("\"{t}\"")
+                            // A text that starts with a double quote is quoted and doubles its quotes (types/lt-evaluate-recordid/
+                            // EvaluateRecordIdComposite.al:RoundTrip_KeyValueWithComma `dquote`: `"Q"` reads `"""Q"""`); a quote further in
+                            // is left as it is (types/lt-implicit-conversions/P79RecordId.al:CompositeKey_SpecialCharacters: `A"B`).
+                            if t.is_empty()
+                                || (matches!(k, Value::Text(_) | Value::Code(_))
+                                    && (t.contains(',') || t.starts_with('"')))
+                            {
+                                format!("\"{}\"", t.replace('"', "\"\""))
                             } else {
                                 t
                             }

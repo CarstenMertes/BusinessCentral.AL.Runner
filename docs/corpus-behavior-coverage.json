@@ -13671,7 +13671,7 @@
         "code": "IndexOutOfBounds",
         "file": "crates/al-vm/src/interp.rs",
         "generic": false,
-        "line": 1125,
+        "line": 1124,
         "pinned": true,
         "site": "collections/lt-array-rows/ArrayRows.al:185",
         "template": "Index out of bounds."

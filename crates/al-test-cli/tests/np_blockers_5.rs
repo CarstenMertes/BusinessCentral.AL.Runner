@@ -9,15 +9,29 @@ use al_vm::Engine;
 fn run_with_base(base: &str, objects: &str) -> Vec<(String, Outcome)> {
     let (ws, l) = al_sema::lower::compile_apps(
         vec![
-            AppSource { id: "base".into(), name: "base".into(), dependencies: vec![], files: vec![("b.al".into(), base.into())] },
-            AppSource { id: "main".into(), name: "main".into(), dependencies: vec!["base".into()], files: vec![("m.al".into(), objects.into())] },
+            AppSource {
+                id: "base".into(),
+                name: "base".into(),
+                dependencies: vec![],
+                files: vec![("b.al".into(), base.into())],
+            },
+            AppSource {
+                id: "main".into(),
+                name: "main".into(),
+                dependencies: vec!["base".into()],
+                files: vec![("m.al".into(), objects.into())],
+            },
         ],
         vec![AppKind::Dependency, AppKind::Workspace],
         &Default::default(),
     );
     assert!(ws.diagnostics.is_empty(), "{:?}", ws.diagnostics);
     let oi = l.program.objects.iter().position(|o| o.name == "T").unwrap();
-    let blocked = l.unsupported.iter().map(|o| o.iter().map(|r| r.first().cloned()).collect()).collect();
+    let blocked = l
+        .unsupported
+        .iter()
+        .map(|o| o.iter().map(|r| r.first().cloned()).collect())
+        .collect();
     let engine = Engine::new(l.program.clone(), blocked);
     run_codeunit(&engine, &l, oi)
 }

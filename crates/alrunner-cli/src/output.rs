@@ -389,6 +389,7 @@ mod tests {
             coverage: Vec::new(),
             messages: Vec::new(),
             captured: None,
+            impact: Vec::new(),
         }
     }
 

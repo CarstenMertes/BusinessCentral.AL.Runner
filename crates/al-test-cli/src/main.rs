@@ -565,6 +565,8 @@ fn run_version(
         hooks: Default::default(),
         clock_starts: (!clocks.is_empty()).then(|| std::sync::Arc::new(clocks)),
         quiet_baseline: false,
+        impact_trace: false,
+        narrow: None,
     };
     let load_time = started.elapsed();
     let rt = runtime::CorpusRuntime::try_run_suites_with(

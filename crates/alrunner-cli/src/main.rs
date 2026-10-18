@@ -6,6 +6,7 @@ mod bcapps;
 mod capture;
 mod coverage;
 mod impact;
+mod impact_index;
 mod output;
 mod recipe;
 mod recipe_run;
@@ -150,6 +151,13 @@ fn real_main() -> ExitCode {
         },
         Command::Serve(daemon) => match serve::serve(&daemon) {
             Ok(()) => ExitCode::SUCCESS,
+            Err(e) => {
+                eprintln!("error: {e}");
+                ExitCode::from(2)
+            }
+        },
+        Command::ImpactIndexBuild(a) => match impact_index::build(&a) {
+            Ok(code) => ExitCode::from(code),
             Err(e) => {
                 eprintln!("error: {e}");
                 ExitCode::from(2)

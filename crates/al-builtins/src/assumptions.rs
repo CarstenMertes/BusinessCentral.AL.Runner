@@ -265,12 +265,6 @@ registry! {
         tests: "Tests-ERM SalesInvoiceTryPreview and the other posting preview tests (Gen. Jnl.-Post Preview): about 30 tests.",
         probe: "B.GetTable(A) with A open on a table with a filter and a found row; change A, read B; with A not open; with B open on another table.",
     },
-    MinimumActiveRowVersionIdle => {
-        id: "minimum-active-row-version-idle",
-        assumed: "Database.MinimumActiveRowVersion() answers LastUsedRowVersion() + 1: the session is the only one, so no other transaction holds an older row version. The corpus pins only 0 <= value <= LastUsedRowVersion() + 1 and that a later call is not lower.",
-        tests: "No Microsoft test. The corpus tests that pin the bounds (platform/lt-platform-members/PlTDatabase.al:MinimumActiveRowVersion_Relations, session/TestBCDatabaseContracts.al, session/TestMiscComplete.al) pass with any value in range; NP Retail's change tracker reads the value as the boundary below which row versions are committed (about 420 partner tests).",
-        probe: "The exact value with no other session: before and after an Insert, inside an open write transaction, after Commit, and equal to LastUsedRowVersion() + 1 or not.",
-    },
     RequestPageCaptionSet => {
         id: "request-page-caption-set",
         assumed: "`RequestOptionsPage.Caption := Text` in the code of a report changes nothing a test can see: a request page handler's `TestRequestPage.Caption` is not changed by it.",

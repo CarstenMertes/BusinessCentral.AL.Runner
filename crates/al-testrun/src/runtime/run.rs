@@ -268,8 +268,9 @@ pub(crate) fn run_codeunit_core(
     // Set by the first test of the codeunit that did not pass: it drew other numbers from `Random` than BC did, and the
     // sequence is the session's.
     let mut earlier_not_run: Option<String> = None;
-    // The previous test when it was refused before it started: its name and reason, and the tables it touches.
-    let mut refused_before_start: Option<(String, std::collections::BTreeSet<u32>)> = None;
+    // Every earlier test refused before it started that can write a table or draw a random number: its name and reason,
+    // and what its static reach holds.
+    let mut refused_before_start: Vec<(String, ReachFacts)> = Vec::new();
     let mut panicked = false;
     for r in tests.iter().copied() {
         // A cancelled run starts no further test (the one running finishes).
@@ -418,30 +419,35 @@ pub(crate) fn run_codeunit_core(
             }
         };
         // A test refused before it started did not leave what BC would have left in the database: under TestIsolation =
-        // Codeunit the next test sees that. A failure of the test right after it, when both touch a table in common, is
-        // not trusted (Tests-ERM "Discount Setup Notifications": the refused test would have reset the posting setups
-        // the test before it left blank). Only the next test is covered: the older refused tests of the codeunit
-        // touch too many tables to say (probe wanted, see the report of branch ms-top-refusals-3).
-        let tables_of_this = (checkpoint.is_none() && (matches!(outcome, Outcome::Fail(_)) || !began))
-            .then(|| tables_touched(lowered, object, r));
-        let outcome = match (outcome, &refused_before_start, &tables_of_this) {
-            (Outcome::Fail(m), Some((first, tables)), Some(mine)) if !tables.is_disjoint(mine) => {
-                Outcome::NotRun(format!(
-                    "the test right before this one in the codeunit was refused before it started ({first}) and touches the same tables, so the data it would have left is not BC's; this failure is not trusted: {m}"
-                ))
+        // Codeunit a later test sees that. A failure of a later test is not trusted when what a refused test of the codeunit
+        // can write (its static reach, subscribers included) meets what this test can read (Tests-ERM "Discount Setup
+        // Notifications": the refused test would have reset the posting setups the test before it left blank). A refused
+        // test that writes nothing this test reads does not make its failure doubtful.
+        let facts_of_this = (matches!(outcome, Outcome::Fail(_)) || !began)
+            .then(|| reach_facts(&session.engine.clone(), lowered, object, r));
+        let outcome = match (outcome, &facts_of_this) {
+            (Outcome::Fail(m), Some(mine)) if checkpoint.is_none() => {
+                match refused_before_start.iter().find(|(_, w)| w.writes_meet(&mine.touched)) {
+                    Some((first, _)) => Outcome::NotRun(format!(
+                        "an earlier test of this codeunit was refused before it started ({first}) and can write a table this test reads, so the data it would have left is not BC's; this failure is not trusted: {m}"
+                    )),
+                    None => Outcome::Fail(m),
+                }
             }
-            (o, _, _) => o,
+            (o, _) => o,
         };
-        refused_before_start = match (&outcome, began, tables_of_this) {
-            (Outcome::NotRun(why), false, Some(tables)) => Some((
-                format!("{}: not run ({why})", routine.name).chars().take(120).collect(),
-                tables,
-            )),
-            _ => None,
-        };
+        if let (Outcome::NotRun(why), false, Some(facts)) = (&outcome, began, facts_of_this) {
+            if facts.random || !facts.writes.is_empty() || facts.writes_any {
+                refused_before_start.push((
+                    format!("{}: not run ({why})", routine.name).chars().take(120).collect(),
+                    facts,
+                ));
+            }
+        }
         let drew = session.random_draws() > draws_before;
         let fresh_not_run = match &outcome {
-            Outcome::NotRun(why) => Some(
+            // A test refused before it started drew nothing, where BC drew; whether it could have is its static reach (below).
+            Outcome::NotRun(why) if began => Some(
                 format!("{}: did not run ({why})", routine.name)
                     .chars()
                     .take(120)
@@ -471,6 +477,13 @@ pub(crate) fn run_codeunit_core(
         let outcome = match (outcome, &earlier_not_run) {
             (Outcome::Fail(m), Some(first)) if drew => Outcome::NotRun(format!(
                 "a test before this one in the codeunit did not pass ({first}) and this test draws random numbers: a test that stopped early or did not run leaves other numbers of the shared sequence than BC's; this failure is not trusted: {m}"
+            )),
+            (o, _) => o,
+        };
+        // The same for a test refused before it started whose static reach holds a `Random` call.
+        let outcome = match (outcome, refused_before_start.iter().find(|(_, f)| f.random)) {
+            (Outcome::Fail(m), Some((first, _))) if drew => Outcome::NotRun(format!(
+                "a test before this one in the codeunit did not run ({first}) and could draw random numbers, and this test draws random numbers: the shared sequence is not BC's; this failure is not trusted: {m}"
             )),
             (o, _) => o,
         };

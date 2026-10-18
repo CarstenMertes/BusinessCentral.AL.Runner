@@ -49,6 +49,10 @@ pub enum Gate {
     /// A query aggregate (Sum, Average, Min, Max) over a BigInteger column is accepted from BC 29
     /// (query/W7QueryAggregates.al, corpus bump 9). Not consumed yet.
     QueryAggregateOverBigInteger,
+    /// Typing the key of a card after a line was entered in its list part raises an error that cannot be caught on BC 27
+    /// (an uncatchable CLR exception), so the corpus probe exists only from BC 28
+    /// (pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al, corpus bump 23). Not consumed yet.
+    PartLineBeforeHostKeyFrom28,
     /// `RecordRef.IsDirty` exists from BC 28; the corpus probe is compiled only from BC 28
     /// (recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al, corpus bump 22). Not consumed yet.
     RecordRefIsDirtyFrom28,
@@ -113,6 +117,7 @@ impl Gate {
         Gate::FeatureKeyListChangedFrom28,
         Gate::PermissionObjectNameLongerFrom29,
         Gate::QueryAggregateOverBigInteger,
+        Gate::PartLineBeforeHostKeyFrom28,
         Gate::RecordRefIsDirtyFrom28,
         Gate::ReportLayoutSelectionPartNamesFrom29,
         Gate::GetTextArgumentEvaluateErrorFrom28,
@@ -154,7 +159,8 @@ impl Gate {
             | Gate::Base64TextIsWindows1252From28
             | Gate::TestFieldTypedValueTexts
             | Gate::GetTextArgumentEvaluateErrorFrom28
-            | Gate::RecordRefIsDirtyFrom28 => 28,
+            | Gate::RecordRefIsDirtyFrom28
+            | Gate::PartLineBeforeHostKeyFrom28 => 28,
         }
     }
 
@@ -222,6 +228,10 @@ impl Gate {
             Gate::RecordRefIsDirtyFrom28 => &[Evidence {
                 file: "recordref/lt-recordref-isdirty-edges/RecordRefIsDirtyEdges.al",
                 lines: "12",
+            }],
+            Gate::PartLineBeforeHostKeyFrom28 => &[Evidence {
+                file: "pages/lt-part-line-before-host-key/PartLineBeforeHostKey.al",
+                lines: "322",
             }],
             Gate::QueryAggregateOverBigInteger => &[Evidence {
                 file: "query/W7QueryAggregates.al",

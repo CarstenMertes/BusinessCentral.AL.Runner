@@ -782,13 +782,8 @@ impl Session {
         if auto.is_empty() {
             return Ok(());
         }
-        // A temporary record's auto-calculated Blob is not pinned (the corpus pins a stored row only).
-        if rec.borrow().temporary {
-            let table = rec.borrow().table as usize;
-            if auto.iter().any(|&p| self.is_blob_field(table, p)) {
-                return unsupported("SetAutoCalcFields of a Blob field on a temporary record (not pinned)");
-            }
-        }
+        // A temporary record loads an auto-calculated Blob like a stored row (record/lt-temporary-blob/TemporaryBlobAutoCalc.al:
+        // Temporary_SetAutoCalcFields_ThenFind).
         self.calc_fields(rec, &auto)
     }
 }

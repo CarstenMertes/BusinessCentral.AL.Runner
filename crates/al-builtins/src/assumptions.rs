@@ -79,18 +79,6 @@ registry! {
         tests: "Tests-ERM price list tests that rename an Item, Resource, G/L Account or Item Variant (Assembly Header.\"Bin Code\" `Quantity = filter(< 0)`, Purchase Line.\"No.\" and \"Variant Code\" `Document Type = filter(<> \"Credit Memo\" & <> \"Return Order\")`); about 28 Tests-ERM tests.",
         probe: "A table with a field whose TableRelation is `if (Kind = filter(<> B)) Parent else Other`: rename a Parent row with a referencing row of Kind A and one of Kind B; read both fields.",
     },
-    RelationOptionBlankConst => {
-        id: "relation-option-blank-const",
-        assumed: "A TableRelation condition `Field = const(\" \")` on an Option field selects the arm when the field holds the option's blank member (ordinal of the member written \" \"), as it does for an Enum.",
-        tests: "Finance Charge Memo Line.\"No.\" (`if (Type = const(\" \")) \"Standard Text\"`); Tests-ERM ERM Finance Charge Memo Apply IssueFinanceChargeMemoWithInvoiceRounding and 25 more.",
-        probe: "An Option field with OptionMembers = \" \",A and a TableRelation if (Opt = const(\" \")) T1 else if (Opt = const(A)) T2: Validate a value of each table with Opt at each member.",
-    },
-    SetViewFieldByCaption => {
-        id: "set-view-field-by-caption",
-        assumed: "SetView resolves a field name that no field has by the field's caption (GetView writes captions, so SetView(GetView()) restores the view of a table whose caption differs from the name); a name wins over a caption.",
-        tests: "Purchase Alloc. Acc. Mgt.ReplaceInheritFromParent (SetView(GetView()) on Allocation Line, whose \"Line No.\" has Caption 'Primary Key'); about 20 Tests-ERM tests.",
-        probe: "A table with field \"Line No.\" (Caption 'Primary Key'): SetView(GetView()) after SetRange on it; SetView('WHERE(Primary Key=FILTER(2))'); a caption equal to another field's name.",
-    },
     PackageAutoIncrementFromOne => {
         id: "package-auto-increment-from-one",
         assumed: "A table built from a RapidStart package whose rows hold no value for the table's AutoIncrement field (Dimension Value.\"Dimension Value ID\" is not in the shipped package) gets 1, 2, 3 in the order of the package's rows, as the database numbers rows it inserts, and the counter continues after them.",
@@ -367,12 +355,6 @@ registry! {
         tests: "About 975 Tests-ERM, Tests-SCM and Tests-General Journal tests (Library - Random and Library - Utility date and time helpers).",
         probe: "Dt.Date() and Dt.Time() for a set DateTime and for 0DT, next to DT2Date(Dt) and DT2Time(Dt).",
     },
-    TestFieldBlobWithStoredContent => {
-        id: "test-field-blob-with-stored-content",
-        assumed: "TestField of a Blob field that holds content from the database (after CalcFields) passes. (An empty Blob fails and a Blob written through a stream and not saved passes: misc/lt-probes-needed-5/PnE08RecordMisc.al:TestField_Blob.)",
-        tests: "Tests-ERM tests that call TestField on a Blob after CalcFields (XSD Parser `XMLSchema.TestField(XSD)`, about 25 tests).",
-        probe: "Save a Blob with content, Get the record, CalcFields, then TestField(Blob); and TestField(Blob) after Get without CalcFields.",
-    },
     ReportViewOverStoredRequestFilters => {
         id: "report-view-over-stored-request-filters",
         assumed: "A data item the caller gave a view (SetTableView, or the record of Report.Run or RunModal) keeps that view when the report has SaveValues and an earlier run stored other filters for the data item. (That an OK stores the view's filters is pinned by report/lt-requestpage-savevalues-date-text-setvalue/P147SaveValuesFilter.al:P147_Filter_SetTableViewVsStored.)",
@@ -474,12 +456,6 @@ registry! {
         assumed: "A TableRelation check that fails, with several where() conditions none of which is on a primary key field of the related table, raises DB:NothingInsideFilter, as one condition on a non-key field does. (A mix with key fields stays refused.)",
         tests: "Item Blocked Test and Item Variant Blocked Test (Item where(Blocked = const(false), \"Service Blocked\" = const(false)) and the sales and purchase variants), SCM Dedicated Bins; about 26 Tests-SCM tests. They compare the message only.",
         probe: "A relation with two non-key where() conditions and a value that fails one of them, and one that is missing: GetLastErrorCode; the same with one key and one non-key condition.",
-    },
-    EnumFromIntegerVariantEnum => {
-        id: "enum-from-integer-variant-enum",
-        assumed: "Enum.FromInteger(V) with a Variant V that holds an Enum value takes the ordinal, as an assignment of that Variant to an Integer does (pinned by B_EnumOptionVariant.al:EnumVariant_To_Integer).",
-        tests: "SCM Performance Tests ItemTrackingLinesPageHandler (\"Item Tracking Entry Type\".FromInteger(OptionValue), OptionValue dequeued from Library - Variable Storage after an enum was enqueued): 9 Tests-SCM tests.",
-        probe: "V := EnumValue; E := \"Enum\".FromInteger(V): the ordinal or the error; the same with an Option in the Variant.",
     },
     ForeachIntegerIntoEnum => {
         id: "foreach-integer-into-enum",

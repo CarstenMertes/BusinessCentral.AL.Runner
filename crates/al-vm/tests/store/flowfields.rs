@@ -1516,3 +1516,65 @@ table 60010 "ALT Dur"
     );
     assert_eq!(text(r), "5 milliseconds");
 }
+
+// record/lt-temporary-blob/TemporaryBlobAutoCalc.al:Temporary_SetAutoCalcFields_ThenFind: a temporary record with
+// SetAutoCalcFields(Blob) loads the Blob on Find, FindFirst, Get and FindSet.
+#[test]
+fn set_auto_calc_fields_of_a_blob_on_a_temporary_record_loads_it() {
+    const T: &str = r#"
+table 60011 "ALT TB"
+{
+    fields { field(1; Id; Integer) { } field(2; Data; Blob) { } }
+    keys { key(PK; Id) { Clustered = true; } }
+}
+"#;
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var Row: Record \"ALT TB\" temporary; Fresh: Record \"ALT TB\" temporary; OutS: OutStream; s: Text;
+        begin
+            Row.Id := 1;
+            Row.Data.CreateOutStream(OutS); OutS.WriteText('hello');
+            Row.Insert();
+            Fresh.Copy(Row, true);
+            Fresh.SetAutoCalcFields(Data);
+            s := Format(Fresh.FindFirst()) + Format(Fresh.Data.Length());
+            Clear(Fresh); Fresh.Copy(Row, true); Fresh.SetAutoCalcFields(Data);
+            s += '|' + Format(Fresh.Get(1)) + Format(Fresh.Data.Length());
+            exit(s);
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "Yes5|Yes5");
+}
+
+// record/lt-testfield-blob-decimal/TestFieldBlobDecimal.al:TestField_Blob_StoredContent: TestField of a Blob passes after Get
+// without CalcFields when the row holds content, and fails once the saved content was cleared.
+#[test]
+fn test_field_of_a_blob_after_get_without_calcfields_passes_when_the_row_holds_content() {
+    const T: &str = r#"
+table 60012 "ALT TFB"
+{
+    fields { field(1; Id; Integer) { } field(2; Data; Blob) { } }
+    keys { key(PK; Id) { Clustered = true; } }
+}
+"#;
+    let r = run_with(
+        T,
+        "procedure F(): Text
+        var Row: Record \"ALT TFB\"; OutS: OutStream; s: Text;
+        begin
+            Row.Id := 1; Row.Insert();
+            Row.Data.CreateOutStream(OutS); OutS.WriteText('content');
+            Row.Modify();
+            Row.Get(1);
+            Row.TestField(Data);
+            s := 'ok';
+            Clear(Row.Data); Row.Modify(); Row.Get(1); Row.CalcFields(Data);
+            asserterror Row.TestField(Data);
+            exit(s + '|' + GetLastErrorText());
+        end;",
+        "F",
+    );
+    assert_eq!(text(r), "ok|Data must have a value in ALT TFB: Id=1. It cannot be zero or empty.");
+}

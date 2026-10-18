@@ -323,17 +323,15 @@ impl Session {
     }
 
     /// The field a view names: by name or `Field<n>`; failing that by caption, which is what
-    /// `GetView` writes (assumption set-view-field-by-caption).
+    /// `GetView` writes; a name wins over a caption (record/lt-setview-caption/SetViewByCaption.al: SetView_CaptionInWhere
+    /// `name_beta_is_also_a_caption`, SetView_CaptionInSorting).
     fn view_field(&self, t: &TableDef, name: &str) -> Result<usize, Signal> {
         if let Some(p) = field_by_name(t, name) {
             return Ok(p);
         }
         let wanted = name.trim_matches('"');
         match (0..t.fields.len()).find(|&p| self.field_caption(t, p).eq_ignore_ascii_case(wanted)) {
-            Some(p) => {
-                al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::SetViewFieldByCaption);
-                Ok(p)
-            }
+            Some(p) => Ok(p),
             None => unsupported(format!("view field `{wanted}`")),
         }
     }

@@ -81,7 +81,8 @@ fn enum_as_integer_returns_the_ordinal() {
 }
 
 // types/lt-filter-enum-relation-duration-guid/B_EnumOptionVariant.al:EnumVariant_To_Integer pins an Enum in a Variant read as an
-// Integer by assignment; FromInteger taking such a Variant is the same conversion, on an assumption (enum-from-integer-variant-enum).
+// Integer by assignment; FromInteger taking such a Variant is the same conversion (enum/lt-enum-fromint-variant/EnumFromIntegerVariant.al:
+// FromInteger_VariantHolding `enum`, `decimal` 1 and `text` '1' all give Green; a fraction or a non-number text is not pinned: refused).
 #[test]
 fn enum_from_integer_takes_a_variant_that_holds_an_enum() {
     let v = "S: Enum \"ALT Status\"; T: Enum \"ALT Status\"; V: Variant;";
@@ -93,6 +94,21 @@ fn enum_from_integer_takes_a_variant_that_holds_an_enum() {
         .unwrap(),
         5
     );
+}
+
+#[test]
+fn enum_from_integer_takes_a_variant_that_holds_a_whole_decimal_or_a_number_text() {
+    let v = "S: Enum \"ALT Status\"; V: Variant;";
+    assert_eq!(
+        int_of(v, "V := 5.0; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").unwrap(),
+        5
+    );
+    assert_eq!(
+        int_of(v, "V := '5'; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").unwrap(),
+        5
+    );
+    assert!(int_of(v, "V := 1.5; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").is_err());
+    assert!(int_of(v, "V := 'abc'; S := \"ALT Status\".FromInteger(V); exit(S.AsInteger());").is_err());
 }
 
 // foreach over Ordinals into an Enum variable (foreach-integer-into-enum, an assumption): the variable holds the enum value.

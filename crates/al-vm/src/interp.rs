@@ -1121,7 +1121,6 @@ impl Session {
         // A one-dimensional array passed to a parameter declared with more elements: reading or writing past the argument's
         // elements is an index error (misc/lt-probes-needed-5/PnE01Arrays.al:SmallerArray_VarParameter, SmallerArray_ByValue).
         if flat >= arr.borrow().len() && dims.len() == 1 {
-            eprintln!("DBG flat {} len {} dims {:?}", flat, arr.borrow().len(), dims);
             return al_builtins::native::raise("Index out of bounds.", "IndexOutOfBounds");
         }
         if flat >= arr.borrow().len() {

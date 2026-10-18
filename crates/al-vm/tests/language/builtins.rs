@@ -1475,18 +1475,15 @@ fn a_chained_index_of_a_two_dimensional_array_is_the_element() {
     assert_eq!(r.unwrap(), "750");
 }
 
-// `A[x]` alone on a two-dimensional array is a row, not a cell: it used to read the cell at flat position x.
-// What a row is (Clear of it, assignment, passing it) is not pinned, so it is refused.
+// `A[x]` alone on a two-dimensional array is a row; Clear of a row clears its cells (commit 70719d7e, corpus
+// collections/lt-array-rows/ArrayRows.al).
 #[test]
-fn a_row_of_a_two_dimensional_array_is_refused() {
+fn clear_of_a_row_of_a_two_dimensional_array_clears_its_cells() {
     let r = text_of(
         "A: array[2, 3] of Integer;",
         "A[2, 1] := 4; Clear(A[2]); exit(Format(A[2, 1]));",
     );
-    match r {
-        Err(Signal::Unsupported(why)) => assert!(why.contains("row") && why.contains("not pinned"), "{why}"),
-        other => panic!("{other:?}"),
-    }
+    assert_eq!(r.unwrap(), "0");
 }
 
 // A `for` loop over an Integer whose bounds are Option values (Microsoft's "Library - Manufacturing" loops

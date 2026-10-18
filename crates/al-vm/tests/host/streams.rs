@@ -379,7 +379,11 @@ fn array_helpers() {
     // streams/TestStreamsRuntimeContracts.al:ArrayLen_MultiDimensional_WithAndWithoutDimension: the total.
     let t = text("A: array[2, 3] of Integer;", "exit(Format(ArrayLen(A)));");
     assert_eq!(t, "6");
-    assert!(refused("A: array[3, 4] of Integer;", "exit(Format(ArrayLen(A, 3)));"));
+    // A dimension outside the array raises when the call runs (misc/lt-system-functions/Arrays.al:ArrayLen_Values).
+    assert!(matches!(
+        run("A: array[3, 4] of Integer;", "exit(Format(ArrayLen(A, 3)));"),
+        Err(Signal::Error(_))
+    ));
 }
 
 #[test]

@@ -438,8 +438,8 @@ fn evaluate_guid_and_datetime_xml_form() {
 
 #[test]
 fn evaluate_of_forms_the_corpus_does_not_pin_is_refused() {
-    // Grouped thousands are read (P86Eval.al); a group of two digits is not pinned.
-    assert!(unsupported("I: Integer;", "Evaluate(I, '1,00'); exit('');"));
+    // Grouped thousands are read (P86Eval.al); `1,00` is 100 (errors/lt-ms-refusals-129/P129Evaluate.al:420).
+    assert_eq!(text_of("I: Integer;", "Evaluate(I, '1,00'); exit(Format(I));"), "100");
     assert_eq!(
         raised("B: Boolean;", "Evaluate(B, 'maybe'); exit('');"),
         (

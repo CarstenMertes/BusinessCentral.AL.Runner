@@ -1934,7 +1934,14 @@ impl Session {
                                 .map_err(|e| Signal::Unsupported(format!("{e}")))?
                                 == 0
                         {
-                            let id = self.identification(&t, &rec.borrow().fields.clone())?;
+                            let fields = rec.borrow().fields.clone();
+                            let pk = t.primary_key(&fields);
+                            if !pk.iter().all(|v| crate::recmeta::is_blank(v).unwrap_or(false)) {
+                                return unsupported(
+                                    "Find on an empty table with a key value other than the default: only default keys are pinned (FindEmptyTable.al)",
+                                );
+                            }
+                            let id = self.identification(&t, &fields)?;
                             let message = if which == "=" {
                                 format!(
                                     "The {} does not exist. Identification fields and values: {id}",

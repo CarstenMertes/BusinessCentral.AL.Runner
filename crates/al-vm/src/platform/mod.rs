@@ -333,6 +333,13 @@ impl Providers {
                         "a Tenant Media row of a media imported with a file name: its File Name, Description and Mime Type are not pinned".into(),
                     );
                 }
+                // ADR-044: the picture was never produced; its content, MIME type and size are unknown.
+                if let Some(what) = &o.pending {
+                    let al_builtins::native::Signal::Unsupported(why) = al_builtins::stream::render_pending_error(what) else {
+                        unreachable!("render_pending_error is a refusal")
+                    };
+                    return mat::Entry::poisoned(row, why);
+                }
                 row[pos(t, 2)] = Value::Text(o.description.clone().into());
                 let blob = al_builtins::stream::new_blob();
                 al_builtins::stream::write_bytes(&blob, &o.bytes);

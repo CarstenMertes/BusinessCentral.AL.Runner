@@ -401,8 +401,9 @@ fn join(ids: &[u32]) -> String {
 
 /// Report Data Items: "Report ID" (1), "Data Item ID" (2), Name (3), "Request Filter Fields" (4),
 /// "Related Table ID" (5), "Indentation Level" (6), "Sorting Fields" (7), "Data Item Table View" (8).
-/// The id is not a declaration ordinal (TestReportMetadataColumns.al:200-232, which only needs
-/// the ids of two items to differ and not to be 1 and 2): it is the position times ten.
+/// The id is the absolute value of the 32-bit FNV-1a hash of the item's name in UTF-16 (little endian), read as a signed
+/// number: `A` 1792377636, `D` 120712215 (|-120712215|), `Kid` 1167510851, `Src` 1369927887 (misc/lt-probes-needed-3/PnC21Metadata.al:
+/// 201-249), and the rows come in the order of the ids: Rw, Rw3, Rw2 (report/lt-y-report-props/YReportPropsTests.al:272).
 pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
     let engine = p.engine();
     let c = Catalog::new(&engine);
@@ -425,7 +426,16 @@ pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
             continue;
         };
         for (n, item) in rep.items.iter().enumerate() {
-            let item_id = (n as i32 + 1) * 10;
+            let Some(item_id) = data_item_id(&item.name) else {
+                let mut k = blank(t);
+                k[pos(t, 1)] = Value::Integer(id as i32);
+                out.push(Entry::poisoned_prefix(
+                    k,
+                    1,
+                    format!("data item '{}' of report '{}': its id is not pinned", item.name, o.name),
+                ));
+                continue;
+            };
             let mut key = blank(t);
             key[pos(t, 1)] = Value::Integer(id as i32);
             key[pos(t, 2)] = Value::Integer(item_id);
@@ -465,6 +475,18 @@ pub(super) fn report_data_item_rows(p: &Providers, t: &TableDef) -> Vec<Entry> {
         }
     }
     out
+}
+
+/// `Data Item ID`: see `report_data_item_rows`. `None` for the one hash whose absolute value overflows (not pinned).
+fn data_item_id(name: &str) -> Option<i32> {
+    let mut h: u32 = 0x811c_9dc5;
+    for unit in name.encode_utf16() {
+        for b in unit.to_le_bytes() {
+            h ^= u32::from(b);
+            h = h.wrapping_mul(0x0100_0193);
+        }
+    }
+    (h as i32).checked_abs()
 }
 
 fn data_item_row(
@@ -579,5 +601,15 @@ mod tests {
         );
         assert!(view_segments("sorting(a").is_err());
         assert!(view_segments("nonsense").is_err());
+    }
+}
+
+#[cfg(test)]
+mod data_item_id_tests {
+    // misc/lt-probes-needed-3/PnC21Metadata.al:204-249.
+    #[test]
+    fn the_data_item_id_is_the_fnv_hash_of_the_name() {
+        let ids: Vec<i32> = ["A", "B", "C", "D", "E", "Kid", "Src"].iter().map(|n| super::data_item_id(n).unwrap()).collect();
+        assert_eq!(ids, [1792377636, 589499809, 1227196426, 120712215, 758408832, 1167510851, 1369927887]);
     }
 }

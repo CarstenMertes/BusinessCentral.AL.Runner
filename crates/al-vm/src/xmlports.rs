@@ -1371,7 +1371,9 @@ impl Session {
         self.xp_import_attrs(inst, schema, node, elem, Some(assigned))?;
         let mut seq = Sequence::new(schema, node);
         for ce in elem.elements() {
-            let child = seq.accept(schema, &ce.name)?;
+            let Some(child) = seq.accept(schema, ce)? else {
+                continue;
+            };
             match schema.node(child).kind {
                 ir::XmlNodeKind::Field => assigned.push(self.xp_assign_field(inst, schema, child, &ce.text())?),
                 ir::XmlNodeKind::Text => self.xp_assign_variable(inst, schema, child, ce.text())?,

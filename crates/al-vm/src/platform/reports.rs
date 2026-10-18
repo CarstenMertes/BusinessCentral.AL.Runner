@@ -609,7 +609,15 @@ mod data_item_id_tests {
     // misc/lt-probes-needed-3/PnC21Metadata.al:204-249.
     #[test]
     fn the_data_item_id_is_the_fnv_hash_of_the_name() {
-        let ids: Vec<i32> = ["A", "B", "C", "D", "E", "Kid", "Src"].iter().map(|n| super::data_item_id(n).unwrap()).collect();
-        assert_eq!(ids, [1792377636, 589499809, 1227196426, 120712215, 758408832, 1167510851, 1369927887]);
+        let ids: Vec<i32> = ["A", "B", "C", "D", "E", "Kid", "Src"]
+            .iter()
+            .map(|n| super::data_item_id(n).unwrap())
+            .collect();
+        assert_eq!(
+            ids,
+            [
+                1792377636, 589499809, 1227196426, 120712215, 758408832, 1167510851, 1369927887
+            ]
+        );
     }
 }

@@ -163,6 +163,7 @@ pub enum SubscriberTarget {
     GlobalTriggers,
     CaptionClass,
     ReportingTriggers,
+    FilterHelperTriggers,
 }
 
 /// An event subscriber of an object that was not compiled (a dependency object nothing reached): the runtime

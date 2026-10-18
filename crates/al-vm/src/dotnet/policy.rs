@@ -14,6 +14,7 @@ pub enum Access<'a> {
 pub struct Policy {
     deny_assembly: Vec<(String, String)>,
     deny_type: Vec<(String, String)>,
+    allow_type: Vec<String>,
     deny_member: Vec<(String, String, String)>,
     deny_new_no_args: Vec<(String, String)>,
     server_prefix: Vec<String>,
@@ -43,6 +44,7 @@ impl Policy {
             let (subject, rule) = (subject.trim().to_string(), rule.trim().to_string());
             match kind {
                 "deny-assembly" => p.deny_assembly.push((subject, rule)),
+                "allow-type" => p.allow_type.push(subject),
                 "deny-type" => p.deny_type.push((subject, rule)),
                 "deny-member" => {
                     let (ty, member) = subject.rsplit_once('.').ok_or_else(|| bad("expected Type.Member"))?;
@@ -65,7 +67,8 @@ impl Policy {
                 return Err(format!("refused by policy: assembly '{asm}' ({rule}); {clr_type}"));
             }
         }
-        if let Some((_, rule)) = self.deny_type.iter().find(|(t, _)| {
+        let allowed = self.allow_type.iter().any(|t| t.eq_ignore_ascii_case(clr_type));
+        if let Some((_, rule)) = self.deny_type.iter().filter(|_| !allowed).find(|(t, _)| {
             if t.ends_with('.') {
                 starts_with_ci(clr_type, t)
             } else {
@@ -120,6 +123,30 @@ mod tests {
         let e = r.expect_err("must be refused");
         for n in needles {
             assert!(e.contains(n), "`{e}` does not mention `{n}`");
+        }
+    }
+
+    /// Owner decision 2026-10-18; pinned by corpus tests/al-language-onprem-dotnet/lt-af-dotnet/AfMailAddress.al.
+    #[test]
+    fn mail_address_is_allowed_and_only_it_under_system_net() {
+        let p = p();
+        assert!(
+            p.check(Some("System"), "System.Net.Mail.MailAddress", Access::Construct(1))
+                .is_ok()
+        );
+        assert!(
+            p.check(None, "System.Net.Mail.MailAddress", Access::Member("User"))
+                .is_ok()
+        );
+        for ty in [
+            "System.Net.Mail.SmtpClient",
+            "System.Net.Mail.MailMessage",
+            "System.Net.Mail.MailAddressCollection",
+        ] {
+            refused(
+                p.check(Some("System"), ty, Access::Construct(0)),
+                &["refused by policy", ty],
+            );
         }
     }
 

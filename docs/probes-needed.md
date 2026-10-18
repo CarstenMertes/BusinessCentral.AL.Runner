@@ -959,3 +959,14 @@ The corpus CI runs BC in a Linux container. Official Windows BC containers (corp
 - `OptimizeForTextSearch`: Windows installs the app and an `@*hello*` filter finds the row; the Linux container lacked full-text search. The runtime does not refuse on it (only the property is read, `IsOptimizedForTextSearch`).
 - `GetDatabaseTableTriggerSetup` inbound flag values depend on the environment. They are not an oracle; the runtime encodes no Linux-only value.
 - Confirmed as real BC on Windows, unchanged: SetValue on a FlowField (CLR abort), Gesture ContextMenu error, Evaluate into PageStyle/HttpRequestType/PageBackgroundTaskErrorLevel (server C# compile failure), `ExportData` writes no file, `File.Erase('')` text, `OnGlobal*` with mask 15 (only Rename fires).
+
+## Duration divided by a number (duration-division)
+
+Pinned (types/lt-filter-enum-relation-duration-guid/D_Duration.al:211-218, 349-365; types/lt-expression-operators-literals/ExpressionBinaryDateTimeOperands.al:127, 137):
+`Duration / Integer` is a Decimal; only the assignment into a Duration raises (ConversionCast, Decimal18 text) when the value has a fraction, and the target stays unchanged.
+
+| Not pinned | Probe |
+|---|---|
+| `Dec := D1 / 7` straight into a Decimal (assumed the exact quotient, 18 significant digits, no error) | `D1 := 90000; Dec := D1 / 7; Format(Dec)` |
+| `Duration / BigInteger` (assumed like Integer) | `D1 / BigIntVar` into a Decimal and into a Duration |
+| A Decimal beyond the Int64 range into a Duration (refused, no error text pinned) | `D := 1e19` |

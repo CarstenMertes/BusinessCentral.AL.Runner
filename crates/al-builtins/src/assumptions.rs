@@ -451,18 +451,6 @@ registry! {
         tests: "Post Inventory Cost to G/L (PostValueEntryToGL.MarkedOnly(true); DeleteAll() in OnPostDataItem, then CapValueEntryLoop Gets the capacity entries left): SCM Kitting D3 Part 2 and SCM Costing Batch, and every test that posts inventory cost with the report.",
         probe: "Mark two of three rows, MarkedOnly(true), DeleteAll: which rows remain; the same with a filter that excludes a marked row, and DeleteAll(true) with an OnDelete trigger.",
     },
-    DateFormulaEvaluatePercentPlaceholder => {
-        id: "date-formula-evaluate-percent-placeholder",
-        assumed: "Evaluate into a DateFormula reads `<+%1D>` as CalcDate of the same text does (one day: misc/lt-protected-var-abs-query-views/P146FormatCalcDate.al pins CalcDate only) and stores the text as typed; what Format of that DateFormula prints is not assumed anywhere.",
-        tests: "SCM Planning and SCM Planning NTF tests Initialize: Evaluate(DaysInMonthFormula, Format('<+%1D>', CalcDate('<1M>') - Today)); about 200 Tests-SCM tests.",
-        probe: "Evaluate(F, '<+%1D>') for a DateFormula: the Boolean, Format(F) and CalcDate(F, D).",
-    },
-    CalcDateClosingBracketMissingAfterPlus => {
-        id: "calcdate-closing-bracket-missing-after-plus",
-        assumed: "CalcDate of a formula that starts with `<+` and has no closing bracket (`<+6W`) reads it as the same formula with the bracket. (P146FormatCalcDate.al pins it for `<+%1D` only.)",
-        tests: "Tests-SCM tests that build a formula with Format of a text and a length: `<+6W` (13), `<+7W` (3), `<+1D` (2), `<+0D` (1).",
-        probe: "CalcDate('<+6W', D), CalcDate('<+0D', D) and CalcDate('<-1D', D) with the closing bracket missing: the date or the error text.",
-    },
     GroupedQueryTiesInGroupingOrder => {
         id: "grouped-query-ties-in-grouping-order",
         assumed: "Groups of an aggregated query that tie on every OrderBy column are read in the order of the query's grouping columns (column declaration order, each ascending).",

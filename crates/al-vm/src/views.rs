@@ -56,6 +56,18 @@ impl Session {
                 return Ok(format!("{y:04}-{m:02}-{day:02}"));
             }
         }
+        // A date filter writes a two-digit year for 2031 to 2038 too, where Format(Date) writes four digits
+        // (record/lt-date-text-forms/DateFilterTextForms.al:GetRange_DateTextForms_English `filter 02/01/31`,
+        // GetRange_FourDigits_OtherWorkDate `filter 02/01/38`). The years 2039 to 2049 are not pinned.
+        if let Value::Date(d, false) = v {
+            let (y, m, day) = al_builtins::format::civil_from_day(*d);
+            if (2031..=2038).contains(&y) {
+                return Ok(format!("{m:02}/{day:02}/{:02}", y % 100));
+            }
+            if (2039..=2049).contains(&y) {
+                return unsupported("the text of a date filter value in the years 2039 to 2049 (not pinned)");
+            }
+        }
         if let Value::Text(s) | Value::Code(s) = v {
             // A blank text shows as two single quotes (corpus record/PWFilterGroupOr.al: `A: ''`).
             if s.is_empty() {
@@ -267,14 +279,17 @@ impl Session {
             t.keys[key].iter().map(|&p| name(p)).collect::<Vec<_>>().join(",")
         );
         let fields = t.keys[key].len();
+        // Only the key's own fields show in the view. When just the primary key fields after the key run descending
+        // (`Ascending(false)`, then `SetAscending(Field, true)`), the view is the plain ascending sorting
+        // (record/lt-record-sort-ascending/RecordSortAscendingViews.al:P161_SetAscending_Single_AscendingMethodAndTies `back.view`).
+        let key_bits = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
+        let mask_all = mask;
+        let mask = mask & key_bits;
+        let only_ties_descending = mask == 0 && mask_all != 0;
         if mask != 0 && !(fields == 1 && mask == 1) {
             // One direction per field of the key: `ORDER(Descending,Ascending)` (records/W4SortKeys.al:
             // SetAscending_TwoFieldKey_OneFieldAtATime). Every field descending, a field of the primary key's part, or the
             // numeric form is not pinned.
-            let key_bits = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
-            if mask & !key_bits != 0 {
-                return unsupported("GetView of a record with SetAscending on these fields of a sorting (not pinned)");
-            }
             if mask == key_bits {
                 // Every field descending reads as the one direction (SetAscendingEdges.al:GetView_AllKeyFieldsDescending).
                 out.push_str(if use_names || !record_form {
@@ -294,7 +309,7 @@ impl Session {
                     .collect();
                 out.push_str(&format!(" ORDER({})", dirs.join(",")));
             }
-        } else if !ascending {
+        } else if !ascending && !only_ties_descending {
             out.push_str(if use_names || !record_form {
                 " ORDER(Descending)"
             } else {

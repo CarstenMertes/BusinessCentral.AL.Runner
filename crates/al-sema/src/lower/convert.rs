@@ -236,6 +236,19 @@ impl<'a> Lowerer<'a> {
                 }
             }
         }
+        // A Media or MediaSet value in a Variant answers no Is... test (not even IsGuid) and formats as its media id
+        // (media/lt-variant-media/VariantMedia.al:Variant_HoldingEmptyMediaField, _HoldingImportedMediaField;
+        // types/lt-variant-unsupported-kinds/VariantUnsupportedKinds.al:Variant_BlobAndMediaFieldValues).
+        if matches!(self.rt(target), Ok(RtType::Variant))
+            && matches!(src, Ty::Builtin(n) if n.eq_ignore_ascii_case("Media") || n.eq_ignore_ascii_case("MediaSet"))
+        {
+            return Ok(ir::Expr::Builtin {
+                id: super::call::builtin_id("Media.ToVariant#1")?,
+                receiver: None,
+                args: vec![ir::Arg::Value(value)],
+                ret_used: true,
+            });
+        }
         if !self.tys_on {
             return self.convert_raw(target, src, value);
         }

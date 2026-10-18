@@ -794,10 +794,18 @@ impl Session {
                     if let al_builtins::value::RtType::Array(d, el) = self.place_type(base, f) {
                         if idx.len() < d.len() {
                             // The cells of that row become the default of their type and the other rows stay (misc/lt-probes-needed-6/
-                            // PnF25ArrayRowClear.al:Array_ClearRow, an Integer array[3, 4]); other element types are not pinned.
-                            if !matches!(*el, al_builtins::value::RtType::Integer) {
+                            // PnF25ArrayRowClear.al:Array_ClearRow, an Integer array[3, 4]; types/lt-clear-array-row/ClearArrayRow.al:
+                            // Clear_Row_TextArray2D, _DecimalArray2D, _RecordArray2D; a record cell loses its filters too). Other
+                            // element types are not pinned.
+                            if !matches!(
+                                *el,
+                                al_builtins::value::RtType::Integer
+                                    | al_builtins::value::RtType::Decimal
+                                    | al_builtins::value::RtType::Text(_)
+                                    | al_builtins::value::RtType::Record(..)
+                            ) {
                                 return Err(Signal::Unsupported(
-                                    "Clear of a row of a multi-dimensional array of other than Integer (not pinned)"
+                                    "Clear of a row of a multi-dimensional array of a type the corpus does not pin"
                                         .into(),
                                 ));
                             }
@@ -805,6 +813,15 @@ impl Session {
                             let Some((arr, start, len)) = self.row_range(base, idx, f)? else {
                                 return Err(Signal::Unsupported("Clear of a row of an array (not pinned)".into()));
                             };
+                            if matches!(*el, al_builtins::value::RtType::Record(..)) {
+                                let cells: Vec<Value> = arr.borrow()[start..start + len].to_vec();
+                                for c in cells {
+                                    if let Value::Record(rc) = c {
+                                        self.record_op(al_builtins::record_op::RecordOp::Clear, &rc, &mut [])?;
+                                    }
+                                }
+                                return Ok(Value::Null);
+                            }
                             for c in &mut arr.borrow_mut()[start..start + len] {
                                 *c = Value::default_for(&el);
                             }

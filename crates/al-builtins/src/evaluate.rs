@@ -439,6 +439,19 @@ fn date_month_first(text: &str, today: Option<i32>) -> Option<Result<Parsed, Sig
             });
         }
     }
+    // A year of five digits after slashes is no date (types/lt-evaluate-date-3digit-year/EvaluateDate3DigitYear.al:
+    // Evaluate_Date_ThreeDigitYear_English `en_slash_5digit` `01/02/12026`, also German and British English).
+    {
+        let parts: Vec<&str> = text.split('/').collect();
+        if parts.len() == 3
+            && parts.iter().all(|p| all_digits(p))
+            && parts[0].len() <= 2
+            && parts[1].len() <= 2
+            && parts[2].len() == 5
+        {
+            return Some(Ok(Parsed::Rejected));
+        }
+    }
     let words: Vec<&str> = text.split(' ').collect();
     if words.len() == 3 && all_digits(words[0]) && all_digits(words[1]) && all_digits(words[2]) {
         return Some(Ok(Parsed::Rejected));

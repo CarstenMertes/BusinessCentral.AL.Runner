@@ -225,13 +225,21 @@ impl Lowerer<'_> {
                 {
                     "System.FormatVariant#1".to_string()
                 } else if id == "TextBuilder.Append#1"
+                    && args
+                        .first()
+                        .is_some_and(|a| matches!(self.res(a), Some(Res::Builtin(i)) if i == "FieldRef.Value#1"))
+                {
+                    // `FieldRef.Value()` written directly as the argument appends the formatted value
+                    // (text/lt-textbuilder-field-direct/TextBuilderAppendFieldDirect.al).
+                    "TextBuilder.AppendFieldValue#1".to_string()
+                } else if id == "TextBuilder.Append#1"
                     && args.first().is_some_and(|a| {
                         matches!(self.ty_of(a), Ty::Variant)
                             && matches!(self.res(a), Some(Res::Local(_) | Res::Global(_)))
                     })
                 {
                     // A Variant variable holding a number raises (types/lt-number-to-text/NumberToTextIsFormat.al:193-216);
-                    // a `FieldRef.Value()` argument is not that case and stays on `TextBuilder.Append#1`.
+                    // a `FieldRef.Value()` argument goes to `TextBuilder.AppendFieldValue#1`.
                     "TextBuilder.AppendVariant#1".to_string()
                 } else if id == "System.Format#1" && decimal_field_places.is_some() {
                     "System.FormatDecimalField#1".to_string()

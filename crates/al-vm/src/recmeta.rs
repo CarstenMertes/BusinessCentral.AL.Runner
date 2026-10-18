@@ -163,13 +163,20 @@ impl Session {
             .filter(|&i| t.fields[i].id < SYSTEM_FIELD_BASE)
             .collect();
         order.sort_by_key(|&i| t.fields[i].id);
-        // The stored fields come first, then the FlowFields and the FlowFilter fields together in field number
+        // The stored fields come first, then the FlowFilter fields and then the FlowFields, each in field number
         // order; a FlowFilter field shows the value the field holds (0 for an Integer) whatever filter was set on it
         // (types/ProbeTypeFormsAndFilters.al:FormatRecord_WithFlowFilter_BeforeAndAfterSetRange and
         // types/W7FormatRecord.al:FormatRecord_FlowFilterField, BC 27.5 and 29.0).
+        // All FlowFilter fields come before the FlowFields, whatever their numbers
+        // (misc/lt-probes-needed-5/PnE08RecordMisc.al:FormatRecord_FlowFilterPlacement `afterCalc`: filter 2, FlowField 3,
+        // filter 4 show as `0 0 1`).
         let (normal, calculated): (Vec<usize>, Vec<usize>) = order.into_iter().partition(|&i| t.fields[i].stored);
+        let schema = self.engine.program.objects[t.object as usize].table.as_ref();
+        let (filters, flow_fields): (Vec<usize>, Vec<usize>) = calculated
+            .into_iter()
+            .partition(|&i| schema.and_then(|s| s.fields.get(i)).is_some_and(|f| f.flow_filter));
         let mut parts = Vec::new();
-        for i in normal.into_iter().chain(calculated) {
+        for i in normal.into_iter().chain(filters).chain(flow_fields) {
             parts.push(one(i)?);
         }
         Ok(parts.join("\t"))
@@ -516,8 +523,11 @@ impl Session {
                 // GetTable_CopiesBufferFiltersKeyDirection, `rr_ascending` No).
                 match args.first() {
                     None => Ok(Value::Boolean({
+                        // Primary key fields after the key do not count (RecordSortAscendingViews.al:P161_SetAscending_Single_
+                        // AscendingMethodAndTies `back.asc`).
                         let r = rec.borrow();
-                        r.ascending && r.field_descending == 0
+                        let key_bits = (1u32 << t.keys[r.key].len().min(31)) - 1;
+                        r.ascending && r.field_descending & key_bits == 0
                     })),
                     Some(v) => {
                         let mut r = rec.borrow_mut();
@@ -589,9 +599,12 @@ impl Session {
                 let mut r = rec.borrow_mut();
                 if !r.ascending {
                     // After Ascending(false) every field of the key reads as descending, and the one field changes
-                    // (SetAscendingEdges.al:SetAscending_AfterAscendingFalse, `then_grp_true_view`).
+                    // (SetAscendingEdges.al:SetAscending_AfterAscendingFalse, `then_grp_true_view`). The primary key
+                    // fields that follow the key run descending too, so rows with equal key values stay in descending
+                    // order (record/lt-record-sort-ascending/RecordSortAscendingViews.al:P161_SetAscending_Single_AscendingMethodAndTies
+                    // `back.walk`).
                     r.ascending = true;
-                    let fields = t.keys[key].len();
+                    let fields = t.keys[key].len() + t.keys[0].iter().filter(|p| !t.keys[key].contains(p)).count();
                     r.field_descending = if fields >= 32 { u32::MAX } else { (1u32 << fields) - 1 };
                 }
                 if ascending {

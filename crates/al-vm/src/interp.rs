@@ -874,6 +874,7 @@ impl Session {
                     let mut r = rc.borrow_mut();
                     r.fields[*pos] = v;
                     r.touched = true;
+                    r.assigned = true;
                     if r.load.partial {
                         r.load.written(*pos);
                     }

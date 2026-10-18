@@ -639,25 +639,33 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
         return Ok(v);
     }
     // Dashes read like slashes in an English session when the year has four digits (P81DateFilters.al:SetFilter_Date_InvalidTexts
-    // `01-01-2026`).
+    // `01-01-2026`), and with two-digit numbers throughout (record/lt-date-text-forms/DateFilterTextForms.al:
+    // GetRange_DateTextForms_English `separators_short_year` `02-01-26`, GetRange_DayAboveTwelve_English `mm_dd_yy_separators`).
+    let dashed_short = t.split('-').count() == 3
+        && t.split('-')
+            .all(|p| p.len() == 2 && p.bytes().all(|b| b.is_ascii_digit()));
     if english {
         let b = text.as_bytes();
-        if b.len() == 10
+        if (b.len() == 10
             && b[2] == b'-'
             && b[5] == b'-'
             && b.iter()
                 .enumerate()
-                .all(|(i, c)| i == 2 || i == 5 || c.is_ascii_digit())
+                .all(|(i, c)| i == 2 || i == 5 || c.is_ascii_digit()))
+            || dashed_short
         {
             if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &text.replace('-', "/")) {
                 return Ok(v);
             }
         }
     }
-    // Six digits read as month, day, year in an English session: `020126` is 2026-02-01 and `040126` is 2026-04-01
-    // (fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:389-565, filters of a Date field). Seven and eight digits read the same
-    // way with a longer year (P81DateFilters.al:SetFilter_Date_RangeForms `01012026`, SetFilter_Date_InvalidTexts `0101202`).
-    if english && text.bytes().all(|b| b.is_ascii_digit()) {
+    // Six digits read as month, day, year in an English or a German session: `020126` is 2026-02-01 and `040126` is 2026-04-01
+    // (fieldref/lt-range-min-max-types/RangeMinMaxTypes.al:389-565, filters of a Date field; DateFilterTextForms.al:
+    // GetRange_SixDigits_German). Eight digits read the same way with a four-digit year in both (DateFilterTextForms.al:
+    // GetRange_SixDigits_German `eight_digits`); seven digits in an English session (P81DateFilters.al:SetFilter_Date_RangeForms
+    // `01012026`, SetFilter_Date_InvalidTexts `0101202`).
+    let digits_only = text.bytes().all(|b| b.is_ascii_digit());
+    if (english || german) && digits_only {
         match text.len() {
             6 => {
                 let spelled = format!("{}/{}/{}", &text[0..2], &text[2..4], &text[4..6]);
@@ -665,7 +673,7 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
                     return Ok(v);
                 }
             }
-            7 | 8 => {
+            7 | 8 if english || text.len() == 8 => {
                 let (m, d, y): (u32, u32, i32) = (
                     text[0..2].parse().unwrap_or(0),
                     text[2..4].parse().unwrap_or(0),
@@ -678,9 +686,25 @@ fn date_filter_value(t: &str) -> Result<Value, String> {
             _ => {}
         }
     }
-    // The texts the corpus pins as invalid: a number of 6 to 8 digits that is no date, `0`, and a text with a letter no
-    // date formula uses (P81DateFilters.al:SetFilter_Date_InvalidTexts, EmptyAndZeroForms `0`, `000000`).
-    let invalid_shape = (text.bytes().all(|b| b.is_ascii_digit()) && matches!(text.len(), 6..=8))
+    // Four digits are month and day, the year is the work date's (DateFilterTextForms.al:GetRange_DateTextForms_English
+    // `four_digits` 0201 with work date 2031 gives 2031-02-01, GetRange_FourDigits_OtherWorkDate with 2038 gives 2038; German
+    // :GetRange_SixDigits_German `four_digits`; `0113` reads, `1301` does not).
+    if (english || german) && text.len() == 4 && digits_only {
+        if let Some(c) = ctx {
+            let year = crate::format::civil_from_day(c.work_date).0;
+            let spelled = format!("{}/{}/{year:04}", &text[0..2], &text[2..4]);
+            if let Some(v) = crate::evaluate::read_text(&crate::value::RtType::Date, &spelled) {
+                return Ok(v);
+            }
+        } else {
+            return Err(needs_session());
+        }
+    }
+    // The texts the corpus pins as invalid: a number of 4 to 8 digits that is no date, `0`, a text with a letter no
+    // date formula uses (P81DateFilters.al:SetFilter_Date_InvalidTexts, EmptyAndZeroForms `0`, `000000`), and three two-digit
+    // numbers split by dashes (DateFilterTextForms.al:GetRange_DayAboveTwelve_English `dd_mm_yy_separators`).
+    let invalid_shape = (digits_only && matches!(text.len(), 4..=8))
+        || dashed_short
         || text == "0"
         || text
             .chars()

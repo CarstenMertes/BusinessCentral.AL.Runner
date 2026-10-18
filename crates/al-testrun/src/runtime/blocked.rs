@@ -340,6 +340,12 @@ fn on_run_of(lowered: &Lowered, id: u32) -> Option<(usize, usize)> {
 impl RunnerPermissions {
     pub(crate) fn of(lowered: &Lowered) -> RunnerPermissions {
         let program = &lowered.program;
+        // Without the runner's codeunits nothing starts or narrows the mock (the corpus programs): skip the scan.
+        let reset = on_run_of(lowered, RESET_STATE_BEFORE_TEST_RUN);
+        let set_state = on_run_of(lowered, SET_STATE_TEST_RUN);
+        if reset.is_none() && set_state.is_none() {
+            return RunnerPermissions::default();
+        }
         let helper = |t: &al_builtins::value::RtType| {
             matches!(t, al_builtins::value::RtType::DotNet(i)
                 if dotnet_type_is(program, Some(*i as usize), PERMISSION_TEST_HELPER))
@@ -366,10 +372,8 @@ impl RunnerPermissions {
                 }
             }
         }
-        let starts_mock = on_run_of(lowered, RESET_STATE_BEFORE_TEST_RUN)
-            .is_some_and(|(o, r)| reaches_any(lowered, o, r, &constructs).is_some());
-        let lowers_unless_disabled =
-            on_run_of(lowered, SET_STATE_TEST_RUN).and_then(|(o, r)| reaches_any(lowered, o, r, &lowering));
+        let starts_mock = reset.is_some_and(|(o, r)| reaches_any(lowered, o, r, &constructs).is_some());
+        let lowers_unless_disabled = set_state.and_then(|(o, r)| reaches_any(lowered, o, r, &lowering));
         RunnerPermissions {
             lowering,
             starts_mock,

@@ -367,8 +367,23 @@ one test per module and level (16 modules x Setup/Master/Transactional/Historica
    Base App `O365 Brand Color`.CreateDefaultBrandColors/MakePicture (O365BrandColor.Table.al:124). This is the first step of
    `CreateSetupDemoData`, so it blocks both lanes and hides what follows (13 further tests fail only because the Foundation
    data is missing).
-2. `builtin System.DWY2Date#1 is not implemented`: 7 tests (for example `Bank Module` `CreateHistoricalData`).
+2. `builtin System.DWY2Date#1 is not implemented`: 7 tests (for example `Bank Module` `CreateHistoricalData`). Implemented
+   on 2026-10-18 as pinned by types/lt-datetime/DateFuncs.al:311-399; the spike no longer shows it.
 3. `DotNet new System.Net.Mail.MailAddress` (refused by policy: touches the network): `CRM Module` `CreateMasterData`.
+
+Behind the Bitmap refusal (2026-10-18, scratch run with the `MakePicture` body cut out of the Base App source, not committed;
+ADR-044 is the proposal for Bitmap itself). 64 tests: 52 pass, 7 fail, 5 not run. In order:
+
+1. `NavApp.GetResource` of the Contoso app finds nothing: 5 tests (`PostingExchangeDefinitions/OCRCREDITMEMO.xml`, `CRONUS.jpg`,
+   `Images/Item/1896-S.jpg`, `Images/Person/*.jpg`, `IncomingDocuments/*.PDF`). The `.app` holds them under `resources/` with
+   percent-encoded names (`%20`); resources of dependency apps are only loaded for corpus apps (`app.resources` is set in
+   `al-testrun/src/runtime/corpus.rs`). A runtime task: load and decode `resources/` of dependency packages.
+2. `platform table 'License Permission' (2000000043) has no provider`: `Sales Module` `CreateHistoricalData`.
+3. `DotNet new System.Net.Mail.MailAddress` (policy, network): `HR Module` `CreateMasterData`. Needs an owner decision.
+4. `Unhandled UI: Message Shipment Date 03/29/26 is before work date 10/18/26`: `Sales Module` `CreateTransactionalData`. The
+   demo data dates are relative to a work date; check what the recipe sets as WorkDate before treating it as a bug.
+5. `Vendor Item No. already exists` (`Inventory` transactional), `Status must not be Certified` (`Manufacturing`) and
+   `Opportunity Entry already exists` (`CRM`): may follow from the earlier failures in the same codeunit; unverified.
 
 More refusals may sit behind the first one. Each is a runtime task (a corpus pin is needed first for DWY2Date; the two
 DotNet types need an owner decision on the policy or a native replacement). The two lanes stay refused with the first

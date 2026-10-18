@@ -16,7 +16,8 @@
 use super::registry::{MemberFn, MemberKind, MemberRefFn, Pin, RegistryMember, RegistryType};
 use crate::Session;
 use al_builtins::dotnet_sigs::{
-    AL_CONFIG_SETTINGS, GRAPH_QUERY, TENANT_INFO, TENANT_SETTINGS_HELPER, TEST_EXECUTION, USER_ACCOUNT_HELPER,
+    AL_CONFIG_SETTINGS, GRAPH_QUERY, PERMISSION_TEST_HELPER, TENANT_INFO, TENANT_SETTINGS_HELPER, TEST_EXECUTION,
+    USER_ACCOUNT_HELPER,
 };
 use al_builtins::native::Signal;
 use al_builtins::value::{DotNetKind, DotNetObject, Value};
@@ -398,6 +399,43 @@ fn graph_user(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<
     graph_null_reference("GetUser")
 }
 
+/// Evidence for the members of `PermissionTestHelper` (the platform object behind codeunit 131006 "Permissions Mock").
+const MOCK_LIFECYCLE_PIN: &str = "permissions/TestPermissionsMockLifecycle.al:29-82 (Start, ClearAssignments and Stop are \
+    accepted); permissions/TestPermissionsMockEnforcement.al:74-97 (with no set assigned, the user's own permissions \
+    apply: the insert goes through)";
+
+/// `PermissionTestHelper()`: starts the mock with no set assigned. The user's own permissions apply then
+/// (`MOCK_LIFECYCLE_PIN`), and every access is granted here (ADR-027), so the object holds nothing.
+fn permission_helper_new(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "PermissionTestHelper constructor")?;
+    Ok(Value::DotNet(Rc::new(DotNetObject::new(DotNetKind::Internal {
+        type_name: PERMISSION_TEST_HELPER.into(),
+        state: RefCell::new(Vec::new()),
+    }))))
+}
+
+/// `Clear()` and `Dispose()`: back to no assigned set, the user's own permissions (`MOCK_LIFECYCLE_PIN`).
+fn permission_helper_clear(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "PermissionTestHelper.Clear")?;
+    Ok(Value::Null)
+}
+
+fn permission_helper_dispose(_: &mut Session, _: Option<&Rc<DotNetObject>>, args: Args) -> Result<Value, Signal> {
+    no_args(args, "PermissionTestHelper.Dispose")?;
+    Ok(Value::Null)
+}
+
+/// `AddEffectivePermissionSet(RoleId)` narrows the session to the assigned sets (enforced on BC: corpus
+/// permissions/TestPermissionsMockEnforcement.al:28-47). Permissions are not enforced here (ADR-027), so a test that
+/// lowers them is not run.
+fn permission_helper_add_set(_: &mut Session, _: Option<&Rc<DotNetObject>>, _: Args) -> Result<Value, Signal> {
+    Err(Signal::Unsupported(
+        "DotNet PermissionTestHelper.AddEffectivePermissionSet lowers the permissions of the test session; \
+         permissions are not enforced here (every access is granted, ADR-027), so the test is not run"
+            .into(),
+    ))
+}
+
 fn probe(what: &str) -> Pin {
     Pin::Probe(format!("{ENV_PROBE}:{what}"))
 }
@@ -544,6 +582,25 @@ fn own_types() -> Vec<RegistryType> {
                 .into_iter()
                 .map(|n| member(n, Pin::Corpus(TENANT_INFO_PIN.into()), tenant_info_empty_text))
                 .collect(),
+        },
+        RegistryType {
+            clr_name: PERMISSION_TEST_HELPER.into(),
+            members: {
+                let m = |name: &str, f: MemberFn| member(name, Pin::Corpus(MOCK_LIFECYCLE_PIN.into()), f);
+                vec![
+                    RegistryMember {
+                        kind: MemberKind::Construct,
+                        ..m("PermissionTestHelper", permission_helper_new)
+                    },
+                    m("Clear", permission_helper_clear),
+                    m("Dispose", permission_helper_dispose),
+                    member(
+                        "AddEffectivePermissionSet",
+                        Pin::Corpus("permissions/TestPermissionsMockEnforcement.al:28-47 (the assigned set is enforced)".into()),
+                        permission_helper_add_set,
+                    ),
+                ]
+            },
         },
         RegistryType {
             clr_name: TEST_EXECUTION.into(),

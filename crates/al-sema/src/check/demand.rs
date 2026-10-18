@@ -30,6 +30,12 @@ use std::rc::Rc;
 /// Base Application's `Company-Initialize`, which a new company runs once.
 pub const COMPANY_INITIALIZE: u32 = 2;
 
+/// The codeunits BC's AL test runner runs by id around every test method when they exist (Test Runner app, BC 27.5):
+/// 131006 "Permissions Mock" (started and stopped by `Test Runner - Mgt`, TestRunnerMgt.Codeunit.al:105, :127),
+/// 130301 "Reset State Before Test Run" and 130302 "Set State Test Run" (ALTestRunnerResetEnvironment.Codeunit.al:42-63),
+/// 132553 "Block Changes to System Tables" (:65-75). They are found by id only, as the runner's `AllObj` check does.
+pub const TEST_RUNNER_CODEUNITS: [u32; 4] = [131006, 130301, 130302, 132553];
+
 /// An object nothing in the compile refers to.
 pub const NONE: u8 = 0;
 /// Lowered, with its routines stubbed.
@@ -365,6 +371,20 @@ impl Checker<'_> {
                     }
                 }
             } else if company_initialize {
+                self.reach_run(i);
+            }
+        }
+    }
+
+    /// The codeunits the test runner runs around every test method ([`TEST_RUNNER_CODEUNITS`]): their OnRun is a root
+    /// whenever a dependency app holds them, as nothing in the apps names them.
+    pub(super) fn reach_test_runner(&self) {
+        for i in 0..self.ws.objects.len() {
+            let o = &self.ws.objects[i];
+            if o.kind == ObjKind::Codeunit
+                && self.ws.is_dependency(i)
+                && o.id.is_some_and(|id| TEST_RUNNER_CODEUNITS.contains(&id))
+            {
                 self.reach_run(i);
             }
         }

@@ -620,7 +620,7 @@ fn policy_refusals_name_the_rule_and_never_reach_the_host() {
 #[test]
 fn an_unregistered_server_class_is_refused_before_the_host() {
     let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
-    let r = run(&host, "H: DotNet PermissionTestHelper;", "H.Clear();", "");
+    let r = run(&host, "H: DotNet UserInfo;", "H.ToString();", "");
     let why = unsupported(&r);
     assert!(
         why.contains("server class") && why.contains("neither registered nor classified pure"),
@@ -1369,6 +1369,8 @@ fn the_declared_result_types_match_the_registry() {
             "GetGroupPage" | "GetGroupInfo" | "FindFirstGroupInfoForDisplayName" | "GetUser" => continue,
             // Answers a null reference by design; graph_get_current_user_returns_null_without_an_error runs it.
             "GetCurrentUser" | "GetTenantDetail" => continue,
+            // Refused by design (it lowers permissions); adding_an_effective_permission_set_is_refused runs it.
+            "AddEffectivePermissionSet" => continue,
             _ => vec![],
         };
         let mut s = Session::new(Engine::new(al_ir::Program::default(), vec![]));
@@ -1480,4 +1482,40 @@ fn a_dotnet_result_is_added_to_a_collection_as_its_element_type() {
         ": Text",
     );
     assert_eq!(text(r), "AbcAbc");
+}
+
+/// `Permissions Mock`.Start/Stop/ClearAssignments (codeunit 131006) construct, clear and dispose the platform's
+/// `PermissionTestHelper`. With no permission set assigned the user's own permissions apply (corpus
+/// permissions/TestPermissionsMockEnforcement.al:74-97), and Start, Stop and ClearAssignments are accepted
+/// (permissions/TestPermissionsMockLifecycle.al:29-82). BC's test runner starts and stops the mock around every
+/// test method (Test Runner app, TestRunnerMgt.Codeunit.al:105 and :127).
+#[test]
+fn the_permission_test_helper_starts_clears_and_stops_without_the_host() {
+    let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
+    let r = run(
+        &host,
+        "H: DotNet PermissionTestHelper;",
+        "H := H.PermissionTestHelper(); H.Clear(); H.Dispose(); exit('done');",
+        ": Text",
+    );
+    assert_eq!(text(r), "done");
+    assert_eq!(host.log(), vec![]);
+}
+
+/// Assigning a permission set lowers the session's permissions (enforced on BC: corpus
+/// permissions/TestPermissionsMockEnforcement.al:28-47); permissions are not enforced here, so it is refused.
+#[test]
+fn adding_an_effective_permission_set_is_refused() {
+    let host = Fake::new(|r| panic!("the host must not be called: {r:?}"));
+    let r = run(
+        &host,
+        "H: DotNet PermissionTestHelper;",
+        "H := H.PermissionTestHelper(); H.AddEffectivePermissionSet('D365 BASIC');",
+        "",
+    );
+    let why = unsupported(&r);
+    assert!(
+        why.contains("AddEffectivePermissionSet") && why.contains("lowers"),
+        "{why}"
+    );
 }

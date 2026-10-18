@@ -628,7 +628,32 @@ impl Session {
                     return unsupported("Page.GetRecord into a record of another table (not pinned)");
                 }
                 if st.borrow().cursor != Cursor::Row {
-                    return unsupported("Page.GetRecord of a page that closed on no row (not pinned)");
+                    // A page that ran over a table with no row at all hands back the blank record, whatever the record held
+                    // (errors/lt-ms-refusals-129/P129PageMisc.al:P129_GetRecord_AfterRunModalCancelledOnEmptyTable,
+                    // _AfterRunModalOkOnEmptyTable, _PageTypedHandlerOnEmptyTable: `id=0|grp=|qty=0`). A page on no row of a
+                    // table that has rows is not pinned.
+                    // A page that never ran hands back the record SetRecord gave it (pages/lt-part-never-ran/NeverRanSetRecord.al:
+                    // P182b_HostNeverRan_PartSetRecord, `id=7 name=seven`).
+                    let given = st.borrow().set_record.clone().filter(|_| !st.borrow().ran);
+                    if let Some(given) = given.filter(|g| g.borrow().table == dst.borrow().table) {
+                        let fields = given.borrow().fields.clone();
+                        dst.borrow_mut().fields = fields;
+                        return Ok(Value::Null);
+                    }
+                    let initial = self.initial_fields(dst.borrow().table as usize);
+                    let src_blank = {
+                        let s = src.borrow();
+                        s.fields.len() == initial.len()
+                            && s.fields
+                                .iter()
+                                .zip(&initial)
+                                .all(|(a, b)| al_builtins::ops::compare(a, b).ok() == Some(std::cmp::Ordering::Equal))
+                    };
+                    if !src_blank {
+                        return unsupported("Page.GetRecord of a page that closed on no row of a table that has rows (not pinned)");
+                    }
+                    dst.borrow_mut().fields = initial;
+                    return Ok(Value::Null);
                 }
                 let fields = src.borrow().fields.clone();
                 dst.borrow_mut().fields = fields;

@@ -3873,6 +3873,8 @@
 67092 Dialog_PageTypedHandler
 67092 List_PageTypedHandler
 67094 PageVariableNeverOpened_PartRead
+67095 Nav_ActionChangesViewThenUpdate
+67095 Nav_TwelveRows_OpenLastPreviousFirstNext
 67096 DeleteLastOfTwoRows_WithoutUpdate
 67096 DeleteOnlyRow_WithUpdate
 67096 DeleteOnlyRow_WithoutUpdate

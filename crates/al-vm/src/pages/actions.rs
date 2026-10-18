@@ -729,6 +729,38 @@ impl Session {
         Ok(())
     }
 
+    /// `CurrPage.Update` on a list with OnFindRecord, OnNextRecord and OnAfterGetRecord (no OnAfterGetCurrRecord) whose action just
+    /// changed the view so that the stored row the cursor stands on is outside it: the call itself reads the row (pages/lt-f3-pages/
+    /// F3ListTests.al:72 Nav_ActionChangesViewThenUpdate `after_update` begins `AGR(R1003) | AGR(R1003) | OnlyBig done`, the first read
+    /// being the one before every action). Remembers it for the refresh.
+    pub(super) fn note_view_left(&mut self, st: &St) -> Result<(), Signal> {
+        if !self.is_list(st)
+            || st.borrow().host.is_some()
+            || st.borrow().cursor != Cursor::Row
+            || st.borrow().draft
+            || !(self.declares(st, "onfindrecord")
+                && self.declares(st, "onnextrecord")
+                && self.declares(st, "onaftergetrecord"))
+            || self.declares(st, "onaftergetcurrrecord")
+        {
+            return Ok(());
+        }
+        let rec = self.page_rec(st);
+        if self.stored_row(&rec)?.is_none() {
+            return Ok(());
+        }
+        let probe = Rc::new(RefCell::new(rec.borrow().clone()));
+        self.ret_used = true;
+        if matches!(
+            self.record_op(RecordOp::Find, &probe, &mut [Value::Text("=".into())])?,
+            Value::Boolean(true)
+        ) {
+            return Ok(());
+        }
+        st.borrow_mut().view_left = true;
+        self.populate_current(st)
+    }
+
     /// The re-read `CurrPage.Update` asked for, once the call that made it has returned: the
     /// stored current row loads again and raises OnAfterGetRecord and OnAfterGetCurrRecord; a new
     /// row nobody has saved has nothing to re-read (corpus pageupdate/TestPageUpdateNewRow.al:1-30,
@@ -823,7 +855,27 @@ impl Session {
     fn refresh_list_with_find(&mut self, st: &St) -> Result<(), Signal> {
         al_builtins::assumptions::assume(al_builtins::assumptions::Assumption::UpdateRefreshListOnFindRecord);
         let rec = self.page_rec(st);
-        self.page_trigger(st, "onaftergetrecord", vec![])?;
+        let view_left = std::mem::take(&mut st.borrow_mut().view_left);
+        let with_current = self.declares(st, "onaftergetcurrrecord");
+        if view_left {
+            // The row the cursor stands on is stored but the view no longer holds it: the client asks OnNextRecord(1) for the
+            // row to settle on and reads it, where it would read the row again (pages/lt-f3-pages/F3ListTests.al:72
+            // Nav_ActionChangesViewThenUpdate `after_update`: `Next(1)=1 | AGR(R1008) | Find(=>)=Yes`). Pinned only when that step
+            // lands on the first row of the view (nothing before it), and for a list without OnAfterGetCurrRecord.
+            if with_current || !self.declares(st, "onnextrecord") {
+                return unsupported(
+                    "CurrPage.Update after the view left the current row, on a list with OnAfterGetCurrRecord or without OnNextRecord (not pinned)",
+                );
+            }
+            if !self.nav_next(st, 1)? {
+                return unsupported(
+                    "CurrPage.Update after the view left the current row, with no row after it (not pinned)",
+                );
+            }
+            self.populate_current(st)?;
+        } else {
+            self.page_trigger(st, "onaftergetrecord", vec![])?;
+        }
         if !self.nav_find(st, "=>")? {
             return unsupported("OnFindRecord finds no row after CurrPage.Update on a list (not pinned)");
         }
@@ -866,6 +918,19 @@ impl Session {
             });
         }
         before.reverse();
+        if view_left {
+            // No OnAfterGetCurrRecord: the refresh ends after the step back (F3ListTests.al:72 `...Next(1)=0 | AGR(R1008) | Next(-1)=0`).
+            if !before.is_empty() {
+                return unsupported(
+                    "CurrPage.Update after the view left the current row, with rows before the first one read (not pinned)",
+                );
+            }
+            st.borrow_mut().window = forward;
+            st.borrow_mut().window_from_start = true;
+            st.borrow_mut().window_eof = true;
+            st.borrow_mut().refresh = false;
+            return self.sync_parts(st);
+        }
         rec.borrow_mut().fields = first.stored.clone();
         self.page_trigger(st, "onaftergetrecord", vec![])?;
         if !self.nav_find(st, "=")? {
